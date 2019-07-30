@@ -71,6 +71,7 @@ extern "C" {
     typedef struct sUIWriteVars {
         bool LED1;
         bool LED2;
+        bool enableLEDs;
     } sUIWriteVars;
     
     

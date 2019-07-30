@@ -303,14 +303,14 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
  */
 static void TcpServer_InitializeClient(TcpClientData* client)
 {
-    client->client = INVALID_SOCKET;
-    client->readBuffer[0] = '\0';
-    client->readBufferLength = 0;
-    client->writeBuffer[0] = '\0';
-    microrl_init(&client->console, microrl_echo);
-    microrl_set_echo(&client->console, false);
-    microrl_set_execute_callback(&client->console, microrl_commandComplete);
-    client->scpiContext = CreateSCPIContext(&scpi_interface, client);
+//    client->client = INVALID_SOCKET;
+//    client->readBuffer[0] = '\0';
+//    client->readBufferLength = 0;
+//    client->writeBuffer[0] = '\0';
+//    microrl_init(&client->console, microrl_echo);
+//    microrl_set_echo(&client->console, false);
+//    microrl_set_execute_callback(&client->console, microrl_commandComplete);
+//    client->scpiContext = CreateSCPIContext(&scpi_interface, client);
 }
 
 void TcpServer_Initialize()

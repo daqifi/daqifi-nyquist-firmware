@@ -188,21 +188,36 @@ void APP_Tasks(void)
     // Wait for power-on for WiFi
     if (g_BoardData.PowerData.powerState > MICRO_ON)
     {
-        WifiTasks();
+        //WifiTasks();
     }
 }
 
 void APP_SelfTest(void)
 {
     size_t index;
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Delay for voltage to stabilize
+    volatile double voltage_Vsys, voltage_3_3V, voltage_2_5_Vref, voltage_5V, voltage_ADC;
+    volatile uint32_t DIO_result;
+    volatile bool test_result[7] = {false,false,false,false,false,false,false};
+        
+    vTaskDelay(1500 / portTICK_PERIOD_MS);  // Delay for voltage to stabilize
+    
+    // Enable all on-board ADC channels
+    for (index=0; index<16; ++index)
+    {
+        size_t channelIndex = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)index);
+        AInRuntimeConfig* channelRuntimeConfig = &g_BoardRuntimeConfig.AInChannels.Data[channelIndex];
+        AInChannel* channel = &g_BoardConfig.AInChannels.Data[channelIndex];
+
+        channelRuntimeConfig->IsEnabled = true;  // If public, allow allow configuration.
+    }
+
+    ADC_WriteChannelStateAll(&g_BoardConfig, &g_BoardRuntimeConfig);
+    
+    vTaskDelay(1200 / portTICK_PERIOD_MS);  // Delay for ADC to collect data
+    
     index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VSYS);
     if (ADC_IsDataValid(&g_BoardData.AInLatest.Data[index]))
     {
-        volatile double voltage_Vsys, voltage_3_3V, voltage_2_5_Vref, voltage_5V;
-        volatile DIO_result;
-        volatile bool test_result[6] = {false,false,false,false,false,false};
-        
            
         // Check system voltages
         index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VSYS);
@@ -221,6 +236,23 @@ void APP_SelfTest(void)
         voltage_5V = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[index]);
         if (voltage_5V > 5.44 && voltage_5V < 5.6) test_result[3] = true;
         
+        // Read all on-board ADC channels
+        for (index=0; index<16; ++index)
+        {
+            size_t channelIndex = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)index);
+            voltage_ADC = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[channelIndex]);
+            if (voltage_ADC > 4.95 && voltage_ADC < 5.05)
+            {
+                test_result[4] = true;
+            }
+            else
+            {
+                test_result[4] = false;
+                break;
+            }
+        }
+        
+        
         // Check DIO
         // Assuming each pair of DIO are connected together with jumpers 0--1, 2--3, etc.
         // Write even DIO
@@ -228,16 +260,43 @@ void APP_SelfTest(void)
         SCPI_GPIOMultiStateSet(21845);
         
         SCPI_GPIOMultiStateGet(&DIO_result);
-        if(DIO_result == 65535) test_result[4] = true;
+        if(DIO_result == 65535) test_result[5] = true;
         
         // Write odd DIO
         SCPI_GPIOMultiDirectionSet(~43690);
         SCPI_GPIOMultiStateSet(43690);
         
         SCPI_GPIOMultiStateGet(&DIO_result);   
-        if(DIO_result == 65535) test_result[5] = true;
-
-        // if (test_result) PLIB_PORTS_PinSet(config.LED1_Mod, config.LED1_Ch, config.LED1_Bit);
+        if(DIO_result == 65535) test_result[6] = true;
+        
+        g_BoardRuntimeConfig.UIWriteVars.enableLEDs = false;
+        for (index=0;index<7;index++)
+        {
+            if (!test_result[index])
+            {
+                uint8_t x = 0;
+                for (x=0;x<index;x++)
+                {
+                    vTaskDelay(500 / portTICK_PERIOD_MS); 
+                    PLIB_PORTS_PinSet(g_BoardConfig.UIConfig.LED2_Mod, g_BoardConfig.UIConfig.LED2_Ch, g_BoardConfig.UIConfig.LED2_Bit);
+                    vTaskDelay(500 / portTICK_PERIOD_MS); 
+                    PLIB_PORTS_PinClear(g_BoardConfig.UIConfig.LED2_Mod, g_BoardConfig.UIConfig.LED2_Ch, g_BoardConfig.UIConfig.LED2_Bit);
+                }
+                vTaskDelay(1500 / portTICK_PERIOD_MS);
+            }
+            else
+            {
+                // We've passed all tests so end the program here
+                PLIB_PORTS_PinSet(g_BoardConfig.UIConfig.LED1_Mod, g_BoardConfig.UIConfig.LED1_Ch, g_BoardConfig.UIConfig.LED1_Bit);
+                PLIB_PORTS_PinSet(g_BoardConfig.UIConfig.LED2_Mod, g_BoardConfig.UIConfig.LED2_Ch, g_BoardConfig.UIConfig.LED2_Bit);
+                SYS_INT_Disable();
+                while(1){}
+            }
+        }
+        
+        vTaskDelay(2000 / portTICK_PERIOD_MS); 
+        g_BoardRuntimeConfig.UIWriteVars.enableLEDs = true;
+        
     }
 }
 

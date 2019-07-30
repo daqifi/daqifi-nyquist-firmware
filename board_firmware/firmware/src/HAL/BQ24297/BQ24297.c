@@ -23,13 +23,14 @@ void BQ24297_InitSettings(sBQ24297Config config, sBQ24297WriteVars write, sBQ242
     // REG00: 0b00000XXX
     BQ24297_Write_I2C(config, write, *data, 0x00, reg & 0b00000111);
      
+    // Disable watchdog WATCHDOG = 0, set charge timer to 20hr
+    // REG05: 0b10001110
+    BQ24297_Write_I2C(config, write, *data, 0x05, 0b10001110);    
+    
     // Reset watchdog and set system voltage limit to 3.0V: SYS_MIN = 0b000
     // REG01: 0b01010001
     BQ24297_Write_I2C(config, write, *data, 0x01, 0b01010001);
     
-    // Disable watchdog WATCHDOG = 0, set charge timer to 20hr
-    // REG05: 0b10001110
-    BQ24297_Write_I2C(config, write, *data, 0x05, 0b10001110);
 }
 
 void BQ24297_Write_I2C(sBQ24297Config config, sBQ24297WriteVars write, sBQ24297Data data, uint8_t reg, uint8_t txData)

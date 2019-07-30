@@ -290,7 +290,7 @@ void _POWER_AND_UI_Tasks(void)
     {
         Power_Tasks(g_BoardConfig.PowerConfig, &g_BoardData.PowerData, &g_BoardRuntimeConfig.PowerWriteVars);
         Button_Tasks(g_BoardConfig.UIConfig, &g_BoardData.UIReadVars, &g_BoardData.PowerData);
-        LED_Tasks(g_BoardConfig.UIConfig, &g_BoardData.PowerData, &g_BoardData.UIReadVars, g_BoardRuntimeConfig.StreamingConfig.IsEnabled);
+        if(g_BoardRuntimeConfig.UIWriteVars.enableLEDs) LED_Tasks(g_BoardConfig.UIConfig, &g_BoardData.PowerData, &g_BoardData.UIReadVars, g_BoardRuntimeConfig.StreamingConfig.IsEnabled);
         vTaskDelay(125 / portTICK_PERIOD_MS);
     }
 }

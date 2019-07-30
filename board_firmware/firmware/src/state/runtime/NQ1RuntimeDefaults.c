@@ -75,6 +75,7 @@ const BoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
     .UIWriteVars = {
         .LED1 = false,
         .LED2 = false,
+        .enableLEDs = true,
     },
     .StreamingConfig = {
         .IsEnabled = false,

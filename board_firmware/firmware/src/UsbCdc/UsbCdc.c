@@ -150,7 +150,7 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
                 /* Register the CDC Device application event handler here.
                  * Note how the usbCdcData object pointer is passed as the
                  * user data */
-                USB_DEVICE_CDC_EventHandlerSet(USB_DEVICE_CDC_INDEX_0, UsbCdc_CDCEventHandler, (uintptr_t)&g_BoardRuntimeConfig.usbSettings);
+                //USB_DEVICE_CDC_EventHandlerSet(USB_DEVICE_CDC_INDEX_0, UsbCdc_CDCEventHandler, (uintptr_t)&g_BoardRuntimeConfig.usbSettings);
 
                 /* Mark that the device is now configured */
                 g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_WAIT;
