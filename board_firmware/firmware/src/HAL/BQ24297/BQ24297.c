@@ -27,9 +27,9 @@ void BQ24297_InitSettings(sBQ24297Config config, sBQ24297WriteVars write, sBQ242
     // REG05: 0b10001110
     BQ24297_Write_I2C(config, write, *data, 0x05, 0b10001110);    
     
-    // Reset watchdog and set system voltage limit to 3.0V: SYS_MIN = 0b000
-    // REG01: 0b01010001
-    BQ24297_Write_I2C(config, write, *data, 0x01, 0b01010001);
+    // Reset watchdog and set system voltage limit to 3.0V: SYS_MIN = 0b000, disable charging
+    // REG01: 0b01000001
+    BQ24297_Write_I2C(config, write, *data, 0x01, 0b01000001);
     
 }
 

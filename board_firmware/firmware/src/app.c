@@ -219,7 +219,7 @@ void APP_SelfTest(void)
 
     ADC_WriteChannelStateAll(&g_BoardConfig, &g_BoardRuntimeConfig);
     
-    vTaskDelay(1200 / portTICK_PERIOD_MS);  // Delay for ADC to collect data
+    vTaskDelay(2300 / portTICK_PERIOD_MS);  // Delay for ADC to collect data
     
     index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VSYS);
     if (ADC_IsDataValid(&g_BoardData.AInLatest.Data[index]))
@@ -228,11 +228,11 @@ void APP_SelfTest(void)
         // Check system voltages
         index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VSYS);
         voltage_Vsys = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[index]);
-        if (voltage_Vsys > 3 && voltage_Vsys < 4.3) test_result[0] = true;
+        if (voltage_Vsys > 3 && voltage_Vsys < 4.35) test_result[0] = true;
         
         index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_3_3V);
         voltage_3_3V = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[index]);
-        if (voltage_3_3V > 3.24 && voltage_3_3V < 3.35) test_result[1] = true;
+        if (voltage_3_3V > 3.18 && voltage_3_3V < 3.31) test_result[1] = true;
         
         index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_2_5VREF);
         voltage_2_5_Vref = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[index]);

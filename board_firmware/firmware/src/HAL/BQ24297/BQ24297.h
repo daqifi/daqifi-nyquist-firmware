@@ -70,7 +70,7 @@ typedef struct
    typedef struct sBQ24297WriteVars{
 
 	unsigned char OTG_Val;	// Input type selection (Low for USB port, High for ac-dc adapter)
-	unsigned char CE_Val;	// USB port input current limit selection when SEL = Low. (Low = 100 mA, High = 500 mA)
+    
  } sBQ24297WriteVars;
  
     /**
