@@ -7,6 +7,13 @@
 
 #define UNUSED(x) (void)(x)
 
+//! Pointer to the board configuration data structure to be set in initialization
+static BoardConfig *pBoardConfig;
+//! Pointer to the board runtime configuration data structure, to be set in initialization
+static BoardRuntimeConfig *pBoardRuntimeConfig;
+// Pointer to the BoardData data structure, to be set in initialization
+static BoardData* pBoardData;
+
 /**
  * Extracts channel information for the specified module
  * @param moduleChannels [out] Static channel data
@@ -30,115 +37,70 @@
 //    }
 //}
 
-/**
- * Extracts channel information for the specified module
- * @param moduleChannels [out] Static channel data
- * @param moduleChannelRuntime [out] Runtime channel data
- * @param moduleId The module to search for
- * @param boardConfig The board to extract information from
- * @param runtimeConfig The runtime structure to extract information from
- */
-static void GetModuleChannelRuntimeData(AInArray* moduleChannels, AInRuntimeArray* moduleChannelRuntime,
-        uint8_t moduleId, const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig)
-{
-    moduleChannels->Size = 0;
-    moduleChannelRuntime->Size = 0;
-    size_t i;
-    for (i=0; i<boardConfig->AInChannels.Size; ++i)
-    {
-        if (boardConfig->AInChannels.Data[i].DataModule != moduleId)
-        {
-            continue;
-        }
-        
-        moduleChannels->Data[moduleChannels->Size] = boardConfig->AInChannels.Data[i];
-        moduleChannels->Size += 1;
-        
-        moduleChannelRuntime->Data[moduleChannelRuntime->Size] = runtimeConfig->AInChannels.Data[i];
-        moduleChannelRuntime->Size += 1;
-    }
+//static bool ADC_IsDataValid(const AInSample* sample);
+
+static uint8_t ADC_FindModuleIndex( const AInModule* module );
+
+static bool ADC_ReadSamples( \
+                            AInSampleArray* samples, \
+                            const AInModule* module, \
+                            AInModuleRuntimeConfig* moduleRuntime );
+
+static bool ADC_WriteModuleState( \
+                            size_t moduleId, \
+                            POWER_STATE powerState);
+
+static bool ADC_InitHardware( \
+                            const AInModule* boardConfig, \
+                            const AInArray* moduleChannels );
+
+static void GetModuleChannelRuntimeData( \
+                            AInArray* moduleChannels, \
+                            AInRuntimeArray* moduleChannelRuntime, \
+                            uint8_t moduleId );
+
+
+void ADC_Init( \
+                    const BoardConfig *pInitBoardConfig, \
+                    const BoardRuntimeConfig *pInitBoardRuntimeConfig, \
+                    const BoardData *pInitBoardData ){
+    
+    pBoardConfig = (BoardConfig *)pInitBoardConfig;
+    pBoardRuntimeConfig = (BoardRuntimeConfig *)pInitBoardRuntimeConfig;
+    pBoardData = (BoardData *)pInitBoardData;
 }
 
-bool ADC_InitHardware(const AInModule* boardConfig, const AInArray* moduleChannels)
-{
-    bool result = false;
-     
-    switch(boardConfig->Type)
-    {
-    case AIn_MC12bADC:
-        result = MC12b_InitHardware(&boardConfig->Config.MC12b, moduleChannels);
-        break;
-    case AIn_AD7609:
-        result = AD7609_InitHardware(&boardConfig->Config.AD7609, moduleChannels);
-        break;
-    case AIn_AD7173:
-        result = AD7173_InitHardware(&boardConfig->Config.AD7173, moduleChannels);
-        break;
-    default:
-        // Not implemented yet
-        break;
-    }
-    
-    return result;
-}
-
-bool ADC_WriteModuleState(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t moduleId, POWER_STATE powerState)
-{
-    const AInModule* currentModule = &boardConfig->AInModules.Data[moduleId];
-    AInModuleRuntimeConfig* currentModuleRuntime = &runtimeConfig->AInModules.Data[moduleId];
-    
-    bool result = true;
-    bool isPowered = (powerState> MICRO_ON);
-    switch(currentModule->Type)
-    {
-    case AIn_MC12bADC:
-        result &= MC12b_WriteModuleState(&currentModule->Config.MC12b, currentModuleRuntime);
-        break;
-    case AIn_AD7609:
-        result &= AD7609_WriteModuleState(&currentModule->Config.AD7609, currentModuleRuntime, isPowered);
-        break;
-    case AIn_AD7173:
-        result &= AD7173_WriteModuleState(&currentModule->Config.AD7173, currentModuleRuntime, isPowered);
-        break;
-    default:
-        // Not implemented yet
-        break;
-    }
-    
-    return result;
-}
-
-bool ADC_WriteChannelStateAll(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig)
+bool ADC_WriteChannelStateAll( void )
 {
     size_t i;
     bool result = true;
-    for (i=0; i<boardConfig->AInModules.Size; ++i)
+    for (i=0; i< pBoardConfig->AInModules.Size; ++i)
     {
         // Get channels associated with the current module
         AInArray moduleChannels;
         AInRuntimeArray moduleChannelRuntime;
-        GetModuleChannelRuntimeData(&moduleChannels, &moduleChannelRuntime, i, boardConfig, runtimeConfig);
+        GetModuleChannelRuntimeData( &moduleChannels, &moduleChannelRuntime, i );
         
         // Delegate to the implementation
-        switch(boardConfig->AInModules.Data[i].Type)
+        switch( pBoardConfig->AInModules.Data[i].Type)
         {
         case AIn_MC12bADC:
-            result &= MC12b_WriteStateAll(&boardConfig->AInModules.Data[i].Config.MC12b,
-                &runtimeConfig->AInModules.Data[i],
+            result &= MC12b_WriteStateAll(&pBoardConfig->AInModules.Data[i].Config.MC12b,
+                &pBoardRuntimeConfig->AInModules.Data[i],
                 &moduleChannels,
                 &moduleChannelRuntime);
             
             break;
         case AIn_AD7609:
-            result &= AD7609_WriteStateAll(&boardConfig->AInModules.Data[i].Config.AD7609,
-                &runtimeConfig->AInModules.Data[i],
+            result &= AD7609_WriteStateAll(&pBoardConfig->AInModules.Data[i].Config.AD7609,
+                &pBoardRuntimeConfig->AInModules.Data[i],
                 &moduleChannels,
                 &moduleChannelRuntime);
             
             break;
         case AIn_AD7173:
-            result &= AD7173_WriteStateAll(&boardConfig->AInModules.Data[i].Config.AD7173,
-                &runtimeConfig->AInModules.Data[i],
+            result &= AD7173_WriteStateAll(&pBoardConfig->AInModules.Data[i].Config.AD7173,
+                &pBoardRuntimeConfig->AInModules.Data[i],
                 &moduleChannels,
                 &moduleChannelRuntime);
             
@@ -152,86 +114,44 @@ bool ADC_WriteChannelStateAll(const BoardConfig* boardConfig, BoardRuntimeConfig
     return result;
 }
 
-bool ADC_WriteChannelStateSingle(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t channelId)
-{
-    const AInChannel* channel = &boardConfig->AInChannels.Data[channelId];
-    AInRuntimeConfig* channelRuntime = &runtimeConfig->AInChannels.Data[channelId];
-    
-    const AInModule* module = &boardConfig->AInModules.Data[channel->DataModule];
-    AInModuleRuntimeConfig* moduleRuntime = &runtimeConfig->AInModules.Data[channel->DataModule];
-    
-    bool result = true;
-    switch(module->Type)
-    {
-    case AIn_MC12bADC:
-        result &= MC12b_WriteStateSingle(&module->Config.MC12b,
-            moduleRuntime,
-            &channel->Config.MC12b,
-            channelRuntime);
-        break;
-    case AIn_AD7609:
-        result &= AD7609_WriteStateSingle(&module->Config.AD7609,
-            moduleRuntime,
-            &channel->Config.AD7609,
-            channelRuntime);
-        break;
-    case AIn_AD7173:
-        result &= AD7173_WriteStateSingle(&module->Config.AD7173,
-            moduleRuntime,
-            &channel->Config.AD7173,
-            channelRuntime);
-        break;
-    default:
-        // Not implemented yet
-        break;
-    }
-    
-    return result;
-}
+//bool ADC_WriteChannelStateSingle(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t channelId)
+//{
+//    const AInChannel* channel = &boardConfig->AInChannels.Data[channelId];
+//    AInRuntimeConfig* channelRuntime = &runtimeConfig->AInChannels.Data[channelId];
+//    
+//    const AInModule* module = &boardConfig->AInModules.Data[channel->DataModule];
+//    AInModuleRuntimeConfig* moduleRuntime = &runtimeConfig->AInModules.Data[channel->DataModule];
+//    
+//    bool result = true;
+//    switch(module->Type)
+//    {
+//    case AIn_MC12bADC:
+//        result &= MC12b_WriteStateSingle(&module->Config.MC12b,
+//            moduleRuntime,
+//            &channel->Config.MC12b,
+//            channelRuntime);
+//        break;
+//    case AIn_AD7609:
+//        result &= AD7609_WriteStateSingle(&module->Config.AD7609,
+//            moduleRuntime,
+//            &channel->Config.AD7609,
+//            channelRuntime);
+//        break;
+//    case AIn_AD7173:
+//        result &= AD7173_WriteStateSingle(&module->Config.AD7173,
+//            moduleRuntime,
+//            &channel->Config.AD7173,
+//            channelRuntime);
+//        break;
+//    default:
+//        // Not implemented yet
+//        break;
+//    }
+//    
+//    return result;
+//}
 
-bool ADC_ReadSamples(AInSampleArray* samples, const AInModule* module, AInModuleRuntimeConfig* moduleRuntime)
-{
-    uint8_t moduleId = ADC_FindModuleIndex(&g_BoardConfig.AInModules, module);
-    
-    // Get channels associated with the current module
-    AInArray moduleChannels;
-    AInRuntimeArray moduleChannelRuntime;
-    GetModuleChannelRuntimeData(&moduleChannels, &moduleChannelRuntime, moduleId, &g_BoardConfig, &g_BoardRuntimeConfig);
-    
-    bool result = true;
-    
-    switch(module->Type)
-    {
-    case AIn_MC12bADC:
-        result &= MC12b_ReadSamples(samples, &module->Config.MC12b,
-            moduleRuntime,
-            &moduleChannels,
-            &moduleChannelRuntime,
-            g_BoardData.StreamTrigStamp);
-        break;
-    case AIn_AD7609:
-        result &= AD7609_ReadSamples(samples, &module->Config.AD7609,
-            moduleRuntime,
-            &moduleChannels,
-            &moduleChannelRuntime,
-            g_BoardData.StreamTrigStamp);
-        break;
-    case AIn_AD7173:
-        result &= AD7173_ReadSamples(samples, &module->Config.AD7173,
-            moduleRuntime,
-            &moduleChannels,
-            &moduleChannelRuntime,
-            g_BoardData.StreamTrigStamp);
-        break;
-    default:
-        // Not implemented yet
-        break;
-    }
-    
-    return result;
-}
-
-bool ADC_TriggerConversion(const AInModule* module)
+bool ADC_TriggerConversion( const AInModule* module )
 {
     #if(DAQIFI_DIO_DEBUG == 1)
     {
@@ -244,7 +164,7 @@ bool ADC_TriggerConversion(const AInModule* module)
     }
     #endif
     
-    uint8_t moduleId = ADC_FindModuleIndex(&g_BoardConfig.AInModules, module);
+    uint8_t moduleId = ADC_FindModuleIndex( module );
     
     POWER_STATE powerState = g_BoardData.PowerData.powerState;
     const AInModuleRuntimeConfig* moduleRuntime = &g_BoardRuntimeConfig.AInModules.Data[moduleId];
@@ -281,14 +201,17 @@ bool ADC_TriggerConversion(const AInModule* module)
     return result;
 }
 
-const AInModule* ADC_FindModule(const AInModArray* boardConfig, AInType moduleType)
+const AInModule* ADC_FindModule( AInType moduleType )
 {
-    size_t moduleIndex = 0;
-    for (moduleIndex = 0; moduleIndex < boardConfig->Size; ++moduleIndex)
-    {
-        const AInModule* module = &boardConfig->Data[moduleIndex];
-        if (module->Type == moduleType)
-        {
+    size_t moduleIndex;
+    
+    for( \
+            moduleIndex = 0; \
+            moduleIndex < pBoardConfig->AInModules.Size; \
+            ++moduleIndex ){
+        
+        const AInModule* module = &pBoardConfig->AInModules.Data[ moduleIndex ];
+        if( module->Type == moduleType ){
             return module;
         }
     }
@@ -296,21 +219,7 @@ const AInModule* ADC_FindModule(const AInModArray* boardConfig, AInType moduleTy
     return NULL;
 }
 
-uint8_t ADC_FindModuleIndex(const AInModArray* boardConfig, const AInModule* module)
-{
-    size_t moduleIndex = 0;
-    for (moduleIndex = 0; moduleIndex < boardConfig->Size; ++moduleIndex)
-    {
-        if (module == &boardConfig->Data[moduleIndex])
-        {
-            return moduleIndex;
-        }
-    }
-    
-    return (uint8_t)-1;
-}
-
-void ADC_ConversionComplete(const AInModule* module)
+void ADC_ConversionComplete( const AInModule* module )
 {
     
     AInSampleArray samples;
@@ -327,7 +236,7 @@ void ADC_ConversionComplete(const AInModule* module)
     #endif
 
     
-    uint8_t moduleId = ADC_FindModuleIndex(&g_BoardConfig.AInModules, module);
+    uint8_t moduleId = ADC_FindModuleIndex( module);
     
     g_BoardData.AInState.Data[moduleId].AInTaskState = AINTASK_CONVCOMPLETE;
        
@@ -340,7 +249,7 @@ void ADC_ConversionComplete(const AInModule* module)
     // Copy samples to the data list
     for (i=0; i<samples.Size; i++)
     {
-        size_t channelIndex = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, samples.Data[i].Channel);
+        size_t channelIndex = ADC_FindChannelIndex( samples.Data[i].Channel);
         if(channelIndex == (size_t)-1 ){
             break;
         }
@@ -369,30 +278,32 @@ void ADC_ConversionComplete(const AInModule* module)
     g_BoardData.AInState.Data[moduleId].AInTaskState = AINTASK_IDLE;
 }
 
-void ADC_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, BoardData* boardData)
+void ADC_Tasks( void )
 {
     size_t moduleIndex = 0;
-    POWER_STATE powerState = boardData->PowerData.powerState;
-    bool isPowered = (powerState > MICRO_ON);
+    POWER_STATE powerState = pBoardData->PowerData.powerState;
+    bool isPowered = ( powerState > MICRO_ON );
     
-    for (moduleIndex = 0; moduleIndex < runtimeConfig->AInModules.Size; ++moduleIndex)
-    {
+    for( \
+            moduleIndex = 0; \
+            moduleIndex < pBoardRuntimeConfig->AInModules.Size; \
+            ++moduleIndex ){
         // Get channels associated with the current module
         AInArray moduleChannels;
-        const AInModule* module = &boardConfig->AInModules.Data[moduleIndex];
-        const AInModuleRuntimeConfig* moduleRuntime = &runtimeConfig->AInModules.Data[moduleIndex];
+        const AInModule* module = &pBoardConfig->AInModules.Data[moduleIndex];
+        const AInModuleRuntimeConfig* moduleRuntime = &pBoardRuntimeConfig->AInModules.Data[moduleIndex];
         AInRuntimeArray moduleChannelRuntime;
-        GetModuleChannelRuntimeData(&moduleChannels, &moduleChannelRuntime, moduleIndex, boardConfig, runtimeConfig);
+        GetModuleChannelRuntimeData( &moduleChannels, &moduleChannelRuntime, moduleIndex );
         
         // Check if the module is enabled - if not, skip it
         bool isEnabled = (module->Type == AIn_MC12bADC || isPowered) && moduleRuntime->IsEnabled;
         if(!isEnabled)
         {
-            boardData->AInState.Data[moduleIndex].AInTaskState = AINTASK_DISABLED;
+            pBoardData->AInState.Data[moduleIndex].AInTaskState = AINTASK_DISABLED;
             continue;
         }
                
-        if (boardData->AInState.Data[moduleIndex].AInTaskState == AINTASK_INITIALIZING)
+        if (pBoardData->AInState.Data[moduleIndex].AInTaskState == AINTASK_INITIALIZING)
         {
             bool canInit = (module->Type == AIn_MC12bADC || isPowered);
             bool initialized = false;
@@ -402,20 +313,20 @@ void ADC_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig
                 {
                     if(module->Type == AIn_MC12bADC)
                     {
-                        MC12b_WriteStateAll(&boardConfig->AInModules.Data[moduleIndex].Config.MC12b,
-                            &runtimeConfig->AInModules.Data[moduleIndex],
+                        MC12b_WriteStateAll(&pBoardConfig->AInModules.Data[moduleIndex].Config.MC12b,
+                            &pBoardRuntimeConfig->AInModules.Data[moduleIndex],
                             &moduleChannels,
                             &moduleChannelRuntime);
                     }
                     if(module->Type == AIn_AD7173)
                     {
-                        AD7173_WriteStateAll(&boardConfig->AInModules.Data[moduleIndex].Config.AD7173,
-                            &runtimeConfig->AInModules.Data[moduleIndex],
+                        AD7173_WriteStateAll(&pBoardConfig->AInModules.Data[moduleIndex].Config.AD7173,
+                            &pBoardRuntimeConfig->AInModules.Data[moduleIndex],
                             &moduleChannels,
                             &moduleChannelRuntime);
                     }
-                    ADC_WriteModuleState(boardConfig, runtimeConfig, moduleIndex, powerState);
-                    boardData->AInState.Data[moduleIndex].AInTaskState = AINTASK_IDLE;
+                    ADC_WriteModuleState( moduleIndex, powerState );
+                    pBoardData->AInState.Data[moduleIndex].AInTaskState = AINTASK_IDLE;
                     initialized = true;
                 }
             }
@@ -429,13 +340,11 @@ void ADC_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig
     }
 }
 
-size_t ADC_FindChannelIndex(const AInArray* boardConfig, uint8_t channelId)
+size_t ADC_FindChannelIndex( uint8_t channelId )
 {
     size_t i=0;
-    for (i=0; i<boardConfig->Size; ++i)
-    {
-        if (boardConfig->Data[i].ChannelId == channelId)
-        {
+    for (i=0; i< pBoardConfig->AInChannels.Size; ++i){
+        if( pBoardConfig->AInChannels.Data[i].ChannelId == channelId ){
             return i;
         }
     }
@@ -443,14 +352,9 @@ size_t ADC_FindChannelIndex(const AInArray* boardConfig, uint8_t channelId)
     return (size_t)-1;
 }
 
-bool ADC_IsDataValid(const AInSample* sample)
-{
-    return (sample->Timestamp > 0);
-}
-
 double ADC_ConvertToVoltage(const AInSample* sample)
 {
-    size_t channelIndex = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, sample->Channel);
+    size_t channelIndex = ADC_FindChannelIndex( sample->Channel );
     const AInChannel* channelConfig = &g_BoardConfig.AInChannels.Data[channelIndex];
     const AInRuntimeConfig* runtimeConfig = &g_BoardRuntimeConfig.AInChannels.Data[channelIndex];
     const AInModule* moduleConfig = &g_BoardConfig.AInModules.Data[channelConfig->DataModule];
@@ -479,5 +383,171 @@ double ADC_ConvertToVoltage(const AInSample* sample)
             sample);
     default:
         return 0.0;
+    }
+}
+
+/*static bool ADC_IsDataValid(const AInSample* sample){
+    return (sample->Timestamp > 0);
+}*/
+
+static uint8_t ADC_FindModuleIndex( const AInModule* module ){
+    size_t moduleIndex = 0;
+    for( moduleIndex = 0; moduleIndex < pBoardConfig->AInModules.Size; ++moduleIndex ){
+        
+        if( module == &pBoardConfig->AInModules.Data[ moduleIndex ] ){
+            return moduleIndex;
+        }
+    }
+    
+    return (uint8_t)-1;
+}
+
+static bool ADC_ReadSamples( \
+                            AInSampleArray* samples, \
+                            const AInModule* module, \
+                            AInModuleRuntimeConfig* moduleRuntime )
+{
+    uint8_t moduleId = ADC_FindModuleIndex( module );
+    
+    // Get channels associated with the current module
+    AInArray moduleChannels;
+    AInRuntimeArray moduleChannelRuntime;
+    GetModuleChannelRuntimeData( \
+                            &moduleChannels, \
+                            &moduleChannelRuntime, \
+                            moduleId );
+    
+    bool result = true;
+    
+    switch(module->Type)
+    {
+    case AIn_MC12bADC:
+        result &= MC12b_ReadSamples( \
+                                    samples, \
+                                    &module->Config.MC12b, \
+                                    moduleRuntime, \
+                                    &moduleChannels, \
+                                    &moduleChannelRuntime, \
+                                    pBoardData->StreamTrigStamp );
+        break;
+    case AIn_AD7609:
+        result &= AD7609_ReadSamples( \
+                                    samples, \
+                                    &module->Config.AD7609, \
+                                    moduleRuntime, \
+                                    &moduleChannels, \
+                                    &moduleChannelRuntime, \
+                                    pBoardData->StreamTrigStamp );
+        break;
+    case AIn_AD7173:
+        result &= AD7173_ReadSamples( \
+                                    samples, \
+                                    &module->Config.AD7173, \
+                                    moduleRuntime, \
+                                    &moduleChannels, \
+                                    &moduleChannelRuntime, \
+                                    pBoardData->StreamTrigStamp );
+        break;
+    default:
+        // Not implemented yet
+        break;
+    }
+    
+    return result;
+}
+
+static bool ADC_WriteModuleState( size_t moduleId, POWER_STATE powerState )
+{
+    const AInModule* currentModule = &pBoardConfig->AInModules.Data[ moduleId ];
+    AInModuleRuntimeConfig* currentModuleRuntime = \
+                                &pBoardRuntimeConfig->AInModules.Data[moduleId];
+    
+    bool result = true;
+    bool isPowered = (powerState> MICRO_ON);
+    switch(currentModule->Type)
+    {
+    case AIn_MC12bADC:
+        result &= MC12b_WriteModuleState( \
+                        &currentModule->Config.MC12b, \
+                        currentModuleRuntime );
+        break;
+    case AIn_AD7609:
+        result &= AD7609_WriteModuleState( \
+                        &currentModule->Config.AD7609, \
+                        currentModuleRuntime, \
+                        isPowered );
+        break;
+    case AIn_AD7173:
+        result &= AD7173_WriteModuleState( \
+                        &currentModule->Config.AD7173, \
+                        currentModuleRuntime, \
+                        isPowered );
+        break;
+    default:
+        // Not implemented yet
+        break;
+    }
+    
+    return result;
+}
+
+static bool ADC_InitHardware( \
+                            const AInModule* boardConfig, \
+                            const AInArray* moduleChannels )
+{
+    bool result = false;
+     
+    switch(boardConfig->Type)
+    {
+    case AIn_MC12bADC:
+        result = MC12b_InitHardware( \
+                                    &boardConfig->Config.MC12b, \
+                                    moduleChannels );
+        break;
+    case AIn_AD7609:
+        result = AD7609_InitHardware( \
+                                    &boardConfig->Config.AD7609, \
+                                    moduleChannels );
+        break;
+    case AIn_AD7173:
+        result = AD7173_InitHardware( \
+                                    &boardConfig->Config.AD7173, \
+                                    moduleChannels );
+        break;
+    default:
+        // Not implemented yet
+        break;
+    }
+    
+    return result;
+}
+
+/**
+ * Extracts channel information for the specified module
+ * @param moduleChannels [out] Static channel data
+ * @param moduleChannelRuntime [out] Runtime channel data
+ * @param moduleId The module to search for
+ * @param boardConfig The board to extract information from
+ * @param runtimeConfig The runtime structure to extract information from
+ */
+static void GetModuleChannelRuntimeData( \
+                            AInArray* moduleChannels, \
+                            AInRuntimeArray* moduleChannelRuntime, \
+                            uint8_t moduleId )
+{
+    moduleChannels->Size = 0;
+    moduleChannelRuntime->Size = 0;
+    size_t i;
+    for ( i=0; i< pBoardConfig->AInChannels.Size; ++i ){
+        
+        if( pBoardConfig->AInChannels.Data[i].DataModule != moduleId ){
+            continue;
+        }
+        
+        moduleChannels->Data[moduleChannels->Size] = pBoardConfig->AInChannels.Data[i];
+        moduleChannels->Size += 1;
+        
+        moduleChannelRuntime->Data[moduleChannelRuntime->Size] = pBoardRuntimeConfig->AInChannels.Data[i];
+        moduleChannelRuntime->Size += 1;
     }
 }

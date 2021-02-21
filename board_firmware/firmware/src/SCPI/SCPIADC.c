@@ -24,7 +24,7 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
     {
         // Get single
         volatile double val = 0;
-        size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)channel);
+        size_t index = ADC_FindChannelIndex( (uint8_t)channel );
         if (index > g_BoardConfig.AInChannels.Size)
         {
             return SCPI_RES_ERR;
@@ -69,10 +69,10 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
 
     if (SCPI_ParamInt32(context, &param2, FALSE))
     {
-        size_t channelIndex = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+        size_t channelIndex = ADC_FindChannelIndex( (uint8_t)param1 );
         AInRuntimeConfig* channelRuntimeConfig = &g_BoardRuntimeConfig.AInChannels.Data[channelIndex];
         AInChannel* channel = &g_BoardConfig.AInChannels.Data[channelIndex];
-        const AInModule* module = ADC_FindModule(&g_BoardConfig.AInModules, channel->DataModule);
+        const AInModule* module = ADC_FindModule( channel->DataModule );
         
         // Single channel
         if (channelIndex > g_BoardConfig.AInChannels.Size)
@@ -101,10 +101,10 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
         size_t index=0;
         for (index=0; index<g_BoardConfig.AInChannels.Size; ++index)
         {
-            size_t channelIndex = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)index);
+            size_t channelIndex = ADC_FindChannelIndex( (uint8_t)index );
             AInRuntimeConfig* channelRuntimeConfig = &g_BoardRuntimeConfig.AInChannels.Data[channelIndex];
             AInChannel* channel = &g_BoardConfig.AInChannels.Data[channelIndex];
-            const AInModule* module = ADC_FindModule(&g_BoardConfig.AInModules, channel->DataModule);
+            const AInModule* module = ADC_FindModule( channel->DataModule );
             bool value = (bool)((param1 & (1 << index)) > 0);
             
             // TODO: Perhaps add some sort of feedback if the user is attempting to edit a value beyond their  - this is fairly tricky to implement however
@@ -122,7 +122,7 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
         }
     }
     
-    if (ADC_WriteChannelStateAll(&g_BoardConfig, &g_BoardRuntimeConfig))
+    if (ADC_WriteChannelStateAll() )
     {
         return SCPI_RES_OK;
     }
@@ -138,7 +138,7 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context)
     if (SCPI_ParamInt32(context, &param1, FALSE))
     {
         // Single channel
-        size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+        size_t index = ADC_FindChannelIndex( (uint8_t)param1 );
         // TODO: This function should be able to read which version of the board we are using and assign the ADC channels associated that version
         if (index > g_BoardConfig.AInChannels.Size)
         {
@@ -183,7 +183,7 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
     if (SCPI_ParamInt32(context, &param2, FALSE))
     {
         // Single channel
-        size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+        size_t index = ADC_FindChannelIndex( (uint8_t)param1 );
         if (index > g_BoardConfig.AInChannels.Size)
         {
             return SCPI_RES_ERR;
@@ -200,7 +200,7 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
         }
     }
     
-    if (ADC_WriteChannelStateAll(&g_BoardConfig, &g_BoardRuntimeConfig))
+    if( ADC_WriteChannelStateAll( ) )
     {
         return SCPI_RES_OK;
     }
@@ -216,7 +216,7 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context)
     if (SCPI_ParamInt32(context, &param1, FALSE))
     {
         // Single channel
-        size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+        size_t index = ADC_FindChannelIndex( (uint8_t)param1 );
         if (index > g_BoardConfig.AInChannels.Size)
         {
             return SCPI_RES_ERR;
@@ -276,7 +276,7 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context)
         return SCPI_RES_ERR;
     }
     
-    size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+    size_t index = ADC_FindChannelIndex( (uint8_t)param1 );
     if (index > g_BoardConfig.AInChannels.Size)
     {
         return SCPI_RES_ERR;
@@ -301,7 +301,7 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context)
         return SCPI_RES_ERR;
     }
     
-    size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+    size_t index = ADC_FindChannelIndex( (uint8_t)param1 );
     if (index > g_BoardConfig.AInChannels.Size)
     {
         return SCPI_RES_ERR;
@@ -319,7 +319,7 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context)
         return SCPI_RES_ERR;
     }
         
-    size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+    size_t index = ADC_FindChannelIndex( (uint8_t)param1 );
     if (index > g_BoardConfig.AInChannels.Size)
     {
         return SCPI_RES_ERR;
@@ -337,7 +337,7 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context)
         return SCPI_RES_ERR;
     }
         
-    size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, (uint8_t)param1);
+    size_t index = ADC_FindChannelIndex( (uint8_t)param1 );
     if (index > g_BoardConfig.AInChannels.Size)
     {
         return SCPI_RES_ERR;

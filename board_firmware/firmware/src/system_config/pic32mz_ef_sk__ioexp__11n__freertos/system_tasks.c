@@ -327,7 +327,7 @@ void _ADC_Deferred_Interrupt_Task( void ){
     while( 1 ){
         ulTaskNotifyTake( pdFALSE,
                                             xBlockTime );
-        const AInModule* module = ADC_FindModule( &g_BoardConfig.AInModules, AIn_MC12bADC );
+        const AInModule* module = ADC_FindModule( AIn_MC12bADC );
         ADC_ConversionComplete(module);
     }
 }

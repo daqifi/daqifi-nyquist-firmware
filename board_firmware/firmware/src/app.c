@@ -169,6 +169,11 @@ void APP_Initialize(void)
 	TimestampTimer_Init(&g_BoardConfig.StreamingConfig, &g_BoardRuntimeConfig.StreamingConfig);
     Streaming_Init(&g_BoardConfig.StreamingConfig, &g_BoardRuntimeConfig.StreamingConfig);
     Streaming_UpdateState(&g_BoardConfig, &g_BoardRuntimeConfig);
+    
+    ADC_Init( \
+                &g_BoardConfig, \
+                &g_BoardRuntimeConfig, \
+                &g_BoardData );
 }
 
 
@@ -181,7 +186,7 @@ void APP_Initialize(void)
  */
 void APP_Tasks(void)
 {   
-    ADC_Tasks(&g_BoardConfig, &g_BoardRuntimeConfig, &g_BoardData);
+    ADC_Tasks( );
     Streaming_Tasks(&g_BoardConfig, &g_BoardRuntimeConfig, &g_BoardData);
     
     // Don't do anything else until the board powers on

@@ -284,7 +284,7 @@ void Power_UpdateState(sPowerConfig config, sPowerData *data, sPowerWriteVars *v
 
 void Power_UpdateChgPct(sPowerData *data)
 {
-    size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VBATT);
+    size_t index = ADC_FindChannelIndex( ADC_CHANNEL_VBATT );
     // TODO: Add data validation without blocking
 //    while(!ADC_IsDataValid(&g_BoardData.AInLatest.Data[index]))
 //    {
