@@ -161,10 +161,11 @@ void APP_Initialize(void)
     Power_Init(g_BoardConfig.PowerConfig, &g_BoardData.PowerData, g_BoardRuntimeConfig.PowerWriteVars);
     
     // Init DIO Hardware
-    DIO_InitHardware(&g_BoardConfig.DIOChannels);
+    DIO_InitHardware( &g_BoardConfig, \
+                      &g_BoardRuntimeConfig );
     
 	// Write initial values
-    DIO_WriteStateAll(&g_BoardConfig.DIOChannels, &g_BoardRuntimeConfig.DIOChannels);
+    DIO_WriteStateAll( );
    
 	TimestampTimer_Init(&g_BoardConfig.StreamingConfig, &g_BoardRuntimeConfig.StreamingConfig);
     Streaming_Init(&g_BoardConfig.StreamingConfig, &g_BoardRuntimeConfig.StreamingConfig);

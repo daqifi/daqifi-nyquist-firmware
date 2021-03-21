@@ -14,31 +14,6 @@ static BoardRuntimeConfig *pBoardRuntimeConfig;
 // Pointer to the BoardData data structure, to be set in initialization
 static BoardData* pBoardData;
 
-/**
- * Extracts channel information for the specified module
- * @param moduleChannels [out] Static channel data
- * @param moduleId The module to search for
- * @param boardConfig The board to extract information from
- */
-//Function unused
-//static void GetModuleChannelData(AInArray* moduleChannels, uint8_t moduleId, const BoardConfig* boardConfig)
-//{
-//    moduleChannels->Size = 0;
-//    size_t i;
-//    for (i=0; i<boardConfig->AInChannels.Size; ++i)
-//    {
-//        if (boardConfig->AInChannels.Data[i].DataModule != moduleId)
-//        {
-//            continue;
-//        }
-//        
-//        moduleChannels->Data[moduleChannels->Size] = boardConfig->AInChannels.Data[i];
-//        moduleChannels->Size += 1;
-//    }
-//}
-
-//static bool ADC_IsDataValid(const AInSample* sample);
-
 static uint8_t ADC_FindModuleIndex( const AInModule* module );
 
 static bool ADC_ReadSamples( \
@@ -114,43 +89,6 @@ bool ADC_WriteChannelStateAll( void )
     return result;
 }
 
-//bool ADC_WriteChannelStateSingle(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t channelId)
-//{
-//    const AInChannel* channel = &boardConfig->AInChannels.Data[channelId];
-//    AInRuntimeConfig* channelRuntime = &runtimeConfig->AInChannels.Data[channelId];
-//    
-//    const AInModule* module = &boardConfig->AInModules.Data[channel->DataModule];
-//    AInModuleRuntimeConfig* moduleRuntime = &runtimeConfig->AInModules.Data[channel->DataModule];
-//    
-//    bool result = true;
-//    switch(module->Type)
-//    {
-//    case AIn_MC12bADC:
-//        result &= MC12b_WriteStateSingle(&module->Config.MC12b,
-//            moduleRuntime,
-//            &channel->Config.MC12b,
-//            channelRuntime);
-//        break;
-//    case AIn_AD7609:
-//        result &= AD7609_WriteStateSingle(&module->Config.AD7609,
-//            moduleRuntime,
-//            &channel->Config.AD7609,
-//            channelRuntime);
-//        break;
-//    case AIn_AD7173:
-//        result &= AD7173_WriteStateSingle(&module->Config.AD7173,
-//            moduleRuntime,
-//            &channel->Config.AD7173,
-//            channelRuntime);
-//        break;
-//    default:
-//        // Not implemented yet
-//        break;
-//    }
-//    
-//    return result;
-//}
-
 bool ADC_TriggerConversion( const AInModule* module )
 {
     #if(DAQIFI_DIO_DEBUG == 1)
@@ -160,7 +98,7 @@ bool ADC_TriggerConversion( const AInModule* module )
         g_BoardRuntimeConfig.DIOChannels.Data[2].IsReadOnly = false;
         g_BoardRuntimeConfig.DIOChannels.Data[2].Value = !g_BoardRuntimeConfig.DIOChannels.Data[2].Value;
         // Toggle DIO pin for diagnostic use
-        DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[2], &g_BoardRuntimeConfig.DIOChannels.Data[2]);
+        DIO_WriteStateSingle( 2 );
     }
     #endif
     
@@ -266,7 +204,7 @@ void ADC_ConversionComplete( const AInModule* module )
                 #if(DAQIFI_DIO_DEBUG == 1)
                 {
                     // Toggle DIO pin for diagnostic use
-                    if (result) DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[0], &g_BoardRuntimeConfig.DIOChannels.Data[0]);
+                    if (result) DIO_WriteStateSingle( 0 );
                 }
                 #endif      
             }

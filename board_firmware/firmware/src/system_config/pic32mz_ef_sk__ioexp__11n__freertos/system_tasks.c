@@ -360,7 +360,7 @@ void _Streaming_Deferred_Interrupt_Task( void ){
 
         if (g_BoardRuntimeConfig.StreamingConfig.StreamCount == g_BoardRuntimeConfig.StreamingConfig.StreamCountTrigger) // TODO: Replace with DIOPrescale
         {
-            DIO_Tasks(&g_BoardConfig.DIOChannels, &g_BoardRuntimeConfig, &g_BoardData.DIOLatest, &g_BoardData.DIOSamples);
+            DIO_Tasks( &g_BoardData.DIOLatest, &g_BoardData.DIOSamples );
         }
 
         g_BoardRuntimeConfig.StreamingConfig.StreamCount = (g_BoardRuntimeConfig.StreamingConfig.StreamCount + 1) % g_BoardRuntimeConfig.StreamingConfig.MaxStreamCount;

@@ -224,7 +224,7 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
             if (size > 0)
             {
                 // Toggle DIO pin for diagnostic use
-                DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[1], &g_BoardRuntimeConfig.DIOChannels.Data[1]);
+                DIO_WriteStateSingle( 1 );
                 
                 if (hasUsb)
                 {
