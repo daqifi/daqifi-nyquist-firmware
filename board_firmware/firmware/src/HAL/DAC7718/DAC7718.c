@@ -4,6 +4,8 @@
 static DAC7718Config m_DAC7718Config[MAX_DAC7718_CONFIG];
 static uint8_t m_DAC7718ConfigCount;
 
+static void DAC7718_Reset(uint8_t id);
+static void DAC7718_Apply_SPI_Config(uint8_t id);
 
 void DAC7718_InitGlobal()
 {
@@ -37,7 +39,7 @@ DAC7718Config* DAC7718_GetConfig(uint8_t id)
     return &m_DAC7718Config[id];
 }
 
-void DAC7718_Reset(uint8_t id)
+static void DAC7718_Reset(uint8_t id)
 {
     DAC7718Config* config = DAC7718_GetConfig(id);
     
@@ -63,7 +65,7 @@ void DAC7718_Reset(uint8_t id)
     PLIB_PORTS_PinWrite(PORTS_ID_0, config->RST_Ch , config->RST_Bit, true);
 }
 
-void DAC7718_Apply_SPI_Config(uint8_t id){
+static void DAC7718_Apply_SPI_Config(uint8_t id){
     DAC7718Config* config = DAC7718_GetConfig(id);
     
     //Disable SPI

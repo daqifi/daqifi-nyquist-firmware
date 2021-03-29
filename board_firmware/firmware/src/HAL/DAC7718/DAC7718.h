@@ -72,22 +72,7 @@ extern "C" {
      * @return 
      */
     DAC7718Config* DAC7718_GetConfig(uint8_t id);
-
-        
-    /**
-    * Sets the SPI parameters and opens the SPI port
-    * TODO:
-    * @param id Driver instance ID
-    */
-    void DAC7718_Apply_SPI_Config(uint8_t id);
     
-    /**
-    * Resets the DAC7718.  Must be called after DAC7718_Init
-    * TODO:
-    * @param id Driver instance ID
-    */
-    void DAC7718_Reset(uint8_t id);
-
     /**
     * Initializes the DAC7718.
     * TODO:
