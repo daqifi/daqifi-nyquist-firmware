@@ -105,15 +105,12 @@ extern "C" {
 
     } sPowerWriteVars;
     
-    void Power_Init(sPowerConfig config, sPowerData *data, sPowerWriteVars vars);
-    void Power_Update_Settings(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars);
-    void Power_USB_Sleep_Update(sPowerConfig config, sPowerData *data, bool connected);
-    void Power_Write(sPowerConfig config, sPowerWriteVars *vars);
-    void Power_Up(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars);
-    void Power_Down(sPowerConfig configs, sPowerData *data, sPowerWriteVars *vars);
-    void Power_UpdateState(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars);
-    void Power_UpdateChgPct(sPowerData *data);
-    void Power_Tasks(sPowerConfig PowerConfig, sPowerData *PowerData, sPowerWriteVars *powerVars);
+    void Power_Init( \
+            sPowerConfig *pInitConfig, \
+            sPowerData *pInitData, \
+            sPowerWriteVars *pInitVars );
+    void Power_Tasks( void );
+    void Power_USB_Sleep_Update( bool sleep );
     
 #ifdef	__cplusplus
 }
