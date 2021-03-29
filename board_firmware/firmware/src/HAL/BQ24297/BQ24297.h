@@ -84,41 +84,34 @@ typedef struct
 	unsigned char CE_Val;	// USB port input current limit selection when SEL = Low. (Low = 100 mA, High = 500 mA)
  } sBQ24297WriteVars;
  
-    /**
-     * Initializes hardware
+    /*!
+     * Initializes hardware. It stores internally the receiver pointers, and it
+     * also performs the basic initialization tasks
+     * @param[in] pBQ24297Config Pointer to the BQ24297 configuration data 
+     * structure
+     * @param[in] pWrite Pointer to the data structure with the write variables
+     * @param[in] data Pointer to the structure with the device's data
      */
-    void BQ24297_InitHardware(sBQ24297Config config, sBQ24297WriteVars write, sBQ24297Data *data);
+    void BQ24297_InitHardware( \
+                sBQ24297Config *pBQ24297Config, \
+                sBQ24297WriteVars *pWrite, \
+                sBQ24297Data *data );
  
-    /**
+    /*!
      * Sets the default variable values via I2C
      */
-    void BQ24297_InitSettings(sBQ24297Config config, sBQ24297WriteVars write, sBQ24297Data *data);
+    void BQ24297_InitSettings( void );
     
-    /**
-    * Reads data from BQ24297.
-    * TODO:
-    * @param config
-    * @param data 
-    * @return
-    */
-    uint8_t BQ24297_Read_I2C(sBQ24297Config config, sBQ24297WriteVars write, sBQ24297Data data, uint8_t reg);
+    /*!
+     *  Sets or clears the charge enable feature
+     */
+    void BQ24297_ChargeEnable( bool chargeEnable );
     
-    /**
-    * Writes data to the the BQ24297.
-    * TODO:
-    * @param config
-    * @param write
-    * @return
-    */
-    void BQ24297_Write_I2C(sBQ24297Config config, sBQ24297WriteVars write, sBQ24297Data data, uint8_t reg, uint8_t txData);
+    /*! This function is used for updating value on the BQ24297 related 
+     * data strustures */
+    void BQ24297_UpdateStatus( void );
     
-    void BQ24297_ChargeEnable(sBQ24297Config config, sBQ24297WriteVars *write, sBQ24297Data *data, bool chargeEnable);
-
-    void BQ24297_UpdateStatus(sBQ24297Config config, sBQ24297WriteVars write, sBQ24297Data *data);
-    
-    void BQ24297_ForceDPDM(sBQ24297Config config, sBQ24297WriteVars write, sBQ24297Data *data);
-    
-    void BQ24297_AutoSetILim(sBQ24297Config config, sBQ24297WriteVars *write, sBQ24297Data *data);
+    void BQ24297_AutoSetILim( void );
 
 
     

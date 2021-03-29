@@ -12,7 +12,7 @@
 void Power_Init(sPowerConfig config, sPowerData *data, sPowerWriteVars vars)
 {
     // NOTE: This is called before the RTOS is running.  Don't call any RTOS functions here!
-    BQ24297_InitHardware(config.BQ24297Config, vars.BQ24297WriteVars, &(data->BQ24297Data));
+    BQ24297_InitHardware( &config.BQ24297Config, &vars.BQ24297WriteVars, &(data->BQ24297Data));
     
     PLIB_PORTS_PinWrite(PORTS_ID_0, config.EN_3_3V_Ch, config.EN_3_3V_Bit, vars.EN_3_3V_Val);
     PLIB_PORTS_PinWrite(PORTS_ID_0, config.EN_5_10V_Ch, config.EN_5_10V_Bit, vars.EN_5_10V_Val);
@@ -309,7 +309,7 @@ void Power_Tasks(sPowerConfig PowerConfig, sPowerData *PowerData, sPowerWriteVar
     // If we haven't initialized the battery management settings, do so now
     if (PowerData->BQ24297Data.initComplete == false)
     {
-        BQ24297_InitSettings(PowerConfig.BQ24297Config, powerWriteVars->BQ24297WriteVars, &(PowerData->BQ24297Data));
+        BQ24297_InitSettings( );
     }
 
     // Update power settings based on BQ24297 interrupt change
@@ -327,7 +327,7 @@ void Power_Tasks(sPowerConfig PowerConfig, sPowerData *PowerData, sPowerWriteVar
          */
         vTaskDelay(100 / portTICK_PERIOD_MS);
         // Update battery management status - plugged in (USB, charger, etc), charging/discharging, etc.
-        BQ24297_UpdateStatus(PowerConfig.BQ24297Config, powerWriteVars->BQ24297WriteVars, &(PowerData->BQ24297Data));
+        BQ24297_UpdateStatus( );
         Power_Update_Settings(PowerConfig, PowerData, powerWriteVars);
         PowerData->BQ24297Data.intFlag = false; // Clear flag
     }
@@ -343,10 +343,10 @@ void Power_Update_Settings(sPowerConfig config, sPowerData *data, sPowerWriteVar
     // Change charging/other power settings based on current status
        
     // Check new power source and set parameters accordingly
-    BQ24297_AutoSetILim(config.BQ24297Config, &vars->BQ24297WriteVars, &data->BQ24297Data);
+    BQ24297_AutoSetILim( );
     
     // Enable/disable charging
-    BQ24297_ChargeEnable(config.BQ24297Config, &vars->BQ24297WriteVars, &data->BQ24297Data, data->BQ24297Data.status.batPresent);
+    BQ24297_ChargeEnable( data->BQ24297Data.status.batPresent);
 }
 
 void Power_USB_Sleep_Update(sPowerConfig config, sPowerData *data, bool sleep)
