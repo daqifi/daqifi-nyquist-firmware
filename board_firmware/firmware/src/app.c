@@ -162,6 +162,9 @@ void APP_Initialize(void)
     Power_Init( &g_BoardConfig.PowerConfig, \
                 &g_BoardData.PowerData, \
                 &g_BoardRuntimeConfig.PowerWriteVars );
+    UI_Init( &g_BoardConfig.UIConfig, \
+             &g_BoardData.UIReadVars, \
+             &g_BoardData.PowerData );
     
     // Init DIO Hardware
     DIO_InitHardware( &g_BoardConfig, \

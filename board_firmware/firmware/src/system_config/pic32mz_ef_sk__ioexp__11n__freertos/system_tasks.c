@@ -314,8 +314,8 @@ void _POWER_AND_UI_Tasks(void)
     while(1)
     {
         Power_Tasks( );
-        Button_Tasks(g_BoardConfig.UIConfig, &g_BoardData.UIReadVars, &g_BoardData.PowerData);
-        LED_Tasks(g_BoardConfig.UIConfig, &g_BoardData.PowerData, &g_BoardData.UIReadVars, g_BoardRuntimeConfig.StreamingConfig.IsEnabled);
+        Button_Tasks( );
+        LED_Tasks( g_BoardRuntimeConfig.StreamingConfig.IsEnabled );
         vTaskDelay(125 / portTICK_PERIOD_MS);
     }
 }
