@@ -36,11 +36,11 @@
           <itemPath>../src/HAL/DIO.h</itemPath>
         </logicalFolder>
         <logicalFolder name="json" displayName="json" projectFiles="true">
-          <itemPath>../src/json/Encoder.h</itemPath>
+          <itemPath>../src/json/JSON_Encoder.h</itemPath>
         </logicalFolder>
         <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
           <itemPath>../src/nanopb/DaqifiOutMessage.pb.h</itemPath>
-          <itemPath>../src/nanopb/Encoder.h</itemPath>
+          <itemPath>../src/nanopb/Nanopb_Encoder.h</itemPath>
         </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/SCPI/SCPIADC.h</itemPath>
@@ -620,6 +620,7 @@
         <itemPath>../../../../../third_party/rtos/FreeRTOS/Source/include/stream_buffer.h</itemPath>
         <itemPath>../../../../../third_party/rtos/FreeRTOS/Source/include/message_buffer.h</itemPath>
       </logicalFolder>
+      <itemPath>../src/encoder.h</itemPath>
     </logicalFolder>
     <logicalFolder name="LinkerScript"
                    displayName="Linker Files"
@@ -668,11 +669,11 @@
           <itemPath>../src/HAL/DIO.c</itemPath>
         </logicalFolder>
         <logicalFolder name="json" displayName="json" projectFiles="true">
-          <itemPath>../src/json/Encoder.c</itemPath>
+          <itemPath>../src/json/JSON_Encoder.c</itemPath>
         </logicalFolder>
         <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
           <itemPath>../src/nanopb/DaqifiOutMessage.pb.c</itemPath>
-          <itemPath>../src/nanopb/Encoder.c</itemPath>
+          <itemPath>../src/nanopb/Nanopb_Encoder.c</itemPath>
         </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/SCPI/SCPIADC.c</itemPath>
@@ -779,6 +780,7 @@
         <itemPath>../src/http_print.c</itemPath>
         <itemPath>../src/custom_http_app.c</itemPath>
         <itemPath>../src/mpfs_img2.c</itemPath>
+        <itemPath>../src/encoder.c</itemPath>
       </logicalFolder>
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">

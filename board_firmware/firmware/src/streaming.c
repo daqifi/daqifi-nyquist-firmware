@@ -2,16 +2,13 @@
 
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
-#include "json/Encoder.h"
+#include "json/JSON_Encoder.h"
 #include "nanopb/DaqifiOutMessage.pb.h"
-#include "nanopb/Encoder.h"
+#include "nanopb/Nanopb_Encoder.h"
 #include "Util/Logger.h"
 #include "TcpServer/TcpServer.h"
 
 #define UNUSED(x) (void)(x)
-
-#define BUFFER_SIZE 2048
-uint8_t buffer[BUFFER_SIZE];
     
 void Streaming_StuffDummyData (void); // Function for debugging - fills buffer with dummy data
 
@@ -144,12 +141,12 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
     bool hasUsb = false;
     if (runtimeConfig->usbSettings.state == USB_CDC_STATE_PROCESS)
     {
-        usbSize = min(BUFFER_SIZE, USB_BUFFER_SIZE - runtimeConfig->usbSettings.writeBufferLength);
+        usbSize = min(STREAMING_BUFFER_SIZE, USB_BUFFER_SIZE - runtimeConfig->usbSettings.writeBufferLength);
         hasUsb = true;
     }
 
     size_t i=0;
-    size_t wifiSize = BUFFER_SIZE;
+    size_t wifiSize = STREAMING_BUFFER_SIZE;
     bool hasWifi = false;
     if (runtimeConfig->serverData.state == IP_SERVER_PROCESS)
     {
@@ -211,13 +208,14 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
         // TODO: ASCII Encoder
         if(flags.Size>0){
             size_t size = 0;
+            uint8_t *pBuffer;
             if (runtimeConfig->StreamingConfig.Encoding == Streaming_Json)
             {
-                size = Json_Encode(boardData, &flags, buffer, maxSize);
+                size = Json_Encode(boardData, &flags, &pBuffer );
             }
             else
             {
-                size = Nanopb_Encode(boardData, &flags, buffer, maxSize);
+                //size = Nanopb_Encode(boardData, &flags, &pBuffer );
             }
 
             // Write the packet out
@@ -228,7 +226,7 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
                 
                 if (hasUsb)
                 {
-                    memcpy(runtimeConfig->usbSettings.writeBuffer + runtimeConfig->usbSettings.writeBufferLength, buffer, size);
+                    memcpy(runtimeConfig->usbSettings.writeBuffer + runtimeConfig->usbSettings.writeBufferLength, pBuffer, size);
                     runtimeConfig->usbSettings.writeBufferLength += size;
                 }
 
@@ -239,7 +237,7 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
                         {
                             if (runtimeConfig->serverData.clients[i].client != INVALID_SOCKET)
                             {
-                                memcpy(runtimeConfig->serverData.clients[i].writeBuffer + runtimeConfig->serverData.clients[i].writeBufferLength, buffer, size);
+                                memcpy(runtimeConfig->serverData.clients[i].writeBuffer + runtimeConfig->serverData.clients[i].writeBufferLength, pBuffer, size);
                                 runtimeConfig->serverData.clients[i].writeBufferLength += size;
                             }
                         }

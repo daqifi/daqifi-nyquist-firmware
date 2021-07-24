@@ -77,7 +77,7 @@ void Button_Tasks( void )
             pPowerData->requestedPowerState = DO_POWER_DOWN;
             oneShot = true;
         }
-        
+         
     }
     else
     {

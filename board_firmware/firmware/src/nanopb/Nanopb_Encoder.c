@@ -1,7 +1,7 @@
 #include "pb_encode.h"
 #include "pb_decode.h"
 
-#include "Encoder.h"
+#include "Nanopb_Encoder.h"
 #include "state/data/BoardData.h"
 #include "Util/Logger.h"
 

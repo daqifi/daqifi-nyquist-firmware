@@ -14,7 +14,7 @@
 #include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
 #include "nanopb/DaqifiOutMessage.pb.h"
-#include "nanopb/Encoder.h"
+#include "nanopb/Nanopb_Encoder.h"
 #include "Util/StringFormatters.h"
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
