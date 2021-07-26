@@ -288,14 +288,14 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context)
         param1=0;
     }
     
-    uint8_t buffer[DaqifiOutMessage_size];
-    size_t count = Nanopb_Encode(&g_BoardData, (const NanopbFlagsArray *)&fields_info, buffer, (size_t)DaqifiOutMessage_size);
+    uint8_t *pBuffer;
+    size_t count = Nanopb_Encode(&g_BoardData, (const NanopbFlagsArray *)&fields_info, &pBuffer ); //, (size_t)DaqifiOutMessage_size);
     if (count < 1)
     {
         return SCPI_RES_ERR;
     }
     
-    context->interface->write(context, (char*)buffer, count);
+    context->interface->write(context, (char*)pBuffer, count);
     return SCPI_RES_OK;
 }
 

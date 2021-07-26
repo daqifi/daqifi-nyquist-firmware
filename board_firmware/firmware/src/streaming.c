@@ -209,13 +209,11 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
         if(flags.Size>0){
             size_t size = 0;
             uint8_t *pBuffer;
-            if (runtimeConfig->StreamingConfig.Encoding == Streaming_Json)
-            {
-                size = Json_Encode(boardData, &flags, &pBuffer );
+            if( runtimeConfig->StreamingConfig.Encoding == Streaming_Json ){
+                size = Json_Encode( boardData, &flags, &pBuffer );
             }
-            else
-            {
-                //size = Nanopb_Encode(boardData, &flags, &pBuffer );
+            else{
+                size = Nanopb_Encode( boardData, &flags, &pBuffer );
             }
 
             // Write the packet out

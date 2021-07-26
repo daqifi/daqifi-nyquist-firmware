@@ -8,10 +8,21 @@
 #include "DaqifiOutMessage.pb.h"
 #include "state/board/BoardConfig.h"
 
-size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen)
+#include "encoder.h"
+
+//! Buffer size used for streaming purposes
+#define NANOPB_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
+
+size_t Nanopb_Encode( BoardData* state, const NanopbFlagsArray* fields, uint8_t** ppBuffer )
 {
     // If we cannot encode a whole message, bail out
-    if (bufferLen < DaqifiOutMessage_size) return 0;
+    if( NANOPB_ENCODER_BUFFER_SIZE < DaqifiOutMessage_size ){
+        return 0;
+    }
+    if( ppBuffer == NULL ){
+        return 0;
+    }
+    *ppBuffer = Encoder_Get_Buffer();
 
     DaqifiOutMessage message = DaqifiOutMessage_init_default;
     size_t i=0;
@@ -58,7 +69,7 @@ size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* 
                 DIOSample DIOdata;
                 if(DIOSampleList_PopFront(&state->DIOSamples, &DIOdata))
                 {
-                    memcpy(message.digital_data.bytes, &DIOdata.Values, sizeof(message.digital_data.bytes));
+                    memcpy( message.digital_data.bytes, &DIOdata.Values, sizeof(message.digital_data.bytes) );
                     message.digital_data.size = sizeof(message.digital_data.bytes);
                     message.has_digital_data = true; 
                 }
@@ -603,7 +614,7 @@ size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* 
         }
     }
 
-    pb_ostream_t stream = pb_ostream_from_buffer(buffer, bufferLen);
+    pb_ostream_t stream = pb_ostream_from_buffer( *ppBuffer, NANOPB_ENCODER_BUFFER_SIZE );
     
     bool status = pb_encode_delimited(&stream, DaqifiOutMessage_fields, &message);
     if (status)

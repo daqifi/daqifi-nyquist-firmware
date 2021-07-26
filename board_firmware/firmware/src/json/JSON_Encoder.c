@@ -4,6 +4,10 @@
 #include "state/data/BoardData.h"
 #include "Util/StringFormatters.h"
 
+#include "encoder.h"
+
+//! Buffer size used for streaming purposes
+#define JSON_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
 //! Size of temporal buffer used for JSON encoding purposes
 #define TMP_MAX_LEN             64
 //! Temporal buffer used for JSON encoding purposes

@@ -3,6 +3,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "state/data/BoardData.h"
+#include "encoder.h"
 #include "json/JSON_Encoder.h"
 
 #ifdef	__cplusplus
@@ -10,7 +11,7 @@ extern "C" {
 #endif
 
     //! Buffer size used for streaming purposes
-    #define STREAMING_BUFFER_SIZE               JSON_ENCODER_BUFFER_SIZE
+    #define STREAMING_BUFFER_SIZE               ENCODER_BUFFER_SIZE
 
     /**
      * Initializes the streaming component
