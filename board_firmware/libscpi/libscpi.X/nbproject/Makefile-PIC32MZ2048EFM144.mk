@@ -107,114 +107,114 @@ endif
 # ------------------------------------------------------------------------------------
 # Rules for buildStep: compile
 ifeq ($(TYPE_IMAGE), DEBUG_RUN)
-${OBJECTDIR}/_ext/2080528684/error.o: ../libscpi/src/error.c  .generated_files/flags/PIC32MZ2048EFM144/d690f07b25bb08588dd770b8bc8df1bf7082a51 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/error.o: ../libscpi/src/error.c  .generated_files/flags/PIC32MZ2048EFM144/3d58967aa46f726246e9540044a7be91a44118db .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/error.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/error.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/error.o.d" -o ${OBJECTDIR}/_ext/2080528684/error.o ../libscpi/src/error.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/error.o.d" -o ${OBJECTDIR}/_ext/2080528684/error.o ../libscpi/src/error.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/expression.o: ../libscpi/src/expression.c  .generated_files/flags/PIC32MZ2048EFM144/6cd276942c3cbdcfa967e6335228feaa958fa55c .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/expression.o: ../libscpi/src/expression.c  .generated_files/flags/PIC32MZ2048EFM144/606521717048292dce4334567b34ec9db6fa3a57 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/expression.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/expression.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/expression.o.d" -o ${OBJECTDIR}/_ext/2080528684/expression.o ../libscpi/src/expression.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/expression.o.d" -o ${OBJECTDIR}/_ext/2080528684/expression.o ../libscpi/src/expression.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/fifo.o: ../libscpi/src/fifo.c  .generated_files/flags/PIC32MZ2048EFM144/73551a7a71319e59626668f0cbc9ac347527a15b .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/fifo.o: ../libscpi/src/fifo.c  .generated_files/flags/PIC32MZ2048EFM144/fd554e6046541b0cc737512c1375fc7cf47263c6 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/fifo.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/fifo.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/fifo.o.d" -o ${OBJECTDIR}/_ext/2080528684/fifo.o ../libscpi/src/fifo.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/fifo.o.d" -o ${OBJECTDIR}/_ext/2080528684/fifo.o ../libscpi/src/fifo.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/ieee488.o: ../libscpi/src/ieee488.c  .generated_files/flags/PIC32MZ2048EFM144/7ab7026c6a4a5665e038d47e1bca624027300807 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/ieee488.o: ../libscpi/src/ieee488.c  .generated_files/flags/PIC32MZ2048EFM144/c216742c74e1d8add0955157d5abf0b47d7eb40e .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/ieee488.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/ieee488.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/ieee488.o.d" -o ${OBJECTDIR}/_ext/2080528684/ieee488.o ../libscpi/src/ieee488.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/ieee488.o.d" -o ${OBJECTDIR}/_ext/2080528684/ieee488.o ../libscpi/src/ieee488.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/lexer.o: ../libscpi/src/lexer.c  .generated_files/flags/PIC32MZ2048EFM144/35e7c8c88a5db4f5b2ff94a7258b20481abf952e .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/lexer.o: ../libscpi/src/lexer.c  .generated_files/flags/PIC32MZ2048EFM144/cab0fc704b843b033923e0d5ff6bba9bbebc15eb .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/lexer.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/lexer.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/lexer.o.d" -o ${OBJECTDIR}/_ext/2080528684/lexer.o ../libscpi/src/lexer.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/lexer.o.d" -o ${OBJECTDIR}/_ext/2080528684/lexer.o ../libscpi/src/lexer.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/minimal.o: ../libscpi/src/minimal.c  .generated_files/flags/PIC32MZ2048EFM144/7c010cdf91b04bbaff881181bd1e10f11f159362 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/minimal.o: ../libscpi/src/minimal.c  .generated_files/flags/PIC32MZ2048EFM144/c3b64bc8ff2a47e9844a061ac7628314e394171a .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/minimal.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/minimal.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/minimal.o.d" -o ${OBJECTDIR}/_ext/2080528684/minimal.o ../libscpi/src/minimal.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/minimal.o.d" -o ${OBJECTDIR}/_ext/2080528684/minimal.o ../libscpi/src/minimal.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/parser.o: ../libscpi/src/parser.c  .generated_files/flags/PIC32MZ2048EFM144/252585a8f3a57c7df72280103741e9a40224b999 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/parser.o: ../libscpi/src/parser.c  .generated_files/flags/PIC32MZ2048EFM144/287b22879589be5886c9e6a3998d196fcde227db .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/parser.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/parser.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/parser.o.d" -o ${OBJECTDIR}/_ext/2080528684/parser.o ../libscpi/src/parser.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/parser.o.d" -o ${OBJECTDIR}/_ext/2080528684/parser.o ../libscpi/src/parser.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/units.o: ../libscpi/src/units.c  .generated_files/flags/PIC32MZ2048EFM144/afd49e29f9dc7add744b1c05a59d44ac3b8896ae .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/units.o: ../libscpi/src/units.c  .generated_files/flags/PIC32MZ2048EFM144/3036f2969fed5b55a9370c33e53dc560b4d18dc1 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/units.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/units.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/units.o.d" -o ${OBJECTDIR}/_ext/2080528684/units.o ../libscpi/src/units.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/units.o.d" -o ${OBJECTDIR}/_ext/2080528684/units.o ../libscpi/src/units.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/utils.o: ../libscpi/src/utils.c  .generated_files/flags/PIC32MZ2048EFM144/7160cf6bdc9ac2ae3b8816ed9991cc18b8a07526 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/utils.o: ../libscpi/src/utils.c  .generated_files/flags/PIC32MZ2048EFM144/41952881a32efd8db94b8903ead45b798db679d0 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/utils.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/utils.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/utils.o.d" -o ${OBJECTDIR}/_ext/2080528684/utils.o ../libscpi/src/utils.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/utils.o.d" -o ${OBJECTDIR}/_ext/2080528684/utils.o ../libscpi/src/utils.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
 else
-${OBJECTDIR}/_ext/2080528684/error.o: ../libscpi/src/error.c  .generated_files/flags/PIC32MZ2048EFM144/8ec11a3ca2e08efc05f09b683be015c1bb390019 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/error.o: ../libscpi/src/error.c  .generated_files/flags/PIC32MZ2048EFM144/2cbfcc9597969e964e23c3a41ac1f8b7f1d3f1a3 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/error.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/error.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/error.o.d" -o ${OBJECTDIR}/_ext/2080528684/error.o ../libscpi/src/error.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/error.o.d" -o ${OBJECTDIR}/_ext/2080528684/error.o ../libscpi/src/error.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/expression.o: ../libscpi/src/expression.c  .generated_files/flags/PIC32MZ2048EFM144/69bd3adb011a953cbe0aa36fd1c1c059654bef09 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/expression.o: ../libscpi/src/expression.c  .generated_files/flags/PIC32MZ2048EFM144/75b927e1fd34108d6b4a3628b8dd4a1e692bf5f7 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/expression.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/expression.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/expression.o.d" -o ${OBJECTDIR}/_ext/2080528684/expression.o ../libscpi/src/expression.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/expression.o.d" -o ${OBJECTDIR}/_ext/2080528684/expression.o ../libscpi/src/expression.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/fifo.o: ../libscpi/src/fifo.c  .generated_files/flags/PIC32MZ2048EFM144/140312461e227f0b849a77467893d7e36f1bacbd .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/fifo.o: ../libscpi/src/fifo.c  .generated_files/flags/PIC32MZ2048EFM144/75f1099c1fba8c870f4c3e54bb30ea32e2b0a878 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/fifo.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/fifo.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/fifo.o.d" -o ${OBJECTDIR}/_ext/2080528684/fifo.o ../libscpi/src/fifo.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/fifo.o.d" -o ${OBJECTDIR}/_ext/2080528684/fifo.o ../libscpi/src/fifo.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/ieee488.o: ../libscpi/src/ieee488.c  .generated_files/flags/PIC32MZ2048EFM144/ecc9049bd083d19747f76a819812ab2b5398afa2 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/ieee488.o: ../libscpi/src/ieee488.c  .generated_files/flags/PIC32MZ2048EFM144/74d288d260241f2fabcafc88acfa29f2e7e55868 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/ieee488.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/ieee488.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/ieee488.o.d" -o ${OBJECTDIR}/_ext/2080528684/ieee488.o ../libscpi/src/ieee488.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/ieee488.o.d" -o ${OBJECTDIR}/_ext/2080528684/ieee488.o ../libscpi/src/ieee488.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/lexer.o: ../libscpi/src/lexer.c  .generated_files/flags/PIC32MZ2048EFM144/785dbfcbe634c8bd4d34e4f2059a5b9c6b92e773 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/lexer.o: ../libscpi/src/lexer.c  .generated_files/flags/PIC32MZ2048EFM144/c26cdb6c9966df767d84e07141552b96a47b234f .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/lexer.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/lexer.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/lexer.o.d" -o ${OBJECTDIR}/_ext/2080528684/lexer.o ../libscpi/src/lexer.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/lexer.o.d" -o ${OBJECTDIR}/_ext/2080528684/lexer.o ../libscpi/src/lexer.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/minimal.o: ../libscpi/src/minimal.c  .generated_files/flags/PIC32MZ2048EFM144/ea81fe3f2aa03d9bd77387ab02c73635ea8435b9 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/minimal.o: ../libscpi/src/minimal.c  .generated_files/flags/PIC32MZ2048EFM144/8c79dca9425fd51662072094b99dc57ba401f235 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/minimal.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/minimal.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/minimal.o.d" -o ${OBJECTDIR}/_ext/2080528684/minimal.o ../libscpi/src/minimal.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/minimal.o.d" -o ${OBJECTDIR}/_ext/2080528684/minimal.o ../libscpi/src/minimal.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/parser.o: ../libscpi/src/parser.c  .generated_files/flags/PIC32MZ2048EFM144/3f7aa8ab584cbb7166da16c7b9da250fea897906 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/parser.o: ../libscpi/src/parser.c  .generated_files/flags/PIC32MZ2048EFM144/9f251d0e0824dcc1c8c80429372a55f7065aedf8 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/parser.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/parser.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/parser.o.d" -o ${OBJECTDIR}/_ext/2080528684/parser.o ../libscpi/src/parser.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/parser.o.d" -o ${OBJECTDIR}/_ext/2080528684/parser.o ../libscpi/src/parser.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/units.o: ../libscpi/src/units.c  .generated_files/flags/PIC32MZ2048EFM144/87078d25def8ed59deb867b05af3b12ba5e66967 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/units.o: ../libscpi/src/units.c  .generated_files/flags/PIC32MZ2048EFM144/ea7382247f73fb8b07264ddefa85f1851829ccd6 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/units.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/units.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/units.o.d" -o ${OBJECTDIR}/_ext/2080528684/units.o ../libscpi/src/units.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/units.o.d" -o ${OBJECTDIR}/_ext/2080528684/units.o ../libscpi/src/units.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
-${OBJECTDIR}/_ext/2080528684/utils.o: ../libscpi/src/utils.c  .generated_files/flags/PIC32MZ2048EFM144/f5c37bccfff0a719e74cd80fc1dd08b9564bf80e .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/2080528684/utils.o: ../libscpi/src/utils.c  .generated_files/flags/PIC32MZ2048EFM144/bb135302adec504a08011ccfbab36e3c1252c596 .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/2080528684" 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/utils.o.d 
 	@${RM} ${OBJECTDIR}/_ext/2080528684/utils.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/utils.o.d" -o ${OBJECTDIR}/_ext/2080528684/utils.o ../libscpi/src/utils.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -O1 -I"../libscpi/inc" -MP -MMD -MF "${OBJECTDIR}/_ext/2080528684/utils.o.d" -o ${OBJECTDIR}/_ext/2080528684/utils.o ../libscpi/src/utils.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
 endif
 

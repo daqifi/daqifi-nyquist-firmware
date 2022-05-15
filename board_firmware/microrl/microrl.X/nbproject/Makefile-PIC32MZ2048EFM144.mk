@@ -107,18 +107,18 @@ endif
 # ------------------------------------------------------------------------------------
 # Rules for buildStep: compile
 ifeq ($(TYPE_IMAGE), DEBUG_RUN)
-${OBJECTDIR}/_ext/1360937237/microrl.o: ../src/microrl.c  .generated_files/flags/PIC32MZ2048EFM144/a0a4e43aed5a9731de633a8ab32a9f40595a75be .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/1360937237/microrl.o: ../src/microrl.c  .generated_files/flags/PIC32MZ2048EFM144/600b6191d07a015fa7659af4f2b90482185cd8bb .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/1360937237" 
 	@${RM} ${OBJECTDIR}/_ext/1360937237/microrl.o.d 
 	@${RM} ${OBJECTDIR}/_ext/1360937237/microrl.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -I"../src" -O1 -MP -MMD -MF "${OBJECTDIR}/_ext/1360937237/microrl.o.d" -o ${OBJECTDIR}/_ext/1360937237/microrl.o ../src/microrl.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE) -g -D__DEBUG   -fframe-base-loclist  -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -I"../src" -O1 -MP -MMD -MF "${OBJECTDIR}/_ext/1360937237/microrl.o.d" -o ${OBJECTDIR}/_ext/1360937237/microrl.o ../src/microrl.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
 else
-${OBJECTDIR}/_ext/1360937237/microrl.o: ../src/microrl.c  .generated_files/flags/PIC32MZ2048EFM144/5700415084ad179d7a8c5e53bb28862945eca628 .generated_files/flags/PIC32MZ2048EFM144/6a3a8b14b0030ef685ef523278bac81734aa6a18
+${OBJECTDIR}/_ext/1360937237/microrl.o: ../src/microrl.c  .generated_files/flags/PIC32MZ2048EFM144/f00f627ee1e6fd1da1b5db7619efb8b631b8dd4c .generated_files/flags/PIC32MZ2048EFM144/98fdd68849e8a18ffcbcc43989dec45413e7b5e2
 	@${MKDIR} "${OBJECTDIR}/_ext/1360937237" 
 	@${RM} ${OBJECTDIR}/_ext/1360937237/microrl.o.d 
 	@${RM} ${OBJECTDIR}/_ext/1360937237/microrl.o 
-	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -I"../src" -O1 -MP -MMD -MF "${OBJECTDIR}/_ext/1360937237/microrl.o.d" -o ${OBJECTDIR}/_ext/1360937237/microrl.o ../src/microrl.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)    
+	${MP_CC}  $(MP_EXTRA_CC_PRE)  -g -x c -c -mprocessor=$(MP_PROCESSOR_OPTION)  -I"../src" -O1 -MP -MMD -MF "${OBJECTDIR}/_ext/1360937237/microrl.o.d" -o ${OBJECTDIR}/_ext/1360937237/microrl.o ../src/microrl.c    -DXPRJ_PIC32MZ2048EFM144=$(CND_CONF)  -legacy-libc  $(COMPARISON_BUILD)  -mdfp="${DFP_DIR}"  
 	
 endif
 
