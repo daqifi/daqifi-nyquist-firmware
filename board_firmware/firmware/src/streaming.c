@@ -63,6 +63,11 @@ void Streaming_Start(const StreamingConfig* config, StreamingRuntimeConfig* runt
    
     if (!runtimeConfig->Running)
     {       
+      
+        DEBUG_PRINTF("Registering stream timer. Stream frequency = %lu, divider = %lu\r\n", 
+                DRV_TMR_CounterFrequencyGet(runtimeConfig->TimerHandle), 
+                runtimeConfig->ClockDivider);
+        
         DRV_TMR_AlarmRegister(runtimeConfig->TimerHandle,
             runtimeConfig->ClockDivider,
             true,
@@ -135,20 +140,14 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
         // Decide how many samples we can send out
         if (runtimeConfig->usbSettings.state == USB_CDC_STATE_PROCESS)
         {
-            usbSize = CircularBuf_NumBytesFree(&runtimeConfig->usbSettings.wCirbuf);
+            usbSize = CircularBuf_NumBytesFree(&runtimeConfig->usbSettings.streamCirbuf);
             hasUsb  = true;
         }
 
-        if (runtimeConfig->serverData.state == IP_SERVER_PROCESS)
+        if (runtimeConfig->serverData.state == IP_SERVER_SERVING_CONNECTION)
         {
-            for (wifi_cnt=0; wifi_cnt<WIFI_MAX_CLIENT; ++wifi_cnt)
-            {
-                if (runtimeConfig->serverData.clients[wifi_cnt].client != INVALID_SOCKET)
-                {
-                    wifiSize = min(wifiSize, WIFI_BUFFER_SIZE - runtimeConfig->serverData.clients[wifi_cnt].writeBufferLength);
-                    hasWifi = true;
-                }
-            }
+            hasWifi  = TCPServer_IsConnected();
+            wifiSize = CircularBuf_NumBytesFree(&runtimeConfig->serverData.streamCirbuf);
         }
         
         if (hasUsb && hasWifi){
@@ -202,25 +201,13 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
             if (size > 0){
 
                 if (hasUsb){
-                    UsbCdc_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings, buffer, size);
+                    //UsbCdc_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings, buffer, size);
+                    CircularBuf_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings.streamCirbuf, buffer, size);
                 }
 
                 if (hasWifi){
-                    
-                    if( TCP_Server_Is_Blocked() == 0 ){
-                        for (wifi_cnt=0; wifi_cnt<WIFI_MAX_CLIENT; ++wifi_cnt)
-                        {
-                            if (runtimeConfig->serverData.clients[wifi_cnt].client != INVALID_SOCKET)
-                            {
-                                memcpy(runtimeConfig->serverData.clients[wifi_cnt].writeBuffer + runtimeConfig->serverData.clients[wifi_cnt].writeBufferLength, buffer, size);
-                                runtimeConfig->serverData.clients[wifi_cnt].writeBufferLength += size;
-                            }
-                        }
-                    }
-                    else{
-                        maxSize = 0;
-                        continue;
-                    }
+                    //TcpServer_WriteToBuffer(&g_BoardRuntimeConfig.serverData, buffer, size);
+                    CircularBuf_WriteToBuffer(&g_BoardRuntimeConfig.serverData.streamCirbuf, buffer, size);
                 }
                 maxSize = maxSize - size;
             }else

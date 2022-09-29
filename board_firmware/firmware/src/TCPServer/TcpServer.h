@@ -26,6 +26,8 @@ extern "C" {
      * @return 1 When bloked, 0 when it is not
      */
     uint8_t TCP_Server_Is_Blocked( void );
+    
+    bool TCPServer_IsConnected(void);
 
 #ifdef	__cplusplus
 }

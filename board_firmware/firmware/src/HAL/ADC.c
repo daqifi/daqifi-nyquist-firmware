@@ -256,6 +256,7 @@ bool ADC_TriggerConversion(const AInModule* module)
     }
     
     g_BoardData.AInState.Data[moduleId].AInTaskState = AINTASK_CONVSTART;
+    //g_BoardData.StreamTrigStamp = xTaskGetTickCount();//
     g_BoardData.StreamTrigStamp = DRV_TMR_CounterValueGet(g_BoardRuntimeConfig.StreamingConfig.TSTimerHandle);  // Set streaming trigger timestamp
     
     bool result = false;

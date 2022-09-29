@@ -9,6 +9,7 @@
 
 #include "SCPI/SCPIInterface.h"
 #include "microrl.h"
+#include "Util/CircularBuffer.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -33,7 +34,9 @@ typedef enum e_TcpClientState
 typedef struct s_TcpClientData
 {
     /** The client socket associated with this client */
-    SOCKET client;
+    TCP_SOCKET socket;
+    bool       sock_was_connected;
+    uint32_t   reconnectTick;
 
     /** Client read buffer */
     uint8_t readBuffer[WIFI_BUFFER_SIZE];
@@ -61,11 +64,16 @@ typedef enum e_TcpServerState
 {
     IP_SERVER_INITIALIZE,
     IP_SERVER_WAIT,
-    IP_SERVER_CONNECT,
-    IP_SERVER_BIND,
-    IP_SERVER_LISTEN,
-    IP_SERVER_PROCESS,
-    IP_SERVER_DISCONNECT,
+//    IP_SERVER_CONNECT,
+//    IP_SERVER_BIND,
+//    IP_SERVER_LISTEN,
+//    IP_SERVER_PROCESS,
+//    IP_SERVER_DISCONNECT,
+            
+    IP_SERVER_OPENING_SERVER,
+    //IP_SERVER_WAIT_FOR_CONNECTION,
+    IP_SERVER_SERVING_CONNECTION,
+    IP_SERVER_CLOSING_CONNECTION,
 } TcpServerState;
 
 /**
@@ -80,6 +88,11 @@ typedef struct s_TcpServerData
     TCPIP_NET_HANDLE hInterface;
 
     TcpClientData clients[WIFI_MAX_CLIENT];
+    //TCP_SOCKET    socket[WIFI_MAX_CLIENT];
+    //bool          socketWasConnected[WIFI_MAX_CLIENT];
+    
+    CircularBuf   streamCirbuf;
+    //SemaphoreHandle_t wMutex;
 } TcpServerData;
 
 

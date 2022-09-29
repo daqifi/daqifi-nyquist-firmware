@@ -189,7 +189,7 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
     }
 }
 
-int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len)
+int UsbCdc_ProcessStreamBufferCallback(uint8_t* buf, uint16_t len)
 {    
 
     memcpy(&g_BoardRuntimeConfig.usbSettings.writeBuffer,buf,len);
@@ -218,12 +218,12 @@ static bool UsbCdc_BeginWrite(UsbCdcData* client)
     
     // make sure there is no write transfer in progress
     if((client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
-    && (CircularBuf_NumBytesAvailable(&client->wCirbuf)>0))
+    && (CircularBuf_NumBytesAvailable(&client->streamCirbuf)>0))
     {
        
-        xSemaphoreTake(client->wMutex, portMAX_DELAY);
-        CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USB_WBUFFER_SIZE, &writeResult);
-        xSemaphoreGive(client->wMutex);
+        //xSemaphoreTake(client->wMutex, portMAX_DELAY);
+        CircularBuf_ProcessBytes(&client->streamCirbuf, NULL, USB_WBUFFER_SIZE, &writeResult);
+        //xSemaphoreGive(client->wMutex);
         
         if(writeResult != USB_DEVICE_CDC_RESULT_OK){
             //while(1);
@@ -392,29 +392,29 @@ static bool UsbCdc_FinalizeRead(UsbCdcData* client)
     return false;
 }
 
-size_t UsbCdc_WriteToBuffer(UsbCdcData* client, const char* data, size_t len)
-{
-    size_t bytesAdded = 0;
-    
-    if(len==0)return 0;
-
-    while(CircularBuf_NumBytesFree(&client->wCirbuf)<len){
-        vTaskDelay(10);
-    }
-
-    // if the data to write can't fit into the buffer entirely, discard it. 
-    if(CircularBuf_NumBytesFree(&client->wCirbuf)<len){
-        commTest.USBOverflow++;
-        return 0;  
-    }
-    
-    //Obtain ownership of the mutex object
-    xSemaphoreTake(client->wMutex, portMAX_DELAY);
-    bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, data, len);
-    xSemaphoreGive(client->wMutex);
-
-    return bytesAdded;
-}
+//size_t UsbCdc_WriteToBuffer(UsbCdcData* client, const char* data, size_t len)
+//{
+//    size_t bytesAdded = 0;
+//    
+//    if(len==0)return 0;
+//
+//    while(CircularBuf_NumBytesFree(&client->wCirbuf)<len){
+//        vTaskDelay(10);
+//    }
+//
+//    // if the data to write can't fit into the buffer entirely, discard it. 
+//    if(CircularBuf_NumBytesFree(&client->wCirbuf)<len){
+//        commTest.USBOverflow++;
+//        return 0;  
+//    }
+//    
+//    //Obtain ownership of the mutex object
+//    xSemaphoreTake(client->wMutex, portMAX_DELAY);
+//    bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, data, len);
+//    xSemaphoreGive(client->wMutex);
+//
+//    return bytesAdded;
+//}
 
 /*
 size_t UsbCdc_WriteDefault(const char* data, size_t len)
@@ -443,7 +443,9 @@ static bool UsbCdc_Flush(UsbCdcData* client)
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len)
 {
     UNUSED(context);
-    UsbCdc_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings, data, len);
+    if(len>0)
+    DEBUG_PRINTF("Tx USB: %s\r\n", data);
+    CircularBuf_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings.streamCirbuf, data, len);
     return len;
 }
 
@@ -522,7 +524,7 @@ static scpi_interface_t scpi_interface = {
 static void microrl_echo(microrl_t* context, size_t textLen, const char* text)
 {
     UNUSED(context);
-    UsbCdc_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings,text, textLen);
+    CircularBuf_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings.streamCirbuf, text, textLen);
 }
 
 /**
@@ -538,6 +540,7 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     
     if (command != NULL && commandLen > 0)
     {
+        DEBUG_PRINTF("Rx USB: %s",command);
         return SCPI_Input(&g_BoardRuntimeConfig.usbSettings.scpiContext, command, commandLen);
     }
     
@@ -566,17 +569,10 @@ void UsbCdc_Initialize()
     g_BoardRuntimeConfig.usbSettings.scpiContext = CreateSCPIContext(&scpi_interface, &g_BoardRuntimeConfig.usbSettings);
     
     // reset circular buffer variables to known state. 
-    CircularBuf_Init(&g_BoardRuntimeConfig.usbSettings.wCirbuf, UsbCdc_Wrapper_Write, (USB_WBUFFER_SIZE*2));
-     /* Create a mutex type semaphore. */
-    g_BoardRuntimeConfig.usbSettings.wMutex = xSemaphoreCreateMutex();
+    CircularBuf_Init(&g_BoardRuntimeConfig.usbSettings.streamCirbuf, 
+                     UsbCdc_ProcessStreamBufferCallback, 
+                     (USB_WBUFFER_SIZE*2));
 
-    if( g_BoardRuntimeConfig.usbSettings.wMutex == NULL ){
-        /* The semaphore was created successfully and
-        can be used. */
-    }
-       
-    //Release ownership of the mutex object
-    xSemaphoreGive(g_BoardRuntimeConfig.usbSettings.wMutex);
     
 }
 

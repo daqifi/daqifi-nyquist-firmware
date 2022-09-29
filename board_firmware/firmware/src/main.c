@@ -63,7 +63,7 @@ MAIN_RETURN main ( void )
     SYS_ASSERT(false, "about to exit main");
 
     return MAIN_RETURN_CODE(MAIN_RETURN_SUCCESS);
-}
+} 
 
 /*******************************************************************************
  End of File

@@ -36,6 +36,46 @@ void CircularBuf_Init(CircularBuf* cirbuf, int(*fp)(uint8_t*,uint16_t), uint16_t
     cirbuf->buf_size               = size;
     cirbuf->insertPtr              = cirbuf->removePtr = cirbuf->buf_ptr;
     cirbuf->totalBytes             = 0;
+    
+         /* Create a mutex type semaphore. */
+    cirbuf->wMutex = xSemaphoreCreateMutex();
+
+    if( cirbuf->wMutex == NULL ){
+        /* The semaphore was created successfully and
+        can be used. */
+    }
+       
+    //Release ownership of the mutex object
+    xSemaphoreGive(cirbuf->wMutex);
+}
+
+
+
+size_t CircularBuf_WriteToBuffer(CircularBuf* cirbuf, const char* data, size_t len)
+{
+    size_t bytesAdded = 0;
+    
+    if(len==0){
+        //DEBUG_PRINTF("Warning: write 0 byte to circular buffer.\r\n");
+        return 0;
+    }
+    //while(CircularBuf_NumBytesFree(cirbuf)<len){
+    //    vTaskDelay(10);
+    //}
+
+    // if the data to write can't fit into the buffer entirely, discard it. 
+    if(CircularBuf_NumBytesFree(cirbuf)<len){
+        ///commTest.USBOverflow++;
+        DEBUG_PRINTF("Warning: data discarded due to circular buffer overflow\r\n");
+        return 0;  
+    }
+    
+    //Obtain ownership of the mutex object
+    xSemaphoreTake(cirbuf->wMutex, portMAX_DELAY);
+    bytesAdded = CircularBuf_AddBytes(cirbuf, data, len);
+    xSemaphoreGive(cirbuf->wMutex);
+
+    return bytesAdded;
 }
 
 /*=============================================================================
@@ -64,7 +104,7 @@ uint16_t CircularBuf_NumBytesAvailable(CircularBuf* cirbuf)
 
 uint16_t CircularBuf_NumBytesFree(CircularBuf* cirbuf)
 {
-    return (cirbuf->buf_size - 0);//CircularBuf_NumBytesAvailable(cirbuf));
+    return (cirbuf->buf_size - CircularBuf_NumBytesAvailable(cirbuf));
 }
 
 
@@ -77,9 +117,11 @@ uint16_t CircularBuf_ProcessBytes(CircularBuf* cirbuf, uint8_t* bytesBuf, uint16
     bytesToSend = min(CircularBuf_NumBytesAvailable(cirbuf), maxBytes);
    
     if(bytesToSend>0){
+                                        
+        xSemaphoreTake(cirbuf->wMutex, portMAX_DELAY);                        
         
         if(bytesBuf != NULL){
-                                
+            
             //start next transfer
             //make sure we don't transfer the out of bound data.
             if(cirbuf->removePtr + bytesToSend > (char*)BUF_END){
@@ -132,10 +174,13 @@ uint16_t CircularBuf_ProcessBytes(CircularBuf* cirbuf, uint8_t* bytesBuf, uint16
             cirbuf->totalBytes -= bytesToSend;
             bytesRemoved  = bytesToSend;
         }
+        
+        xSemaphoreGive(cirbuf->wMutex);
     }
     
     return bytesRemoved;
 }
+
 
 /*======================================================================================
   CircularBuf_AddBytes

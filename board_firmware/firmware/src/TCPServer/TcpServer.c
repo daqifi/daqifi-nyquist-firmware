@@ -29,10 +29,11 @@ extern __attribute__((section(".bss.errno"))) int errno;
 static uint8_t tcpServerBlocked = 0;
 
 // Function Prototypes
-static void TcpServer_InitializeClient(TcpClientData* client);
-static bool TcpServer_Flush(TcpClientData* client);
-static size_t TcpServer_Write(TcpClientData* client, const char* data, size_t len);
-
+static void     TcpServer_InitializeClient(TcpClientData* client);
+static bool     TcpServer_Flush(TcpClientData* client);
+static size_t   TcpServer_Write(TcpClientData* client, const char* data, size_t len);
+static int      TcpServer_ProcessStreamBufferCallback(uint8_t* buf, uint16_t len);
+static uint16_t TCPServer_GetTxBytesReady(void);
 /**
  * Writes data to the output buffere
  * @param client The client to write to
@@ -87,81 +88,16 @@ static size_t TcpServer_Write(TcpClientData* client, const char* data, size_t le
  * @return  True if data is flushed, false otherwise
  */
 static bool TcpServer_Flush(TcpClientData* client)
-{
-    int length;
-//    uint8_t securityCounter = 0;
-    
-    tcpServerBlocked = 1;
-    int i = 0;
-    do{
-        length = send(client->client, (char*)client->writeBuffer +i, client->writeBufferLength, 0);
-        if( ( errno == EWOULDBLOCK ) && (length == SOCKET_ERROR) ){
-            vTaskDelay( TCPSERVER_EWOULDBLOCK_ERROR_TIMEOUT );
-//            securityCounter++;
-//            if( securityCounter > 100 ){
-//                errno = ECONNRESET;
-//            }
-        }
-
-    }while( ( errno == EWOULDBLOCK ) && (length == SOCKET_ERROR) );
-    tcpServerBlocked = 0;
-    if (length == SOCKET_ERROR)
+{    
+    if((TCPIP_TCP_IsConnected(client->socket)) 
+    && (TCPIP_TCP_PutIsReady (client->socket)>= client->writeBufferLength))
     {
-        switch(errno)
-        {
-        case EWOULDBLOCK:
-            // No action
-            break;
-        case ENOTCONN: // Disconnect
-        case ECONNRESET:
-            closesocket(client->client);
-            TcpServer_InitializeClient(client);
-            break;
-        case EFAULT: // Bad IP address        
-        case EBADF: // i > socket count
-        case EINVAL: // i > socket count
-        default:
-            SYS_DEBUG_PRINT(SYS_ERROR_ERROR, "Unhandled errno: %d", errno);
-            break;
-        }
-    }
-    else if ( length == SOCKET_CNXN_IN_PROGRESS )
-    {
-        // No action
-    }
-    else if ( length == SOCKET_DISCONNECTED ||
-              length == 0) // Disconnect
-    {
-        closesocket(client->client);
-        TcpServer_InitializeClient(client);
-    }
-    else if(length > 0) // Valid Data
-    {
-        // netHandle = Function_???(client->client); // Read from BSDSocketArray
-        // NET_PRES_SocketFlush(netHandle);
-        if (length == client->writeBufferLength)
-        {
-            client->writeBufferLength = 0;
-            client->writeBuffer[client->writeBufferLength] = '\0';
-        }
-        else
-        {
-            // Overflow
-            SYS_DEBUG_PRINT(SYS_ERROR_ERROR, "Could not write packet. actual=%d, expected=%d.", length, client->writeBufferLength);
-            int remainder = client->writeBufferLength - length;
-            memcpy(client->writeBuffer, client->writeBuffer + length, remainder);
-            client->writeBufferLength = remainder;
-            client->writeBuffer[client->writeBufferLength] = '\0';
-        }
-        
+        TCPIP_TCP_ArrayPut(client->socket, client->writeBuffer, client->writeBufferLength);
+        client->writeBufferLength = 0;
+        client->writeBuffer[client->writeBufferLength] = '\0';
         return true;
     }
-    else
-    {
-        // Unknown error
-        SYS_DEBUG_PRINT(SYS_ERROR_ERROR, "Unknown error when writing to socket %d: Length=%d", (int)client->client, length);
-    }
-    
+
     return false;
 }
 
@@ -193,8 +129,17 @@ static TcpClientData* SCPI_TCP_GetClient(scpi_t * context)
  */
 static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len)
 {
+    if(len==0)return 0;
+    
     TcpClientData* client = SCPI_TCP_GetClient(context);
-    return TcpServer_Write(client, data, len);
+    
+    DEBUG_PRINTF("Tx TCP: %s\r\n", data);
+//    return TcpServer_Write(client, data, len);
+    if(TCPIP_TCP_IsConnected(client->socket) && (TCPIP_TCP_PutIsReady(client->socket)>=len)){
+        return TCPIP_TCP_ArrayPut(client->socket, data, len);
+    }
+//    
+    return 0;
 }
 
 /**
@@ -205,6 +150,7 @@ static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len)
 static scpi_result_t SCPI_TCP_Flush(scpi_t * context)
 {
     TcpClientData* client = SCPI_TCP_GetClient(context);
+    
     if (TcpServer_Flush(client))
     {
         return SCPI_RES_OK;
@@ -213,6 +159,14 @@ static scpi_result_t SCPI_TCP_Flush(scpi_t * context)
     {
         return SCPI_RES_ERR;
     }
+    
+    
+//    if(TCPIP_TCP_IsConnected(client->socket)){
+//        TCPIP_TCP_Flush(client->socket);
+//        return SCPI_RES_OK;
+//    }
+//
+//    return SCPI_RES_ERR;
 }
 
 /**
@@ -259,7 +213,7 @@ static scpi_interface_t scpi_interface = {
     .error = SCPI_TCP_Error,
     .reset = NULL,
     .control = SCPI_TCP_Control,
-    .flush = SCPI_TCP_Flush,
+    .flush = NULL,//SCPI_TCP_Flush,
 };
 
 /**
@@ -289,8 +243,13 @@ static TcpClientData* microrl_GetClient(microrl_t* context)
  */
 static void microrl_echo(microrl_t* context, size_t textLen, const char* text)
 {
-        TcpClientData* client = microrl_GetClient(context);
-        TcpServer_Write(client, text, textLen);
+    if(textLen == 0)return;
+    
+    TcpClientData* client = microrl_GetClient(context);
+//    TcpServer_Write(client, text, textLen);
+    if(TCPIP_TCP_IsConnected(client->socket) && (TCPIP_TCP_PutIsReady(client->socket)>=textLen)){
+        TCPIP_TCP_ArrayPut(client->socket, text, textLen);
+    }
 }
 
 /**
@@ -312,6 +271,7 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     
     if (command != NULL && commandLen > 0)
     {
+        DEBUG_PRINTF("Recv TCP: %s",command);
         return SCPI_Input(&client->scpiContext, command, commandLen);
     }
     
@@ -324,10 +284,12 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
  */
 static void TcpServer_InitializeClient(TcpClientData* client)
 {
-    client->client = INVALID_SOCKET;
+    client->socket = INVALID_SOCKET;
+    client->reconnectTick = 0;
     client->readBuffer[0] = '\0';
     client->readBufferLength = 0;
     client->writeBuffer[0] = '\0';
+    client->writeBufferLength = 0;
     microrl_init(&client->console, microrl_echo);
     microrl_set_echo(&client->console, false);
     microrl_set_execute_callback(&client->console, microrl_commandComplete);
@@ -341,6 +303,11 @@ void TcpServer_Initialize()
     g_BoardRuntimeConfig.serverData.state = IP_SERVER_INITIALIZE;
     g_BoardRuntimeConfig.serverData.hInterface = TCPIP_STACK_NetHandleGet(WIFI_INTERFACE_NAME);
     
+    // Initialize transmit buffer. 
+    CircularBuf_Init(&g_BoardRuntimeConfig.serverData.streamCirbuf, 
+                     TcpServer_ProcessStreamBufferCallback, 
+                    (USB_WBUFFER_SIZE*2));
+        
     // Init client params
     uint8_t i;
     for (i=0; i<WIFI_MAX_CLIENT; ++i)
@@ -351,178 +318,103 @@ void TcpServer_Initialize()
 
 void TcpServer_ProcessState()
 {
+    uint8_t i;
+    uint16_t tcpPort;
+    TcpServerData* server;
+                 
     switch (g_BoardRuntimeConfig.serverData.state)
     {
-    case IP_SERVER_INITIALIZE:
-        TcpServer_Initialize();
-        g_BoardRuntimeConfig.serverData.state = IP_SERVER_WAIT;
-        break;
-    case IP_SERVER_WAIT:
-        if (TCPIP_STACK_NetIsUp(g_BoardRuntimeConfig.serverData.hInterface))
+        case IP_SERVER_INITIALIZE:
         {
-            g_BoardRuntimeConfig.serverData.state = IP_SERVER_CONNECT;
-        }
-        break;
-    case IP_SERVER_CONNECT:
-        g_BoardRuntimeConfig.serverData.serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (g_BoardRuntimeConfig.serverData.serverSocket != SOCKET_ERROR)
-        {
-            g_BoardRuntimeConfig.serverData.state = IP_SERVER_BIND;
-        }
-
-        break;
-    case IP_SERVER_BIND:
-    {
-        struct sockaddr_in addr;
-        int addrlen = sizeof(struct sockaddr_in);
-        addr.sin_port = g_BoardData.wifiSettings.settings.wifi.tcpPort;
-        addr.sin_addr.S_un.S_addr = IP_ADDR_ANY;
-        if( bind(g_BoardRuntimeConfig.serverData.serverSocket, (struct sockaddr*)&addr, addrlen ) != SOCKET_ERROR )
-        {
-            g_BoardRuntimeConfig.serverData.state = IP_SERVER_LISTEN;
-        }
-        break;
-    }
-    case IP_SERVER_LISTEN:
-        if(listen(g_BoardRuntimeConfig.serverData.serverSocket, WIFI_MAX_CLIENT) == 0)
-        {
-             g_BoardRuntimeConfig.serverData.state = IP_SERVER_PROCESS;
-        }
+            TcpServer_Initialize();
+            g_BoardRuntimeConfig.serverData.state = IP_SERVER_WAIT;
+        }break;
         
-        break;
-    case IP_SERVER_PROCESS:
-    {
-        struct sockaddr_in addRemote;
-        int addrlen = sizeof(struct sockaddr_in);
-            
-        uint8_t i = 0;
-        for (i=0; i<WIFI_MAX_CLIENT; ++i)
+        case IP_SERVER_WAIT:
         {
-            // Accept incoming connections
-            TcpClientData* client = &g_BoardRuntimeConfig.serverData.clients[i];
-            if(client->client == INVALID_SOCKET)
+            if (TCPIP_STACK_NetIsUp(g_BoardRuntimeConfig.serverData.hInterface))
             {
-                client->client = accept(g_BoardRuntimeConfig.serverData.serverSocket, (struct sockaddr*)&addRemote, &addrlen);
-                if(client->client == INVALID_SOCKET)
-                {
-                    // EMFILE indicates that no incoming connections are available. All others indicate that we somehow lost the server connection
-                    switch(errno)
-                    {
-                    case EMFILE: // Server is listening, but there are no incoming connections
-                        break;
-                    case EFAULT:
-                        SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Invalid IP address. Resetting.");
-                        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
-                        return;  
-                    case EOPNOTSUPP:
-                        SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Not a streaming connection. Resetting.");
-                        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
-                        return;
-                    case EINVAL:
-                        SYS_DEBUG_MESSAGE(SYS_ERROR_WARNING, "TcpServer Disconnected. Resetting.");
-                        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
-                        return;
-                    default:
-                        SYS_DEBUG_PRINT(SYS_ERROR_ERROR, "Unhandled errno: %d", errno);
-                        break;
-                    }
+                g_BoardRuntimeConfig.serverData.state = IP_SERVER_OPENING_SERVER;
+            }
+        }break;
 
-                    // No incoming connections
-                    continue;
+        case IP_SERVER_OPENING_SERVER:
+        {  
+            tcpPort = g_BoardData.wifiSettings.settings.wifi.tcpPort;
+            server  = &g_BoardRuntimeConfig.serverData;
+                           
+            for (i=0; i<WIFI_MAX_CLIENT; ++i)
+            {                
+                server->clients[i].sock_was_connected = false;
+                server->clients[i].socket = TCPIP_TCP_ServerOpen(IP_ADDRESS_TYPE_IPV4,tcpPort,0);
+
+                if (server->clients[i].socket == INVALID_SOCKET)
+                {
+                    SYS_CONSOLE_MESSAGE("Couldn't open server socket\r\n");
+                    break;
                 }
             }
-            
-            if (client->readBufferLength < WIFI_BUFFER_SIZE)
+
+            server->state = IP_SERVER_SERVING_CONNECTION;
+
+        }break;
+        
+        case IP_SERVER_SERVING_CONNECTION:
+        {
+            uint16_t bytesToSend, bytesToRead;
+            int error;
+
+            tcpPort     = g_BoardData.wifiSettings.settings.wifi.tcpPort;
+            server      = &g_BoardRuntimeConfig.serverData;
+            bytesToSend = min(TCPServer_GetTxBytesReady(), CircularBuf_NumBytesAvailable(&server->streamCirbuf));
+           
+            // transfer the data out of our stream buffer and into TCP TX FIFO
+            CircularBuf_ProcessBytes(&server->streamCirbuf, NULL, bytesToSend, &error);
+
+            for (i=0; i<WIFI_MAX_CLIENT; i++)
             {
-                int length = recv(client->client, (char*)client->readBuffer + client->readBufferLength, WIFI_BUFFER_SIZE - client->readBufferLength, 0);
-                if (length == SOCKET_ERROR)
-                {
-                    switch(errno)
-                    {
-                    case EWOULDBLOCK:
-                        // No action
-                        break;
-                    case ENOTCONN: // Disconnect
-                    case ECONNRESET:
-                        closesocket(client->client);
-                        TcpServer_InitializeClient(client);
-                        continue;
-                    case EFAULT: // Bad IP address        
-                    case EBADF: // i > socket count
-                    case EINVAL: // i > socket count
-                    default:
-                        SYS_DEBUG_PRINT(SYS_ERROR_ERROR, "Unhandled errno: %d", errno);
-                        continue;
+                // previous now action
+                // 0        0   do nothing
+                // 0        1   read / write to socket
+                // 1        0   reinitialize socket
+                // 1        1   read / write to socket
+
+                if(TCPIP_TCP_IsConnected(server->clients[i].socket)){
+                    // read and write to socket
+                    server->clients[i].sock_was_connected = true;
+                    
+                    bytesToRead = TCPIP_TCP_GetIsReady(server->clients[i].socket);	// Get TCP RX FIFO byte count
+
+                    if(bytesToRead>0){
+                               
+                        // Transfer the data out of the TCP RX FIFO and into our local processing buffer.
+                        TCPIP_TCP_ArrayGet(server->clients[i].socket, 
+                                           server->clients[i].readBuffer, 
+                                           bytesToRead);
+                        
+                        size_t j=0;
+                        
+                        for (j=0; j<bytesToRead; ++j)
+                        {
+                            microrl_insert_char (&server->clients[i].console, server->clients[i].readBuffer[j]);
+                        }
                     }
                 }
-                else if ( length == SOCKET_CNXN_IN_PROGRESS )
-                {
-                    // No action
-                    continue;
-                }
-                else if ( length == SOCKET_DISCONNECTED ||
-                          length == 0) // Disconnect
-                {
-                    closesocket(client->client);
-                    TcpServer_InitializeClient(client);
-                    continue;
-                }
-                else if(length > 0) // Valid Data
-                {
-                    // Pass Data to the console for processing
-                    client->readBufferLength += length;
-                    client->readBuffer[client->readBufferLength] = '\0';
+                else{
 
-                    size_t j = 0;
-                    for (j=0; j<client->readBufferLength; ++j)
-                    {
-                        microrl_insert_char (&client->console, client->readBuffer[j]);
+                    if(server->clients[i].sock_was_connected){
+                        //reinitialized the socket
+                          // Close the socket connection.
+                        TCPIP_TCP_Close(server->clients[i].socket);
+                        server->clients[i].socket = INVALID_SOCKET;
+                        server->clients[i].sock_was_connected = false;
+                        server->clients[i].socket = TCPIP_TCP_ServerOpen(IP_ADDRESS_TYPE_IPV4, tcpPort, 0);
                     }
-
-                    client->readBufferLength = 0;
-                    client->readBuffer[client->readBufferLength] = '\0';
-                }
-                else
-                {
-                     SYS_DEBUG_PRINT(SYS_ERROR_ERROR, "Unknown error when reading from socket %d: Length=%d", (int)i, length);
                 }
             }
+        }break;
             
-            // Send data out
-            if (client->writeBufferLength > 0)
-            {
-                TcpServer_Flush(client);
-            }
-        }
-        
-        break;
-    }
-    case IP_SERVER_DISCONNECT:
-    {
-        uint8_t i = 0;
-        for (i=0; i<WIFI_MAX_CLIENT; ++i)
-        {
-            TcpClientData* client = &g_BoardRuntimeConfig.serverData.clients[i];
-            if(client->client != INVALID_SOCKET)
-            {
-                closesocket(client->client);
-                client->client = INVALID_SOCKET;
-            }
-        }
-        
-        if (g_BoardRuntimeConfig.serverData.serverSocket != INVALID_SOCKET)
-        {
-            closesocket(g_BoardRuntimeConfig.serverData.serverSocket);
-            g_BoardRuntimeConfig.serverData.serverSocket = INVALID_SOCKET;
-        }
-        
-        g_BoardRuntimeConfig.serverData.state = IP_SERVER_INITIALIZE;
-        
-        break;
-    }
-    default:
-        LogMessage("TCPIP State error. TcpServer.c ln 502\n\r");
-        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
+    case IP_SERVER_CLOSING_CONNECTION:
         break;
     }
 }
@@ -533,4 +425,66 @@ void TcpServer_ProcessState()
 */
 uint8_t TCP_Server_Is_Blocked( void ){
     return tcpServerBlocked;
+}
+
+bool TCPServer_IsConnected( void )
+{
+    int i;    
+    TcpServerData* server = &g_BoardRuntimeConfig.serverData;
+        
+    for (i=0; i<WIFI_MAX_CLIENT; i++)
+    {
+        if(server->clients[i].socket == INVALID_SOCKET)
+        continue;
+        
+        if(TCPIP_TCP_IsConnected(server->clients[i].socket))
+        return true;
+    }
+   
+    return false;
+}
+
+static uint16_t TCPServer_GetTxBytesReady(void)
+{
+    int i;
+    uint16_t wMaxPut = 0xFFFF;
+    uint16_t bytes;
+    bool hasConnection = false;
+    TcpServerData* server = &g_BoardRuntimeConfig.serverData;
+        
+    for (i=0; i<WIFI_MAX_CLIENT; i++)
+    {
+        if(TCPIP_TCP_IsConnected(server->clients[i].socket)){
+            
+            hasConnection = true;
+            bytes = TCPIP_TCP_PutIsReady(server->clients[i].socket);	// Get TCP TX FIFO free space
+            
+            if(bytes<wMaxPut)
+            wMaxPut = bytes;
+        }
+    }
+    
+    if(hasConnection == false)
+    wMaxPut = 0;
+    
+    return wMaxPut;
+}
+
+static int TcpServer_ProcessStreamBufferCallback(uint8_t* buf, uint16_t len)
+{    
+    int i;
+    TcpServerData* server = &g_BoardRuntimeConfig.serverData;
+     
+    for (i=0; i<WIFI_MAX_CLIENT; i++)
+    {
+        server = &g_BoardRuntimeConfig.serverData;
+        
+        if((TCPIP_TCP_IsConnected(server->clients[i].socket)==false) 
+        || (TCPIP_TCP_PutIsReady (server->clients[i].socket)<len))
+        continue;
+        
+        TCPIP_TCP_ArrayPut(server->clients[i].socket, buf, len);
+    }
+    
+    return 0;
 }

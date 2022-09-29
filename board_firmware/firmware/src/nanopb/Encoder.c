@@ -323,8 +323,12 @@ int Nanopb_EncodeLength(const NanopbFlagsArray* fields)
 
 size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen)
 {
+    static uint32_t prev_msg_time_stamp = 0;
+    static uint32_t max_diff_time_stamp = 0;
+    uint32_t diff_time_stamp;
+    
     // If we cannot encode a whole message, bail out
-    if (bufferLen < Nanopb_EncodeLength(fields)) return 0;
+    if (bufferLen < Nanopb_EncodeLength(fields))return 0;
 
     DaqifiOutMessage message = DaqifiOutMessage_init_default;
     size_t i=0;
@@ -335,6 +339,7 @@ size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* 
             case DaqifiOutMessage_msg_time_stamp_tag:
                 message.has_msg_time_stamp = true;
                 message.msg_time_stamp = state->StreamTrigStamp;
+               
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
                 message.analog_in_data_count = 0;
@@ -940,9 +945,11 @@ size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* 
     else
     {
 #ifndef PB_NO_ERRMSG
+        DEBUG_PRINTF("Nanopb_Encode error = %d/r/n", stream.errmsg);
         LogMessage(stream.errmsg);
 #else
-        LogMessage("NonoPb encode error\n\r");
+        DEBUG_PRINTF("Nanopb_Encode error/r/n");
+        LogMessage("NanoPb encode error\n\r");
 #endif
         return 0;
     }

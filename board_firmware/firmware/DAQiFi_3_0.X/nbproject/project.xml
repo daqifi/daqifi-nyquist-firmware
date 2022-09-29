@@ -6,7 +6,7 @@
             <name>wifi_easy_configuration</name>
             <creation-uuid>61a1e4f7-33a5-4425-8178-cfd335c060b6</creation-uuid>
             <make-project-type>0</make-project-type>
-            <c-extensions>c</c-extensions>
+            <c-extensions>c,S</c-extensions>
             <cpp-extensions/>
             <header-extensions>h</header-extensions>
             <sourceEncoding>ISO-8859-1</sourceEncoding>

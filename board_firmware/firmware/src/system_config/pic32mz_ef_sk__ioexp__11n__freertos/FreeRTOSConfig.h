@@ -92,7 +92,7 @@
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
 
 /* Misc */
-#define configUSE_APPLICATION_TASK_TAG          0
+#define configUSE_APPLICATION_TASK_TAG          1
 
 /* Prevent C specific syntax being included in assembly files. */
 #ifndef __LANGUAGE_ASSEMBLY
@@ -133,10 +133,14 @@ Only API functions that end in ...FromISR() can be used within interrupts. */
     #define configLIST_VOLATILE volatile
     #define configRECORD_STACK_HIGH_ADDRESS             1
 
+    #define traceTASK_SWITCHED_IN()         APP_Debug_Task( 1, (int)pxCurrentTCB->pxTaskTag )
+    #define traceTASK_SWITCHED_OUT()        APP_Debug_Task( 0, (int)pxCurrentTCB->pxTaskTag )
+
     /* Microchip MPLAB X IDE */
     #ifndef __LANGUAGE_ASSEMBLY
     extern void runTimeStatsTimer89_init(void);
     extern unsigned long runTimeStatsTimer89_counter(void);
+    extern void APP_Debug_Task(int, int);
     #endif
 #endif
 

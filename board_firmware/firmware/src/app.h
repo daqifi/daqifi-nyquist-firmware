@@ -77,6 +77,10 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 void APP_Initialize(void);
 
 void APP_Tasks(void);
+void APP_Debug_Task(int, int);
+void APP_LogPrintUart4(const char *format, ...);   
+
+#define DEBUG_PRINTF(...)   APP_LogPrintUart4(__VA_ARGS__)
 
 #endif /* _APP_H */
 

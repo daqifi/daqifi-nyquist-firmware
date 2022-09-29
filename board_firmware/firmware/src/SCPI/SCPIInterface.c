@@ -247,7 +247,7 @@ static microrl_t* SCPI_GetMicroRLClient(scpi_t* context)
  */
 static scpi_result_t SCPI_Reset(scpi_t * context)
 {
-    UNUSED(context);
+    //UNUSED(context);
     
     // TODO: Send a shutdown message. The purpose of this message is to shut down timers
     // and anything else we don't want to leave running when the board goes offline.

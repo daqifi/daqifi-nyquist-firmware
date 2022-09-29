@@ -65,6 +65,7 @@ extern "C" {
          * The TCP server state
          */
         TcpServerData serverData;
+        
     } BoardRuntimeConfig;
     
     /**

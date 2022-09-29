@@ -52,6 +52,7 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "state/data/BoardData.h"
 #include "commTest.h"
+#include <stdarg.h>
 
 const char BOARD_HARDWARE_REV[16] = "2.0";
 const char BOARD_FIRMWARE_REV[16] = "1.0.3";
@@ -161,6 +162,50 @@ unsigned long runTimeStatsTimer89_counter(void)
     return (TMR9 <<16 | TMR8); // The 32-bit timer will overflow every 10995 secs.
 }
 
+void APP_LogPrintUart4(const char *format, ...)
+{
+#if !defined __DEBUG
+    va_list  args;
+    char buffer[100];
+    int toSend, i;
+    
+    // use blocking uart write to print out diagnostic message 
+    // when the scheduler hasn't started. 
+    va_start(args,format);
+    toSend = vsnprintf(buffer, sizeof(buffer)-1, format, args);
+    va_end(args);  
+    
+    for(i=0;i<toSend;i++){
+        DRV_USART_WriteByte(sysObj.drvUsart0, buffer[i]);
+    }
+#endif
+}
+
+
+void APP_Debug_Task(int pin_state, int task_id)
+{
+    if(task_id >= g_BoardConfig.DIOChannels.Size)    
+    return;
+    
+    // Set data pin direction as output
+    PLIB_PORTS_PinDirectionOutputSet(g_BoardConfig.DIOChannels.Data[task_id].DataModule,
+                                     g_BoardConfig.DIOChannels.Data[task_id].DataChannel , 
+                                     g_BoardConfig.DIOChannels.Data[task_id].DataPin);
+    
+    
+    PLIB_PORTS_PinWrite(g_BoardConfig.DIOChannels.Data[task_id].EnableModule, 
+                        g_BoardConfig.DIOChannels.Data[task_id].EnableChannel, 
+                        g_BoardConfig.DIOChannels.Data[task_id].EnablePin, 
+                       !g_BoardConfig.DIOChannels.Data[task_id].EnableInverted);
+    
+    // Set driver value
+    PLIB_PORTS_PinWrite(g_BoardConfig.DIOChannels.Data[task_id].DataModule, 
+                        g_BoardConfig.DIOChannels.Data[task_id].DataChannel, 
+                        g_BoardConfig.DIOChannels.Data[task_id].DataPin, 
+                        pin_state);
+    
+}
+
 /*******************************************************************************
   Function:
     void APP_Initialize(void)
@@ -238,6 +283,7 @@ void APP_Initialize(void)
  */
 void APP_Tasks(void)
 {   
+    static uint32_t count = 0;
     ADC_Tasks(&g_BoardConfig, &g_BoardRuntimeConfig, &g_BoardData);
     
     Streaming_Tasks(&g_BoardConfig, &g_BoardRuntimeConfig, &g_BoardData);

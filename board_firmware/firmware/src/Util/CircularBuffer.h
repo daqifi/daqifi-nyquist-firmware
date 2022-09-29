@@ -9,6 +9,9 @@
 /* ************************************************************************** */
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+
+#include "system_definitions.h"
 /* This section lists the other files that are included in this file.
  */
 
@@ -32,16 +35,18 @@ extern "C" {
      */
 typedef struct s_CircularBuf
 {
-    uint8_t*    insertPtr;
-    uint8_t*    removePtr;
-    uint16_t    totalBytes;
-    uint8_t*    buf_ptr;
-    uint16_t    buf_size;
-    int        (*process_callback)(uint8_t*, uint16_t);
+    uint8_t*          insertPtr;
+    uint8_t*          removePtr;
+    uint16_t          totalBytes;
+    uint8_t*          buf_ptr;
+    uint16_t          buf_size;
+    int               (*process_callback)(uint8_t*, uint16_t);
+    SemaphoreHandle_t wMutex;
 }CircularBuf;
 
 
 void     CircularBuf_Init(CircularBuf*, int (*fp)(uint8_t*,uint16_t), uint16_t);
+size_t   CircularBuf_WriteToBuffer(CircularBuf* cirbuf, const char* data, size_t len);
 uint16_t CircularBuf_AddBytes(CircularBuf*, uint8_t*, uint16_t);
 uint16_t CircularBuf_NumBytesAvailable(CircularBuf*);
 uint16_t CircularBuf_NumBytesFree(CircularBuf*);

@@ -87,6 +87,7 @@ void _POWER_AND_UI_Tasks(void);
 void _ADC_Deferred_Interrupt_Task( void );
 void _Streaming_Deferred_Interrupt_Task( void );
 
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: System "Tasks" Routine
@@ -175,8 +176,16 @@ void SYS_Tasks ( void )
     
     xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
                 "Stream Interrupt",
-                2048, NULL, 4, &streamingInterruptHandle);   
-      
+                2048, NULL, 4, &streamingInterruptHandle);  
+    
+    vTaskSetApplicationTaskTag(sysHandle, ( void * ) TASK_ID_SYSTEM);
+    vTaskSetApplicationTaskTag(usbHandle, ( void * ) TASK_ID_USB_STACK);
+    vTaskSetApplicationTaskTag(tcpipHandle, ( void * ) TASK_ID_TCPIP_STACK);
+    vTaskSetApplicationTaskTag(netpHandle, ( void * ) TASK_ID_NET_PRES);
+    vTaskSetApplicationTaskTag(appHandle, ( void * ) TASK_ID_APP);
+    vTaskSetApplicationTaskTag(powerUIHandle, ( void * ) TASK_ID_POWER_UI);
+    vTaskSetApplicationTaskTag(ADCInterruptHandle, ( void * ) TASK_ID_ADC_DEFERRED_INT);
+    vTaskSetApplicationTaskTag(streamingInterruptHandle, ( void * ) TASK_ID_STREAM_DEFERRED_INT);
     /**************
      * Start RTOS * 
      **************/
@@ -219,6 +228,9 @@ static void _SYS_Tasks ( void)
         SYS_TMR_Tasks(sysObj.sysTmr);
 
         /* Maintain Device Drivers */
+    DRV_USART_TasksTransmit(sysObj.drvUsart0);
+    DRV_USART_TasksError (sysObj.drvUsart0);
+    DRV_USART_TasksReceive(sysObj.drvUsart0);
  
  
 
@@ -298,7 +310,7 @@ static void _APP_Tasks(void)
     while(1)
     {
         APP_Tasks();
-        vTaskDelay(1 / portTICK_PERIOD_MS);
+        vTaskDelay(1/ portTICK_PERIOD_MS);
     }
 }
 

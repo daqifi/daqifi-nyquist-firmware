@@ -69,6 +69,7 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #include "system/tmr/sys_tmr.h"
 #include "driver/adc/drv_adc_static.h"
 #include "driver/tmr/drv_tmr.h"
+#include "driver/usart/drv_usart_static.h"
 #include "driver/nvm/drv_nvm.h"
 #include "system/ports/sys_ports.h"
 #include "driver/sdcard/drv_sdcard.h"
@@ -129,6 +130,7 @@ typedef struct
     SYS_MODULE_OBJ  drvTmr1;
     SYS_MODULE_OBJ  drvTmr2;
 
+    SYS_MODULE_OBJ  drvUsart0;
     SYS_MODULE_OBJ  drvI2C0;
     SYS_MODULE_OBJ  drvNvm;
     SYS_MODULE_OBJ  drvSDCard;

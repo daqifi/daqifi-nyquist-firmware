@@ -450,6 +450,15 @@ int LogMessage(const char* format, ...);
 #define DRV_TMR_ASYNC_WRITE_ENABLE_IDX2     false
 #define DRV_TMR_POWER_STATE_IDX2            SYS_MODULE_POWER_RUN_FULL
 
+ // *****************************************************************************
+/* USART Driver Configuration Options
+*/
+#define DRV_USART_INSTANCES_NUMBER                  1
+#define DRV_USART_CLIENTS_NUMBER                    1
+#define DRV_USART_INTERRUPT_MODE                    false
+#define DRV_USART_BYTE_MODEL_SUPPORT                true
+#define DRV_USART_READ_WRITE_MODEL_SUPPORT          false
+#define DRV_USART_BUFFER_QUEUE_SUPPORT              false
  /*** Wi-Fi Driver Configuration ***/
 #define WINC1500_INT_SOURCE INT_SOURCE_EXTERNAL_4
 #define WINC1500_INT_VECTOR INT_VECTOR_INT4
@@ -1161,50 +1170,15 @@ int LogMessage(const char* format, ...);
 
 
 /*** Application Instance 0 Configuration ***/
-//
-//#define DBG_DIO_0_TRIS         g_BoardRuntimeConfig.DIOChannels.Data[0].IsInput = false;\
-//                               g_BoardRuntimeConfig.DIOChannels.Data[0].IsReadOnly = false;
-//#define DBG_DIO_0_SET(x)       g_BoardRuntimeConfig.DIOChannels.Data[0].Value = x;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[0], &g_BoardRuntimeConfig.DIOChannels.Data[0]);
-//#define DBG_DIO_0_TOG()        g_BoardRuntimeConfig.DIOChannels.Data[0].Value = !g_BoardRuntimeConfig.DIOChannels.Data[0].Value;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[0], &g_BoardRuntimeConfig.DIOChannels.Data[0]);
-//
-//
-//#define DBG_DIO_1_TRIS         g_BoardRuntimeConfig.DIOChannels.Data[1].IsInput = false;\
-//                               g_BoardRuntimeConfig.DIOChannels.Data[1].IsReadOnly = false;
-//#define DBG_DIO_1_SET(x)       g_BoardRuntimeConfig.DIOChannels.Data[1].Value = x;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[1], &g_BoardRuntimeConfig.DIOChannels.Data[1]);
-//#define DBG_DIO_1_TOG()        g_BoardRuntimeConfig.DIOChannels.Data[1].Value = !g_BoardRuntimeConfig.DIOChannels.Data[1].Value;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[1], &g_BoardRuntimeConfig.DIOChannels.Data[1]);
-//
-//
-//#define DBG_DIO_2_TRIS         g_BoardRuntimeConfig.DIOChannels.Data[2].IsInput = false;\
-//                               g_BoardRuntimeConfig.DIOChannels.Data[2].IsReadOnly = false;
-//#define DBG_DIO_2_SET(x)       g_BoardRuntimeConfig.DIOChannels.Data[2].Value = x;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[2], &g_BoardRuntimeConfig.DIOChannels.Data[2]);
-//#define DBG_DIO_2_TOG()        g_BoardRuntimeConfig.DIOChannels.Data[2].Value = !g_BoardRuntimeConfig.DIOChannels.Data[2].Value;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[2], &g_BoardRuntimeConfig.DIOChannels.Data[2]);
-//
-//#define DBG_DIO_3_TRIS         g_BoardRuntimeConfig.DIOChannels.Data[3].IsInput = false;\
-//                               g_BoardRuntimeConfig.DIOChannels.Data[3].IsReadOnly = false;
-//#define DBG_DIO_3_SET(x)       g_BoardRuntimeConfig.DIOChannels.Data[3].Value = x;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[3], &g_BoardRuntimeConfig.DIOChannels.Data[3]);
-//#define DBG_DIO_3_TOG()        g_BoardRuntimeConfig.DIOChannels.Data[3].Value = !g_BoardRuntimeConfig.DIOChannels.Data[3].Value;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[3], &g_BoardRuntimeConfig.DIOChannels.Data[3]);
-//
-//#define DBG_DIO_4_TRIS         g_BoardRuntimeConfig.DIOChannels.Data[4].IsInput = false;\
-//                               g_BoardRuntimeConfig.DIOChannels.Data[4].IsReadOnly = false;
-//#define DBG_DIO_4_SET(x)       g_BoardRuntimeConfig.DIOChannels.Data[4].Value = x;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[4], &g_BoardRuntimeConfig.DIOChannels.Data[4]);
-//#define DBG_DIO_4_TOG()        g_BoardRuntimeConfig.DIOChannels.Data[4].Value = !g_BoardRuntimeConfig.DIOChannels.Data[4].Value;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[4], &g_BoardRuntimeConfig.DIOChannels.Data[4]);
-//
-//#define DBG_DIO_5_TRIS         g_BoardRuntimeConfig.DIOChannels.Data[5].IsInput = false;\
-//                               g_BoardRuntimeConfig.DIOChannels.Data[5].IsReadOnly = false;
-//#define DBG_DIO_5_SET(x)       g_BoardRuntimeConfig.DIOChannels.Data[5].Value = x;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[5], &g_BoardRuntimeConfig.DIOChannels.Data[5]);
-//#define DBG_DIO_5_TOG()        g_BoardRuntimeConfig.DIOChannels.Data[5].Value = !g_BoardRuntimeConfig.DIOChannels.Data[5].Value;\
-//                               DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[5], &g_BoardRuntimeConfig.DIOChannels.Data[5]);
+#define TASK_ID_USB_STACK               0
+#define TASK_ID_TCPIP_STACK             1
+#define TASK_ID_NET_PRES                2
+#define TASK_ID_SYSTEM                  3
+#define TASK_ID_APP                     4
+#define TASK_ID_POWER_UI                5
+#define TASK_ID_ADC_DEFERRED_INT        6
+#define TASK_ID_STREAM_DEFERRED_INT     7  
+
 
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus

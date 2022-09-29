@@ -279,6 +279,8 @@ const DRV_TMR_INIT drvTmr2InitData =
     .interruptSource = DRV_TMR_INTERRUPT_SOURCE_IDX2,
     .asyncWriteEnable = false,
 };
+// <editor-fold defaultstate="collapsed" desc="DRV_USART Initialization Data">
+// </editor-fold>
 // <editor-fold defaultstate="collapsed" desc="DRV_USB Initialization Data">
 /******************************************************
  * USB Driver Initialization
@@ -1257,7 +1259,9 @@ void SYS_Initialize ( void* data )
     SYS_INT_VectorPrioritySet(INT_VECTOR_T7, INT_PRIORITY_LEVEL1);
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T7, INT_SUBPRIORITY_LEVEL0);
  
- 
+#if !defined __DEBUG
+    sysObj.drvUsart0 = DRV_USART_Initialize(DRV_USART_INDEX_0, (SYS_MODULE_INIT *)NULL);
+#endif
      /* RTCC System Service Initialization Call */
     sysObj.sysRtcc = SYS_RTCC_Initialize( );
     /* Initialize USB Driver */ 

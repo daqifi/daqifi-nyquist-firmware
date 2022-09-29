@@ -87,8 +87,8 @@ typedef struct s_UsbCdcData
     /** Client write buffer */
     uint8_t writeBuffer[USB_WBUFFER_SIZE] __attribute__((aligned(16)));
     
-    CircularBuf wCirbuf;
-    SemaphoreHandle_t wMutex;
+    CircularBuf streamCirbuf;
+    //SemaphoreHandle_t wMutex;
 } UsbCdcData;
 
 #ifdef	__cplusplus

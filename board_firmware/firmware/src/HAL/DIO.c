@@ -69,7 +69,7 @@ bool DIO_ReadSampleByMask(DIOSample* sample, const DIOArray* boardConfig, DIORun
 {
     sample->Mask = mask;
     sample->Values = 0;
-    sample->Timestamp = DRV_TMR_CounterValueGet(g_BoardRuntimeConfig.StreamingConfig.TSTimerHandle);  // Set module trigger timestamp
+    sample->Timestamp = xTaskGetTickCount();//DRV_TMR_CounterValueGet(g_BoardRuntimeConfig.StreamingConfig.TSTimerHandle);  // Set module trigger timestamp
     
     size_t i=0;
     for (i=0; i<runtimeConfig->Size; ++i)
