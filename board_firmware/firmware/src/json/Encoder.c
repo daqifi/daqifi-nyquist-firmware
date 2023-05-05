@@ -4,7 +4,7 @@
 #include "state/data/BoardData.h"
 #include "Util/StringFormatters.h"
 
-size_t Json_Encode(BoardData* state, NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen)
+size_t Json_Encode(tBoardData* state, NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen)
 {
     const size_t TMP_MAX_LEN = 64;
     int tmpLen = 0;

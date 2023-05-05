@@ -32,8 +32,7 @@ extern "C" {
         /* Board partially powered. External power disabled. */         
         POWERED_UP_EXT_DOWN,
      } POWER_STATE;
-   
-   
+     
     typedef enum
      {      
         /* No power detected. */ 
@@ -49,7 +48,7 @@ extern "C" {
         /* 500mA USB power */
         USB_500MA_EXT_POWER,
      } EXT_POWER_SOURCE;
-
+     
     typedef struct sPowerConfig{
 
         PORTS_CHANNEL EN_Vref_Ch;
@@ -69,7 +68,7 @@ extern "C" {
        
        sBQ24297Config BQ24297Config;
 
-    } sPowerConfig;
+    } tPowerConfig;
 
     typedef struct sPowerData{
 
@@ -86,7 +85,7 @@ extern "C" {
        
        sBQ24297Data BQ24297Data;
 
-    } sPowerData;
+    } tPowerData;
     
     typedef struct sPowerWriteVars{
 
@@ -97,21 +96,22 @@ extern "C" {
        unsigned char EN_12V_Val;
        sBQ24297WriteVars BQ24297WriteVars;
 
-    } sPowerWriteVars;
+    } tPowerWriteVars;
     
-    void Power_Init(sPowerConfig config, sPowerData *data, sPowerWriteVars vars);
-    void Power_Update_Settings(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars);
-    void Power_USB_Sleep_Update(sPowerConfig config, sPowerData *data, bool connected);
-    void Power_Write(sPowerConfig config, sPowerWriteVars *vars);
-    void Power_Up(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars);
-    void Power_Down(sPowerConfig configs, sPowerData *data, sPowerWriteVars *vars);
-    void Power_UpdateState(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars);
-    void Power_UpdateChgPct(sPowerData *data);
-    void Power_Tasks(sPowerConfig PowerConfig, sPowerData *PowerData, sPowerWriteVars *powerVars);
+    void Power_Init(tPowerConfig config, tPowerData *data, tPowerWriteVars vars);
+    void Power_Update_Settings(tPowerConfig config, tPowerData *data, tPowerWriteVars *vars);
+    void Power_USB_Sleep_Update(tPowerConfig config, tPowerData *data, bool connected);
+    void Power_Write(tPowerConfig config, tPowerWriteVars *vars);
+    void Power_Up(tPowerConfig config, tPowerData *data, tPowerWriteVars *vars);
+    void Power_Down(tPowerConfig configs, tPowerData *data, tPowerWriteVars *vars);
+    void Power_UpdateState(tPowerConfig config, tPowerData *data, tPowerWriteVars *vars);
+    void Power_UpdateChgPct(tPowerData *data);
+    void Power_Tasks(tPowerConfig PowerConfig, tPowerData *PowerData, tPowerWriteVars *powerVars);
     
 #ifdef	__cplusplus
 }
 #endif
 
 #endif	/* POWERAPI_H */
+
 

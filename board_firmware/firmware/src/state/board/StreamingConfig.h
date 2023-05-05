@@ -31,7 +31,7 @@ extern "C" {
          * The timestamp timer intent
          */
         DRV_IO_INTENT TSTimerIntent;
-    } StreamingConfig;
+    } tStreamingConfig;
 
 
 #ifdef	__cplusplus

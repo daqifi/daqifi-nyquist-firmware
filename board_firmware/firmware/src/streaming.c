@@ -45,7 +45,7 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
     inHandler = false;
 }
 
-void Streaming_Init(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
+void Streaming_Init(const tStreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
 {
     // Initialize sample trigger timer
     runtimeConfig->TimerHandle = DRV_TMR_Open(config->TimerIndex, config->TimerIntent);
@@ -58,7 +58,7 @@ void Streaming_Init(const StreamingConfig* config, StreamingRuntimeConfig* runti
     runtimeConfig->Running = false;
 }
 
-void Streaming_Start(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
+void Streaming_Start(const tStreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
 {
     UNUSED(config);
    
@@ -77,7 +77,7 @@ void Streaming_Start(const StreamingConfig* config, StreamingRuntimeConfig* runt
     
 }
 
-void Streaming_Stop(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
+void Streaming_Stop(const tStreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
 {
     UNUSED(config);
     if (runtimeConfig->Running)
@@ -89,7 +89,7 @@ void Streaming_Stop(const StreamingConfig* config, StreamingRuntimeConfig* runti
     DRV_TMR_CounterValue32BitSet(runtimeConfig->TimerHandle, 0);
 }
 
-void Streaming_UpdateState(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig)
+void Streaming_UpdateState(const tBoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig)
 {
     Streaming_Stop(&boardConfig->StreamingConfig, &runtimeConfig->StreamingConfig);
     
@@ -104,7 +104,7 @@ void Streaming_UpdateState(const BoardConfig* boardConfig, BoardRuntimeConfig* r
     Streaming_Start(&boardConfig->StreamingConfig, &runtimeConfig->StreamingConfig);
 }
     
-void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, BoardData* boardData)
+void Streaming_Tasks(const tBoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, tBoardData* boardData)
 {
     if (!runtimeConfig->StreamingConfig.IsEnabled)
     {
@@ -234,7 +234,7 @@ void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtime
     
 }
 
-void TimestampTimer_Init(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
+void TimestampTimer_Init(const tStreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
 {
     // Initialize and start timestamp timer
     // This is a free running timer used for reference - this doesn't interrupt or callback

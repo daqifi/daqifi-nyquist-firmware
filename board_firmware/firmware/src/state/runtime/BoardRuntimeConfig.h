@@ -45,9 +45,9 @@ extern "C" {
          */
         AInRuntimeArray AInChannels;
                 
-        sPowerWriteVars PowerWriteVars;
+        tPowerWriteVars PowerWriteVars;
         
-        sUIWriteVars UIWriteVars;
+        tUIWriteVars UIWriteVars;
         
         StreamingRuntimeConfig StreamingConfig;
         

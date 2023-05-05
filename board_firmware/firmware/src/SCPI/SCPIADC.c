@@ -20,6 +20,9 @@
 scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
 {
     int channel;
+    AInSample *pAInLatest; 
+    uint32_t *pAInLatestSize;
+    
     if (SCPI_ParamInt32(context, &channel, FALSE))
     {
         // Get single
@@ -35,23 +38,35 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
             SCPI_ResultDouble(context, 0.0);
             return SCPI_RES_OK;
         }
-        val = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[index]);
+        pAInLatest = BoardData_Get(                                         \
+                BOARDDATA_AIN_LATEST,                                       \
+                index );  
+        
+        val = ADC_ConvertToVoltage(pAInLatest);
         SCPI_ResultDouble(context, val);
     }
     else
     {
         // Get all
-        
         size_t i=0;
-        for (i=0; i<g_BoardData.AInLatest.Size; ++i)
+        
+        pAInLatestSize = BoardData_Get(                                     \
+                BOARDDATA_AIN_LATEST_SIZE,                                  \
+                0 );   
+        
+        for (i=0; i<*pAInLatestSize; ++i)
         {
-            if (!g_BoardRuntimeConfig.AInChannels.Data[i].IsEnabled || g_BoardData.AInLatest.Data[i].Timestamp < 1)
+            pAInLatest = BoardData_Get(                                     \
+                BOARDDATA_AIN_LATEST,                                       \
+                i ); 
+            
+            if (!g_BoardRuntimeConfig.AInChannels.Data[i].IsEnabled || pAInLatest->Timestamp < 1)
             {
                 SCPI_ResultDouble(context, 0.0);
             }
             else
             {
-                SCPI_ResultDouble(context, g_BoardData.AInLatest.Data[i].Value);
+                SCPI_ResultDouble(context, pAInLatest->Value);
             }
         }
     }
@@ -174,6 +189,8 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context)
 
 scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
 {
+    
+    uint32_t *pAInLatestSize; 
     int param1, param2;
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
@@ -193,8 +210,12 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
     }
     else
     {
+        pAInLatestSize = BoardData_Get(                                     \
+                BOARDDATA_AIN_LATEST_SIZE,                                  \
+                0 ); 
+        
         size_t i=0;
-        for (i=0; i<g_BoardData.AInLatest.Size; ++i)
+        for (i=0; i<&pAInLatestSize; ++i)
         {
             g_BoardRuntimeConfig.AInChannels.Data[i].IsDifferential = (param2 & (1 << i)) == 0;
         }
@@ -213,6 +234,7 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
 scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context)
 {
     int param1;
+    uint32_t *pAInLatestSize; 
     if (SCPI_ParamInt32(context, &param1, FALSE))
     {
         // Single channel
@@ -235,7 +257,11 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context)
     {
         uint32_t mask = 0;
         size_t i=0;
-        for (i=0; i<g_BoardData.AInLatest.Size; ++i)
+        
+        pAInLatestSize = BoardData_Get(                                     \
+                BOARDDATA_AIN_LATEST_SIZE,                                  \
+                0 ); 
+        for (i=0; i<&pAInLatestSize; ++i)
         {
             if (!g_BoardRuntimeConfig.AInChannels.Data[i].IsDifferential)
             {

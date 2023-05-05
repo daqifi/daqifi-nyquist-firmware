@@ -18,17 +18,17 @@ extern "C" {
     /**
      * Updates the state of a single module
      */
-    bool ADC_WriteModuleState(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t moduleId, POWER_STATE powerState);
+    bool ADC_WriteModuleState(const tBoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t moduleId, POWER_STATE powerState);
     
     /**
      * Sets the state for all ADC channels
      */
-    bool ADC_WriteChannelStateAll(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig);
+    bool ADC_WriteChannelStateAll(const tBoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig);
     
     /**
      * Updates the state for a single ADC channel
      */
-    bool ADC_WriteChannelStateSingle(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t channelId);
+    bool ADC_WriteChannelStateSingle(const tBoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, size_t channelId);
     
     /**
      * Populates the sample array using data in the board config
@@ -75,7 +75,7 @@ extern "C" {
      * @param runtimeConfig The runtime config to use
      * @param powerState The power state of the board
      */
-    void ADC_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, BoardData* boardData);
+    void ADC_Tasks(const tBoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, tBoardData* boardData);
     
     /**
      * Locates an index for the given channel id

@@ -9,7 +9,7 @@
 #define BATT_LOW_TH 10.0 // 10% or ~3.2V
 #define BATT_LOW_HYST 10.0 // Battery must be charged at least this value higher than BATT_LOW_TH
 
-void Power_Init(sPowerConfig config, sPowerData *data, sPowerWriteVars vars)
+void Power_Init(tPowerConfig config, tPowerData *data, tPowerWriteVars vars)
 {
     // NOTE: This is called before the RTOS is running.  Don't call any RTOS functions here!
     BQ24297_InitHardware(config.BQ24297Config, vars.BQ24297WriteVars, &(data->BQ24297Data));
@@ -21,7 +21,7 @@ void Power_Init(sPowerConfig config, sPowerData *data, sPowerWriteVars vars)
     PLIB_PORTS_PinWrite(PORTS_ID_0, config.EN_Vref_Ch, config.EN_Vref_Bit, vars.EN_Vref_Val);
 }
 
-void Power_Write(sPowerConfig config, sPowerWriteVars *vars)
+void Power_Write(tPowerConfig config, tPowerWriteVars *vars)
 {    
     // Current power state values
 
@@ -57,7 +57,7 @@ void Power_Write(sPowerConfig config, sPowerWriteVars *vars)
 
 }
 
-void Power_Up(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars)
+void Power_Up(tPowerConfig config, tPowerData *data, tPowerWriteVars *vars)
 {
     //uint32_t achievedFrequencyHz=0;
     
@@ -70,7 +70,7 @@ void Power_Up(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars)
     
 
     // If the battery management is not enabled, wait for it to become ready
-    while(!data->BQ24297Data.initComplete) vTaskDelay(10 / portTICK_PERIOD_MS);   
+    while(!data->BQ24297Data.initComplete) vTaskDelay(100 / portTICK_PERIOD_MS);   
     
     // Enable processor to run at full speed
     SYS_INT_Disable();
@@ -172,7 +172,7 @@ void Power_Up(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars)
 
 }
 
-void Power_Down(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars)
+void Power_Down(tPowerConfig config, tPowerData *data, tPowerWriteVars *vars)
 {
     // Set 3.3V Enable Pin as input
     PLIB_PORTS_PinDirectionInputSet(PORTS_ID_0, config.EN_3_3V_Ch, config.EN_3_3V_Bit);
@@ -209,7 +209,7 @@ void Power_Down(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars)
 }
 
 
-void Power_UpdateState(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars)
+void Power_UpdateState(tPowerConfig config, tPowerData *data, tPowerWriteVars *vars)
 {
     switch(data->powerState){
             
@@ -232,8 +232,6 @@ void Power_UpdateState(sPowerConfig config, sPowerData *data, sPowerWriteVars *v
             {
                 Power_Up(config, data, vars);
                 data->powerState = POWERED_UP;
-                vTaskDelay(100 / portTICK_PERIOD_MS);   // Allow systems to initialize before allowing state machine to switch
-                
             }else
             {
                 // Otherwise insufficient power.  Notify user and power down
@@ -288,7 +286,7 @@ void Power_UpdateState(sPowerConfig config, sPowerData *data, sPowerWriteVars *v
  
 }
 
-void Power_UpdateChgPct(sPowerData *data)
+void Power_UpdateChgPct(tPowerData *data)
 {
     size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VBATT);
     // TODO: Add data validation without blocking
@@ -296,7 +294,14 @@ void Power_UpdateChgPct(sPowerData *data)
 //    {
 //        vTaskDelay(100 / portTICK_PERIOD_MS);
 //    }
-    data->battVoltage = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[index]);
+    //data->battVoltage = ADC_ConvertToVoltage(&g_BoardData.AInLatest.Data[index]);
+    
+    const AInSample *pAnalogSample = BoardData_Get(                         \
+                  BOARDDATA_AIN_LATEST,                                     \
+                  index );
+    if( NULL != pAnalogSample ){
+        data->battVoltage = ADC_ConvertToVoltage( pAnalogSample );
+    }
 
     // Function below is defined from 3.17-3.868.  Must coerce input value to within these bounds.
     if(data->battVoltage<3.17)
@@ -310,7 +315,7 @@ void Power_UpdateChgPct(sPowerData *data)
     }
 }
 
-void Power_Tasks(sPowerConfig PowerConfig, sPowerData *PowerData, sPowerWriteVars *powerWriteVars)
+void Power_Tasks(tPowerConfig PowerConfig, tPowerData *PowerData, tPowerWriteVars *powerWriteVars)
 {
     // If we haven't initialized the battery management settings, do so now
     if (PowerData->BQ24297Data.initComplete == false)
@@ -331,7 +336,7 @@ void Power_Tasks(sPowerConfig PowerConfig, sPowerData *PowerData, sPowerWriteVar
          * -On temperature fault
          * -Safety timer timeout
          */
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
         // Update battery management status - plugged in (USB, charger, etc), charging/discharging, etc.
         BQ24297_UpdateStatus(PowerConfig.BQ24297Config, powerWriteVars->BQ24297WriteVars, &(PowerData->BQ24297Data));
         Power_Update_Settings(PowerConfig, PowerData, powerWriteVars);
@@ -344,7 +349,7 @@ void Power_Tasks(sPowerConfig PowerConfig, sPowerData *PowerData, sPowerWriteVar
     Power_UpdateState(PowerConfig, PowerData, powerWriteVars);
 }
 
-void Power_Update_Settings(sPowerConfig config, sPowerData *data, sPowerWriteVars *vars)
+void Power_Update_Settings(tPowerConfig config, tPowerData *data, tPowerWriteVars *vars)
 {
     // Change charging/other power settings based on current status
        
@@ -355,7 +360,7 @@ void Power_Update_Settings(sPowerConfig config, sPowerData *data, sPowerWriteVar
     BQ24297_ChargeEnable(config.BQ24297Config, &vars->BQ24297WriteVars, &data->BQ24297Data, data->BQ24297Data.status.batPresent);
 }
 
-void Power_USB_Sleep_Update(sPowerConfig config, sPowerData *data, bool sleep)
+void Power_USB_Sleep_Update(tPowerConfig config, tPowerData *data, bool sleep)
 {
     data->USBSleep = sleep;
 }

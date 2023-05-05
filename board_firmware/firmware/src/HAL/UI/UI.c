@@ -22,7 +22,7 @@
 #define BUTTON_POWER_OFF_TH (1000/UI_TASK_CALLING_PRD)  //  ~1 second
 
 
-void Button_Tasks(sUIConfig config, sUIReadVars *UIReadVars, sPowerData *PowerData)
+void Button_Tasks(tUIConfig config, tUIReadVars *UIReadVars, tPowerData *PowerData)
 {
     static uint16_t buttonPressCount = 0;   // Number of times the function has consecutively detected a button press
     static bool oneShot = false;    // One shot variable to ensure only action is performed if the user holds the button for a long period of time
@@ -33,7 +33,6 @@ void Button_Tasks(sUIConfig config, sUIReadVars *UIReadVars, sPowerData *PowerDa
     {
         buttonPressCount++;
         switch(PowerData->powerState){
-            case FRESH_BOOT:
             case MICRO_ON:
                 if((buttonPressCount > BUTTON_POWER_ON_TH) && !oneShot)
                 {
@@ -65,7 +64,7 @@ void Button_Tasks(sUIConfig config, sUIReadVars *UIReadVars, sPowerData *PowerDa
      
 }
 
-void LED_Tasks(sUIConfig config, sPowerData *PowerData, sUIReadVars *UIReadVars, bool streamingFlag)
+void LED_Tasks(tUIConfig config, tPowerData *PowerData, tUIReadVars *UIReadVars, bool streamingFlag)
 {
     static uint16_t sequenceNum = 0;
     static int8_t currentPattern = 0;
@@ -107,9 +106,8 @@ void LED_Tasks(sUIConfig config, sPowerData *PowerData, sUIReadVars *UIReadVars,
         repeatSeqNum = 0;
         sequenceNum = 0;
         currentPattern = 0; 
-        PowerData->powerDnAllowed = true;    // TODO: This should remain false until we've signaled to the user we are going down for any reason other than button power off
     }
-    // If we are directed to power up, turn on LED
+    // If we are directed to power down, turn on LED
     else if(PowerData->powerState == DO_POWER_UP){
         repeatSeq = 0;
         repeatSeqNum = 0;

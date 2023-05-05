@@ -333,7 +333,7 @@ int Nanopb_EncodeLength(const NanopbFlagsArray* fields)
     return len;
 }
 
-size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen)
+size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen)
 {
     // If we cannot encode a whole message, bail out
     if (bufferLen < Nanopb_EncodeLength(fields)) return 0;

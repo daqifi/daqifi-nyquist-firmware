@@ -2,7 +2,7 @@
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
-const BoardConfig g_NQ2BoardConfig = {
+const tBoardConfig g_NQ2BoardConfig = {
     .BoardVariant = 3,
     .DIOChannels = {
         .Data = {

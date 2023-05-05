@@ -12,7 +12,7 @@ extern "C" {
      * Encodes board data as JSON
      * @return 
      */
-    size_t Json_Encode(BoardData* state, NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen);
+    size_t Json_Encode(tBoardData* state, NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen);
 
 #ifdef	__cplusplus
 }

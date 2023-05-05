@@ -284,13 +284,21 @@ scpi_result_t SCPI_Help(scpi_t* context);
 static scpi_result_t SCPI_SysInfoGet(scpi_t * context)
 {
     int param1;
+    tBoardData * pBoardData = BoardData_Get(                                \
+                    BOARDDATA_ALL_DATA,                              \
+                    0 ); 
+    
     if (!SCPI_ParamInt32(context, &param1, FALSE))
     {
         param1=0;
     }
     
     uint8_t buffer[DaqifiOutMessage_size];
-    size_t count = Nanopb_Encode(&g_BoardData, (const NanopbFlagsArray *)&fields_info, buffer, (size_t)DaqifiOutMessage_size);
+    size_t count = Nanopb_Encode(                                           \
+                        pBoardData,                                         \
+                        (const NanopbFlagsArray *)&fields_info,             \
+                        buffer,                                             \
+                        (size_t)DaqifiOutMessage_size);
     if (count < 1)
     {
         return SCPI_RES_ERR;
@@ -330,7 +338,10 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context)
  */
 static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardData.PowerData.externalPowerSource);
+    tPowerData *pPowerData = BoardData_Get(                                 \
+                        BOARDATA_POWER_DATA,                                \
+                        0 );
+    SCPI_ResultInt32(context, (int)(pPowerData->externalPowerSource));
     return SCPI_RES_OK;
 }
 
@@ -341,7 +352,10 @@ static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context)
  */
 static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardData.PowerData.chargePct);
+    tPowerData *pPowerData = BoardData_Get(                                 \
+                        BOARDATA_POWER_DATA,                                \
+                        0 );
+    SCPI_ResultInt32(context, (int)(pPowerData->chargePct));
     return SCPI_RES_OK;
 }
 
@@ -352,7 +366,10 @@ static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context)
  */
 static scpi_result_t SCPI_GetPowerState(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardData.PowerData.powerState);
+    tPowerData *pPowerData = BoardData_Get(                                 \
+                        BOARDATA_POWER_DATA,                                \
+                        0 );
+    SCPI_ResultInt32(context, (int)(pPowerData->powerState));
     return SCPI_RES_OK;
 }
 
@@ -364,6 +381,12 @@ static scpi_result_t SCPI_GetPowerState(scpi_t * context)
 static scpi_result_t SCPI_SetPowerState(scpi_t * context)
 {
     int param1;
+    
+    
+    tPowerData * pPowerData = BoardData_Get(                                \
+                            BOARDATA_POWER_DATA,                            \
+                            0 );
+    
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -371,11 +394,19 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context)
     
     if (param1 != 0)
     {
-        g_BoardData.PowerData.powerState = DO_POWER_UP;
+        pPowerData->powerState = DO_POWER_UP;
+        BoardData_Set(                                                      \
+                            BOARDATA_POWER_DATA,                            \
+                            0,                                              \
+                            pPowerData );
     }
     else
-    {
-        g_BoardData.PowerData.powerState = DO_POWER_DOWN;
+    {     
+        pPowerData->powerState = DO_POWER_DOWN;
+        BoardData_Set(                                                      \
+                            BOARDATA_POWER_DATA,                            \
+                            0,                                              \
+                            pPowerData );
     }
     
     return SCPI_RES_OK;

@@ -21,7 +21,7 @@ extern "C" {
      * @param bufferLen The size of the buffer
      * @return The number of bytes written to the buffer
      */
-    size_t Nanopb_Encode(BoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen);
+    size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen);
 
     /**
      * Decodes the the nanopb format into the system settings object
