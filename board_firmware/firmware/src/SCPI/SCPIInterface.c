@@ -225,18 +225,23 @@ const NanopbFlagsArray fields_discovery = {
  */
 static microrl_t* SCPI_GetMicroRLClient(scpi_t* context)
 {
+    UsbCdcData * pRunTimeUsbSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_USB_SETTINGS);
     
-    if (&g_BoardRuntimeConfig.usbSettings.scpiContext == context)
+    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(          \
+                        BOARDRUNTIME_SERVER_DATA);
+    
+    if (&pRunTimeUsbSettings->scpiContext == context)
         {
-             return &g_BoardRuntimeConfig.usbSettings.console;
+             return &pRunTimeUsbSettings->console;
         }
     
     uint8_t i = 0;
     for (i=0; i<WIFI_MAX_CLIENT; ++i)
     {
-        if (&g_BoardRuntimeConfig.serverData.clients[i].scpiContext == context)
+        if (&pRunTimeServerData->clients[i].scpiContext == context)
         {
-             return &g_BoardRuntimeConfig.serverData.clients[i].console;
+             return &pRunTimeServerData->clients[i].console;
         }
     }
     return NULL;
@@ -432,14 +437,29 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context)
 static scpi_result_t SCPI_StartStreaming(scpi_t * context)
 {
     int32_t freq;
-    uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(g_BoardRuntimeConfig.StreamingConfig.TimerHandle);  // timer running frequency
+    
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0 );
+    
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
+                        BOARDRUNTIMECONFIG_ALL_CONFIG);
+    
+     // timer running frequency
+    uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(                         \
+                        pRunTimeStreamConfig->TimerHandle); 
     
     if (SCPI_ParamInt32(context, &freq, FALSE))
     {
         if (freq >= 1 && freq <= 1000)///TODO: Test higher throughput
         {
-            g_BoardRuntimeConfig.StreamingConfig.ClockDivider = clkFreq / freq; // calculate the divider needed
-            g_BoardRuntimeConfig.StreamingConfig.TSClockDivider = 0xFFFFFFFF; // Set timer to maximum period
+            // calculate the divider needed
+            pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
+            // Set timer to maximum period
+            pRunTimeStreamConfig->TSClockDivider = 0xFFFFFFFF; 
         }
         else
         {
@@ -451,29 +471,46 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context)
         //No freq given just stream with the current value
     }
     
-    Streaming_UpdateState(&g_BoardConfig, &g_BoardRuntimeConfig);
-    g_BoardRuntimeConfig.StreamingConfig.IsEnabled = true;
+    Streaming_UpdateState(pBoardConfig, pBoardRuntimeConfig);
+    pRunTimeStreamConfig->IsEnabled = true;
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_StopStreaming(scpi_t * context)
 {
-    g_BoardRuntimeConfig.StreamingConfig.IsEnabled = false;
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0 );
     
-    Streaming_UpdateState(&g_BoardConfig, &g_BoardRuntimeConfig);
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
+                        BOARDRUNTIMECONFIG_ALL_CONFIG);
+    
+    pRunTimeStreamConfig->IsEnabled = false;
+    
+    Streaming_UpdateState(pBoardConfig, pBoardRuntimeConfig);
     
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_IsStreaming(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardRuntimeConfig.StreamingConfig.IsEnabled);
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->IsEnabled);
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
 {
     int param1, param2;
+    
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -481,15 +518,15 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
     
     if (param1 == Streaming_ProtoBuffer)
     {
-        g_BoardRuntimeConfig.StreamingConfig.Encoding = Streaming_ProtoBuffer;
+        pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
     }
     else if(param1 == Streaming_Json)
     {
-        g_BoardRuntimeConfig.StreamingConfig.Encoding = Streaming_Json;
+        pRunTimeStreamConfig->Encoding = Streaming_Json;
     }
     else if(param1 == Streaming_TestData)
     {
-        g_BoardRuntimeConfig.StreamingConfig.Encoding = Streaming_TestData;
+        pRunTimeStreamConfig->Encoding = Streaming_TestData;
         
         if(SCPI_ParamInt32(context, &param2, FALSE) && (param2 <= 1000)){
             commTest.TestData_len = param2;
@@ -505,7 +542,10 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
 
 static scpi_result_t SCPI_GetStreamFormat(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardRuntimeConfig.StreamingConfig.Encoding);
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->Encoding);
     return SCPI_RES_OK;
 }
 
@@ -599,7 +639,11 @@ scpi_result_t SCPI_ForceBootloader(scpi_t * context)
 
 scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
 {
-    SCPI_ResultUInt64Base(context, g_BoardConfig.boardSerialNumber, 16);
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0 );
+    
+    SCPI_ResultUInt64Base(context, pBoardConfig->boardSerialNumber, 16);
     return SCPI_RES_OK;
 }
 

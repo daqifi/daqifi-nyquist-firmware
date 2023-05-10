@@ -4,7 +4,11 @@
 
 void Delay(const uint32_t ticks)
 {
-    if (g_BoardData.InISR > 0)
+    int * pBoardDataInISR = BoardData_Get(                                  \
+                            BOARDDATA_IN_ISR,                               \
+                            0); 
+        
+    if (*pBoardDataInISR > 0)
     {
         uint32_t i;
         for (i=0; i < ticks; ++i)

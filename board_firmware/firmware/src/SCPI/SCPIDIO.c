@@ -193,19 +193,24 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
 
 scpi_result_t SCPI_GPIOEnableSet(scpi_t * context)
 {
+    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(                \
+                        BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    bool enable = false; 
     int param1;
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
     }
-    
-    g_BoardRuntimeConfig.DIOGlobalEnable = param1>0;
+    enable = param1>0;
+    memcpy(pRunTimeDIOGlobalEnable, &enable, sizeof(bool));
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_GPIOEnableGet(scpi_t * context)
 {
-    SCPI_ResultInt32(context, g_BoardRuntimeConfig.DIOGlobalEnable);
+    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(                \
+                        BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    SCPI_ResultInt32(context, *pRunTimeDIOGlobalEnable);
     return SCPI_RES_OK;
 }
 
@@ -215,13 +220,22 @@ scpi_result_t SCPI_GPIOEnableGet(scpi_t * context)
 
 static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
 {
-    if ( id > g_BoardRuntimeConfig.DIOChannels.Size)
+    AInChannel * pBoardConfigDIOChannel = BoardConfig_Get(                  \
+                            BOARDCONFIG_DIO_CHANNEL,                        \
+                            id );
+    
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    if ( id > pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
     
-    g_BoardRuntimeConfig.DIOChannels.Data[id].IsInput = isInput;
-    if (!DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[id], &g_BoardRuntimeConfig.DIOChannels.Data[id]))
+    pRunTimeDIOChannels->Data[id].IsInput = isInput;
+    if (!DIO_WriteStateSingle(                                              \
+                        pBoardConfigDIOChannel, 
+                        &pRunTimeDIOChannels->Data[id]))
     {
         return SCPI_RES_ERR;
     }
@@ -233,7 +247,12 @@ static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask)
 {
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
-    for (i=0; i<g_BoardRuntimeConfig.DIOChannels.Size; ++i) // Obviously, this breaks down if we have more than 32 channels
+    
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    // Obviously, this breaks down if we have more than 32 channels
+    for (i=0; i<pRunTimeDIOChannels->Size; ++i) 
     {
         bool isInput = (mask & (1 << i));
         if (SCPI_GPIOSingleDirectionSet(i, isInput) == SCPI_RES_ERR)
@@ -247,22 +266,29 @@ static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask)
 
 static scpi_result_t SCPI_GPIOSingleDirectionGet(uint8_t id, bool* result)
 {
-    if ( id > g_BoardRuntimeConfig.DIOChannels.Size)
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    if ( id > pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
     
-    (*result)=!g_BoardRuntimeConfig.DIOChannels.Data[id].IsInput;
+    (*result)=!pRunTimeDIOChannels->Data[id].IsInput;
 
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_GPIOMultiDirectionGet(uint32_t* mask)
 {
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
     scpi_result_t result = SCPI_RES_OK;
     (*mask) = 0;
     int i;
-    for (i=0; i<g_BoardRuntimeConfig.DIOChannels.Size; ++i) // Obviously, this breaks down if we have more than 32 channels
+    // Obviously, this breaks down if we have more than 32 channels
+    for (i=0; i<pRunTimeDIOChannels->Size; ++i) 
     {
         bool channelResult;
         if (SCPI_GPIOSingleDirectionGet(i, &channelResult) == SCPI_RES_ERR)
@@ -283,13 +309,22 @@ static scpi_result_t SCPI_GPIOMultiDirectionGet(uint32_t* mask)
 
 static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
 {
-    if ( id > g_BoardRuntimeConfig.DIOChannels.Size)
+    AInChannel * pBoardConfigDIOChannel = BoardConfig_Get(                 \
+                            BOARDCONFIG_DIO_CHANNEL,                       \
+                            id );
+    
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    if ( id > pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
     
-    g_BoardRuntimeConfig.DIOChannels.Data[id].Value = value;
-    if (!DIO_WriteStateSingle(&g_BoardConfig.DIOChannels.Data[id], &g_BoardRuntimeConfig.DIOChannels.Data[id]))
+    pRunTimeDIOChannels->Data[id].Value = value;
+    if (!DIO_WriteStateSingle(                                              \
+                        pBoardConfigDIOChannel,                             \
+                        &pRunTimeDIOChannels->Data[id]))
     {
         return SCPI_RES_ERR;
     }
@@ -301,7 +336,12 @@ static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
 {
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
-    for (i=0; i<g_BoardRuntimeConfig.DIOChannels.Size; ++i) // Obviously, this breaks down if we have more than 32 channels
+    
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    // Obviously, this breaks down if we have more than 32 channels
+    for (i=0; i<pRunTimeDIOChannels->Size; ++i) 
     {
         bool value = (mask & (1 << i));
         if (SCPI_GPIOSingleStateSet(i, value) == SCPI_RES_ERR)
@@ -315,14 +355,25 @@ static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
 
 static scpi_result_t SCPI_GPIOSingleStateGet(uint8_t id, bool* result)
 {
-    if ( id > g_BoardRuntimeConfig.DIOChannels.Size)
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0 );
+    
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    if ( id > pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
     
     DIOSample sample;
     uint32_t mask = (1 << id);
-    if (!DIO_ReadSampleByMask(&sample, &g_BoardConfig.DIOChannels, &g_BoardRuntimeConfig.DIOChannels, mask))
+    if (!DIO_ReadSampleByMask(                                              \
+                        &sample,                                            \
+                        &pBoardConfig->DIOChannels,                         \
+                        pRunTimeDIOChannels,                                \
+                        mask))
     {
         return SCPI_RES_ERR;
     }
@@ -336,7 +387,17 @@ static scpi_result_t SCPI_GPIOMultiStateGet(uint32_t* result)
     (*result) = 0;
     uint32_t channelMask = 0xFFFFFFFF;
     DIOSample sample;
-    if (!DIO_ReadSampleByMask(&sample, &g_BoardConfig.DIOChannels, &g_BoardRuntimeConfig.DIOChannels, channelMask))
+    
+    tBoardConfig * pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG,0);
+    
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    if (!DIO_ReadSampleByMask(                                              \
+                        &sample,                                            \
+                        &pBoardConfig->DIOChannels,                         \
+                        pRunTimeDIOChannels,                                \
+                        channelMask))
     {
         return SCPI_RES_ERR;
     }

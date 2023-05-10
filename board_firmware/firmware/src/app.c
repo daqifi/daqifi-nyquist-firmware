@@ -170,6 +170,17 @@ unsigned long runTimeStatsTimer89_counter(void)
  */
 void APP_Initialize(void)
 {
+    tBoardData * pBoardData = BoardData_Get(                                \
+                            BOARDDATA_ALL_DATA,                             \
+                            0);
+    
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0);
+    
+    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
+                            BOARDRUNTIMECONFIG_ALL_CONFIG);
+    
 	force_bootloader_flag = 0;    // Reset force bootloader flag
     
     DaqifiSettings tmpTopLevelSettings;
@@ -191,7 +202,7 @@ void APP_Initialize(void)
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
-    InitializeBoardData(&g_BoardData);
+    InitializeBoardData(pBoardData);
     
     // Try to load WiFiSettings from NVM - if this fails, store default settings to NVM (first run after a program)
     DaqifiSettings tmpWifiSettings;
@@ -206,26 +217,51 @@ void APP_Initialize(void)
         SaveNvmSettings(&tmpWifiSettings);
     }
     // Move temp variable to global variables
-    memcpy(&g_BoardRuntimeConfig.wifiSettings.settings.wifi, &tmpWifiSettings.settings.wifi, sizeof(WifiSettings));
-    memcpy(&g_BoardData.wifiSettings.settings.wifi, &tmpWifiSettings.settings.wifi, sizeof(WifiSettings));
+    memcpy(             &pBoardRuntimeConfig->wifiSettings.settings.wifi,   \
+                        &tmpWifiSettings.settings.wifi,                     \
+                        sizeof(WifiSettings));
+    memcpy(             &pBoardData->wifiSettings.settings.wifi,            \
+                        &tmpWifiSettings.settings.wifi,                     \
+                        sizeof(WifiSettings));
         
     // Load factory calibration parameters - if they are not initialized, store them (first run after a program)
-    if(!LoadADCCalSettings(DaqifiSettings_FactAInCalParams, &g_BoardRuntimeConfig.AInChannels)) SaveADCCalSettings(DaqifiSettings_FactAInCalParams, &g_BoardRuntimeConfig.AInChannels);
+    if(!LoadADCCalSettings(                                                 \
+                        DaqifiSettings_FactAInCalParams,                    \
+                        &pBoardRuntimeConfig->AInChannels)) 
+    {
+        SaveADCCalSettings(                                                 \
+                        DaqifiSettings_FactAInCalParams,                    \
+                        &pBoardRuntimeConfig->AInChannels);
+    }
     // If calVals has been set to 1 (user cal params), overwrite with user calibration parameters
-    if(tmpTopLevelSettings.settings.topLevelSettings.calVals) LoadADCCalSettings(DaqifiSettings_UserAInCalParams, &g_BoardRuntimeConfig.AInChannels);
-
+    if(tmpTopLevelSettings.settings.topLevelSettings.calVals)
+    {
+        LoadADCCalSettings(                                                 \
+                        DaqifiSettings_UserAInCalParams,                    \
+                        &pBoardRuntimeConfig->AInChannels);
+    }
  	// Power initialization - enables 3.3V rail by default - other power functions are in power task
-    Power_Init(g_BoardConfig.PowerConfig, &g_BoardData.PowerData, g_BoardRuntimeConfig.PowerWriteVars);
+    Power_Init(             pBoardConfig->PowerConfig,                      \
+                            &pBoardData->PowerData,                         \
+                            pBoardRuntimeConfig->PowerWriteVars);
     
     // Init DIO Hardware
-    DIO_InitHardware(&g_BoardConfig.DIOChannels);
+    DIO_InitHardware(&pBoardConfig->DIOChannels);
     
 	// Write initial values
-    DIO_WriteStateAll(&g_BoardConfig.DIOChannels, &g_BoardRuntimeConfig.DIOChannels);
+    DIO_WriteStateAll(  &pBoardConfig->DIOChannels,                         \
+                        &pBoardRuntimeConfig->DIOChannels);
    
-	TimestampTimer_Init(&g_BoardConfig.StreamingConfig, &g_BoardRuntimeConfig.StreamingConfig);
-    Streaming_Init(&g_BoardConfig.StreamingConfig, &g_BoardRuntimeConfig.StreamingConfig);
-    Streaming_UpdateState(&g_BoardConfig, &g_BoardRuntimeConfig);
+	TimestampTimer_Init(&pBoardConfig->StreamingConfig,                     \
+                        &pBoardRuntimeConfig->StreamingConfig);
+    Streaming_Init(     &pBoardConfig->StreamingConfig,                     \
+                        &pBoardRuntimeConfig->StreamingConfig);
+    Streaming_UpdateState(pBoardConfig, pBoardRuntimeConfig);   
+    
+    ADC_Init(                                                               \
+                pBoardConfig,                                               \
+                pBoardRuntimeConfig,                                        \
+                pBoardData );
 }
 
 
@@ -238,12 +274,23 @@ void APP_Initialize(void)
  */
 void APP_Tasks(void)
 {   
-    ADC_Tasks(&g_BoardConfig, &g_BoardRuntimeConfig, &g_BoardData);
+    tBoardData * pBoardData = BoardData_Get(                                \
+                            BOARDDATA_ALL_DATA,                             \
+                            0);
     
-    Streaming_Tasks(&g_BoardConfig, &g_BoardRuntimeConfig, &g_BoardData);
+    const tBoardConfig * pBoardConfig = BoardConfig_Get(                    \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0); 
+    
+    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
+                        BOARDRUNTIMECONFIG_ALL_CONFIG);
+    
+    ADC_Tasks();
+    
+    Streaming_Tasks(pBoardConfig, pBoardRuntimeConfig, pBoardData);
     
     // Don't do anything else until the board powers on
-    if (g_BoardData.PowerData.powerState == MICRO_ON)
+    if (pBoardData->PowerData.powerState == MICRO_ON)
     {
         return;
     }

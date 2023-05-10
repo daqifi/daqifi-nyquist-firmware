@@ -335,6 +335,17 @@ int Nanopb_EncodeLength(const NanopbFlagsArray* fields)
 
 size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen)
 {
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0 );
+    StreamingRuntimeConfig * pRuntimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION); 
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_AIN_CHANNELS);    
+    AInModRuntimeArray * pRuntimeAInModules = BoardRunTimeConfig_Get(       \
+                        BOARDRUNTIMECONFIG_AIN_MODULES);      
+    DIORuntimeArray * pRuntimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);     
     // If we cannot encode a whole message, bail out
     if (bufferLen < Nanopb_EncodeLength(fields)) return 0;
 
@@ -430,18 +441,20 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 break;
             case DaqifiOutMessage_timestamp_freq_tag:
                 message.has_timestamp_freq = true;
-                message.timestamp_freq = DRV_TMR_CounterFrequencyGet(g_BoardRuntimeConfig.StreamingConfig.TSTimerHandle);  // timestamp timer running frequency
+                // timestamp timer running frequency
+                message.timestamp_freq = DRV_TMR_CounterFrequencyGet(       \
+                        pRuntimeStreamConfig->TSTimerHandle);
 				break;
             case DaqifiOutMessage_analog_in_port_num_tag:
             {   
                 uint32_t x = 0;
                 message.has_analog_in_port_num = true;
                 message.analog_in_port_num = 0;
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
                     {
-                        if(g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic) message.analog_in_port_num ++;          //  and it is marked as public, count as public channel
+                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) message.analog_in_port_num ++;          //  and it is marked as public, count as public channel
                     }else
                     {
                         message.analog_in_port_num ++;     //  All other modules' channels are automatically public
@@ -454,11 +467,15 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t x = 0;
                 message.has_analog_in_port_num_priv = true;
                 message.analog_in_port_num_priv = 0;
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (the only type to have priv ch)
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (the only type to have priv ch)
                     {
-                        if(!g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic) message.analog_in_port_num_priv ++;         //  and it is marked as private, count as private channel
+                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)
+                        {
+                            //  and it is marked as private, count as private channel
+                            message.analog_in_port_num_priv ++;
+                        }
                     }
                 }  
             }
@@ -473,11 +490,15 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t x = 0;
                 uint32_t data = 0;
                 message.has_analog_in_port_rse = true;
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    data |= (g_BoardRuntimeConfig.AInChannels.Data[x].IsDifferential << x);
+                    data |=                                                 \
+                        (pRuntimeAInChannels->Data[x].IsDifferential << x);
                 }               
-                int2PBByteArray(data, (pb_bytes_array_t*)&message.analog_in_port_rse, sizeof(message.analog_in_port_rse.bytes));
+                int2PBByteArray(                                            \
+                            data,                                           \
+                            (pb_bytes_array_t*)&message.analog_in_port_rse, \
+                            sizeof(message.analog_in_port_rse.bytes));
 				break;
             }
             case DaqifiOutMessage_analog_in_port_enabled_tag:
@@ -485,17 +506,23 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t x = 0;
                 uint32_t data = 0;                
                 message.has_analog_in_port_enabled = true;
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    data |= (g_BoardRuntimeConfig.AInChannels.Data[x].IsEnabled << x);
+                    data |=                                                 \
+                    (pRuntimeAInChannels->Data[x].IsEnabled << x);
                 }     
-                int2PBByteArray(data, (pb_bytes_array_t*)&message.analog_in_port_enabled, sizeof(message.analog_in_port_enabled.bytes));
+                int2PBByteArray(                                            \
+                        data,                                               \
+                        (pb_bytes_array_t*)&message.analog_in_port_enabled, \
+                        sizeof(message.analog_in_port_enabled.bytes));
 				break;
             }
             case DaqifiOutMessage_analog_in_port_av_range_tag:
             {
                 // TODO: Make this work for cases besides Nq1
-                message.analog_in_port_av_range[0] = g_BoardRuntimeConfig.AInModules.Data[0].Range; //  Get available ranges for that module
+                //  Get available ranges for that module
+                message.analog_in_port_av_range[0] =                        \
+                        pRuntimeAInModules->Data[0].Range;
                 message.analog_in_port_av_range_count = 1;
                 break;
             }
@@ -509,20 +536,24 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through public channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
                     {
-                        if(g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
-                        {         
-                            message.analog_in_port_range[chan] = g_BoardRuntimeConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Range; //  Get range for that channel
+                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
+                        {   
+                            //  Get range for that channel
+                            message.analog_in_port_range[chan] =            \
+                            pRuntimeAInModules->Data[pBoardConfig->AInChannels.Data[x].DataModule].Range;
                             chan ++; 
 
                         }
                     }else
                     {
                         //  All other modules' channels are automatically public
-                        message.analog_in_port_range[chan] = g_BoardRuntimeConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Range; //  Get range for that channel
+                        //  Get range for that channel
+                        message.analog_in_port_range[chan] =                \
+                        pRuntimeAInModules->Data[pBoardConfig->AInChannels.Data[x].DataModule].Range;
                         chan ++;
                     }
                 }            
@@ -535,13 +566,15 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through private channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; ++x)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
                     {
-                        if(!g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
+                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
                         {
-                            message.analog_in_port_range_priv[chan] = g_BoardRuntimeConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Range;     //  Get range for that channel
+                             //  Get range for that channel
+                            message.analog_in_port_range_priv[chan] =       \
+                            pRuntimeAInModules->Data[pBoardConfig->AInChannels.Data[x].DataModule].Range;    
                             chan ++;                            
                         }
                     }
@@ -551,22 +584,22 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
             }
             case DaqifiOutMessage_analog_in_res_tag:
                 message.has_analog_in_res = true;
-                switch (g_BoardConfig.BoardVariant)
+                switch (pBoardConfig->BoardVariant)
                 {
                     case 1:
-                        message.analog_in_res = g_BoardConfig.AInModules.Data[0].Config.MC12b.Resolution;
+                        message.analog_in_res = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
                         break;
                     case 2:
-                        message.analog_in_res = g_BoardConfig.AInModules.Data[1].Config.AD7173.Resolution;
+                        message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7173.Resolution;
                         break;
                     case 3:
-                        message.analog_in_res = g_BoardConfig.AInModules.Data[1].Config.AD7609.Resolution;
+                        message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
                         break;
                 }
 				break;
             case DaqifiOutMessage_analog_in_res_priv_tag:
                 message.has_analog_in_res_priv = true;
-                message.analog_in_res_priv = g_BoardConfig.AInModules.Data[0].Config.MC12b.Resolution;
+                message.analog_in_res_priv = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
 				break;
             case DaqifiOutMessage_analog_in_int_scale_m_tag:
             {
@@ -574,13 +607,13 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through public channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (only channels with internal scale)
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (only channels with internal scale)
                     {
-                        if(g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
+                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
                         {         
-                            message.analog_in_int_scale_m[chan] = g_BoardConfig.AInChannels.Data[x].Config.MC12b.InternalScale; //  Get internal scale m for that channel
+                            message.analog_in_int_scale_m[chan] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale; //  Get internal scale m for that channel
                             chan ++; 
                         }
                     }
@@ -594,13 +627,13 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through private channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; ++x)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (only channels with internal scale)
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (only channels with internal scale)
                     {
-                        if(!g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
+                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
                         {
-                            message.analog_in_int_scale_m_priv[chan] = g_BoardConfig.AInChannels.Data[x].Config.MC12b.InternalScale; //  Get internal scale m for that channel
+                            message.analog_in_int_scale_m_priv[chan] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale; //  Get internal scale m for that channel
                             chan ++;                            
                         }
                     }
@@ -614,20 +647,24 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through public channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
                     {
-                        if(g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
-                        {         
-                            message.analog_in_cal_m[chan] = g_BoardRuntimeConfig.AInChannels.Data[x].CalM; //  Get cal m for that channel
+                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
+                        {   
+                            //  Get cal m for that channel
+                            message.analog_in_cal_m[chan] =                 \
+                            pRuntimeAInChannels->Data[x].CalM; 
                             chan ++; 
 
                         }
                     }else
                     {
                         //  All other modules' channels are automatically public
-                        message.analog_in_cal_m[chan] = g_BoardRuntimeConfig.AInChannels.Data[x].CalM; //  Get cal m for that channel
+                        //  Get cal m for that channel
+                        message.analog_in_cal_m[chan] =                     \
+                        pRuntimeAInChannels->Data[x].CalM;
                         chan ++;
                     }
                 }            
@@ -640,20 +677,24 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through public channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
                     {
-                        if(g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
+                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
                         {         
-                            message.analog_in_cal_b[chan] = g_BoardRuntimeConfig.AInChannels.Data[x].CalB; //  Get cal b for that channel
+                            //  Get cal b for that channel
+                            message.analog_in_cal_b[chan] =                 \
+                            pRuntimeAInChannels->Data[x].CalB; 
                             chan ++; 
 
                         }
                     }else
                     {
-                        //  All other modules' channels are automatically public
-                        message.analog_in_cal_b[chan] = g_BoardRuntimeConfig.AInChannels.Data[x].CalB; //  Get cal b for that channel
+                        //  All other modules' channels are automatically public 
+                        //  Get cal b for that channel
+                        message.analog_in_cal_b[chan] =                     \
+                        pRuntimeAInChannels->Data[x].CalB;
                         chan ++;
                     }
                 }            
@@ -666,13 +707,15 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through private channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; ++x)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
                     {
-                        if(!g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
+                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
                         {
-                            message.analog_in_cal_m_priv[chan] = g_BoardRuntimeConfig.AInChannels.Data[x].CalM;             //  Get cal m for that channel
+                            //  Get cal m for that channel
+                            message.analog_in_cal_m_priv[chan] =            \
+                            pRuntimeAInChannels->Data[x].CalM;             
                             chan ++;                            
                         }
                     }
@@ -686,13 +729,15 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 uint32_t chan = 0;
                 
                 //  Loop through private channels
-                for (x = 0; x < g_BoardConfig.AInChannels.Size; ++x)
+                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
                 {
-                    if(g_BoardConfig.AInModules.Data[g_BoardConfig.AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
+                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
                     {
-                        if(!g_BoardConfig.AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
+                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
                         {
-                            message.analog_in_cal_b_priv[chan] = g_BoardRuntimeConfig.AInChannels.Data[x].CalB;             //  Get cal b for that channel
+                            //  Get cal b for that channel
+                            message.analog_in_cal_b_priv[chan] =            \
+                            pRuntimeAInChannels->Data[x].CalB;             
                             chan ++;                            
                         }
                     }
@@ -702,7 +747,7 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
             }                   
             case DaqifiOutMessage_digital_port_num_tag:
                 message.has_digital_port_num = true;
-                message.digital_port_num = g_BoardConfig.DIOChannels.Size;
+                message.digital_port_num = pBoardConfig->DIOChannels.Size;
 				break;
             case DaqifiOutMessage_digital_port_dir_tag:
             {
@@ -711,25 +756,28 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
                 
                 message.has_digital_port_dir = true;
               
-                for (x = 0; x < g_BoardConfig.DIOChannels.Size; x++)
+                for (x = 0; x < pBoardConfig->DIOChannels.Size; x++)
                 {
-                    data |= (g_BoardRuntimeConfig.DIOChannels.Data[x].IsInput << x);
+                    data |= (pRuntimeDIOChannels->Data[x].IsInput << x);
                 }     
-                int2PBByteArray(data, (pb_bytes_array_t*)&message.digital_port_dir, sizeof(message.digital_port_dir.bytes));
+                int2PBByteArray(                                            \
+                        data,                                               \
+                        (pb_bytes_array_t*)&message.digital_port_dir,       \
+                        sizeof(message.digital_port_dir.bytes));
 				break;
             }
             case DaqifiOutMessage_analog_out_res_tag:
                 message.has_analog_out_res = false;
-                switch (g_BoardConfig.BoardVariant)
+                switch (pBoardConfig->BoardVariant)
                 {
                     case 1:
                         // No AO on the Nq1
                         break;
                     case 2:
-                        message.analog_out_res = g_BoardConfig.AInModules.Data[1].Config.AD7173.Resolution;
+                        message.analog_out_res = pBoardConfig->AInModules.Data[1].Config.AD7173.Resolution;
                         break;
                     case 3:
-                        message.analog_out_res = g_BoardConfig.AInModules.Data[1].Config.AD7609.Resolution;
+                        message.analog_out_res = pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
                         break;
                 }
 				break;                   
@@ -923,20 +971,20 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
             {
                 message.has_device_pn = true;
                 
-                snprintf(message.device_pn, 4, "Nq%d", g_BoardConfig.BoardVariant);
+                snprintf(message.device_pn, 4, "Nq%d", pBoardConfig->BoardVariant);
                 break;
             }
             case DaqifiOutMessage_device_hw_rev_tag:
                 message.has_device_hw_rev = true;
-                memcpy(&message.device_hw_rev, &g_BoardConfig.boardHardwareRev, 16);
+                memcpy(&message.device_hw_rev, &pBoardConfig->boardHardwareRev, 16);
 				break;
             case DaqifiOutMessage_device_fw_rev_tag:
                 message.has_device_fw_rev = true;
-                memcpy(&message.device_fw_rev, &g_BoardConfig.boardFirmwareRev, 16);
+                memcpy(&message.device_fw_rev, &pBoardConfig->boardFirmwareRev, 16);
                 break;
             case DaqifiOutMessage_device_sn_tag:
                 message.has_device_sn = true;
-                message.device_sn = g_BoardConfig.boardSerialNumber;
+                message.device_sn = pBoardConfig->boardSerialNumber;
                 break;
             default:
                 // Skip unknown fields
@@ -962,7 +1010,11 @@ size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t*
     }
 }
 
-uint8_array Nanopb_Decode(const uint8_t* buffer, const size_t bufferLen, const NanopbFlagsArray* fields, BoardRuntimeConfig* state)
+uint8_array Nanopb_Decode(                                                  \
+                        const uint8_t* buffer,                              \
+                        const size_t bufferLen,                             \
+                        const NanopbFlagsArray* fields,                     \
+                        tBoardRuntimeConfig* state)
 {
     DaqifiOutMessage message = DaqifiOutMessage_init_default;
     

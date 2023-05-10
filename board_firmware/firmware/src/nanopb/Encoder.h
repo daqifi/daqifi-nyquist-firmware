@@ -31,7 +31,11 @@ extern "C" {
      * @param state The state object to hold the result
      * @return True on success, false otherwise
      */
-    uint8_array Nanopb_Decode(const uint8_t* buffer, const size_t bufferLen, const NanopbFlagsArray* fields, BoardRuntimeConfig* state);
+    uint8_array Nanopb_Decode(                                              \
+                        const uint8_t* buffer,                              \
+                        const size_t bufferLen,                             \
+                        const NanopbFlagsArray* fields,                     \
+                        tBoardRuntimeConfig* state);
 
     void int2PBByteArray(const size_t integer, pb_bytes_array_t* byteArray, size_t maxArrayLen);
     

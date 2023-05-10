@@ -83,12 +83,18 @@ typedef struct sBoardData
     uint32_t StreamTrigStamp; 
 } tBoardData;
 
+/*!
+ * Initializes the board data 
+ * @param[in] boardData Pointer to data space 
+ */
+void InitializeBoardData(tBoardData* boardData);
 
 /*! This function is used for getting a board data parameter
  * @param[in] parameter Parameter to be get
  * @param[in] index In case that the parameter is an array, an index can be 
  * specified here for getting a specific member of the array
- * @return Parameter which is part of the global Board Configuration structure
+ * @return Parameter which is part of the global Board Configuration 
+ *         structure
  */
 const void *BoardData_Get(                                                  \
                             enum eBoardData parameter,                      \
@@ -104,17 +110,6 @@ void BoardData_Set(                                                         \
                             enum eBoardData parameter,                      \
                             uint8_t index,                                  \
                             const void *pSetValue );
-
-#warning extern declarations will be removed
-/**
- * The board configuration
- */
-extern tBoardData __attribute__((coherent)) g_BoardData;
-
-/**
- * Initializes the board data 
- */
-void InitializeBoardData(tBoardData* boardData);
     
 #ifdef __cplusplus
 }

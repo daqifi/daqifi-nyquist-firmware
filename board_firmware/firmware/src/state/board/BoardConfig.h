@@ -32,6 +32,8 @@ extern "C" {
 
 //! Enumeration with the board configuration parameters.
 enum eBoardParameter{
+    //! Board config 
+    BOARDCONFIG_ALL_CONFIG, 
     //! Board variant element
     BOARDCONFIG_VARIANT,
     //! Hardware revision element
@@ -44,6 +46,8 @@ enum eBoardParameter{
     BOARDCONFIG_DIO_CHANNEL,
     //! AIN Module element
     BOARDCONFIG_AIN_MODULE,
+    //! AIN channels
+    BOARDCONFIG_AIN_CHANNELS,
     //! Power Config element
     BOARDCONFIG_POWER_CONFIG,
     //! UI Config element
@@ -86,12 +90,36 @@ typedef struct sBoardConfig
     tStreamingConfig StreamingConfig;
 }tBoardConfig;
 
+/*!
+ * Initializes the g_BoardConfig structure for the current board
+ * @param[in] pTopLevelSettings Board settings
+ */
+void InitBoardConfig(TopLevelSettings* pTopLevelSettings);
+
+/*! This function is used for getting a board configuration parameter
+ * @param[in] parameter Parameter to be get
+ * @param[in] index In case that the parameter is an array, an index can be 
+ * specified here for getting a specific member of the array
+ * @return Parameter which is part of the global Board Configuration structure
+ */
+const void *BoardConfig_Get(                                                \
+                        enum eBoardParameter parameter,                     \
+                        uint8_t index );
+
+/*! This function is used for setting a board configuration parameter
+ * @param[in] parameter Parameter to be set
+ * @param[in] index In case that the parameter is an array, an index can be 
+ * specified here for setting a specific member of the array
+ * @param[in] pSetValue Pointer to the configuration value to be set
+ */
+void BoardConfig_Set(                                                       \
+                        enum eBoardParameter parameter,                     \
+                        uint8_t index,                                      \
+                        const void *pSetValue );
+
+
 
 #warning extern declarations must be further removed when refactoring is complete on all modules
-/**
- * The board configuration
- */
-extern tBoardConfig g_BoardConfig;
 
 /**
  * The Nyquist 1 board configuration
@@ -107,33 +135,6 @@ extern const tBoardConfig g_NQ2BoardConfig;
  * The Nyquist 3 board configuration
  */
 extern const tBoardConfig g_NQ3BoardConfig;
-
-/*!
- * Initializes the g_BoardConfig structure for the current board
- * @param[in] pTopLevelSettings Board settings
- */
-void InitBoardConfig(TopLevelSettings* pTopLevelSettings);
-
-/*! This function is used for getting a board configuration parameter
- * @param[in] parameter Parameter to be get
- * @param[in] index In case that the parameter is an array, an index can be 
- * specified here for getting a specific member of the array
- * @return Parameter which is part of the global Board Configuration structure
- */
-const void *BoardConfig_Get(                                                \
-                            enum eBoardParameter parameter,                 \
-                            uint8_t index );
-
-/*! This function is used for setting a board configuration parameter
- * @param[in] parameter Parameter to be set
- * @param[in] index In case that the parameter is an array, an index can be 
- * specified here for setting a specific member of the array
- * @param[in] pSetValue Pointer to the configuration value to be set
- */
-void BoardConfig_Set(                                                       \
-                            enum eBoardParameter parameter,                 \
-                            uint8_t index,                                  \
-                            const void *pSetValue );
 
 #ifdef __cplusplus
 }

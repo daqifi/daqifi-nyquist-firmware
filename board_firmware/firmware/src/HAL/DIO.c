@@ -65,9 +65,13 @@ bool DIO_WriteStateSingle(const DIOConfig* boardConfig, DIORuntimeConfig* runtim
 
 bool DIO_ReadSampleByMask(DIOSample* sample, const DIOArray* boardConfig, DIORuntimeArray* runtimeConfig, uint32_t mask)
 {
+    StreamingRuntimeConfig * pRuntimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
     sample->Mask = mask;
     sample->Values = 0;
-    sample->Timestamp = DRV_TMR_CounterValueGet(g_BoardRuntimeConfig.StreamingConfig.TSTimerHandle);  // Set module trigger timestamp
+    // Set module trigger timestamp
+    sample->Timestamp = DRV_TMR_CounterValueGet(                            \
+                        pRuntimeStreamConfig->TSTimerHandle);
     
     size_t i=0;
     for (i=0; i<runtimeConfig->Size; ++i)
@@ -84,7 +88,7 @@ bool DIO_ReadSampleByMask(DIOSample* sample, const DIOArray* boardConfig, DIORun
     return true;
 }
 
-void DIO_Tasks(const DIOArray* boardConfig, BoardRuntimeConfig* runtimeConfig, DIOSample* latest, DIOSampleList* streamingSamples)
+void DIO_Tasks(const DIOArray* boardConfig, tBoardRuntimeConfig* runtimeConfig, DIOSample* latest, DIOSampleList* streamingSamples)
 {
 //    // For debugging streaming frequency only!
 //    runtimeConfig->Data[0].Value = !runtimeConfig->Data[0].Value;
@@ -112,7 +116,10 @@ void DIO_Tasks(const DIOArray* boardConfig, BoardRuntimeConfig* runtimeConfig, D
             streamingSample.Mask = 0xFFFF;
             streamingSample.Values = latest->Values;
             streamingSample.Timestamp = latest->Timestamp;
-            if(!DIOSampleList_PushBack(streamingSamples, &streamingSample)){
+            if(!DIOSampleList_PushBack(                                     \
+                        streamingSamples,                                   \
+                        (const DIOSample* )&streamingSample))
+            {
                 commTest.DIOSampleListOverflow++;
             }
         }

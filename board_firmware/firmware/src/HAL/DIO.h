@@ -46,7 +46,7 @@ extern "C" {
      * @param latest Storage for the latest values
      * @param streamingSamples Storage for the latest streaming values
      */
-    void DIO_Tasks(const DIOArray* boardConfig, BoardRuntimeConfig* runtimeConfig, DIOSample* latest, DIOSampleList* streamingSamples);
+    void DIO_Tasks(const DIOArray* boardConfig, tBoardRuntimeConfig* runtimeConfig, DIOSample* latest, DIOSampleList* streamingSamples);
     
 #ifdef	__cplusplus
 }
