@@ -81,24 +81,18 @@ bool ADC_WriteChannelStateAll( void )
         {
         case AIn_MC12bADC:
             result &= MC12b_WriteStateAll(                                  \
-                        &pBoardConfigADC->AInModules.Data[i].Config.MC12b,  \
-                        &pBoardRuntimeConfigADC->AInModules.Data[i],        \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime);
             
             break;
         case AIn_AD7609:
-            result &= AD7609_WriteStateAll(
-                        &pBoardConfigADC->AInModules.Data[i].Config.AD7609, \
-                        &pBoardRuntimeConfigADC->AInModules.Data[i],        \
+            result &= AD7609_WriteStateAll(                                 \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime);
             
             break;
         case AIn_AD7173:
             result &= AD7173_WriteStateAll(                                 \
-                        &pBoardConfigADC->AInModules.Data[i].Config.AD7173, \
-                        &pBoardRuntimeConfigADC->AInModules.Data[i],        \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime);
             
@@ -162,7 +156,7 @@ bool ADC_TriggerConversion(const AInModule* module)
     switch(module->Type)
     {
     case AIn_MC12bADC:
-        result &= MC12b_TriggerConversion(&module->Config.MC12b);
+        result &= MC12b_TriggerConversion();
         break;
     case AIn_AD7609:
         result &= AD7609_TriggerConversion(&module->Config.AD7609);
@@ -339,16 +333,12 @@ void ADC_Tasks( void )
                     if(module->Type == AIn_MC12bADC)
                     {
                         MC12b_WriteStateAll(                                \
-                        &pBoardConfigADC->AInModules.Data[moduleIndex].Config.MC12b,\
-                        &pBoardRuntimeConfigADC->AInModules.Data[moduleIndex],\
                         &moduleChannels,                                    \
                         &moduleChannelRuntime);
                     }
                     if(module->Type == AIn_AD7173)
                     {
                         AD7173_WriteStateAll(                               \
-                        &pBoardConfigADC->AInModules.Data[moduleIndex].Config.AD7173,\
-                        &pBoardRuntimeConfigADC->AInModules.Data[moduleIndex],\
                         &moduleChannels,
                         &moduleChannelRuntime);
                     }
@@ -413,22 +403,14 @@ double ADC_ConvertToVoltage(const AInSample* sample)
         return MC12b_ConvertToVoltage(                                      \
                         &channelConfig->Config.MC12b,                       \
                         pRunTimeAInChannels,                                \
-                        &moduleConfig->Config.MC12b,                        \
-                        moduleRuntimeConfig,                                \
                         sample);
     case AIn_AD7173:
         return AD7173_ConvertToVoltage(                                     \
-                        &channelConfig->Config.AD7173,                      \               
                         runtimeConfig,                                      \
-                        &moduleConfig->Config.AD7173,                       \
-                        moduleRuntimeConfig,                                \
                         sample);
     case AIn_AD7609:
         return AD7609_ConvertToVoltage(                                     \
-                        &channelConfig->Config.AD7609,                      \
                         runtimeConfig,                                      \
-                        &moduleConfig->Config.AD7609,                       \
-                        moduleRuntimeConfig,                                \
                         sample);
     default:
         return 0.0;
@@ -473,8 +455,6 @@ static bool ADC_ReadSamples(                                                \
     case AIn_MC12bADC:
         result &= MC12b_ReadSamples(                                        \
                         samples,                                            \
-                        &module->Config.MC12b,                              \
-                        moduleRuntime,                                      \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime,                              \
                         pBoardDataADC->StreamTrigStamp);
@@ -482,8 +462,6 @@ static bool ADC_ReadSamples(                                                \
     case AIn_AD7609:
         result &= AD7609_ReadSamples(                                       \
                         samples,                                            \
-                        &module->Config.AD7609,                             \
-                        moduleRuntime,                                      \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime,                              \
                         pBoardDataADC->StreamTrigStamp);
@@ -491,8 +469,6 @@ static bool ADC_ReadSamples(                                                \
     case AIn_AD7173:
         result &= AD7173_ReadSamples(                                       \
                         samples,                                            \
-                        &module->Config.AD7173,                             \
-                        moduleRuntime,                                      \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime,                              \
                         pBoardDataADC->StreamTrigStamp);
@@ -517,21 +493,13 @@ bool ADC_WriteModuleState( size_t moduleId, POWER_STATE powerState)
     switch(currentModule->Type)
     {
     case AIn_MC12bADC:
-        result &= MC12b_WriteModuleState(                                   \
-                        &currentModule->Config.MC12b,                       \
-                        currentModuleRuntime);
+        result &= MC12b_WriteModuleState();
         break;
     case AIn_AD7609:
-        result &= AD7609_WriteModuleState(                                  \
-                        &currentModule->Config.AD7609,                      \
-                        currentModuleRuntime,                               \
-                        isPowered);
+        result &= AD7609_WriteModuleState(isPowered);
         break;
     case AIn_AD7173:
-        result &= AD7173_WriteModuleState(                                  \
-                        &currentModule->Config.AD7173,                      \
-                        currentModuleRuntime,                               \
-                        isPowered);
+        result &= AD7173_WriteModuleState(isPowered);
         break;
     default:
         // Not implemented yet
@@ -550,13 +518,11 @@ static bool ADC_InitHardware(                                               \
     {
     case AIn_MC12bADC:
         result = MC12b_InitHardware(                                        \
-                                    &boardConfig->Config.MC12b,             \
-                                    moduleChannels );
+                &boardConfig->Config.MC12b,                                 \
+                &pBoardRuntimeConfigADC->AInModules.Data[boardConfig->Type]);
         break;
     case AIn_AD7609:
-        result = AD7609_InitHardware(                                       \
-                                    &boardConfig->Config.AD7609,            \
-                                    moduleChannels );
+        result = AD7609_InitHardware( &boardConfig->Config.AD7609 );
         break;
     case AIn_AD7173:
         result = AD7173_InitHardware(                                       \
