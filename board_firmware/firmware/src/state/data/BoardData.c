@@ -34,7 +34,7 @@ void InitializeBoardData(tBoardData* boardData)
     // size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VBATT);
     // boardData->AInLatest.Data[index].Value = 4095;
     
-    boardData->PowerData.powerState = FRESH_BOOT;
+    boardData->PowerData.powerState = MICRO_ON;
     boardData->PowerData.battLow = false;
     boardData->PowerData.battVoltage = 0.0;
     boardData->PowerData.chargePct = 0;

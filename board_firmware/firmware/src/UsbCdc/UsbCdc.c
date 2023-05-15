@@ -189,18 +189,12 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
 
         case USB_DEVICE_EVENT_SUSPENDED:
             // TODO: Are the transfer handles still valid?
-            Power_USB_Sleep_Update(                                         \
-                            pBoardConfig->PowerConfig,                      \
-                            pPowerData,                                     \
-                            true);
+            Power_USB_Sleep_Update(true);
             pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
             break;
         case USB_DEVICE_EVENT_RESUMED:
             // TODO: Does suspend only occur after initialization?
-            Power_USB_Sleep_Update(                                         \
-                            pBoardConfig->PowerConfig,                      \
-                            pPowerData,                                     \
-                            false);
+            Power_USB_Sleep_Update(false);
             pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
             break;
         case USB_DEVICE_EVENT_ERROR:

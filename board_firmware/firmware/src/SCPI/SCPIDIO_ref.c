@@ -233,7 +233,7 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
     }
     
     pRunTimeDIOChannels->Data[id].IsInput = isInput;
-    if (!DIO_WriteStateSingle(id))
+    if (!DIO_WriteStateSingle(&pRunTimeDIOChannels->Data[id]))
     {
         return SCPI_RES_ERR;
     }
@@ -320,7 +320,7 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
     }
     
     pRunTimeDIOChannels->Data[id].Value = value;
-    if (!DIO_WriteStateSingle(id))
+    if (!DIO_WriteStateSingle( &pRunTimeDIOChannels->Data[id]))
     {
         return SCPI_RES_ERR;
     }
@@ -365,7 +365,7 @@ static scpi_result_t SCPI_GPIOSingleStateGet(uint8_t id, bool* result)
     
     DIOSample sample;
     uint32_t mask = (1 << id);
-    if (!DIO_ReadSampleByMask(&sample,mask))
+    if (!DIO_ReadSampleByMask( &sample, mask))
     {
         return SCPI_RES_ERR;
     }

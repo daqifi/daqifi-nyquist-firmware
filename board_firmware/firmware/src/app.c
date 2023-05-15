@@ -241,16 +241,15 @@ void APP_Initialize(void)
                         &pBoardRuntimeConfig->AInChannels);
     }
  	// Power initialization - enables 3.3V rail by default - other power functions are in power task
-    Power_Init(             pBoardConfig->PowerConfig,                      \
+    Power_Init(             &pBoardConfig->PowerConfig,                     \
                             &pBoardData->PowerData,                         \
-                            pBoardRuntimeConfig->PowerWriteVars);
+                            &pBoardRuntimeConfig->PowerWriteVars);
     
     // Init DIO Hardware
-    DIO_InitHardware(&pBoardConfig->DIOChannels);
+    DIO_InitHardware(pBoardConfig, pBoardRuntimeConfig);
     
 	// Write initial values
-    DIO_WriteStateAll(  &pBoardConfig->DIOChannels,                         \
-                        &pBoardRuntimeConfig->DIOChannels);
+    DIO_WriteStateAll( );
    
 	TimestampTimer_Init(&pBoardConfig->StreamingConfig,                     \
                         &pBoardRuntimeConfig->StreamingConfig);

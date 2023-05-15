@@ -341,9 +341,7 @@ void _POWER_AND_UI_Tasks(void)
                             &pBoardData->PowerData,                         \
                             &pBoardData->UIReadVars,                        \
                             pRunTimeStreamConf->IsEnabled);
-        Power_Tasks(        pBoardConfig->PowerConfig,                      \
-                            &pBoardData->PowerData,                         \
-                            pRunTimePowerWriteVars);
+        Power_Tasks( );
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
@@ -415,9 +413,7 @@ void _Streaming_Deferred_Interrupt_Task( void ){
         if (pRunTimeStreamConf->StreamCount ==                              \
             pRunTimeStreamConf->StreamCountTrigger) 
         {
-            DIO_Tasks(      (const DIOArray *)&pBoardConfig->DIOChannels,   \
-                            pBoardRuntimeConfig,                            \
-                            &pBoardData->DIOLatest,                         \
+            DIO_Tasks(      &pBoardData->DIOLatest,                         \
                             &pBoardData->DIOSamples);
         }
 
