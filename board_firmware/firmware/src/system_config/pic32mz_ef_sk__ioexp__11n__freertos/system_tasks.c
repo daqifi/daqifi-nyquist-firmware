@@ -334,13 +334,8 @@ void _POWER_AND_UI_Tasks(void)
     portTASK_USES_FLOATING_POINT();
     while(1)
     {
-        Button_Tasks(       pBoardConfig->UIConfig,                         \
-                            &pBoardData->UIReadVars,                        \
-                            &pBoardData->PowerData);
-        LED_Tasks(          pBoardConfig->UIConfig,                         \
-                            &pBoardData->PowerData,                         \
-                            &pBoardData->UIReadVars,                        \
-                            pRunTimeStreamConf->IsEnabled);
+        Button_Tasks();
+        LED_Tasks( pRunTimeStreamConf->IsEnabled );
         Power_Tasks( );
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }

@@ -224,7 +224,8 @@ void APP_Initialize(void)
                         &tmpWifiSettings.settings.wifi,                     \
                         sizeof(WifiSettings));
         
-    // Load factory calibration parameters - if they are not initialized, store them (first run after a program)
+    // Load factory calibration parameters - if they are not initialized, 
+    // store them (first run after a program)
     if(!LoadADCCalSettings(                                                 \
                         DaqifiSettings_FactAInCalParams,                    \
                         &pBoardRuntimeConfig->AInChannels)) 
@@ -233,17 +234,23 @@ void APP_Initialize(void)
                         DaqifiSettings_FactAInCalParams,                    \
                         &pBoardRuntimeConfig->AInChannels);
     }
-    // If calVals has been set to 1 (user cal params), overwrite with user calibration parameters
+    // If calVals has been set to 1 (user cal params), overwrite with user 
+    // calibration parameters
     if(tmpTopLevelSettings.settings.topLevelSettings.calVals)
     {
         LoadADCCalSettings(                                                 \
                         DaqifiSettings_UserAInCalParams,                    \
                         &pBoardRuntimeConfig->AInChannels);
     }
- 	// Power initialization - enables 3.3V rail by default - other power functions are in power task
+ 	// Power initialization - enables 3.3V rail by default - other power 
+    // functions are in power task
     Power_Init(             &pBoardConfig->PowerConfig,                     \
                             &pBoardData->PowerData,                         \
                             &pBoardRuntimeConfig->PowerWriteVars);
+    
+    UI_Init( &pBoardConfig->UIConfig,                                       \
+             &pBoardData->UIReadVars,                                       \
+             &pBoardData->PowerData );
     
     // Init DIO Hardware
     DIO_InitHardware(pBoardConfig, pBoardRuntimeConfig);
