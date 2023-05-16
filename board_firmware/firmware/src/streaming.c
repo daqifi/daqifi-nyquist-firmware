@@ -2,9 +2,9 @@
 
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
-#include "json/Encoder.h"
+#include "json/JSON_Encoder.h"
 #include "nanopb/DaqifiOutMessage.pb.h"
-#include "nanopb/Encoder.h"
+#include "nanopb/NanoPB_Encoder.h"
 #include "Util/Logger.h"
 #include "TcpServer/TcpServer.h"
 #include "Util/CircularBuffer.h"
@@ -15,8 +15,9 @@
 
 #define BUFFER_SIZE  USB_WBUFFER_SIZE //2048
 uint8_t buffer[BUFFER_SIZE];
-size_t loop = 0;
-void Streaming_StuffDummyData (void); // Function for debugging - fills buffer with dummy data
+
+// Function for debugging - fills buffer with dummy data
+void Streaming_StuffDummyData (void); 
 
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
 {
@@ -145,6 +146,8 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
     bool hasUsb, hasWifi;
     //! 
     int wifiCnt;
+    //! Pointer to client data in runtime, variable for legibility
+    TcpClientData * pClientData; 
     
     //Analog input availability. Digital input/output availability
     bool AINDataAvailable=!AInSampleList_IsEmpty(&boardData->AInSamples);
@@ -168,7 +171,8 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
         maxSize    = 0;
         
         if(AINDataAvailable || DIODataAvailable){
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] =                            \
+                        DaqifiOutMessage_msg_time_stamp_tag;
         }else{
             return;
         }
@@ -176,7 +180,8 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
         // Decide how many samples we can send out
         if (runtimeConfig->usbSettings.state == USB_CDC_STATE_PROCESS)
         {
-            usbSize = CircularBuf_NumBytesFree(&runtimeConfig->usbSettings.wCirbuf);
+            usbSize = CircularBuf_NumBytesFree(                             \
+                        &runtimeConfig->usbSettings.wCirbuf);
             hasUsb  = true;
         }
 
@@ -184,9 +189,11 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
         {
             for (wifiCnt=0; wifiCnt<WIFI_MAX_CLIENT; ++wifiCnt)
             {
-                if (runtimeConfig->serverData.clients[wifiCnt].client != INVALID_SOCKET)
+                if (runtimeConfig->serverData.clients[wifiCnt].client !=    \
+                        INVALID_SOCKET)
                 {
-                    wifiSize = WIFI_WBUFFER_SIZE - runtimeConfig->serverData.clients[wifiCnt].writeBufferLength;
+                    wifiSize = WIFI_WBUFFER_SIZE -                          \
+                    runtimeConfig->serverData.clients[wifiCnt].writeBufferLength;
                     hasWifi = true;
                 }
             }
@@ -207,12 +214,15 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
         }
         
         if (AINDataAvailable){
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_data_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] =                            \
+                        DaqifiOutMessage_analog_in_data_tag;
         }
 
         if (DIODataAvailable){
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_data_tag;
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] =                            \
+                        DaqifiOutMessage_digital_data_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] =                            \
+                        DaqifiOutMessage_digital_port_dir_tag;
         }
            
         // Generate a packet
@@ -224,14 +234,15 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
                 size = Json_Encode(                                         \
                         boardData,                                          \
                         &nanopbFlag,                                        \
-                        buffer,                                             \
-                        maxSize);
+                        &buffer);
             }
             else{
 
-                size = Nanopb_Encode(boardData, &nanopbFlag, buffer, maxSize);
+                size = Nanopb_Encode(boardData, &nanopbFlag, &buffer);
                 
-                if(runtimeConfig->StreamingConfig.Encoding == Streaming_TestData){
+                if(runtimeConfig->StreamingConfig.Encoding ==               \
+                        Streaming_TestData)
+                {
   
                     // if TestData_Len is specified, overwrite the buffer length
                     if(commTest.TestData_len>0)
@@ -244,24 +255,30 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
             }
 
             // Write the packet out
-            if (size > 0){
-
-                if (hasUsb){
+            if (size > 0)
+            {
+                if (hasUsb)
+                {
                     UsbCdc_WriteToBuffer(                                   \
                         pRunTimeUsbSettings,                                \
                         (const char *)buffer,                               \
                         size);
                 }
-
-                if (hasWifi){
-                    
+                if (hasWifi)
+                {
                     if( TCP_Server_Is_Blocked() == 0 ){
                         for (wifiCnt=0; wifiCnt<WIFI_MAX_CLIENT; ++wifiCnt)
                         {
-                            if (runtimeConfig->serverData.clients[wifiCnt].client != INVALID_SOCKET)
+                            pClientData =                                   \
+                                &runtimeConfig->serverData.clients[wifiCnt];
+                            if (INVALID_SOCKET != pClientData->client )
                             {
-                                memcpy(runtimeConfig->serverData.clients[wifiCnt].writeBuffer + runtimeConfig->serverData.clients[wifiCnt].writeBufferLength, buffer, size);
-                                runtimeConfig->serverData.clients[wifiCnt].writeBufferLength += size;
+                                memcpy(                                     \
+                                pClientData->writeBuffer +                  \
+                                pClientData->writeBufferLength,             \
+                                buffer, 
+                                size);
+                                pClientData->writeBufferLength += size;
                             }
                         }
                     }
@@ -282,21 +299,27 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
     
 }
 
-void TimestampTimer_Init(const tStreamingConfig* config, StreamingRuntimeConfig* runtimeConfig)
+void TimestampTimer_Init(                                                   \
+                        const tStreamingConfig* config,                     \
+                        StreamingRuntimeConfig* runtimeConfig)
 {
     // Initialize and start timestamp timer
-    // This is a free running timer used for reference - this doesn't interrupt or callback
-    runtimeConfig->TSTimerHandle = DRV_TMR_Open(config->TSTimerIndex, config->TSTimerIntent);
+    // This is a free running timer used for reference - 
+    // this doesn't interrupt or callback
+    runtimeConfig->TSTimerHandle = DRV_TMR_Open(                            \
+                        config->TSTimerIndex,                               \
+                        config->TSTimerIntent);
     if( runtimeConfig->TSTimerHandle == DRV_HANDLE_INVALID )
     {
         // Client cannot open the instance.
          SYS_DEBUG_BreakPoint();
     }
-    DRV_TMR_AlarmRegister(runtimeConfig->TSTimerHandle,
-            runtimeConfig->TSClockDivider,
-            true,
-            0,
-            NULL);
+    DRV_TMR_AlarmRegister(                                                  \
+                        runtimeConfig->TSTimerHandle,                       \
+                        runtimeConfig->TSClockDivider,                      \
+                        true,                                               \
+                        0,                                                  \
+                        NULL);
     DRV_TMR_AlarmDisable(runtimeConfig->TSTimerHandle);
     DRV_TMR_Start(runtimeConfig->TSTimerHandle);
 }
@@ -314,7 +337,9 @@ void Streaming_StuffDummyData (void)
     
     data.Value = 'O';
     data.Timestamp ++;
-    if (data.Timestamp == 0) data.Timestamp++;  // Skip zero so as not to allow multiple duplicate timestamps (uninitialized channels will have 0 timestamp)
+    // Skip zero so as not to allow multiple duplicate timestamps 
+    // (uninitialized channels will have 0 timestamp)
+    if (data.Timestamp == 0) data.Timestamp++;  
 
     for (i=0; i<16; ++i)
     {

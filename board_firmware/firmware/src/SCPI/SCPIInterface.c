@@ -14,7 +14,7 @@
 #include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
 #include "nanopb/DaqifiOutMessage.pb.h"
-#include "nanopb/Encoder.h"
+#include "nanopb/NanoPB_Encoder.h"
 #include "Util/StringFormatters.h"
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
@@ -302,8 +302,7 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context)
     size_t count = Nanopb_Encode(                                           \
                         pBoardData,                                         \
                         (const NanopbFlagsArray *)&fields_info,             \
-                        buffer,                                             \
-                        (size_t)DaqifiOutMessage_size);
+                        buffer);
     if (count < 1)
     {
         return SCPI_RES_ERR;

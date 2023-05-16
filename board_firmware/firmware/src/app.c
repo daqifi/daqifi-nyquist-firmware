@@ -80,9 +80,14 @@ const char BOARD_FIRMWARE_REV[16] = "1.0.3";
 
 
 
-// Declare force bootloader RAM flag location (FORCE_BOOTLOADER_FLAG_ADDR defined in preprocessor directives as 0x8007FFFC)
-// 0x8007FFFC is the last word of RAM - this value must match what is defined in the bootloader project as well!
-extern volatile uint32_t force_bootloader_flag __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
+// Declare force bootloader RAM flag location (FORCE_BOOTLOADER_FLAG_ADDR 
+// defined in preprocessor directives as 0x8007FFFC) 0x8007FFFC is the last 
+// word of RAM - this value must match what is defined in the bootloader 
+// project as well!
+extern volatile uint32_t force_bootloader_flag __attribute__((              \
+                        persistent,                                         \
+                        coherent,                                           \
+                        address(FORCE_BOOTLOADER_FLAG_ADDR)));
 
 // *****************************************************************************
 // *****************************************************************************

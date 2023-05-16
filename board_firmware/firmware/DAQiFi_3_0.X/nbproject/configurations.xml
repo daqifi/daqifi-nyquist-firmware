@@ -39,11 +39,11 @@
           <itemPath>../src/HAL/DIO.h</itemPath>
         </logicalFolder>
         <logicalFolder name="json" displayName="json" projectFiles="true">
-          <itemPath>../src/json/Encoder.h</itemPath>
+          <itemPath>../src/json/JSON_Encoder.h</itemPath>
         </logicalFolder>
         <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
           <itemPath>../src/nanopb/DaqifiOutMessage.pb.h</itemPath>
-          <itemPath>../src/nanopb/Encoder.h</itemPath>
+          <itemPath>../src/nanopb/NanoPB_Encoder.h</itemPath>
         </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/SCPI/SCPIADC.h</itemPath>
@@ -126,6 +126,7 @@
         <itemPath>../src/app_commands.h</itemPath>
         <itemPath>../src/streaming.h</itemPath>
         <itemPath>../src/app_wifi_winc1500.h</itemPath>
+        <itemPath>../src/encoder.h</itemPath>
       </logicalFolder>
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">
@@ -675,11 +676,11 @@
           <itemPath>../src/HAL/DIO.c</itemPath>
         </logicalFolder>
         <logicalFolder name="json" displayName="json" projectFiles="true">
-          <itemPath>../src/json/Encoder.c</itemPath>
+          <itemPath>../src/json/JSON_Encoder.c</itemPath>
         </logicalFolder>
         <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
           <itemPath>../src/nanopb/DaqifiOutMessage.pb.c</itemPath>
-          <itemPath>../src/nanopb/Encoder.c</itemPath>
+          <itemPath>../src/nanopb/NanoPB_Encoder.c</itemPath>
         </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/SCPI/SCPIADC.c</itemPath>
@@ -787,6 +788,7 @@
         <itemPath>../src/http_print.c</itemPath>
         <itemPath>../src/custom_http_app.c</itemPath>
         <itemPath>../src/mpfs_img2.c</itemPath>
+        <itemPath>../src/encoder.c</itemPath>
       </logicalFolder>
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">
@@ -2186,6 +2188,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="C:/microchip/harmony/v2_06/apps/weehau-clean_18-03-23/board_firmware/firmware/DAQiFi_3_0.X/debug/pic32mz_ef_sk__ioexp__11n__freertos/DAQiFi_3_0_ptg"/>
         <property key="programmerToGoImageName" value="DAQiFi_3_0_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
