@@ -302,7 +302,7 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context)
     size_t count = Nanopb_Encode(                                           \
                         pBoardData,                                         \
                         (const NanopbFlagsArray *)&fields_info,             \
-                        buffer);
+                        (uint8_t **)&buffer);
     if (count < 1)
     {
         return SCPI_RES_ERR;
@@ -437,15 +437,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context)
 {
     int32_t freq;
     
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
-                            BOARDCONFIG_ALL_CONFIG,                         \
-                            0 );
-    
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
                         BOARDRUNTIME_STREAMING_CONFIGURATION);
-    
-    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
-                        BOARDRUNTIMECONFIG_ALL_CONFIG);
     
      // timer running frequency
     uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(                         \
@@ -470,26 +463,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context)
         //No freq given just stream with the current value
     }
     
-    Streaming_UpdateState(pBoardConfig, pBoardRuntimeConfig);
+    Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_StopStreaming(scpi_t * context)
 {
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
-                            BOARDCONFIG_ALL_CONFIG,                         \
-                            0 );
-    
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
                         BOARDRUNTIME_STREAMING_CONFIGURATION);
     
-    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
-                        BOARDRUNTIMECONFIG_ALL_CONFIG);
-    
     pRunTimeStreamConfig->IsEnabled = false;
     
-    Streaming_UpdateState(pBoardConfig, pBoardRuntimeConfig);
+    Streaming_UpdateState();
     
     return SCPI_RES_OK;
 }

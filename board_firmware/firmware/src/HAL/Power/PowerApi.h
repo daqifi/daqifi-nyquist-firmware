@@ -16,6 +16,9 @@
 extern "C" {
 #endif
 
+/*! @enum POWER_STATE
+ * @brief Enumeration with the possible power states 
+ */
 typedef enum
  {  
     /* Powered down */
@@ -27,7 +30,10 @@ typedef enum
     /* Board partially powered. External power disabled */         
     POWERED_UP_EXT_DOWN,
  } POWER_STATE;
-     
+ 
+ /*! @enum POWER_STATE_REQUEST
+ * @brief Enumeration with the possible power states request
+ */
 typedef enum
 {      
     /* Board fully powered. */ 
@@ -40,6 +46,9 @@ typedef enum
     NO_CHANGE,
 } POWER_STATE_REQUEST;
 
+ /*! @enum EXT_POWER_SOURCE
+ * @brief Enumeration with the possible power source
+ */
 typedef enum
 {      
     /* No power detected. */ 
@@ -55,7 +64,10 @@ typedef enum
     /* 500mA USB power */
     USB_500MA_EXT_POWER,
 } EXT_POWER_SOURCE;
-     
+ 
+/*! @struct sPowerConfig
+ * @brief Power configuration 
+ */
 typedef struct sPowerConfig{
 
     PORTS_CHANNEL EN_Vref_Ch;
@@ -77,6 +89,9 @@ typedef struct sPowerConfig{
 
 } tPowerConfig;
 
+/*! @struct sPowerData
+ * @brief Power data 
+ */
 typedef struct sPowerData{
 
     uint8_t chargePct;
@@ -95,15 +110,17 @@ typedef struct sPowerData{
 
 } tPowerData;
 
-typedef struct sPowerWriteVars{
-
+/*! @struct sPowerWriteVars
+ * @brief Power write variables 
+ */
+typedef struct sPowerWriteVars
+{
    unsigned char EN_Vref_Val;
    unsigned char EN_3_3V_Val;
    unsigned char EN_5_10V_Val;
    unsigned char EN_5V_ADC_Val;
    unsigned char EN_12V_Val;
    tBQ24297WriteVars BQ24297WriteVars;
-
 } tPowerWriteVars;
 
 /*! Initialice power 

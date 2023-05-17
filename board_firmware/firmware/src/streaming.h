@@ -12,36 +12,28 @@ extern "C" {
 #define STREAMING_BUFFER_SIZE               ENCODER_BUFFER_SIZE
     
 /*! Initializes the streaming component
- * @param[in]  config        Streaming configuration
- * @param[out] runtimeConfig Streaming configuration in runtime
+ * @param[in] pStreamingConfigInit Streaming configuration
+ * @param[out] pStreamingRuntimeConfigInit Streaming configuration in runtime
  */
-void Streaming_Init(    const tStreamingConfig* config,                      \
-                        StreamingRuntimeConfig* runtimeConfig);
+void Streaming_Init(const tStreamingConfig* pStreamingConfigInit,           \
+                    const StreamingRuntimeConfig* pStreamingRuntimeConfigInit);
 
 /*! Updates the streaming timer 
- * @param[in] boardConfig       Board configuration, includes board type
- * @param[in/out] runtimeConfig The runtime configuration
  */
-void Streaming_UpdateState(                                                 \
-                        const tBoardConfig* boardConfig,                    \
-                        tBoardRuntimeConfig* runtimeConfig );
+void Streaming_UpdateState( void );
 
 /*!
  * Called to write streaming data to the underlying tasks
- * @param boardConfig   The hardware configuration
  * @param runtimeConfig The runtime configuration
  * @param boardData     The board data
  */
-void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
-                        tBoardRuntimeConfig* runtimeConfig,                 \
+void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
                         tBoardData* boardData);
 
 /**
  * Initializes and starts the timestamp timer
- * @param config The hardware configuration
- * @param runtimeConfig The runtime configurations
  */
-void TimestampTimer_Init(const tStreamingConfig* config, StreamingRuntimeConfig* runtimeConfig);
+void TimestampTimer_Init( void );
 
 #ifdef	__cplusplus
 }

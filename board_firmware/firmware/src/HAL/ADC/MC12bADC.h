@@ -2,7 +2,7 @@
  * File:   MC12bADC.h
  * Author: Daniel
  *
- * Created on March 29, 2017, 12:03 PM
+ * This file implements the functions to manage the module ADC AD7609. 
  */
 
 #pragma once

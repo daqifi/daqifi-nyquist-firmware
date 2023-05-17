@@ -524,9 +524,6 @@ scpi_result_t SCPI_LANAVSecurityGet(scpi_t * context)
 scpi_result_t SCPI_LANSecuritySet(scpi_t * context)
 {
     int param1;
-    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
-                        BOARDDATA_WIFI_SETTINGS,                            \
-                        0); 
     DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIME_WIFI_SETTINGS);
     
@@ -981,10 +978,13 @@ scpi_result_t SCPI_LANAVSsidScan(scpi_t * context)
                 continue;
             }                 
             // Store SSID 
-            strcpy(     pWifiSettings->settings.wifi.av_ssid[index],         \       
+            strcpy(     pWifiSettings->settings.wifi.av_ssid[index],         \
                         (const char*) scanResult.ssid); 
             
-            context->interface->write( context, (const char*) scanResult.ssid, strlen( (const char*) scanResult.ssid ) );
+            context->interface->write(                                      \
+                        context,                                            \
+                        (const char*) scanResult.ssid,                      \
+                        strlen( (const char*) scanResult.ssid ) );
             context->interface->write( context, (const char*) "\r\n", 2 );
             context->interface->flush(context);
             

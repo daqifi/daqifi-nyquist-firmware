@@ -1,3 +1,9 @@
+/* 
+ * @file   DAC7718.c
+ * @brief This file manages the DAC7718 module
+ * 
+ */
+
 #include "DAC7718.h"
 
 //! Max number of configuration to DAC7718 module

@@ -8,10 +8,12 @@
  * www.abluethinginthecloud.com
  *     
  */
-
+#include "NQ1BoardConfig.h"
+#include "NQ2BoardConfig.h"
+#include "NQ3BoardConfig.h"
 #include "BoardConfig.h"
 
-tBoardConfig pBoardConfig;
+static tBoardConfig boardConfig;
 
 /*!
  * Initializes the doardConfig structure for the current board
@@ -20,31 +22,31 @@ tBoardConfig pBoardConfig;
 void InitBoardConfig(TopLevelSettings* pTopLevelSettings)
 {
     // Initialize variable to known state
-    memset(&pBoardConfig, 0, sizeof(pBoardConfig));
-    
+    memset(&boardConfig, 0, sizeof(boardConfig));
+     
     switch (pTopLevelSettings->boardVariant)
     {
     case 3:
-        memcpy(&pBoardConfig, &g_NQ3BoardConfig, sizeof(tBoardConfig));
+        memcpy(&boardConfig, NQ3BoardConfig_Get(), sizeof(tBoardConfig));
         break;
     case 2:
-        memcpy(&pBoardConfig, &g_NQ2BoardConfig, sizeof(tBoardConfig));
+        memcpy(&boardConfig, NQ2BoardConfig_Get(), sizeof(tBoardConfig));
         break;
     case 1: // Everything else is an NQ1
     default:
-        memcpy(&pBoardConfig, &g_NQ1BoardConfig, sizeof(tBoardConfig));
+        memcpy(&boardConfig, NQ1BoardConfig_Get() , sizeof(tBoardConfig));
         break;
     }
     
     // Set board version information from settings memory
-    pBoardConfig.BoardVariant = pTopLevelSettings->boardVariant;
-    memcpy(                 &pBoardConfig.boardFirmwareRev,                \
-                            &pTopLevelSettings->boardFirmwareRev,          \
+    boardConfig.BoardVariant = pTopLevelSettings->boardVariant;
+    memcpy(                 &boardConfig.boardFirmwareRev,                  \
+                            &pTopLevelSettings->boardFirmwareRev,           \
                             16);
-    memcpy(                 &pBoardConfig.boardHardwareRev,                \
-                            &pTopLevelSettings->boardHardwareRev,          \
+    memcpy(                 &boardConfig.boardHardwareRev,                  \
+                            &pTopLevelSettings->boardHardwareRev,           \
                             16);
-    pBoardConfig.boardSerialNumber = ((uint64_t)DEVSN1 << 32) | DEVSN0;
+    boardConfig.boardSerialNumber = ((uint64_t)DEVSN1 << 32) | DEVSN0;
 }
 
 /*! This function is used for getting a board configuration parameter
@@ -59,33 +61,33 @@ const void *BoardConfig_Get(                                                \
 {
     switch( parameter ){
         case BOARDCONFIG_ALL_CONFIG:
-            return &pBoardConfig;
+            return &boardConfig;
         case BOARDCONFIG_VARIANT:
-            return &pBoardConfig.BoardVariant;
+            return &boardConfig.BoardVariant;
         case BOARDCONFIG_HARDWARE_REVISION:
-            return pBoardConfig.boardHardwareRev;
+            return boardConfig.boardHardwareRev;
         case BOARDCONFIG_FIRMWARE_REVISION:
-            return pBoardConfig.boardFirmwareRev;
+            return boardConfig.boardFirmwareRev;
         case BOARDCONFIG_SERIAL_NUMBER:
-            return &pBoardConfig.boardSerialNumber;
+            return &boardConfig.boardSerialNumber;
         case BOARDCONFIG_DIO_CHANNEL:
-            if( index < pBoardConfig.DIOChannels.Size ){
-                return &pBoardConfig.DIOChannels.Data[ index ];
+            if( index < boardConfig.DIOChannels.Size ){
+                return &boardConfig.DIOChannels.Data[ index ];
             }
             return NULL;
         case BOARDCONFIG_AIN_MODULE:
-            if( index < pBoardConfig.AInModules.Size ){
-                return &pBoardConfig.AInModules.Data[ index ];
+            if( index < boardConfig.AInModules.Size ){
+                return &boardConfig.AInModules.Data[ index ];
             }
             return NULL;
         case BOARDCONFIG_AIN_CHANNELS: 
-            return &pBoardConfig.AInChannels; 
+            return &boardConfig.AInChannels; 
         case BOARDCONFIG_POWER_CONFIG:
-            return &pBoardConfig.PowerConfig;
+            return &boardConfig.PowerConfig;
         case BOARDCONFIG_UI_CONFIG:
-            return &pBoardConfig.UIConfig;
+            return &boardConfig.UIConfig;
         case BOARDCONFIG_STREAMING_CONFIG:
-            return &pBoardConfig.StreamingConfig;
+            return &boardConfig.StreamingConfig;
         case BOARDCONFIG_NUM_OF_ELEMENTS:
         default:
             return NULL;
@@ -108,54 +110,54 @@ void BoardConfig_Set(                                                       \
     }
     switch( parameter ){
         case BOARDCONFIG_VARIANT:
-            pBoardConfig.BoardVariant = *((uint8_t *)pSetValue );
+            boardConfig.BoardVariant = *((uint8_t *)pSetValue );
             break;
         case BOARDCONFIG_HARDWARE_REVISION:
             memcpy(                                                         \
-                            pBoardConfig.boardHardwareRev,                  \
+                            boardConfig.boardHardwareRev,                  \
                             pSetValue,                                      \
                             BOARDCONFIG_HARDWARE_REVISION_SIZE );
             break;
         case BOARDCONFIG_FIRMWARE_REVISION:
             memcpy(                                                         \
-                            pBoardConfig.boardFirmwareRev,                  \
+                            boardConfig.boardFirmwareRev,                  \
                             pSetValue,                                      \
                             BOARDCONFIG_FIRMWARE_REVISION_SIZE );
             break;
         case BOARDCONFIG_SERIAL_NUMBER:
-            pBoardConfig.boardSerialNumber = *( (uint64_t *)pSetValue);
+            boardConfig.boardSerialNumber = *( (uint64_t *)pSetValue);
             break;
         case BOARDCONFIG_DIO_CHANNEL:
-            if( index < pBoardConfig.DIOChannels.Size ){
+            if( index < boardConfig.DIOChannels.Size ){
                 memcpy(                                                     \
-                            &pBoardConfig.DIOChannels.Data[ index ],        \
+                            &boardConfig.DIOChannels.Data[ index ],        \
                             pSetValue,                                      \
                             sizeof( DIOConfig ) );
             }
             break;
         case BOARDCONFIG_AIN_MODULE:
-            if( index < pBoardConfig.AInModules.Size ){
+            if( index < boardConfig.AInModules.Size ){
                 memcpy(                                                     \
-                            &pBoardConfig.AInModules.Data[ index ],         \
+                            &boardConfig.AInModules.Data[ index ],         \
                             pSetValue,                                      \
                             sizeof( AInModule ) );
             }
             break;
         case BOARDCONFIG_POWER_CONFIG:
             memcpy(                                                         \
-                            &pBoardConfig.PowerConfig,                      \
+                            &boardConfig.PowerConfig,                      \
                             pSetValue,                                      \
                             sizeof(tPowerConfig) );
             break;
         case BOARDCONFIG_UI_CONFIG:
             memcpy(                                                         \
-                            &pBoardConfig.UIConfig,                         \
+                            &boardConfig.UIConfig,                         \
                             pSetValue,                                      \
                             sizeof( tUIConfig ) );
             break;
         case BOARDCONFIG_STREAMING_CONFIG:
             memcpy(                                                         \
-                            &pBoardConfig.StreamingConfig,                  \
+                            &boardConfig.StreamingConfig,                  \
                             pSetValue,                                      \
                             sizeof( tStreamingConfig ) );
         case BOARDCONFIG_NUM_OF_ELEMENTS:

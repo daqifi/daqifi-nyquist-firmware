@@ -1,3 +1,8 @@
+/*! @file AD7609.c 
+ * 
+ * This file implements the functions to manage the module ADC AD7609. 
+ */
+
 #include "AD7609.h"
 #include "Util/Delay.h"
 
@@ -9,6 +14,9 @@ static AD7609ModuleConfig* pModuleConfigAD7609;
 //! to be set in initialization
 static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609; 
 
+/*! 
+ * Function to configre SPI related to ADC
+ */
 static void AD7609_Apply_SPI_Config( void )
 {
     //Disable SPI
@@ -49,6 +57,9 @@ static void AD7609_Apply_SPI_Config( void )
     while(PLIB_SPI_IsBusy(pModuleConfigAD7609->SPI.spiID));
 }
 
+/*!
+ *  Reset the module 
+ */
 static void AD7609_Reset( void )
 {
     // Reset AD7609 by pulling RST line high for > 100ns
@@ -150,7 +161,6 @@ bool AD7609_WriteStateSingle(
     UNUSED(moduleRuntimeConfig);
     UNUSED(channelConfig);
     UNUSED(channelRuntimeConfig);
-#warning "This function is unused, it should be deleted or completed"
     // Nothing yet!
     
     return true;

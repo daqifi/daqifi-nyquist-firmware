@@ -1,3 +1,8 @@
+/*! @file NanoPB_Encoder.c 
+ * 
+ * This file implements the functions to manage the NanoPB encoder
+ */
+
 #include "pb_encode.h"
 #include "pb_decode.h"
 

@@ -83,14 +83,8 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
 scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
 {
     int param1, param2;
-    tBoardRuntimeConfig * pBoardRunTimeConfig = BoardRunTimeConfig_Get(     \
-                        BOARDRUNTIMECONFIG_ALL_CONFIG);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
-    
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
-                            BOARDCONFIG_VARIANT,                            \
-                            0 ); 
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
                             BOARDCONFIG_AIN_CHANNELS,                       \
                             0 ); 
@@ -227,12 +221,7 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
                             BOARDCONFIG_AIN_CHANNELS,                       \
                             0 );
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
-                            BOARDCONFIG_VARIANT,                            \
-                            0 ); 
     
-    tBoardRuntimeConfig * pBoardRunTimeConfig = BoardRunTimeConfig_Get(     \
-                        BOARDRUNTIMECONFIG_ALL_CONFIG);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
     
@@ -259,7 +248,7 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
                 0 ); 
         
         size_t i=0;
-        for (i=0; i<&pAInLatestSize; ++i)
+        for (i=0; i<*pAInLatestSize; ++i)
         {
             pRuntimeAInChannels->Data[i].IsDifferential =               \
                         (param2 & (1 << i)) == 0;
@@ -283,8 +272,6 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context)
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
                             BOARDCONFIG_AIN_CHANNELS,                       \
                             0 );
-    tBoardRuntimeConfig * pBoardRunTimeConfig = BoardRunTimeConfig_Get(     \
-                        BOARDRUNTIMECONFIG_ALL_CONFIG);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
     if (SCPI_ParamInt32(context, &param1, FALSE))
@@ -313,7 +300,7 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context)
         pAInLatestSize = BoardData_Get(                                     \
                 BOARDDATA_AIN_LATEST_SIZE,                                  \
                 0 ); 
-        for (i=0; i<&pAInLatestSize; ++i)
+        for (i=0; i<*pAInLatestSize; ++i)
         {
             if (!pRuntimeAInChannels->Data[i].IsDifferential)
             {

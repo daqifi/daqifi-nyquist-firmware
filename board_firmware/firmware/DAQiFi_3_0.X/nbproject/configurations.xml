@@ -39,11 +39,11 @@
           <itemPath>../src/HAL/DIO.h</itemPath>
         </logicalFolder>
         <logicalFolder name="json" displayName="json" projectFiles="true">
-          <itemPath>../src/json/JSON_Encoder.h</itemPath>
+          <itemPath>../src/json/Encoder.h</itemPath>
         </logicalFolder>
         <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
           <itemPath>../src/nanopb/DaqifiOutMessage.pb.h</itemPath>
-          <itemPath>../src/nanopb/NanoPB_Encoder.h</itemPath>
+          <itemPath>../src/nanopb/Encoder.h</itemPath>
         </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/SCPI/SCPIADC.h</itemPath>
@@ -57,6 +57,9 @@
             <itemPath>../src/state/board/BoardConfig.h</itemPath>
             <itemPath>../src/state/board/DIOConfig.h</itemPath>
             <itemPath>../src/state/board/StreamingConfig.h</itemPath>
+            <itemPath>../src/state/board/NQ1BoardConfig.h</itemPath>
+            <itemPath>../src/state/board/NQ2BoardConfig.h</itemPath>
+            <itemPath>../src/state/board/NQ3BoardConfig.h</itemPath>
           </logicalFolder>
           <logicalFolder name="data" displayName="data" projectFiles="true">
             <itemPath>../src/state/data/AInSample.h</itemPath>

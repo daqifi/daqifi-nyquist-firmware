@@ -1,11 +1,8 @@
 /*******************************************************************************
-  File Name:
-    app.c
-
-  Summary:
-
-
-  Description:
+  File Name: app.c
+ 
+  Description: This file initialice all modules and manage the tasks of the 
+               system
 
  *******************************************************************************/
 
@@ -34,11 +31,6 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
  *******************************************************************************/
 // DOM-IGNORE-END
 
-// *****************************************************************************
-// *****************************************************************************
-// Section: Included Files
-// *****************************************************************************
-// *****************************************************************************
 #include <sys/attribs.h>
 #include "streaming.h"
 #include "HAL/DIO.h"
@@ -59,79 +51,41 @@ const char BOARD_FIRMWARE_REV[16] = "1.0.3";
 
 #define UNUSED(x) (void)(x)
 
-// *****************************************************************************
-// *****************************************************************************
-// Section: Global Variable Definitions
-// *****************************************************************************
-// *****************************************************************************
-
-// *****************************************************************************
-/* Application Data
-
-  Summary:
-    Holds application data
-
-  Description:
-    This structure holds the application's data.
-
-  Remarks:
-    Application strings and buffers are be defined outside this structure.
+/*! Declare force bootloader RAM flag location (FORCE_BOOTLOADER_FLAG_ADDR 
+ *  defined in preprocessor directives as 0x8007FFFC) 0x8007FFFC is the last 
+ * word of RAM - this value must match what is defined in the bootloader 
+ *  project as well!
  */
-
-
-
-// Declare force bootloader RAM flag location (FORCE_BOOTLOADER_FLAG_ADDR 
-// defined in preprocessor directives as 0x8007FFFC) 0x8007FFFC is the last 
-// word of RAM - this value must match what is defined in the bootloader 
-// project as well!
 extern volatile uint32_t force_bootloader_flag __attribute__((              \
                         persistent,                                         \
                         coherent,                                           \
                         address(FORCE_BOOTLOADER_FLAG_ADDR)));
 
-// *****************************************************************************
-// *****************************************************************************
-// Section: Application Callback Functions
-// *****************************************************************************
-// *****************************************************************************
+//! Pointer to board data information 
+static tBoardData * pBoardData;
+//! Pointer to board configuration 
+static tBoardConfig * pBoardConfig;
+//! Pointer to board configuration in runtime
+static tBoardRuntimeConfig * pBoardRuntimeConfig; 
 
-/* TODO:  Add any necessary callback functions.
+/*!
+ * @function runTimeStatsTimer89_init
+ * @brief This routine initializes timer 8/9, which is a 32-bit hardware timer
+ * to generate tick every 2.56us. The timer is used for the following 
+ * purposes:
+ * 1. FreeRTOS run time statistic counter. The freeRTOS run time statistics 
+ * time base needs to have a higher resolution than the 1ms tick interrupt. 
+ * Otherwise the statistics may be too inaccurate to be truly useful. The 
+ * timer 8/9 tick is set to run ~400 time faster than the tick interrupt 
+ * because the faster the time base the more accurate the statistics will be. 
+ * However, the downside is the timer value will also overflow faster(~3 hours). 
+ * This becomes a problem because there is no overflow protection in the FreeRTOS 
+ * library function, so count values are only valid until the timer overflows. 
+ * As a workaround, the timer 8/9 is programmed to interrupt every 60 mins 
+ * to reset runtime counter for every task. 
+ * 2. General purpose microseconds counter. Refer to osGetSystemTimeUs()
+ * in os_port_freertos.c                                  
 */
-
-// *****************************************************************************
-// *****************************************************************************
-// Section: Application Local Functions
-// *****************************************************************************
-// *****************************************************************************
-
-// *****************************************************************************
-// *****************************************************************************
-// Section: Application Initialization and State Machine Functions
-// *****************************************************************************
-// *****************************************************************************
-/*=============================================================================
- * Function: runTimeStatsTimer89_init
- * Execution Level:
- * Execution Time: Not measured
- *
- * Return Value:  No return value.
- *
- * Abstract:  This routine initializes timer 8/9, which is a 32-bit hardware timer
- *            to generate tick every 2.56us. The timer is used for the following 
- *            purposes:
- *            1. FreeRTOS run time statistic counter. The freeRTOS run time statistics 
- *               time base needs to have a higher resolution than the 1ms tick interrupt. 
- *               Otherwise the statistics may be too inaccurate to be truly useful. The 
- *               timer 8/9 tick is set to run ~400 time faster than the tick interrupt 
- *               because the faster the time base the more accurate the statistics will be. 
- *               However, the downside is the timer value will also overflow faster(~3 hours). 
- *               This becomes a problem because there is no overflow protection in the FreeRTOS 
- *               library function, so count values are only valid until the timer overflows. 
- *               As a workaround, the timer 8/9 is programmed to interrupt every 60 mins to reset 
- *				 runtime counter for every task. 
- *            2. General purpose microseconds counter. Refer to osGetSystemTimeUs()
- *               in os_port_freertos.c                                  
- *===========================================================================*/
 void runTimeStatsTimer89_init(void)
 {
     PLIB_TMR_Stop(TMR_ID_8);
@@ -141,76 +95,92 @@ void runTimeStatsTimer89_init(void)
     PLIB_TMR_PrescaleSelect(TMR_ID_8, TMR_PRESCALE_VALUE_256);
     PLIB_TMR_Mode32BitEnable(TMR_ID_8);
     PLIB_TMR_Counter32BitClear(TMR_ID_8);
-    // interrupt every ~ 1 hour. <-Do NOT change the interrupt frequency as it 
-    // will affect other applications that are using the timer, e.g Recorder library. 
+    // interrupt every ~ 1 hour. <-Do NOT change the interrupt frequency as
+    // it will affect other applications that are using the timer, 
+    // e.g Recorder library. 
     PLIB_TMR_Period32BitSet(TMR_ID_8, 0x50000000); 
-    
-    /* Setup Interrupt */   
-    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_VECTOR_T9, INT_PRIORITY_LEVEL3);
-    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_VECTOR_T9, INT_SUBPRIORITY_LEVEL3);
-    PLIB_INT_SourceDisable(INT_ID_0, INT_SOURCE_TIMER_9);//disable interrupt
+   
+    // Setup Interrupt  
+    PLIB_INT_VectorPrioritySet(                                             \
+                        INT_ID_0,                                           \
+                        INT_VECTOR_T9,                                      \
+                        INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(                                          \
+                        INT_ID_0,                                           \
+                        INT_VECTOR_T9,                                      \
+                        INT_SUBPRIORITY_LEVEL3);
+    //disable interrupt
+    PLIB_INT_SourceDisable(INT_ID_0, INT_SOURCE_TIMER_9);
     PLIB_TMR_Start(TMR_ID_8);
 }
 
-/*=============================================================================
- * Function: runTimeStatsTimer89_counter
- * Execution Level:
- * Execution Time: Not measured
- *
- * Return Value:  No return value.
- *
- * Abstract:  This routine returns tick counter for FreeRTOS run time stats. 
- *===========================================================================*/
+/*! @function runTimeStatsTimer89_counter
+ * @brief  This routine returns tick counter for FreeRTOS run time stats. 
+ * @return The 32bit timer
+ */
 unsigned long runTimeStatsTimer89_counter(void)
 {
-    return (TMR9 <<16 | TMR8); // The 32-bit timer will overflow every 10995 secs.
+    // The 32-bit timer will overflow every 10995 secs.
+    return (TMR9 <<16 | TMR8); 
 }
 
-/*******************************************************************************
-  Function:
-    void APP_Initialize(void)
-
-  Remarks:
-    See prototype in app.h.
+/*! @function void APP_Initialize(void)
+ * @brief This function manage the system and modules initialization
  */
 void APP_Initialize(void)
 {
-    tBoardData * pBoardData = BoardData_Get(                                \
+    DaqifiSettings tmpTopLevelSettings;    
+    DaqifiSettings tmpWifiSettings;
+    
+    pBoardData = BoardData_Get(                                             \
                             BOARDDATA_ALL_DATA,                             \
                             0);
     
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+    pBoardConfig = BoardConfig_Get(                                         \
                             BOARDCONFIG_ALL_CONFIG,                         \
                             0);
     
-    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
+    pBoardRuntimeConfig = BoardRunTimeConfig_Get(                           \
                             BOARDRUNTIMECONFIG_ALL_CONFIG);
     
-	force_bootloader_flag = 0;    // Reset force bootloader flag
+    // Reset force bootloader flag
+	force_bootloader_flag = 0;  
     
-    DaqifiSettings tmpTopLevelSettings;
     // Initialize the variable to 0s
     memset(&tmpTopLevelSettings, 0, sizeof(tmpTopLevelSettings));
     tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
     
-    // Try to load TopLevelSettings from NVM - if this fails, store default settings to NVM (first run after a program)
-    if(!LoadNvmSettings(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings))
+    // Try to load TopLevelSettings from NVM - if this fails, store default 
+    // settings to NVM (first run after a program)
+    if(!LoadNvmSettings(                                                    \
+                        DaqifiSettings_TopLevelSettings,                    \
+                        &tmpTopLevelSettings))
     {
-        // Get board variant and cal param type from TopLevelSettings NVM variable
-        LoadFactorySettings(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings);
-        strcpy(tmpTopLevelSettings.settings.topLevelSettings.boardHardwareRev, BOARD_HARDWARE_REV);
-        strcpy(tmpTopLevelSettings.settings.topLevelSettings.boardFirmwareRev, BOARD_FIRMWARE_REV);
-        tmpTopLevelSettings.settings.topLevelSettings.boardVariant = BOARD_VARIANT;
+        // Get board variant and cal param type from TopLevelSettings NVM 
+        // variable
+        LoadFactorySettings(                                                \
+                        DaqifiSettings_TopLevelSettings,                    \
+                        &tmpTopLevelSettings);
+        strcpy(                                                             \
+            tmpTopLevelSettings.settings.topLevelSettings.boardHardwareRev, \
+                        BOARD_HARDWARE_REV);
+        strcpy(                                                             \
+            tmpTopLevelSettings.settings.topLevelSettings.boardFirmwareRev, \
+                        BOARD_FIRMWARE_REV);
+        tmpTopLevelSettings.settings.topLevelSettings.boardVariant =        \
+                        BOARD_VARIANT;
         SaveNvmSettings(&tmpTopLevelSettings);
     }
     
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
-    InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
+    InitBoardRuntimeConfig(                                                 \
+                tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     InitializeBoardData(pBoardData);
     
-    // Try to load WiFiSettings from NVM - if this fails, store default settings to NVM (first run after a program)
-    DaqifiSettings tmpWifiSettings;
+    // Try to load WiFiSettings from NVM - if this fails, store default 
+    // settings to NVM (first run after a program)
+
     // Initialize the variable to 0s
     memset(&tmpWifiSettings, 0, sizeof(tmpWifiSettings));
     tmpWifiSettings.type = DaqifiSettings_Wifi;
@@ -263,11 +233,9 @@ void APP_Initialize(void)
 	// Write initial values
     DIO_WriteStateAll( );
    
-	TimestampTimer_Init(&pBoardConfig->StreamingConfig,                     \
-                        &pBoardRuntimeConfig->StreamingConfig);
     Streaming_Init(     &pBoardConfig->StreamingConfig,                     \
                         &pBoardRuntimeConfig->StreamingConfig);
-    Streaming_UpdateState(pBoardConfig, pBoardRuntimeConfig);   
+    Streaming_UpdateState();   
     
     ADC_Init(                                                               \
                 pBoardConfig,                                               \
@@ -275,30 +243,13 @@ void APP_Initialize(void)
                 pBoardData );
 }
 
-
-/*******************************************************************************
-  Function:
-    void APP_Tasks(void)
-
-  Remarks:
-    See prototype in app.h.
+/*! This function manage the application tasks. 
  */
 void APP_Tasks(void)
 {   
-    tBoardData * pBoardData = BoardData_Get(                                \
-                            BOARDDATA_ALL_DATA,                             \
-                            0);
-    
-    const tBoardConfig * pBoardConfig = BoardConfig_Get(                    \
-                            BOARDCONFIG_ALL_CONFIG,                         \
-                            0); 
-    
-    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
-                        BOARDRUNTIMECONFIG_ALL_CONFIG);
-    
     ADC_Tasks();
     
-    Streaming_Tasks(pBoardConfig, pBoardRuntimeConfig, pBoardData);
+    Streaming_Tasks( pBoardRuntimeConfig, pBoardData);
     
     // Don't do anything else until the board powers on
     if (pBoardData->PowerData.powerState == MICRO_ON)
@@ -310,6 +261,3 @@ void APP_Tasks(void)
 
 }
 
-/*******************************************************************************
- End of File
-*/

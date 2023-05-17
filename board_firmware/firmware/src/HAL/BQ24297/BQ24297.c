@@ -1,3 +1,7 @@
+/* 
+ * @file   BQ24297.c
+ * @brief This file manages the BQ24297 module
+ */
 #include "BQ24297.h"
 
 //! Pointer to the BQ24297 device configuration data structure
@@ -44,7 +48,7 @@ void BQ24297_InitHardware(                                                  \
                         pWriteVariables->OTG_Val );
 }
 
-void BQ24297_InitSettings( void )
+void BQ24297_Config_Settings( void )
 {
     // Temporary value to hold current register value
     uint8_t reg = 0;
@@ -217,7 +221,7 @@ static uint8_t BQ24297_Read_I2C( uint8_t reg)
     if(pData->I2C_Handle != DRV_HANDLE_INVALID)
     {
         if ( (I2CWriteBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID) ||     \
-        (DRV_I2C_TransferStatusGet(pData->I2C_Handle, I2CWriteBufferHandle)\ 
+        (DRV_I2C_TransferStatusGet(pData->I2C_Handle, I2CWriteBufferHandle) \
                         == DRV_I2C_BUFFER_EVENT_COMPLETE) ||                \
          (DRV_I2C_TransferStatusGet(pData->I2C_Handle, I2CWriteBufferHandle)\
                         == DRV_I2C_BUFFER_EVENT_ERROR) )
@@ -261,7 +265,7 @@ static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData)
     if(pData->I2C_Handle != DRV_HANDLE_INVALID)
     {
         if ( (I2CWriteBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID) ||     \
-          (DRV_I2C_TransferStatusGet(pData->I2C_Handle, I2CWriteBufferHandle)\ 
+          (DRV_I2C_TransferStatusGet(pData->I2C_Handle, I2CWriteBufferHandle)\
                         == DRV_I2C_BUFFER_EVENT_COMPLETE) ||                \
           (DRV_I2C_TransferStatusGet(pData->I2C_Handle, I2CWriteBufferHandle)\
                         == DRV_I2C_BUFFER_EVENT_ERROR) )

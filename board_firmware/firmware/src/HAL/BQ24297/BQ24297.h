@@ -15,67 +15,114 @@
 extern "C" {
 #endif
     
+/*! @enum eILimit
+ * @brief Enumeration for input limit 
+ */
+enum eILimit{ 
+    //! Limit 100
+    ILim_100, 
+    //! Limit 150
+    ILim_150, 
+    //! Limit 500
+    ILim_500, 
+    //! Limit 900
+    ILim_900, 
+    //! Limit 1000
+    ILim_1000, 
+    //! Limit 1500
+    ILim_1500, 
+    //! Limit 2000
+    ILim_2000,
+    //! Limit 3000 
+    ILim_3000
+};
+
+/*! @enum eBusStatus
+ * @brief Enumeration for bus status
+ */
+enum eBusStatus{
+    //!Bus unknown
+    VBUS_UNKNOWN,
+    //! Bus USB
+    VBUS_USB,
+    //! Bus charger
+    VBUS_CHARGER, 
+    //! Bus OTG module
+    VBUS_OTG
+};
+
+/*! @enum eChargeStatus
+ * @brief Enumeration for charge status
+ */
+enum eChargeStatus{
+    //! No charge
+    CHG_STAT_NOCHARGE,
+    //! Precharge
+    CHG_STAT_PRECHARGE, 
+    //! Fast charge
+    CHG_STAT_FASTCHARGE,
+    //! Stat charged
+    CHG_STAT_CHARGED
+};
+
+/*! @enum eChargeStatus
+ * @brief Enumeration for charge fault
+ */
+enum eChargeFault{
+    //! No fail
+    CHG_FAULT_NORMAL, 
+    //! Fault in input
+    CHG_FAULT_INPUTFAULT, 
+    //! Thermal error
+    CHG_FAULT_THERMAL,
+    //! Timer error
+    CHG_FAULT_TIMER
+};
+
+/*! @enum eNTCFault
+ * @brief Enumeration for NTC fault
+ */
+enum eNTCFault{
+    //! NTC works normal
+    NTC_FAULT_NORMAL,
+    //! Hot error
+    NTC_FAULT_HOT, 
+    //! Cold error
+    NTC_FAULT_COLD, 
+    //! Hot cold fault
+    NTC_FAULT_HOTCOLD
+}eNTCFault;
 
 typedef struct
 {
-    // From control register 0x00
+    //! From control register 0x00
     bool hiZ;
-    enum inLim_t{
-        ILim_100, 
-        ILim_150, 
-        ILim_500, 
-        ILim_900, 
-        ILim_1000, 
-        ILim_1500, 
-        ILim_2000, 
-        ILim_3000} 
-    inLim;
-    
-    // From power-on configuration 0x01
+    //! Input limit
+    enum eILimit inLim;
+    //! From power-on configuration 0x01
     bool otg;
     bool chg;
-    
-    // From charger current control register 0x02
+    //! From charger current control register 0x02
     uint8_t ichg;
-    
     // From operation control register 0x07
     bool iinDet_Read;
-    
     // From status register 0x08
-    enum vBusStat_t{
-        VBUS_UNKNOWN, 
-        VBUS_USB,
-        VBUS_CHARGER, 
-        VBUS_OTG} 
-    vBusStat;
-    enum chgStat_t{
-        CHG_STAT_NOCHARGE, 
-        CHG_STAT_PRECHARGE, 
-        CHG_STAT_FASTCHARGE, 
-        CHG_STAT_CHARGED} 
-    chgStat;
+    //! Bus status
+    enum eBusStatus vBusStat;
+    //! Charge status
+    enum eChargeStatus chgStat;
     bool dpmStat;
     bool pgStat;
     bool thermStat;
     bool vsysStat;
-    
     // From fault register 0x09
     bool watchdog_fault;
     bool otg_fault;
-    enum chgFault_t{
-        CHG_FAULT_NORMAL, 
-        CHG_FAULT_INPUTFAULT, 
-        CHG_FAULT_THERMAL, 
-        CHG_FAULT_TIMER} 
-    chgFault;
+    //! Charge error
+    enum eChargeFault chgFault;
     bool bat_fault;
-    enum ntcFault_t{
-        NTC_FAULT_NORMAL, 
-        NTC_FAULT_HOT, 
-        NTC_FAULT_COLD, 
-        NTC_FAULT_HOTCOLD} 
-    ntcFault;
-    
+    //! NTC Fault code
+    enum eNTCFault ntcFault;
     // Inferred battery status from registers
     bool batPresent;
 } BQ24297_STATUS;
@@ -122,12 +169,19 @@ typedef struct
  * @brief Data type associated to the structure sBQ24297Data
  */
   typedef struct sBQ24297Data{
+    //! Interruption value
 	unsigned char INT_Val;
+    //! Status value
 	unsigned char STAT_Val;
+    //! Interruption falg
     volatile bool intFlag;
+    //! Indicate if charge is allowed
     bool chargeAllowed;
+    //! Initialitaion completed
     bool initComplete;
+    //! Current status of the module
     BQ24297_STATUS status;
+    //I2C handler to this module
     DRV_HANDLE I2C_Handle;
  } tBQ24297Data;
  
@@ -157,7 +211,7 @@ void BQ24297_InitHardware(                                                  \
 /*!
  * Sets the default variable values via I2C
  */
-void BQ24297_InitSettings( void );  
+void BQ24297_Config_Settings( void );  
       
 /*! 
  * Function to update status 

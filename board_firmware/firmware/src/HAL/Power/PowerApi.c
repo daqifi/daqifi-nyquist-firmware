@@ -1,3 +1,8 @@
+/*! @file PowerApi.c 
+ * 
+ * This file implements the functions to manage power API
+ */
+
 #include "HAL/Power/PowerApi.h"
 #include "system_definitions.h"
 #include "state/board/BoardConfig.h"
@@ -18,11 +23,29 @@ static tPowerData *pData;
 //! Pointer to a data structure with all the write variable data fields
 static tPowerWriteVars *pWriteVariables;
 
+/*! 
+ * Funtion to write in power channel
+ */
 static void Power_Write( void );
+/*!
+ * Function to active power capabilities
+ */
 static void Power_Up( void );
+/*!
+ * Function to turn off power capabilities
+ */
 static void Power_Down( void );
+/*!
+ * Function to upate power state
+ */
 static void Power_UpdateState( void );
+/*!
+ * Function to update charge percentage
+ */
 static void Power_UpdateChgPct( void );
+/*!
+ * Function to update the configuration
+ */
 static void Power_Update_Settings( void );
 
 void Power_Init(                                                            \
@@ -68,7 +91,7 @@ void Power_Tasks( void )
     // If we haven't initialized the battery management settings, do so now
     if (pData->BQ24297Data.initComplete == false)
     {
-        BQ24297_InitSettings();
+        BQ24297_Config_Settings();
     }
 
     // Update power settings based on BQ24297 interrupt change

@@ -1,3 +1,8 @@
+/*! @file streaming.c 
+ * 
+ * This file implements the functions to manage the streaming
+ */
+
 #include "streaming.h"
 
 #include "HAL/ADC.h"
@@ -16,13 +21,29 @@
 #define BUFFER_SIZE  USB_WBUFFER_SIZE //2048
 uint8_t buffer[BUFFER_SIZE];
 
-// Function for debugging - fills buffer with dummy data
-void Streaming_StuffDummyData (void); 
+//! Pointer to the board configuration data structure to be set in 
+//! initialization
+static tStreamingConfig *pConfigStream;
+//! Pointer to the board runtime configuration data structure, to be 
+//! set in initialization
+static StreamingRuntimeConfig *pRuntimeConfigStream;
+//! Indicate if handler is used 
+static bool inHandler = false;
+   
 
+/*!
+ *  Function for debugging - fills buffer with dummy data
+ */
+static void Streaming_StuffDummyData (void); 
+
+/*!
+ * Function to manage timer handler
+ * @param[in] context    unused
+ * @param[in] alarmCount unused
+ */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
 {
-    static bool inHandler = false;
-    
+
     UNUSED(context);
     UNUSED(alarmCount);
     
@@ -30,9 +51,12 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
     inHandler = true;
     
     // On a 'System' prescale match
-    // - Read the latest DIO (if it's not streaming- otherwise we'll wind up with an extra sample)
-    // - Read the latest ADC (if it's not streaming- otherwise we'll wind up with an extra sample)
-    // - Disable the charger and read battery voltages (Omit the regular channels so we don't wind up with extra samples)
+    // - Read the latest DIO (if it's not streaming- otherwise we'll wind 
+    //   up with an extra sample)
+    // - Read the latest ADC (if it's not streaming- otherwise we'll wind up
+    //   with an extra sample)
+    // - Disable the charger and read battery voltages (Omit the regular 
+    //   channels so we don't wind up with extra samples)
     // Otherwise
     // - Trigger conversions if, and only if, their prescale has been matched
     
@@ -48,67 +72,63 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
 
 /*!
  * Starts the streaming timer
- * @param[in] runtimeConfig The runtime configurations
  */
-static void Streaming_Start(StreamingRuntimeConfig* runtimeConfig)
+static void Streaming_Start( void )
 {
-    if (!runtimeConfig->Running)
+    if (!pRuntimeConfigStream->Running)
     {       
-        DRV_TMR_AlarmRegister(runtimeConfig->TimerHandle,
-            runtimeConfig->ClockDivider,
-            true,
-            0,
-            Streaming_TimerHandler);
+        DRV_TMR_AlarmRegister(                                              \
+                        pRuntimeConfigStream->TimerHandle,                  \
+                        pRuntimeConfigStream->ClockDivider,                 \
+                        true,                                               \
+                        0,                                                  \
+                        Streaming_TimerHandler);
         
-        DRV_TMR_Start(runtimeConfig->TimerHandle);
+        DRV_TMR_Start(pRuntimeConfigStream->TimerHandle);
         
-        runtimeConfig->Running = true;
+        pRuntimeConfigStream->Running = true;
     }
 }
 
-/*! Stops the streaming timer
- * @param{in/out] runtimeConfig The runtime configuration
+/*! 
+ * Stops the streaming timer
  */
-static void Streaming_Stop(StreamingRuntimeConfig* runtimeConfig)
+static void Streaming_Stop( void )
 {
-    if (runtimeConfig->Running)
+    if (pRuntimeConfigStream->Running)
     {
-        DRV_TMR_Stop(runtimeConfig->TimerHandle);
-        DRV_TMR_AlarmDeregister(runtimeConfig->TimerHandle);
-        runtimeConfig->Running = false;
+        DRV_TMR_Stop(pRuntimeConfigStream->TimerHandle);
+        DRV_TMR_AlarmDeregister(pRuntimeConfigStream->TimerHandle);
+        pRuntimeConfigStream->Running = false;
     }
-    DRV_TMR_CounterValue32BitSet(runtimeConfig->TimerHandle, 0);
+    DRV_TMR_CounterValue32BitSet(pRuntimeConfigStream->TimerHandle, 0);
 }
 
-/*! Initializes the streaming component
- * @param[in] Streaming configuration
- * @param[out] Streaming configuration in runtime
- */
-void Streaming_Init(    const tStreamingConfig* config,                     \
-                        StreamingRuntimeConfig* runtimeConfig)
+void Streaming_Init(const tStreamingConfig* pStreamingConfigInit,           \
+                    const StreamingRuntimeConfig* pStreamingRuntimeConfigInit)
 {
+    pConfigStream = pStreamingConfigInit;
+    pRuntimeConfigStream = pStreamingRuntimeConfigInit;
+    
+    TimestampTimer_Init(); 
+    
     // Initialize sample trigger timer
-    runtimeConfig->TimerHandle = DRV_TMR_Open(                              \
-                        config->TimerIndex,                                 \
-                        config->TimerIntent);
-    if( runtimeConfig->TimerHandle == DRV_HANDLE_INVALID )
+    pRuntimeConfigStream->TimerHandle = DRV_TMR_Open(                       \
+                        pConfigStream->TimerIndex,                          \
+                        pConfigStream->TimerIntent);
+    if( DRV_HANDLE_INVALID ==                                               \
+                    pStreamingRuntimeConfigInit->TimerHandle )
     {
         // Client cannot open the instance.
          SYS_DEBUG_BreakPoint();
     }
     
-    runtimeConfig->Running = false;
+    pRuntimeConfigStream->Running = false;
 }
 
-/*! Updates the streaming timer 
- * @param[in] boardConfig       Board configuration, includes board type
- * @param[in/out] runtimeConfig The runtime configuration
- */
-void Streaming_UpdateState(                                                 \
-                        const tBoardConfig* boardConfig,                    \
-                        tBoardRuntimeConfig* runtimeConfig )
+void Streaming_UpdateState( void )
 {
-    Streaming_Stop(&runtimeConfig->StreamingConfig);
+    Streaming_Stop();
     
     /* TODO: Calculate an appropriate runtimeConfig->ClockDivider and 
      * Prescale value for each module/channel
@@ -119,32 +139,25 @@ void Streaming_UpdateState(                                                 \
       - The 'System' prescale should be selected to be approximately 1s 
         (if possible), and should probably be excluded from the LCD calculation
     */
-    runtimeConfig->StreamingConfig.StreamCountTrigger = 0;
-    runtimeConfig->StreamingConfig.MaxStreamCount =                         \
-                        runtimeConfig->StreamingConfig.StreamCountTrigger+1;
+    pRuntimeConfigStream->StreamCountTrigger = 0;
+    pRuntimeConfigStream->MaxStreamCount =                                  \
+                        pRuntimeConfigStream->StreamCountTrigger+1;
     
     // We never actually disable the streaming time because the system 
     //functions (battery level, voltages, actually depend on it)
-    Streaming_Start(&runtimeConfig->StreamingConfig);
+    Streaming_Start();
 }
 
-/*!
- * Called to write streaming data to the underlying tasks
- * @param boardConfig   The hardware configuration
- * @param runtimeConfig The runtime configuration
- * @param boardData     The board data
- */
-void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
-                        tBoardRuntimeConfig* runtimeConfig,                 \
+void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
                         tBoardData* boardData)
 {
     //Nanopb flag, decide what to write
     NanopbFlagsArray nanopbFlag;
-    //! 
+    //! Structures size
     size_t usbSize, wifiSize, maxSize;
     //! Boolean to indicate if the system has USB and Wifi actives. 
     bool hasUsb, hasWifi;
-    //! 
+    //! Counter to wifi configuration
     int wifiCnt;
     //! Pointer to client data in runtime, variable for legibility
     TcpClientData * pClientData; 
@@ -234,11 +247,14 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
                 size = Json_Encode(                                         \
                         boardData,                                          \
                         &nanopbFlag,                                        \
-                        &buffer);
+                        (uint8_t **)&buffer);
             }
             else{
 
-                size = Nanopb_Encode(boardData, &nanopbFlag, &buffer);
+                size = Nanopb_Encode(                                       \
+                        boardData,                                          \
+                        &nanopbFlag,                                        \
+                        (uint8_t **)&buffer);
                 
                 if(runtimeConfig->StreamingConfig.Encoding ==               \
                         Streaming_TestData)
@@ -299,32 +315,30 @@ void Streaming_Tasks(   const tBoardConfig* boardConfig,                    \
     
 }
 
-void TimestampTimer_Init(                                                   \
-                        const tStreamingConfig* config,                     \
-                        StreamingRuntimeConfig* runtimeConfig)
+void TimestampTimer_Init( void )
 {
     // Initialize and start timestamp timer
     // This is a free running timer used for reference - 
     // this doesn't interrupt or callback
-    runtimeConfig->TSTimerHandle = DRV_TMR_Open(                            \
-                        config->TSTimerIndex,                               \
-                        config->TSTimerIntent);
-    if( runtimeConfig->TSTimerHandle == DRV_HANDLE_INVALID )
+    pRuntimeConfigStream->TSTimerHandle = DRV_TMR_Open(                     \
+                        pConfigStream->TSTimerIndex,                        \
+                        pConfigStream->TSTimerIntent);
+    if( pRuntimeConfigStream->TSTimerHandle == DRV_HANDLE_INVALID )
     {
         // Client cannot open the instance.
          SYS_DEBUG_BreakPoint();
     }
     DRV_TMR_AlarmRegister(                                                  \
-                        runtimeConfig->TSTimerHandle,                       \
-                        runtimeConfig->TSClockDivider,                      \
+                        pRuntimeConfigStream->TSTimerHandle,                \
+                        pRuntimeConfigStream->TSClockDivider,               \
                         true,                                               \
                         0,                                                  \
                         NULL);
-    DRV_TMR_AlarmDisable(runtimeConfig->TSTimerHandle);
-    DRV_TMR_Start(runtimeConfig->TSTimerHandle);
+    DRV_TMR_AlarmDisable(pRuntimeConfigStream->TSTimerHandle);
+    DRV_TMR_Start(pRuntimeConfigStream->TSTimerHandle);
 }
 
-void Streaming_StuffDummyData (void)
+static void Streaming_StuffDummyData (void)
 {
     // Stuff stream with some data
     // Copy dummy samples to the data list

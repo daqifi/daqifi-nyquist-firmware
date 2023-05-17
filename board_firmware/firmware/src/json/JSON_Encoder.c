@@ -1,4 +1,7 @@
-
+/*! @file JSON_Encoder.c 
+ * 
+ * This file implements the functions to manage the JSON encoder
+ */
 
 #include "nanopb/DaqifiOutMessage.pb.h"
 #include "state/data/BoardData.h"
@@ -9,7 +12,7 @@
 //! Buffer size used for streaming purposes
 #define JSON_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
 //! Size of temporal buffer used for JSON encoding purposes
-#define TMP_MAX_LEN             64
+#define TMP_MAX_LEN                                 64
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
 

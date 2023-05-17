@@ -1,3 +1,8 @@
+/*! @file ADC.c 
+ * 
+ * This file implements the functions to manage the module ADC. 
+ */
+
 #include "ADC.h"
 
 #include "ADC/AD7609.h"
@@ -9,42 +14,54 @@
 
 //! Pointer to the board configuration data structure to be set in initialization
 static tBoardConfig *pBoardConfigADC;
-//! Pointer to the board runtime configuration data structure, to be set in initialization
+//! Pointer to the board runtime configuration data structure, to be set 
+// !in initialization
 static tBoardRuntimeConfig *pBoardRuntimeConfigADC;
 // Pointer to the BoardData data structure, to be set in initialization
 static tBoardData* pBoardDataADC;
 
-/**
+/*!
  * Retrieves the index of a module
- * @param boardConfig The board config to search
- * @param module The module to search for
+ * @param[in] pModule Pointer to the module to search for
  * @return The index of the module in the array
  */
-static uint8_t ADC_FindModuleIndex( const AInModule* module );
+static uint8_t ADC_FindModuleIndex( const AInModule* pModule );
 
-/**
+/*!
 * Populates the sample array using data in the board config
 * NOTE: This is intended to be non-blocking. Samples that are not ready will be skipped.
-* @param samples The array to populate
-* @param module The module to retrieve samples from
-* @param moduleRuntime Runtime data for the given module
+* @param[in] pSamples Pointer to the array to populate
+* @param[in] module The module to retrieve samples from
+* @param moduleRuntime[in] Runtime data for the given module
 */
 static bool ADC_ReadSamples(                                                \
-                            AInSampleArray* samples,                        \
+                            AInSampleArray* pSamples,                       \
                             const AInModule* module,                        \
                             AInModuleRuntimeConfig* moduleRuntime );
 
 /**
 * Updates the state of a single module
+ * @param[in] moduleId ID of the module to use
+ * @param[in] powerState Power state tp write in the module, @ref POWER_STATE
 */
 static bool ADC_WriteModuleState(                                           \
                             size_t moduleId,                                \
                             POWER_STATE powerState);
 
+/*! This function initialice the hardware neccesary for ADC
+ * @param[in] pBoardAInModule Pointer to analog input module configuration
+ * @param[in] pModuleChannels Pointer to module channels
+ */
 static bool ADC_InitHardware(                                               \
-                            const AInModule* boardConfig,                   \
-                            const AInArray* moduleChannels );
+                            const AInModule* pBoardAInModule,               \
+                            const AInArray* pModuleChannels );
 
+/*!
+ * Extracts channel information for the specified module
+ * @param moduleChannels [out] Static channel data
+ * @param moduleChannelRuntime [out] Runtime channel data
+ * @param moduleId The module to search for
+ */
 static void GetModuleChannelRuntimeData(                                    \
                             AInArray* moduleChannels,                       \
                             AInRuntimeArray* moduleChannelRuntime,          \
@@ -216,7 +233,7 @@ void ADC_ConversionComplete(const AInModule* module)
     StreamingRuntimeConfig * pRuntimeStreamConfig =                         \
                         &pBoardRuntimeConfigADC->StreamingConfig;
     
-    const AInSample *pAInSample = &pBoardDataADC->AInSamples;
+    AInSampleList *pAInSample = &pBoardDataADC->AInSamples;
     
     #if(DAQIFI_DIO_DEBUG == 1)
     {       
@@ -254,7 +271,11 @@ void ADC_ConversionComplete(const AInModule* module)
             //if the channel is public
             if (moduleId == AIn_MC12bADC) 
             {
-                if (channel->Config.MC12b.IsPublic) AInSampleList_PushBack(pAInSample, &samples.Data[i]);  // If public, allow the value to be sent to streaming
+                if (channel->Config.MC12b.IsPublic)
+                {
+                    // If public, allow the value to be sent to streaming
+                    AInSampleList_PushBack(pAInSample, &samples.Data[i]);  
+                }
             }
             else
             {
@@ -382,49 +403,45 @@ bool ADC_IsDataValid(const AInSample* sample)
 
 double ADC_ConvertToVoltage(const AInSample* sample)
 {
-    AInModRuntimeArray * pRunTimeAInModule =                                \
-                        &pBoardRuntimeConfigADC->AInModules;
-    AInRuntimeArray * pRunTimeAInChannels =                                 \
+    const AInRuntimeArray * pRunTimeAInChannels =                           \
                         &pBoardRuntimeConfigADC->AInChannels;
     
     size_t channelIndex = ADC_FindChannelIndex(sample->Channel);
     const AInChannel* channelConfig =                                       \
                         &pBoardConfigADC->AInChannels.Data[channelIndex];
-    const AInRuntimeConfig* runtimeConfig =                                 \
+    const AInRuntimeConfig* pRuntimeConfig =                                 \
                         &pRunTimeAInChannels->Data[channelIndex];
     const AInModule* moduleConfig =                                         \
                   &pBoardConfigADC->AInModules.Data[channelConfig->DataModule];
-    const AInModuleRuntimeConfig* moduleRuntimeConfig =                     \
-                        &pRunTimeAInModule->Data[channelConfig->DataModule];
 
     switch(moduleConfig->Type)
     {
-    case AIn_MC12bADC:
+    case AIn_MC12bADC: 
         return MC12b_ConvertToVoltage(                                      \
                         &channelConfig->Config.MC12b,                       \
-                        pRunTimeAInChannels,                                \
+                        pRuntimeConfig,                                     \
                         sample);
     case AIn_AD7173:
         return AD7173_ConvertToVoltage(                                     \
-                        runtimeConfig,                                      \
+                        pRuntimeConfig,                                     \
                         sample);
     case AIn_AD7609:
         return AD7609_ConvertToVoltage(                                     \
-                        runtimeConfig,                                      \
+                        pRuntimeConfig,                                     \
                         sample);
     default:
         return 0.0;
     }
 }
 
-static uint8_t ADC_FindModuleIndex(const AInModule* module)
+static uint8_t ADC_FindModuleIndex(const AInModule* pModule)
 {
     size_t moduleIndex = 0;
     for (               moduleIndex = 0;                                    \
                         moduleIndex < pBoardConfigADC->AInModules.Size;     \
                         ++moduleIndex)
     {
-        if (module == &pBoardConfigADC->AInModules.Data[moduleIndex])
+        if (pModule == &pBoardConfigADC->AInModules.Data[moduleIndex])
         {
             return moduleIndex;
         }
@@ -434,7 +451,7 @@ static uint8_t ADC_FindModuleIndex(const AInModule* module)
 }
 
 static bool ADC_ReadSamples(                                                \
-                            AInSampleArray* samples,                        \
+                            AInSampleArray* pSamples,                       \
                             const AInModule* module,                        \
                             AInModuleRuntimeConfig* moduleRuntime )
 {
@@ -454,21 +471,21 @@ static bool ADC_ReadSamples(                                                \
     {
     case AIn_MC12bADC:
         result &= MC12b_ReadSamples(                                        \
-                        samples,                                            \
+                        pSamples,                                           \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime,                              \
                         pBoardDataADC->StreamTrigStamp);
         break;
     case AIn_AD7609:
         result &= AD7609_ReadSamples(                                       \
-                        samples,                                            \
+                        pSamples,                                           \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime,                              \
                         pBoardDataADC->StreamTrigStamp);
         break;
     case AIn_AD7173:
         result &= AD7173_ReadSamples(                                       \
-                        samples,                                            \
+                        pSamples,                                           \
                         &moduleChannels,                                    \
                         &moduleChannelRuntime,                              \
                         pBoardDataADC->StreamTrigStamp);
@@ -485,8 +502,6 @@ bool ADC_WriteModuleState( size_t moduleId, POWER_STATE powerState)
 {
     const AInModule* currentModule =                                        \
                         &pBoardConfigADC->AInModules.Data[moduleId];
-    AInModuleRuntimeConfig* currentModuleRuntime =                          \
-                        &pBoardRuntimeConfigADC->AInModules.Data[moduleId];
     bool result = true;
     bool isPowered = (powerState> MICRO_ON);
     
@@ -509,25 +524,25 @@ bool ADC_WriteModuleState( size_t moduleId, POWER_STATE powerState)
 }
 
 static bool ADC_InitHardware(                                               \
-                            const AInModule* boardConfig,                   \
-                            const AInArray* moduleChannels )
+                            const AInModule* pBoardAInModule,               \
+                            const AInArray* pModuleChannels )
 {
     bool result = false;
      
-    switch(boardConfig->Type)
+    switch(pBoardAInModule->Type)
     {
     case AIn_MC12bADC:
         result = MC12b_InitHardware(                                        \
-                &boardConfig->Config.MC12b,                                 \
-                &pBoardRuntimeConfigADC->AInModules.Data[boardConfig->Type]);
+                &pBoardAInModule->Config.MC12b,                             \
+                &pBoardRuntimeConfigADC->AInModules.Data[pBoardAInModule->Type]);
         break;
     case AIn_AD7609:
-        result = AD7609_InitHardware( &boardConfig->Config.AD7609 );
+        result = AD7609_InitHardware( &pBoardAInModule->Config.AD7609 );
         break;
     case AIn_AD7173:
         result = AD7173_InitHardware(                                       \
-                                    &boardConfig->Config.AD7173,            \
-                                    moduleChannels );
+                                    &pBoardAInModule->Config.AD7173,        \
+                                    pModuleChannels );
         break;
     default:
         // Not implemented yet
@@ -537,12 +552,6 @@ static bool ADC_InitHardware(                                               \
     return result;
 }
 
-/**
- * Extracts channel information for the specified module
- * @param moduleChannels [out] Static channel data
- * @param moduleChannelRuntime [out] Runtime channel data
- * @param moduleId The module to search for
- */
 static void GetModuleChannelRuntimeData(                                    \
                         AInArray* moduleChannels,                           \
                         AInRuntimeArray* moduleChannelRuntime,              \

@@ -91,13 +91,6 @@ typedef struct sUIWriteVars {
     bool LED2;
 } tUIWriteVars;
     
-
-// *****************************************************************************
-// *****************************************************************************
-// Section: Interface Functions
-// *****************************************************************************
-// *****************************************************************************
-
 /*! Function for initializing UI layer, in which button and LED tasks 
  * are included
  * @param[in] pConfigInit Pointer to the configuration data structure

@@ -117,25 +117,6 @@ void BoardConfig_Set(                                                       \
                         uint8_t index,                                      \
                         const void *pSetValue );
 
-
-
-#warning extern declarations must be further removed when refactoring is complete on all modules
-
-/**
- * The Nyquist 1 board configuration
- */
-extern const tBoardConfig g_NQ1BoardConfig;
-
-/**
- * The Nyquist 2 board configuration
- */
-extern const tBoardConfig g_NQ2BoardConfig;
-
-/**
- * The Nyquist 3 board configuration
- */
-extern const tBoardConfig g_NQ3BoardConfig;
-
 #ifdef __cplusplus
 }
 #endif

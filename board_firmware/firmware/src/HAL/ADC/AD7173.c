@@ -1,3 +1,8 @@
+/*! @file AD7173.c 
+ * 
+ * This file implements the functions to manage the module ADC AD7173. 
+ */
+
 #include "AD7173.h"
 #include "Util/Delay.h"
 
@@ -9,6 +14,9 @@ static AD7173ModuleConfig* pModuleConfig;
 //! to be set in initialization
 static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7173; 
 
+/*! 
+ * Function to configre SPI related to ADC
+ */
 static void AD7173_Apply_SPI_Config( void )
 {
     //Disable SPI
@@ -20,7 +28,7 @@ static void AD7173_Apply_SPI_Config( void )
     PLIB_SPI_StopInIdleDisable(pModuleConfig->SPI.spiID);
     PLIB_SPI_PinEnable( pModuleConfig->SPI.spiID,                           \
                         SPI_PIN_DATA_OUT|SPI_PIN_DATA_IN);
-    PLIB_SPI_CommunicationWidthSelect(                                      \   
+    PLIB_SPI_CommunicationWidthSelect(                                      \
                         pModuleConfig->SPI.spiID,                           \
                         pModuleConfig->SPI.busWidth);
     PLIB_SPI_InputSamplePhaseSelect(                                        \
@@ -48,6 +56,9 @@ static void AD7173_Apply_SPI_Config( void )
     while(PLIB_SPI_IsBusy(pModuleConfig->SPI.spiID));
 }
 
+/*! 
+ * Reset the module 
+ */
 static void AD7173_Reset( void )
 {
     // Select the chip
@@ -73,6 +84,9 @@ static void AD7173_Reset( void )
                         true);
 }
 
+/*! 
+ * Function to wait until a pin has the expected value
+ */
 static void AD7173_WaitForPinValue(                                         \
                         PORTS_MODULE_ID index,                              \
                         PORTS_CHANNEL channel,                              \
@@ -363,8 +377,8 @@ bool AD7173_ReadSamples(AInSampleArray* samples,                            \
         }
         
     }
-    PLIB_PORTS_ChannelChangeNoticeEnable(                                   \   
-                        pModuleConfig->DataModule,                          \ 
+    PLIB_PORTS_ChannelChangeNoticeEnable(                                   \
+                        pModuleConfig->DataModule,                          \
                         pModuleConfig->SPI_SDI_Ch,                          \
                         pModuleConfig->SPI_SDI_BitMask);
     return true;
@@ -398,10 +412,10 @@ bool AD7173_TriggerConversion(const AD7173ModuleConfig* moduleConfig)
     // In order to detect the end of conversion, the CS line must be held 
     //low (active) until conversion is complete
     // At that time, CS line can be disabled.
-    // PLIB_PORTS_PinWrite(moduleConfig->DataModule,                        \
+    /* PLIB_PORTS_PinWrite(moduleConfig->DataModule,                        \
                         moduleConfig->CS_Ch,                                \
                         moduleConfig->CS_Bit,                               \
-                        true);	//Disable CS_DDS
+                        true);	//Disable CS_DDS*/
     
     // Enable interrupt on change since a conversion has been started
     // TODO: Use semaphore/ to disallow other SPI (temp sensor) transfer 

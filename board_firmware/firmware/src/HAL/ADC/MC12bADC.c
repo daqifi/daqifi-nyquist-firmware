@@ -1,3 +1,8 @@
+/*! @file MC12bADC.c 
+ * 
+ * This file implements the functions to manage the module ADC MC12bADC. 
+ */
+
 #include "MC12bADC.h"
 
 #include <peripheral/peripheral.h>
@@ -14,6 +19,8 @@ static MC12bModuleConfig* pModuleConfigMC12;
 //! Pointer to the module configuration data structure in runtime
 //! to be set in initialization
 static AInModuleRuntimeConfig* pModuleRuntimeConfigMC12; 
+//! Boolean to indicate if this module is enabled
+static bool isEnabled = false;
 
 bool MC12b_InitHardware(const MC12bModuleConfig* pModuleConfigInit,         \
                     const AInModuleRuntimeConfig * pModuleRuntimeConfigInit)
@@ -33,7 +40,6 @@ bool MC12b_InitHardware(const MC12bModuleConfig* pModuleConfigInit,         \
 
 bool MC12b_WriteModuleState( void )
 {
-    static bool isEnabled = false;
     
     if (pModuleRuntimeConfigMC12->IsEnabled == isEnabled)
     {

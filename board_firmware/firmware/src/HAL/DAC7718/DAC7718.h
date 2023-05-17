@@ -1,7 +1,7 @@
 /* 
- * File:   DAC7718.h
+ * @file   DAC7718.h
  * Author: Chris Lange
- *
+ * @brief This file manages the DAC7718 module
  * Created on July 15, 2016, 4:08 PM
  */
 #ifndef DAC7718_H

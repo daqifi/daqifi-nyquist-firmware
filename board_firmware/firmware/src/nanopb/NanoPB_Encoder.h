@@ -1,5 +1,5 @@
 /* 
- * File:   Encoder.h
+ * File:   NanoPB_Encoder.h
  * Author: Daniel
  *
  * Created on September 12, 2016, 12:29 PM

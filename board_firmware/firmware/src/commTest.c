@@ -101,7 +101,8 @@ bool CommTest_FillTestData(uint8_t* buffer, uint16_t len)
     // byte[n+3]         = \r
     // byte[n+4]         = \n                              // 2 bytes
     
-    min_size = sizeof(char) + sizeof(timestamp) + sizeof(counter) + sizeof(chksum16) + (2*sizeof(char));
+    min_size = sizeof(char) + sizeof(timestamp) + sizeof(counter) +         \
+                        sizeof(chksum16) + (2*sizeof(char));
     if(len<min_size) //minimun length required is 11
     return false;
         

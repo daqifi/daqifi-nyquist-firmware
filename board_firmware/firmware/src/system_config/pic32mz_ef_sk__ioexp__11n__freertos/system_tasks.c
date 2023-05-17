@@ -318,18 +318,8 @@ static void _APP_Tasks(void)
 
 void _POWER_AND_UI_Tasks(void)
 {
-    const tBoardData * pBoardData = BoardData_Get(                          \
-                            BOARDDATA_ALL_DATA,                             \
-                            0); 
-    const tBoardConfig * pBoardConfig = BoardConfig_Get(                    \
-                            BOARDCONFIG_ALL_CONFIG,                         \
-                            0); 
-    
     StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(   \
                         BOARDRUNTIME_STREAMING_CONFIGURATION);
-    
-    tPowerWriteVars * pRunTimePowerWriteVars = BoardRunTimeConfig_Get(      \
-                        BOARDRUNTIME_POWER_WRITE_VARIABLES);
     
     portTASK_USES_FLOATING_POINT();
     while(1)
@@ -345,9 +335,6 @@ void _ADC_Deferred_Interrupt_Task( void )
 {
     const TickType_t xBlockTime = portMAX_DELAY;
     const AInModule* module = NULL;
-    const tBoardConfig * pBoardConfig = BoardConfig_Get(                    \
-                            BOARDCONFIG_ALL_CONFIG,                         \
-                            0); 
     
     do{
         vTaskDelay( 1 );
@@ -379,9 +366,6 @@ void _Streaming_Deferred_Interrupt_Task( void ){
     const tBoardConfig * pBoardConfig = BoardConfig_Get(                    \
                             BOARDCONFIG_ALL_CONFIG,                         \
                             0);
-    
-    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(     \
-                        BOARDRUNTIMECONFIG_ALL_CONFIG);
     
     StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(   \
                         BOARDRUNTIME_STREAMING_CONFIGURATION);

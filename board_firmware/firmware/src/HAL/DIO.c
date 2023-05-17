@@ -1,3 +1,8 @@
+/*! @file DIO.c 
+ * 
+ * This file implements the functions to manage the digital input/output
+ */
+
 #include "DIO.h"
 
 #include "system_config.h"

@@ -418,7 +418,7 @@ void TcpServer_ProcessState()
             if(client->client == INVALID_SOCKET)
             {
                 client->client = accept(                                    \
-                        pRunTimeServerData->serverSocket,                   \       
+                        pRunTimeServerData->serverSocket,                   \
                         (struct sockaddr*)&addRemote,                       \
                         &addrlen);
                 if(client->client == INVALID_SOCKET)

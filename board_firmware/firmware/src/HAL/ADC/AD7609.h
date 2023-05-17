@@ -1,8 +1,6 @@
-/* 
- * File:   AD7609.h
- * Author: Daniel
- *
- * Created on March 29, 2017, 12:01 PM
+/*! @file AD7609.h 
+ * 
+ * This file implements the functions to manage the ADC module
  */
 
 #pragma once

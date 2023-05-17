@@ -1,3 +1,8 @@
+/*! @file ADC.h 
+ * 
+ * This file implements the interface to functions to manage the module ADC. 
+ */
+
 #pragma once
 
 #include "state/board/BoardConfig.h"
@@ -8,16 +13,16 @@
 extern "C" {
 #endif
 
-    /*! This function is used for initializing ADC firmware layer, setting the 
-     * board config and board runtime config data structure pointers.
-     * @param[in] pInitBoardConfig Pointer to the BoardConfig data structure
-     * which will be used the next times any function of ADC layer is called.
-     * @param[in] pInitBoardRuntimeConfig Pointer to the BoardRuntimeConfig
-     * data structure which will be used the next times any function of ADC
-     * layer is called.
-     * @param[in] pInitBoardData Pointer to the BoardData data structure, which
-     * will be used when needed the next times any function of ADC layer is
-     * called */
+/*! This function is used for initializing ADC firmware layer, setting the 
+ * board config and board runtime config data structure pointers.
+ * @param[in] pInitBoardConfig Pointer to the BoardConfig data structure
+ * which will be used the next times any function of ADC layer is called.
+ * @param[in] pInitBoardRuntimeConfig Pointer to the BoardRuntimeConfig
+ * data structure which will be used the next times any function of ADC
+ * layer is called.
+ * @param[in] pInitBoardData Pointer to the BoardData data structure, which
+ * will be used when needed the next times any function of ADC layer is
+ * called */
 void ADC_Init(                                                              \
                     const tBoardConfig * pBoardConfigADCInit,               \
                     const tBoardRuntimeConfig* pBoardRuntimeConfigADCInit,  \

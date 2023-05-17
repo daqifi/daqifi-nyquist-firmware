@@ -31,12 +31,6 @@ static tUIReadVars *pReadVariables;
 //! Pointer to the data structure where the UI Power Data will be stored
 static tPowerData *pPowerData;
 
-/*! Function for initializing UI layer, in which button and LED tasks 
- * are included
- * @param[in] pConfigInit Pointer to the configuration data structure
- * @param[in] pReadVarsInit Pointer to the Read Variables data structure
- * @param[in] pPowerDataInit Pointer to the Power Data data stucture
- */
 void UI_Init(                                                               \
                 tUIConfig *pConfigInit,                                     \
                 tUIReadVars *pReadVarsInit,                                 \

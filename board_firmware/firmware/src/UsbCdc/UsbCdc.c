@@ -136,13 +136,6 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
 {
     USB_DEVICE_EVENT_DATA_CONFIGURED *configuredEventData;
     
-    tPowerData * pPowerData = BoardData_Get(                            \
-                            BOARDATA_POWER_DATA,                        \
-                            0);
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
-                            BOARDCONFIG_ALL_CONFIG,                         \
-                            0);
-    
     UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
                         BOARDRUNTIME_USB_SETTINGS);
 

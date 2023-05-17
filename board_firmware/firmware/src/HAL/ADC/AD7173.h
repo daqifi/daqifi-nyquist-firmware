@@ -2,7 +2,8 @@
  * File:   AD7173.h
  * Author: Daniel
  *
- * Created on March 29, 2017, 12:01 PM
+ * This file implements the interface to the functions to manage the module
+ * ADC AD7609. 
  */
 
 #pragma once
