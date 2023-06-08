@@ -2,7 +2,7 @@
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
-const BoardConfig g_NQ2BoardConfig = {
+const tBoardConfig NQ3BoardConfig = {
     .BoardVariant = 3,
     .DIOChannels = {
         .Data = {
@@ -230,3 +230,11 @@ const BoardConfig g_NQ2BoardConfig = {
         .TSTimerIntent = DRV_IO_INTENT_EXCLUSIVE,
     }
 };
+
+/*! This function is used for getting a board version 1 configuration parameter
+ * @return Pointer to Board Configuration structure
+ */
+const void *NQ3BoardConfig_Get( void )
+{
+    return &NQ3BoardConfig; 
+}

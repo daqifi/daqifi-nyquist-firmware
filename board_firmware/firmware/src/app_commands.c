@@ -37,14 +37,19 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #include <ctype.h>
 #include "app_commands.h"
 
-#if defined(TCPIP_STACK_COMMAND_ENABLE) && defined(TCPIP_STACK_COMMANDS_WIFI_ENABLE)
+#if defined(TCPIP_STACK_COMMAND_ENABLE) &&                                  \
+    defined(TCPIP_STACK_COMMANDS_WIFI_ENABLE)
 
 extern WF_SCAN_CONTEXT g_wifi_scanContext;
 
 static bool s_scanList_signal = false;
 static bool s_consoleWriteComplete = true;
 
-static int _APP_Commands_ScanList(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv);
+static int _APP_Commands_ScanList(                                          \
+                        SYS_CMD_DEVICE_NODE *pCmdIO,                        \
+                        int argc,                                           \
+                        char **argv);
+
 static void _APP_Commands_ConsoleWriteComplete(void *param);
 
 static const SYS_CMD_DESCRIPTOR appCmdTbl[] =
@@ -54,12 +59,18 @@ static const SYS_CMD_DESCRIPTOR appCmdTbl[] =
 
 bool APP_Commands_Init(void)
 {
-    if (!SYS_CMD_ADDGRP(appCmdTbl, sizeof(appCmdTbl) / sizeof(*appCmdTbl), "app", ": app commands")) {
+    if (                !SYS_CMD_ADDGRP(appCmdTbl,                          \
+                        sizeof(appCmdTbl) / sizeof(*appCmdTbl),             \
+                        "app",                                              \
+                        ": app commands")) 
+    {
         SYS_ERROR(SYS_ERROR_ERROR, "Failed to create APP Commands\r\n", 0);
         return false;
     }
 
-    SYS_CMD_RegisterCallback(_APP_Commands_ConsoleWriteComplete, SYS_CMD_EVENT_WRITE_COMPLETE);
+    SYS_CMD_RegisterCallback(                                               \
+                        _APP_Commands_ConsoleWriteComplete,                 \
+                        SYS_CMD_EVENT_WRITE_COMPLETE);
 
     s_scanList_signal = false;
     s_consoleWriteComplete = true;
@@ -108,9 +119,19 @@ void APP_Commands_ScanListEntry_Display(void)
     if (i < g_wifi_scanContext.numberOfResults) {
         p_scanResult = &(g_wifi_scanContext.results[i]);
 #if defined(TCPIP_IF_MRF24WN)
-        SYS_CONSOLE_PRINT(" %2d)%32s  %2d    %u\r\n", ++i, p_scanResult->ssid, p_scanResult->rssi, p_scanResult->channel);
+        SYS_CONSOLE_PRINT(                                                  \
+                        " %2d)%32s  %2d    %u\r\n",                         \
+                        ++i,                                                \
+                        p_scanResult->ssid,                                 \
+                        p_scanResult->rssi,                                 \
+                        p_scanResult->channel);
 #else
-        SYS_CONSOLE_PRINT(" %2d)%32s  %3d   %u\r\n", ++i, p_scanResult->ssid, p_scanResult->rssi, p_scanResult->channel);
+        SYS_CONSOLE_PRINT(                                                  \
+                        " %2d)%32s  %3d   %u\r\n",                          \
+                        ++i,                                                \
+                        p_scanResult->ssid,                                 \
+                        p_scanResult->rssi,                                 \
+                        p_scanResult->channel);
 #endif
         s_consoleWriteComplete = false;
     } else {
@@ -119,7 +140,10 @@ void APP_Commands_ScanListEntry_Display(void)
     }
 }
 
-static int _APP_Commands_ScanList(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **argv)
+static int _APP_Commands_ScanList(                                          \
+                        SYS_CMD_DEVICE_NODE *pCmdIO,                        \
+                        int argc,                                           \
+                        char **argv)
 {
     const void *cmdIoParam = pCmdIO->cmdIoParam;
 
@@ -129,7 +153,8 @@ static int _APP_Commands_ScanList(SYS_CMD_DEVICE_NODE *pCmdIO, int argc, char **
     }
 
     if (g_wifi_scanContext.numberOfResults == 0) {
-        SYS_CONSOLE_MESSAGE("No scan result was previously stored, or no AP found\r\n");
+        SYS_CONSOLE_MESSAGE(                                                \
+                "No scan result was previously stored, or no AP found\r\n");
         return true;
     }
 

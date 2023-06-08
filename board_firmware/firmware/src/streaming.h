@@ -7,47 +7,34 @@
 #ifdef	__cplusplus
 extern "C" {
 #endif
-    /**
-     * Initializes the streaming component
-     */
-    void Streaming_Init(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig);
+
+//! Buffer size used for streaming purposes
+#define STREAMING_BUFFER_SIZE               ENCODER_BUFFER_SIZE
     
-    /**
-     * Starts the streaming timer
-     * @param config The hardware configuration
-     * @param runtimeConfig The runtime configurations
-     */
-    void Streaming_Start(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig);
-    
-    /**
-     * Stops the streaming timer
-     * @param config The haardware configuration
-     * @param runtimeConfig The runtime configuration
-     */
-    void Streaming_Stop(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig);
-    
-    /**
-     * Updates the streaming timer 
-     * @param boardConfig The haardware configuration
-     * @param runtimeConfig The runtime configuration
-     */
-    void Streaming_UpdateState(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig);
-    
-    /**
-     * Called to write streaming data to the underlying tasks
-     * @param boardConfig The haardware configuration
-     * @param runtimeConfig The runtime configuration
-     * @param boardData The board data
-     */
-    void Streaming_Tasks(const BoardConfig* boardConfig, BoardRuntimeConfig* runtimeConfig, BoardData* boardData);
-    
-    /**
-     * Initializes and starts the timestamp timer
-     * @param config The hardware configuration
-     * @param runtimeConfig The runtime configurations
-     */
-    void TimestampTimer_Init(const StreamingConfig* config, StreamingRuntimeConfig* runtimeConfig);
-    
+/*! Initializes the streaming component
+ * @param[in] pStreamingConfigInit Streaming configuration
+ * @param[out] pStreamingRuntimeConfigInit Streaming configuration in runtime
+ */
+void Streaming_Init(const tStreamingConfig* pStreamingConfigInit,           \
+                    const StreamingRuntimeConfig* pStreamingRuntimeConfigInit);
+
+/*! Updates the streaming timer 
+ */
+void Streaming_UpdateState( void );
+
+/*!
+ * Called to write streaming data to the underlying tasks
+ * @param runtimeConfig The runtime configuration
+ * @param boardData     The board data
+ */
+void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
+                        tBoardData* boardData);
+
+/**
+ * Initializes and starts the timestamp timer
+ */
+void TimestampTimer_Init( void );
+
 #ifdef	__cplusplus
 }
 #endif

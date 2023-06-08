@@ -174,11 +174,21 @@ static bool InitBuffer(char** buffer, uint8_t bufferLen)
 
 bool WifiApplyNetworkSettings(WifiSettings* settings)
 {
-    if (g_BoardData.PowerData.powerState < POWERED_UP)
+    const tPowerData *pPowerState = BoardData_Get(                          \
+              BOARDATA_POWER_DATA,                                          \
+              0 );
+    if( NULL != pPowerState &&                                              \
+        pPowerState->powerState <  POWERED_UP )
     {
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
+    
+    /*if (g_BoardData.PowerData.powerState < POWERED_UP)
+    {
+        LogMessage("Board must be powered-on for WiFi operations\n\r");
+        return false;
+    }*/
     
     TCPIP_NET_HANDLE handle = TCPIP_STACK_IndexToNet(0);
     if (handle == NULL)
@@ -357,11 +367,20 @@ uint8_t WifiCopyKey(uint8_t* buffer, uint8_t securityMode, const uint8_t* source
 
 bool WifiResetConnection(WifiSettings* settings)
 {
-    if (g_BoardData.PowerData.powerState < POWERED_UP)
+    const tPowerData *pPowerState = BoardData_Get(                          \
+              BOARDATA_POWER_DATA,                                          \
+              0 );
+    if( NULL != pPowerState &&                                              \
+        pPowerState->powerState <  POWERED_UP )
     {
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
+    /*if (g_BoardData.PowerData.powerState < POWERED_UP)
+    {
+        LogMessage("Board must be powered-on for WiFi operations\n\r");
+        return false;
+    }*/
     
     bool result = WifiConnectionDown();
     
@@ -375,11 +394,20 @@ bool WifiResetConnection(WifiSettings* settings)
 
 bool WifiConnectionUp()
 {
-    if (g_BoardData.PowerData.powerState < POWERED_UP)
+    const tPowerData *pPowerState = BoardData_Get(                          \
+              BOARDATA_POWER_DATA,                                          \
+              0 );
+    if( NULL != pPowerState &&                                              \
+        pPowerState->powerState <  POWERED_UP )
     {
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
+   /* if (g_BoardData.PowerData.powerState < POWERED_UP)
+    {
+        LogMessage("Board must be powered-on for WiFi operations\n\r");
+        return false;
+    }*/
     
     TCPIP_NET_HANDLE handle = TCPIP_STACK_IndexToNet(0);
     if (handle == NULL)
@@ -398,11 +426,20 @@ bool WifiConnectionUp()
 
 bool WifiConnectionDown()
 {
-    if (g_BoardData.PowerData.powerState < POWERED_UP)
+    const tPowerData *pPowerState = BoardData_Get(                          \
+              BOARDATA_POWER_DATA,                                          \
+              0 );
+    if( NULL != pPowerState &&                                              \
+        pPowerState->powerState <  POWERED_UP )
     {
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
+    /*if (g_BoardData.PowerData.powerState < POWERED_UP)
+    {
+        LogMessage("Board must be powered-on for WiFi operations\n\r");
+        return false;
+    }*/
     
     TCPIP_NET_HANDLE handle = TCPIP_STACK_IndexToNet(0);
     if (handle == NULL)

@@ -70,7 +70,10 @@ static size_t SCPI_SafeParamString(scpi_t * context, char* value, const size_t m
  */
 scpi_result_t SCPI_LANEnabledGet(scpi_t * context)
 {
-    bool enabled = g_BoardData.wifiSettings.settings.wifi.isEnabled;
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    bool enabled = pWifiSettings->settings.wifi.isEnabled;
     SCPI_ResultInt32(context, (int)enabled);
     
     return SCPI_RES_OK;
@@ -82,13 +85,16 @@ scpi_result_t SCPI_LANEnabledGet(scpi_t * context)
  */
 scpi_result_t SCPI_LANEnabledSet(scpi_t * context)
 {
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
     int param1;
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
     }
     
-    g_BoardRuntimeConfig.wifiSettings.settings.wifi.isEnabled = (bool)param1;
+    pRunTimeWifiSettings->settings.wifi.isEnabled = (bool)param1;
     return SCPI_RES_OK;
 }
 
@@ -98,7 +104,10 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context)
  */
 scpi_result_t SCPI_LANNetTypeGet(scpi_t * context)
 {
-    uint8_t type = g_BoardData.wifiSettings.settings.wifi.networkType;
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    uint8_t type = pWifiSettings->settings.wifi.networkType;
     SCPI_ResultInt32(context, (int)type);
     
     return SCPI_RES_OK;
@@ -107,11 +116,16 @@ scpi_result_t SCPI_LANNetTypeGet(scpi_t * context)
 scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context)
 {
     uint8_t index = 0;
-    uint8_t numberOfResults = g_BoardData.wifiSettings.settings.wifi.av_num;
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    uint8_t numberOfResults = pWifiSettings->settings.wifi.av_num;
 
     for(index = 0;index<numberOfResults;index++)
     {
-        SCPI_ResultInt32(context, (int)g_BoardData.wifiSettings.settings.wifi.av_networkType[index]);
+        SCPI_ResultInt32(                                                   \
+                context,                                                    \
+                (int)pWifiSettings->settings.wifi.av_networkType[index]);
     }
     
     return SCPI_RES_OK;
@@ -124,6 +138,10 @@ scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context)
 scpi_result_t SCPI_LANNetTypeSet(scpi_t * context)
 {
     int param1;
+    
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -138,7 +156,7 @@ scpi_result_t SCPI_LANNetTypeSet(scpi_t * context)
         return SCPI_RES_ERR;
     }
     
-    g_BoardRuntimeConfig.wifiSettings.settings.wifi.networkType = (uint8_t)param1;
+    pRunTimeWifiSettings->settings.wifi.networkType = (uint8_t)param1;
     return SCPI_RES_OK;
 }
 
@@ -148,7 +166,11 @@ scpi_result_t SCPI_LANNetTypeSet(scpi_t * context)
  */
 scpi_result_t SCPI_LANIpv6Get(scpi_t * context)
 {
-    bool ipv6 = g_BoardData.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    bool ipv6 = pWifiSettings->settings.wifi.configFlags &                  \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
     SCPI_ResultInt32(context, (int)ipv6);
     
     return SCPI_RES_OK;
@@ -161,6 +183,10 @@ scpi_result_t SCPI_LANIpv6Get(scpi_t * context)
 scpi_result_t SCPI_LANIpv6Set(scpi_t * context)
 {
     int param1;
+    
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -169,11 +195,13 @@ scpi_result_t SCPI_LANIpv6Set(scpi_t * context)
     bool ipv6 = (bool)param1;
     if (ipv6)
     {
-        g_BoardRuntimeConfig.wifiSettings.settings.wifi.configFlags |= TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+        pRunTimeWifiSettings->settings.wifi.configFlags |=                  \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
     }
     else
     {
-        g_BoardRuntimeConfig.wifiSettings.settings.wifi.configFlags &= ~TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+        pRunTimeWifiSettings->settings.wifi.configFlags &=                  \
+                        ~TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
     }
     
     return SCPI_RES_OK;
@@ -185,8 +213,15 @@ scpi_result_t SCPI_LANIpv6Set(scpi_t * context)
  */
 scpi_result_t SCPI_LANAddrGet(scpi_t * context)
 {
-    bool ipv6 = g_BoardData.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrGetImpl(context, ipv6, &g_BoardData.wifiSettings.settings.wifi.ipAddr);
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    bool ipv6 = pWifiSettings->settings.wifi.configFlags &                  \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pWifiSettings->settings.wifi.ipAddr);
 }
 
 /**
@@ -194,9 +229,16 @@ scpi_result_t SCPI_LANAddrGet(scpi_t * context)
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANAddrSet(scpi_t * context)
-{
-    bool ipv6 = g_BoardRuntimeConfig.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrSetImpl(context, ipv6, &g_BoardRuntimeConfig.wifiSettings.settings.wifi.ipAddr);
+{    
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    bool ipv6 = pRunTimeWifiSettings->settings.wifi.configFlags &           \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrSetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pRunTimeWifiSettings->settings.wifi.ipAddr);
 }
 
 /**
@@ -205,8 +247,15 @@ scpi_result_t SCPI_LANAddrSet(scpi_t * context)
  */
 scpi_result_t SCPI_LANMaskGet(scpi_t * context)
 {
-    bool ipv6 = g_BoardData.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrGetImpl(context, ipv6, &g_BoardData.wifiSettings.settings.wifi.ipMask);
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    bool ipv6 = pWifiSettings->settings.wifi.configFlags &                  \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pWifiSettings->settings.wifi.ipMask);
 }
 
 /**
@@ -215,8 +264,15 @@ scpi_result_t SCPI_LANMaskGet(scpi_t * context)
  */
 scpi_result_t SCPI_LANMaskSet(scpi_t * context)
 {
-    bool ipv6 = g_BoardRuntimeConfig.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrSetImpl(context, ipv6, &g_BoardRuntimeConfig.wifiSettings.settings.wifi.ipMask);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    bool ipv6 = pRunTimeWifiSettings->settings.wifi.configFlags &           \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pRunTimeWifiSettings->settings.wifi.ipMask);
 }
 
 /**
@@ -225,8 +281,15 @@ scpi_result_t SCPI_LANMaskSet(scpi_t * context)
  */
 scpi_result_t SCPI_LANGatewayGet(scpi_t * context)
 {
-    bool ipv6 = g_BoardData.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrGetImpl(context, ipv6, &g_BoardData.wifiSettings.settings.wifi.gateway);
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    bool ipv6 = pWifiSettings->settings.wifi.configFlags &                  \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pWifiSettings->settings.wifi.gateway);
 }
 
 /**
@@ -235,8 +298,15 @@ scpi_result_t SCPI_LANGatewayGet(scpi_t * context)
  */
 scpi_result_t SCPI_LANGatewaySet(scpi_t * context)
 {
-    bool ipv6 = g_BoardRuntimeConfig.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrSetImpl(context, ipv6, &g_BoardRuntimeConfig.wifiSettings.settings.wifi.gateway);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    bool ipv6 = pRunTimeWifiSettings->settings.wifi.configFlags &           \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pRunTimeWifiSettings->settings.wifi.gateway);
 }
 
 /**
@@ -245,8 +315,15 @@ scpi_result_t SCPI_LANGatewaySet(scpi_t * context)
  */
 scpi_result_t SCPI_LANDns1Get(scpi_t * context)
 {
-    bool ipv6 = g_BoardData.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrGetImpl(context, ipv6, &g_BoardData.wifiSettings.settings.wifi.priDns);
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    bool ipv6 = pWifiSettings->settings.wifi.configFlags &                  \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pWifiSettings->settings.wifi.priDns);
 }
 
 /**
@@ -255,8 +332,15 @@ scpi_result_t SCPI_LANDns1Get(scpi_t * context)
  */
 scpi_result_t SCPI_LANDns1Set(scpi_t * context)
 {
-    bool ipv6 = g_BoardRuntimeConfig.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrSetImpl(context, ipv6, &g_BoardRuntimeConfig.wifiSettings.settings.wifi.priDns);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    bool ipv6 = pRunTimeWifiSettings->settings.wifi.configFlags &           \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pRunTimeWifiSettings->settings.wifi.priDns);
 }
 
 /**
@@ -265,8 +349,15 @@ scpi_result_t SCPI_LANDns1Set(scpi_t * context)
  */
 scpi_result_t SCPI_LANDns2Get(scpi_t * context)
 {
-    bool ipv6 = g_BoardData.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrGetImpl(context, ipv6, &g_BoardData.wifiSettings.settings.wifi.secDns);
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    bool ipv6 = pWifiSettings->settings.wifi.configFlags &                  \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pWifiSettings->settings.wifi.secDns);
 }
 
 /**
@@ -275,8 +366,15 @@ scpi_result_t SCPI_LANDns2Get(scpi_t * context)
  */
 scpi_result_t SCPI_LANDns2Set(scpi_t * context)
 {
-    bool ipv6 = g_BoardRuntimeConfig.wifiSettings.settings.wifi.configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-    return SCPI_LANAddrSetImpl(context, ipv6, &g_BoardRuntimeConfig.wifiSettings.settings.wifi.secDns);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    bool ipv6 = pRunTimeWifiSettings->settings.wifi.configFlags &           \
+                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
+    return SCPI_LANAddrGetImpl(                                             \
+                        context,                                            \
+                        ipv6,                                               \
+                        &pRunTimeWifiSettings->settings.wifi.secDns);
 }
 
 /**
@@ -287,7 +385,12 @@ scpi_result_t SCPI_LANMacGet(scpi_t * context)
 {
     char buffer[MAX_MAC_ADDR_LEN];
 
-    if (MacAddr_ToString(&g_BoardData.wifiSettings.settings.wifi.macAddr, buffer, MAX_MAC_ADDR_LEN) < 1)
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    if (MacAddr_ToString(&pWifiSettings->settings.wifi.macAddr,             \
+                        buffer,                                             \
+                        MAX_MAC_ADDR_LEN) < 1)
     {
         return SCPI_RES_ERR;
     }
@@ -304,12 +407,19 @@ scpi_result_t SCPI_LANMacSet(scpi_t * context)
 {
     char value[MAX_MAC_ADDR_LEN + 1];
     size_t len = SCPI_SafeParamString(context, value, MAX_MAC_ADDR_LEN, TRUE);
+   
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
     if (len < 1)
     {
         return SCPI_RES_ERR;
     }
     
-    if (!MacAddr_FromString(value, len, &g_BoardRuntimeConfig.wifiSettings.settings.wifi.macAddr))
+    if (!MacAddr_FromString(                                                \
+                        value,                                              \
+                        len,                                                \
+                        &pRunTimeWifiSettings->settings.wifi.macAddr))
     {
         return SCPI_RES_ERR;
     }
@@ -319,55 +429,93 @@ scpi_result_t SCPI_LANMacSet(scpi_t * context)
 
 scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
 {
-    return SCPI_LANStringGetImpl(context, g_BoardData.wifiSettings.settings.wifi.hostName);
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    return SCPI_LANStringGetImpl(context, pWifiSettings->settings.wifi.hostName);
 }
 
 scpi_result_t SCPI_LANHostnameSet(scpi_t * context)
 {
-    return SCPI_LANStringSetImpl(context, g_BoardRuntimeConfig.wifiSettings.settings.wifi.hostName, TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    return SCPI_LANStringSetImpl(                                           \
+                        context,                                            \
+                        pRunTimeWifiSettings->settings.wifi.hostName,       \
+                        TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
 }
 
 scpi_result_t SCPI_LANSsidGet(scpi_t * context)
 {
-    return SCPI_LANStringGetImpl(context, g_BoardData.wifiSettings.settings.wifi.ssid);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    return SCPI_LANStringGetImpl(                                           \
+                        context,                                            \
+                        pRunTimeWifiSettings->settings.wifi.ssid);
 }
 
 scpi_result_t SCPI_LANSsidSet(scpi_t * context)
 {
-    return SCPI_LANStringSetImpl(context, g_BoardRuntimeConfig.wifiSettings.settings.wifi.ssid, WDRV_MAX_SSID_LENGTH);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    return SCPI_LANStringSetImpl(                                           \
+                        context,                                            \
+                        pRunTimeWifiSettings->settings.wifi.ssid,           \
+                        WDRV_MAX_SSID_LENGTH);
 }
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context)
 {
-    return SCPI_ResultInt32(context, (int) g_BoardRuntimeConfig.wifiSettings.settings.wifi.ssid_str);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    return SCPI_ResultInt32(                                                \
+                        context,                                            \
+                        (int) pRunTimeWifiSettings->settings.wifi.ssid_str);
 }
 
 scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context)
 {
     uint8_t index = 0;
-    uint8_t numberOfResults = g_BoardData.wifiSettings.settings.wifi.av_num;
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    uint8_t numberOfResults = pWifiSettings->settings.wifi.av_num;
+
 
     for(index = 0;index<numberOfResults;index++)
     {
-        SCPI_ResultInt32(context, (int) g_BoardData.wifiSettings.settings.wifi.av_ssid_str[index]);
+        SCPI_ResultInt32(                                                   \
+                    context,                                                \
+                    (int) pWifiSettings->settings.wifi.av_ssid_str[index]);
     }
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANSecurityGet(scpi_t * context)
 {
-    SCPI_ResultInt32(context, g_BoardData.wifiSettings.settings.wifi.securityMode);
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    SCPI_ResultInt32(context, pWifiSettings->settings.wifi.securityMode);
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANAVSecurityGet(scpi_t * context)
 {
-    uint8_t index = 0;
-    uint8_t numberOfResults = g_BoardData.wifiSettings.settings.wifi.av_num;
+    uint8_t index = 0;DaqifiSettings * pWifiSettings = BoardData_Get(                          \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    uint8_t numberOfResults = pWifiSettings->settings.wifi.av_num;
 
     for(index = 0;index<numberOfResults;index++)
     {
-        SCPI_ResultInt32(context, g_BoardData.wifiSettings.settings.wifi.av_securityMode[index]);
+        SCPI_ResultInt32(                                                   \
+                    context,                                                \
+                    pWifiSettings->settings.wifi.av_securityMode[index]);
     }
 
     return SCPI_RES_OK;
@@ -376,6 +524,9 @@ scpi_result_t SCPI_LANAVSecurityGet(scpi_t * context)
 scpi_result_t SCPI_LANSecuritySet(scpi_t * context)
 {
     int param1;
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -402,21 +553,28 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context)
         return SCPI_RES_ERR;
     }
     
-    g_BoardRuntimeConfig.wifiSettings.settings.wifi.securityMode = (uint8_t)param1;
+    pRunTimeWifiSettings->settings.wifi.securityMode = (uint8_t)param1;
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANPasskeySet(scpi_t * context)
 {
     char value[WDRV_MAX_SECURITY_KEY_LENGTH + 1];
-    size_t len = SCPI_SafeParamString(context, value, WDRV_MAX_SECURITY_KEY_LENGTH, TRUE);
+    size_t len = SCPI_SafeParamString(                                      \
+                        context,                                            \
+                        value,                                              \
+                        WDRV_MAX_SECURITY_KEY_LENGTH, TRUE);
+    
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
     if (len < 1)
     {
         return SCPI_RES_ERR;
     }
     
     // TODO: Additional validation (length?))
-    switch (g_BoardRuntimeConfig.wifiSettings.settings.wifi.securityMode)
+    switch (pRunTimeWifiSettings->settings.wifi.securityMode)
     {
     case WDRV_SECURITY_WEP_40:
     case WDRV_SECURITY_WEP_104:
@@ -429,9 +587,9 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context)
         return SCPI_RES_ERR;
     }
     
-    memcpy(g_BoardRuntimeConfig.wifiSettings.settings.wifi.passKey, value, len);
-    g_BoardRuntimeConfig.wifiSettings.settings.wifi.passKeyLength = len;
-    g_BoardRuntimeConfig.wifiSettings.settings.wifi.passKey[len] = '\0';
+    memcpy(pRunTimeWifiSettings->settings.wifi.passKey, value, len);
+    pRunTimeWifiSettings->settings.wifi.passKeyLength = len;
+    pRunTimeWifiSettings->settings.wifi.passKey[len] = '\0';
     
     return SCPI_RES_OK;
 }
@@ -439,18 +597,23 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context)
 scpi_result_t SCPI_LANPasskeyCheck(scpi_t * context)
 {
     char value[WDRV_MAX_SECURITY_KEY_LENGTH + 1];
-    size_t len = SCPI_SafeParamString(context, value, WDRV_MAX_SECURITY_KEY_LENGTH, TRUE);
+    size_t len = SCPI_SafeParamString(                                      \
+                        context,                                            \
+                        value,                                              \
+                        WDRV_MAX_SECURITY_KEY_LENGTH, TRUE);
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
     if (len < 1)
     {
         return SCPI_RES_ERR;
     }
     
-    if (g_BoardRuntimeConfig.wifiSettings.settings.wifi.passKeyLength != len)
+    if (pRunTimeWifiSettings->settings.wifi.passKeyLength != len)
     {
         SCPI_ResultInt32(context, 0);
     }
     else if (len > 0 &&
-        memcmp(g_BoardRuntimeConfig.wifiSettings.settings.wifi.passKey, value, len) != 0)
+        memcmp(pRunTimeWifiSettings->settings.wifi.passKey, value, len) != 0)
     {
         SCPI_ResultInt32(context, 0);
     }
@@ -466,6 +629,8 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context)
 {
     bool saveSettings = false;
     int param1;
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
     if (SCPI_ParamInt32(context, &param1, FALSE))
     {
         saveSettings = (bool)param1;
@@ -473,24 +638,29 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context)
     
     if (saveSettings)
     {
-        if (!SaveNvmSettings(&g_BoardRuntimeConfig.wifiSettings))
+        if (!SaveNvmSettings(pRunTimeWifiSettings))
         {
             return SCPI_RES_ERR;
         }
     }
     
-    if (!WifiApplyNetworkSettings(&g_BoardRuntimeConfig.wifiSettings.settings.wifi))
+    if (!WifiApplyNetworkSettings(&pRunTimeWifiSettings->settings.wifi))
     {
         return SCPI_RES_ERR;
     }
-    
-    memcpy(&g_BoardData.wifiSettings, &g_BoardRuntimeConfig.wifiSettings, sizeof(DaqifiSettings));
+    BoardData_Set(                                                          \
+                            BOARDDATA_WIFI_SETTINGS,                        \
+                            0,                                              \
+                            pRunTimeWifiSettings);
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANSettingsSave(scpi_t * context)
-{
-    if (!SaveNvmSettings(&g_BoardData.wifiSettings))
+{    
+    DaqifiSettings * pWifiSettings =  BoardData_Get(                        \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    if (!SaveNvmSettings(pWifiSettings))
     {
         return SCPI_RES_ERR;
     }
@@ -502,24 +672,30 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context)
 {
     bool applySettings = false;
     int param1;
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
     if (SCPI_ParamInt32(context, &param1, FALSE))
     {
         applySettings = (bool)param1;
     }
     
-    if (!LoadNvmSettings(g_BoardRuntimeConfig.wifiSettings.type, &g_BoardRuntimeConfig.wifiSettings))
+    if (!LoadNvmSettings(                                                   \
+                        pRunTimeWifiSettings->type,                         \
+                        pRunTimeWifiSettings))
     {
         return SCPI_RES_ERR;
     }
     
     if (applySettings)
     {
-        if (!WifiApplyNetworkSettings(&g_BoardRuntimeConfig.wifiSettings.settings.wifi))
+        if (!WifiApplyNetworkSettings(&pRunTimeWifiSettings->settings.wifi))
         {
             return SCPI_RES_ERR;
         }
-    
-        memcpy(&g_BoardData.wifiSettings, &g_BoardRuntimeConfig.wifiSettings, sizeof(DaqifiSettings));
+        BoardData_Set(                                                      \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0,                                                  \
+                        pRunTimeWifiSettings);
     }
     
     return SCPI_RES_OK;
@@ -529,24 +705,30 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context)
 {
     bool applySettings = false;
     int param1;
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
     if (SCPI_ParamInt32(context, &param1, FALSE))
     {
         applySettings = (bool)param1;
     }
     
-    if (!LoadFactorySettings(g_BoardRuntimeConfig.wifiSettings.type, &g_BoardRuntimeConfig.wifiSettings))
+    if (!LoadFactorySettings(                                               \
+                        pRunTimeWifiSettings->type,                         \
+                        pRunTimeWifiSettings))
     {
         return SCPI_RES_ERR;
     }
     
     if (applySettings)
     {
-        if (!WifiApplyNetworkSettings(&g_BoardRuntimeConfig.wifiSettings.settings.wifi))
+        if (!WifiApplyNetworkSettings(&pRunTimeWifiSettings->settings.wifi))
         {
             return SCPI_RES_ERR;
         }
-    
-        memcpy(&g_BoardData.wifiSettings, &g_BoardRuntimeConfig.wifiSettings, sizeof(DaqifiSettings));
+        BoardData_Set(                                                      \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0,                                                  \
+                        pRunTimeWifiSettings);
     }
     
     return SCPI_RES_OK;
@@ -554,7 +736,10 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context)
 
 scpi_result_t SCPI_LANSettingsClear(scpi_t * context)
 {
-    if (ClearNvmSettings(g_BoardData.wifiSettings.type))
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    if (ClearNvmSettings(pWifiSettings->type))
     {
         return SCPI_RES_ERR;
     }
@@ -666,11 +851,16 @@ static size_t SCPI_SafeParamString(scpi_t * context, char* value, const size_t m
 scpi_result_t SCPI_LANAVSsidGet(scpi_t * context)
 {
     uint8_t index = 0;
-    uint8_t numberOfResults = g_BoardData.wifiSettings.settings.wifi.av_num;
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    uint8_t numberOfResults = pWifiSettings->settings.wifi.av_num;
 
     for(index = 0;index<numberOfResults;index++)
     {
-        SCPI_LANStringGetImpl(context, (const char*) g_BoardData.wifiSettings.settings.wifi.av_ssid[index]);
+        SCPI_LANStringGetImpl(                                              \
+                context,                                                    \
+                (const char*) pWifiSettings->settings.wifi.av_ssid[index]);
     }
     
 
@@ -686,7 +876,13 @@ scpi_result_t SCPI_LANAVSsidScan(scpi_t * context)
     const uint8_t backSpace = 8;
     int32_t scanTimeout = 2000; // 1 second of timeout for network scan
     
-    if( g_BoardRuntimeConfig.wifiSettings.settings.wifi.networkType != 1 ){
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0); 
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    if( pRunTimeWifiSettings->settings.wifi.networkType != 1 ){
         context->interface->write( context, \
                 (const char*) "No SSID found, WiFi needs to restart\r\n", \
                 strlen( "No SSID found, WiFi needs to restart\r\n" ) );
@@ -696,9 +892,9 @@ scpi_result_t SCPI_LANAVSsidScan(scpi_t * context)
                 strlen( "Please Wait\r\n" ) );
         context->interface->flush(context);
         
-        g_BoardRuntimeConfig.wifiSettings.settings.wifi.networkType = 1;
-        WifiApplyNetworkSettings(&g_BoardRuntimeConfig.wifiSettings.settings.wifi);
-        WifiInit( &g_BoardRuntimeConfig.wifiSettings.settings.wifi );
+        pRunTimeWifiSettings->settings.wifi.networkType = 1;
+        WifiApplyNetworkSettings(&pRunTimeWifiSettings->settings.wifi);
+        WifiInit( &pRunTimeWifiSettings->settings.wifi );
         // After WiFi initialization with new settings, it is needed a timeout so
         // APP_Task is able to run the WiFi state machine
         uint32_t timeout = 0;
@@ -762,7 +958,8 @@ scpi_result_t SCPI_LANAVSsidScan(scpi_t * context)
         context->interface->flush(context);
         WDRV_EXT_CmdScanGet(&numberOfResults);
         if(numberOfResults>maxSSIDs) numberOfResults = maxSSIDs;
-        g_BoardData.wifiSettings.settings.wifi.av_num = numberOfResults;    // Set number of results in the global settings structure
+         // Set number of results in the global settings structure
+        pWifiSettings->settings.wifi.av_num = numberOfResults;  
         
         for(index = 0;index<numberOfResults;index++)
         {          
@@ -780,15 +977,25 @@ scpi_result_t SCPI_LANAVSsidScan(scpi_t * context)
             if( ( scanResult.ssidLen == 0 ) || ( scanResult.ssidLen >= WDRV_MAX_SSID_LENGTH ) ){            
                 continue;
             }                 
-            strcpy(g_BoardData.wifiSettings.settings.wifi.av_ssid[index], (const char*) scanResult.ssid);   // Store SSID    
+            // Store SSID 
+            strcpy(     pWifiSettings->settings.wifi.av_ssid[index],         \
+                        (const char*) scanResult.ssid); 
             
-            context->interface->write( context, (const char*) scanResult.ssid, strlen( (const char*) scanResult.ssid ) );
+            context->interface->write(                                      \
+                        context,                                            \
+                        (const char*) scanResult.ssid,                      \
+                        strlen( (const char*) scanResult.ssid ) );
             context->interface->write( context, (const char*) "\r\n", 2 );
             context->interface->flush(context);
             
-            g_BoardData.wifiSettings.settings.wifi.av_ssid_str[index] = scanResult.rssi;                    // Store strength
-            g_BoardData.wifiSettings.settings.wifi.av_networkType[index] = scanResult.bssType;              // Store network type
-            g_BoardData.wifiSettings.settings.wifi.av_securityMode[index] = scanResult.apConfig;            // Store network security settings
+            // Store strength
+            pWifiSettings->settings.wifi.av_ssid_str[index] = scanResult.rssi;      
+            // Store network type
+            pWifiSettings->settings.wifi.av_networkType[index] =            \
+                        scanResult.bssType;   
+            // Store network security settings
+            pWifiSettings->settings.wifi.av_securityMode[index] =           \
+                        scanResult.apConfig; 
             vTaskDelay( 25 );
         }            
     }

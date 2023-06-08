@@ -28,7 +28,10 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
 {
     UsbCdcData * usbCdcDataObject;
     usbCdcDataObject = (UsbCdcData *)userData;
-    USB_CDC_CONTROL_LINE_STATE * controlLineStateData;
+    USB_CDC_CONTROL_LINE_STATE * controlLineStateData;    
+    
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
 
     switch ( event )
     {
@@ -68,14 +71,14 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
 
             if (usbCdcDataObject->controlLineStateData.dtr == 0)
             {
-                if (g_BoardRuntimeConfig.usbSettings.state == USB_CDC_STATE_PROCESS)
+                if (pRunTimeUsbSttings->state == USB_CDC_STATE_PROCESS)
                 {
-                    g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_WAIT;
+                    pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
                 }
             }
             else
             {
-                g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_PROCESS;
+                pRunTimeUsbSttings->state = USB_CDC_STATE_PROCESS;
             }
             
             USB_DEVICE_ControlStatus(usbCdcDataObject->deviceHandle, USB_DEVICE_CONTROL_STATUS_OK);
@@ -132,13 +135,17 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
 void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t context )
 {
     USB_DEVICE_EVENT_DATA_CONFIGURED *configuredEventData;
+    
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+
     switch ( event )
     {
         case USB_DEVICE_EVENT_DECONFIGURED:
         case USB_DEVICE_EVENT_RESET:
-            if (g_BoardRuntimeConfig.usbSettings.deviceHandle != USB_DEVICE_HANDLE_INVALID)
+            if (pRunTimeUsbSttings->deviceHandle != USB_DEVICE_HANDLE_INVALID)
             {
-                g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_BEGIN_CLOSE;
+                pRunTimeUsbSttings->state = USB_CDC_STATE_BEGIN_CLOSE;
             }
             break;
         case USB_DEVICE_EVENT_CONFIGURED:
@@ -150,10 +157,13 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
                 /* Register the CDC Device application event handler here.
                  * Note how the usbCdcData object pointer is passed as the
                  * user data */
-                USB_DEVICE_CDC_EventHandlerSet(USB_DEVICE_CDC_INDEX_0, UsbCdc_CDCEventHandler, (uintptr_t)&g_BoardRuntimeConfig.usbSettings);
+                USB_DEVICE_CDC_EventHandlerSet(                             \
+                        USB_DEVICE_CDC_INDEX_0,                             \
+                        UsbCdc_CDCEventHandler,                             \
+                        (uintptr_t)pRunTimeUsbSttings);
 
                 /* Mark that the device is now configured */
-                g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_WAIT;
+                pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
             }
             break;
 
@@ -161,28 +171,28 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
 
             /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
             vTaskDelay(100 / portTICK_PERIOD_MS);
-            USB_DEVICE_Attach(g_BoardRuntimeConfig.usbSettings.deviceHandle);
+            USB_DEVICE_Attach(pRunTimeUsbSttings->deviceHandle);
             break;
 
         case USB_DEVICE_EVENT_POWER_REMOVED:
 
             /* VBUS is not available any more. Detach the device. */
-            USB_DEVICE_Detach(g_BoardRuntimeConfig.usbSettings.deviceHandle);
+            USB_DEVICE_Detach(pRunTimeUsbSttings->deviceHandle);
             break;
 
         case USB_DEVICE_EVENT_SUSPENDED:
             // TODO: Are the transfer handles still valid?
-            Power_USB_Sleep_Update(g_BoardConfig.PowerConfig, &g_BoardData.PowerData, true);
-            g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_WAIT;
+            Power_USB_Sleep_Update(true);
+            pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
             break;
         case USB_DEVICE_EVENT_RESUMED:
             // TODO: Does suspend only occur after initialization?
-            Power_USB_Sleep_Update(g_BoardConfig.PowerConfig, &g_BoardData.PowerData, false);
-            g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_WAIT;
+            Power_USB_Sleep_Update(false);
+            pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
             break;
         case USB_DEVICE_EVENT_ERROR:
             // TODO: Are there non-fatal errors?
-            g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_BEGIN_CLOSE;
+            pRunTimeUsbSttings->state = USB_CDC_STATE_BEGIN_CLOSE;
             break;
         default:
             break;
@@ -192,13 +202,16 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
 int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len)
 {    
 
-    memcpy(&g_BoardRuntimeConfig.usbSettings.writeBuffer,buf,len);
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+
+    memcpy(&pRunTimeUsbSttings->writeBuffer,buf,len);
     
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
-                                &g_BoardRuntimeConfig.usbSettings.writeTransferHandle, 
-                                &g_BoardRuntimeConfig.usbSettings.writeBuffer, 
-                                len, 
-                                USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
+                        &pRunTimeUsbSttings->writeTransferHandle, 
+                        &pRunTimeUsbSttings->writeBuffer, 
+                        len, 
+                        USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
     
     return writeResult;
 }
@@ -208,6 +221,9 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len)
  */
 static bool UsbCdc_BeginWrite(UsbCdcData* client)
 {
+
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
 
     USB_DEVICE_CDC_RESULT writeResult;
     
@@ -241,7 +257,7 @@ static bool UsbCdc_BeginWrite(UsbCdcData* client)
         case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
         case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
             // Reset the interface
-            g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_BEGIN_CLOSE;
+            pRunTimeUsbSttings->state = USB_CDC_STATE_BEGIN_CLOSE;
             return false;
         
         case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
@@ -254,7 +270,8 @@ static bool UsbCdc_BeginWrite(UsbCdcData* client)
             return false;
         }
         
-        if (g_BoardRuntimeConfig.usbSettings.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
+        if (pRunTimeUsbSttings->writeTransferHandle ==                      \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
         {
             // SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Non-error w/ invalid transfer handle"); // Means USB write could not be scheduled
             return false;
@@ -301,17 +318,22 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData* client)
  */
 static bool UsbCdc_BeginRead(UsbCdcData* client)
 {
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+    
     if (client->state != USB_CDC_STATE_PROCESS)
     {
         return false;
     }
-    
     // Schedule the next read
-    if(g_BoardRuntimeConfig.usbSettings.readTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID &&
-       g_BoardRuntimeConfig.usbSettings.readBufferLength == 0)
+    if(pRunTimeUsbSttings->readTransferHandle ==                            \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID &&           \
+                        pRunTimeUsbSttings->readBufferLength == 0)
     {
-        USB_DEVICE_CDC_RESULT readResult = USB_DEVICE_CDC_Read (USB_DEVICE_CDC_INDEX_0,
-            &g_BoardRuntimeConfig.usbSettings.readTransferHandle, client->readBuffer, USB_RBUFFER_SIZE);
+        USB_DEVICE_CDC_RESULT readResult = USB_DEVICE_CDC_Read (            \
+                        USB_DEVICE_CDC_INDEX_0,                             \
+                        &pRunTimeUsbSttings->readTransferHandle,\
+                        client->readBuffer, USB_RBUFFER_SIZE);
 
         switch (readResult)
         {
@@ -325,7 +347,7 @@ static bool UsbCdc_BeginRead(UsbCdcData* client)
         case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
         case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
             // Reset the interface
-            g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_BEGIN_CLOSE;
+            pRunTimeUsbSttings->state = USB_CDC_STATE_BEGIN_CLOSE;
             return false;
         
         case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
@@ -338,7 +360,8 @@ static bool UsbCdc_BeginRead(UsbCdcData* client)
             return false;
         }
         
-        if (g_BoardRuntimeConfig.usbSettings.readTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
+        if (pRunTimeUsbSttings->readTransferHandle ==                       \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
         {
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Non-error w/ invalid transfer handle");
             return false;
@@ -442,8 +465,11 @@ static bool UsbCdc_Flush(UsbCdcData* client)
  */
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len)
 {
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+    
     UNUSED(context);
-    UsbCdc_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings, data, len);
+    UsbCdc_WriteToBuffer(pRunTimeUsbSttings, data, len);
     return len;
 }
 
@@ -454,9 +480,12 @@ static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len)
  */
 static scpi_result_t SCPI_USB_Flush(scpi_t * context)
 {
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+    
     UNUSED(context);
     
-    if (UsbCdc_Flush(&g_BoardRuntimeConfig.usbSettings))
+    if (UsbCdc_Flush(pRunTimeUsbSttings))
     {
         return SCPI_RES_OK;
     }
@@ -521,8 +550,11 @@ static scpi_interface_t scpi_interface = {
  */
 static void microrl_echo(microrl_t* context, size_t textLen, const char* text)
 {
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+    
     UNUSED(context);
-    UsbCdc_WriteToBuffer(&g_BoardRuntimeConfig.usbSettings,text, textLen);
+    UsbCdc_WriteToBuffer(pRunTimeUsbSttings,text, textLen);
 }
 
 /**
@@ -534,11 +566,17 @@ static void microrl_echo(microrl_t* context, size_t textLen, const char* text)
  */
 static int microrl_commandComplete(microrl_t* context, size_t commandLen, const char* command)
 {
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+    
     UNUSED(context);
     
     if (command != NULL && commandLen > 0)
     {
-        return SCPI_Input(&g_BoardRuntimeConfig.usbSettings.scpiContext, command, commandLen);
+        return SCPI_Input(                                                  \
+                        &pRunTimeUsbSttings->scpiContext,                   \
+                        command,                                            \
+                        commandLen);
     }
     
     SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "NULL or zero length command.");
@@ -547,57 +585,74 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
 
 void UsbCdc_Initialize()
 {
-    g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_INIT;
-
-    g_BoardRuntimeConfig.usbSettings.deviceHandle = USB_DEVICE_HANDLE_INVALID ;
-
-    g_BoardRuntimeConfig.usbSettings.getLineCodingData.dwDTERate = 9600;
-    g_BoardRuntimeConfig.usbSettings.getLineCodingData.bParityType =  0;
-    g_BoardRuntimeConfig.usbSettings.getLineCodingData.bParityType = 0;
-    g_BoardRuntimeConfig.usbSettings.getLineCodingData.bDataBits = 8;
-
-    g_BoardRuntimeConfig.usbSettings.readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
-    g_BoardRuntimeConfig.usbSettings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
-    g_BoardRuntimeConfig.usbSettings.readBufferLength = 0;
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
     
-    microrl_init(&g_BoardRuntimeConfig.usbSettings.console, microrl_echo);
-    microrl_set_echo(&g_BoardRuntimeConfig.usbSettings.console, true);
-    microrl_set_execute_callback(&g_BoardRuntimeConfig.usbSettings.console, microrl_commandComplete);
-    g_BoardRuntimeConfig.usbSettings.scpiContext = CreateSCPIContext(&scpi_interface, &g_BoardRuntimeConfig.usbSettings);
+    pRunTimeUsbSttings->state = USB_CDC_STATE_INIT;
+
+    pRunTimeUsbSttings->deviceHandle = USB_DEVICE_HANDLE_INVALID ;
+
+    pRunTimeUsbSttings->getLineCodingData.dwDTERate = 9600;
+    pRunTimeUsbSttings->getLineCodingData.bParityType =  0;
+    pRunTimeUsbSttings->getLineCodingData.bParityType = 0;
+    pRunTimeUsbSttings->getLineCodingData.bDataBits = 8;
+
+    pRunTimeUsbSttings->readTransferHandle =                                \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+    pRunTimeUsbSttings->writeTransferHandle =                               \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+    pRunTimeUsbSttings->readBufferLength = 0;
+    
+    microrl_init(&pRunTimeUsbSttings->console, microrl_echo);
+    microrl_set_echo(&pRunTimeUsbSttings->console, true);
+    microrl_set_execute_callback(                                           \
+                        &pRunTimeUsbSttings->console,                       \
+                        microrl_commandComplete);
+    pRunTimeUsbSttings->scpiContext = CreateSCPIContext(                    \
+                        &scpi_interface,                                    \
+                        pRunTimeUsbSttings);
     
     // reset circular buffer variables to known state. 
-    CircularBuf_Init(&g_BoardRuntimeConfig.usbSettings.wCirbuf, UsbCdc_Wrapper_Write, (USB_WBUFFER_SIZE*2));
+    CircularBuf_Init(   &pRunTimeUsbSttings->wCirbuf,                       \
+                        UsbCdc_Wrapper_Write,                               \
+                        (USB_WBUFFER_SIZE*2));
      /* Create a mutex type semaphore. */
-    g_BoardRuntimeConfig.usbSettings.wMutex = xSemaphoreCreateMutex();
+    pRunTimeUsbSttings->wMutex = xSemaphoreCreateMutex();
 
-    if( g_BoardRuntimeConfig.usbSettings.wMutex == NULL ){
+    if( pRunTimeUsbSttings->wMutex == NULL ){
         /* The semaphore was created successfully and
         can be used. */
     }
        
     //Release ownership of the mutex object
-    xSemaphoreGive(g_BoardRuntimeConfig.usbSettings.wMutex);
+    xSemaphoreGive(pRunTimeUsbSttings->wMutex);
     
 }
 
 void UsbCdc_ProcessState()
 {
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+    
     UNUSED(UsbCdc_WaitForRead); // We dont want to block on the read so this is currently not used
 
-    switch(g_BoardRuntimeConfig.usbSettings.state)
+    switch(pRunTimeUsbSttings->state)
     {
         case USB_CDC_STATE_INIT:
             //GPIO_WritePin(g_boardState.led2Id, false);
             
             /* Open the device layer */
-            g_BoardRuntimeConfig.usbSettings.deviceHandle = USB_DEVICE_Open( USB_DEVICE_INDEX_0, DRV_IO_INTENT_READWRITE );
+            pRunTimeUsbSttings->deviceHandle = USB_DEVICE_Open( USB_DEVICE_INDEX_0, DRV_IO_INTENT_READWRITE );
 
-            if(g_BoardRuntimeConfig.usbSettings.deviceHandle != USB_DEVICE_HANDLE_INVALID)
+            if(pRunTimeUsbSttings->deviceHandle != USB_DEVICE_HANDLE_INVALID)
             {
                 /* Register a callback with device layer to get event notification (for end point 0) */
-                USB_DEVICE_EventHandlerSet(g_BoardRuntimeConfig.usbSettings.deviceHandle, UsbCdc_EventHandler, 0);
+                USB_DEVICE_EventHandlerSet(                                 \
+                        pRunTimeUsbSttings->deviceHandle,                   \
+                        UsbCdc_EventHandler,                                \
+                        0);
 
-                g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_WAIT;
+                pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
             }
             else
             {
@@ -608,23 +663,25 @@ void UsbCdc_ProcessState()
             break;
         case USB_CDC_STATE_PROCESS:           
             // If a write operation is not in progress
-            if(g_BoardRuntimeConfig.usbSettings.readTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
+            if(pRunTimeUsbSttings->readTransferHandle ==                    \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
             {
                 // Process any input
-                UsbCdc_FinalizeRead(&g_BoardRuntimeConfig.usbSettings);
+                UsbCdc_FinalizeRead(pRunTimeUsbSttings);
                 
                 // Schedule the next read
-                if (!UsbCdc_BeginRead(&g_BoardRuntimeConfig.usbSettings))
+                if (!UsbCdc_BeginRead(pRunTimeUsbSttings))
                 {
                     break;
                 }
             }
             
             // I a read operation is not in progress
-            if(g_BoardRuntimeConfig.usbSettings.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
+            if(pRunTimeUsbSttings->writeTransferHandle ==                   \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
             {
                 // Schedule any output
-                if (!UsbCdc_BeginWrite(&g_BoardRuntimeConfig.usbSettings))
+                if (!UsbCdc_BeginWrite(pRunTimeUsbSttings))
                 {
                     break;
                 }
@@ -634,27 +691,29 @@ void UsbCdc_ProcessState()
         case USB_CDC_STATE_BEGIN_CLOSE:
             //GPIO_WritePin(g_boardState.led2Id, false);
             
-            if(g_BoardRuntimeConfig.usbSettings.deviceHandle != USB_DEVICE_HANDLE_INVALID)
+            if(pRunTimeUsbSttings->deviceHandle != USB_DEVICE_HANDLE_INVALID)
             {
-                USB_DEVICE_Close(g_BoardRuntimeConfig.usbSettings.deviceHandle);
-                g_BoardRuntimeConfig.usbSettings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
+                USB_DEVICE_Close(pRunTimeUsbSttings->deviceHandle);
+                pRunTimeUsbSttings->deviceHandle = USB_DEVICE_HANDLE_INVALID;
                 
-                g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_WAIT;
+                pRunTimeUsbSttings->state = USB_CDC_STATE_WAIT;
             }
             
-            g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_CLOSED;
+            pRunTimeUsbSttings->state = USB_CDC_STATE_CLOSED;
             
             break;
         case USB_CDC_STATE_CLOSED:
             //GPIO_WritePin(g_boardState.led2Id, false);
             
-            g_BoardRuntimeConfig.usbSettings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
+            pRunTimeUsbSttings->deviceHandle = USB_DEVICE_HANDLE_INVALID;
 
-            g_BoardRuntimeConfig.usbSettings.readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
-            g_BoardRuntimeConfig.usbSettings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
-            g_BoardRuntimeConfig.usbSettings.readBufferLength = 0;
+            pRunTimeUsbSttings->readTransferHandle =                        \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+            pRunTimeUsbSttings->writeTransferHandle =                       \
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+            pRunTimeUsbSttings->readBufferLength = 0;
 
-            g_BoardRuntimeConfig.usbSettings.state = USB_CDC_STATE_INIT;
+            pRunTimeUsbSttings->state = USB_CDC_STATE_INIT;
             
             break;
         case USB_CDC_STATE_WAIT: // No action
@@ -665,5 +724,8 @@ void UsbCdc_ProcessState()
 
 bool UsbCdc_IsActive()
 {
-    return (g_BoardRuntimeConfig.usbSettings.state == USB_CDC_STATE_PROCESS);
+    UsbCdcData * pRunTimeUsbSttings = BoardRunTimeConfig_Get(               \
+                        BOARDRUNTIME_USB_SETTINGS);
+    
+    return (pRunTimeUsbSttings->state == USB_CDC_STATE_PROCESS);
 }

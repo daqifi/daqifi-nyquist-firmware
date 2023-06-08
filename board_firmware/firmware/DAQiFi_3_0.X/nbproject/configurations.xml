@@ -57,6 +57,9 @@
             <itemPath>../src/state/board/BoardConfig.h</itemPath>
             <itemPath>../src/state/board/DIOConfig.h</itemPath>
             <itemPath>../src/state/board/StreamingConfig.h</itemPath>
+            <itemPath>../src/state/board/NQ1BoardConfig.h</itemPath>
+            <itemPath>../src/state/board/NQ2BoardConfig.h</itemPath>
+            <itemPath>../src/state/board/NQ3BoardConfig.h</itemPath>
           </logicalFolder>
           <logicalFolder name="data" displayName="data" projectFiles="true">
             <itemPath>../src/state/data/AInSample.h</itemPath>
@@ -126,6 +129,7 @@
         <itemPath>../src/app_commands.h</itemPath>
         <itemPath>../src/streaming.h</itemPath>
         <itemPath>../src/app_wifi_winc1500.h</itemPath>
+        <itemPath>../src/encoder.h</itemPath>
       </logicalFolder>
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">
@@ -675,11 +679,11 @@
           <itemPath>../src/HAL/DIO.c</itemPath>
         </logicalFolder>
         <logicalFolder name="json" displayName="json" projectFiles="true">
-          <itemPath>../src/json/Encoder.c</itemPath>
+          <itemPath>../src/json/JSON_Encoder.c</itemPath>
         </logicalFolder>
         <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
           <itemPath>../src/nanopb/DaqifiOutMessage.pb.c</itemPath>
-          <itemPath>../src/nanopb/Encoder.c</itemPath>
+          <itemPath>../src/nanopb/NanoPB_Encoder.c</itemPath>
         </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/SCPI/SCPIADC.c</itemPath>
@@ -787,6 +791,7 @@
         <itemPath>../src/http_print.c</itemPath>
         <itemPath>../src/custom_http_app.c</itemPath>
         <itemPath>../src/mpfs_img2.c</itemPath>
+        <itemPath>../src/encoder.c</itemPath>
       </logicalFolder>
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">
@@ -1130,7 +1135,7 @@
         <platform>3</platform>
       </toolsSet>
       <packs>
-        <pack name="PIC32MZ-EF_DFP" vendor="Microchip" version="1.3.58"/>
+        <pack name="PIC32MZ-EF_DFP" vendor="Microchip" version="1.2.51"/>
       </packs>
       <ScriptingSettings>
       </ScriptingSettings>
@@ -1546,6 +1551,20 @@
       <item path="../src/system_config/pic32mz_ef_sk__ioexp__11n__freertos/app_mz.ld"
             ex="true"
             overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
       </item>
       <C32>
         <property key="additional-warnings" value="true"/>
@@ -2172,6 +2191,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="C:/microchip/harmony/v2_06/apps/weehau-clean_18-03-23/board_firmware/firmware/DAQiFi_3_0.X/debug/pic32mz_ef_sk__ioexp__11n__freertos/DAQiFi_3_0_ptg"/>
         <property key="programmerToGoImageName" value="DAQiFi_3_0_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>

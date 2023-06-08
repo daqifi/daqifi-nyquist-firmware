@@ -167,11 +167,15 @@ static bool TcpServer_Flush(TcpClientData* client)
 static TcpClientData* SCPI_TCP_GetClient(scpi_t * context)
 {
     uint8_t i = 0;
+    
+    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(            \
+                        BOARDRUNTIME_SERVER_DATA);
+    
     for (i=0; i<WIFI_MAX_CLIENT; ++i)
     {
-        if (&g_BoardRuntimeConfig.serverData.clients[i].scpiContext == context)
+        if (&pRunTimeServerData->clients[i].scpiContext == context)
         {
-             return &g_BoardRuntimeConfig.serverData.clients[i];
+             return &pRunTimeServerData->clients[i];
         }
     }
     
@@ -264,11 +268,15 @@ static scpi_interface_t scpi_interface = {
 static TcpClientData* microrl_GetClient(microrl_t* context)
 {
     uint8_t i = 0;
+    
+    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(            \
+                        BOARDRUNTIME_SERVER_DATA);
+    
     for (i=0; i<WIFI_MAX_CLIENT; ++i)
     {
-        if (&g_BoardRuntimeConfig.serverData.clients[i].console == context)
+        if (&pRunTimeServerData->clients[i].console == context)
         {
-             return &g_BoardRuntimeConfig.serverData.clients[i];
+             return &pRunTimeServerData->clients[i];
         }
     }
     
@@ -330,38 +338,50 @@ static void TcpServer_InitializeClient(TcpClientData* client)
 
 void TcpServer_Initialize()
 {
+    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(            \
+                        BOARDRUNTIME_SERVER_DATA);
+    
     // Init server params
-    g_BoardRuntimeConfig.serverData.serverSocket = INVALID_SOCKET;
-    g_BoardRuntimeConfig.serverData.state = IP_SERVER_INITIALIZE;
-    g_BoardRuntimeConfig.serverData.hInterface = TCPIP_STACK_NetHandleGet(WIFI_INTERFACE_NAME);
+    pRunTimeServerData->serverSocket = INVALID_SOCKET;
+    pRunTimeServerData->state = IP_SERVER_INITIALIZE;
+    pRunTimeServerData->hInterface =                                        \
+                        TCPIP_STACK_NetHandleGet(WIFI_INTERFACE_NAME);
     
     // Init client params
     uint8_t i;
     for (i=0; i<WIFI_MAX_CLIENT; ++i)
     {
-        TcpServer_InitializeClient(&g_BoardRuntimeConfig.serverData.clients[i]);
+        TcpServer_InitializeClient(&pRunTimeServerData->clients[i]);
     }
 }
 
 void TcpServer_ProcessState()
 {
-    switch (g_BoardRuntimeConfig.serverData.state)
+    DaqifiSettings * pWifiSettings = BoardData_Get(                         \
+                            BOARDDATA_WIFI_SETTINGS,                        \
+                            0); 
+    
+    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(            \
+                        BOARDRUNTIME_SERVER_DATA);
+    
+    switch (pRunTimeServerData->state)
     {
     case IP_SERVER_INITIALIZE:
         TcpServer_Initialize();
-        g_BoardRuntimeConfig.serverData.state = IP_SERVER_WAIT;
+        pRunTimeServerData->state = IP_SERVER_WAIT;
         break;
     case IP_SERVER_WAIT:
-        if (TCPIP_STACK_NetIsUp(g_BoardRuntimeConfig.serverData.hInterface))
+        if (TCPIP_STACK_NetIsUp(pRunTimeServerData->hInterface))
         {
-            g_BoardRuntimeConfig.serverData.state = IP_SERVER_CONNECT;
+            pRunTimeServerData->state = IP_SERVER_CONNECT;
         }
         break;
     case IP_SERVER_CONNECT:
-        g_BoardRuntimeConfig.serverData.serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (g_BoardRuntimeConfig.serverData.serverSocket != SOCKET_ERROR)
+        pRunTimeServerData->serverSocket =                                  \
+                            socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (pRunTimeServerData->serverSocket != SOCKET_ERROR)
         {
-            g_BoardRuntimeConfig.serverData.state = IP_SERVER_BIND;
+            pRunTimeServerData->state = IP_SERVER_BIND;
         }
 
         break;
@@ -369,18 +389,19 @@ void TcpServer_ProcessState()
     {
         struct sockaddr_in addr;
         int addrlen = sizeof(struct sockaddr_in);
-        addr.sin_port = g_BoardData.wifiSettings.settings.wifi.tcpPort;
+        addr.sin_port = pWifiSettings->settings.wifi.tcpPort;
         addr.sin_addr.S_un.S_addr = IP_ADDR_ANY;
-        if( bind(g_BoardRuntimeConfig.serverData.serverSocket, (struct sockaddr*)&addr, addrlen ) != SOCKET_ERROR )
+        if( bind(pRunTimeServerData->serverSocket,              \
+                (struct sockaddr*)&addr, addrlen ) != SOCKET_ERROR )
         {
-            g_BoardRuntimeConfig.serverData.state = IP_SERVER_LISTEN;
+            pRunTimeServerData->state = IP_SERVER_LISTEN;
         }
         break;
     }
     case IP_SERVER_LISTEN:
-        if(listen(g_BoardRuntimeConfig.serverData.serverSocket, WIFI_MAX_CLIENT) == 0)
+        if(listen(pRunTimeServerData->serverSocket, WIFI_MAX_CLIENT) == 0)
         {
-             g_BoardRuntimeConfig.serverData.state = IP_SERVER_PROCESS;
+             pRunTimeServerData->state = IP_SERVER_PROCESS;
         }
         
         break;
@@ -393,10 +414,13 @@ void TcpServer_ProcessState()
         for (i=0; i<WIFI_MAX_CLIENT; ++i)
         {
             // Accept incoming connections
-            TcpClientData* client = &g_BoardRuntimeConfig.serverData.clients[i];
+            TcpClientData* client = &pRunTimeServerData->clients[i];
             if(client->client == INVALID_SOCKET)
             {
-                client->client = accept(g_BoardRuntimeConfig.serverData.serverSocket, (struct sockaddr*)&addRemote, &addrlen);
+                client->client = accept(                                    \
+                        pRunTimeServerData->serverSocket,                   \
+                        (struct sockaddr*)&addRemote,                       \
+                        &addrlen);
                 if(client->client == INVALID_SOCKET)
                 {
                     // EMFILE indicates that no incoming connections are available. All others indicate that we somehow lost the server connection
@@ -406,15 +430,15 @@ void TcpServer_ProcessState()
                         break;
                     case EFAULT:
                         SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Invalid IP address. Resetting.");
-                        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
+                        pRunTimeServerData->state = IP_SERVER_DISCONNECT;
                         return;  
                     case EOPNOTSUPP:
                         SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Not a streaming connection. Resetting.");
-                        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
+                        pRunTimeServerData->state = IP_SERVER_DISCONNECT;
                         return;
                     case EINVAL:
                         SYS_DEBUG_MESSAGE(SYS_ERROR_WARNING, "TcpServer Disconnected. Resetting.");
-                        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
+                        pRunTimeServerData->state = IP_SERVER_DISCONNECT;
                         return;
                     default:
                         SYS_DEBUG_PRINT(SYS_ERROR_ERROR, "Unhandled errno: %d", errno);
@@ -496,7 +520,7 @@ void TcpServer_ProcessState()
         uint8_t i = 0;
         for (i=0; i<WIFI_MAX_CLIENT; ++i)
         {
-            TcpClientData* client = &g_BoardRuntimeConfig.serverData.clients[i];
+            TcpClientData* client = &pRunTimeServerData->clients[i];
             if(client->client != INVALID_SOCKET)
             {
                 closesocket(client->client);
@@ -504,19 +528,19 @@ void TcpServer_ProcessState()
             }
         }
         
-        if (g_BoardRuntimeConfig.serverData.serverSocket != INVALID_SOCKET)
+        if (pRunTimeServerData->serverSocket != INVALID_SOCKET)
         {
-            closesocket(g_BoardRuntimeConfig.serverData.serverSocket);
-            g_BoardRuntimeConfig.serverData.serverSocket = INVALID_SOCKET;
+            closesocket(pRunTimeServerData->serverSocket);
+            pRunTimeServerData->serverSocket = INVALID_SOCKET;
         }
         
-        g_BoardRuntimeConfig.serverData.state = IP_SERVER_INITIALIZE;
+        pRunTimeServerData->state = IP_SERVER_INITIALIZE;
         
         break;
     }
     default:
         LogMessage("TCPIP State error. TcpServer.c ln 502\n\r");
-        g_BoardRuntimeConfig.serverData.state = IP_SERVER_DISCONNECT;
+        pRunTimeServerData->state = IP_SERVER_DISCONNECT;
         break;
     }
 }

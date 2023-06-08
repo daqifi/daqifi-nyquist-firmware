@@ -2,26 +2,129 @@
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
-const BoardConfig g_NQ3BoardConfig = {
+const tBoardConfig NQ2BoardConfig = {
     .BoardVariant = 2,
     .DIOChannels = {
         .Data = {
-            {PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_1, PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_2, false},
-            {PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_3, PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_2, true},
-            {PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_3, PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_13, true},
-            {PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_12, PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_0, false},
-            {PORTS_ID_0, PORT_CHANNEL_F, PORTS_BIT_POS_0, PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_7, true},
-            {PORTS_ID_0, PORT_CHANNEL_F, PORTS_BIT_POS_1, PORTS_ID_0, PORT_CHANNEL_K, PORTS_BIT_POS_7, false},
-            {PORTS_ID_0, PORT_CHANNEL_G, PORTS_BIT_POS_0, PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_4, true},
-            {PORTS_ID_0, PORT_CHANNEL_G, PORTS_BIT_POS_1, PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_5, false},
-            {PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_6, PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_7, false},
-            {PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_1, PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_0, true},
-            {PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_4, PORTS_ID_0, PORT_CHANNEL_G, PORTS_BIT_POS_15, false},
-            {PORTS_ID_0, PORT_CHANNEL_C, PORTS_BIT_POS_2, PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_10, true},
-            {PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_3, PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_2, true},
-            {PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_6, PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_7, false},
-            {PORTS_ID_0, PORT_CHANNEL_E, PORTS_BIT_POS_5, PORTS_ID_0, PORT_CHANNEL_A, PORTS_BIT_POS_5, true},
-            {PORTS_ID_0, PORT_CHANNEL_C, PORTS_BIT_POS_1, PORTS_ID_0, PORT_CHANNEL_J, PORTS_BIT_POS_12, false},  
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_D,                                     \
+                        PORTS_BIT_POS_1,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_D,                                     \
+                        PORTS_BIT_POS_2,                                    \
+                        false},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_3,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_2,                                    \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_D,                                     \
+                        PORTS_BIT_POS_3,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_D,                                     \
+                        PORTS_BIT_POS_13,                                   \
+                        true},      
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_D,                                     \
+                        PORTS_BIT_POS_12,                                   \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_0,                                    \
+                        false},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_F,                                     \
+                        PORTS_BIT_POS_0,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_D,                                     \
+                        PORTS_BIT_POS_7,                                    \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_F,                                     \
+                        PORTS_BIT_POS_0,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_D,                                     \
+                        PORTS_BIT_POS_7,                                    \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_F,                                     \
+                        PORTS_BIT_POS_1,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_K,                                     \
+                        PORTS_BIT_POS_7,                                    \
+                        false},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_G,                                     \
+                        PORTS_BIT_POS_0,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_4,                                    \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_G,                                     \
+                        PORTS_BIT_POS_1,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_5,                                    \
+                        false},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_6,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_7,                                    \
+                        false},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_1,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_0,                                    \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_4,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_G,                                     \
+                        PORTS_BIT_POS_15,                                   \
+                        false},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_C,                                     \
+                        PORTS_BIT_POS_2,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_10,                                   \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_3,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_2,                                    \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_6,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_7,                                    \
+                        false},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_E,                                     \
+                        PORTS_BIT_POS_5,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_A,                                     \
+                        PORTS_BIT_POS_5,                                    \
+                        true},
+            {           PORTS_ID_0,                                         \
+                        PORT_CHANNEL_C,                                     \
+                        PORTS_BIT_POS_1,                                    \
+                        PORTS_ID_0,                                         \
+                        PORT_CHANNEL_J,                                     \
+                        PORTS_BIT_POS_12,                                   \
+                        false},  
         },
         .Size = 16,
     },
@@ -29,7 +132,10 @@ const BoardConfig g_NQ3BoardConfig = {
         .Data = {
             {
                 .Type = AIn_MC12bADC,
-                .Config = {.MC12b = { .moduleId = DRV_ADC_ID_1, .Resolution = 4096 } },
+                .Config = {                                     
+                    .MC12b = {  
+                        .moduleId = DRV_ADC_ID_1, 
+                        .Resolution = 4096 } },
                 .Size = 16
             },
             {
@@ -260,3 +366,10 @@ const BoardConfig g_NQ3BoardConfig = {
         .TSTimerIntent = DRV_IO_INTENT_EXCLUSIVE,
     }
 };
+/*! This function is used for getting a board version 1 configuration parameter
+ * @return Pointer to Board Configuration structure
+ */
+const void *NQ2BoardConfig_Get( void )
+{
+    return &NQ2BoardConfig; 
+}

@@ -10,43 +10,45 @@
 #include "state/runtime/DIORuntimeConfig.h"
 #include "state/data/DIOSample.h"
 #include "state/runtime/BoardRuntimeConfig.h"
+#include "state/board/BoardConfig.h"
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
-    /**
-     * Performs board initialization
-     * @param boardConfig The hardware configuration
-     */
-    bool DIO_InitHardware(const DIOArray* boardConfig);
+    
+/*!
+ * Performs board initialization
+ * @param pInitBoardConfiguration Board configuration data structure
+ * @param[in] pInitBoardRuntmeConfig Board runtime configuration data
+ * structure
+ */
+bool DIO_InitHardware( const tBoardConfig *pInitBoardConfiguration,         \
+                        const tBoardRuntimeConfig *pInitBoardRuntimeConfig );
 
-    /**
-     * Sets the initial state for all DIO channelss
-     */
-    bool DIO_WriteStateAll(const DIOArray* boardConfig, DIORuntimeArray* runtimeConfig);
+/*!
+ * Sets the initial state for all DIO channelss
+ */
+bool DIO_WriteStateAll( void );
     
-    /**
-     * Updates the state for a single DIO channel
-     */
-    bool DIO_WriteStateSingle(const DIOConfig* boardConfig, DIORuntimeConfig* runtimeConfig);
+/*!
+ * Updates the state for a single DIO channel
+ * @param[in] Data channel index
+ */
+bool DIO_WriteStateSingle( uint8_t dataIndex );
     
-    /**
-     * Generates a sample based all enabled samples included in the mask
-     * @param sample The sample to populate
-     * @param boardConfig The configuration for the board
-     * @param runtimeConfig The runtime configuration for the board
-     * @param mask Defines the channels that will be included
-     */
-    bool DIO_ReadSampleByMask(DIOSample* sample, const DIOArray* boardConfig, DIORuntimeArray* runtimeConfig, uint32_t mask);
+/*!
+ * Generates a sample based all enabled samples included in the mask
+ * @param sample The sample to populate
+ * @param mask Defines the channels that will be included
+ */
+bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask);
     
-    /**
-     * Performs periodic tasks for DIO
-     * @param boardConfig The board config to use
-     * @param runtimeConfig The runtime config to use
-     * @param latest Storage for the latest values
-     * @param streamingSamples Storage for the latest streaming values
-     */
-    void DIO_Tasks(const DIOArray* boardConfig, BoardRuntimeConfig* runtimeConfig, DIOSample* latest, DIOSampleList* streamingSamples);
+/*!
+ * Performs periodic tasks for DIO
+ * @param latest Storage for the latest values
+ * @param streamingSamples Storage for the latest streaming values
+ */
+void DIO_Tasks( DIOSample* latest, DIOSampleList* streamingSamples );
     
 #ifdef	__cplusplus
 }

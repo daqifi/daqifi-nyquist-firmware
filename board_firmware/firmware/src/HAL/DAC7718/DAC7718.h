@@ -1,7 +1,7 @@
 /* 
- * File:   DAC7718.h
+ * @file   DAC7718.h
  * Author: Chris Lange
- *
+ * @brief This file manages the DAC7718 module
  * Created on July 15, 2016, 4:08 PM
  */
 #ifndef DAC7718_H
@@ -15,101 +15,106 @@
 extern "C" {
 #endif
     
-     /**
-     * Configuration for a single SPI Port
-     */
-    typedef struct sSPIConfig
-    {
-        SPI_MODULE_ID spiID;
-        uint32_t baud;
-        SPI_BAUD_RATE_CLOCK clock;                                   //Selects the type of clock is used by the Baud Rate Generator.
-        CLK_BUSES_PERIPHERAL busClk_id;
+/*! @struct sDAC7718Config
+ * @brief Data structure for a single SPI Port configuration
+ * @typedef tDAC7718Config
+ * @brief Data type associated to the structure sDAC7718Config
+ */
+typedef struct sSPIConfig
+{
+    //! SPI module ID
+    SPI_MODULE_ID spiID;
+    //! Baudrate
+    uint32_t baud;
+    //! Selects the type of clock is used by the Baud Rate Generator.
+    SPI_BAUD_RATE_CLOCK clock;  
+    //! Bus clock id
+    CLK_BUSES_PERIPHERAL busClk_id;
+    //! Enables clock polarity.
+    SPI_CLOCK_POLARITY clockPolarity;
+    //! Selects the data width for the SPI communication.
+    SPI_COMMUNICATION_WIDTH busWidth;                   
+    //! Selects the SPI data input sample phase.
+    SPI_INPUT_SAMPLING_PHASE inSamplePhase;        
+    //! Selects serial output data change.
+    SPI_OUTPUT_DATA_PHASE outDataPhase; 
 
-        SPI_CLOCK_POLARITY clockPolarity;                    //Enables clock polarity.
-        SPI_COMMUNICATION_WIDTH busWidth;                   //Selects the data width for the SPI communication.
-
-        SPI_INPUT_SAMPLING_PHASE inSamplePhase;        //Selects the SPI data input sample phase.
-
-        SPI_OUTPUT_DATA_PHASE outDataPhase; //Selects serial output data change.
-  
-    } DAC7718_SPIConfig;
+} tDAC7718_SPIConfig;
     
-        
-    /**
-     * Configuration for a single DAC7718
-     */
-    typedef struct sDAC7718Config
-    {
-        uint8_t id;
-                
-        PORTS_CHANNEL RST_Ch;
-        PORTS_BIT_POS RST_Bit;
-        PORTS_CHANNEL CS_Ch;
-        PORTS_BIT_POS CS_Bit;
-        
-        uint8_t DAC_Range;
-        
-        DAC7718_SPIConfig SPI;
+/*! @struct sDAC7718Config
+ * @brief Data structure for a single DAC7718 configuration
+ * @typedef tDAC7718Config
+ * @brief Data type associated to the structure sDAC7718Config
+ */
+typedef struct sDAC7718Config
+{
+    //! Configuration ID
+    uint8_t id;
+    //! Reset port
+    PORTS_CHANNEL RST_Ch;
+    //! Reset bit possition
+    PORTS_BIT_POS RST_Bit;
+    //! CS port
+    PORTS_CHANNEL CS_Ch;
+    //! CS bit possition
+    PORTS_BIT_POS CS_Bit;
+    //! DAC range
+    uint8_t DAC_Range;
+    //! SPI configuration
+    tDAC7718_SPIConfig SPI;
 
-    } DAC7718Config;
+} tDAC7718Config;
 
-    /**
-     * Initializes the internal GPIO data structures
-     */
-    void DAC7718_InitGlobal();
+/*!
+ * Initializes the internal GPIO data structures
+ */
+void DAC7718_InitGlobal( void );
     
-        /**
-     * Creates a new configuration for the specified set of inputs and returns the id
-     * @param channel
-     * @param pin
-     * @param mode
-     * @return 
-     */
-    uint8_t DAC7718_NewConfig(DAC7718Config *newDAC7718Config);
+/*!
+ * Creates a new configuration for the specified set of inputs and 
+ * returns the id
+ * @param channel
+ * @param pin
+ * @param mode
+ * @return 
+ */
+uint8_t DAC7718_NewConfig(tDAC7718Config *newDAC7718Config);
     
-    /**
-     * Gets a handle to the config object with the specified id
-     * @return 
-     */
-    DAC7718Config* DAC7718_GetConfig(uint8_t id);
+/*!
+ * Gets a handle to the config object with the specified id
+ * @param id Configuration id
+ * @return 
+ */
+tDAC7718Config* DAC7718_GetConfig(uint8_t id);
 
-        
-    /**
-    * Sets the SPI parameters and opens the SPI port
-    * @param id Driver instance ID
-    */
-    void DAC7718_Apply_SPI_Config(uint8_t id);
-    
-    /**
-    * Resets the DAC7718.  Must be called after DAC7718_Init
-    * @param id Driver instance ID
-    */
-    void DAC7718_Reset(uint8_t id);
+/*1
+* Initializes the DAC7718.
+* @param id Driver instance ID
+* @param range Range setting
+* @return
+*/
+void DAC7718_Init(uint8_t id, uint8_t range);
 
-    /**
-    * Initializes the DAC7718.
-    * @param id Driver instance ID
-    * @param range Range setting
-    * @return
-    */
-    void DAC7718_Init(uint8_t id, uint8_t range);
+/*!
+* Reads/Writes to a register in the DAC7718.
+* @param id Driver instance ID
+* @param RW Read/Write Bit (W=0, R=1)
+* @param reg Register to read/write to DAC7718
+* @param data to write to DAC7718
+* @return
+*/
+uint32_t DAC7718_ReadWriteReg(                                              \
+                        uint8_t id,                                         \
+                        uint8_t RW,                                         \
+                        uint8_t Reg,                                        \
+                        uint32_t Data); 
 
-    /**
-    * Reads/Writes to a register in the DAC7718.
-    * @param id Driver instance ID
-    * @param RW Read/Write Bit (W=0, R=1)
-    * @param reg Register to read/write to DAC7718
-    * @param data to write to DAC7718
-    * @return
-    */
-    uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t reg, uint32_t data);
-
-    /**
-    * Updates latches with values written to the DAC7718.
-    * @param id Driver instance ID 
-    * @return
-    */
-    void DAC7718_UpdateLatch(uint8_t id);
+/*!
+* Updates latches with values written to the DAC7718.
+* @param id Driver instance ID 
+* @return
+*/
+void DAC7718_UpdateLatch(uint8_t id);
 
 
 #ifdef	__cplusplus

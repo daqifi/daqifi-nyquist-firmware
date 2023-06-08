@@ -65,7 +65,8 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #define HTTP_APP_USE_EMAIL
 #endif
 
-#if defined(TCPIP_IF_MRF24WN) || defined(TCPIP_IF_WINC1500) || defined(TCPIP_IF_WILC1000)
+#if defined(TCPIP_IF_MRF24WN) || defined(TCPIP_IF_WINC1500) ||              \
+    defined(TCPIP_IF_WILC1000)
 #define HTTP_APP_USE_WIFI
 #endif
 
@@ -86,17 +87,20 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
     #if defined(HTTP_APP_USE_RECONFIG)
         static HTTP_IO_RESULT HTTPPostConfig(HTTP_CONN_HANDLE connHandle);
         #if defined(TCPIP_STACK_USE_SNMP_SERVER)
-        static HTTP_IO_RESULT HTTPPostSNMPCommunity(HTTP_CONN_HANDLE connHandle);
+        static HTTP_IO_RESULT HTTPPostSNMPCommunity(                        \
+                        HTTP_CONN_HANDLE connHandle);
         #endif
     #endif
     #if defined(HTTP_APP_USE_EMAIL) 
         static HTTP_IO_RESULT HTTPPostEmail(HTTP_CONN_HANDLE connHandle);
     #endif
     #if defined(TCPIP_STACK_USE_DYNAMICDNS_CLIENT)
-        static HTTP_IO_RESULT HTTPPostDDNSConfig(HTTP_CONN_HANDLE connHandle);
+        static HTTP_IO_RESULT HTTPPostDDNSConfig(                           \
+                        HTTP_CONN_HANDLE connHandle);
     #endif
     #if defined(HTTP_APP_USE_WIFI)
-        static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle);
+        static HTTP_IO_RESULT HTTPPostWIFIConfig(                           \
+                        HTTP_CONN_HANDLE connHandle);
     #endif
 #endif
 
@@ -200,7 +204,9 @@ static bool Helper_HEXStrToBIN(char *p_ascii_hex_str, uint16_t *p_bin)
     return true;
 }
 
-static bool Helper_HEXStrToBINInplace(char *p_str, uint8_t expected_binary_size)
+static bool Helper_HEXStrToBINInplace(                                      \
+                        char *p_str,                                        \
+                        uint8_t expected_binary_size)
 {
     char str_buffer[3];
     char *ascii_hex_str_start = p_str;
@@ -236,7 +242,9 @@ static bool Helper_HEXStrToBINInplace(char *p_str, uint8_t expected_binary_size)
     return true;
 }
 
-static bool Helper_WIFI_SecuritySelect(WF_REDIRECTION_CONFIG *cfg, const char *str)
+static bool Helper_WIFI_SecuritySelect(                                     \
+                        WF_REDIRECTION_CONFIG *cfg,                         \
+                        const char *str)
 {
     bool ascii_key = false;
     uint8_t key_size = 0;
@@ -281,8 +289,10 @@ static bool Helper_WIFI_SecuritySelect(WF_REDIRECTION_CONFIG *cfg, const char *s
     cfg->securityKey[key_size] = 0; /* terminate string */
     if (!ascii_key) {
         key_size /= 2;
-        if (!Helper_HEXStrToBINInplace((char *)cfg->securityKey, key_size)) {
-            SYS_CONSOLE_MESSAGE("\r\nFailed to convert ASCII string (representing HEX digits) to real HEX string!\r\n");
+        if (!Helper_HEXStrToBINInplace((char *)cfg->securityKey, key_size)) 
+        {
+            SYS_CONSOLE_MESSAGE("\r\nFailed to convert ASCII string (\
+            representing HEX digits) to real HEX string!\r\n");
             return false;
         }
     }
@@ -290,7 +300,9 @@ static bool Helper_WIFI_SecuritySelect(WF_REDIRECTION_CONFIG *cfg, const char *s
     return true;
 }
 
-static void Helper_WIFI_KeySave(WF_REDIRECTION_CONFIG *redirectCfg, WF_CONFIG *cfg)
+static void Helper_WIFI_KeySave(                                            \
+                        WF_REDIRECTION_CONFIG *redirectCfg,                 \
+                        WF_CONFIG *cfg)
 {
     uint8_t key_size =0;
 
@@ -306,7 +318,8 @@ static void Helper_WIFI_KeySave(WF_REDIRECTION_CONFIG *redirectCfg, WF_CONFIG *c
         case WF_SECURITY_WPA2_WITH_PASS_PHRASE:
 #endif
         case WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE:
-            key_size = strlen((const char *)(redirectCfg->securityKey)); // ascii so use strlen
+             // ascii so use strlen
+            key_size = strlen((const char *)(redirectCfg->securityKey));
             break;
         default:
             break;
@@ -324,7 +337,8 @@ static bool Helper_WIFI_IsScanNeeded(void)
      * Otherwise, initiate a new scan.
      */
     iwpriv_get(NETWORKTYPE_GET, &s_httpapp_get_param);
-    return !(s_httpapp_get_param.netType.type == WF_NETWORK_TYPE_SOFT_AP && g_wifi_scanContext.numberOfResults > 0 );
+    return !(s_httpapp_get_param.netType.type == WF_NETWORK_TYPE_SOFT_AP && \
+                        g_wifi_scanContext.numberOfResults > 0 );
 }
 
 // helper triggered by a system timer callback function to set the redirection
@@ -335,7 +349,9 @@ static void HTTP_APP_RedirectionFlagSet(uintptr_t context, uint32_t currTick)
 }
 
 // helper to switch to error.htm webpage
-static HTTP_IO_RESULT HTTP_APP_ConfigFailure(HTTP_CONN_HANDLE connHandle, uint8_t *httpDataBuff)
+static HTTP_IO_RESULT HTTP_APP_ConfigFailure(                               \
+                        HTTP_CONN_HANDLE connHandle,                        \
+                        uint8_t *httpDataBuff)
 {
     lastFailure = true;
     if (httpDataBuff)
@@ -364,14 +380,17 @@ HTTP_IO_RESULT TCPIP_HTTP_GetExecute(HTTP_CONN_HANDLE connHandle)
 
     // Load the file name.
     // Make sure uint8_t filename[] above is large enough for your longest name.
-    SYS_FS_FileNameGet(TCPIP_HTTP_CurrentConnectionFileGet(connHandle), filename, 20);
+    SYS_FS_FileNameGet( TCPIP_HTTP_CurrentConnectionFileGet(connHandle),    \
+                        filename,                                           \
+                        20);
 
     httpDataBuff = TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle);
 
     // If its the forms.htm page.
     if(!memcmp(filename, "forms.htm", 9))
     {
-        // Seek out each of the four LED strings, and if it exists set the LED states.
+        // Seek out each of the four LED strings, and if it exists set
+        // the LED states.
         ptr = TCPIP_HTTP_ArgGet(httpDataBuff, (const uint8_t *)"led2");
         //if(ptr)
             //BSP_LEDStateSet(APP_LED_3, (*ptr == '1'));
@@ -434,15 +453,24 @@ HTTP_IO_RESULT TCPIP_HTTP_GetExecute(HTTP_CONN_HANDLE connHandle)
                 iwpriv_execute(SCAN_START, NULL);
                 do {
                     iwpriv_get(SCANSTATUS_GET, &s_httpapp_get_param);
-                } while (s_httpapp_get_param.scan.scanStatus == IWPRIV_SCAN_IN_PROGRESS);
+                } while (s_httpapp_get_param.scan.scanStatus ==             \
+                        IWPRIV_SCAN_IN_PROGRESS);
                 iwpriv_get(SCANRESULTS_COUNT_GET, &s_httpapp_get_param);
-                if (s_httpapp_get_param.scan.numberOfResults > WF_SCAN_RESULTS_BUFFER_SIZE)
-                    g_wifi_scanContext.numberOfResults = WF_SCAN_RESULTS_BUFFER_SIZE;
+                if (s_httpapp_get_param.scan.numberOfResults >              \
+                        WF_SCAN_RESULTS_BUFFER_SIZE)
+                {
+                    g_wifi_scanContext.numberOfResults =                    \
+                        WF_SCAN_RESULTS_BUFFER_SIZE;
+                }
                 else
-                    g_wifi_scanContext.numberOfResults = s_httpapp_get_param.scan.numberOfResults;
+                {
+                    g_wifi_scanContext.numberOfResults =                    \
+                        s_httpapp_get_param.scan.numberOfResults;
+                }
                 while (i < g_wifi_scanContext.numberOfResults) {
                     s_httpapp_get_param.scan.index = i;
-                    s_httpapp_get_param.scan.result = &(g_wifi_scanContext.results[i]);
+                    s_httpapp_get_param.scan.result =                       \
+                        &(g_wifi_scanContext.results[i]);
                     iwpriv_get(SCANRESULT_GET, &s_httpapp_get_param);
                     ++i;
                 }
@@ -679,7 +707,13 @@ static HTTP_IO_RESULT HTTPPostMD5(HTTP_CONN_HANDLE connHandle)
             CRYPT_MD5_Initialize(&md5);
 
             // See if a CRLF is in the buffer
-            lenA = TCPIP_TCP_ArrayFind(sktHTTP, (const uint8_t *)"\r\n", 2, 0, 0, false);
+            lenA = TCPIP_TCP_ArrayFind(                                     \
+                        sktHTTP,                                            \
+                        (const uint8_t *)"\r\n",                            \
+                        2,                                                  \
+                        0,                                                  \
+                        0,                                                  \
+                        false);
             if(lenA == 0xffff)
             {   // if not, ask for more data
                 return HTTP_IO_NEED_DATA;
@@ -690,27 +724,41 @@ static HTTP_IO_RESULT HTTPPostMD5(HTTP_CONN_HANDLE connHandle)
             TCPIP_HTTP_CurrentConnectionByteCountDec(connHandle, lenA + 6);
 
             // Read past the CRLF
-            TCPIP_HTTP_CurrentConnectionByteCountDec(connHandle, TCPIP_TCP_ArrayGet(sktHTTP, NULL, lenA + 2));
+            TCPIP_HTTP_CurrentConnectionByteCountDec(                       \
+                        connHandle,                                         \
+                        TCPIP_TCP_ArrayGet(sktHTTP, NULL, lenA + 2));
 
             // Save the next state (skip to CRLFCRLF)
-            TCPIP_HTTP_CurrentConnectionPostSmSet(connHandle, SM_MD5_SKIP_TO_DATA);
+            TCPIP_HTTP_CurrentConnectionPostSmSet(                          \
+                        connHandle, SM_MD5_SKIP_TO_DATA);
 
             // No break...continue reading the headers if possible
 
         // Skip the headers
         case SM_MD5_SKIP_TO_DATA:
             // Look for the CRLFCRLF
-            lenA = TCPIP_TCP_ArrayFind(sktHTTP, (const uint8_t *)"\r\n\r\n", 4, 0, 0, false);
+            lenA = TCPIP_TCP_ArrayFind(                                     \
+                        sktHTTP,                                            \
+                        (const uint8_t *)"\r\n\r\n",                        \
+                        4,                                                  \
+                        0,                                                  \
+                        0,                                                  \
+                        false);
 
             if(lenA != 0xffff)
             {// Found it, so remove all data up to and including
                 lenA = TCPIP_TCP_ArrayGet(sktHTTP, NULL, lenA + 4);
                 TCPIP_HTTP_CurrentConnectionByteCountDec(connHandle, lenA);
-                TCPIP_HTTP_CurrentConnectionPostSmSet(connHandle, SM_MD5_READ_DATA);
+                TCPIP_HTTP_CurrentConnectionPostSmSet(                      \
+                        connHandle,                                         \
+                        SM_MD5_READ_DATA);
             }
             else
             {// Otherwise, remove as much as possible
-                lenA = TCPIP_TCP_ArrayGet(sktHTTP, NULL, TCPIP_TCP_GetIsReady(sktHTTP) - 4);
+                lenA = TCPIP_TCP_ArrayGet(                                  \
+                        sktHTTP,                                            \
+                        NULL,                                               \
+                        TCPIP_TCP_GetIsReady(sktHTTP) - 4);
                 TCPIP_HTTP_CurrentConnectionByteCountDec(connHandle, lenA);
 
                 // Return the need more data flag
@@ -730,7 +778,10 @@ static HTTP_IO_RESULT HTTPPostMD5(HTTP_CONN_HANDLE connHandle)
 
             while(lenA > 0u)
             {// Add up to 64 bytes at a time to the sum
-                lenB = TCPIP_TCP_ArrayGet(sktHTTP, httpDataBuff, (lenA < 64u)?lenA:64);
+                lenB = TCPIP_TCP_ArrayGet(                                  \
+                        sktHTTP,                                            \
+                        httpDataBuff,                                       \
+                        (lenA < 64u)?lenA:64);
                 TCPIP_HTTP_CurrentConnectionByteCountDec(connHandle, lenB);
                 lenA -= lenB;
                 CRYPT_MD5_DataAdd(&md5,httpDataBuff, lenB);
@@ -739,7 +790,9 @@ static HTTP_IO_RESULT HTTPPostMD5(HTTP_CONN_HANDLE connHandle)
             // If we've read all the data
             if(TCPIP_HTTP_CurrentConnectionByteCountGet(connHandle) == 0u)
             {// Calculate and copy result data buffer for printout
-                TCPIP_HTTP_CurrentConnectionPostSmSet(connHandle, SM_MD5_POST_COMPLETE);
+                TCPIP_HTTP_CurrentConnectionPostSmSet(                      \
+                        connHandle,                                         \
+                        SM_MD5_POST_COMPLETE);
                 CRYPT_MD5_Finalize(&md5, httpDataBuff);
                 return HTTP_IO_DONE;
             }
@@ -862,7 +915,10 @@ static HTTP_IO_RESULT HTTPPostConfig(HTTP_CONN_HANDLE connHandle)
         }
 
         // Read a form field value
-        if(TCPIP_HTTP_PostValueRead(connHandle, httpDataBuff + 6, httpBuffSize - 6 - 2) != HTTP_READ_OK)
+        if(TCPIP_HTTP_PostValueRead(                                        \
+                        connHandle,                                         \
+                        httpDataBuff + 6,                                   \
+                        httpBuffSize - 6 - 2) != HTTP_READ_OK)
         {
             bConfigFailure = true;
             break;
@@ -871,61 +927,87 @@ static HTTP_IO_RESULT HTTPPostConfig(HTTP_CONN_HANDLE connHandle)
         // Parse the value that was read
         if(!strcmp((char *)httpDataBuff, (const char *)"ip"))
         {   // Save new static IP Address
-            if(!TCPIP_Helper_StringToIPAddress((char *)(httpDataBuff + 6), &newIPAddress))
+            if(!TCPIP_Helper_StringToIPAddress(                             \
+                        (char *)(httpDataBuff + 6),                         \
+                        &newIPAddress))
             {
                 bConfigFailure = true;
                 break;
             }
-            strncpy(httpNetData.ipAddr, (char *)httpDataBuff + 6, sizeof(httpNetData.ipAddr));
+            strncpy(    httpNetData.ipAddr,                                 \
+                        (char *)httpDataBuff + 6,                           \
+                        sizeof(httpNetData.ipAddr));
         }
         else if(!strcmp((char *)httpDataBuff, (const char *)"gw"))
         {   // Read new gateway address
-            if(!TCPIP_Helper_StringToIPAddress((char *)(httpDataBuff + 6), &newIPAddress))
+            if(!TCPIP_Helper_StringToIPAddress(                             \
+                        (char *)(httpDataBuff + 6),                         \
+                        &newIPAddress))
             {
                 bConfigFailure = true;
                 break;
             }
-            strncpy(httpNetData.gwIP, (char *)httpDataBuff + 6, sizeof(httpNetData.gwIP));
+            strncpy(    httpNetData.gwIP,                                   \
+                        (char *)httpDataBuff + 6,                           \
+                        sizeof(httpNetData.gwIP));
         }
         else if(!strcmp((char *)httpDataBuff, (const char *)"sub"))
         {   // Read new static subnet
-            if(!TCPIP_Helper_StringToIPAddress((char *)(httpDataBuff + 6), &newMask))
+            if(!TCPIP_Helper_StringToIPAddress(                             \
+                        (char *)(httpDataBuff + 6),                         \
+                        &newMask))
             {
                 bConfigFailure = true;
                 break;
             }
-            strncpy(httpNetData.ipMask, (char *)httpDataBuff + 6, sizeof(httpNetData.ipMask));
+            strncpy(    httpNetData.ipMask,                                 \
+                        (char *)httpDataBuff + 6,                           \
+                        sizeof(httpNetData.ipMask));
         }
         else if(!strcmp((char *)httpDataBuff, (const char *)"dns1"))
         {   // Read new primary DNS server
-            if(!TCPIP_Helper_StringToIPAddress((char *)(httpDataBuff + 6), &newIPAddress))
+            if(!TCPIP_Helper_StringToIPAddress(                             \
+                        (char *)(httpDataBuff + 6),                         \
+                        &newIPAddress))
             {
                 bConfigFailure = true;
                 break;
             }
-            strncpy(httpNetData.dns1IP, (char *)httpDataBuff + 6, sizeof(httpNetData.dns1IP));
+            strncpy(    httpNetData.dns1IP,                                 \
+                        (char *)httpDataBuff + 6,                           \
+                        sizeof(httpNetData.dns1IP));
         }
         else if(!strcmp((char *)httpDataBuff, (const char *)"dns2"))
         {   // Read new secondary DNS server
-            if(!TCPIP_Helper_StringToIPAddress((char *)(httpDataBuff + 6), &newIPAddress))
+            if(!TCPIP_Helper_StringToIPAddress(                             \
+                        (char *)(httpDataBuff + 6),                         \
+                        &newIPAddress))
             {
                 bConfigFailure = true;
                 break;
             }
-            strncpy(httpNetData.dns2IP, (char *)httpDataBuff + 6, sizeof(httpNetData.dns2IP));
+            strncpy(    httpNetData.dns2IP,                                 \
+                        (char *)httpDataBuff + 6,                           \
+                        sizeof(httpNetData.dns2IP));
         }
         else if(!strcmp((char *)httpDataBuff, (const char *)"mac"))
         {   // read the new MAC address
-            if(!TCPIP_Helper_StringToMACAddress((char *)(httpDataBuff + 6), newMACAddr.v))
+            if(!TCPIP_Helper_StringToMACAddress(                            \
+                        (char *)(httpDataBuff + 6),                         \
+                        newMACAddr.v))
             {
                 bConfigFailure = true;
                 break;
             }
-            strncpy(httpNetData.ifMacAddr, (char *)httpDataBuff + 6, sizeof(httpNetData.ifMacAddr));
+            strncpy(    httpNetData.ifMacAddr,                              \
+                        (char *)httpDataBuff + 6,                           \
+                        sizeof(httpNetData.ifMacAddr));
         }
         else if(!strcmp((char *)httpDataBuff, (const char *)"host"))
         {   // Read new hostname
-            strncpy(httpNetData.nbnsName, (char *)httpDataBuff + 6, sizeof(httpNetData.nbnsName));
+            strncpy(    httpNetData.nbnsName,                               \
+                        (char *)httpDataBuff + 6,                           \
+                        sizeof(httpNetData.nbnsName));
         }
         else if(!strcmp((char *)httpDataBuff, (const char *)"dhcp"))
         {   // Read new DHCP Enabled flag
@@ -948,7 +1030,9 @@ static HTTP_IO_RESULT HTTPPostConfig(HTTP_CONN_HANDLE connHandle)
         }
         // save current interface and mark as valid
         httpNetData.currNet = TCPIP_TCP_SocketNetGet(sktHTTP);
-        strncpy(httpNetData.ifName, TCPIP_STACK_NetNameGet(httpNetData.currNet), sizeof(httpNetData.ifName));
+        strncpy(        httpNetData.ifName,                                 \
+                        TCPIP_STACK_NetNameGet(httpNetData.currNet),        \
+                        sizeof(httpNetData.ifName));
     }
     else
     {   // Configuration error
@@ -1196,18 +1280,33 @@ static HTTP_IO_RESULT HTTPPostEmail(HTTP_CONN_HANDLE connHandle)
             postEmail.ptrParam[postEmail.paramSize] = 0;
 
             // check if we're done with the parameters
-            TCPIP_HTTP_CurrentConnectionPostSmSet(connHandle, postEmail.mailParamsDone == true ? SM_EMAIL_SEND_MESSAGE : SM_EMAIL_READ_PARAM_NAME);
+            TCPIP_HTTP_CurrentConnectionPostSmSet(                          \
+            connHandle,                                                     \
+            postEmail.mailParamsDone == true ? SM_EMAIL_SEND_MESSAGE : SM_EMAIL_READ_PARAM_NAME);
             return HTTP_IO_WAITING;
 
         case SM_EMAIL_SEND_MESSAGE:
             // prepare the message attachment
             // output the system status as a CSV file.
             // Write the header and button strings
-            postEmail.attachLen = sprintf(postEmail.mailAttachment, "SYSTEM STATUS\r\nButtons:,%c,%c,%c\r\n", APP_SWITCH_1StateGet() + '0', APP_SWITCH_2StateGet() + '0', APP_SWITCH_3StateGet() + '0');
+            postEmail.attachLen = sprintf(                                  \
+                        postEmail.mailAttachment,                           \
+                        "SYSTEM STATUS\r\nButtons:,%c,%c,%c\r\n",           \
+                        APP_SWITCH_1StateGet() + '0',                       \
+                        APP_SWITCH_2StateGet() + '0',                       \
+                        APP_SWITCH_3StateGet() + '0');
             // Write the header and button strings
-            postEmail.attachLen += sprintf(postEmail.mailAttachment + postEmail.attachLen, "LEDs:,%c,%c,%c\r\n", BSP_LEDStateGet(APP_LED_1) + '0', BSP_LEDStateGet(APP_LED_2) + '0', BSP_LEDStateGet(APP_LED_3) + '0');
+            postEmail.attachLen += sprintf(                                 \
+                        postEmail.mailAttachment + postEmail.attachLen,     \
+                        "LEDs:,%c,%c,%c\r\n",                               \
+                        BSP_LEDStateGet(APP_LED_1) + '0',                   \
+                        BSP_LEDStateGet(APP_LED_2) + '0',                   \
+                        BSP_LEDStateGet(APP_LED_3) + '0');
             // add a potentiometer read: a random string
-            postEmail.attachLen += sprintf(postEmail.mailAttachment + postEmail.attachLen, "Pot:,%d\r\n", SYS_RANDOM_PseudoGet());
+            postEmail.attachLen += sprintf(                                 \
+                        postEmail.mailAttachment + postEmail.attachLen,     \
+                        "Pot:,%d\r\n",                                      \
+                        SYS_RANDOM_PseudoGet());
 
             // prepare the message itself
             memset(&mySMTPMessage, 0, sizeof(mySMTPMessage));
@@ -1459,7 +1558,8 @@ static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle)
 
     byteCount = TCPIP_HTTP_CurrentConnectionByteCountGet(connHandle);
     sktHTTP = TCPIP_HTTP_CurrentConnectionSocketGet(connHandle);
-    if (byteCount > TCPIP_TCP_GetIsReady(sktHTTP) + TCPIP_TCP_FifoRxFreeGet(sktHTTP))
+    if (byteCount >                                                         \
+            TCPIP_TCP_GetIsReady(sktHTTP) + TCPIP_TCP_FifoRxFreeGet(sktHTTP))
         return HTTP_APP_ConfigFailure(connHandle, httpDataBuff);
 
     // Ensure that all data is waiting to be parsed.  If not, keep waiting for
@@ -1473,11 +1573,16 @@ static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle)
     while (TCPIP_HTTP_CurrentConnectionByteCountGet(connHandle))
     {
         // Read a form field name.
-        if (TCPIP_HTTP_PostNameRead(connHandle, httpDataBuff, 6) != HTTP_READ_OK)
+        if (HTTP_READ_OK !=                                                 \
+                        TCPIP_HTTP_PostNameRead(connHandle, httpDataBuff, 6) )
             return HTTP_APP_ConfigFailure(connHandle, httpDataBuff);
 
         // Read a form field value.
-        if (TCPIP_HTTP_PostValueRead(connHandle, httpDataBuff + 6, httpBuffSize - 6 - 2) != HTTP_READ_OK)
+        if (HTTP_READ_OK !=                                                 \
+            TCPIP_HTTP_PostValueRead(                                       \
+                        connHandle,                                         \
+                        httpDataBuff + 6,                                   \
+                        httpBuffSize - 6 - 2))
             return HTTP_APP_ConfigFailure(connHandle, httpDataBuff);
 
         // Parse the value that was read.
@@ -1488,11 +1593,15 @@ static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle)
             if (strlen((const char *)(httpDataBuff + 6)) > 5) /* Sanity check. */
                 return HTTP_APP_ConfigFailure(connHandle, httpDataBuff);
 
-            memcpy(networkType, httpDataBuff + 6, strlen((const char *)(httpDataBuff + 6)));
-            networkType[strlen((const char *)(httpDataBuff + 6))] = 0; /* Terminate string. */
+            memcpy(     networkType,                                        \
+                        httpDataBuff + 6,                                   \
+                        strlen((const char *)(httpDataBuff + 6)));
+            /* Terminate string. */
+            networkType[strlen((const char *)(httpDataBuff + 6))] = 0; 
             if (!strcmp(networkType, "infra"))
             {
-                g_wifi_redirectionConfig.networkType = WF_NETWORK_TYPE_INFRASTRUCTURE;
+                g_wifi_redirectionConfig.networkType =                      \
+                        WF_NETWORK_TYPE_INFRASTRUCTURE;
             }
             else
             {
@@ -1503,14 +1612,17 @@ static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle)
 
             // Save old network type.
             iwpriv_get(NETWORKTYPE_GET, &s_httpapp_get_param);
-            g_wifi_redirectionConfig.prevNetworkType = s_httpapp_get_param.netType.type;
+            g_wifi_redirectionConfig.prevNetworkType =                      \
+                        s_httpapp_get_param.netType.type;
         }
         else if (!strcmp((const char *)httpDataBuff, (const char *)"ssid"))
         {
             // Get new SSID and make sure it is valid.
             if (strlen((const char *)(httpDataBuff + 6)) < 33u)
             {
-                memcpy(g_wifi_redirectionConfig.ssid, httpDataBuff + 6, strlen((const char *)(httpDataBuff + 6)));
+                memcpy( g_wifi_redirectionConfig.ssid,                      \
+                        httpDataBuff + 6,                                   \
+                        strlen((const char *)(httpDataBuff + 6)));
                 g_wifi_redirectionConfig.ssid[strlen((const char *)(httpDataBuff + 6))] = 0; /* Terminate string. */
 
                 /* Save current profile SSID for displaying later. */
@@ -1532,8 +1644,11 @@ static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle)
             if (strlen((const char *)(httpDataBuff + 6)) > 6) /* Sanity check. */
                 return HTTP_APP_ConfigFailure(connHandle, httpDataBuff);
 
-            memcpy(securityMode, httpDataBuff + 6, strlen((const char *)(httpDataBuff + 6)));
-            securityMode[strlen((const char *)(httpDataBuff + 6))] = 0; /* Terminate string. */
+            memcpy(     securityMode,                                       \
+                        httpDataBuff + 6,                                   \
+                        strlen((const char *)(httpDataBuff + 6)));
+            // Terminate string. 
+            securityMode[strlen((const char *)(httpDataBuff + 6))] = 0; 
 
             if (!strcmp(securityMode, "no"))
             {
@@ -1549,32 +1664,46 @@ static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle)
             }
             else if (!strcmp(securityMode, "wpa1"))
             {
-                if (g_wifi_deviceInfo.deviceType == MRF24WN_MODULE) {
-                    g_wifi_redirectionConfig.securityMode = WF_SECURITY_WPA_WITH_PASS_PHRASE;
-                } else if (g_wifi_deviceInfo.deviceType == WINC1500_MODULE) {
-                    g_wifi_redirectionConfig.securityMode = WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
-                } else if (g_wifi_deviceInfo.deviceType == WILC1000_MODULE) {
-                    g_wifi_redirectionConfig.securityMode = WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
+                if (g_wifi_deviceInfo.deviceType == MRF24WN_MODULE) 
+                {
+                    g_wifi_redirectionConfig.securityMode =                 \
+                        WF_SECURITY_WPA_WITH_PASS_PHRASE;
+                } else if (g_wifi_deviceInfo.deviceType == WINC1500_MODULE) 
+                {
+                    g_wifi_redirectionConfig.securityMode =                 \
+                        WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
+                } else if (g_wifi_deviceInfo.deviceType == WILC1000_MODULE) 
+                {
+                    g_wifi_redirectionConfig.securityMode =                 \
+                        WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
                 } else {
                     WF_ASSERT(false, "Incorrect Wi-Fi Device Info");
                 }
             }
             else if (!strcmp(securityMode, "wpa2"))
             {
-                if (g_wifi_deviceInfo.deviceType == MRF24WN_MODULE) {
-                    g_wifi_redirectionConfig.securityMode = WF_SECURITY_WPA2_WITH_PASS_PHRASE;
-                } else if (g_wifi_deviceInfo.deviceType == WINC1500_MODULE) {
-                    g_wifi_redirectionConfig.securityMode = WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
-                } else if (g_wifi_deviceInfo.deviceType == WILC1000_MODULE) {
-                    g_wifi_redirectionConfig.securityMode = WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
+                if (g_wifi_deviceInfo.deviceType == MRF24WN_MODULE) 
+                {
+                    g_wifi_redirectionConfig.securityMode =                 \
+                        WF_SECURITY_WPA2_WITH_PASS_PHRASE;
+                } else if (g_wifi_deviceInfo.deviceType == WINC1500_MODULE) 
+                {
+                    g_wifi_redirectionConfig.securityMode =                 \
+                        WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
+                } else if (g_wifi_deviceInfo.deviceType == WILC1000_MODULE) 
+                {
+                    g_wifi_redirectionConfig.securityMode =                 \
+                        WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
                 } else {
                     WF_ASSERT(false, "Incorrect Wi-Fi Device Info");
                 }
             }
             else if (!strcmp(securityMode, "wpa"))
             {
-                WF_ASSERT(g_wifi_deviceInfo.deviceType != MRF24WN_MODULE, "Incorrect Wi-Fi Device Info");
-                g_wifi_redirectionConfig.securityMode = WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
+                WF_ASSERT(g_wifi_deviceInfo.deviceType != MRF24WN_MODULE,   \
+                        "Incorrect Wi-Fi Device Info");
+                g_wifi_redirectionConfig.securityMode =                     \
+                        WF_SECURITY_WPA_AUTO_WITH_PASS_PHRASE;
             }
             else
             {
@@ -1586,7 +1715,9 @@ static HTTP_IO_RESULT HTTPPostWIFIConfig(HTTP_CONN_HANDLE connHandle)
         else if (!strcmp((const char *)httpDataBuff, (const char *)"key"))
         {
             // Read new key material.
-            if (!Helper_WIFI_SecuritySelect(&g_wifi_redirectionConfig, (const char *)(httpDataBuff + 6)))
+            if (!Helper_WIFI_SecuritySelect(                                \
+                        &g_wifi_redirectionConfig,                          \
+                        (const char *)(httpDataBuff + 6)))
                 return HTTP_APP_ConfigFailure(connHandle, httpDataBuff);
         }
     }
@@ -1675,7 +1806,10 @@ uint8_t TCPIP_HTTP_FileAuthenticate(HTTP_CONN_HANDLE connHandle, uint8_t *cFile)
     See documentation in the TCP/IP Stack APIs or http.h for details.
  ****************************************************************************/
 #if defined(TCPIP_HTTP_USE_AUTHENTICATION)
-uint8_t TCPIP_HTTP_UserAuthenticate(HTTP_CONN_HANDLE connHandle, uint8_t *cUser, uint8_t *cPass)
+uint8_t TCPIP_HTTP_UserAuthenticate(                                        \
+                        HTTP_CONN_HANDLE connHandle,                        \
+                        uint8_t *cUser,                                     \
+                        uint8_t *cPass)
 {
     if(strcmp((char *)cUser,(const char *)"admin") == 0
         && strcmp((char *)cPass, (const char *)"microchip") == 0)
@@ -1709,7 +1843,9 @@ void TCPIP_HTTP_Print_hellomsg(HTTP_CONN_HANDLE connHandle)
     const uint8_t *ptr;
     TCP_SOCKET sktHTTP = TCPIP_HTTP_CurrentConnectionSocketGet(connHandle);
 
-    ptr = TCPIP_HTTP_ArgGet(TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle), (const uint8_t *)"name");
+    ptr = TCPIP_HTTP_ArgGet(                                                \
+                    TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle),  \
+                    (const uint8_t *)"name");
     // We omit checking for space because this is the only data being written
     if(ptr != NULL)
     {
@@ -1733,17 +1869,22 @@ void TCPIP_HTTP_Print_builddate(HTTP_CONN_HANDLE connHandle)
 
 void TCPIP_HTTP_Print_version(HTTP_CONN_HANDLE connHandle)
 {
-    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (const void *)TCPIP_STACK_VERSION_STR);
+    TCPIP_TCP_StringPut(                                                    \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (const void *)TCPIP_STACK_VERSION_STR);
 }
 
 void TCPIP_HTTP_Print_drive(HTTP_CONN_HANDLE connHandle)
 {
-    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (const void *)SYS_FS_DRIVE);
+    TCPIP_TCP_StringPut(                                                    \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (const void *)SYS_FS_DRIVE);
 }
 
 void TCPIP_HTTP_Print_fstype(HTTP_CONN_HANDLE connHandle)
 {
-    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (const void *)SYS_FS_MPFS_STRING);
+    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (const void *)SYS_FS_MPFS_STRING);
 }
 
 void TCPIP_HTTP_Print_cookiename(HTTP_CONN_HANDLE connHandle)
@@ -1751,7 +1892,9 @@ void TCPIP_HTTP_Print_cookiename(HTTP_CONN_HANDLE connHandle)
     const uint8_t *ptr;
     TCP_SOCKET sktHTTP = TCPIP_HTTP_CurrentConnectionSocketGet(connHandle);
 
-    ptr = TCPIP_HTTP_ArgGet(TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle), (const uint8_t *)"name");
+    ptr = TCPIP_HTTP_ArgGet(                                                \
+                    TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle),  \
+                    (const uint8_t *)"name");
     if(ptr)
         TCPIP_TCP_StringPut(sktHTTP, ptr);
     else
@@ -1763,7 +1906,9 @@ void TCPIP_HTTP_Print_cookiefav(HTTP_CONN_HANDLE connHandle)
     const uint8_t *ptr;
     TCP_SOCKET sktHTTP = TCPIP_HTTP_CurrentConnectionSocketGet(connHandle);
 
-    ptr = TCPIP_HTTP_ArgGet(TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle), (const uint8_t *)"fav");
+    ptr = TCPIP_HTTP_ArgGet(                                                \
+                    TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle),  \
+                    (const uint8_t *)"fav");
     if(ptr)
         TCPIP_TCP_StringPut(sktHTTP, ptr);
     else
@@ -1792,7 +1937,8 @@ void TCPIP_HTTP_Print_btn(HTTP_CONN_HANDLE connHandle, uint16_t num)
     }
 
     // Print the output
-    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (num ? HTML_UP_ARROW : HTML_DOWN_ARROW));
+    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (num ? HTML_UP_ARROW : HTML_DOWN_ARROW));
 }
 
 void TCPIP_HTTP_Print_led(HTTP_CONN_HANDLE connHandle, uint16_t num)
@@ -1814,10 +1960,14 @@ void TCPIP_HTTP_Print_led(HTTP_CONN_HANDLE connHandle, uint16_t num)
     }
 
     // Print the output
-    TCPIP_TCP_Put(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (num ? '1' : '0'));
+    TCPIP_TCP_Put(      TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (num ? '1' : '0'));
 }
 
-void TCPIP_HTTP_Print_ledSelected(HTTP_CONN_HANDLE connHandle, uint16_t num, uint16_t state)
+void TCPIP_HTTP_Print_ledSelected(                                          \
+                        HTTP_CONN_HANDLE connHandle,                        \
+                        uint16_t num,                                       \
+                        uint16_t state)
 {
     // Determine which LED to check
     switch(num)
@@ -1837,7 +1987,9 @@ void TCPIP_HTTP_Print_ledSelected(HTTP_CONN_HANDLE connHandle, uint16_t num, uin
 
     // Print output if true and ON or if false and OFF
     if((state && num) || (!state && !num))
-        TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (const uint8_t *)"SELECTED");
+        TCPIP_TCP_StringPut(                                                \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (const uint8_t *)"SELECTED");
 }
 
 void TCPIP_HTTP_Print_pot(HTTP_CONN_HANDLE connHandle)
@@ -1849,7 +2001,9 @@ void TCPIP_HTTP_Print_pot(HTTP_CONN_HANDLE connHandle)
 
     uitoa(ADval, (uint8_t *)AN0String);
 
-    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), AN0String);
+    TCPIP_TCP_StringPut(                                                    \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        AN0String);
 }
 
 void TCPIP_HTTP_Print_status_ok(HTTP_CONN_HANDLE connHandle)
@@ -1897,7 +2051,8 @@ void TCPIP_HTTP_Print_uploadedmd5(HTTP_CONN_HANDLE connHandle)
         return;
     }
 
-    TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"<b>Uploaded File's MD5 was:</b><br />");
+    TCPIP_TCP_StringPut(sktHTTP,                                            \
+                    (const uint8_t *)"<b>Uploaded File's MD5 was:</b><br />");
     httpDataBuff = TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle);
 
     // Write a byte of the md5 sum at a time
@@ -1916,7 +2071,8 @@ void TCPIP_HTTP_Print_config_hostname(HTTP_CONN_HANDLE connHandle)
 {
     TCP_SOCKET sktHTTP = TCPIP_HTTP_CurrentConnectionSocketGet(connHandle);
 
-    TCPIP_TCP_StringPut(sktHTTP, (uint8_t *)TCPIP_STACK_NetBIOSName(TCPIP_TCP_SocketNetGet(sktHTTP)));
+    TCPIP_TCP_StringPut(sktHTTP,                                            \
+            (uint8_t *)TCPIP_STACK_NetBIOSName(TCPIP_TCP_SocketNetGet(sktHTTP)));
 }
 
 void TCPIP_HTTP_Print_config_dhcpchecked(HTTP_CONN_HANDLE connHandle)
@@ -1936,7 +2092,9 @@ void TCPIP_HTTP_Print_config_ip(HTTP_CONN_HANDLE connHandle)
     TCPIP_NET_HANDLE netH = TCPIP_TCP_SocketNetGet(sktHTTP);
 
     ipAddress.Val = TCPIP_STACK_NetAddress(netH);
-    if (TCPIP_Helper_IPAddressToString(&ipAddress, (char *)s_buf_ipv4addr, HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
+    if (TCPIP_Helper_IPAddressToString(                                     \
+                &ipAddress,                                                 \
+                (char *)s_buf_ipv4addr, HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
     {
         TCPIP_TCP_StringPut(sktHTTP, s_buf_ipv4addr);
     }
@@ -1949,7 +2107,10 @@ void TCPIP_HTTP_Print_config_gw(HTTP_CONN_HANDLE connHandle) // gateway
     TCPIP_NET_HANDLE netH = TCPIP_TCP_SocketNetGet(sktHTTP);
 
     gwAddress.Val = TCPIP_STACK_NetAddressGateway(netH);
-    if (TCPIP_Helper_IPAddressToString(&gwAddress, (char *)s_buf_ipv4addr, HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
+    if (TCPIP_Helper_IPAddressToString(                                     \
+                        &gwAddress,                                         \
+                        (char *)s_buf_ipv4addr,                             \
+                        HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
     {
         TCPIP_TCP_StringPut(sktHTTP, s_buf_ipv4addr);
     }
@@ -1962,7 +2123,10 @@ void TCPIP_HTTP_Print_config_subnet(HTTP_CONN_HANDLE connHandle)
     TCPIP_NET_HANDLE netH = TCPIP_TCP_SocketNetGet(sktHTTP);
 
     ipMask.Val = TCPIP_STACK_NetMask(netH);
-    if (TCPIP_Helper_IPAddressToString(&ipMask, (char *)s_buf_ipv4addr, HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
+    if (TCPIP_Helper_IPAddressToString(                                     \
+                        &ipMask,                                            \
+                        (char *)s_buf_ipv4addr,                             \
+                        HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
     {
         TCPIP_TCP_StringPut(sktHTTP, s_buf_ipv4addr);
     }
@@ -1975,7 +2139,10 @@ void TCPIP_HTTP_Print_config_dns1(HTTP_CONN_HANDLE connHandle)
     TCPIP_NET_HANDLE netH = TCPIP_TCP_SocketNetGet(sktHTTP);
 
     priDnsAddr.Val = TCPIP_STACK_NetAddressDnsPrimary(netH);
-    if (TCPIP_Helper_IPAddressToString(&priDnsAddr, (char *)s_buf_ipv4addr, HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
+    if (TCPIP_Helper_IPAddressToString(                                     \
+                        &priDnsAddr,                                        \
+                        (char *)s_buf_ipv4addr,                             \
+                        HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
     {
         TCPIP_TCP_StringPut(sktHTTP, s_buf_ipv4addr);
     }
@@ -1988,7 +2155,10 @@ void TCPIP_HTTP_Print_config_dns2(HTTP_CONN_HANDLE connHandle)
     TCPIP_NET_HANDLE netH = TCPIP_TCP_SocketNetGet(sktHTTP);
 
     secondDnsAddr.Val = TCPIP_STACK_NetAddressDnsSecond(netH);
-    if (TCPIP_Helper_IPAddressToString(&secondDnsAddr, (char *)s_buf_ipv4addr, HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
+    if (TCPIP_Helper_IPAddressToString(                                     \
+                        &secondDnsAddr,                                     \
+                        (char *)s_buf_ipv4addr,                             \
+                        HTTP_APP_IPV4_ADDRESS_BUFFER_SIZE))
     {
         TCPIP_TCP_StringPut(sktHTTP, s_buf_ipv4addr);
     }
@@ -2036,7 +2206,9 @@ void TCPIP_HTTP_Print_ddns_user(HTTP_CONN_HANDLE connHandle)
     callbackPos = TCPIP_HTTP_CurrentConnectionCallbackPosGet(connHandle);
     if(callbackPos == 0x00u)
         callbackPos = (uint32_t)DDNSClient.Username.szRAM;
-    callbackPos = (uint32_t)TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (uint8_t *)callbackPos);
+    callbackPos = (uint32_t)TCPIP_TCP_StringPut(                            \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (uint8_t *)callbackPos);
     if(*(uint8_t *)callbackPos == '\0')
         callbackPos = 0x00;
     TCPIP_HTTP_CurrentConnectionCallbackPosSet(connHandle, callbackPos);
@@ -2055,7 +2227,9 @@ void TCPIP_HTTP_Print_ddns_pass(HTTP_CONN_HANDLE connHandle)
 
     if(callbackPos == 0x00u)
         callbackPos = (uint32_t)DDNSClient.Password.szRAM;
-    callbackPos = (uint32_t)TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (uint8_t *)callbackPos);
+    callbackPos = (uint32_t)TCPIP_TCP_StringPut(                            \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (uint8_t *)callbackPos);
     if(*(uint8_t *)callbackPos == '\0')
         callbackPos = 0x00;
     TCPIP_HTTP_CurrentConnectionCallbackPosSet(connHandle, callbackPos);
@@ -2072,7 +2246,9 @@ void TCPIP_HTTP_Print_ddns_host(HTTP_CONN_HANDLE connHandle)
     callbackPos = TCPIP_HTTP_CurrentConnectionCallbackPosGet(connHandle);
     if(callbackPos == 0x00u)
         callbackPos = (uint32_t)DDNSClient.Host.szRAM;
-    callbackPos = (uint32_t)TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (uint8_t *)callbackPos);
+    callbackPos = (uint32_t)TCPIP_TCP_StringPut(                            \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (uint8_t *)callbackPos);
     if(*(uint8_t *)callbackPos == '\0')
         callbackPos = 0x00;
     TCPIP_HTTP_CurrentConnectionCallbackPosSet(connHandle, callbackPos);
@@ -2085,7 +2261,9 @@ void TCPIP_HTTP_Print_ddns_service(HTTP_CONN_HANDLE connHandle, uint16_t i)
     if(!DDNSClient.ROMPointers.UpdateServer || !DDNSClient.UpdateServer.szROM)
         return;
     if((const char *)DDNSClient.UpdateServer.szROM == ddnsServiceHosts[i])
-        TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), (const uint8_t *)"selected");
+        TCPIP_TCP_StringPut(                                                \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        (const uint8_t *)"selected");
     #endif
 }
 
@@ -2122,27 +2300,41 @@ void TCPIP_HTTP_Print_ddns_status_msg(HTTP_CONN_HANDLE connHandle)
     {
         case DDNS_STATUS_GOOD:
         case DDNS_STATUS_NOCHG:
-            TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"The last update was successful.");
+            TCPIP_TCP_StringPut(                                            \
+                        sktHTTP,                                            \
+                        (const uint8_t *)"The last update was successful.");
             break;
         case DDNS_STATUS_UNCHANGED:
-            TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"The IP has not changed since the last update.");
+            TCPIP_TCP_StringPut(                                            \
+            sktHTTP,                                                        \
+            (const uint8_t *)"The IP has not changed since the last update.");
             break;
         case DDNS_STATUS_UPDATE_ERROR:
         case DDNS_STATUS_CHECKIP_ERROR:
-            TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"Could not communicate with DDNS server.");
+            TCPIP_TCP_StringPut(                                            \
+                    sktHTTP,                                                \
+                    (const uint8_t *)"Could not communicate with DDNS server.");
             break;
         case DDNS_STATUS_INVALID:
-            TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"The current configuration is not valid.");
+            TCPIP_TCP_StringPut(                                            \
+                    sktHTTP,                                                \
+                    (const uint8_t *)"The current configuration is not valid.");
             break;
         case DDNS_STATUS_UNKNOWN:
-            TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"The Dynamic DNS client is pending an update.");
+            TCPIP_TCP_StringPut(                                            \
+                    sktHTTP,                                                \
+                    (const uint8_t *)"The Dynamic DNS client is pending an update.");
             break;
         default:
-            TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"An error occurred during the update.<br />The DDNS Client is suspended.");
+            TCPIP_TCP_StringPut(                                            \
+                    sktHTTP,                                                \
+                    (const uint8_t *)"An error occurred during the update.<br />The DDNS Client is suspended.");
             break;
     }
     #else
-    TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"The Dynamic DNS Client is not enabled.");
+    TCPIP_TCP_StringPut(                                                    \
+                    sktHTTP,                                                \
+                    (const uint8_t *)"The Dynamic DNS Client is not enabled.");
     #endif
 
     TCPIP_HTTP_CurrentConnectionCallbackPosSet(connHandle, 0);
@@ -2165,7 +2357,8 @@ void TCPIP_HTTP_Print_reboot(HTTP_CONN_HANDLE connHandle)
         httpNetData.netConfig.secondDNS = httpNetData.dns2IP;
         httpNetData.netConfig.powerMode = TCPIP_STACK_IF_POWER_FULL;
         // httpNetData.netConfig.startFlags should be already set;
-        httpNetData.netConfig.pMacObject = TCPIP_STACK_MACObjectGet(httpNetData.currNet);
+        httpNetData.netConfig.pMacObject =                                  \
+                        TCPIP_STACK_MACObjectGet(httpNetData.currNet);
 
         TCPIP_STACK_NetDown(httpNetData.currNet);
         TCPIP_STACK_NetUp(httpNetData.currNet, &httpNetData.netConfig);
@@ -2174,7 +2367,9 @@ void TCPIP_HTTP_Print_reboot(HTTP_CONN_HANDLE connHandle)
 
 void TCPIP_HTTP_Print_rebootaddr(HTTP_CONN_HANDLE connHandle)
 {   // This is the expected address of the board upon rebooting
-    TCPIP_TCP_StringPut(TCPIP_HTTP_CurrentConnectionSocketGet(connHandle), TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle));
+    TCPIP_TCP_StringPut(                                                    \
+                        TCPIP_HTTP_CurrentConnectionSocketGet(connHandle),  \
+                        TCPIP_HTTP_CurrentConnectionDataBufferGet(connHandle));
 }
 
 void TCPIP_HTTP_Print_smtps_en(HTTP_CONN_HANDLE connHandle)
@@ -2246,7 +2441,10 @@ void TCPIP_HTTP_Print_fwver(HTTP_CONN_HANDLE connHandle)
         firstTime = false;
         s_httpapp_get_param.devInfo.info = &deviceInfo;
         iwpriv_get(DEVICEINFO_GET, &s_httpapp_get_param);
-        sprintf((char *)fwverString, "%02x%02x", deviceInfo.romVersion, deviceInfo.patchVersion);
+        sprintf(        (char *)fwverString,                                \
+                        "%02x%02x",                                         \
+                        deviceInfo.romVersion,                              \
+                        deviceInfo.patchVersion);
     }
     TCPIP_TCP_StringPut(sktHTTP, fwverString);
 }
@@ -2397,12 +2595,21 @@ void TCPIP_HTTP_Print_prevWLAN(HTTP_CONN_HANDLE connHandle)
 {
     TCP_SOCKET sktHTTP = TCPIP_HTTP_CurrentConnectionSocketGet(connHandle);
 
-    if (g_wifi_redirectionConfig.prevNetworkType == WF_NETWORK_TYPE_INFRASTRUCTURE)
+    if (g_wifi_redirectionConfig.prevNetworkType ==                         \
+                        WF_NETWORK_TYPE_INFRASTRUCTURE)
+    {
         TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"Infrastructure (BSS)");
-    else if (g_wifi_redirectionConfig.prevNetworkType == WF_NETWORK_TYPE_ADHOC)
+    }
+    else if (g_wifi_redirectionConfig.prevNetworkType ==                    \
+                        WF_NETWORK_TYPE_ADHOC)
+    {
         TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"Ad hoc (IBSS)");
-    else if (g_wifi_redirectionConfig.prevNetworkType == WF_NETWORK_TYPE_SOFT_AP)
+    }
+    else if (g_wifi_redirectionConfig.prevNetworkType ==                    \
+                        WF_NETWORK_TYPE_SOFT_AP)
+    {
         TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"SoftAP (BSS)");
+    }
     else
         TCPIP_TCP_StringPut(sktHTTP, (const uint8_t *)"Unknown");
 }

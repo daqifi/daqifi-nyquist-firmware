@@ -22,6 +22,7 @@
 /* ************************************************************************** */
 #include "CircularBuffer.h"
 #include <stddef.h>
+#include "string.h"
 #include <stdlib.h>
 #include "osal/osal.h"
 /* This section lists the other files that are included in this file.

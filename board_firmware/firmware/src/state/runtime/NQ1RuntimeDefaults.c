@@ -3,7 +3,7 @@
 
 // The default board configuration
 // TODO: It would be handly if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
-const BoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
+const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
     .DIOChannels = {
         .Data = {
             {.IsInput = true, .IsReadOnly = false, .Value = false},

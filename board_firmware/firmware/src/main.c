@@ -1,14 +1,10 @@
 /*******************************************************************************
-  TCPIP Web Server Demo
-
   File Name:
     main.c
 
-  Summary:
-    TCPIP Web Server Demo
 
   Description:
-    This file contains the TCPIP Web Server Demo main function.
+    This file contains the Daqufi Nyquist main function.
  *******************************************************************************/
 
 // DOM-IGNORE-BEGIN
@@ -36,18 +32,10 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
  *******************************************************************************/
 // DOM-IGNORE-END
 
-// *****************************************************************************
-// *****************************************************************************
-// Section: Included Files
-// *****************************************************************************
-// *****************************************************************************
 #include "system/common/sys_module.h"   // SYS function prototypes
 
-// *****************************************************************************
-// *****************************************************************************
-// Section: Main Entry Point
-// *****************************************************************************
-// *****************************************************************************
+/*! Main function
+ */
 MAIN_RETURN main ( void )
 {
     /*Call the SYS Init routine. App init routine gets called from this*/
@@ -65,6 +53,3 @@ MAIN_RETURN main ( void )
     return MAIN_RETURN_CODE(MAIN_RETURN_SUCCESS);
 }
 
-/*******************************************************************************
- End of File
-*/

@@ -112,7 +112,7 @@ static void Streaming_TriggerADC(AInModule* module)
         
     }
     
-    ADC_TriggerConversion(module);
+    ADC_TriggerConversion((const AInModule *)module);
 }
 
 /*******************************************************************************
@@ -297,8 +297,10 @@ void _NET_PRES_Tasks(void)
 
 static void _APP_Tasks(void)
 {
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_WIFI_SETTINGS);
     portTASK_USES_FLOATING_POINT();
-    WifiInit(&(g_BoardRuntimeConfig.wifiSettings.settings.wifi));
+    WifiInit(&(pRunTimeWifiSettings->settings.wifi));
     while(1)
     {
         APP_Tasks();
@@ -316,23 +318,27 @@ static void _APP_Tasks(void)
 
 void _POWER_AND_UI_Tasks(void)
 {
+    StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(   \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
     portTASK_USES_FLOATING_POINT();
     while(1)
     {
-        Button_Tasks(g_BoardConfig.UIConfig, &g_BoardData.UIReadVars, &g_BoardData.PowerData);
-        LED_Tasks(g_BoardConfig.UIConfig, &g_BoardData.PowerData, &g_BoardData.UIReadVars, g_BoardRuntimeConfig.StreamingConfig.IsEnabled);
-        Power_Tasks(g_BoardConfig.PowerConfig, &g_BoardData.PowerData, &g_BoardRuntimeConfig.PowerWriteVars);
+        Button_Tasks();
+        LED_Tasks( pRunTimeStreamConf->IsEnabled );
+        Power_Tasks( );
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 /*! Task for ADC deferred interrupt*/
-void _ADC_Deferred_Interrupt_Task( void ){
+void _ADC_Deferred_Interrupt_Task( void )
+{
     const TickType_t xBlockTime = portMAX_DELAY;
     const AInModule* module = NULL;
     
     do{
         vTaskDelay( 1 );
-        module = ADC_FindModule( &g_BoardConfig.AInModules, AIn_MC12bADC );
+        module = ADC_FindModule( AIn_MC12bADC );
     }while( module == NULL);
     
     while( 1 ){
@@ -342,7 +348,8 @@ void _ADC_Deferred_Interrupt_Task( void ){
 }
 
 /*! Function to be called from the ISR for deferring the ADC interrupt */
-void _ADC_Defer_Interrupt( void ){
+void _ADC_Defer_Interrupt( void )
+{
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     vTaskNotifyGiveFromISR( ADCInterruptHandle, &xHigherPriorityTaskWoken );
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
@@ -352,32 +359,52 @@ void _Streaming_Deferred_Interrupt_Task( void ){
     
     uint8_t i=0;
     const TickType_t xBlockTime = portMAX_DELAY;
+    
+    const tBoardData * pBoardData = BoardData_Get(                          \
+                            BOARDDATA_ALL_DATA,                             \
+                            0); 
+    const tBoardConfig * pBoardConfig = BoardConfig_Get(                    \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0);
+    
+    StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(   \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(       \
+                        BOARDRUNTIMECONFIG_AIN_MODULES);
 
     while( 1 ){
         ulTaskNotifyTake( pdFALSE, xBlockTime );
 
-        for (i=0; i < g_BoardRuntimeConfig.AInModules.Size; ++i)
+        for (i=0; i < pRunTimeAInModules->Size; ++i)
         {
             // Only trigger conversions if the previous conversion is complete
-            if (g_BoardData.AInState.Data[i].AInTaskState == AINTASK_IDLE &&
-                g_BoardRuntimeConfig.StreamingConfig.StreamCount == g_BoardRuntimeConfig.StreamingConfig.StreamCountTrigger) // TODO: Replace with ADCPrescale[i]
+            // TODO: Replace with ADCPrescale[i]
+            if (pBoardData->AInState.Data[i].AInTaskState == AINTASK_IDLE &&\
+                pRunTimeStreamConf->StreamCount ==                          \
+                pRunTimeStreamConf->StreamCountTrigger)
             {
-                Streaming_TriggerADC(&g_BoardConfig.AInModules.Data[i]);
+                Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
             }
 
         }
-
-        if (g_BoardRuntimeConfig.StreamingConfig.StreamCount == g_BoardRuntimeConfig.StreamingConfig.StreamCountTrigger) // TODO: Replace with DIOPrescale
+        // TODO: Replace with DIOPrescale
+        if (pRunTimeStreamConf->StreamCount ==                              \
+            pRunTimeStreamConf->StreamCountTrigger) 
         {
-            DIO_Tasks(&g_BoardConfig.DIOChannels, &g_BoardRuntimeConfig, &g_BoardData.DIOLatest, &g_BoardData.DIOSamples);
+            DIO_Tasks(      &pBoardData->DIOLatest,                         \
+                            &pBoardData->DIOSamples);
         }
 
-        g_BoardRuntimeConfig.StreamingConfig.StreamCount = (g_BoardRuntimeConfig.StreamingConfig.StreamCount + 1) % g_BoardRuntimeConfig.StreamingConfig.MaxStreamCount;
+        pRunTimeStreamConf->StreamCount =                                   \
+                (pRunTimeStreamConf->StreamCount + 1) %                     \
+                pRunTimeStreamConf->MaxStreamCount;
         
     }
 }
 
-void Streaming_Defer_Interrupt( void ){
+void Streaming_Defer_Interrupt( void )
+{
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     vTaskNotifyGiveFromISR( streamingInterruptHandle, &xHigherPriorityTaskWoken );
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);

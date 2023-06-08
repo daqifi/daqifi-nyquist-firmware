@@ -14,7 +14,7 @@
 #include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
 #include "nanopb/DaqifiOutMessage.pb.h"
-#include "nanopb/Encoder.h"
+#include "nanopb/NanoPB_Encoder.h"
 #include "Util/StringFormatters.h"
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
@@ -225,18 +225,23 @@ const NanopbFlagsArray fields_discovery = {
  */
 static microrl_t* SCPI_GetMicroRLClient(scpi_t* context)
 {
+    UsbCdcData * pRunTimeUsbSettings = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIME_USB_SETTINGS);
     
-    if (&g_BoardRuntimeConfig.usbSettings.scpiContext == context)
+    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(          \
+                        BOARDRUNTIME_SERVER_DATA);
+    
+    if (&pRunTimeUsbSettings->scpiContext == context)
         {
-             return &g_BoardRuntimeConfig.usbSettings.console;
+             return &pRunTimeUsbSettings->console;
         }
     
     uint8_t i = 0;
     for (i=0; i<WIFI_MAX_CLIENT; ++i)
     {
-        if (&g_BoardRuntimeConfig.serverData.clients[i].scpiContext == context)
+        if (&pRunTimeServerData->clients[i].scpiContext == context)
         {
-             return &g_BoardRuntimeConfig.serverData.clients[i].console;
+             return &pRunTimeServerData->clients[i].console;
         }
     }
     return NULL;
@@ -284,13 +289,20 @@ scpi_result_t SCPI_Help(scpi_t* context);
 static scpi_result_t SCPI_SysInfoGet(scpi_t * context)
 {
     int param1;
+    tBoardData * pBoardData = BoardData_Get(                                \
+                    BOARDDATA_ALL_DATA,                              \
+                    0 ); 
+    
     if (!SCPI_ParamInt32(context, &param1, FALSE))
     {
         param1=0;
     }
     
     uint8_t buffer[DaqifiOutMessage_size];
-    size_t count = Nanopb_Encode(&g_BoardData, (const NanopbFlagsArray *)&fields_info, buffer, (size_t)DaqifiOutMessage_size);
+    size_t count = Nanopb_Encode(                                           \
+                        pBoardData,                                         \
+                        (const NanopbFlagsArray *)&fields_info,             \
+                        (uint8_t **)&buffer);
     if (count < 1)
     {
         return SCPI_RES_ERR;
@@ -330,7 +342,10 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context)
  */
 static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardData.PowerData.externalPowerSource);
+    tPowerData *pPowerData = BoardData_Get(                                 \
+                        BOARDATA_POWER_DATA,                                \
+                        0 );
+    SCPI_ResultInt32(context, (int)(pPowerData->externalPowerSource));
     return SCPI_RES_OK;
 }
 
@@ -341,7 +356,10 @@ static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context)
  */
 static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardData.PowerData.chargePct);
+    tPowerData *pPowerData = BoardData_Get(                                 \
+                        BOARDATA_POWER_DATA,                                \
+                        0 );
+    SCPI_ResultInt32(context, (int)(pPowerData->chargePct));
     return SCPI_RES_OK;
 }
 
@@ -352,7 +370,10 @@ static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context)
  */
 static scpi_result_t SCPI_GetPowerState(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardData.PowerData.powerState);
+    tPowerData *pPowerData = BoardData_Get(                                 \
+                        BOARDATA_POWER_DATA,                                \
+                        0 );
+    SCPI_ResultInt32(context, (int)(pPowerData->powerState));
     return SCPI_RES_OK;
 }
 
@@ -364,6 +385,12 @@ static scpi_result_t SCPI_GetPowerState(scpi_t * context)
 static scpi_result_t SCPI_SetPowerState(scpi_t * context)
 {
     int param1;
+    
+    
+    tPowerData * pPowerData = BoardData_Get(                                \
+                            BOARDATA_POWER_DATA,                            \
+                            0 );
+    
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -371,11 +398,19 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context)
     
     if (param1 != 0)
     {
-        g_BoardData.PowerData.powerState = DO_POWER_UP;
+        pPowerData->powerState = DO_POWER_UP;
+        BoardData_Set(                                                      \
+                            BOARDATA_POWER_DATA,                            \
+                            0,                                              \
+                            pPowerData );
     }
     else
-    {
-        g_BoardData.PowerData.powerState = DO_POWER_DOWN;
+    {     
+        pPowerData->powerState = DO_POWER_DOWN;
+        BoardData_Set(                                                      \
+                            BOARDATA_POWER_DATA,                            \
+                            0,                                              \
+                            pPowerData );
     }
     
     return SCPI_RES_OK;
@@ -401,14 +436,22 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context)
 static scpi_result_t SCPI_StartStreaming(scpi_t * context)
 {
     int32_t freq;
-    uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(g_BoardRuntimeConfig.StreamingConfig.TimerHandle);  // timer running frequency
+    
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+     // timer running frequency
+    uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(                         \
+                        pRunTimeStreamConfig->TimerHandle); 
     
     if (SCPI_ParamInt32(context, &freq, FALSE))
     {
         if (freq >= 1 && freq <= 1000)///TODO: Test higher throughput
         {
-            g_BoardRuntimeConfig.StreamingConfig.ClockDivider = clkFreq / freq; // calculate the divider needed
-            g_BoardRuntimeConfig.StreamingConfig.TSClockDivider = 0xFFFFFFFF; // Set timer to maximum period
+            // calculate the divider needed
+            pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
+            // Set timer to maximum period
+            pRunTimeStreamConfig->TSClockDivider = 0xFFFFFFFF; 
         }
         else
         {
@@ -420,29 +463,39 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context)
         //No freq given just stream with the current value
     }
     
-    Streaming_UpdateState(&g_BoardConfig, &g_BoardRuntimeConfig);
-    g_BoardRuntimeConfig.StreamingConfig.IsEnabled = true;
+    Streaming_UpdateState();
+    pRunTimeStreamConfig->IsEnabled = true;
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_StopStreaming(scpi_t * context)
 {
-    g_BoardRuntimeConfig.StreamingConfig.IsEnabled = false;
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
     
-    Streaming_UpdateState(&g_BoardConfig, &g_BoardRuntimeConfig);
+    pRunTimeStreamConfig->IsEnabled = false;
+    
+    Streaming_UpdateState();
     
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_IsStreaming(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardRuntimeConfig.StreamingConfig.IsEnabled);
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->IsEnabled);
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
 {
     int param1, param2;
+    
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -450,15 +503,15 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
     
     if (param1 == Streaming_ProtoBuffer)
     {
-        g_BoardRuntimeConfig.StreamingConfig.Encoding = Streaming_ProtoBuffer;
+        pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
     }
     else if(param1 == Streaming_Json)
     {
-        g_BoardRuntimeConfig.StreamingConfig.Encoding = Streaming_Json;
+        pRunTimeStreamConfig->Encoding = Streaming_Json;
     }
     else if(param1 == Streaming_TestData)
     {
-        g_BoardRuntimeConfig.StreamingConfig.Encoding = Streaming_TestData;
+        pRunTimeStreamConfig->Encoding = Streaming_TestData;
         
         if(SCPI_ParamInt32(context, &param2, FALSE) && (param2 <= 1000)){
             commTest.TestData_len = param2;
@@ -474,7 +527,10 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
 
 static scpi_result_t SCPI_GetStreamFormat(scpi_t * context)
 {
-    SCPI_ResultInt32(context, (int)g_BoardRuntimeConfig.StreamingConfig.Encoding);
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->Encoding);
     return SCPI_RES_OK;
 }
 
@@ -568,7 +624,11 @@ scpi_result_t SCPI_ForceBootloader(scpi_t * context)
 
 scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
 {
-    SCPI_ResultUInt64Base(context, g_BoardConfig.boardSerialNumber, 16);
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
+                            BOARDCONFIG_ALL_CONFIG,                         \
+                            0 );
+    
+    SCPI_ResultUInt64Base(context, pBoardConfig->boardSerialNumber, 16);
     return SCPI_RES_OK;
 }
 
