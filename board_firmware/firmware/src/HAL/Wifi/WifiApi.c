@@ -178,17 +178,11 @@ bool WifiApplyNetworkSettings(WifiSettings* settings)
               BOARDATA_POWER_DATA,                                          \
               0 );
     if( NULL != pPowerState &&                                              \
-        pPowerState->powerState <  POWERED_UP )
+        pPowerState->powerState < POWERED_UP )
     {
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
-    
-    /*if (g_BoardData.PowerData.powerState < POWERED_UP)
-    {
-        LogMessage("Board must be powered-on for WiFi operations\n\r");
-        return false;
-    }*/
     
     TCPIP_NET_HANDLE handle = TCPIP_STACK_IndexToNet(0);
     if (handle == NULL)
@@ -376,11 +370,6 @@ bool WifiResetConnection(WifiSettings* settings)
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
-    /*if (g_BoardData.PowerData.powerState < POWERED_UP)
-    {
-        LogMessage("Board must be powered-on for WiFi operations\n\r");
-        return false;
-    }*/
     
     bool result = WifiConnectionDown();
     
@@ -403,11 +392,6 @@ bool WifiConnectionUp()
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
-   /* if (g_BoardData.PowerData.powerState < POWERED_UP)
-    {
-        LogMessage("Board must be powered-on for WiFi operations\n\r");
-        return false;
-    }*/
     
     TCPIP_NET_HANDLE handle = TCPIP_STACK_IndexToNet(0);
     if (handle == NULL)
@@ -435,11 +419,6 @@ bool WifiConnectionDown()
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
-    /*if (g_BoardData.PowerData.powerState < POWERED_UP)
-    {
-        LogMessage("Board must be powered-on for WiFi operations\n\r");
-        return false;
-    }*/
     
     TCPIP_NET_HANDLE handle = TCPIP_STACK_IndexToNet(0);
     if (handle == NULL)

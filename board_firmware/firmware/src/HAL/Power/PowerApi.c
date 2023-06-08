@@ -69,7 +69,7 @@ void Power_Init(                                                            \
                         pConfig->EN_3_3V_Bit,                               \
                         pWriteVariables->EN_3_3V_Val);
     PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
-                            pConfig->EN_5_10V_Ch,                           \
+                        pConfig->EN_5_10V_Ch,                               \
                         pConfig->EN_5_10V_Bit,                              \
                         pWriteVariables->EN_5_10V_Val);
     PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
@@ -359,20 +359,24 @@ void Power_Down( void )
 
 static void Power_UpdateState( void )
 {
-    // Set power state immediately if POWER_DOWN is requested
+    // Set power state immediately if DO_POWER_DOWN is requested
     if( pData->requestedPowerState == DO_POWER_DOWN ){
-        pData->powerState = POWER_DOWN;
+        pData->powerState = POWERED_DOWN;
     }
     
     switch( pData->powerState ){
-        case POWER_DOWN:
+        case POWERED_DOWN:
             /* Not initialized or powered down */
             
             // Check to see if we've finished signaling the user of insufficient power if necessary
             if( pData->powerDnAllowed == true ){
                 Power_Down( );
+                // Reset the requested power state after handling request
+                pData->requestedPowerState = NO_CHANGE;
             }
             break;
+            
+        case FRESH_BOOT:  
             
         case MICRO_ON:
         /* 3.3V rail enabled. Ready to check initial status 
@@ -380,19 +384,22 @@ static void Power_UpdateState( void )
          * There is no Vref at this time, so any read to ADC is invalid!
          */
             if( pData->requestedPowerState == DO_POWER_UP ){
-                // Code below is commented out when I2C is disabled
+
                 if( !pData->BQ24297Data.status.vsysStat || \
                     pData->BQ24297Data.status.pgStat )    // If batt voltage is greater than VSYSMIN or power is good, we can power up
                 {
                     Power_Up( );
+                    // Reset the requested power state after handling request
+                    pData->requestedPowerState = NO_CHANGE;
                 }
-                // Code below is commented out when I2C is disabled
+
                 else
                 {
                     // Otherwise insufficient power.  Notify user and power down
                     pData->powerDnAllowed = false; // This will turn true after the LED sequence completes
-                    pData->powerState = POWER_DOWN;
+                    pData->powerState = POWERED_DOWN;
                 }
+                
             }
             break;
             
@@ -408,6 +415,8 @@ static void Power_UpdateState( void )
                 pWriteVariables->EN_5_10V_Val = false;
                 Power_Write( );
                 pData->powerState = POWERED_UP_EXT_DOWN;
+                // Reset the requested power state after handling request
+                pData->requestedPowerState = NO_CHANGE;
             }
             break;
             
@@ -421,6 +430,8 @@ static void Power_UpdateState( void )
                     pWriteVariables->EN_5_10V_Val = true;
                     Power_Write( );
                     pData->powerState = POWERED_UP;
+                    // Reset the requested power state after handling request
+                    pData->requestedPowerState = NO_CHANGE;
                 }
             
             // Else, remain here because the user didn't want to be fully powered
@@ -428,7 +439,7 @@ static void Power_UpdateState( void )
                 // Code below is commented out when I2C is disabled
                 // Insufficient power.  Notify user and power down.
                 pData->powerDnAllowed = false;   // This will turn true after the LED sequence completes
-                pData->powerState = POWER_DOWN;
+                pData->powerState = POWERED_DOWN;
             }
 
             break;

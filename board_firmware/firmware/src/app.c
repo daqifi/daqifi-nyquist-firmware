@@ -252,7 +252,7 @@ void APP_Tasks(void)
     Streaming_Tasks( pBoardRuntimeConfig, pBoardData);
     
     // Don't do anything else until the board powers on
-    if (pBoardData->PowerData.powerState == MICRO_ON)
+    if (pBoardData->PowerData.powerState < POWERED_UP)
     {
         return;
     }

@@ -58,11 +58,12 @@ void Button_Tasks( void )
     {
         buttonPressCount++;
         switch(pPowerData->powerState){
+			case FRESH_BOOT:
             case MICRO_ON:
                 if((buttonPressCount > BUTTON_POWER_ON_TH) && !oneShot)
                 {
                     // Signal board to power up
-                    pPowerData->powerState = DO_POWER_UP;
+                    pPowerData->requestedPowerState = DO_POWER_UP;
                     oneShot = true;
                 }
                 break;
@@ -75,7 +76,7 @@ void Button_Tasks( void )
                     // off without LED indication.
                     pPowerData->powerDnAllowed = true;   
                     // Signal board to power off
-                    pPowerData->powerState = DO_POWER_DOWN;
+                    pPowerData->requestedPowerState = DO_POWER_DOWN;
                     oneShot = true;
                 }
                 break;
@@ -132,15 +133,18 @@ void LED_Tasks(bool streamingFlag)
     // number is executing.
     
     // If we are directed to power down, turn off LEDs
-    if(pPowerData->powerState == DO_POWER_DOWN){
+    if(pPowerData->requestedPowerState == DO_POWER_DOWN){
         // Reset and take over any other sequence
         repeatSeq = 0;
         repeatSeqNum = 0;
         sequenceNum = 0;
         currentPattern = 0; 
+        // TODO: This should remain false until we've signaled to the user we are going down for any reason
+        // other than button power off
+        pPowerData->powerDnAllowed = true;    
     }
-    // If we are directed to power down, turn on LED
-    else if(pPowerData->powerState == DO_POWER_UP){
+    // If we are directed to power up, turn on LED
+    else if(pPowerData->requestedPowerState == DO_POWER_UP){
         repeatSeq = 0;
         repeatSeqNum = 0;
         sequenceNum = 0;
