@@ -1,11 +1,7 @@
 /*! @file BoardConfig.h
  * @brief Interface of the Board Configuration module
  * 
- * j.longares@abluethinginthecloud.com
  * 
- * A Blue Thing In The Cloud S.L.U.
- *   === When Technology becomes art ===
- * www.abluethinginthecloud.com
  *     
  */
 

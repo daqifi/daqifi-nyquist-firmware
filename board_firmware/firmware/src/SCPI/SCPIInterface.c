@@ -398,7 +398,7 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context)
     
     if (param1 != 0)
     {
-        pPowerData->requestedPowerState = DO_POWER_UP;
+        pPowerData->powerState = DO_POWER_UP;
         BoardData_Set(                                                      \
                             BOARDATA_POWER_DATA,                            \
                             0,                                              \
@@ -406,7 +406,7 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context)
     }
     else
     {     
-        pPowerData->requestedPowerState = DO_POWER_DOWN;
+        pPowerData->powerState = DO_POWER_DOWN;
         BoardData_Set(                                                      \
                             BOARDATA_POWER_DATA,                            \
                             0,                                              \

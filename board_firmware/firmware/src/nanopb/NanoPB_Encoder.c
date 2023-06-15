@@ -381,41 +381,44 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.analog_in_data_count = 0;
              
                 AInSample aInData;
-                //TODO: Send data with the same timestamp at once to save 
-                //transaction time
-                //PeekFront seemed to cause a crash.  Need to revisit.
-                //AInSampleList_PeekFront(&state->AInSamples, &aInData);
-                //uint32_t firstTimestamp = aInData.Timestamp;
+                uint32_t firstTimestamp = 0;
                 uint32_t index = 0;
-                // As long as the time stamp matches the first of the list
-                //and array has data, pull those samples
-                //while (aInData.Timestamp == firstTimestamp && !AInSampleList_IsEmpty(&state->AInSamples))
-                while( AInSampleList_IsEmpty( &state->AInSamples ) == false ){
-                    if( AInSampleList_PopFront(&state->AInSamples, &aInData) ){
-                        message.analog_in_data[index++] = aInData.Value;
-                        message.analog_in_data_count++;
-                        // Check next value to be evaluated in the while test
-                        //AInSampleList_PeekFront(&state->AInSamples, &aInData);
-                        // Added to catch error when forcing data through 
-                        //without generating real data
-                        //if (message.analog_in_data_count++ > 16)
-                        //{
-                        //    message.analog_in_data_count = 16;
-                        //}
-                    }
-                    else{
-                        /*
-                         * Something weird happened. The Queue is not empty but there
-                         * is an error poping data from the queue.
-                         * In this case, restart the queue
-                         */
-                        AInSampleList_Destroy( &state->AInSamples );
-                        AInSampleList_Initialize(                           \
+                
+                // Check to see if sample is available to send
+                if(AInSampleList_IsEmpty( &state->AInSamples ) == false)
+                {
+                    // If a sample is available, pop it from the list and record its timestamp
+                    AInSampleList_PopFront(&state->AInSamples, &aInData);
+                    firstTimestamp = aInData.Timestamp;
+                    
+                    // Add data to message
+                    message.analog_in_data[index++] = aInData.Value;
+                    message.analog_in_data_count++;
+
+                    // As long as the subsequent time stamps match the first 
+                    // of the list and array has data, pull those samples
+                    while( aInData.Timestamp == firstTimestamp &&           \
+                        AInSampleList_IsEmpty( &state->AInSamples ) == false)
+                    {
+                        if( AInSampleList_PopFront(&state->AInSamples, &aInData) )
+                        {
+                            message.analog_in_data[index++] = aInData.Value;
+                            message.analog_in_data_count++;
+                        }
+                        else{
+                            /*
+                            * Something weird happened. The Queue is not empty but there
+                            * is an error poping data from the queue.
+                            * In this case, restart the queue
+                            */
+                            AInSampleList_Destroy( &state->AInSamples );
+                            AInSampleList_Initialize(                       \
                                                     &state->AInSamples,     \
                                                     MAX_AIN_SAMPLE_COUNT,   \
                                                     false,                  \
                                                     NULL );
-                    }
+                        }
+                    } 
                 }
                 break;
             case DaqifiOutMessage_analog_in_data_float_tag:

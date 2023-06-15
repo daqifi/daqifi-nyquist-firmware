@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?> 
 <project>                                  
-  <executable name="dist/pic32mz_ef_sk__ioexp__11n__freertos/debug/DAQiFi_3_0.X.debug.elf">                 
+  <executable name="dist/pic32mz_ef_sk__ioexp__11n__freertos/production/DAQiFi_3_0.X.production.elf">                 
     <memory name="program">                 
       <units>bytes</units>                 
       <length>2098304</length>                 
-      <used>628540</used>                     
-      <free>1469764</free>                     
+      <used>628304</used>                     
+      <free>1470000</free>                     
     </memory>                              
     <memory name="data">              
       <units>bytes</units>                 
-      <length>525184</length>                 
-      <used>194372</used>                     
-      <free>330812</free>                     
+      <length>524288</length>                 
+      <used>192584</used>                     
+      <free>331704</free>                     
     </memory>                              
   </executable>                            
 </project>                                 

@@ -3,7 +3,7 @@
     <type>com.microchip.mplab.nbide.embedded.makeproject</type>
     <configuration>
         <data xmlns="http://www.netbeans.org/ns/make-project/1">
-            <name>wifi_easy_configuration</name>
+            <name>wifi_easy_configuration_original</name>
             <creation-uuid>61a1e4f7-33a5-4425-8178-cfd335c060b6</creation-uuid>
             <make-project-type>0</make-project-type>
             <c-extensions>c</c-extensions>

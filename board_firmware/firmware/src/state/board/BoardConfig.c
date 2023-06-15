@@ -1,11 +1,6 @@
 /*! @file BoardConfig.c
  * @brief Implementation of the board configuration module
  * 
- * j.longares@abluethinginthecloud.com
- * 
- * A Blue Thing In The Cloud S.L.U.
- *   === When Technology becomes art ===
- * www.abluethinginthecloud.com
  *     
  */
 #include "NQ1BoardConfig.h"

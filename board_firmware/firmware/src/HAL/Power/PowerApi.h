@@ -22,11 +22,9 @@ extern "C" {
 typedef enum
  {  
     /* Powered down */
-    POWERED_DOWN = 0,
-    /* Power was just applied */
-    FRESH_BOOT,
+    POWER_DOWN = -1,
     /* 3.3V rail enabled. Ready to check initial status */
-    MICRO_ON,
+    MICRO_ON = 0,
     /* Board fully powered. Monitor for any changes/faults */ 
     POWERED_UP,
     /* Board partially powered. External power disabled */         
@@ -38,14 +36,14 @@ typedef enum
  */
 typedef enum
 {      
-    /* No change.  This is the default status which allows power task to handle board power state.*/
-    NO_CHANGE,
     /* Board fully powered. */ 
     DO_POWER_UP,
     /* Board partially powered. External power disabled. */         
     DO_POWER_UP_EXT_DOWN,
     /* Power down. */
-    DO_POWER_DOWN
+    DO_POWER_DOWN,
+    /* No change.  This is the default status which allows power task to handle board power state.*/
+    NO_CHANGE,
 } POWER_STATE_REQUEST;
 
  /*! @enum EXT_POWER_SOURCE
