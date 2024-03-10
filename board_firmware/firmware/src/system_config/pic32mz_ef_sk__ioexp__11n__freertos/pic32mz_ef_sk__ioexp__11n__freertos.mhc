@@ -6,7 +6,7 @@
 #     Harmony version: 2.06
 #
 #
-# from $HARMONY_VERSION_PATH\apps\nyquist-firmware\board_firmware\firmware\wifi_easy_configuration.hconfig
+# from D:\Repositories\DAQIFI\repo\daqifi-nyquist-firmware\master\board_firmware\firmware\wifi_easy_configuration.hconfig
 #
 CONFIG_APP_INSTANCES=1
 #
@@ -20,7 +20,7 @@ CONFIG_APP_TASK_PRIORITY_IDX0=2
 CONFIG_APP_TASK_USE_DELAY_IDX0=y
 CONFIG_APP_TASK_DELAY_IDX0=1
 #
-# from $HARMONY_VERSION_PATH\apps\nyquist-firmware\board_firmware\firmware\wifi_easy_configuration.hconfig
+# from D:\Repositories\DAQIFI\repo\daqifi-nyquist-firmware\master\board_firmware\firmware\wifi_easy_configuration.hconfig
 #
 CONFIG_USE_EXCEPTION_HANDLER=y
 CONFIG_EXCEPTION_USE_SYS_DEBUG=y

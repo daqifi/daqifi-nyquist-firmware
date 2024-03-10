@@ -42,6 +42,7 @@
                 <sourceRootElem>..\src\pic32mz_ef_sk__ioexp__11n__freertos</sourceRootElem>
                 <sourceRootElem>..\src\system_config\pic32mz_ef_sk__ioexp__11n__freertos</sourceRootElem>
                 <sourceRootElem>../..</sourceRootElem>
+                <sourceRootElem>../../../../../../microchip/harmony/v2_06</sourceRootElem>
             </sourceRootList>
             <confList>
                 <confElem>

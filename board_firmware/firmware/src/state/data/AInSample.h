@@ -4,7 +4,7 @@
 
 #include "Util/ArrayWrapper.h"
 #include "Util/HeapList.h"
-
+#include "../board/AInConfig.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -53,8 +53,9 @@ extern "C" {
     } AInSample;
     
     // Define a storage class for analog input channels
-    #define MAX_AIN_CHANNEL    48
+    
     #define MAX_AIN_SAMPLE_COUNT 255
+//#define MAX_AIN_CHANNEL 24
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
     
     /**

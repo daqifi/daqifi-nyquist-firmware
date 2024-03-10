@@ -77,11 +77,11 @@ extern "C" {
     }AInCalParam;
 
     // Define a storage class for analog input modules
-    #define MAX_AIN_RUNTIME_MOD 3
+    #define MAX_AIN_RUNTIME_MOD 1
     ARRAYWRAPPERDEF(AInModRuntimeArray, AInModuleRuntimeConfig, MAX_AIN_RUNTIME_MOD);
     
     // Define a storage class for analog input channels
-    #define MAX_AIN_RUNTIME_CHANNEL 48
+    #define MAX_AIN_RUNTIME_CHANNEL 24
     ARRAYWRAPPERDEF(AInRuntimeArray, AInRuntimeConfig, MAX_AIN_RUNTIME_CHANNEL);
     
     // Define a storage class for analog input channel calibration settings.

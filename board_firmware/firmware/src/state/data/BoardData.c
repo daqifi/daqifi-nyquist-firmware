@@ -22,11 +22,12 @@ void InitializeBoardData(tBoardData* boardData)
         
     memset(&boardData->DIOLatest, 0, sizeof(DIOSample));
     DIOSampleList_Initialize(&boardData->DIOSamples, MAX_DIO_SAMPLE_COUNT, false, &g_NullLockProvider);
-    
-    memset(&boardData->AInState, 0, sizeof(AInModDataArray));
-    
+    memset(&boardData->AInState.Data, 0, sizeof(AInModDataArray));
+    boardData->AInState.Size=MAX_AIN_MOD;
     memset(&boardData->AInLatest, 0, sizeof(AInSampleArray));
-    boardData->AInLatest.Size = MAX_AIN_DATA_MOD;
+    boardData->AInLatest.Size = MAX_AIN_CHANNEL;
+
+   
     AInSampleList_Initialize(&boardData->AInSamples, MAX_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
     
     // Set default battery values for debugging - allows power on without ADC active

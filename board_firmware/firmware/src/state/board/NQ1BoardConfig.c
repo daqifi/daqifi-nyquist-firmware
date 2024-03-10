@@ -30,7 +30,7 @@ const tBoardConfig NQ1BoardConfig = {
             {
                 .Type = AIn_MC12bADC,
                 .Config = {.MC12b = { .moduleId = DRV_ADC_ID_1, .Resolution = 4096 } },
-                .Size = 16
+                .Size = 1
             },
         },
         .Size = 1
@@ -85,7 +85,7 @@ const tBoardConfig NQ1BoardConfig = {
             {
                 .ChannelId = 8,
                 .DataModule = 0,
-                .Config = {.MC12b = {true, 0, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1
+                .Config = {.MC12b = {false, 0, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1
             },
             {
                 .ChannelId = 9,
@@ -95,7 +95,7 @@ const tBoardConfig NQ1BoardConfig = {
             {
                 .ChannelId = 10,
                 .DataModule = 0,
-                .Config = {.MC12b = {true, 1, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1
+                .Config = {.MC12b = {false, 1, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1
             },
             {
                 .ChannelId = 11,
@@ -105,7 +105,7 @@ const tBoardConfig NQ1BoardConfig = {
             {
                 .ChannelId = 12,
                 .DataModule = 0,
-                .Config = {.MC12b = {true, 2, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1
+                .Config = {.MC12b = {false, 2, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1
             },
             {
                 .ChannelId = 13,
@@ -115,7 +115,7 @@ const tBoardConfig NQ1BoardConfig = {
             {
                 .ChannelId = 14,
                 .DataModule = 0,
-                .Config = {.MC12b = {true, 3, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1
+                .Config = {.MC12b = {false, 3, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1
             },
             {
                 .ChannelId = 15,

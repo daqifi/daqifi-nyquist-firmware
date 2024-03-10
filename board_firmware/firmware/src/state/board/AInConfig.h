@@ -251,11 +251,11 @@ extern "C" {
     } AInChannel;
     
     // Define a storage class for analog input modules
-    #define MAX_AIN_MOD 3
+    #define MAX_AIN_MOD 1
     ARRAYWRAPPERDEF(AInModArray, AInModule, MAX_AIN_MOD);
     
     // Define a storage class for analog input channels
-    #define MAX_AIN_CHANNEL 48
+    #define MAX_AIN_CHANNEL 24
     ARRAYWRAPPERDEF(AInArray, AInChannel, MAX_AIN_CHANNEL);
     
     #define ADC_CHANNEL_VSYS 248
