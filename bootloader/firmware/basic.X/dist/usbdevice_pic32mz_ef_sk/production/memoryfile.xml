@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?> 
 <project>                                  
-  <executable name="dist/pic32mz_ef_sk__ioexp__11n__freertos/production/DAQiFi_3_0.X.production.elf">                 
+  <executable name="dist/usbdevice_pic32mz_ef_sk/production/basic.X.production.elf">                 
     <memory name="program">                 
       <units>bytes</units>                 
-      <length>2098304</length>                 
-      <used>633336</used>                     
-      <free>1464968</free>                     
+      <length>62336</length>                 
+      <used>44300</used>                     
+      <free>18036</free>                     
     </memory>                              
     <memory name="data">              
       <units>bytes</units>                 
       <length>524288</length>                 
-      <used>192780</used>                     
-      <free>331508</free>                     
+      <used>1496</used>                     
+      <free>522792</free>                     
     </memory>                              
   </executable>                            
 </project>                                 

@@ -239,9 +239,18 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
 }
 scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){}
 scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
-    int param1;
+    int param1,param2;
     int i;
+    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    if(param2>timerClock || param2<=0)
     {
         return SCPI_RES_ERR;
     }
@@ -249,11 +258,40 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
-        pRunTimeDIOChannels->Data[i].PwmFrequency=param1;
+        pRunTimeDIOChannels->Data[i].PwmFrequency=param2;
     }
+    PLIB_TMR_Stop(TMR_ID_3);
+    uint16_t period=timerClock/param2;
+    PLIB_TMR_Period16BitSet(TMR_ID_3, period);  
+    PLIB_TMR_Start(TMR_ID_3);
+    return SCPI_RES_OK;
 }
 scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){}
-scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){}
+scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
+    
+    int param1, param2;
+    DIORuntimeArray * pRunTimeDIOChannels;
+    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (!SCPI_ParamInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    pRunTimeDIOChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    if(param1>pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    if(param1>100){
+        return SCPI_RES_ERR;
+    }
+    uint16_t period=(timerClock/pRunTimeDIOChannels->Data[param1].PwmFrequency)*(param2/100.00);
+    pRunTimeDIOChannels->Data[param1].PwmDutyCycle=param2;    
+    DRV_OC_PulseWidthSet(DRV_OC_INDEX_0,period);
+}
 scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){}
 
 ////////
