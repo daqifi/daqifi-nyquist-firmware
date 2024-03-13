@@ -163,7 +163,30 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask)
     return true;
 }
 
-bool DIO_PWMEnableSingle( uint8_t dataIndex ){
+bool DIO_PWMWriteStateSingle( uint8_t dataIndex )
+{
+    bool enableInverted = pBoardConfigDIO->DIOChannels.Data[ dataIndex ].EnableInverted;
+    PORTS_MODULE_ID enableModule = pBoardConfigDIO->DIOChannels.Data[ dataIndex ].EnableModule;
+    PORTS_CHANNEL enableChannel = pBoardConfigDIO->DIOChannels.Data[ dataIndex ]. EnableChannel;
+    PORTS_BIT_POS enablePin = pBoardConfigDIO->DIOChannels.Data[ dataIndex ].EnablePin;
+    PORTS_MODULE_ID dataModule = pBoardConfigDIO->DIOChannels.Data[ dataIndex ].DataModule;
+    bool isPwmSupported= pBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsPwmCapable;
+    SYS_MODULE_INDEX pwmDriverInstance=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsPwmCapable;
+    PORTS_REMAP_OUTPUT_PIN pwmPPSPinNo=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].pwmRemapPin;
+    PORTS_REMAP_OUTPUT_FUNCTION pwmPPSFunction=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].pwmRemapFuction;
+    bool pwmState=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsPwmActive;
+    if(isPwmSupported!=1){
+        return false;
+    }
+    if(pwmState){
+        SYS_PORTS_RemapOutput(dataModule,pwmPPSFunction,pwmPPSPinNo);
+        DRV_OC_Start(pwmDriverInstance,DRV_IO_INTENT_WRITE);
+        PLIB_PORTS_PinWrite(enableModule,enableChannel,enablePin,!enableInverted );
+    }else{
+        SYS_PORTS_RemapOutput(dataModule,OUTPUT_FUNC_NO_CONNECT,pwmPPSPinNo);
+        DRV_OC_Stop(pwmDriverInstance);
+        PLIB_PORTS_PinWrite(enableModule,enableChannel,enablePin,enableInverted );
+    }
     return true;
 }
 

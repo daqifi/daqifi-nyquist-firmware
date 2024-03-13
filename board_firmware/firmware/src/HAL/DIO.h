@@ -54,7 +54,7 @@ void DIO_Tasks( DIOSample* latest, DIOSampleList* streamingSamples );
  * Enable PWM on a single PWM channel
  * @param[in] Data channel index
  */
-bool DIO_PWMEnableSingle( uint8_t dataIndex );
+bool DIO_PWMWriteStateSingle( uint8_t dataIndex );
     
 #ifdef	__cplusplus
 }

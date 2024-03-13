@@ -56,6 +56,14 @@ extern "C" {
          * PWM driver index
          */
         bool IsPwmCapable;
+         /**
+         * PPS remap function
+         */
+        PORTS_REMAP_OUTPUT_FUNCTION pwmRemapFuction;
+         /**
+         * PPS remap pin
+         */
+        PORTS_REMAP_OUTPUT_PIN pwmRemapPin;
     } DIOConfig;
     
     // Define a storage class for DIO Configs

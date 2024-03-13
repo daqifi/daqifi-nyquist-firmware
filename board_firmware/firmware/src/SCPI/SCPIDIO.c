@@ -75,6 +75,13 @@ static scpi_result_t SCPI_GPIOSingleStateGet(uint8_t id, bool* result);
  */
 static scpi_result_t SCPI_GPIOMultiStateGet(uint32_t* result);
 
+/**
+ * Enables the 
+ * @param mask A mask where each bit corresponds to the pin with the given id (BIT(1) == PIN(1))
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value);
+
 scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
 {
     int param1, param2;
@@ -222,17 +229,29 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
         return SCPI_RES_ERR;
     }
     
-    // TODO: Validate channel
     if (!SCPI_ParamInt32(context, &param2, TRUE))
     {
         return SCPI_RES_ERR;
     }
     
-    return SCPI_GPIOSingleStateSet((uint8_t)param1, (bool)param2); // Interpret the input as a bit/direction pair
+    return SCPI_PWMSingleStateSet((uint8_t)param1, (bool)param2);
    
 }
 scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){}
-scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){}
+scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
+    int param1;
+    int i;
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
+    for(i=0;i<pRunTimeDIOChannels->Size;i++){
+        pRunTimeDIOChannels->Data[i].PwmFrequency=param1;
+    }
+}
 scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){}
 scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){}
 scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){}
@@ -412,7 +431,7 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
         return SCPI_RES_ERR;
     }
     
-    if (!DIO_PWMEnableSingle(id))
+    if (!DIO_PWMWriteStateSingle(id))
     {
         return SCPI_RES_ERR;
     }
