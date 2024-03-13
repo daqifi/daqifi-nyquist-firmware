@@ -28,6 +28,21 @@ extern "C" {
          * For output, defines the output value
          */
         bool Value;
+        
+        /**
+         * Indicates if PWM is active for this pin
+         */
+        bool IsPwmActive;
+        
+        /**
+         * Frequency of PWM output
+         */
+        uint16_t PwmFrequency;
+        
+        /**
+         * Duty Cycle of PWM output
+         */
+        uint16_t PwmDutyCycle;
     } DIORuntimeConfig;
     
     // Define a storage class for DIO Configs

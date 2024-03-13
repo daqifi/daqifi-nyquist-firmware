@@ -309,6 +309,7 @@ int LogMessage(const char* format, ...);
 #define DRV_NVM_SYS_FS_REGISTER
 
 
+#define DRV_OC_DRIVER_MODE_STATIC 
 
 /*** SDCARD Driver Configuration ***/
 #define DRV_SDCARD_INSTANCES_NUMBER     1
@@ -409,7 +410,7 @@ int LogMessage(const char* format, ...);
 #define DRV_SPI_RESERVED_JOB_IDX1 			1
 /*** Timer Driver Configuration ***/
 #define DRV_TMR_INTERRUPT_MODE             true
-#define DRV_TMR_INSTANCES_NUMBER           3
+#define DRV_TMR_INSTANCES_NUMBER           4
 #define DRV_TMR_CLIENTS_NUMBER             1
 
 /*** Timer Driver 0 Configuration ***/
@@ -449,6 +450,18 @@ int LogMessage(const char* format, ...);
 #define DRV_TMR_OPERATION_MODE_IDX2         DRV_TMR_OPERATION_MODE_32_BIT
 #define DRV_TMR_ASYNC_WRITE_ENABLE_IDX2     false
 #define DRV_TMR_POWER_STATE_IDX2            SYS_MODULE_POWER_RUN_FULL
+/*** Timer Driver 3 Configuration ***/
+#define DRV_TMR_PERIPHERAL_ID_IDX3          TMR_ID_3
+#define DRV_TMR_INTERRUPT_SOURCE_IDX3       INT_SOURCE_TIMER_3
+#define DRV_TMR_INTERRUPT_VECTOR_IDX3       INT_VECTOR_T3
+#define DRV_TMR_ISR_VECTOR_IDX3             _TIMER_3_VECTOR
+#define DRV_TMR_INTERRUPT_PRIORITY_IDX3     INT_PRIORITY_LEVEL4
+#define DRV_TMR_INTERRUPT_SUB_PRIORITY_IDX3 INT_SUBPRIORITY_LEVEL0
+#define DRV_TMR_CLOCK_SOURCE_IDX3           DRV_TMR_CLKSOURCE_INTERNAL
+#define DRV_TMR_PRESCALE_IDX3               TMR_PRESCALE_VALUE_256
+#define DRV_TMR_OPERATION_MODE_IDX3         DRV_TMR_OPERATION_MODE_16_BIT
+#define DRV_TMR_ASYNC_WRITE_ENABLE_IDX3     false
+#define DRV_TMR_POWER_STATE_IDX3            SYS_MODULE_POWER_RUN_FULL
 
  /*** Wi-Fi Driver Configuration ***/
 #define WINC1500_INT_SOURCE INT_SOURCE_EXTERNAL_4

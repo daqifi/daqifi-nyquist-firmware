@@ -163,6 +163,10 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask)
     return true;
 }
 
+bool DIO_PWMEnableSingle( uint8_t dataIndex ){
+    return true;
+}
+
 void DIO_Tasks( DIOSample* latest, DIOSampleList* streamingSamples)
 {
 //    // For debugging streaming frequency only!

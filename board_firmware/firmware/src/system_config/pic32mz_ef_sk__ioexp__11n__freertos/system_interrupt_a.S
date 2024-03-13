@@ -208,6 +208,27 @@ IntVectorDrvTmrInstance2:
     .end	IntVectorDrvTmrInstance2
 
 
+/* TMR Instance 3 Interrupt */
+   .extern  IntHandlerDrvTmrInstance3
+
+   .section	.vector_14,code, keep
+   .equ     __vector_dispatch_14, IntVectorDrvTmrInstance3
+   .global  __vector_dispatch_14
+   .set     nomicromips
+   .set     noreorder
+   .set     nomips16
+   .set     noat
+   .ent  IntVectorDrvTmrInstance3
+
+IntVectorDrvTmrInstance3:
+    portSAVE_CONTEXT
+    la    s6,  IntHandlerDrvTmrInstance3
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end	IntVectorDrvTmrInstance3
+
+
 
 
 /* SPI Instance 0 Interrupt */

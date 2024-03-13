@@ -713,6 +713,12 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "DIO:PORt:STATe?", .callback = SCPI_GPIOStateGet, },
     {.pattern = "DIO:PORt:ENAble", .callback = SCPI_GPIOEnableSet, },
     {.pattern = "DIO:PORt:ENAble?", .callback = SCPI_GPIOEnableGet, },
+    {.pattern = "PWM:CHannel:ENable", .callback=SCPI_PWMChannelEnableSet,},
+    {.pattern = "PWM:CHannel:ENable?", .callback=SCPI_PWMChannelEnableGet,},
+    {.pattern = "PWM:CHannel:FREQuency", .callback=SCPI_PWMChannelFrequencySet,},
+    {.pattern = "PWM:CHannel:FREQuency?", .callback=SCPI_PWMChannelFrequencyGet,},
+    {.pattern = "PWM:CHannel:DUTY", .callback=SCPI_PWMChannelDUTYSet,},
+    {.pattern = "PWM:CHannel:DUTY?", .callback=SCPI_PWMChannelDUTYGet,},
     
     // Wifi
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet, },

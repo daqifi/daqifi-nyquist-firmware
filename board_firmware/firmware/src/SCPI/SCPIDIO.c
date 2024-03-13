@@ -214,6 +214,29 @@ scpi_result_t SCPI_GPIOEnableGet(scpi_t * context)
     return SCPI_RES_OK;
 }
 
+
+scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
+    int param1, param2;
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    // TODO: Validate channel
+    if (!SCPI_ParamInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    return SCPI_GPIOSingleStateSet((uint8_t)param1, (bool)param2); // Interpret the input as a bit/direction pair
+   
+}
+scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){}
+scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){}
+scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){}
+scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){}
+scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){}
+
 ////////
 // Internal Implementation
 ////////
@@ -319,6 +342,7 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
     
     return SCPI_RES_OK;
 }
+ 
 
 static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
 {
@@ -376,3 +400,23 @@ static scpi_result_t SCPI_GPIOMultiStateGet(uint32_t* result)
     (*result)=sample.Values;
     return SCPI_RES_OK;
 }
+
+
+static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
+{
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    if ( id > pRunTimeDIOChannels->Size)
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (!DIO_PWMEnableSingle(id))
+    {
+        return SCPI_RES_ERR;
+    }
+    pRunTimeDIOChannels->Data[id].IsPwmActive=1;
+    return SCPI_RES_OK;
+}
+

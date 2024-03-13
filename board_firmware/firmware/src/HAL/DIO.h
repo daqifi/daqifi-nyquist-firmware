@@ -49,6 +49,12 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask);
  * @param streamingSamples Storage for the latest streaming values
  */
 void DIO_Tasks( DIOSample* latest, DIOSampleList* streamingSamples );
+
+/*!
+ * Enable PWM on a single PWM channel
+ * @param[in] Data channel index
+ */
+bool DIO_PWMEnableSingle( uint8_t dataIndex );
     
 #ifdef	__cplusplus
 }
