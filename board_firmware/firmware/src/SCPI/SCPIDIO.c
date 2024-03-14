@@ -263,7 +263,6 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     }
     PLIB_TMR_Stop(TMR_ID_3);
     uint16_t period=timerClock/param2;
-    PLIB_INT_SourceEnable(INT_ID_0, INT_SOURCE_TIMER_3);
     PLIB_TMR_Period16BitSet(TMR_ID_3, period);  
     PLIB_TMR_Start(TMR_ID_3);
     return SCPI_RES_OK;

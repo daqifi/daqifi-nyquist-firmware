@@ -244,12 +244,16 @@ void APP_Initialize(void)
 //    SYS_PORTS_RemapOutput(PORTS_ID_0,OTPUT_FUNC_OC1,OUTPUT_PIN_RPD1);
 //    PLIB_INT_SourceEnable(INT_ID_0, INT_SOURCE_TIMER_3);
 //    PLIB_TMR_Period16BitSet(TMR_ID_3, 4000);     
+//    PLIB_INT_SourceEnable(INT_ID_0, INT_SOURCE_TIMER_3);
+//    PLIB_TMR_Period16BitSet(TMR_ID_3, 65);     
+//    PLIB_TMR_Start(TMR_ID_3);
+//    DRV_OC_PulseWidthSet(DRV_OC_INDEX_0,30);
 //    PLIB_TMR_Start(TMR_ID_3);
     
 //    
 //    DRV_OC_PulseWidthSet(DRV_OC_INDEX_0,2000);
 //    DRV_OC_Start(DRV_OC_INDEX_0,DRV_IO_INTENT_WRITE);
-    //DRV_OC0_Start();
+//    DRV_OC0_Start();
     
 }
 
