@@ -23,10 +23,10 @@ static tPowerData *pData;
 //! Pointer to a data structure with all the write variable data fields
 static tPowerWriteVars *pWriteVariables;
 
-/*! 
- * Funtion to write in power channel
- */
-static void Power_Write( void );
+///*! 
+// * Funtion to write in power channel
+// */
+//static void Power_Write( void );
 /*!
  * Function to active power capabilities
  */
@@ -125,7 +125,7 @@ void Power_USB_Sleep_Update( bool sleep )
     pData->USBSleep = sleep;
 }
 
-static void Power_Write( void )
+void Power_Write( void )
 {    
     // Current power state values
 

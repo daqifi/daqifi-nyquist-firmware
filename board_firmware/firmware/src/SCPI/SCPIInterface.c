@@ -631,6 +631,30 @@ scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
     SCPI_ResultUInt64Base(context, pBoardConfig->boardSerialNumber, 16);
     return SCPI_RES_OK;
 }
+scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context){
+    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(                           \
+                            BOARDRUNTIMECONFIG_ALL_CONFIG);
+        
+    tPowerData * pPowerData = BoardData_Get(                                \
+                            BOARDATA_POWER_DATA,                            \
+                            0 );
+    
+    uint32_t param1;
+    bool status = false;
+    if (!SCPI_ParamUInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    if(pPowerData->powerState != POWERED_UP){
+        return SCPI_RES_ERR;
+    }
+    if(param1)
+        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val=1;
+    else
+        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val=0;
+    Power_Write();
+     return SCPI_RES_OK;   
+}
 
 scpi_result_t SCPI_GetFreeRtosStats(scpi_t * context)
 {
@@ -705,6 +729,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet, },
     {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState, },
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState, },
+    {.pattern = "SYSTem:FORce5V5POWer:STATe",.callback=SCPI_Force5v5PowerStateSet},
     
     // DIO
     {.pattern = "DIO:PORt:DIRection", .callback = SCPI_GPIODirectionSet, },

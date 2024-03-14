@@ -471,10 +471,14 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
     {
         return SCPI_RES_ERR;
     }
-    if(value)
+    if(value){
+        pRunTimeDIOChannels->Data[id].Value=1;
         pRunTimeDIOChannels->Data[id].IsPwmActive=1;
-    else
+    }
+    else{
+        pRunTimeDIOChannels->Data[id].Value=0;
         pRunTimeDIOChannels->Data[id].IsPwmActive=0;
+    }
     if (!DIO_PWMWriteStateSingle(id))
     {
         return SCPI_RES_ERR;

@@ -90,6 +90,10 @@ bool DIO_WriteStateSingle( uint8_t dataIndex )
     
     _Bool value =                                                           \
                 pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].Value;
+    bool isPwmRunning=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsPwmActive;
+    if(isPwmRunning){
+        return 1;
+    }
     if( pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsInput )
     {
         // Set driver disabled - this value will be the value of 
