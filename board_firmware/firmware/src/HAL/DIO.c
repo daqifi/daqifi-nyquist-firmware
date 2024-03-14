@@ -171,7 +171,7 @@ bool DIO_PWMWriteStateSingle( uint8_t dataIndex )
     PORTS_BIT_POS enablePin = pBoardConfigDIO->DIOChannels.Data[ dataIndex ].EnablePin;
     PORTS_MODULE_ID dataModule = pBoardConfigDIO->DIOChannels.Data[ dataIndex ].DataModule;
     bool isPwmSupported= pBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsPwmCapable;
-    SYS_MODULE_INDEX pwmDriverInstance=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsPwmCapable;
+    SYS_MODULE_INDEX pwmDriverInstance=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmDrvIndex;
     PORTS_REMAP_OUTPUT_PIN pwmPPSPinNo=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].pwmRemapPin;
     PORTS_REMAP_OUTPUT_FUNCTION pwmPPSFunction=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].pwmRemapFuction;
     bool pwmState=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].IsPwmActive;
