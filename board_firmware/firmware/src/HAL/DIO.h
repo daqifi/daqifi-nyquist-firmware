@@ -55,6 +55,17 @@ void DIO_Tasks( DIOSample* latest, DIOSampleList* streamingSamples );
  * @param[in] Data channel index
  */
 bool DIO_PWMWriteStateSingle( uint8_t dataIndex );
+/*!
+ * Set duty cycle of PWM channel
+ * @param[in] Data channel index
+ */
+bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex);
+
+/*!
+ * Set frequency of the PWM timer
+ * @param[in] Data channel index
+ */
+bool DIO_PWMFrequencySet(uint8_t dataIndex);
     
 #ifdef	__cplusplus
 }

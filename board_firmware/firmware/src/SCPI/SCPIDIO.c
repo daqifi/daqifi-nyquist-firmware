@@ -261,10 +261,7 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
         pRunTimeDIOChannels->Data[i].PwmFrequency=param2;
     }
-    PLIB_TMR_Stop(TMR_ID_3);
-    uint16_t period=timerClock/param2;
-    PLIB_TMR_Period16BitSet(TMR_ID_3, period);  
-    PLIB_TMR_Start(TMR_ID_3);
+    DIO_PWMFrequencySet(param1);
     return SCPI_RES_OK;
 }
 scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){}
@@ -272,7 +269,6 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     
     int param1, param2;
     DIORuntimeArray * pRunTimeDIOChannels;
-    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -289,9 +285,9 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     if(param1>100){
         return SCPI_RES_ERR;
     }
-    uint16_t period=(timerClock/pRunTimeDIOChannels->Data[param1].PwmFrequency)*(param2/100.00);
+    
     pRunTimeDIOChannels->Data[param1].PwmDutyCycle=param2;    
-    DRV_OC_PulseWidthSet(DRV_OC_INDEX_0,period);
+    DIO_PWMDutyCycleSetSingle(param1);
     return SCPI_RES_OK;
 }
 scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){}

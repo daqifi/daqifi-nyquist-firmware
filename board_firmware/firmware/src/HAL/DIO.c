@@ -193,6 +193,27 @@ bool DIO_PWMWriteStateSingle( uint8_t dataIndex )
     }
     return true;
 }
+bool DIO_PWMDutyCycleSetSingle( uint8_t dataIndex ){
+     SYS_MODULE_INDEX pwmDriverInstance=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmDrvIndex;
+     uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
+     uint16_t pwmDutyCycle=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmDutyCycle;
+     uint16_t pwmFrequency=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmFrequency;
+     uint16_t period=(timerClock/pwmFrequency)*(pwmDutyCycle/100.00);
+     DRV_OC_PulseWidthSet(pwmDriverInstance,period);
+     return true;
+}
+
+bool DIO_PWMFrequencySet(uint8_t dataIndex){
+    
+    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
+    uint16_t pwmFrequency=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmFrequency;
+    PLIB_TMR_Stop(TMR_ID_3);
+    uint16_t period=timerClock/pwmFrequency;
+    PLIB_TMR_Period16BitSet(TMR_ID_3, period);  
+    PLIB_TMR_Start(TMR_ID_3);
+
+    return true;
+}
 
 void DIO_Tasks( DIOSample* latest, DIOSampleList* streamingSamples)
 {
