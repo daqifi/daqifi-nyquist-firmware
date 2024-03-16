@@ -37,7 +37,7 @@ extern "C" {
         /**
          * Frequency of PWM output
          */
-        uint16_t PwmFrequency;
+        uint32_t PwmFrequency;
         
         /**
          * Duty Cycle of PWM output

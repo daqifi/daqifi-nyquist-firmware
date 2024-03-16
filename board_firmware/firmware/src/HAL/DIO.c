@@ -197,7 +197,7 @@ bool DIO_PWMDutyCycleSetSingle( uint8_t dataIndex ){
      SYS_MODULE_INDEX pwmDriverInstance=pBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmDrvIndex;
      uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
      uint16_t pwmDutyCycle=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmDutyCycle;
-     uint16_t pwmFrequency=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmFrequency;
+     uint32_t pwmFrequency=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmFrequency;
      uint16_t period=(timerClock/pwmFrequency)*(pwmDutyCycle/100.00);
      DRV_OC_PulseWidthSet(pwmDriverInstance,period);
      return true;
@@ -205,10 +205,24 @@ bool DIO_PWMDutyCycleSetSingle( uint8_t dataIndex ){
 
 bool DIO_PWMFrequencySet(uint8_t dataIndex){
     
-    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
-    uint16_t pwmFrequency=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmFrequency;
+    const uint16_t tim3PreScalers[8]={1,2,4,8,16,32,64,256};
+    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3);
+    uint32_t pwmFrequency=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmFrequency;
+    uint32_t timer3ScaledClock=timerClock;
+    uint64_t temp;
+    uint8_t preScalerIndex=(sizeof(tim3PreScalers)/sizeof(tim3PreScalers[0]))-1;
+    uint16_t period=100;
+    temp=period*pwmFrequency; //100 is kept as the ideal minimum period value
+    for(preScalerIndex;preScalerIndex>0;preScalerIndex--){
+        timer3ScaledClock=timerClock/tim3PreScalers[preScalerIndex];
+        if(timer3ScaledClock>temp){
+            break;
+        }
+    }
+    timer3ScaledClock=timerClock/tim3PreScalers[preScalerIndex];
+    period=timer3ScaledClock/pwmFrequency;
     PLIB_TMR_Stop(TMR_ID_3);
-    uint16_t period=timerClock/pwmFrequency;
+    PLIB_TMR_PrescaleSelect(TMR_ID_3,preScalerIndex);
     PLIB_TMR_Period16BitSet(TMR_ID_3, period);  
     PLIB_TMR_Start(TMR_ID_3);
 

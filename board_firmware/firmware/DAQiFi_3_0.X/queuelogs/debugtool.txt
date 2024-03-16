@@ -1,20 +1,1002 @@
+40379 1710609187350 XXXX 1710609187350, Thread 40379: XXXX 1710609187350, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187354 XXXX 1710609187354, Thread 40379: XXXX 1710609187354, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187354 XXXX 1710609187354, Thread 40379: XXXX 1710609187354, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187354 XXXX 1710609187354, Thread 40379: XXXX 1710609187354, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187358 XXXX 1710609187358, Thread 40379: XXXX 1710609187358, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187358 XXXX 1710609187358, Thread 40379: XXXX 1710609187358, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187358 XXXX 1710609187358, Thread 40379: XXXX 1710609187358, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187362 XXXX 1710609187362, Thread 40379: XXXX 1710609187362, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187362 XXXX 1710609187362, Thread 40379: XXXX 1710609187362, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187362 XXXX 1710609187362, Thread 40379: XXXX 1710609187362, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187366 XXXX 1710609187366, Thread 40379: XXXX 1710609187366, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187366 XXXX 1710609187366, Thread 40379: XXXX 1710609187366, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187366 XXXX 1710609187366, Thread 40379: XXXX 1710609187366, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187370 XXXX 1710609187370, Thread 40379: XXXX 1710609187370, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187370 XXXX 1710609187370, Thread 40379: XXXX 1710609187370, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187370 XXXX 1710609187370, Thread 40379: XXXX 1710609187370, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187373 XXXX 1710609187373, Thread 40379: XXXX 1710609187373, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187373 XXXX 1710609187373, Thread 40379: XXXX 1710609187373, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187373 XXXX 1710609187373, Thread 40379: XXXX 1710609187373, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187378 XXXX 1710609187378, Thread 40379: XXXX 1710609187378, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187378 XXXX 1710609187378, Thread 40379: XXXX 1710609187378, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187378 XXXX 1710609187378, Thread 40379: XXXX 1710609187378, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187381 XXXX 1710609187381, Thread 40379: XXXX 1710609187381, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187381 XXXX 1710609187381, Thread 40379: XXXX 1710609187381, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187381 XXXX 1710609187381, Thread 40379: XXXX 1710609187381, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187385 XXXX 1710609187385, Thread 40379: XXXX 1710609187385, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187385 XXXX 1710609187385, Thread 40379: XXXX 1710609187385, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187385 XXXX 1710609187385, Thread 40379: XXXX 1710609187385, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187388 XXXX 1710609187388, Thread 40379: XXXX 1710609187388, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187388 XXXX 1710609187388, Thread 40379: XXXX 1710609187388, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187388 XXXX 1710609187388, Thread 40379: XXXX 1710609187388, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187392 XXXX 1710609187392, Thread 40379: XXXX 1710609187392, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187392 XXXX 1710609187392, Thread 40379: XXXX 1710609187392, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187392 XXXX 1710609187392, Thread 40379: XXXX 1710609187392, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187396 XXXX 1710609187396, Thread 40379: XXXX 1710609187396, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187396 XXXX 1710609187396, Thread 40379: XXXX 1710609187396, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187396 XXXX 1710609187396, Thread 40379: XXXX 1710609187396, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187399 XXXX 1710609187399, Thread 40379: XXXX 1710609187399, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187399 XXXX 1710609187399, Thread 40379: XXXX 1710609187399, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187399 XXXX 1710609187399, Thread 40379: XXXX 1710609187399, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187403 XXXX 1710609187403, Thread 40379: XXXX 1710609187403, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187403 XXXX 1710609187403, Thread 40379: XXXX 1710609187403, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187403 XXXX 1710609187403, Thread 40379: XXXX 1710609187403, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187407 XXXX 1710609187407, Thread 40379: XXXX 1710609187407, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187407 XXXX 1710609187407, Thread 40379: XXXX 1710609187407, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187407 XXXX 1710609187407, Thread 40379: XXXX 1710609187407, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187411 XXXX 1710609187411, Thread 40379: XXXX 1710609187411, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187411 XXXX 1710609187411, Thread 40379: XXXX 1710609187411, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187411 XXXX 1710609187411, Thread 40379: XXXX 1710609187411, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187415 XXXX 1710609187415, Thread 40379: XXXX 1710609187415, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187415 XXXX 1710609187415, Thread 40379: XXXX 1710609187415, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187415 XXXX 1710609187415, Thread 40379: XXXX 1710609187415, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187419 XXXX 1710609187419, Thread 40379: XXXX 1710609187419, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187419 XXXX 1710609187419, Thread 40379: XXXX 1710609187419, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187419 XXXX 1710609187419, Thread 40379: XXXX 1710609187419, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187423 XXXX 1710609187423, Thread 40379: XXXX 1710609187423, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187423 XXXX 1710609187423, Thread 40379: XXXX 1710609187423, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187423 XXXX 1710609187423, Thread 40379: XXXX 1710609187423, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187427 XXXX 1710609187427, Thread 40379: XXXX 1710609187427, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187427 XXXX 1710609187427, Thread 40379: XXXX 1710609187427, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187427 XXXX 1710609187427, Thread 40379: XXXX 1710609187427, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187432 XXXX 1710609187432, Thread 40379: XXXX 1710609187432, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187432 XXXX 1710609187432, Thread 40379: XXXX 1710609187432, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187432 XXXX 1710609187432, Thread 40379: XXXX 1710609187432, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187436 XXXX 1710609187436, Thread 40379: XXXX 1710609187436, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187436 XXXX 1710609187436, Thread 40379: XXXX 1710609187436, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187436 XXXX 1710609187436, Thread 40379: XXXX 1710609187436, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187439 XXXX 1710609187439, Thread 40379: XXXX 1710609187439, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187439 XXXX 1710609187439, Thread 40379: XXXX 1710609187439, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187439 XXXX 1710609187439, Thread 40379: XXXX 1710609187439, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187443 XXXX 1710609187443, Thread 40379: XXXX 1710609187443, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187443 XXXX 1710609187443, Thread 40379: XXXX 1710609187443, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187443 XXXX 1710609187443, Thread 40379: XXXX 1710609187443, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187447 XXXX 1710609187447, Thread 40379: XXXX 1710609187447, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187447 XXXX 1710609187447, Thread 40379: XXXX 1710609187447, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187447 XXXX 1710609187447, Thread 40379: XXXX 1710609187447, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187450 XXXX 1710609187450, Thread 40379: XXXX 1710609187450, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187450 XXXX 1710609187450, Thread 40379: XXXX 1710609187450, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187450 XXXX 1710609187450, Thread 40379: XXXX 1710609187450, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187454 XXXX 1710609187454, Thread 40379: XXXX 1710609187454, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187454 XXXX 1710609187454, Thread 40379: XXXX 1710609187454, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187454 XXXX 1710609187454, Thread 40379: XXXX 1710609187454, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187458 XXXX 1710609187458, Thread 40379: XXXX 1710609187458, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187458 XXXX 1710609187458, Thread 40379: XXXX 1710609187458, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187458 XXXX 1710609187458, Thread 40379: XXXX 1710609187458, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187462 XXXX 1710609187462, Thread 40379: XXXX 1710609187462, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187462 XXXX 1710609187462, Thread 40379: XXXX 1710609187462, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187462 XXXX 1710609187462, Thread 40379: XXXX 1710609187462, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187466 XXXX 1710609187466, Thread 40379: XXXX 1710609187466, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187466 XXXX 1710609187466, Thread 40379: XXXX 1710609187466, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187466 XXXX 1710609187466, Thread 40379: XXXX 1710609187466, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187471 XXXX 1710609187471, Thread 40379: XXXX 1710609187471, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187471 XXXX 1710609187471, Thread 40379: XXXX 1710609187471, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187471 XXXX 1710609187471, Thread 40379: XXXX 1710609187471, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187474 XXXX 1710609187474, Thread 40379: XXXX 1710609187474, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187474 XXXX 1710609187474, Thread 40379: XXXX 1710609187474, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187474 XXXX 1710609187474, Thread 40379: XXXX 1710609187474, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187478 XXXX 1710609187478, Thread 40379: XXXX 1710609187478, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187478 XXXX 1710609187478, Thread 40379: XXXX 1710609187478, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187478 XXXX 1710609187478, Thread 40379: XXXX 1710609187478, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187482 XXXX 1710609187482, Thread 40379: XXXX 1710609187482, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187482 XXXX 1710609187482, Thread 40379: XXXX 1710609187482, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187482 XXXX 1710609187482, Thread 40379: XXXX 1710609187482, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187486 XXXX 1710609187486, Thread 40379: XXXX 1710609187486, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187486 XXXX 1710609187486, Thread 40379: XXXX 1710609187486, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187486 XXXX 1710609187486, Thread 40379: XXXX 1710609187486, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187490 XXXX 1710609187490, Thread 40379: XXXX 1710609187490, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187490 XXXX 1710609187490, Thread 40379: XXXX 1710609187490, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187490 XXXX 1710609187490, Thread 40379: XXXX 1710609187490, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187494 XXXX 1710609187494, Thread 40379: XXXX 1710609187494, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187494 XXXX 1710609187494, Thread 40379: XXXX 1710609187494, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187494 XXXX 1710609187494, Thread 40379: XXXX 1710609187494, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187498 XXXX 1710609187498, Thread 40379: XXXX 1710609187498, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187498 XXXX 1710609187498, Thread 40379: XXXX 1710609187498, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187498 XXXX 1710609187498, Thread 40379: XXXX 1710609187498, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187502 XXXX 1710609187502, Thread 40379: XXXX 1710609187502, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187502 XXXX 1710609187502, Thread 40379: XXXX 1710609187502, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187502 XXXX 1710609187502, Thread 40379: XXXX 1710609187502, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187506 XXXX 1710609187506, Thread 40379: XXXX 1710609187506, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187506 XXXX 1710609187506, Thread 40379: XXXX 1710609187506, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187506 XXXX 1710609187506, Thread 40379: XXXX 1710609187506, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187509 XXXX 1710609187509, Thread 40379: XXXX 1710609187509, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187509 XXXX 1710609187509, Thread 40379: XXXX 1710609187509, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187509 XXXX 1710609187509, Thread 40379: XXXX 1710609187509, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187513 XXXX 1710609187513, Thread 40379: XXXX 1710609187513, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187513 XXXX 1710609187513, Thread 40379: XXXX 1710609187513, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187513 XXXX 1710609187513, Thread 40379: XXXX 1710609187513, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187517 XXXX 1710609187517, Thread 40379: XXXX 1710609187517, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187517 XXXX 1710609187517, Thread 40379: XXXX 1710609187517, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187517 XXXX 1710609187517, Thread 40379: XXXX 1710609187517, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187521 XXXX 1710609187521, Thread 40379: XXXX 1710609187521, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187521 XXXX 1710609187521, Thread 40379: XXXX 1710609187521, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187521 XXXX 1710609187521, Thread 40379: XXXX 1710609187521, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187525 XXXX 1710609187525, Thread 40379: XXXX 1710609187525, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187525 XXXX 1710609187525, Thread 40379: XXXX 1710609187525, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187525 XXXX 1710609187525, Thread 40379: XXXX 1710609187525, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187530 XXXX 1710609187530, Thread 40379: XXXX 1710609187530, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187530 XXXX 1710609187530, Thread 40379: XXXX 1710609187530, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187530 XXXX 1710609187530, Thread 40379: XXXX 1710609187530, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187534 XXXX 1710609187534, Thread 40379: XXXX 1710609187534, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187534 XXXX 1710609187534, Thread 40379: XXXX 1710609187534, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187534 XXXX 1710609187534, Thread 40379: XXXX 1710609187534, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187537 XXXX 1710609187537, Thread 40379: XXXX 1710609187537, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187537 XXXX 1710609187537, Thread 40379: XXXX 1710609187537, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187537 XXXX 1710609187537, Thread 40379: XXXX 1710609187537, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187541 XXXX 1710609187541, Thread 40379: XXXX 1710609187541, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187541 XXXX 1710609187541, Thread 40379: XXXX 1710609187541, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187541 XXXX 1710609187541, Thread 40379: XXXX 1710609187541, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187545 XXXX 1710609187545, Thread 40379: XXXX 1710609187545, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187545 XXXX 1710609187545, Thread 40379: XXXX 1710609187545, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187545 XXXX 1710609187545, Thread 40379: XXXX 1710609187545, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187548 XXXX 1710609187548, Thread 40379: XXXX 1710609187548, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187548 XXXX 1710609187548, Thread 40379: XXXX 1710609187548, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187548 XXXX 1710609187548, Thread 40379: XXXX 1710609187548, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187552 XXXX 1710609187552, Thread 40379: XXXX 1710609187552, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187552 XXXX 1710609187552, Thread 40379: XXXX 1710609187552, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187552 XXXX 1710609187552, Thread 40379: XXXX 1710609187552, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187556 XXXX 1710609187556, Thread 40379: XXXX 1710609187556, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187556 XXXX 1710609187556, Thread 40379: XXXX 1710609187556, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187556 XXXX 1710609187556, Thread 40379: XXXX 1710609187556, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187560 XXXX 1710609187560, Thread 40379: XXXX 1710609187560, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187560 XXXX 1710609187560, Thread 40379: XXXX 1710609187560, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187560 XXXX 1710609187560, Thread 40379: XXXX 1710609187560, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187564 XXXX 1710609187564, Thread 40379: XXXX 1710609187564, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187564 XXXX 1710609187564, Thread 40379: XXXX 1710609187564, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187564 XXXX 1710609187564, Thread 40379: XXXX 1710609187564, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187567 XXXX 1710609187567, Thread 40379: XXXX 1710609187567, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187567 XXXX 1710609187567, Thread 40379: XXXX 1710609187567, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187567 XXXX 1710609187567, Thread 40379: XXXX 1710609187567, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187571 XXXX 1710609187571, Thread 40379: XXXX 1710609187571, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187571 XXXX 1710609187571, Thread 40379: XXXX 1710609187571, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187571 XXXX 1710609187571, Thread 40379: XXXX 1710609187571, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187575 XXXX 1710609187575, Thread 40379: XXXX 1710609187575, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187575 XXXX 1710609187575, Thread 40379: XXXX 1710609187575, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187576 XXXX 1710609187576, Thread 40379: XXXX 1710609187576, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187580 XXXX 1710609187580, Thread 40379: XXXX 1710609187580, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187580 XXXX 1710609187580, Thread 40379: XXXX 1710609187580, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187580 XXXX 1710609187580, Thread 40379: XXXX 1710609187580, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187583 XXXX 1710609187583, Thread 40379: XXXX 1710609187583, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187583 XXXX 1710609187583, Thread 40379: XXXX 1710609187583, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187583 XXXX 1710609187583, Thread 40379: XXXX 1710609187583, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187588 XXXX 1710609187588, Thread 40379: XXXX 1710609187588, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187588 XXXX 1710609187588, Thread 40379: XXXX 1710609187588, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187588 XXXX 1710609187588, Thread 40379: XXXX 1710609187588, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187591 XXXX 1710609187591, Thread 40379: XXXX 1710609187591, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187591 XXXX 1710609187591, Thread 40379: XXXX 1710609187591, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187591 XXXX 1710609187591, Thread 40379: XXXX 1710609187591, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187596 XXXX 1710609187596, Thread 40379: XXXX 1710609187596, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187596 XXXX 1710609187596, Thread 40379: XXXX 1710609187596, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187596 XXXX 1710609187596, Thread 40379: XXXX 1710609187596, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187599 XXXX 1710609187599, Thread 40379: XXXX 1710609187599, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187599 XXXX 1710609187599, Thread 40379: XXXX 1710609187599, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187599 XXXX 1710609187599, Thread 40379: XXXX 1710609187599, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187604 XXXX 1710609187604, Thread 40379: XXXX 1710609187604, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187604 XXXX 1710609187604, Thread 40379: XXXX 1710609187604, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187604 XXXX 1710609187604, Thread 40379: XXXX 1710609187604, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187607 XXXX 1710609187607, Thread 40379: XXXX 1710609187607, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187607 XXXX 1710609187607, Thread 40379: XXXX 1710609187607, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187607 XXXX 1710609187607, Thread 40379: XXXX 1710609187607, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187611 XXXX 1710609187611, Thread 40379: XXXX 1710609187611, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187611 XXXX 1710609187611, Thread 40379: XXXX 1710609187611, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187612 XXXX 1710609187612, Thread 40379: XXXX 1710609187612, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187616 XXXX 1710609187615, Thread 40379: XXXX 1710609187615, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187616 XXXX 1710609187616, Thread 40379: XXXX 1710609187616, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187616 XXXX 1710609187616, Thread 40379: XXXX 1710609187616, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187619 XXXX 1710609187619, Thread 40379: XXXX 1710609187619, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187620 XXXX 1710609187619, Thread 40379: XXXX 1710609187619, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187620 XXXX 1710609187620, Thread 40379: XXXX 1710609187620, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187624 XXXX 1710609187624, Thread 40379: XXXX 1710609187624, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187624 XXXX 1710609187624, Thread 40379: XXXX 1710609187624, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187624 XXXX 1710609187624, Thread 40379: XXXX 1710609187624, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187628 XXXX 1710609187628, Thread 40379: XXXX 1710609187628, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187628 XXXX 1710609187628, Thread 40379: XXXX 1710609187628, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187628 XXXX 1710609187628, Thread 40379: XXXX 1710609187628, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187631 XXXX 1710609187631, Thread 40379: XXXX 1710609187631, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187631 XXXX 1710609187631, Thread 40379: XXXX 1710609187631, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187631 XXXX 1710609187631, Thread 40379: XXXX 1710609187631, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187635 XXXX 1710609187635, Thread 40379: XXXX 1710609187635, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187635 XXXX 1710609187635, Thread 40379: XXXX 1710609187635, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187635 XXXX 1710609187635, Thread 40379: XXXX 1710609187635, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187639 XXXX 1710609187639, Thread 40379: XXXX 1710609187639, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187639 XXXX 1710609187639, Thread 40379: XXXX 1710609187639, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187639 XXXX 1710609187639, Thread 40379: XXXX 1710609187639, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187643 XXXX 1710609187643, Thread 40379: XXXX 1710609187643, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187643 XXXX 1710609187643, Thread 40379: XXXX 1710609187643, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187643 XXXX 1710609187643, Thread 40379: XXXX 1710609187643, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187647 XXXX 1710609187647, Thread 40379: XXXX 1710609187647, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187647 XXXX 1710609187647, Thread 40379: XXXX 1710609187647, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187647 XXXX 1710609187647, Thread 40379: XXXX 1710609187647, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187651 XXXX 1710609187651, Thread 40379: XXXX 1710609187651, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187651 XXXX 1710609187651, Thread 40379: XXXX 1710609187651, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187651 XXXX 1710609187651, Thread 40379: XXXX 1710609187651, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187654 XXXX 1710609187654, Thread 40379: XXXX 1710609187654, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187654 XXXX 1710609187654, Thread 40379: XXXX 1710609187654, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187654 XXXX 1710609187654, Thread 40379: XXXX 1710609187654, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187658 XXXX 1710609187658, Thread 40379: XXXX 1710609187658, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187658 XXXX 1710609187658, Thread 40379: XXXX 1710609187658, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187658 XXXX 1710609187658, Thread 40379: XXXX 1710609187658, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187661 XXXX 1710609187661, Thread 40379: XXXX 1710609187661, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187661 XXXX 1710609187661, Thread 40379: XXXX 1710609187661, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187661 XXXX 1710609187661, Thread 40379: XXXX 1710609187661, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187665 XXXX 1710609187665, Thread 40379: XXXX 1710609187665, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187665 XXXX 1710609187665, Thread 40379: XXXX 1710609187665, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187665 XXXX 1710609187665, Thread 40379: XXXX 1710609187665, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187669 XXXX 1710609187669, Thread 40379: XXXX 1710609187669, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187669 XXXX 1710609187669, Thread 40379: XXXX 1710609187669, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187669 XXXX 1710609187669, Thread 40379: XXXX 1710609187669, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187672 XXXX 1710609187672, Thread 40379: XXXX 1710609187672, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187672 XXXX 1710609187672, Thread 40379: XXXX 1710609187672, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187672 XXXX 1710609187672, Thread 40379: XXXX 1710609187672, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187676 XXXX 1710609187676, Thread 40379: XXXX 1710609187676, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187676 XXXX 1710609187676, Thread 40379: XXXX 1710609187676, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187676 XXXX 1710609187676, Thread 40379: XXXX 1710609187676, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187680 XXXX 1710609187680, Thread 40379: XXXX 1710609187680, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187680 XXXX 1710609187680, Thread 40379: XXXX 1710609187680, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187680 XXXX 1710609187680, Thread 40379: XXXX 1710609187680, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187684 XXXX 1710609187684, Thread 40379: XXXX 1710609187684, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187684 XXXX 1710609187684, Thread 40379: XXXX 1710609187684, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187684 XXXX 1710609187684, Thread 40379: XXXX 1710609187684, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187688 XXXX 1710609187688, Thread 40379: XXXX 1710609187688, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187688 XXXX 1710609187688, Thread 40379: XXXX 1710609187688, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187688 XXXX 1710609187688, Thread 40379: XXXX 1710609187688, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187690 XXXX 1710609187690, Thread 40379: XXXX 1710609187690, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187690 XXXX 1710609187690, Thread 40379: XXXX 1710609187690, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187690 XXXX 1710609187690, Thread 40379: XXXX 1710609187690, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187695 XXXX 1710609187695, Thread 40379: XXXX 1710609187695, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187695 XXXX 1710609187695, Thread 40379: XXXX 1710609187695, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187695 XXXX 1710609187695, Thread 40379: XXXX 1710609187695, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187697 XXXX 1710609187697, Thread 40379: XXXX 1710609187697, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187697 XXXX 1710609187697, Thread 40379: XXXX 1710609187697, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187697 XXXX 1710609187697, Thread 40379: XXXX 1710609187697, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187702 XXXX 1710609187702, Thread 40379: XXXX 1710609187702, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187702 XXXX 1710609187702, Thread 40379: XXXX 1710609187702, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187702 XXXX 1710609187702, Thread 40379: XXXX 1710609187702, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187705 XXXX 1710609187705, Thread 40379: XXXX 1710609187705, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187705 XXXX 1710609187705, Thread 40379: XXXX 1710609187705, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187705 XXXX 1710609187705, Thread 40379: XXXX 1710609187705, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187708 XXXX 1710609187708, Thread 40379: XXXX 1710609187708, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187708 XXXX 1710609187708, Thread 40379: XXXX 1710609187708, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187708 XXXX 1710609187708, Thread 40379: XXXX 1710609187708, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187713 XXXX 1710609187713, Thread 40379: XXXX 1710609187713, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187713 XXXX 1710609187713, Thread 40379: XXXX 1710609187713, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187713 XXXX 1710609187713, Thread 40379: XXXX 1710609187713, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187717 XXXX 1710609187717, Thread 40379: XXXX 1710609187717, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187717 XXXX 1710609187717, Thread 40379: XXXX 1710609187717, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187717 XXXX 1710609187717, Thread 40379: XXXX 1710609187717, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187721 XXXX 1710609187721, Thread 40379: XXXX 1710609187721, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187721 XXXX 1710609187721, Thread 40379: XXXX 1710609187721, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187721 XXXX 1710609187721, Thread 40379: XXXX 1710609187721, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187725 XXXX 1710609187725, Thread 40379: XXXX 1710609187725, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187725 XXXX 1710609187725, Thread 40379: XXXX 1710609187725, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187725 XXXX 1710609187725, Thread 40379: XXXX 1710609187725, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187728 XXXX 1710609187728, Thread 40379: XXXX 1710609187728, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187728 XXXX 1710609187728, Thread 40379: XXXX 1710609187728, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187728 XXXX 1710609187728, Thread 40379: XXXX 1710609187728, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187732 XXXX 1710609187732, Thread 40379: XXXX 1710609187732, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187732 XXXX 1710609187732, Thread 40379: XXXX 1710609187732, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187732 XXXX 1710609187732, Thread 40379: XXXX 1710609187732, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187736 XXXX 1710609187736, Thread 40379: XXXX 1710609187736, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187736 XXXX 1710609187736, Thread 40379: XXXX 1710609187736, Entering Thread 40379: Commands::runScriptWithUpload, script name = ReadRAM  
+40379 1710609187736 XXXX 1710609187736, Thread 40379: XXXX 1710609187736, Entering Thread 40379: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
+40379 1710609187740 XXXX 1710609187740, Thread 40379: XXXX 1710609187740, Exiting Thread 40379: ToolCommUsb::readTransfer,  cr.status = 0x0  
+40379 1710609187740 XXXX 1710609187740, Thread 40379: XXXX 1710609187740, Exiting Thread 40379: Commands::runScriptWithUpload  
+40379 1710609187740 XXXX 1710609187740, Thread 40379: XXXX 1710609187740, Entering Thread 40379: Commands::runScriptWithDownload, script name = WriteRAM  
+40379 1710609187744 XXXX 1710609187744, Thread 40379: XXXX 1710609187744, Exiting Thread 40379: Commands::runScriptWithDownload(WriteRAM)  
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:SetFreezePerihperalInfo
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 none
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
 
-96506 1710434205722 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadTargetMemory
-96506 1710434205722 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-96506 1710434205722 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 FileRegs
-96506 1710434205722 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 8000000c
-96506 1710434205722 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 8000000f
-96506 1710434205722 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-96506 1710434205722 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-96506 1710434205722 XXXX 1710434205722, Thread 96506: XXXX 1710434205722, Entering Thread 96506: Commands::runScriptWithUpload, script name = ReadRAM  
-96506 1710434205722 XXXX 1710434205722, Thread 96506: XXXX 1710434205722, Entering Thread 96506: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
-96506 1710434205722 XXXX 1710434205722, Thread 96506: com.Send returned false 
-96506 1710434205722 XXXX 1710434205722, Thread 96506: readTransfer: exception after writeHeaderAndGetAck null 
-96506 1710434205722 XXXX 1710434205722, Thread 96506: XXXX 1710434205722, Entering Thread 96506: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
-96506 1710434205722 XXXX 1710434205722, Thread 96506: Send Abort Script Engine Command 
-96506 1710434205722 XXXX 1710434205722, Thread 96506: XXXX 1710434205722, Entering Thread 96506: ToolCommUsb::killScriptEngine  
-96506 1710434205723 XXXX 1710434205723, Thread 96506: com.Send returned false 
-96506 1710434205723 XXXX 1710434205723, Thread 96506: Failed sending Abort Script Engine Command. Set nuclear option = true 
-96506 1710434205723 XXXX 1710434205723, Thread 96506: About to nuke 
-96506 1710434205723 XXXX 1710434205723, Thread 96506: XXXX 1710434205723, Entering Thread 96506: ToolCommUsb::nuclearOption  
-96506 1710434205723 XXXX 1710434205723, Thread 96506: com.Send returned false 
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:GetPC
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 null
+40379 1710609187744 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
+40379 1710609187744 XXXX 1710609187744, Thread 40379: XXXX 1710609187744, Entering Thread 40379: Commands::runScriptBasic, script name = GetPC, timeOut = -1 ms  
+40379 1710609187746 XXXX 1710609187746, Thread 40379: XXXX 1710609187746, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609187746 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:GetPC
+40379 1710609187746 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
+40379 1710609187746 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 bfc00000
+40379 1710609187746 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
+
+40379 1710609187748 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:RunTarget
+40379 1710609187748 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
+40379 1710609187748 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.mdbcore.RI4Tool.DebugHandler@4e893f38
+40379 1710609187748 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
+40379 1710609187748 XXXX 1710609187748, Thread 40379: XXXX 1710609187748, Entering Thread 40379: Commands::runScriptBasic, script name = Run, timeOut = -1 ms  
+40379 1710609187750 XXXX 1710609187750, Thread 40379: XXXX 1710609187750, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609187750 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:RunTarget
+40379 1710609187750 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
+40379 1710609187750 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
+40379 1710609187750 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
+40379 1710609188006 XXXX 1710609188006, Thread 40379: XXXX 1710609188006, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188008 XXXX 1710609188008, Thread 40379: XXXX 1710609188008, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188106 XXXX 1710609188106, Thread 40379: XXXX 1710609188106, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188107 XXXX 1710609188107, Thread 40379: XXXX 1710609188107, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188207 XXXX 1710609188207, Thread 40379: XXXX 1710609188207, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188209 XXXX 1710609188209, Thread 40379: XXXX 1710609188209, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188308 XXXX 1710609188308, Thread 40379: XXXX 1710609188308, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188308 XXXX 1710609188308, Thread 40379: XXXX 1710609188308, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188408 XXXX 1710609188408, Thread 40379: XXXX 1710609188408, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188409 XXXX 1710609188409, Thread 40379: XXXX 1710609188409, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188508 XXXX 1710609188508, Thread 40379: XXXX 1710609188508, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188509 XXXX 1710609188509, Thread 40379: XXXX 1710609188509, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188609 XXXX 1710609188609, Thread 40379: XXXX 1710609188609, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188611 XXXX 1710609188611, Thread 40379: XXXX 1710609188611, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188709 XXXX 1710609188709, Thread 40379: XXXX 1710609188709, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188735 XXXX 1710609188735, Thread 40379: XXXX 1710609188735, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188810 XXXX 1710609188810, Thread 40379: XXXX 1710609188810, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188811 XXXX 1710609188811, Thread 40379: XXXX 1710609188811, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609188910 XXXX 1710609188910, Thread 40379: XXXX 1710609188910, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609188912 XXXX 1710609188912, Thread 40379: XXXX 1710609188912, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189010 XXXX 1710609189010, Thread 40379: XXXX 1710609189010, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189012 XXXX 1710609189012, Thread 40379: XXXX 1710609189012, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189111 XXXX 1710609189111, Thread 40379: XXXX 1710609189111, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189111 XXXX 1710609189111, Thread 40379: XXXX 1710609189111, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189212 XXXX 1710609189212, Thread 40379: XXXX 1710609189212, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189234 XXXX 1710609189234, Thread 40379: XXXX 1710609189234, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189313 XXXX 1710609189313, Thread 40379: XXXX 1710609189313, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189314 XXXX 1710609189314, Thread 40379: XXXX 1710609189314, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189413 XXXX 1710609189413, Thread 40379: XXXX 1710609189413, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189414 XXXX 1710609189414, Thread 40379: XXXX 1710609189414, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189514 XXXX 1710609189514, Thread 40379: XXXX 1710609189514, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189516 XXXX 1710609189516, Thread 40379: XXXX 1710609189516, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189615 XXXX 1710609189615, Thread 40379: XXXX 1710609189615, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189616 XXXX 1710609189616, Thread 40379: XXXX 1710609189616, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189716 XXXX 1710609189716, Thread 40379: XXXX 1710609189716, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189740 XXXX 1710609189740, Thread 40379: XXXX 1710609189740, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189817 XXXX 1710609189817, Thread 40379: XXXX 1710609189817, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189819 XXXX 1710609189819, Thread 40379: XXXX 1710609189819, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609189918 XXXX 1710609189918, Thread 40379: XXXX 1710609189918, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609189919 XXXX 1710609189919, Thread 40379: XXXX 1710609189919, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190018 XXXX 1710609190018, Thread 40379: XXXX 1710609190018, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190019 XXXX 1710609190019, Thread 40379: XXXX 1710609190019, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190120 XXXX 1710609190120, Thread 40379: XXXX 1710609190120, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190121 XXXX 1710609190121, Thread 40379: XXXX 1710609190121, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190221 XXXX 1710609190221, Thread 40379: XXXX 1710609190221, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190240 XXXX 1710609190240, Thread 40379: XXXX 1710609190240, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190321 XXXX 1710609190321, Thread 40379: XXXX 1710609190321, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190322 XXXX 1710609190322, Thread 40379: XXXX 1710609190322, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190421 XXXX 1710609190421, Thread 40379: XXXX 1710609190421, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190422 XXXX 1710609190422, Thread 40379: XXXX 1710609190422, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190523 XXXX 1710609190523, Thread 40379: XXXX 1710609190523, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190524 XXXX 1710609190524, Thread 40379: XXXX 1710609190524, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190623 XXXX 1710609190623, Thread 40379: XXXX 1710609190623, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190624 XXXX 1710609190624, Thread 40379: XXXX 1710609190624, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190724 XXXX 1710609190724, Thread 40379: XXXX 1710609190724, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190741 XXXX 1710609190741, Thread 40379: XXXX 1710609190741, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190825 XXXX 1710609190825, Thread 40379: XXXX 1710609190825, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190826 XXXX 1710609190826, Thread 40379: XXXX 1710609190826, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609190927 XXXX 1710609190927, Thread 40379: XXXX 1710609190927, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609190928 XXXX 1710609190928, Thread 40379: XXXX 1710609190928, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191027 XXXX 1710609191027, Thread 40379: XXXX 1710609191027, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191028 XXXX 1710609191028, Thread 40379: XXXX 1710609191028, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191128 XXXX 1710609191128, Thread 40379: XXXX 1710609191128, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191129 XXXX 1710609191129, Thread 40379: XXXX 1710609191129, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191229 XXXX 1710609191229, Thread 40379: XXXX 1710609191229, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191229 XXXX 1710609191229, Thread 40379: XXXX 1710609191229, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191329 XXXX 1710609191329, Thread 40379: XXXX 1710609191329, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191331 XXXX 1710609191331, Thread 40379: XXXX 1710609191331, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191430 XXXX 1710609191430, Thread 40379: XXXX 1710609191430, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191432 XXXX 1710609191432, Thread 40379: XXXX 1710609191432, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191530 XXXX 1710609191530, Thread 40379: XXXX 1710609191530, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191532 XXXX 1710609191532, Thread 40379: XXXX 1710609191532, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191630 XXXX 1710609191630, Thread 40379: XXXX 1710609191630, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191631 XXXX 1710609191631, Thread 40379: XXXX 1710609191631, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191731 XXXX 1710609191731, Thread 40379: XXXX 1710609191731, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191732 XXXX 1710609191732, Thread 40379: XXXX 1710609191732, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191831 XXXX 1710609191831, Thread 40379: XXXX 1710609191831, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191833 XXXX 1710609191833, Thread 40379: XXXX 1710609191833, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609191932 XXXX 1710609191932, Thread 40379: XXXX 1710609191932, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609191933 XXXX 1710609191933, Thread 40379: XXXX 1710609191933, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192033 XXXX 1710609192033, Thread 40379: XXXX 1710609192033, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192034 XXXX 1710609192034, Thread 40379: XXXX 1710609192034, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192133 XXXX 1710609192133, Thread 40379: XXXX 1710609192133, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192134 XXXX 1710609192134, Thread 40379: XXXX 1710609192134, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192234 XXXX 1710609192234, Thread 40379: XXXX 1710609192234, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192235 XXXX 1710609192235, Thread 40379: XXXX 1710609192235, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192336 XXXX 1710609192336, Thread 40379: XXXX 1710609192336, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192337 XXXX 1710609192337, Thread 40379: XXXX 1710609192337, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192436 XXXX 1710609192436, Thread 40379: XXXX 1710609192436, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192438 XXXX 1710609192438, Thread 40379: XXXX 1710609192438, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192536 XXXX 1710609192536, Thread 40379: XXXX 1710609192536, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192538 XXXX 1710609192538, Thread 40379: XXXX 1710609192538, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192636 XXXX 1710609192636, Thread 40379: XXXX 1710609192636, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192637 XXXX 1710609192637, Thread 40379: XXXX 1710609192637, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192736 XXXX 1710609192736, Thread 40379: XXXX 1710609192736, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192739 XXXX 1710609192739, Thread 40379: XXXX 1710609192739, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192836 XXXX 1710609192836, Thread 40379: XXXX 1710609192836, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192837 XXXX 1710609192837, Thread 40379: XXXX 1710609192837, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609192936 XXXX 1710609192936, Thread 40379: XXXX 1710609192936, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609192937 XXXX 1710609192937, Thread 40379: XXXX 1710609192937, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193036 XXXX 1710609193036, Thread 40379: XXXX 1710609193036, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193037 XXXX 1710609193037, Thread 40379: XXXX 1710609193037, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193138 XXXX 1710609193138, Thread 40379: XXXX 1710609193138, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193138 XXXX 1710609193138, Thread 40379: XXXX 1710609193138, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193238 XXXX 1710609193238, Thread 40379: XXXX 1710609193238, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193239 XXXX 1710609193239, Thread 40379: XXXX 1710609193239, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193339 XXXX 1710609193339, Thread 40379: XXXX 1710609193339, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193341 XXXX 1710609193341, Thread 40379: XXXX 1710609193341, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193439 XXXX 1710609193439, Thread 40379: XXXX 1710609193439, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193441 XXXX 1710609193441, Thread 40379: XXXX 1710609193441, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193540 XXXX 1710609193540, Thread 40379: XXXX 1710609193540, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193542 XXXX 1710609193542, Thread 40379: XXXX 1710609193542, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193640 XXXX 1710609193640, Thread 40379: XXXX 1710609193640, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193641 XXXX 1710609193641, Thread 40379: XXXX 1710609193641, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193741 XXXX 1710609193741, Thread 40379: XXXX 1710609193741, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193742 XXXX 1710609193742, Thread 40379: XXXX 1710609193742, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193841 XXXX 1710609193841, Thread 40379: XXXX 1710609193841, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193842 XXXX 1710609193842, Thread 40379: XXXX 1710609193842, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609193943 XXXX 1710609193943, Thread 40379: XXXX 1710609193943, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609193944 XXXX 1710609193944, Thread 40379: XXXX 1710609193944, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194043 XXXX 1710609194043, Thread 40379: XXXX 1710609194043, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194044 XXXX 1710609194044, Thread 40379: XXXX 1710609194044, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194144 XXXX 1710609194144, Thread 40379: XXXX 1710609194144, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194145 XXXX 1710609194145, Thread 40379: XXXX 1710609194145, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194245 XXXX 1710609194245, Thread 40379: XXXX 1710609194245, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194245 XXXX 1710609194245, Thread 40379: XXXX 1710609194245, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194347 XXXX 1710609194347, Thread 40379: XXXX 1710609194347, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194349 XXXX 1710609194349, Thread 40379: XXXX 1710609194349, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194447 XXXX 1710609194447, Thread 40379: XXXX 1710609194447, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194448 XXXX 1710609194448, Thread 40379: XXXX 1710609194448, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194547 XXXX 1710609194547, Thread 40379: XXXX 1710609194547, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194548 XXXX 1710609194548, Thread 40379: XXXX 1710609194548, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194649 XXXX 1710609194649, Thread 40379: XXXX 1710609194649, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194651 XXXX 1710609194651, Thread 40379: XXXX 1710609194651, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194750 XXXX 1710609194750, Thread 40379: XXXX 1710609194750, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194751 XXXX 1710609194751, Thread 40379: XXXX 1710609194751, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194850 XXXX 1710609194850, Thread 40379: XXXX 1710609194850, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194851 XXXX 1710609194851, Thread 40379: XXXX 1710609194851, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609194950 XXXX 1710609194950, Thread 40379: XXXX 1710609194950, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609194951 XXXX 1710609194951, Thread 40379: XXXX 1710609194951, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195051 XXXX 1710609195051, Thread 40379: XXXX 1710609195051, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195053 XXXX 1710609195053, Thread 40379: XXXX 1710609195053, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195151 XXXX 1710609195151, Thread 40379: XXXX 1710609195151, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195152 XXXX 1710609195152, Thread 40379: XXXX 1710609195152, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195253 XXXX 1710609195253, Thread 40379: XXXX 1710609195253, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195254 XXXX 1710609195254, Thread 40379: XXXX 1710609195254, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195353 XXXX 1710609195353, Thread 40379: XXXX 1710609195353, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195354 XXXX 1710609195354, Thread 40379: XXXX 1710609195354, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195454 XXXX 1710609195454, Thread 40379: XXXX 1710609195454, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195455 XXXX 1710609195455, Thread 40379: XXXX 1710609195455, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195554 XXXX 1710609195554, Thread 40379: XXXX 1710609195554, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195554 XXXX 1710609195554, Thread 40379: XXXX 1710609195554, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195654 XXXX 1710609195654, Thread 40379: XXXX 1710609195654, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195655 XXXX 1710609195655, Thread 40379: XXXX 1710609195655, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195755 XXXX 1710609195755, Thread 40379: XXXX 1710609195755, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195756 XXXX 1710609195756, Thread 40379: XXXX 1710609195756, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195856 XXXX 1710609195856, Thread 40379: XXXX 1710609195856, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195856 XXXX 1710609195856, Thread 40379: XXXX 1710609195856, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609195957 XXXX 1710609195957, Thread 40379: XXXX 1710609195957, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609195958 XXXX 1710609195958, Thread 40379: XXXX 1710609195958, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196059 XXXX 1710609196059, Thread 40379: XXXX 1710609196059, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196059 XXXX 1710609196059, Thread 40379: XXXX 1710609196059, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196161 XXXX 1710609196161, Thread 40379: XXXX 1710609196161, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196162 XXXX 1710609196162, Thread 40379: XXXX 1710609196162, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196262 XXXX 1710609196262, Thread 40379: XXXX 1710609196262, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196263 XXXX 1710609196263, Thread 40379: XXXX 1710609196263, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196363 XXXX 1710609196363, Thread 40379: XXXX 1710609196363, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196364 XXXX 1710609196364, Thread 40379: XXXX 1710609196364, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196464 XXXX 1710609196464, Thread 40379: XXXX 1710609196464, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196464 XXXX 1710609196464, Thread 40379: XXXX 1710609196464, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196565 XXXX 1710609196565, Thread 40379: XXXX 1710609196565, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196566 XXXX 1710609196566, Thread 40379: XXXX 1710609196566, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196665 XXXX 1710609196665, Thread 40379: XXXX 1710609196665, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196665 XXXX 1710609196665, Thread 40379: XXXX 1710609196665, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196765 XXXX 1710609196765, Thread 40379: XXXX 1710609196765, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196766 XXXX 1710609196766, Thread 40379: XXXX 1710609196766, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196866 XXXX 1710609196866, Thread 40379: XXXX 1710609196866, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196866 XXXX 1710609196866, Thread 40379: XXXX 1710609196866, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609196967 XXXX 1710609196967, Thread 40379: XXXX 1710609196967, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609196968 XXXX 1710609196968, Thread 40379: XXXX 1710609196968, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197068 XXXX 1710609197068, Thread 40379: XXXX 1710609197068, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197070 XXXX 1710609197070, Thread 40379: XXXX 1710609197070, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197168 XXXX 1710609197168, Thread 40379: XXXX 1710609197168, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197169 XXXX 1710609197169, Thread 40379: XXXX 1710609197169, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197269 XXXX 1710609197269, Thread 40379: XXXX 1710609197269, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197271 XXXX 1710609197271, Thread 40379: XXXX 1710609197271, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197369 XXXX 1710609197369, Thread 40379: XXXX 1710609197369, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197370 XXXX 1710609197370, Thread 40379: XXXX 1710609197370, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197470 XXXX 1710609197470, Thread 40379: XXXX 1710609197470, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197471 XXXX 1710609197471, Thread 40379: XXXX 1710609197471, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197570 XXXX 1710609197570, Thread 40379: XXXX 1710609197570, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197571 XXXX 1710609197571, Thread 40379: XXXX 1710609197571, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197670 XXXX 1710609197670, Thread 40379: XXXX 1710609197670, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197671 XXXX 1710609197671, Thread 40379: XXXX 1710609197671, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197771 XXXX 1710609197771, Thread 40379: XXXX 1710609197771, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197773 XXXX 1710609197773, Thread 40379: XXXX 1710609197773, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197872 XXXX 1710609197872, Thread 40379: XXXX 1710609197872, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197873 XXXX 1710609197873, Thread 40379: XXXX 1710609197873, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609197972 XXXX 1710609197972, Thread 40379: XXXX 1710609197972, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609197974 XXXX 1710609197974, Thread 40379: XXXX 1710609197974, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198072 XXXX 1710609198072, Thread 40379: XXXX 1710609198072, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198073 XXXX 1710609198073, Thread 40379: XXXX 1710609198073, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198172 XXXX 1710609198172, Thread 40379: XXXX 1710609198172, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198173 XXXX 1710609198173, Thread 40379: XXXX 1710609198173, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198272 XXXX 1710609198272, Thread 40379: XXXX 1710609198272, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198274 XXXX 1710609198274, Thread 40379: XXXX 1710609198274, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198372 XXXX 1710609198372, Thread 40379: XXXX 1710609198372, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198373 XXXX 1710609198373, Thread 40379: XXXX 1710609198373, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198472 XXXX 1710609198472, Thread 40379: XXXX 1710609198472, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198474 XXXX 1710609198474, Thread 40379: XXXX 1710609198474, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198572 XXXX 1710609198572, Thread 40379: XXXX 1710609198572, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198574 XXXX 1710609198574, Thread 40379: XXXX 1710609198574, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198673 XXXX 1710609198673, Thread 40379: XXXX 1710609198673, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198675 XXXX 1710609198675, Thread 40379: XXXX 1710609198675, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198773 XXXX 1710609198773, Thread 40379: XXXX 1710609198773, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198775 XXXX 1710609198775, Thread 40379: XXXX 1710609198775, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198873 XXXX 1710609198873, Thread 40379: XXXX 1710609198873, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198875 XXXX 1710609198875, Thread 40379: XXXX 1710609198875, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609198974 XXXX 1710609198974, Thread 40379: XXXX 1710609198974, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609198975 XXXX 1710609198975, Thread 40379: XXXX 1710609198975, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199075 XXXX 1710609199075, Thread 40379: XXXX 1710609199075, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199076 XXXX 1710609199076, Thread 40379: XXXX 1710609199076, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199175 XXXX 1710609199175, Thread 40379: XXXX 1710609199175, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199176 XXXX 1710609199176, Thread 40379: XXXX 1710609199176, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199276 XXXX 1710609199276, Thread 40379: XXXX 1710609199276, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199277 XXXX 1710609199277, Thread 40379: XXXX 1710609199277, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199377 XXXX 1710609199377, Thread 40379: XXXX 1710609199377, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199377 XXXX 1710609199377, Thread 40379: XXXX 1710609199377, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199478 XXXX 1710609199478, Thread 40379: XXXX 1710609199478, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199479 XXXX 1710609199479, Thread 40379: XXXX 1710609199479, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199580 XXXX 1710609199580, Thread 40379: XXXX 1710609199580, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199581 XXXX 1710609199581, Thread 40379: XXXX 1710609199581, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199680 XXXX 1710609199680, Thread 40379: XXXX 1710609199680, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199681 XXXX 1710609199681, Thread 40379: XXXX 1710609199681, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199782 XXXX 1710609199782, Thread 40379: XXXX 1710609199782, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199783 XXXX 1710609199783, Thread 40379: XXXX 1710609199783, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199882 XXXX 1710609199882, Thread 40379: XXXX 1710609199882, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199883 XXXX 1710609199883, Thread 40379: XXXX 1710609199883, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609199982 XXXX 1710609199982, Thread 40379: XXXX 1710609199982, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609199984 XXXX 1710609199984, Thread 40379: XXXX 1710609199984, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200082 XXXX 1710609200082, Thread 40379: XXXX 1710609200082, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200083 XXXX 1710609200083, Thread 40379: XXXX 1710609200083, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200182 XXXX 1710609200182, Thread 40379: XXXX 1710609200182, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200183 XXXX 1710609200183, Thread 40379: XXXX 1710609200183, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200282 XXXX 1710609200282, Thread 40379: XXXX 1710609200282, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200284 XXXX 1710609200284, Thread 40379: XXXX 1710609200284, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200383 XXXX 1710609200383, Thread 40379: XXXX 1710609200383, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200383 XXXX 1710609200383, Thread 40379: XXXX 1710609200383, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200484 XXXX 1710609200484, Thread 40379: XXXX 1710609200484, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200486 XXXX 1710609200486, Thread 40379: XXXX 1710609200486, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200584 XXXX 1710609200584, Thread 40379: XXXX 1710609200584, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200585 XXXX 1710609200585, Thread 40379: XXXX 1710609200585, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200686 XXXX 1710609200686, Thread 40379: XXXX 1710609200686, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200687 XXXX 1710609200687, Thread 40379: XXXX 1710609200687, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200786 XXXX 1710609200786, Thread 40379: XXXX 1710609200786, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200787 XXXX 1710609200787, Thread 40379: XXXX 1710609200787, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200886 XXXX 1710609200886, Thread 40379: XXXX 1710609200886, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200887 XXXX 1710609200887, Thread 40379: XXXX 1710609200887, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609200987 XXXX 1710609200987, Thread 40379: XXXX 1710609200987, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609200988 XXXX 1710609200988, Thread 40379: XXXX 1710609200988, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201089 XXXX 1710609201089, Thread 40379: XXXX 1710609201089, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201091 XXXX 1710609201091, Thread 40379: XXXX 1710609201091, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201190 XXXX 1710609201190, Thread 40379: XXXX 1710609201190, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201191 XXXX 1710609201191, Thread 40379: XXXX 1710609201191, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201291 XXXX 1710609201291, Thread 40379: XXXX 1710609201291, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201292 XXXX 1710609201292, Thread 40379: XXXX 1710609201292, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201392 XXXX 1710609201392, Thread 40379: XXXX 1710609201392, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201393 XXXX 1710609201393, Thread 40379: XXXX 1710609201393, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201492 XXXX 1710609201492, Thread 40379: XXXX 1710609201492, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201493 XXXX 1710609201493, Thread 40379: XXXX 1710609201493, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201591 XXXX 1710609201591, Thread 40379: XXXX 1710609201591, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201593 XXXX 1710609201593, Thread 40379: XXXX 1710609201593, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201692 XXXX 1710609201692, Thread 40379: XXXX 1710609201692, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201694 XXXX 1710609201694, Thread 40379: XXXX 1710609201694, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201792 XXXX 1710609201792, Thread 40379: XXXX 1710609201792, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201794 XXXX 1710609201794, Thread 40379: XXXX 1710609201794, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201893 XXXX 1710609201893, Thread 40379: XXXX 1710609201893, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201894 XXXX 1710609201894, Thread 40379: XXXX 1710609201894, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609201994 XXXX 1710609201994, Thread 40379: XXXX 1710609201994, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609201996 XXXX 1710609201996, Thread 40379: XXXX 1710609201996, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202095 XXXX 1710609202095, Thread 40379: XXXX 1710609202095, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202097 XXXX 1710609202097, Thread 40379: XXXX 1710609202097, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202196 XXXX 1710609202196, Thread 40379: XXXX 1710609202196, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202197 XXXX 1710609202197, Thread 40379: XXXX 1710609202197, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202296 XXXX 1710609202296, Thread 40379: XXXX 1710609202296, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202298 XXXX 1710609202298, Thread 40379: XXXX 1710609202298, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202397 XXXX 1710609202397, Thread 40379: XXXX 1710609202397, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202398 XXXX 1710609202398, Thread 40379: XXXX 1710609202398, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202498 XXXX 1710609202498, Thread 40379: XXXX 1710609202498, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202500 XXXX 1710609202500, Thread 40379: XXXX 1710609202500, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202599 XXXX 1710609202599, Thread 40379: XXXX 1710609202599, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202600 XXXX 1710609202600, Thread 40379: XXXX 1710609202600, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202699 XXXX 1710609202699, Thread 40379: XXXX 1710609202699, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202700 XXXX 1710609202700, Thread 40379: XXXX 1710609202700, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202800 XXXX 1710609202800, Thread 40379: XXXX 1710609202800, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202802 XXXX 1710609202802, Thread 40379: XXXX 1710609202802, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609202901 XXXX 1710609202901, Thread 40379: XXXX 1710609202901, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609202902 XXXX 1710609202902, Thread 40379: XXXX 1710609202902, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203001 XXXX 1710609203001, Thread 40379: XXXX 1710609203001, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203002 XXXX 1710609203002, Thread 40379: XXXX 1710609203002, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203101 XXXX 1710609203101, Thread 40379: XXXX 1710609203101, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203102 XXXX 1710609203102, Thread 40379: XXXX 1710609203102, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203201 XXXX 1710609203201, Thread 40379: XXXX 1710609203201, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203203 XXXX 1710609203203, Thread 40379: XXXX 1710609203203, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203301 XXXX 1710609203301, Thread 40379: XXXX 1710609203301, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203302 XXXX 1710609203302, Thread 40379: XXXX 1710609203302, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203402 XXXX 1710609203402, Thread 40379: XXXX 1710609203402, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203404 XXXX 1710609203404, Thread 40379: XXXX 1710609203404, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203503 XXXX 1710609203503, Thread 40379: XXXX 1710609203503, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203505 XXXX 1710609203505, Thread 40379: XXXX 1710609203505, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203603 XXXX 1710609203603, Thread 40379: XXXX 1710609203603, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203604 XXXX 1710609203604, Thread 40379: XXXX 1710609203604, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203703 XXXX 1710609203703, Thread 40379: XXXX 1710609203703, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203705 XXXX 1710609203705, Thread 40379: XXXX 1710609203705, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203804 XXXX 1710609203804, Thread 40379: XXXX 1710609203804, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203805 XXXX 1710609203805, Thread 40379: XXXX 1710609203805, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609203906 XXXX 1710609203906, Thread 40379: XXXX 1710609203906, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609203907 XXXX 1710609203907, Thread 40379: XXXX 1710609203907, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204006 XXXX 1710609204006, Thread 40379: XXXX 1710609204006, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204008 XXXX 1710609204008, Thread 40379: XXXX 1710609204008, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204107 XXXX 1710609204107, Thread 40379: XXXX 1710609204107, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204108 XXXX 1710609204108, Thread 40379: XXXX 1710609204108, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204207 XXXX 1710609204207, Thread 40379: XXXX 1710609204207, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204208 XXXX 1710609204208, Thread 40379: XXXX 1710609204208, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204308 XXXX 1710609204308, Thread 40379: XXXX 1710609204308, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204310 XXXX 1710609204310, Thread 40379: XXXX 1710609204310, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204409 XXXX 1710609204409, Thread 40379: XXXX 1710609204409, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204410 XXXX 1710609204410, Thread 40379: XXXX 1710609204410, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204509 XXXX 1710609204509, Thread 40379: XXXX 1710609204509, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204511 XXXX 1710609204511, Thread 40379: XXXX 1710609204511, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204610 XXXX 1710609204610, Thread 40379: XXXX 1710609204610, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204611 XXXX 1710609204611, Thread 40379: XXXX 1710609204611, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204712 XXXX 1710609204712, Thread 40379: XXXX 1710609204712, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204713 XXXX 1710609204713, Thread 40379: XXXX 1710609204713, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204812 XXXX 1710609204812, Thread 40379: XXXX 1710609204812, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204813 XXXX 1710609204813, Thread 40379: XXXX 1710609204813, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609204913 XXXX 1710609204913, Thread 40379: XXXX 1710609204913, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609204914 XXXX 1710609204914, Thread 40379: XXXX 1710609204914, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205013 XXXX 1710609205013, Thread 40379: XXXX 1710609205013, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205015 XXXX 1710609205015, Thread 40379: XXXX 1710609205015, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205114 XXXX 1710609205114, Thread 40379: XXXX 1710609205114, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205115 XXXX 1710609205115, Thread 40379: XXXX 1710609205115, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205215 XXXX 1710609205215, Thread 40379: XXXX 1710609205215, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205217 XXXX 1710609205217, Thread 40379: XXXX 1710609205217, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205317 XXXX 1710609205317, Thread 40379: XXXX 1710609205317, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205317 XXXX 1710609205317, Thread 40379: XXXX 1710609205317, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205418 XXXX 1710609205418, Thread 40379: XXXX 1710609205418, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205420 XXXX 1710609205420, Thread 40379: XXXX 1710609205420, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205520 XXXX 1710609205520, Thread 40379: XXXX 1710609205520, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205521 XXXX 1710609205521, Thread 40379: XXXX 1710609205521, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205620 XXXX 1710609205620, Thread 40379: XXXX 1710609205620, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205620 XXXX 1710609205620, Thread 40379: XXXX 1710609205620, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205721 XXXX 1710609205721, Thread 40379: XXXX 1710609205721, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205721 XXXX 1710609205721, Thread 40379: XXXX 1710609205721, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205823 XXXX 1710609205823, Thread 40379: XXXX 1710609205823, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205823 XXXX 1710609205823, Thread 40379: XXXX 1710609205823, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609205925 XXXX 1710609205925, Thread 40379: XXXX 1710609205925, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609205926 XXXX 1710609205926, Thread 40379: XXXX 1710609205926, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206026 XXXX 1710609206026, Thread 40379: XXXX 1710609206026, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206027 XXXX 1710609206027, Thread 40379: XXXX 1710609206027, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206126 XXXX 1710609206126, Thread 40379: XXXX 1710609206126, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206126 XXXX 1710609206126, Thread 40379: XXXX 1710609206126, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206227 XXXX 1710609206227, Thread 40379: XXXX 1710609206227, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206228 XXXX 1710609206228, Thread 40379: XXXX 1710609206228, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206328 XXXX 1710609206328, Thread 40379: XXXX 1710609206328, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206328 XXXX 1710609206328, Thread 40379: XXXX 1710609206328, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206429 XXXX 1710609206429, Thread 40379: XXXX 1710609206429, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206429 XXXX 1710609206429, Thread 40379: XXXX 1710609206429, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206530 XXXX 1710609206530, Thread 40379: XXXX 1710609206530, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206531 XXXX 1710609206531, Thread 40379: XXXX 1710609206531, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206630 XXXX 1710609206630, Thread 40379: XXXX 1710609206630, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206631 XXXX 1710609206631, Thread 40379: XXXX 1710609206631, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206731 XXXX 1710609206731, Thread 40379: XXXX 1710609206731, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206732 XXXX 1710609206732, Thread 40379: XXXX 1710609206732, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206832 XXXX 1710609206832, Thread 40379: XXXX 1710609206832, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206833 XXXX 1710609206833, Thread 40379: XXXX 1710609206833, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609206933 XXXX 1710609206933, Thread 40379: XXXX 1710609206933, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609206934 XXXX 1710609206934, Thread 40379: XXXX 1710609206934, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207035 XXXX 1710609207035, Thread 40379: XXXX 1710609207035, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207035 XXXX 1710609207035, Thread 40379: XXXX 1710609207035, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207137 XXXX 1710609207137, Thread 40379: XXXX 1710609207137, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207139 XXXX 1710609207138, Thread 40379: XXXX 1710609207138, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207237 XXXX 1710609207237, Thread 40379: XXXX 1710609207237, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207237 XXXX 1710609207237, Thread 40379: XXXX 1710609207237, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207338 XXXX 1710609207338, Thread 40379: XXXX 1710609207338, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207339 XXXX 1710609207339, Thread 40379: XXXX 1710609207339, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207438 XXXX 1710609207438, Thread 40379: XXXX 1710609207438, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207439 XXXX 1710609207439, Thread 40379: XXXX 1710609207439, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207539 XXXX 1710609207539, Thread 40379: XXXX 1710609207539, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207540 XXXX 1710609207540, Thread 40379: XXXX 1710609207540, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207639 XXXX 1710609207639, Thread 40379: XXXX 1710609207639, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207641 XXXX 1710609207641, Thread 40379: XXXX 1710609207641, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207739 XXXX 1710609207739, Thread 40379: XXXX 1710609207739, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207740 XXXX 1710609207740, Thread 40379: XXXX 1710609207740, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207840 XXXX 1710609207840, Thread 40379: XXXX 1710609207840, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207841 XXXX 1710609207841, Thread 40379: XXXX 1710609207841, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609207941 XXXX 1710609207941, Thread 40379: XXXX 1710609207941, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609207942 XXXX 1710609207942, Thread 40379: XXXX 1710609207942, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208041 XXXX 1710609208041, Thread 40379: XXXX 1710609208041, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208042 XXXX 1710609208042, Thread 40379: XXXX 1710609208042, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208141 XXXX 1710609208141, Thread 40379: XXXX 1710609208141, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208142 XXXX 1710609208142, Thread 40379: XXXX 1710609208142, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208243 XXXX 1710609208243, Thread 40379: XXXX 1710609208243, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208244 XXXX 1710609208244, Thread 40379: XXXX 1710609208244, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208344 XXXX 1710609208344, Thread 40379: XXXX 1710609208344, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208346 XXXX 1710609208346, Thread 40379: XXXX 1710609208346, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208445 XXXX 1710609208445, Thread 40379: XXXX 1710609208445, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208445 XXXX 1710609208445, Thread 40379: XXXX 1710609208445, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208547 XXXX 1710609208547, Thread 40379: XXXX 1710609208547, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208548 XXXX 1710609208548, Thread 40379: XXXX 1710609208548, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208648 XXXX 1710609208648, Thread 40379: XXXX 1710609208648, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208648 XXXX 1710609208648, Thread 40379: XXXX 1710609208648, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208750 XXXX 1710609208750, Thread 40379: XXXX 1710609208750, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208751 XXXX 1710609208751, Thread 40379: XXXX 1710609208751, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208851 XXXX 1710609208851, Thread 40379: XXXX 1710609208851, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208853 XXXX 1710609208853, Thread 40379: XXXX 1710609208853, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609208952 XXXX 1710609208952, Thread 40379: XXXX 1710609208952, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609208954 XXXX 1710609208954, Thread 40379: XXXX 1710609208954, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209052 XXXX 1710609209052, Thread 40379: XXXX 1710609209052, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209053 XXXX 1710609209053, Thread 40379: XXXX 1710609209053, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209153 XXXX 1710609209153, Thread 40379: XXXX 1710609209153, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209154 XXXX 1710609209154, Thread 40379: XXXX 1710609209154, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209254 XXXX 1710609209254, Thread 40379: XXXX 1710609209254, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209255 XXXX 1710609209255, Thread 40379: XXXX 1710609209255, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209354 XXXX 1710609209354, Thread 40379: XXXX 1710609209354, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209356 XXXX 1710609209356, Thread 40379: XXXX 1710609209356, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209455 XXXX 1710609209455, Thread 40379: XXXX 1710609209455, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209457 XXXX 1710609209457, Thread 40379: XXXX 1710609209457, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209555 XXXX 1710609209555, Thread 40379: XXXX 1710609209555, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209556 XXXX 1710609209556, Thread 40379: XXXX 1710609209556, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209656 XXXX 1710609209656, Thread 40379: XXXX 1710609209656, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209657 XXXX 1710609209657, Thread 40379: XXXX 1710609209657, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209757 XXXX 1710609209757, Thread 40379: XXXX 1710609209757, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209759 XXXX 1710609209759, Thread 40379: XXXX 1710609209759, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209857 XXXX 1710609209857, Thread 40379: XXXX 1710609209857, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209859 XXXX 1710609209859, Thread 40379: XXXX 1710609209859, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609209958 XXXX 1710609209958, Thread 40379: XXXX 1710609209958, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609209959 XXXX 1710609209959, Thread 40379: XXXX 1710609209959, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210059 XXXX 1710609210059, Thread 40379: XXXX 1710609210059, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210061 XXXX 1710609210061, Thread 40379: XXXX 1710609210061, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210160 XXXX 1710609210160, Thread 40379: XXXX 1710609210160, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210161 XXXX 1710609210161, Thread 40379: XXXX 1710609210161, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210261 XXXX 1710609210261, Thread 40379: XXXX 1710609210261, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210262 XXXX 1710609210262, Thread 40379: XXXX 1710609210262, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210362 XXXX 1710609210362, Thread 40379: XXXX 1710609210362, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210363 XXXX 1710609210363, Thread 40379: XXXX 1710609210363, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210462 XXXX 1710609210462, Thread 40379: XXXX 1710609210462, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210463 XXXX 1710609210463, Thread 40379: XXXX 1710609210463, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210562 XXXX 1710609210562, Thread 40379: XXXX 1710609210562, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210564 XXXX 1710609210564, Thread 40379: XXXX 1710609210564, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210663 XXXX 1710609210663, Thread 40379: XXXX 1710609210663, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210665 XXXX 1710609210665, Thread 40379: XXXX 1710609210665, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210764 XXXX 1710609210764, Thread 40379: XXXX 1710609210764, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210765 XXXX 1710609210765, Thread 40379: XXXX 1710609210765, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210864 XXXX 1710609210864, Thread 40379: XXXX 1710609210864, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210865 XXXX 1710609210865, Thread 40379: XXXX 1710609210865, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609210966 XXXX 1710609210966, Thread 40379: XXXX 1710609210966, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609210967 XXXX 1710609210967, Thread 40379: XXXX 1710609210967, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211066 XXXX 1710609211066, Thread 40379: XXXX 1710609211066, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211067 XXXX 1710609211067, Thread 40379: XXXX 1710609211067, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211167 XXXX 1710609211167, Thread 40379: XXXX 1710609211167, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211168 XXXX 1710609211168, Thread 40379: XXXX 1710609211168, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211268 XXXX 1710609211268, Thread 40379: XXXX 1710609211268, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211269 XXXX 1710609211269, Thread 40379: XXXX 1710609211269, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211369 XXXX 1710609211369, Thread 40379: XXXX 1710609211369, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211370 XXXX 1710609211370, Thread 40379: XXXX 1710609211370, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211469 XXXX 1710609211469, Thread 40379: XXXX 1710609211469, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211470 XXXX 1710609211470, Thread 40379: XXXX 1710609211470, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211570 XXXX 1710609211570, Thread 40379: XXXX 1710609211570, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211571 XXXX 1710609211571, Thread 40379: XXXX 1710609211571, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211671 XXXX 1710609211671, Thread 40379: XXXX 1710609211671, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211673 XXXX 1710609211673, Thread 40379: XXXX 1710609211673, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211772 XXXX 1710609211772, Thread 40379: XXXX 1710609211772, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211773 XXXX 1710609211773, Thread 40379: XXXX 1710609211773, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211873 XXXX 1710609211873, Thread 40379: XXXX 1710609211873, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211874 XXXX 1710609211874, Thread 40379: XXXX 1710609211874, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609211972 XXXX 1710609211972, Thread 40379: XXXX 1710609211972, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609211974 XXXX 1710609211974, Thread 40379: XXXX 1710609211974, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212073 XXXX 1710609212073, Thread 40379: XXXX 1710609212073, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212073 XXXX 1710609212073, Thread 40379: XXXX 1710609212073, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212175 XXXX 1710609212175, Thread 40379: XXXX 1710609212175, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212176 XXXX 1710609212176, Thread 40379: XXXX 1710609212176, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212276 XXXX 1710609212276, Thread 40379: XXXX 1710609212276, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212277 XXXX 1710609212277, Thread 40379: XXXX 1710609212277, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212376 XXXX 1710609212376, Thread 40379: XXXX 1710609212376, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212377 XXXX 1710609212377, Thread 40379: XXXX 1710609212377, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212476 XXXX 1710609212476, Thread 40379: XXXX 1710609212476, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212477 XXXX 1710609212477, Thread 40379: XXXX 1710609212477, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212577 XXXX 1710609212577, Thread 40379: XXXX 1710609212577, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212578 XXXX 1710609212578, Thread 40379: XXXX 1710609212578, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212679 XXXX 1710609212679, Thread 40379: XXXX 1710609212679, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212680 XXXX 1710609212680, Thread 40379: XXXX 1710609212680, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212779 XXXX 1710609212779, Thread 40379: XXXX 1710609212779, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212780 XXXX 1710609212780, Thread 40379: XXXX 1710609212780, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212879 XXXX 1710609212879, Thread 40379: XXXX 1710609212879, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212880 XXXX 1710609212880, Thread 40379: XXXX 1710609212880, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609212979 XXXX 1710609212979, Thread 40379: XXXX 1710609212979, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609212980 XXXX 1710609212980, Thread 40379: XXXX 1710609212980, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213080 XXXX 1710609213080, Thread 40379: XXXX 1710609213080, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213082 XXXX 1710609213082, Thread 40379: XXXX 1710609213082, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213181 XXXX 1710609213181, Thread 40379: XXXX 1710609213181, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213182 XXXX 1710609213182, Thread 40379: XXXX 1710609213182, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213282 XXXX 1710609213282, Thread 40379: XXXX 1710609213282, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213284 XXXX 1710609213284, Thread 40379: XXXX 1710609213284, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213382 XXXX 1710609213382, Thread 40379: XXXX 1710609213382, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213384 XXXX 1710609213384, Thread 40379: XXXX 1710609213384, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213483 XXXX 1710609213483, Thread 40379: XXXX 1710609213483, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213484 XXXX 1710609213484, Thread 40379: XXXX 1710609213484, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213584 XXXX 1710609213584, Thread 40379: XXXX 1710609213584, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213585 XXXX 1710609213585, Thread 40379: XXXX 1710609213585, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213685 XXXX 1710609213685, Thread 40379: XXXX 1710609213685, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213686 XXXX 1710609213686, Thread 40379: XXXX 1710609213686, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213785 XXXX 1710609213785, Thread 40379: XXXX 1710609213785, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213786 XXXX 1710609213786, Thread 40379: XXXX 1710609213786, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213886 XXXX 1710609213886, Thread 40379: XXXX 1710609213886, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213888 XXXX 1710609213888, Thread 40379: XXXX 1710609213888, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609213987 XXXX 1710609213987, Thread 40379: XXXX 1710609213987, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609213988 XXXX 1710609213988, Thread 40379: XXXX 1710609213988, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214088 XXXX 1710609214088, Thread 40379: XXXX 1710609214088, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214089 XXXX 1710609214089, Thread 40379: XXXX 1710609214089, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214189 XXXX 1710609214189, Thread 40379: XXXX 1710609214189, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214191 XXXX 1710609214191, Thread 40379: XXXX 1710609214191, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214289 XXXX 1710609214289, Thread 40379: XXXX 1710609214289, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214290 XXXX 1710609214290, Thread 40379: XXXX 1710609214290, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214390 XXXX 1710609214390, Thread 40379: XXXX 1710609214390, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214391 XXXX 1710609214391, Thread 40379: XXXX 1710609214391, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214490 XXXX 1710609214490, Thread 40379: XXXX 1710609214490, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214490 XXXX 1710609214490, Thread 40379: XXXX 1710609214490, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214590 XXXX 1710609214590, Thread 40379: XXXX 1710609214590, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214592 XXXX 1710609214592, Thread 40379: XXXX 1710609214592, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214692 XXXX 1710609214692, Thread 40379: XXXX 1710609214692, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214693 XXXX 1710609214693, Thread 40379: XXXX 1710609214693, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214792 XXXX 1710609214792, Thread 40379: XXXX 1710609214792, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214794 XXXX 1710609214794, Thread 40379: XXXX 1710609214794, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214894 XXXX 1710609214894, Thread 40379: XXXX 1710609214894, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214895 XXXX 1710609214895, Thread 40379: XXXX 1710609214895, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609214995 XXXX 1710609214995, Thread 40379: XXXX 1710609214995, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609214996 XXXX 1710609214996, Thread 40379: XXXX 1710609214996, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215095 XXXX 1710609215095, Thread 40379: XXXX 1710609215095, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215097 XXXX 1710609215097, Thread 40379: XXXX 1710609215097, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215197 XXXX 1710609215196, Thread 40379: XXXX 1710609215196, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215198 XXXX 1710609215198, Thread 40379: XXXX 1710609215198, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215296 XXXX 1710609215296, Thread 40379: XXXX 1710609215296, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215297 XXXX 1710609215297, Thread 40379: XXXX 1710609215297, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215396 XXXX 1710609215396, Thread 40379: XXXX 1710609215396, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215397 XXXX 1710609215397, Thread 40379: XXXX 1710609215397, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215497 XXXX 1710609215497, Thread 40379: XXXX 1710609215497, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215498 XXXX 1710609215498, Thread 40379: XXXX 1710609215498, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215597 XXXX 1710609215597, Thread 40379: XXXX 1710609215597, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215599 XXXX 1710609215599, Thread 40379: XXXX 1710609215599, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215698 XXXX 1710609215698, Thread 40379: XXXX 1710609215698, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215699 XXXX 1710609215699, Thread 40379: XXXX 1710609215699, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215798 XXXX 1710609215798, Thread 40379: XXXX 1710609215798, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215801 XXXX 1710609215801, Thread 40379: XXXX 1710609215801, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609215898 XXXX 1710609215898, Thread 40379: XXXX 1710609215898, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609215899 XXXX 1710609215899, Thread 40379: XXXX 1710609215899, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216000 XXXX 1710609216000, Thread 40379: XXXX 1710609216000, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216001 XXXX 1710609216001, Thread 40379: XXXX 1710609216001, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216102 XXXX 1710609216102, Thread 40379: XXXX 1710609216102, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216104 XXXX 1710609216104, Thread 40379: XXXX 1710609216104, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216202 XXXX 1710609216202, Thread 40379: XXXX 1710609216202, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216203 XXXX 1710609216203, Thread 40379: XXXX 1710609216203, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216304 XXXX 1710609216304, Thread 40379: XXXX 1710609216304, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216305 XXXX 1710609216305, Thread 40379: XXXX 1710609216305, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216403 XXXX 1710609216403, Thread 40379: XXXX 1710609216403, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216406 XXXX 1710609216406, Thread 40379: XXXX 1710609216406, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216503 XXXX 1710609216503, Thread 40379: XXXX 1710609216503, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216505 XXXX 1710609216505, Thread 40379: XXXX 1710609216505, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216604 XXXX 1710609216604, Thread 40379: XXXX 1710609216604, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216605 XXXX 1710609216605, Thread 40379: XXXX 1710609216605, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216704 XXXX 1710609216704, Thread 40379: XXXX 1710609216704, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216706 XXXX 1710609216706, Thread 40379: XXXX 1710609216706, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216805 XXXX 1710609216805, Thread 40379: XXXX 1710609216805, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216806 XXXX 1710609216806, Thread 40379: XXXX 1710609216806, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609216905 XXXX 1710609216905, Thread 40379: XXXX 1710609216905, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609216906 XXXX 1710609216906, Thread 40379: XXXX 1710609216906, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217006 XXXX 1710609217006, Thread 40379: XXXX 1710609217006, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217009 XXXX 1710609217009, Thread 40379: XXXX 1710609217009, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217106 XXXX 1710609217106, Thread 40379: XXXX 1710609217106, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217108 XXXX 1710609217108, Thread 40379: XXXX 1710609217108, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217206 XXXX 1710609217206, Thread 40379: XXXX 1710609217206, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217207 XXXX 1710609217206, Thread 40379: XXXX 1710609217206, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217307 XXXX 1710609217307, Thread 40379: XXXX 1710609217307, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217309 XXXX 1710609217309, Thread 40379: XXXX 1710609217309, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217407 XXXX 1710609217407, Thread 40379: XXXX 1710609217407, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217408 XXXX 1710609217408, Thread 40379: XXXX 1710609217408, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217508 XXXX 1710609217508, Thread 40379: XXXX 1710609217508, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217509 XXXX 1710609217509, Thread 40379: XXXX 1710609217509, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217608 XXXX 1710609217608, Thread 40379: XXXX 1710609217608, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217610 XXXX 1710609217610, Thread 40379: XXXX 1710609217610, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217709 XXXX 1710609217709, Thread 40379: XXXX 1710609217709, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217711 XXXX 1710609217711, Thread 40379: XXXX 1710609217711, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217809 XXXX 1710609217809, Thread 40379: XXXX 1710609217809, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217811 XXXX 1710609217811, Thread 40379: XXXX 1710609217811, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609217910 XXXX 1710609217910, Thread 40379: XXXX 1710609217910, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609217911 XXXX 1710609217911, Thread 40379: XXXX 1710609217911, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218010 XXXX 1710609218010, Thread 40379: XXXX 1710609218010, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218011 XXXX 1710609218011, Thread 40379: XXXX 1710609218011, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218111 XXXX 1710609218111, Thread 40379: XXXX 1710609218111, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218112 XXXX 1710609218112, Thread 40379: XXXX 1710609218112, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218212 XXXX 1710609218212, Thread 40379: XXXX 1710609218212, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218213 XXXX 1710609218213, Thread 40379: XXXX 1710609218213, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218313 XXXX 1710609218313, Thread 40379: XXXX 1710609218313, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218314 XXXX 1710609218314, Thread 40379: XXXX 1710609218314, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218413 XXXX 1710609218413, Thread 40379: XXXX 1710609218413, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218414 XXXX 1710609218414, Thread 40379: XXXX 1710609218414, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218515 XXXX 1710609218515, Thread 40379: XXXX 1710609218515, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218516 XXXX 1710609218516, Thread 40379: XXXX 1710609218516, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218616 XXXX 1710609218616, Thread 40379: XXXX 1710609218616, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218617 XXXX 1710609218617, Thread 40379: XXXX 1710609218617, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218718 XXXX 1710609218718, Thread 40379: XXXX 1710609218718, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218720 XXXX 1710609218720, Thread 40379: XXXX 1710609218720, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218818 XXXX 1710609218818, Thread 40379: XXXX 1710609218818, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218819 XXXX 1710609218819, Thread 40379: XXXX 1710609218819, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609218919 XXXX 1710609218919, Thread 40379: XXXX 1710609218919, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609218922 XXXX 1710609218922, Thread 40379: XXXX 1710609218922, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219019 XXXX 1710609219019, Thread 40379: XXXX 1710609219019, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219020 XXXX 1710609219020, Thread 40379: XXXX 1710609219020, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219119 XXXX 1710609219119, Thread 40379: XXXX 1710609219119, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219121 XXXX 1710609219121, Thread 40379: XXXX 1710609219121, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219221 XXXX 1710609219221, Thread 40379: XXXX 1710609219221, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219223 XXXX 1710609219223, Thread 40379: XXXX 1710609219223, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219321 XXXX 1710609219321, Thread 40379: XXXX 1710609219321, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219321 XXXX 1710609219321, Thread 40379: XXXX 1710609219321, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219422 XXXX 1710609219422, Thread 40379: XXXX 1710609219422, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219424 XXXX 1710609219424, Thread 40379: XXXX 1710609219424, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219522 XXXX 1710609219522, Thread 40379: XXXX 1710609219522, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219523 XXXX 1710609219523, Thread 40379: XXXX 1710609219523, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219623 XXXX 1710609219623, Thread 40379: XXXX 1710609219623, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219624 XXXX 1710609219624, Thread 40379: XXXX 1710609219624, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219724 XXXX 1710609219724, Thread 40379: XXXX 1710609219724, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219725 XXXX 1710609219725, Thread 40379: XXXX 1710609219725, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219825 XXXX 1710609219825, Thread 40379: XXXX 1710609219825, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219827 XXXX 1710609219827, Thread 40379: XXXX 1710609219827, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609219925 XXXX 1710609219925, Thread 40379: XXXX 1710609219925, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609219927 XXXX 1710609219927, Thread 40379: XXXX 1710609219927, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220025 XXXX 1710609220025, Thread 40379: XXXX 1710609220025, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220027 XXXX 1710609220027, Thread 40379: XXXX 1710609220027, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220126 XXXX 1710609220126, Thread 40379: XXXX 1710609220126, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220128 XXXX 1710609220128, Thread 40379: XXXX 1710609220128, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220227 XXXX 1710609220227, Thread 40379: XXXX 1710609220227, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220228 XXXX 1710609220228, Thread 40379: XXXX 1710609220228, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220327 XXXX 1710609220327, Thread 40379: XXXX 1710609220327, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220330 XXXX 1710609220330, Thread 40379: XXXX 1710609220330, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220427 XXXX 1710609220427, Thread 40379: XXXX 1710609220427, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220429 XXXX 1710609220429, Thread 40379: XXXX 1710609220429, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220528 XXXX 1710609220528, Thread 40379: XXXX 1710609220528, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220529 XXXX 1710609220529, Thread 40379: XXXX 1710609220529, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220629 XXXX 1710609220629, Thread 40379: XXXX 1710609220629, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220631 XXXX 1710609220631, Thread 40379: XXXX 1710609220631, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220729 XXXX 1710609220729, Thread 40379: XXXX 1710609220729, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220731 XXXX 1710609220731, Thread 40379: XXXX 1710609220731, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220829 XXXX 1710609220829, Thread 40379: XXXX 1710609220829, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220830 XXXX 1710609220830, Thread 40379: XXXX 1710609220830, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609220930 XXXX 1710609220930, Thread 40379: XXXX 1710609220930, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609220931 XXXX 1710609220931, Thread 40379: XXXX 1710609220931, Exiting Thread 40379: Commands::runScriptBasic  
+40379 1710609221032 XXXX 1710609221032, Thread 40379: XXXX 1710609221032, Entering Thread 40379: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+40379 1710609221034 XXXX 1710609221034, Thread 40379: ToolCommUsb::read, com.Received returned -1 
+40379 1710609221034 XXXX 1710609221034, Thread 40379: transfer: exception after writeHeaderAndGetResult null 
+40379 1710609221044 XXXX 1710609221044, Thread 40379: XXXX 1710609221044, Entering Thread 40379: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
+40379 1710609221045 XXXX 1710609221045, Thread 40379: Send Abort Script Engine Command 
+40379 1710609221045 XXXX 1710609221045, Thread 40379: XXXX 1710609221045, Entering Thread 40379: ToolCommUsb::killScriptEngine  
+40379 1710609231046 XXXX 1710609231046, Thread 40379: ToolCommUsb::read, com.Received returned -1 
+40379 1710609231046 XXXX 1710609231046, Thread 40379: Failed sending Abort Script Engine Command. Set nuclear option = true 
+40379 1710609231046 XXXX 1710609231046, Thread 40379: About to nuke 
+40379 1710609231046 XXXX 1710609231046, Thread 40379: XXXX 1710609231046, Entering Thread 40379: ToolCommUsb::nuclearOption  
+40379 1710609231046 XXXX 1710609231046, Thread 40379: XXXX 1710609231046, Exiting Thread 40379: ToolCommUsb::nuclearOption  
+40379 1710609231046 XXXX 1710609231046, Thread 40379: After nuking 
+40379 1710609231046 XXXX 1710609231046, Thread 40379: Exiting recoverFromProtocolError 
+40379 1710609231046 XXXX 1710609231046, Thread 40379: XXXX 1710609231046, Exiting Thread 40379: ToolCommUsb::recoverFromProtocolError,  
+40379 1710609231046 XXXX 1710609231046, Thread 40379: transfer: after recoverFromProtocolError 

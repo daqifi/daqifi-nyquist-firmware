@@ -223,7 +223,7 @@ scpi_result_t SCPI_GPIOEnableGet(scpi_t * context)
 
 
 scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
-    int param1, param2;
+    uint32_t param1, param2;
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -238,16 +238,31 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
     return SCPI_RES_OK;
    
 }
-scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){}
-scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
-    int param1,param2;
-    int i;
-    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
-    if (!SCPI_ParamInt32(context, &param1, FALSE))
+scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){
+    uint32_t param1, param2;
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
     }
-    if (!SCPI_ParamInt32(context, &param2, TRUE))
+    
+    if(param1>=pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    uint32_t pwmEnable=pRunTimeDIOChannels->Data[param1].IsPwmActive;
+    SCPI_ResultUInt32(context,pwmEnable);
+    return SCPI_RES_OK;
+}
+scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
+    uint32_t param1,param2;
+    int i;
+    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3);
+    if (!SCPI_ParamUInt32(context, &param1, FALSE))
+    {
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamUInt32(context, &param2, TRUE))
     {
         return SCPI_RES_ERR;
     }
@@ -264,17 +279,37 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     DIO_PWMFrequencySet(param1);
     return SCPI_RES_OK;
 }
-scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){}
-scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
-    
-    int param1, param2;
-    DIORuntimeArray * pRunTimeDIOChannels;
+scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){
+    uint32_t param1, param2;
+     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
     }
     
     if (!SCPI_ParamInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+   
+    if(param1>=pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    uint32_t freq=pRunTimeDIOChannels->Data[param1].PwmFrequency;
+    SCPI_ResultUInt32(context,freq);
+    return SCPI_RES_OK;
+}
+scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
+    
+    uint32_t param1, param2;
+    DIORuntimeArray * pRunTimeDIOChannels;
+    if (!SCPI_ParamUInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (!SCPI_ParamUInt32(context, &param2, TRUE))
     {
         return SCPI_RES_ERR;
     }
@@ -290,7 +325,28 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     DIO_PWMDutyCycleSetSingle(param1);
     return SCPI_RES_OK;
 }
-scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){}
+scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){
+    uint32_t param1, param2;
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (!SCPI_ParamInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if(param1>=pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    uint32_t duty=pRunTimeDIOChannels->Data[param1].PwmDutyCycle;
+    SCPI_ResultUInt32(context,duty);
+    return SCPI_RES_OK;
+
+}
 
 ////////
 // Internal Implementation
