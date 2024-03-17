@@ -288,11 +288,6 @@ scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){
         return SCPI_RES_ERR;
     }
     
-    if (!SCPI_ParamInt32(context, &param2, TRUE))
-    {
-        return SCPI_RES_ERR;
-    }
-   
     if(param1>=pRunTimeDIOChannels->Size){
         return SCPI_RES_ERR;
     }
@@ -317,7 +312,7 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     if(param1>pRunTimeDIOChannels->Size){
         return SCPI_RES_ERR;
     }
-    if(param1>100){
+    if(param2>100){
         return SCPI_RES_ERR;
     }
     
@@ -330,11 +325,6 @@ scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
-    {
-        return SCPI_RES_ERR;
-    }
-    
-    if (!SCPI_ParamInt32(context, &param2, TRUE))
     {
         return SCPI_RES_ERR;
     }

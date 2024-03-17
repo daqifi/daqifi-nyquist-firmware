@@ -53,3 +53,4 @@
 *.d
 *.elf
 *.map
+/board_firmware/libscpi/libscpi.X/dist/

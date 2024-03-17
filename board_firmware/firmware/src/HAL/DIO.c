@@ -211,8 +211,8 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex){
     uint32_t timer3ScaledClock=timerClock;
     uint64_t temp;
     uint8_t preScalerIndex=(sizeof(tim3PreScalers)/sizeof(tim3PreScalers[0]))-1;
-    uint16_t period=100;
-    temp=period*pwmFrequency; //100 is kept as the ideal minimum period value
+    uint16_t period=2000;
+    temp=period*pwmFrequency; //2000 is kept as the ideal minimum period value
     for(preScalerIndex;preScalerIndex>0;preScalerIndex--){
         timer3ScaledClock=timerClock/tim3PreScalers[preScalerIndex];
         if(timer3ScaledClock>temp){
