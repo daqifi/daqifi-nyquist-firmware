@@ -198,6 +198,9 @@ bool DIO_PWMDutyCycleSetSingle( uint8_t dataIndex ){
      uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3)/PLIB_TMR_PrescaleGet(TMR_ID_3);
      uint16_t pwmDutyCycle=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmDutyCycle;
      uint32_t pwmFrequency=pRuntimeBoardConfigDIO->DIOChannels.Data[ dataIndex ].PwmFrequency;
+     if(pwmFrequency==0 || pwmDutyCycle==0){
+         return false;
+     }
      uint16_t period=(timerClock/pwmFrequency)*(pwmDutyCycle/100.00);
      DRV_OC_PulseWidthSet(pwmDriverInstance,period);
      return true;
