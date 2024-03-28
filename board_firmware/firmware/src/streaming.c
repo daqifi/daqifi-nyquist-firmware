@@ -34,7 +34,7 @@ static bool inHandler = false;
 /*!
  *  Function for debugging - fills buffer with dummy data
  */
-static void Streaming_StuffDummyData (void); 
+//static void Streaming_StuffDummyData (void); 
 
 /*!
  * Function to manage timer handler
@@ -61,7 +61,7 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
     // - Trigger conversions if, and only if, their prescale has been matched
     
     // TODO: Remove for production
-    //Streaming_StuffDummyData();
+   
     //inHandler = false;
     //return;
 
@@ -338,7 +338,7 @@ void TimestampTimer_Init( void )
     DRV_TMR_Start(pRuntimeConfigStream->TSTimerHandle);
 }
 
-static void Streaming_StuffDummyData (void)
+void Streaming_StuffDummyData (void)
 {
     // Stuff stream with some data
     // Copy dummy samples to the data list
@@ -355,9 +355,11 @@ static void Streaming_StuffDummyData (void)
     // (uninitialized channels will have 0 timestamp)
     if (data.Timestamp == 0) data.Timestamp++;  
 
-    for (i=0; i<16; ++i)
+    for (i=0; true; ++i)
     {
         data.Channel = i;
-        AInSampleList_PushBack(pAInSamples, (const AInSample *)&data); 
+        if(!AInSampleList_PushBack(pAInSamples, (const AInSample *)&data)){
+            break;
+        } 
     }
 }

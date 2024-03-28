@@ -15,13 +15,13 @@
 #define TMP_MAX_LEN                                 64
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
-
+static uint8_t gBuffer[ ENCODER_BUFFER_SIZE ];
 size_t Json_Encode(     tBoardData* state,                                  \
                         NanopbFlagsArray* fields,                           \
                         uint8_t** ppBuffer)
 {
     int tmpLen = 0;
-    char *buffer = (char *)Encoder_Get_Buffer();
+    char *buffer = gBuffer;//(char *)Encoder_Get_Buffer();
     char* charBuffer = (char*)buffer;
     size_t startIndex = snprintf(                                           \
                         charBuffer,                                         \
@@ -34,10 +34,10 @@ size_t Json_Encode(     tBoardData* state,                                  \
     if( ppBuffer == NULL ){
         return 0;
     }
-    else{
-        *ppBuffer = (char *)buffer;
-    }
-    
+//    else{
+//        *ppBuffer = (char *)buffer;
+//    }
+//    
     for (i=0; i<fields->Size; ++i)
     {
         if (JSON_ENCODER_BUFFER_SIZE - startIndex < 3)
@@ -269,6 +269,6 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
                         "}");
     charBuffer[startIndex] = '\0';
-    
+    memcpy(ppBuffer,charBuffer,startIndex);
     return startIndex;
 }

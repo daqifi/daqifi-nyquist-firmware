@@ -9,11 +9,11 @@
 #include "encoder.h"
 
 //! Buffer declaration
-static uint8_t buffer[ ENCODER_BUFFER_SIZE ];
+static uint8_t gBuffer[ ENCODER_BUFFER_SIZE ];
 
 /*! This function is used for getting the enconding
  * @return Pointer to the encoding buffer
  */
 uint8_t *Encoder_Get_Buffer( void ){
-    return buffer;
+    return gBuffer;
 }

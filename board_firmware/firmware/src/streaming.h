@@ -35,6 +35,8 @@ void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
  */
 void TimestampTimer_Init( void );
 
+void Streaming_StuffDummyData (void); 
+
 #ifdef	__cplusplus
 }
 #endif
