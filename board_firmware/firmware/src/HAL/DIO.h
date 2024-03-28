@@ -49,6 +49,23 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask);
  * @param streamingSamples Storage for the latest streaming values
  */
 void DIO_Tasks( DIOSample* latest, DIOSampleList* streamingSamples );
+
+/*!
+ * Enable PWM on a single PWM channel
+ * @param[in] Data channel index
+ */
+bool DIO_PWMWriteStateSingle( uint8_t dataIndex );
+/*!
+ * Set duty cycle of PWM channel
+ * @param[in] Data channel index
+ */
+bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex);
+
+/*!
+ * Set frequency of the PWM timer
+ * @param[in] Data channel index
+ */
+bool DIO_PWMFrequencySet(uint8_t dataIndex);
     
 #ifdef	__cplusplus
 }

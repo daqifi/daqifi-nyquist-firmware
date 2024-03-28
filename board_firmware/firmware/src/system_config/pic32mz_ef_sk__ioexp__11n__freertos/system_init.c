@@ -279,6 +279,16 @@ const DRV_TMR_INIT drvTmr2InitData =
     .interruptSource = DRV_TMR_INTERRUPT_SOURCE_IDX2,
     .asyncWriteEnable = false,
 };
+const DRV_TMR_INIT drvTmr3InitData =
+{
+    .moduleInit.sys.powerState = DRV_TMR_POWER_STATE_IDX3,
+    .tmrId = DRV_TMR_PERIPHERAL_ID_IDX3,
+    .clockSource = DRV_TMR_CLOCK_SOURCE_IDX3,
+    .prescale = DRV_TMR_PRESCALE_IDX3,
+    .mode = DRV_TMR_OPERATION_MODE_16_BIT,
+    .interruptSource = DRV_TMR_INTERRUPT_SOURCE_IDX3,
+    .asyncWriteEnable = false,
+};
 // <editor-fold defaultstate="collapsed" desc="DRV_USB Initialization Data">
 /******************************************************
  * USB Driver Initialization
@@ -1223,7 +1233,14 @@ void SYS_Initialize ( void* data )
     SYS_INT_VectorSubprioritySet(INT_VECTOR_FLASH, INT_SUBPRIORITY_LEVEL0);
     /* Initialize the NVM Driver */
     sysObj.drvNvm = DRV_NVM_Initialize(DRV_NVM_INDEX_0, (SYS_MODULE_INIT *)&drvNvmInit);
-//    sysObj.drvSDCard = DRV_SDCARD_Initialize(DRV_SDCARD_INDEX_0,(SYS_MODULE_INIT *)&drvSDCardInit);
+    /* Initialize the OC Driver */
+    DRV_OC0_Initialize();
+    DRV_OC1_Initialize();
+    DRV_OC2_Initialize();
+    DRV_OC3_Initialize();
+    DRV_OC4_Initialize();
+    DRV_OC5_Initialize();
+    //sysObj.drvSDCard = DRV_SDCARD_Initialize(DRV_SDCARD_INDEX_0,(SYS_MODULE_INIT *)&drvSDCardInit);
 
     /*** SPI Driver Index 0 initialization***/
 
@@ -1248,6 +1265,7 @@ void SYS_Initialize ( void* data )
     sysObj.drvTmr0 = DRV_TMR_Initialize(DRV_TMR_INDEX_0, (SYS_MODULE_INIT *)&drvTmr0InitData);  // System timer service
     sysObj.drvTmr1 = DRV_TMR_Initialize(DRV_TMR_INDEX_1, (SYS_MODULE_INIT *)&drvTmr1InitData);  // DAQiFi streaming timer
     sysObj.drvTmr2 = DRV_TMR_Initialize(DRV_TMR_INDEX_2, (SYS_MODULE_INIT *)&drvTmr2InitData);  // DAQiFi streaming timestamp timer
+        sysObj.drvTmr3 = DRV_TMR_Initialize(DRV_TMR_INDEX_3, (SYS_MODULE_INIT *)&drvTmr3InitData);
 
 
     SYS_INT_VectorPrioritySet(INT_VECTOR_T2, INT_PRIORITY_LEVEL4);
@@ -1256,6 +1274,8 @@ void SYS_Initialize ( void* data )
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T5, INT_SUBPRIORITY_LEVEL0);
     SYS_INT_VectorPrioritySet(INT_VECTOR_T7, INT_PRIORITY_LEVEL1);
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T7, INT_SUBPRIORITY_LEVEL0);
+    SYS_INT_VectorPrioritySet(INT_VECTOR_T3, INT_PRIORITY_LEVEL4);
+    SYS_INT_VectorSubprioritySet(INT_VECTOR_T3, INT_SUBPRIORITY_LEVEL0);
  
  
      /* RTCC System Service Initialization Call */

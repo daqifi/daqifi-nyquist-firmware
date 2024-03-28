@@ -123,10 +123,9 @@ void __attribute__((nomips16)) _general_exception_handler (XCPT_FRAME* const pXF
 {
     register uint32_t _localStackPointerValue asm("sp");
 
-    _excep_addr = _CP0_GET_EPC();
-    _excep_code = (_CP0_GET_CAUSE() & 0x0000007C) >> 2;  
-    _cause_str  = (char*)cause[_excep_code];
-    asm volatile("di"); // Disable all interrupts
+    _excep_addr = pXFrame->epc;
+    _excep_code = pXFrame->cause;   // capture exception type
+    _excep_code = (_excep_code & 0x0000007C) >> 2;
     
     // copy the exception string to the persistent variable for diagnostic.
     sprintf(fault_str," General Exception %s (cause=%d, addr=%x)",_cause_str, _excep_code, _excep_addr);
