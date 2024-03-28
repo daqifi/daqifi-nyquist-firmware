@@ -375,7 +375,7 @@ void _Streaming_Deferred_Interrupt_Task( void ){
 
     while( 1 ){
         ulTaskNotifyTake( pdFALSE, xBlockTime );
-        Streaming_StuffDummyData(); //TODO: Remove this
+
         for (i=0; i < pRunTimeAInModules->Size; ++i)
         {
             // Only trigger conversions if the previous conversion is complete
