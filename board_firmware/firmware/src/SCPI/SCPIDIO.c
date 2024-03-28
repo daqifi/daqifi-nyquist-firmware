@@ -223,7 +223,7 @@ scpi_result_t SCPI_GPIOEnableGet(scpi_t * context)
 
 
 scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
-    uint32_t param1, param2;
+    int param1, param2;
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
         return SCPI_RES_ERR;
@@ -239,7 +239,7 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
    
 }
 scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){
-    uint32_t param1, param2;
+    int param1;
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
@@ -275,13 +275,20 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
         pRunTimeDIOChannels->Data[i].PwmFrequency=param2;
+        //DIO_PWMDutyCycleSetSingle(i);
+        
     }
+    //updating frequency for one channel means updating frequency of all the channels
     DIO_PWMFrequencySet(param1);
+    //update the duty cycle period register of all the channels based on the new frequency
+    for(i=0;i<pRunTimeDIOChannels->Size;i++){
+        DIO_PWMDutyCycleSetSingle(i);
+    }   
     return SCPI_RES_OK;
 }
 scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){
-    uint32_t param1, param2;
-     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    int param1;
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
@@ -321,7 +328,7 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     return SCPI_RES_OK;
 }
 scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){
-    uint32_t param1, param2;
+    int param1;
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
