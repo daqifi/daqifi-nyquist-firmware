@@ -34,9 +34,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
     if( ppBuffer == NULL ){
         return 0;
     }
-    else{
-        *ppBuffer = (char *)buffer;
-    }
+    
     
     for (i=0; i<fields->Size; ++i)
     {
@@ -269,6 +267,6 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
                         "}");
     charBuffer[startIndex] = '\0';
-    
+    memcnpy(ppBuffer,charBuffer,startIndex);
     return startIndex;
 }

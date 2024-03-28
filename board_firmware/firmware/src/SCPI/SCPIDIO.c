@@ -275,8 +275,6 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
         pRunTimeDIOChannels->Data[i].PwmFrequency=param2;
-        //DIO_PWMDutyCycleSetSingle(i);
-        
     }
     //updating frequency for one channel means updating frequency of all the channels
     DIO_PWMFrequencySet(param1);
