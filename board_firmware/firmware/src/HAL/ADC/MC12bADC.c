@@ -85,7 +85,7 @@ bool MC12b_WriteModuleState( void )
         DRV_ADC2_Close();
         DRV_ADC3_Close();
         DRV_ADC4_Close();
-        DRV_ADC5_Close();
+       // DRV_ADC5_Close();
         
         /* Enable clock to analog circuit */
         ADCANCONbits.ANEN0 = 1; // Enable the clock to analog bias
@@ -93,7 +93,7 @@ bool MC12b_WriteModuleState( void )
         ADCANCONbits.ANEN2 = 1; // Enable the clock to analog bias
         ADCANCONbits.ANEN3 = 1; // Enable the clock to analog bias
         ADCANCONbits.ANEN4 = 1; // Enable the clock to analog bias
-        ADCANCONbits.ANEN7 = 1; // Enable the clock to analog bias
+        //ADCANCONbits.ANEN7 = 1; // Enable the clock to analog bias
         
         isEnabled = false;
     }

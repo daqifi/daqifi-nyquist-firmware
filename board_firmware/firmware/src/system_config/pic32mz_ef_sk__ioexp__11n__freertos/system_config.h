@@ -410,7 +410,7 @@ int LogMessage(const char* format, ...);
 #define DRV_SPI_RESERVED_JOB_IDX1 			1
 /*** Timer Driver Configuration ***/
 #define DRV_TMR_INTERRUPT_MODE             true
-#define DRV_TMR_INSTANCES_NUMBER           4
+#define DRV_TMR_INSTANCES_NUMBER           5
 #define DRV_TMR_CLIENTS_NUMBER             1
 
 /*** Timer Driver 0 Configuration ***/
@@ -462,6 +462,20 @@ int LogMessage(const char* format, ...);
 #define DRV_TMR_OPERATION_MODE_IDX3         DRV_TMR_OPERATION_MODE_16_BIT
 #define DRV_TMR_ASYNC_WRITE_ENABLE_IDX3     false
 #define DRV_TMR_POWER_STATE_IDX3            SYS_MODULE_POWER_RUN_FULL
+
+/*** Timer Driver 4 Configuration ***/
+#define DRV_TMR_PERIPHERAL_ID_IDX4          TMR_ID_5
+#define DRV_TMR_INTERRUPT_SOURCE_IDX4       INT_SOURCE_TIMER_5
+#define DRV_TMR_INTERRUPT_VECTOR_IDX4       INT_VECTOR_T5
+#define DRV_TMR_ISR_VECTOR_IDX4             _TIMER_5_VECTOR
+#define DRV_TMR_INTERRUPT_PRIORITY_IDX4     INT_PRIORITY_LEVEL4
+#define DRV_TMR_INTERRUPT_SUB_PRIORITY_IDX4 INT_SUBPRIORITY_LEVEL0
+#define DRV_TMR_CLOCK_SOURCE_IDX4           DRV_TMR_CLKSOURCE_INTERNAL
+#define DRV_TMR_PRESCALE_IDX4               TMR_PRESCALE_VALUE_4
+#define DRV_TMR_OPERATION_MODE_IDX4         DRV_TMR_OPERATION_MODE_16_BIT
+#define DRV_TMR_ASYNC_WRITE_ENABLE_IDX4     false
+#define DRV_TMR_POWER_STATE_IDX4            SYS_MODULE_POWER_RUN_FULL
+
 
  /*** Wi-Fi Driver Configuration ***/
 #define WINC1500_INT_SOURCE INT_SOURCE_EXTERNAL_4

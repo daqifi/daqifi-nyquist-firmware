@@ -10,7 +10,6 @@
 
 // 3rd Party
 #include "scpi/scpi.h"
-
 #include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
 #include "nanopb/DaqifiOutMessage.pb.h"
@@ -446,7 +445,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context)
     
     if (SCPI_ParamInt32(context, &freq, FALSE))
     {
-        if (freq >= 1 && freq <= 1000)///TODO: Test higher throughput
+        if (freq >= 1 && freq <= 15000)///TODO: Test higher throughput
         {
             // calculate the divider needed
             pRunTimeStreamConfig->ClockDivider = clkFreq / freq;

@@ -154,9 +154,9 @@ void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
     //Nanopb flag, decide what to write
     NanopbFlagsArray nanopbFlag;
     //! Structures size
-    size_t usbSize, wifiSize, maxSize;
+    volatile size_t usbSize, wifiSize, maxSize;
     //! Boolean to indicate if the system has USB and Wifi actives. 
-    bool hasUsb, hasWifi;
+    volatile bool hasUsb, hasWifi;
     //! Counter to wifi configuration
     int wifiCnt;
     //! Pointer to client data in runtime, variable for legibility
@@ -179,7 +179,8 @@ void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
         DIODataAvailable=!DIOSampleList_IsEmpty(&boardData->DIOSamples);
         nanopbFlag.Size = 0;
         usbSize    = 0;
-        hasUsb     = hasWifi    = false;
+        hasWifi    = false;
+        hasUsb=true;
         usbSize    = wifiSize   = 0;
         maxSize    = 0;
         
@@ -195,8 +196,14 @@ void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
         {
             usbSize = CircularBuf_NumBytesFree(                             \
                         &runtimeConfig->usbSettings.wCirbuf);
-            hasUsb  = true;
+            if(usbSize==runtimeConfig->usbSettings.wCirbuf.buf_size){
+                hasUsb  = true;
+            }
+            else {
+                hasUsb=false;
+            }
         }
+        
 
         if (runtimeConfig->serverData.state == IP_SERVER_PROCESS)
         {

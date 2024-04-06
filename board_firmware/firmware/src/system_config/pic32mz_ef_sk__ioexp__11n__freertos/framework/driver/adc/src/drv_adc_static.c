@@ -108,7 +108,7 @@ void DRV_ADC_Initialize(void)
      PLIB_ADCHS_AnalogInputTriggerSourceSelect(
                DRV_ADC_ID_1,
                ADCHS_CLASS12_AN0,
-               ADCHS_TRIGGER_SOURCE_GLOBAL_SOFTWARE_EDGE
+               ADCHS_TRIGGER_SOURCE_TMR5_MATCH
      );
     if (DEVADC0 != 0xFFFFFFFF)
     PLIB_ADCHS_ChannelConfigurationSet(DRV_ADC_ID_1, ADCHS_CHANNEL_0, DEVADC0);
@@ -150,7 +150,7 @@ void DRV_ADC_Initialize(void)
      PLIB_ADCHS_AnalogInputTriggerSourceSelect(
                DRV_ADC_ID_1,
                ADCHS_CLASS12_AN1,
-               ADCHS_TRIGGER_SOURCE_GLOBAL_SOFTWARE_EDGE
+               ADCHS_TRIGGER_SOURCE_TMR5_MATCH
      );
     if (DEVADC1 != 0xFFFFFFFF)
     PLIB_ADCHS_ChannelConfigurationSet(DRV_ADC_ID_1, ADCHS_CHANNEL_1, DEVADC1);
@@ -192,7 +192,7 @@ void DRV_ADC_Initialize(void)
      PLIB_ADCHS_AnalogInputTriggerSourceSelect(
                DRV_ADC_ID_1,
                ADCHS_CLASS12_AN2,
-               ADCHS_TRIGGER_SOURCE_GLOBAL_SOFTWARE_EDGE
+               ADCHS_TRIGGER_SOURCE_TMR5_MATCH
      );
     if (DEVADC2 != 0xFFFFFFFF)
     PLIB_ADCHS_ChannelConfigurationSet(DRV_ADC_ID_1, ADCHS_CHANNEL_2, DEVADC2);
@@ -234,7 +234,7 @@ void DRV_ADC_Initialize(void)
      PLIB_ADCHS_AnalogInputTriggerSourceSelect(
                DRV_ADC_ID_1,
                ADCHS_CLASS12_AN3,
-               ADCHS_TRIGGER_SOURCE_GLOBAL_SOFTWARE_EDGE
+               ADCHS_TRIGGER_SOURCE_TMR5_MATCH
      );
     if (DEVADC3 != 0xFFFFFFFF)
     PLIB_ADCHS_ChannelConfigurationSet(DRV_ADC_ID_1, ADCHS_CHANNEL_3, DEVADC3);
@@ -276,7 +276,7 @@ void DRV_ADC_Initialize(void)
      PLIB_ADCHS_AnalogInputTriggerSourceSelect(
                DRV_ADC_ID_1,
                ADCHS_CLASS12_AN4,
-               ADCHS_TRIGGER_SOURCE_GLOBAL_SOFTWARE_EDGE
+               ADCHS_TRIGGER_SOURCE_TMR5_MATCH
      );
     if (DEVADC4 != 0xFFFFFFFF)
     PLIB_ADCHS_ChannelConfigurationSet(DRV_ADC_ID_1, ADCHS_CHANNEL_4, DEVADC4);

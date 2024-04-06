@@ -241,6 +241,12 @@ void APP_Initialize(void)
                 pBoardConfig,                                               \
                 pBoardRuntimeConfig,                                        \
                 pBoardData );
+    
+   DIO_TIMING_TEST_INIT();
+//    PLIB_PORTS_PinWrite(PORTS_ID_0,DIO_EN_0_PORT,DIO_EN_0_PIN,true ); 
+//    PLIB_PORTS_PinWrite(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN,false );   
+//    PLIB_PORTS_PinDirectionOutputSet(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN );
+   
 }
 
 /*! This function manage the application tasks. 
@@ -248,7 +254,9 @@ void APP_Initialize(void)
 void APP_Tasks(void)
 {   
     ADC_Tasks();
-    
+    volatile static bool state=true;
+    state=!state;
+    DIO_TIMING_TEST_WRITE_STATE(state);
     Streaming_Tasks( pBoardRuntimeConfig, pBoardData);
     
     // Don't do anything else until the board powers on

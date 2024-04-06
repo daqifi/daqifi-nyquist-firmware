@@ -6,7 +6,9 @@ const tBoardConfig NQ1BoardConfig = {
     .BoardVariant = 1,
     .DIOChannels = {
         .Data = {
-            {PORTS_ID_0, DIO_0_PORT, DIO_0_PIN, PORTS_ID_0, DIO_EN_0_PORT, DIO_EN_0_PIN, false,DRV_OC_INDEX_0,true,OUTPUT_FUNC_OC1,OUTPUT_PIN_RPD1},
+#ifndef DIO_TIMING_TEST
+            {PORTS_ID_0, DIO_0_PORT, DIO_0_PIN, PORTS_ID_0, DIO_EN_0_PORT, DIO_EN_0_PIN, false,DRV_OC_INDEX_0,true,OUTPUT_FUNC_OC1,OUTPUT_PIN_RPD1}, 
+#endif
             {PORTS_ID_0, DIO_1_PORT, DIO_1_PIN, PORTS_ID_0, DIO_EN_1_PORT, DIO_EN_1_PIN, true,SYS_MODULE_OBJ_INVALID,false,OUTPUT_FUNC_NO_CONNECT},
             {PORTS_ID_0, DIO_2_PORT, DIO_2_PIN, PORTS_ID_0, DIO_EN_2_PORT, DIO_EN_2_PIN, true,SYS_MODULE_OBJ_INVALID,false,OUTPUT_FUNC_NO_CONNECT},
             {PORTS_ID_0, DIO_3_PORT, DIO_3_PIN, PORTS_ID_0, DIO_EN_3_PORT, DIO_EN_3_PIN, false,DRV_OC_INDEX_5,true,OUTPUT_FUNC_OC8,OUTPUT_PIN_RPD12},
@@ -23,7 +25,12 @@ const tBoardConfig NQ1BoardConfig = {
             {PORTS_ID_0, DIO_14_PORT, DIO_14_PIN, PORTS_ID_0, DIO_EN_14_PORT, DIO_EN_14_PIN, true,SYS_MODULE_OBJ_INVALID,false,OUTPUT_FUNC_NO_CONNECT},
             {PORTS_ID_0, DIO_15_PORT, DIO_15_PIN, PORTS_ID_0, DIO_EN_15_PORT, DIO_EN_15_PIN, false,SYS_MODULE_OBJ_INVALID,false,OUTPUT_FUNC_NO_CONNECT},  
         },
+#ifdef DIO_TIMING_TEST
+        .Size = 15,
+#else
         .Size = 16,
+#endif
+        
     },
     .AInModules = {
         .Data = {

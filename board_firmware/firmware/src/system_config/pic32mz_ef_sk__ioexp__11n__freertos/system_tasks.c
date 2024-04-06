@@ -382,7 +382,7 @@ void _Streaming_Deferred_Interrupt_Task( void ){
             // TODO: Replace with ADCPrescale[i]
             if (pBoardData->AInState.Data[i].AInTaskState == AINTASK_IDLE &&\
                 pRunTimeStreamConf->StreamCount ==                          \
-                pRunTimeStreamConf->StreamCountTrigger)
+                pRunTimeStreamConf->StreamCountTrigger && pRunTimeStreamConf->IsEnabled)
             {
                 Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
             }
