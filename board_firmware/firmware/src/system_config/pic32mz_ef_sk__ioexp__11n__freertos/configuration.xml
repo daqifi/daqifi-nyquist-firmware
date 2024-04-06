@@ -1889,7 +1889,7 @@
       <Template dnOrder="2">
         <Name dnOrder="0">system_init.c</Name>
         <Path dnOrder="1">Source&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos</Path>
-        <Checksum dnOrder="2">353530E5516FE3408B42E3AF11D5A7DE</Checksum>
+        <Checksum dnOrder="2">1CD0077403D9E2AABC4BA3B3538F481D</Checksum>
         <ProjectFileChecksum dnOrder="3">C8BAACFCADCB3E81F8D30B891AC38472</ProjectFileChecksum>
       </Template>
       <Template dnOrder="3">
@@ -1968,7 +1968,6 @@
         <Name dnOrder="0">drv_oc_mapping.c</Name>
         <Path dnOrder="1">Source&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos/framework/driver/oc/src</Path>
         <Checksum dnOrder="2">14675AFFF12FF9A900017A79196CB790</Checksum>
-        <ProjectFileChecksum dnOrder="3">1908D961F1DFABD1C3A9322B41074557</ProjectFileChecksum>
       </Template>
       <Template dnOrder="18">
         <Name dnOrder="0">nvm_disk_images.h</Name>
@@ -1985,19 +1984,16 @@
         <Name dnOrder="0">drv_oc_static.c</Name>
         <Path dnOrder="1">Source&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos/framework/driver/oc/src</Path>
         <Checksum dnOrder="2">09373A249F51AFEE26A65C3FC5EDBFCE</Checksum>
-        <ProjectFileChecksum dnOrder="3">9112088427A0443A22A5548069F9EFAF</ProjectFileChecksum>
       </Template>
       <Template dnOrder="21">
         <Name dnOrder="0">drv_oc_static.h</Name>
         <Path dnOrder="1">Header&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos/framework/driver/oc</Path>
         <Checksum dnOrder="2">5E41A4D8460966802CFC8C8527CB8155</Checksum>
-        <ProjectFileChecksum dnOrder="3">BF39E71D4C20766AF77CC89AB84B2974</ProjectFileChecksum>
       </Template>
       <Template dnOrder="22">
         <Name dnOrder="0">sys_ports_static.c</Name>
         <Path dnOrder="1">Source&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos/framework/system/ports/src</Path>
         <Checksum dnOrder="2">7F7E2A272490D0415B7BB03386962DCB</Checksum>
-        <ProjectFileChecksum dnOrder="3">FA62C90CABC670E02BC2C196F084112F</ProjectFileChecksum>
       </Template>
       <Template dnOrder="23">
         <Name dnOrder="0">drv_spi_api.c</Name>
@@ -2007,13 +2003,13 @@
       <Template dnOrder="24">
         <Name dnOrder="0">system_config.h</Name>
         <Path dnOrder="1">Header&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos</Path>
-        <Checksum dnOrder="2">0FC2B4609AE06D452E8F15B97EA2A8CF</Checksum>
+        <Checksum dnOrder="2">FEC95D9A3DF4B6743CBEA9D1C471F06E</Checksum>
         <ProjectFileChecksum dnOrder="3">8D68D2BED60DD6C9DF7F22CDDD5F6B89</ProjectFileChecksum>
       </Template>
       <Template dnOrder="25">
         <Name dnOrder="0">system_interrupt_a.S</Name>
         <Path dnOrder="1">Source&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos</Path>
-        <Checksum dnOrder="2">38AA35CE134E5BD3108D4477C9E49BD8</Checksum>
+        <Checksum dnOrder="2">E1C6C72C60F1BD41C3EA96253B58DCB0</Checksum>
         <ProjectFileChecksum dnOrder="3">AD382358007F951440DA0F3278D46045</ProjectFileChecksum>
       </Template>
       <Template dnOrder="26">

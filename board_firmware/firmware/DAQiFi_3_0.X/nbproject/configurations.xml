@@ -1230,20 +1230,6 @@
       <item path="../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_announce.c"
             ex="true"
             overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
       </item>
       <item path="../../../../../framework/driver/usart/drv_usart.h"
             ex="true"
@@ -1572,7 +1558,7 @@
         <property key="enable-unroll-loops" value="false"/>
         <property key="exclude-floating-point" value="false"/>
         <property key="extra-include-directories"
-                  value="../../../../../framework;../src;../src/pic32mz_ef_sk__ioexp__11n__freertos;../src/system_config/pic32mz_ef_sk__ioexp__11n__freertos/framework;../src/system_config/pic32mz_ef_sk__ioexp__11n__freertos;../../../../../../../../microchip/harmony/v2_06/framework;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/bsp/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/bus_wrapper/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/common/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/driver/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/driver/source;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/spi_flash/include;../../../../../../../../microchip/harmony/v2_06/third_party/rtos/FreeRTOS/Source/include;../../../../../../../../microchip/harmony/v2_06/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ"/>
+                  value="../../../../../framework;../src;../src/system_config/pic32mz_ef_sk__ioexp__11n__freertos;../src/pic32mz_ef_sk__ioexp__11n__freertos;../../../../../../../../microchip/harmony/v2_06/framework;../src/system_config/pic32mz_ef_sk__ioexp__11n__freertos/framework;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/bsp/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/bus_wrapper/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/common/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/driver/include;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/driver/source;../../../../../../../../microchip/harmony/v2_06/framework/driver/wifi/winc1500/wireless_driver_extension/spi_flash/include;../../../../../../../../microchip/harmony/v2_06/third_party/rtos/FreeRTOS/Source/include;../../../../../../../../microchip/harmony/v2_06/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ"/>
         <property key="generate-16-bit-code" value="false"/>
         <property key="generate-micro-compressed-code" value="false"/>
         <property key="isolate-each-function" value="true"/>

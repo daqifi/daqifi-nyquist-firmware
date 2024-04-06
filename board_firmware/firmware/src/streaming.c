@@ -66,10 +66,14 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
     //return;
 
     Streaming_Defer_Interrupt();
-    
+    DIO_TIMING_TEST_TOGGLE_STATE();
     inHandler = false;
 }
-
+static void Streaming_DedicatedADCHandler(uintptr_t context, uint32_t alarmCount){
+    UNUSED(context);
+    UNUSED(alarmCount);
+    //DIO_TIMING_TEST_TOGGLE_STATE();
+}
 /*!
  * Starts the streaming timer
  */
@@ -83,9 +87,16 @@ static void Streaming_Start( void )
                         true,                                               \
                         0,                                                  \
                         Streaming_TimerHandler);
+       
+        DRV_TMR_AlarmRegister(                                              \
+                        pRuntimeConfigStream->DediactedADCTimerHandle,                  \
+                        pRuntimeConfigStream->DedicatedAdcClockDiv,                 \
+                        true,                                               \
+                        0,                                                  \
+                        Streaming_DedicatedADCHandler);
         
         DRV_TMR_Start(pRuntimeConfigStream->TimerHandle);
-        
+        DRV_TMR_Start(pRuntimeConfigStream->DediactedADCTimerHandle);
         pRuntimeConfigStream->Running = true;
     }
 }
@@ -118,6 +129,15 @@ void Streaming_Init(const tStreamingConfig* pStreamingConfigInit,           \
                         pConfigStream->TimerIntent);
     if( DRV_HANDLE_INVALID ==                                               \
                     pStreamingRuntimeConfigInit->TimerHandle )
+    {
+        // Client cannot open the instance.
+         SYS_DEBUG_BreakPoint();
+    }
+     pRuntimeConfigStream->DediactedADCTimerHandle = DRV_TMR_Open(                       \
+                        pConfigStream->DedicatedADCTimerIndex,                          \
+                        pConfigStream->DedicatedADCTimerIntent);
+     if( DRV_HANDLE_INVALID ==                                               \
+                    pStreamingRuntimeConfigInit->DediactedADCTimerHandle )
     {
         // Client cannot open the instance.
          SYS_DEBUG_BreakPoint();

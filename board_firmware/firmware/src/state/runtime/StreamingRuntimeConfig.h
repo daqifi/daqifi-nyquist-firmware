@@ -30,6 +30,11 @@ extern "C" {
         DRV_HANDLE TimerHandle;
         
         /**
+         * Used to access the appropriate driver
+         */
+        DRV_HANDLE DediactedADCTimerHandle;
+        
+        /**
          * Used to access the appropriate timestamp timer driver
          */
         DRV_HANDLE TSTimerHandle;
@@ -44,7 +49,7 @@ extern "C" {
          * The base clock divider
          */
         uint32_t ClockDivider;
-        
+        uint16_t DedicatedAdcClockDiv;
         /**
          * The base clock divider for the timestamp timer
          */

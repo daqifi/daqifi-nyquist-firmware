@@ -21,7 +21,16 @@ extern "C" {
          * The timer intent
          */
         DRV_IO_INTENT TimerIntent;
-         
+        
+        /**
+         *Dedicated adc timer Index
+         */
+        int DedicatedADCTimerIndex;
+         /**
+         * The timer intent
+         */
+        DRV_IO_INTENT DedicatedADCTimerIntent;
+        
         /**
          * The timestamp timer index (e.g. DRV_TMR_INDEX_1)
          */

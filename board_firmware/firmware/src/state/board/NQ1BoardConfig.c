@@ -246,6 +246,8 @@ const tBoardConfig NQ1BoardConfig = {
     .StreamingConfig = {
         .TimerIndex = DRV_TMR_INDEX_1,
         .TimerIntent = DRV_IO_INTENT_EXCLUSIVE,
+        .DedicatedADCTimerIndex=DRV_TMR_INDEX_4,
+        .DedicatedADCTimerIntent = DRV_IO_INTENT_EXCLUSIVE,
         .TSTimerIndex = DRV_TMR_INDEX_2,
         .TSTimerIntent = DRV_IO_INTENT_EXCLUSIVE,
     }

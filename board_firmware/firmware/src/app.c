@@ -254,9 +254,7 @@ void APP_Initialize(void)
 void APP_Tasks(void)
 {   
     ADC_Tasks();
-    volatile static bool state=true;
-    state=!state;
-    DIO_TIMING_TEST_WRITE_STATE(state);
+   
     Streaming_Tasks( pBoardRuntimeConfig, pBoardData);
     
     // Don't do anything else until the board powers on
