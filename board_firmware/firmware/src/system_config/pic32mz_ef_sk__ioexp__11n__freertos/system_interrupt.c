@@ -214,6 +214,7 @@ void IntHandlerDrvTmrInstance3(void)
 void IntHandlerDrvTmrInstance4(void)
 {
     DRV_TMR_Tasks(sysObj.drvTmr4);
+    _ADC_Defer_Interrupt();
 }
  
 void IntHandlerSPIRxInstance0(void)

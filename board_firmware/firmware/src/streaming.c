@@ -66,13 +66,15 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
     //return;
 
     Streaming_Defer_Interrupt();
-    DIO_TIMING_TEST_TOGGLE_STATE();
+    //DIO_TIMING_TEST_TOGGLE_STATE();
     inHandler = false;
 }
 static void Streaming_DedicatedADCHandler(uintptr_t context, uint32_t alarmCount){
     UNUSED(context);
     UNUSED(alarmCount);
-    //DIO_TIMING_TEST_TOGGLE_STATE();
+   asm( "nop ");
+    //DRV_ADC_SamplesAvailable
+    DIO_TIMING_TEST_TOGGLE_STATE();
 }
 /*!
  * Starts the streaming timer
