@@ -2050,6 +2050,7 @@
         <Name dnOrder="0">drv_adc_static.c</Name>
         <Path dnOrder="1">Source&amp;#160;Files/app/system_config/pic32mz_ef_sk__ioexp__11n__freertos/framework/driver/adc/src</Path>
         <Checksum dnOrder="2">8DA5D447FBD1A1E627ED45B7AD44CE78</Checksum>
+        <ProjectFileChecksum dnOrder="3">27548354DAF43F287FCAB61EA012F7B1</ProjectFileChecksum>
       </Template>
       <Template dnOrder="34">
         <Name dnOrder="0">drv_spi_master_dma_tasks.c</Name>

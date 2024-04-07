@@ -66,15 +66,21 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount)
     //return;
 
     Streaming_Defer_Interrupt();
+   
+   DIO_TIMING_TEST_TOGGLE_STATE();
     //DIO_TIMING_TEST_TOGGLE_STATE();
     inHandler = false;
 }
 static void Streaming_DedicatedADCHandler(uintptr_t context, uint32_t alarmCount){
     UNUSED(context);
     UNUSED(alarmCount);
+//    ADCCON3bits.ADINSEL=0;
+//    ADCCON3bits.RQCNVRT=1;
+//    DIO_TIMING_TEST_WRITE_STATE(false);
    asm( "nop ");
+   
     //DRV_ADC_SamplesAvailable
-    DIO_TIMING_TEST_TOGGLE_STATE();
+    //DIO_TIMING_TEST_TOGGLE_STATE();
 }
 /*!
  * Starts the streaming timer
@@ -98,7 +104,7 @@ static void Streaming_Start( void )
                         Streaming_DedicatedADCHandler);
         
         DRV_TMR_Start(pRuntimeConfigStream->TimerHandle);
-        DRV_TMR_Start(pRuntimeConfigStream->DediactedADCTimerHandle);
+       DRV_TMR_Start(pRuntimeConfigStream->DediactedADCTimerHandle);
         pRuntimeConfigStream->Running = true;
     }
 }

@@ -64,7 +64,7 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #include "system_definitions.h"
 
 #include "HAL/ADC.h"
-
+#include "HAL/DIO.h"
 #define UNUSED(x) (void)(x)
 
 // *****************************************************************************
@@ -330,7 +330,36 @@ void IntHandlerDrvAdcEOS(void)
     
     --(*boardDataInISR);
 }
+void IntHandlerADC_DATA0(){
+    asm( "nop ");
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA0);
+    DRV_ADC_SamplesRead(0);
+    //DIO_TIMING_TEST_WRITE_STATE(true);
+}
 
+void IntHandlerADC_DATA1(){
+    asm( "nop ");
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA1);
+    DRV_ADC_SamplesRead(1);
+}
+
+void IntHandlerADC_DATA2(){
+    asm( "nop ");
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA2);
+    DRV_ADC_SamplesRead(2);
+}
+
+void IntHandlerADC_DATA3(){
+    asm( "nop ");
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA3);
+    DRV_ADC_SamplesRead(3);
+}
+
+void IntHandlerADC_DATA4(){
+    asm( "nop ");
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA4);
+    DRV_ADC_SamplesRead(4);
+}
 void _ISR_DefaultInterrupt(void) 
 {
     SYS_DEBUG_BreakPoint();

@@ -541,6 +541,107 @@ IntVectorDrvAdcEOS:
     nop
     portRESTORE_CONTEXT
     .end	IntVectorDrvAdcEOS
+    
+/* ADC DATA 0 Interrupt */
+   .extern  IntHandlerADC_DATA0
+
+   .section	.vector_59,code, keep
+   .equ     __vector_dispatch_59, IntVectorADC_DATA0
+   .global  __vector_dispatch_59
+   .set     nomicromips
+   .set     noreorder
+   .set     nomips16
+   .set     noat
+   .ent  IntVectorADC_DATA0
+
+IntVectorADC_DATA0:
+    portSAVE_CONTEXT
+    la    s6,  IntHandlerADC_DATA0
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end	IntVectorADC_DATA0
+    
+/* ADC DATA 1 Interrupt */
+   .extern  IntHandlerADC_DATA1
+
+   .section	.vector_60,code, keep
+   .equ     __vector_dispatch_60, IntVectorADC_DATA1
+   .global  __vector_dispatch_60
+   .set     nomicromips
+   .set     noreorder
+   .set     nomips16
+   .set     noat
+   .ent  IntVectorADC_DATA1
+
+IntVectorADC_DATA1:
+    portSAVE_CONTEXT
+    la    s6,  IntHandlerADC_DATA1
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end	IntVectorADC_DATA1
+    
+    
+/* ADC DATA 2 Interrupt */
+   .extern  IntHandlerADC_DATA2
+
+   .section	.vector_61,code, keep
+   .equ     __vector_dispatch_61, IntVectorADC_DATA2
+   .global  __vector_dispatch_61
+   .set     nomicromips
+   .set     noreorder
+   .set     nomips16
+   .set     noat
+   .ent  IntVectorADC_DATA2
+
+IntVectorADC_DATA2:
+    portSAVE_CONTEXT
+    la    s6,  IntHandlerADC_DATA2
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end	IntVectorADC_DATA2
+    
+/* ADC DATA 3 Interrupt */
+   .extern  IntHandlerADC_DATA3
+
+   .section	.vector_62,code, keep
+   .equ     __vector_dispatch_62, IntVectorADC_DATA3
+   .global  __vector_dispatch_62
+   .set     nomicromips
+   .set     noreorder
+   .set     nomips16
+   .set     noat
+   .ent  IntVectorADC_DATA3
+
+IntVectorADC_DATA3:
+    portSAVE_CONTEXT
+    la    s6,  IntHandlerADC_DATA3
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end	IntVectorADC_DATA3
+    
+/* ADC DATA 4 Interrupt */
+   .extern  IntHandlerADC_DATA4
+
+   .section	.vector_63,code, keep
+   .equ     __vector_dispatch_63, IntVectorADC_DATA4
+   .global  __vector_dispatch_63
+   .set     nomicromips
+   .set     noreorder
+   .set     nomips16
+   .set     noat
+   .ent  IntVectorADC_DATA4
+
+IntVectorADC_DATA4:
+    portSAVE_CONTEXT
+    la    s6,  IntHandlerADC_DATA4
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end	IntVectorADC_DATA4
 
 /* RTCC Interrupt */
 //  Commenting out because compiler complains past version 2.10

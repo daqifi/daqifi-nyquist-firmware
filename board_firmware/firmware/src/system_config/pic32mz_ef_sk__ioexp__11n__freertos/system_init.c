@@ -1236,6 +1236,38 @@ void SYS_Initialize ( void* data )
     UNUSED(dummyADCCON2);
     PLIB_ADCHS_ScanCompleteInterruptEnable(DRV_ADC_ID_1);
     
+    
+    /*Initialize interrupts for class 1 adc*/
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN0);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA0);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA0);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA0, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA0, INT_SUBPRIORITY_LEVEL0);
+
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN1);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA1);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA1);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA1, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA1, INT_SUBPRIORITY_LEVEL0);
+    
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN2);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA2);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA2);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA2, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA2, INT_SUBPRIORITY_LEVEL0);
+    
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN3);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA3);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA3);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA3, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA3, INT_SUBPRIORITY_LEVEL0);
+    
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN4);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA4);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA4);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA4, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA4, INT_SUBPRIORITY_LEVEL0);
+    
     sysObj.drvFlash0 = DRV_FLASH_Initialize(DRV_FLASH_INDEX_0, (SYS_MODULE_INIT *)NULL);
     /* Configure the Flash Controller Interrupt Priority */
     SYS_INT_VectorPrioritySet(INT_VECTOR_FLASH, INT_PRIORITY_LEVEL4);
