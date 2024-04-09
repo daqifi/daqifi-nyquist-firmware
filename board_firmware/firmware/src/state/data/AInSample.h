@@ -90,7 +90,7 @@ extern "C" {
      * @return True on success, false on failure
      */
     bool AInSampleList_PushBack(AInSampleList* list, const AInSample* data);
-
+    bool AInSampleList_PushBackFromIsr(AInSampleList* list, const AInSample* data);
     /**
      * Removes and returns the first item in the list
      * @param list The list to modify

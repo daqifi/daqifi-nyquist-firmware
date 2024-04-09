@@ -202,6 +202,10 @@ bool MC12b_ReadSamples( AInSampleArray* samples,                            \
         {
             continue;
         }
+        if (channelConfig->Data[i].Config.MC12b.ChannelType==1)
+        {
+            continue;
+        }
         
         const AInChannel* currentChannelConfig = &channelConfig->Data[i];
         uint8_t bufIndex = currentChannelConfig->Config.MC12b.BufferIndex;

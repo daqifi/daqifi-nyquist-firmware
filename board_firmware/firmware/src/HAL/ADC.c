@@ -449,7 +449,29 @@ static uint8_t ADC_FindModuleIndex(const AInModule* pModule)
     
     return (uint8_t)-1;
 }
-
+bool ADC_ReadClass1ADCSampleFromISR(uint32_t value,uint8_t bufferIndex){
+    
+    AInSample sample;
+    bool status=false;
+    int i=0;
+    //sample.Channel=channelId;
+    sample.Timestamp=pBoardDataADC->StreamTrigStamp;
+    sample.Value=value;
+    for(i=0;i<pBoardConfigADC->AInChannels.Size;i++){
+        if(pBoardConfigADC->AInChannels.Data[i].Config.MC12b.BufferIndex==bufferIndex){
+            sample.Channel=i;
+            BoardData_Set(                                       \
+                            BOARDDATA_AIN_LATEST,                \
+                            i,                                   \
+                            &sample);
+            AInSampleList_PushBackFromIsr(NULL,&sample);
+            status=true;
+            break;
+            
+        }
+    }
+    return status;
+}
 static bool ADC_ReadSamples(                                                \
                             AInSampleArray* pSamples,                       \
                             const AInModule* module,                        \
