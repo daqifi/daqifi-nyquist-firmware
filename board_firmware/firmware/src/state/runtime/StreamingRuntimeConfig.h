@@ -49,6 +49,8 @@ extern "C" {
          * The base clock divider
          */
         uint32_t ClockDivider;
+        uint32_t SoftwareClockDiv;
+        uint32_t SoftwareClockCount;
         uint16_t DedicatedAdcClockDiv;
         /**
          * The base clock divider for the timestamp timer

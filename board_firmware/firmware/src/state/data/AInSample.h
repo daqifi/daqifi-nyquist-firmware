@@ -90,6 +90,12 @@ extern "C" {
      * @return True on success, false on failure
      */
     bool AInSampleList_PushBack(AInSampleList* list, const AInSample* data);
+    /**
+     * Adds data to the back of the list from ISR
+     * @param list The list to add to
+     * @param  data The sample to add
+     * @return True on success, false on failure
+     */
     bool AInSampleList_PushBackFromIsr(AInSampleList* list, const AInSample* data);
     /**
      * Removes and returns the first item in the list

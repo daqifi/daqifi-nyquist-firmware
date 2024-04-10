@@ -304,7 +304,6 @@ void IntHandlerUSBInstance0_USBDMA ( void )
 }
 
 void IntHandlerADC_DATA0(){
-    DIO_TIMING_TEST_WRITE_STATE(true);
     ADC_ReadClass1ADCSampleFromISR(DRV_ADC_SamplesRead(0),0);
     //DRV_ADC_SamplesRead(0);
     PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA0);
@@ -332,7 +331,6 @@ void IntHandlerADC_DATA3(){
 void IntHandlerADC_DATA4(){
     ADC_ReadClass1ADCSampleFromISR(DRV_ADC_SamplesRead(4),4);
     PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA4);
-    DIO_TIMING_TEST_WRITE_STATE(false);
 }
 
 void IntHandlerDrvAdcEOS(void)

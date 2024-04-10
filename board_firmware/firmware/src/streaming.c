@@ -48,7 +48,13 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
 
     if (inHandler) return;
     inHandler = true;
-
+    if(pRuntimeConfigStream->SoftwareClockCount<pRuntimeConfigStream->SoftwareClockDiv){
+        pRuntimeConfigStream->SoftwareClockCount++;
+    }else{
+        Streaming_Defer_Interrupt();
+        pRuntimeConfigStream->SoftwareClockCount=0;
+        DIO_TIMING_TEST_TOGGLE_STATE();
+    }
     // On a 'System' prescale match
     // - Read the latest DIO (if it's not streaming- otherwise we'll wind 
     //   up with an extra sample)
@@ -64,9 +70,9 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     //inHandler = false;
     //return;
 
-    Streaming_Defer_Interrupt();
+   
 
-    //DIO_TIMING_TEST_TOGGLE_STATE();
+    
     //DIO_TIMING_TEST_TOGGLE_STATE();
     inHandler = false;
 }

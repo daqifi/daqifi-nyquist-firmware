@@ -224,7 +224,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
                         "  {\"time\"=%u, \"mask\"=%u, \"data\"=%u},\n\r",   \
-                        data.Timestamp-state->StreamTrigStamp,              \
+                        state->StreamTrigStamp-data.Timestamp,              \
                         data.Mask,                                          \
                         data.Values);
         }
@@ -251,7 +251,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
                         "  {\"time\"=%u, \"ch\"=%u, \"data\"=%u},\n\r",     \
-                        data.Timestamp-state->StreamTrigStamp,              \
+                        state->StreamTrigStamp-data.Timestamp,              \
                         data.Channel,                                       \
                         data.Value);
         }
