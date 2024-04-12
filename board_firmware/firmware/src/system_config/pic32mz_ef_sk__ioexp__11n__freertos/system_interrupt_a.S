@@ -169,9 +169,9 @@ IntVectorDrvTmrInstance0:
 /* TMR Instance 1 Interrupt */
    .extern  IntHandlerDrvTmrInstance1
 
-   .section	.vector_19,code, keep
-   .equ     __vector_dispatch_19, IntVectorDrvTmrInstance1
-   .global  __vector_dispatch_19
+   .section	.vector_24,code, keep
+   .equ     __vector_dispatch_24, IntVectorDrvTmrInstance1
+   .global  __vector_dispatch_24
    .set     nomicromips
    .set     noreorder
    .set     nomips16
@@ -227,27 +227,6 @@ IntVectorDrvTmrInstance3:
     nop
     portRESTORE_CONTEXT
     .end	IntVectorDrvTmrInstance3
-
-
-/* TMR Instance 4 Interrupt */
-   .extern  IntHandlerDrvTmrInstance4
-
-   .section	.vector_24,code, keep
-   .equ     __vector_dispatch_24, IntVectorDrvTmrInstance4
-   .global  __vector_dispatch_24
-   .set     nomicromips
-   .set     noreorder
-   .set     nomips16
-   .set     noat
-   .ent  IntVectorDrvTmrInstance4
-
-IntVectorDrvTmrInstance4:
-    portSAVE_CONTEXT
-    la    s6,  IntHandlerDrvTmrInstance4
-    jalr  s6
-    nop
-    portRESTORE_CONTEXT
-    .end	IntVectorDrvTmrInstance4
 
 
 

@@ -27,6 +27,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         charBuffer,                                         \
                         JSON_ENCODER_BUFFER_SIZE,                           \
                         "\n\r{\n\r");
+    size_t initialOffsetIndex=startIndex;
     size_t i=0;
     bool encodeDIO = false;
     bool encodeADC = false;    
@@ -34,7 +35,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
     if( ppBuffer == NULL ){
         return 0;
     }
-    
+   
     
     for (i=0; i<fields->Size; ++i)
     {
@@ -237,23 +238,45 @@ size_t Json_Encode(     tBoardData* state,                                  \
     
     if (encodeADC)
     {
+        startIndex=initialOffsetIndex;//remove timestamp added Initially
+        bool isTimestampAdded=false;
+        uint32_t startTime=0;
         startIndex += snprintf(                                             \
                         charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
                         " \"adc\"=[\n\r");
         
+        uint32_t qSize=AInSampleList_Size(NULL);
         while (((JSON_ENCODER_BUFFER_SIZE - startIndex) >= 65) &&           \
-               (!AInSampleList_IsEmpty(&state->AInSamples)))
+               (qSize>0))
         {
             AInSample data;
             AInSampleList_PopFront(&state->AInSamples, &data);
-            startIndex += snprintf(                                         \
+            qSize--;
+             __add_time_stamp:
+            if(!isTimestampAdded){
+                startIndex += snprintf(                                     \
                         charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                        "  {\"time\"=%u, \"ch\"=%u, \"data\"=%u},\n\r",     \
-                        state->StreamTrigStamp-data.Timestamp,              \
-                        data.Channel,                                       \
-                        data.Value);
+                        " \"timestamp\"=%u,\n\r",                           \
+                        data.Timestamp);
+                isTimestampAdded=true;
+                startTime=data.Timestamp;
+            }
+            if(data.Timestamp==startTime){
+                startIndex += snprintf(                                         \
+                            charBuffer + startIndex,                            \
+                            JSON_ENCODER_BUFFER_SIZE - startIndex,              \
+                            "\"ch\"=%u, \"data\"=%u},\n\r",     \
+                            data.Channel,                                       \
+                            data.Value);
+            }
+            else{  
+                if(((JSON_ENCODER_BUFFER_SIZE - startIndex) < 65))
+                    break;
+                isTimestampAdded=false;
+                goto __add_time_stamp;
+            }    
         }
         
         startIndex += snprintf(                                             \

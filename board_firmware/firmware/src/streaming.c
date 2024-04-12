@@ -48,13 +48,23 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
 
     if (inHandler) return;
     inHandler = true;
-    if(pRuntimeConfigStream->SoftwareClockCount<pRuntimeConfigStream->SoftwareClockDiv){
-        pRuntimeConfigStream->SoftwareClockCount++;
-    }else{
-        Streaming_Defer_Interrupt();
-        pRuntimeConfigStream->SoftwareClockCount=0;
-        DIO_TIMING_TEST_TOGGLE_STATE();
+    volatile uint32_t valueTMR = DRV_TMR_CounterValueGet(pRuntimeConfigStream->TSTimerHandle);
+    BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP,0,&valueTMR ); 
+    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);  
+    volatile AInArray *pBoardConfigADC=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS,0);
+    int i=0;
+    for(i=0;i<pBoardConfigADC->Size;i++){
+        if(pBoardConfigADC->Data[i].Config.MC12b.ChannelType==1){
+            if(pRuntimeAInChannels->Data[i].IsEnabled==1){
+                ADCCON3bits.ADINSEL = pBoardConfigADC->Data[i].Config.MC12b.BufferIndex;
+                ADCCON3bits.RQCNVRT = 1;
+            } 
+            BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
+        }
     }
+    if(pRuntimeConfigStream->Frequency<=1000)
+        Streaming_Defer_Interrupt();
+ 
     // On a 'System' prescale match
     // - Read the latest DIO (if it's not streaming- otherwise we'll wind 
     //   up with an extra sample)
@@ -77,23 +87,23 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     inHandler = false;
 }
 
-static void Streaming_DedicatedADCHandler(uintptr_t context, uint32_t alarmCount) {
-    UNUSED(context);
-    UNUSED(alarmCount);
-    ADCCON3bits.ADINSEL = 0;
-    ADCCON3bits.RQCNVRT = 1;
-    ADCCON3bits.ADINSEL = 1;
-    ADCCON3bits.RQCNVRT = 1;
-    ADCCON3bits.ADINSEL = 2;
-    ADCCON3bits.RQCNVRT = 1;
-    ADCCON3bits.ADINSEL = 3;
-    ADCCON3bits.RQCNVRT = 1;
-    ADCCON3bits.ADINSEL = 4;
-    ADCCON3bits.RQCNVRT = 1;
-    asm("nop ");
-    //DIO_TIMING_TEST_WRITE_STATE(0);
-
-}
+//static void Streaming_DedicatedADCHandler(uintptr_t context, uint32_t alarmCount) {
+//    UNUSED(context);
+//    UNUSED(alarmCount);
+//    ADCCON3bits.ADINSEL = 0;
+//    ADCCON3bits.RQCNVRT = 1;
+//    ADCCON3bits.ADINSEL = 1;
+//    ADCCON3bits.RQCNVRT = 1;
+//    ADCCON3bits.ADINSEL = 2;
+//    ADCCON3bits.RQCNVRT = 1;
+//    ADCCON3bits.ADINSEL = 3;
+//    ADCCON3bits.RQCNVRT = 1;
+//    ADCCON3bits.ADINSEL = 4;
+//    ADCCON3bits.RQCNVRT = 1;
+//    asm("nop ");
+//    //DIO_TIMING_TEST_WRITE_STATE(0);
+//
+//}
 
 /*!
  * Starts the streaming timer
@@ -107,15 +117,8 @@ static void Streaming_Start(void) {
                         0,                                                  \
                         Streaming_TimerHandler);
 
-        DRV_TMR_AlarmRegister(                                              \
-                        pRuntimeConfigStream->DediactedADCTimerHandle,                  \
-                        pRuntimeConfigStream->DedicatedAdcClockDiv,                 \
-                        true,                                               \
-                        0,                                                  \
-                        Streaming_DedicatedADCHandler);
-
         DRV_TMR_Start(pRuntimeConfigStream->TimerHandle);
-        DRV_TMR_Start(pRuntimeConfigStream->DediactedADCTimerHandle);
+      
         pRuntimeConfigStream->Running = true;
     }
 }
@@ -148,14 +151,7 @@ void Streaming_Init(const tStreamingConfig* pStreamingConfigInit,           \
         // Client cannot open the instance.
         SYS_DEBUG_BreakPoint();
     }
-    pRuntimeConfigStream->DediactedADCTimerHandle = DRV_TMR_Open(                       \
-                        pConfigStream->DedicatedADCTimerIndex,                          \
-                        pConfigStream->DedicatedADCTimerIntent);
-    if (DRV_HANDLE_INVALID ==                                               \
-                    pStreamingRuntimeConfigInit->DediactedADCTimerHandle) {
-        // Client cannot open the instance.
-        SYS_DEBUG_BreakPoint();
-    }
+  
 
     pRuntimeConfigStream->Running = false;
 }

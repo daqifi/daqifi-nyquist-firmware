@@ -375,7 +375,6 @@ void _Streaming_Deferred_Interrupt_Task( void ){
 
     while( 1 ){
         ulTaskNotifyTake( pdFALSE, xBlockTime );
-
         for (i=0; i < pRunTimeAInModules->Size; ++i)
         {
             // Only trigger conversions if the previous conversion is complete
@@ -384,6 +383,7 @@ void _Streaming_Deferred_Interrupt_Task( void ){
                 pRunTimeStreamConf->StreamCount ==                          \
                 pRunTimeStreamConf->StreamCountTrigger && pRunTimeStreamConf->IsEnabled)
             {
+                
                 Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
             }
 

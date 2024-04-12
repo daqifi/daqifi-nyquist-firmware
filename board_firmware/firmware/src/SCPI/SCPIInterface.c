@@ -448,17 +448,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context)
         if (freq >= 1 && freq <= 15000)///TODO: Test higher throughput
         {
             // calculate the divider needed
-           
-            if(freq<(clkFreq/6500)){
-                pRunTimeStreamConfig->ClockDivider = 1000;
-                pRunTimeStreamConfig->SoftwareClockDiv=((clkFreq/1000)/freq)-1;
-                pRunTimeStreamConfig->SoftwareClockCount=0;
-            }else{
-                pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
-                pRunTimeStreamConfig->SoftwareClockDiv=0;
-                pRunTimeStreamConfig->SoftwareClockCount=0;
-            }
-            // Set timer to maximum period
+            pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
+            pRunTimeStreamConfig->Frequency=freq;
             pRunTimeStreamConfig->TSClockDivider = 0xFFFFFFFF; 
         }
         else

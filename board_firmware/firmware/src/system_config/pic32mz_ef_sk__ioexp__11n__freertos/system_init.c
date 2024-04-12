@@ -289,16 +289,6 @@ const DRV_TMR_INIT drvTmr3InitData =
     .interruptSource = DRV_TMR_INTERRUPT_SOURCE_IDX3,
     .asyncWriteEnable = false,
 };
-const DRV_TMR_INIT drvTmr4InitData =
-{
-    .moduleInit.sys.powerState = DRV_TMR_POWER_STATE_IDX4,
-    .tmrId = DRV_TMR_PERIPHERAL_ID_IDX4,
-    .clockSource = DRV_TMR_CLOCK_SOURCE_IDX4,
-    .prescale = DRV_TMR_PRESCALE_IDX4,
-    .mode = DRV_TMR_OPERATION_MODE_16_BIT,
-    .interruptSource = DRV_TMR_INTERRUPT_SOURCE_IDX4,
-    .asyncWriteEnable = false,
-};
 // <editor-fold defaultstate="collapsed" desc="DRV_USB Initialization Data">
 /******************************************************
  * USB Driver Initialization
@@ -1308,19 +1298,16 @@ void SYS_Initialize ( void* data )
     sysObj.drvTmr1 = DRV_TMR_Initialize(DRV_TMR_INDEX_1, (SYS_MODULE_INIT *)&drvTmr1InitData);  // DAQiFi streaming timer
     sysObj.drvTmr2 = DRV_TMR_Initialize(DRV_TMR_INDEX_2, (SYS_MODULE_INIT *)&drvTmr2InitData);  // DAQiFi streaming timestamp timer
         sysObj.drvTmr3 = DRV_TMR_Initialize(DRV_TMR_INDEX_3, (SYS_MODULE_INIT *)&drvTmr3InitData);
-    sysObj.drvTmr4 = DRV_TMR_Initialize(DRV_TMR_INDEX_4, (SYS_MODULE_INIT *)&drvTmr4InitData);
 
 
     SYS_INT_VectorPrioritySet(INT_VECTOR_T2, INT_PRIORITY_LEVEL4);
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T2, INT_SUBPRIORITY_LEVEL0);
-    SYS_INT_VectorPrioritySet(INT_VECTOR_T4, INT_PRIORITY_LEVEL3);
-    SYS_INT_VectorSubprioritySet(INT_VECTOR_T4, INT_SUBPRIORITY_LEVEL0);
+    SYS_INT_VectorPrioritySet(INT_VECTOR_T5, INT_PRIORITY_LEVEL3);
+    SYS_INT_VectorSubprioritySet(INT_VECTOR_T5, INT_SUBPRIORITY_LEVEL0);
     SYS_INT_VectorPrioritySet(INT_VECTOR_T7, INT_PRIORITY_LEVEL1);
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T7, INT_SUBPRIORITY_LEVEL0);
     SYS_INT_VectorPrioritySet(INT_VECTOR_T3, INT_PRIORITY_LEVEL4);
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T3, INT_SUBPRIORITY_LEVEL0);
-    SYS_INT_VectorPrioritySet(INT_VECTOR_T5, INT_PRIORITY_LEVEL3);
-    SYS_INT_VectorSubprioritySet(INT_VECTOR_T5, INT_SUBPRIORITY_LEVEL0);
  
  
      /* RTCC System Service Initialization Call */

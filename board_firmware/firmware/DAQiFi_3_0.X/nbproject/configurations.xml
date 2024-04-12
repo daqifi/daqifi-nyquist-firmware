@@ -1060,7 +1060,6 @@
             <itemPath>../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/http.c</itemPath>
             <itemPath>../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/icmp.c</itemPath>
             <itemPath>../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/nbns.c</itemPath>
-            <itemPath>../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_announce.c</itemPath>
             <itemPath>../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/hash_fnv.c</itemPath>
             <itemPath>../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/oahash.c</itemPath>
             <itemPath>../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_helpers.c</itemPath>
@@ -1227,24 +1226,6 @@
         <makeCustomizationEnableLongLines>false</makeCustomizationEnableLongLines>
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
-      <item path="../../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_announce.c"
-            ex="true"
-            overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <item path="../../../../../framework/driver/usart/drv_usart.h"
             ex="true"
             overriding="false">
@@ -1591,7 +1572,7 @@
         <property key="generate-micro-compressed-code" value="false"/>
         <property key="isolate-each-function" value="true"/>
         <property key="make-warnings-into-errors" value="false"/>
-        <property key="optimization-level" value=""/>
+        <property key="optimization-level" value="-O1"/>
         <property key="place-data-into-section" value="true"/>
         <property key="post-instruction-scheduling" value="default"/>
         <property key="pre-instruction-scheduling" value="default"/>
@@ -1693,7 +1674,7 @@
         <property key="generate-micro-compressed-code" value="false"/>
         <property key="isolate-each-function" value="true"/>
         <property key="make-warnings-into-errors" value="false"/>
-        <property key="optimization-level" value=""/>
+        <property key="optimization-level" value="-O1"/>
         <property key="place-data-into-section" value="false"/>
         <property key="post-instruction-scheduling" value="default"/>
         <property key="pre-instruction-scheduling" value="default"/>
