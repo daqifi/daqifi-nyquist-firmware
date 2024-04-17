@@ -8,6 +8,7 @@
 #include "Util/StringFormatters.h"
 #include "encoder.h"
 #include "JSON_Encoder.h"
+#include "../HAL/ADC.h"
 
 //! Buffer size used for streaming purposes
 #define JSON_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
@@ -239,50 +240,57 @@ size_t Json_Encode(     tBoardData* state,                                  \
     if (encodeADC)
     {
         startIndex=initialOffsetIndex;//remove timestamp added Initially
-        bool isTimestampAdded=false;
-        uint32_t startTime=0;
-        startIndex += snprintf(                                             \
-                        charBuffer + startIndex,                            \
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                        " \"adc\"=[\n\r");
-        
+        uint32_t previousTimeStamp=0;   
         uint32_t qSize=AInSampleList_Size(NULL);
         while (((JSON_ENCODER_BUFFER_SIZE - startIndex) >= 65) &&           \
                (qSize>0))
         {
-            AInSample data;
-            AInSampleList_PopFront(&state->AInSamples, &data);
-            qSize--;
-             __add_time_stamp:
-            if(!isTimestampAdded){
-                startIndex += snprintf(                                     \
-                        charBuffer + startIndex,                            \
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                        " \"timestamp\"=%u,\n\r",                           \
-                        data.Timestamp);
-                isTimestampAdded=true;
-                startTime=data.Timestamp;
+            AInSample data;           
+            if(!AInSampleList_PopFront(&state->AInSamples, &data)){
+                AInSampleList_Destroy( &state->AInSamples );
+                AInSampleList_Initialize(   &state->AInSamples,     \
+                    MAX_AIN_SAMPLE_COUNT,   \
+                    false,                  \
+                    NULL ); 
+                break;
             }
-            if(data.Timestamp==startTime){
+            qSize--;
+             __add_data_no_pop:
+            if(data.Timestamp==previousTimeStamp){
+                double voltage=(ADC_ConvertToVoltage(&data))*1000; //convert to millivolts
                 startIndex += snprintf(                                         \
                             charBuffer + startIndex,                            \
                             JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                            "\"ch\"=%u, \"data\"=%u},\n\r",     \
+                            "{\"ch\":%u, \"data\":%u},\n\r",     \
                             data.Channel,                                       \
-                            data.Value);
+                            (int)voltage);
             }
             else{  
                 if(((JSON_ENCODER_BUFFER_SIZE - startIndex) < 65))
                     break;
-                isTimestampAdded=false;
-                goto __add_time_stamp;
+                if(previousTimeStamp!=0){ //to first the first json
+                    startIndex += snprintf(                                             \
+                            charBuffer + startIndex,                            \
+                            JSON_ENCODER_BUFFER_SIZE - startIndex,              \
+                            " ],\n\r");
+                }
+                startIndex += snprintf(charBuffer + startIndex,                            \
+                        JSON_ENCODER_BUFFER_SIZE - startIndex,              \
+                        "\r\n\"timestamp\":%u,\n\r",                           \
+                        data.Timestamp);
+                startIndex += snprintf(charBuffer + startIndex,                            \
+                        JSON_ENCODER_BUFFER_SIZE - startIndex,              \
+                        " \"adc\":[\n\r");
+                previousTimeStamp=data.Timestamp;
+                goto __add_data_no_pop;
+
             }    
         }
         
         startIndex += snprintf(                                             \
                         charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                        " ],\n\r");
+                        " ]\n\r");
     }
     
     startIndex += snprintf(                                                 \

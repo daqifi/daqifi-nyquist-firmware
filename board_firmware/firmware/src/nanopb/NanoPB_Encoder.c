@@ -16,7 +16,12 @@
 #include "NanoPB_Encoder.h"
 
 //! Buffer size used for streaming purposes
-#define NANOPB_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
+#define NANOPB_ENCODER_BUFFER_SIZE                      (ENCODER_BUFFER_SIZE>1200?1200:ENCODER_BUFFER_SIZE)
+//#if ENCODER_BUFFER_SIZE >1300
+//#define NANOPB_ENCODER_BUFFER_SIZE                    1300
+//#else
+//#define NANOPB_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
+//#endif
 
 /*  TODO: Verify this length calculation is accurate.  
 **  
@@ -357,6 +362,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                         BOARDRUNTIMECONFIG_AIN_MODULES);      
     DIORuntimeArray * pRuntimeDIOChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);     
+    volatile uint32_t pBuffOffset=0; //used to pack multiple PB packets
     // If we cannot encode a whole message, bail out
     if (NANOPB_ENCODER_BUFFER_SIZE < Nanopb_EncodeLength(fields))
     {
@@ -379,44 +385,49 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
                 message.analog_in_data_count = 0;
-             
-                AInSample aInData;
-                //TODO: Send data with the same timestamp at once to save 
-                //transaction time
-                //PeekFront seemed to cause a crash.  Need to revisit.
-                //AInSampleList_PeekFront(&state->AInSamples, &aInData);
-                //uint32_t firstTimestamp = aInData.Timestamp;
-                uint32_t index = 0;
-                // As long as the time stamp matches the first of the list
-                //and array has data, pull those samples
-                //while (aInData.Timestamp == firstTimestamp && !AInSampleList_IsEmpty(&state->AInSamples))
-                while( AInSampleList_IsEmpty( &state->AInSamples ) == false ){
-                    if( AInSampleList_PopFront(&state->AInSamples, &aInData) ){
-                        message.analog_in_data[index++] = aInData.Value;
-                        message.analog_in_data_count++;
-                        // Check next value to be evaluated in the while test
-                        //AInSampleList_PeekFront(&state->AInSamples, &aInData);
-                        // Added to catch error when forcing data through 
-                        //without generating real data
-                        //if (message.analog_in_data_count++ > 16)
-                        //{
-                        //    message.analog_in_data_count = 16;
-                        //}
-                    }
-                    else{
-                        /*
-                         * Something weird happened. The Queue is not empty but there
-                         * is an error poping data from the queue.
-                         * In this case, restart the queue
-                         */
+                uint32_t qSize=AInSampleList_Size(NULL);                
+                uint32_t previousTimeStamp=0;
+                uint32_t index = 0;               
+                AInSample data;
+                while(qSize>0){                    
+                    if(!AInSampleList_PopFront(&state->AInSamples, &data)){
                         AInSampleList_Destroy( &state->AInSamples );
-                        AInSampleList_Initialize(                           \
-                                                    &state->AInSamples,     \
+                        AInSampleList_Initialize(   &state->AInSamples,     \
                                                     MAX_AIN_SAMPLE_COUNT,   \
                                                     false,                  \
-                                                    NULL );
+                                                    NULL );  
+                        asm("NOP");
+                        break;
                     }
-                }
+                    qSize--;  
+                    __add_data_no_pop:
+                    if(data.Timestamp==previousTimeStamp){
+                        message.analog_in_data[index++] = data.Value;
+                        message.analog_in_data_count++;
+                    }else{                       
+                        if(message.analog_in_data_count!=0){                        
+                            pb_ostream_t stream = pb_ostream_from_buffer(ppBuffer+pBuffOffset,NANOPB_ENCODER_BUFFER_SIZE-pBuffOffset);          
+                            bool status = pb_encode_delimited(&stream,DaqifiOutMessage_fields,&message);
+                            if(!status){
+                                return 0;
+                            }
+                            pBuffOffset+=stream.bytes_written;
+                            if ((NANOPB_ENCODER_BUFFER_SIZE-pBuffOffset) < Nanopb_EncodeLength(fields))
+                            {
+                                break;
+                            }
+                        }   
+                        index=0;                     
+                        message.analog_in_data_count=0;
+                        message.has_msg_time_stamp = true;
+                        message.msg_time_stamp = data.Timestamp;  
+                        previousTimeStamp=data.Timestamp;     
+                        goto  __add_data_no_pop;      
+                    }
+                    
+                }                
+
+                 asm("NOP");
                 break;
             case DaqifiOutMessage_analog_in_data_float_tag:
                 message.analog_in_data_float_count = 0;
@@ -1022,8 +1033,8 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
     }
 
     pb_ostream_t stream = pb_ostream_from_buffer(                           \
-                        ppBuffer,                                           \
-                        NANOPB_ENCODER_BUFFER_SIZE);
+                        ppBuffer+pBuffOffset,                                           \
+                        NANOPB_ENCODER_BUFFER_SIZE-pBuffOffset);
     
     bool status = pb_encode_delimited(                                      \
                         &stream,                                            \
@@ -1031,7 +1042,8 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                         &message);
     if (status)
     {
-        return (stream.bytes_written);
+        pBuffOffset+=stream.bytes_written;
+        return (pBuffOffset);
     }
     else
     {
