@@ -46,24 +46,35 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     UNUSED(context);
     UNUSED(alarmCount);
 
-    if (inHandler) return;
-    inHandler = true;
+    static uint64_t scanTimerCount=0;
     volatile uint32_t valueTMR = DRV_TMR_CounterValueGet(pRuntimeConfigStream->TSTimerHandle);
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP,0,&valueTMR ); 
     volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);  
     volatile AInArray *pBoardConfigADC=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS,0);
     int i=0;
+    
+    if (inHandler) return;
+    inHandler = true;
+    
     for(i=0;i<pBoardConfigADC->Size;i++){
         if(pBoardConfigADC->Data[i].Config.MC12b.ChannelType==1){
             if(pRuntimeAInChannels->Data[i].IsEnabled==1){
                 ADCCON3bits.ADINSEL = pBoardConfigADC->Data[i].Config.MC12b.BufferIndex;
                 ADCCON3bits.RQCNVRT = 1;
             } 
-            BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
+            //BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
         }
+        BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
     }
-    if(pRuntimeConfigStream->Frequency<=1000)
+    if(pRuntimeConfigStream->Frequency<=1000){
         Streaming_Defer_Interrupt();
+    }else{
+        scanTimerCount++;
+        if(scanTimerCount>=pRuntimeConfigStream->ChannelScanTimeDiv){
+            Streaming_Defer_Interrupt();
+            scanTimerCount=0;
+        }       
+    }
  
     // On a 'System' prescale match
     // - Read the latest DIO (if it's not streaming- otherwise we'll wind 

@@ -269,6 +269,9 @@ void ADC_ConversionComplete(const AInModule* module)
         {   
             // If the current module is the internal ADC then check to see
             //if the channel is public
+            volatile  uint32_t *timeStamp=(uint32_t*)BoardData_Get(BOARDDATA_AIN_LATEST_TIMESTAMP, samples.Data[i].Channel);
+            if(timeStamp!=NULL)
+                samples.Data[i].Timestamp=*timeStamp;
             if (moduleId == AIn_MC12bADC) 
             {
                 if (channel->Config.MC12b.IsPublic)

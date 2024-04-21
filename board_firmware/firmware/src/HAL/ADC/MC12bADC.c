@@ -10,6 +10,7 @@
 #include "system_config.h"
 #include "framework/driver/adc/drv_adc_static.h"
 #include "Util/Delay.h"
+#include "state/data/BoardData.h"
 
 //#define UNUSED(x) (void)(x)
 #define UNUSED(identifier) /* identifier */
@@ -204,7 +205,7 @@ bool MC12b_ReadSamples( AInSampleArray* samples,                            \
         }
         if (channelConfig->Data[i].Config.MC12b.ChannelType==1)
         {
-            continue;
+            continue;  //dedicated channels are handled separately
         }
         
         const AInChannel* currentChannelConfig = &channelConfig->Data[i];
@@ -216,8 +217,9 @@ bool MC12b_ReadSamples( AInSampleArray* samples,                            \
         
         AInSample* sample = &samples->Data[samples->Size];
         sample->Channel = channelConfig->Data[i].ChannelId;
-        sample->Timestamp = triggerTimeStamp;   // We are using the module trigger timestamp here to allow streaming to know which are part of the same set
         volatile uint32_t data = DRV_ADC_SamplesRead(bufIndex);
+        //volatile  uint32_t *timeStamp=(uint32_t*)BoardData_Get(BOARDDATA_AIN_LATEST_TIMESTAMP,sample->Channel);
+        //sample->Timestamp=*timeStamp;
         sample->Value = data; // The XYZ_ConvertToVoltage functions are called downstream for conversion (FPU doesn't work in an ISR)
         
         samples->Size += 1;

@@ -16,7 +16,7 @@
 #include "NanoPB_Encoder.h"
 
 //! Buffer size used for streaming purposes
-#define NANOPB_ENCODER_BUFFER_SIZE                      (ENCODER_BUFFER_SIZE>1200?1200:ENCODER_BUFFER_SIZE)
+#define NANOPB_ENCODER_BUFFER_SIZE                      (ENCODER_BUFFER_SIZE>1350?1350:ENCODER_BUFFER_SIZE)
 //#if ENCODER_BUFFER_SIZE >1300
 //#define NANOPB_ENCODER_BUFFER_SIZE                    1300
 //#else
