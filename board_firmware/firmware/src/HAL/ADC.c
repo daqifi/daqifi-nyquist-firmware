@@ -164,12 +164,12 @@ bool ADC_TriggerConversion(const AInModule* module)
                             &state );
     
     // Set streaming trigger timestamp
-    valueTMR = DRV_TMR_CounterValueGet(                                     \
-                        pBoardRuntimeConfigADC->StreamingConfig.TSTimerHandle);
-    BoardData_Set(                                                          \
-                        BOARDDATA_STREAMING_TIMESTAMP,                      \
-                        0,                                                  \
-                        &valueTMR ); 
+//    valueTMR = DRV_TMR_CounterValueGet(                                     \
+//                        pBoardRuntimeConfigADC->StreamingConfig.TSTimerHandle);
+//    BoardData_Set(                                                          \
+//                        BOARDDATA_STREAMING_TIMESTAMP,                      \
+//                        0,                                                  \
+//                        &valueTMR ); 
     switch(module->Type)
     {
     case AIn_MC12bADC:
@@ -269,6 +269,9 @@ void ADC_ConversionComplete(const AInModule* module)
         {   
             // If the current module is the internal ADC then check to see
             //if the channel is public
+            volatile  uint32_t *timeStamp=(uint32_t*)BoardData_Get(BOARDDATA_AIN_LATEST_TIMESTAMP, samples.Data[i].Channel);
+            if(timeStamp!=NULL)
+                samples.Data[i].Timestamp=*timeStamp;
             if (moduleId == AIn_MC12bADC) 
             {
                 if (channel->Config.MC12b.IsPublic)
@@ -449,7 +452,31 @@ static uint8_t ADC_FindModuleIndex(const AInModule* pModule)
     
     return (uint8_t)-1;
 }
-
+bool ADC_ReadClass1ADCSampleFromISR(uint32_t value,uint8_t bufferIndex){
+    
+    AInSample sample;
+    bool status=false;
+    int i=0;
+    //sample.Channel=channelId;
+    
+    sample.Value=value;
+    for(i=0;i<pBoardConfigADC->AInChannels.Size;i++){
+        if(pBoardConfigADC->AInChannels.Data[i].Config.MC12b.BufferIndex==bufferIndex){
+            volatile  uint32_t *timeStamp=(uint32_t*)BoardData_Get(BOARDDATA_AIN_LATEST_TIMESTAMP,i);
+            sample.Timestamp=*timeStamp;
+            sample.Channel=i;
+            BoardData_Set(                                       \
+                            BOARDDATA_AIN_LATEST,                \
+                            i,                                   \
+                            &sample);
+            AInSampleList_PushBackFromIsr(NULL,&sample);
+            status=true;
+            break;
+            
+        }
+    }
+    return status;
+}
 static bool ADC_ReadSamples(                                                \
                             AInSampleArray* pSamples,                       \
                             const AInModule* module,                        \

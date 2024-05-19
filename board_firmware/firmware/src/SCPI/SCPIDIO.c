@@ -75,6 +75,13 @@ static scpi_result_t SCPI_GPIOSingleStateGet(uint8_t id, bool* result);
  */
 static scpi_result_t SCPI_GPIOMultiStateGet(uint32_t* result);
 
+/**
+ * Enables the 
+ * @param mask A mask where each bit corresponds to the pin with the given id (BIT(1) == PIN(1))
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value);
+
 scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
 {
     int param1, param2;
@@ -214,6 +221,128 @@ scpi_result_t SCPI_GPIOEnableGet(scpi_t * context)
     return SCPI_RES_OK;
 }
 
+
+scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
+    int param1, param2;
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (!SCPI_ParamInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    return SCPI_PWMSingleStateSet((uint8_t)param1, (bool)param2);
+    return SCPI_RES_OK;
+   
+}
+scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){
+    int param1;
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if(param1>=pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    uint32_t pwmEnable=pRunTimeDIOChannels->Data[param1].IsPwmActive;
+    SCPI_ResultUInt32(context,pwmEnable);
+    return SCPI_RES_OK;
+}
+scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
+    uint32_t param1,param2;
+    int i;
+    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3);
+    if (!SCPI_ParamUInt32(context, &param1, FALSE))
+    {
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamUInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    if(param2>timerClock || param2<=0)
+    {
+        return SCPI_RES_ERR;
+    }
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
+    for(i=0;i<pRunTimeDIOChannels->Size;i++){
+        pRunTimeDIOChannels->Data[i].PwmFrequency=param2;
+    }
+    //updating frequency for one channel means updating frequency of all the channels
+    DIO_PWMFrequencySet(param1);
+    //update the duty cycle period register of all the channels based on the new frequency
+    for(i=0;i<pRunTimeDIOChannels->Size;i++){
+        DIO_PWMDutyCycleSetSingle(i);
+    }   
+    return SCPI_RES_OK;
+}
+scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){
+    int param1;
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if(param1>=pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    uint32_t freq=pRunTimeDIOChannels->Data[param1].PwmFrequency;
+    SCPI_ResultUInt32(context,freq);
+    return SCPI_RES_OK;
+}
+scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
+    
+    uint32_t param1, param2;
+    DIORuntimeArray * pRunTimeDIOChannels;
+    if (!SCPI_ParamUInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (!SCPI_ParamUInt32(context, &param2, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    pRunTimeDIOChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    if(param1>pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    if(param2>100){
+        return SCPI_RES_ERR;
+    }
+    
+    pRunTimeDIOChannels->Data[param1].PwmDutyCycle=param2;    
+    DIO_PWMDutyCycleSetSingle(param1);
+    return SCPI_RES_OK;
+}
+scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){
+    int param1;
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if(param1>=pRunTimeDIOChannels->Size){
+        return SCPI_RES_ERR;
+    }
+    uint32_t duty=pRunTimeDIOChannels->Data[param1].PwmDutyCycle;
+    SCPI_ResultUInt32(context,duty);
+    return SCPI_RES_OK;
+
+}
+
 ////////
 // Internal Implementation
 ////////
@@ -319,6 +448,7 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
     
     return SCPI_RES_OK;
 }
+ 
 
 static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
 {
@@ -376,3 +506,29 @@ static scpi_result_t SCPI_GPIOMultiStateGet(uint32_t* result)
     (*result)=sample.Values;
     return SCPI_RES_OK;
 }
+
+
+static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
+{
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    if ( id > pRunTimeDIOChannels->Size)
+    {
+        return SCPI_RES_ERR;
+    }
+    if(value){
+        pRunTimeDIOChannels->Data[id].Value=1;
+        pRunTimeDIOChannels->Data[id].IsPwmActive=1;
+    }
+    else{
+        pRunTimeDIOChannels->Data[id].Value=0;
+        pRunTimeDIOChannels->Data[id].IsPwmActive=0;
+    }
+    if (!DIO_PWMWriteStateSingle(id))
+    {
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+

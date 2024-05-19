@@ -55,7 +55,8 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
      
  
  
- #include "system/devcon/sys_devcon.h"
+ #include "driver/oc/drv_oc.h" 
+#include "system/devcon/sys_devcon.h"
       #include "system/reset/sys_reset.h"
       #include "system/rtcc/sys_rtcc.h"
 #include "system/clk/sys_clk.h"
@@ -65,7 +66,9 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/console/sys_console.h"
 #include "system/random/sys_random.h"
-#include "system/fs/mpfs/mpfs.h"
+#include "system/fs/fat_fs/src/file_system/ff.h"
+#include "system/fs/fat_fs/src/file_system/ffconf.h"
+#include "system/fs/fat_fs/src/hardware_access/diskio.h"
 #include "system/tmr/sys_tmr.h"
 #include "driver/adc/drv_adc_static.h"
 #include "driver/tmr/drv_tmr.h"
@@ -128,6 +131,7 @@ typedef struct
     SYS_MODULE_OBJ  drvTmr0;
     SYS_MODULE_OBJ  drvTmr1;
     SYS_MODULE_OBJ  drvTmr2;
+    SYS_MODULE_OBJ  drvTmr3;
 
     SYS_MODULE_OBJ  drvI2C0;
     SYS_MODULE_OBJ  drvNvm;

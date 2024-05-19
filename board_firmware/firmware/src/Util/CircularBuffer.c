@@ -65,7 +65,7 @@ uint16_t CircularBuf_NumBytesAvailable(CircularBuf* cirbuf)
 
 uint16_t CircularBuf_NumBytesFree(CircularBuf* cirbuf)
 {
-    return (cirbuf->buf_size - 0);//CircularBuf_NumBytesAvailable(cirbuf));
+    return (cirbuf->buf_size - CircularBuf_NumBytesAvailable(cirbuf));
 }
 
 

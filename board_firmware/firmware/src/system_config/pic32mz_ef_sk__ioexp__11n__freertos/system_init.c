@@ -186,15 +186,15 @@ const DRV_NVM_INIT drvNvmInit =
 // <editor-fold defaultstate="collapsed" desc="DRV_SDCARD Initialization Data">
 /*** SDCARD Driver Initialization Data ***/
 
-//const DRV_SDCARD_INIT drvSDCardInit =
-//{
-//    .spiId = SPI_ID_4,
-//    .spiIndex = 0,
-//    .sdcardSpeedHz = 8000000,
-//    .spiClk = CLK_BUS_PERIPHERAL_2,
-//    .chipSelectPort = PORT_CHANNEL_D,
-//    .chipSelectBitPosition = PORTS_BIT_POS_9,
-//};
+const DRV_SDCARD_INIT drvSDCardInit =
+{
+    .spiId = SPI_ID_4,
+    .spiIndex = 0,
+    .sdcardSpeedHz = 20000000,
+    .spiClk = CLK_BUS_PERIPHERAL_2,
+    .chipSelectPort = PORT_CHANNEL_D,
+    .chipSelectBitPosition = PORTS_BIT_POS_9,
+};
 // </editor-fold>
 // <editor-fold defaultstate="collapsed" desc="DRV_SPI Initialization Data"> 
  /*** SPI Driver Initialization Data ***/
@@ -277,6 +277,16 @@ const DRV_TMR_INIT drvTmr2InitData =
     .prescale = DRV_TMR_PRESCALE_IDX2,
     .mode = DRV_TMR_OPERATION_MODE_IDX2,
     .interruptSource = DRV_TMR_INTERRUPT_SOURCE_IDX2,
+    .asyncWriteEnable = false,
+};
+const DRV_TMR_INIT drvTmr3InitData =
+{
+    .moduleInit.sys.powerState = DRV_TMR_POWER_STATE_IDX3,
+    .tmrId = DRV_TMR_PERIPHERAL_ID_IDX3,
+    .clockSource = DRV_TMR_CLOCK_SOURCE_IDX3,
+    .prescale = DRV_TMR_PRESCALE_IDX3,
+    .mode = DRV_TMR_OPERATION_MODE_16_BIT,
+    .interruptSource = DRV_TMR_INTERRUPT_SOURCE_IDX3,
     .asyncWriteEnable = false,
 };
 // <editor-fold defaultstate="collapsed" desc="DRV_USB Initialization Data">
@@ -508,14 +518,14 @@ const SYS_FS_MEDIA_MOUNT_DATA sysfsMountTable[SYS_FS_VOLUME_NUMBER] =
 
 
 
+
 const SYS_FS_REGISTRATION_TABLE sysFSInit [ SYS_FS_MAX_FILE_SYSTEM_TYPE ] =
 {
     {
-        .nativeFileSystemType = MPFS2,
-        .nativeFileSystemFunctions = &MPFSFunctions
+        .nativeFileSystemType = FAT,
+        .nativeFileSystemFunctions = &FatFsFunctions
     }
 };
-
 // </editor-fold>
 // <editor-fold defaultstate="collapsed" desc="SYS_TMR Initialization Data">
 /*** TMR Service Initialization Data ***/
@@ -1216,6 +1226,38 @@ void SYS_Initialize ( void* data )
     UNUSED(dummyADCCON2);
     PLIB_ADCHS_ScanCompleteInterruptEnable(DRV_ADC_ID_1);
     
+    
+    /*Initialize interrupts for class 1 adc*/
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN0);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA0);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA0);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA0, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA0, INT_SUBPRIORITY_LEVEL0);
+
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN1);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA1);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA1);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA1, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA1, INT_SUBPRIORITY_LEVEL0);
+    
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN2);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA2);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA2);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA2, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA2, INT_SUBPRIORITY_LEVEL0);
+    
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN3);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA3);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA3);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA3, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA3, INT_SUBPRIORITY_LEVEL0);
+    
+    PLIB_ADCHS_AnalogInputDataReadyInterruptEnable(DRV_ADC_ID_1, ADCHS_CLASS12_AN4);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA4);
+    PLIB_INT_SourceEnable(INT_ID_0,INT_SOURCE_ADC_1_DATA4);
+    PLIB_INT_VectorPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA4, INT_PRIORITY_LEVEL3);
+    PLIB_INT_VectorSubPrioritySet(INT_ID_0, INT_SOURCE_ADC_1_DATA4, INT_SUBPRIORITY_LEVEL0);
+    
     sysObj.drvFlash0 = DRV_FLASH_Initialize(DRV_FLASH_INDEX_0, (SYS_MODULE_INIT *)NULL);
     /* Configure the Flash Controller Interrupt Priority */
     SYS_INT_VectorPrioritySet(INT_VECTOR_FLASH, INT_PRIORITY_LEVEL4);
@@ -1223,7 +1265,14 @@ void SYS_Initialize ( void* data )
     SYS_INT_VectorSubprioritySet(INT_VECTOR_FLASH, INT_SUBPRIORITY_LEVEL0);
     /* Initialize the NVM Driver */
     sysObj.drvNvm = DRV_NVM_Initialize(DRV_NVM_INDEX_0, (SYS_MODULE_INIT *)&drvNvmInit);
-//    sysObj.drvSDCard = DRV_SDCARD_Initialize(DRV_SDCARD_INDEX_0,(SYS_MODULE_INIT *)&drvSDCardInit);
+    /* Initialize the OC Driver */
+    DRV_OC0_Initialize();
+    DRV_OC1_Initialize();
+    DRV_OC2_Initialize();
+    DRV_OC3_Initialize();
+    DRV_OC4_Initialize();
+    DRV_OC5_Initialize();
+    sysObj.drvSDCard = DRV_SDCARD_Initialize(DRV_SDCARD_INDEX_0,(SYS_MODULE_INIT *)&drvSDCardInit);
 
     /*** SPI Driver Index 0 initialization***/
 
@@ -1248,6 +1297,7 @@ void SYS_Initialize ( void* data )
     sysObj.drvTmr0 = DRV_TMR_Initialize(DRV_TMR_INDEX_0, (SYS_MODULE_INIT *)&drvTmr0InitData);  // System timer service
     sysObj.drvTmr1 = DRV_TMR_Initialize(DRV_TMR_INDEX_1, (SYS_MODULE_INIT *)&drvTmr1InitData);  // DAQiFi streaming timer
     sysObj.drvTmr2 = DRV_TMR_Initialize(DRV_TMR_INDEX_2, (SYS_MODULE_INIT *)&drvTmr2InitData);  // DAQiFi streaming timestamp timer
+        sysObj.drvTmr3 = DRV_TMR_Initialize(DRV_TMR_INDEX_3, (SYS_MODULE_INIT *)&drvTmr3InitData);
 
 
     SYS_INT_VectorPrioritySet(INT_VECTOR_T2, INT_PRIORITY_LEVEL4);
@@ -1256,6 +1306,8 @@ void SYS_Initialize ( void* data )
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T5, INT_SUBPRIORITY_LEVEL0);
     SYS_INT_VectorPrioritySet(INT_VECTOR_T7, INT_PRIORITY_LEVEL1);
     SYS_INT_VectorSubprioritySet(INT_VECTOR_T7, INT_SUBPRIORITY_LEVEL0);
+    SYS_INT_VectorPrioritySet(INT_VECTOR_T3, INT_PRIORITY_LEVEL4);
+    SYS_INT_VectorSubprioritySet(INT_VECTOR_T3, INT_SUBPRIORITY_LEVEL0);
  
  
      /* RTCC System Service Initialization Call */
@@ -1308,11 +1360,11 @@ void SYS_Initialize ( void* data )
     sysObj.sysTmr  = SYS_TMR_Initialize(SYS_TMR_INDEX_0, (const SYS_MODULE_INIT  * const)&sysTmrInitData);
 
     /* Initialize Middleware */
-    sysObj.netPres = NET_PRES_Initialize(0, (SYS_MODULE_INIT*)&netPresInitData);
+    //sysObj.netPres = NET_PRES_Initialize(0, (SYS_MODULE_INIT*)&netPresInitData);
 
     /* TCPIP Stack Initialization */
-    sysObj.tcpip = TCPIP_STACK_Init();
-    SYS_ASSERT(sysObj.tcpip != SYS_MODULE_OBJ_INVALID, "TCPIP_STACK_Init Failed" );
+//    sysObj.tcpip = TCPIP_STACK_Init();
+//    SYS_ASSERT(sysObj.tcpip != SYS_MODULE_OBJ_INVALID, "TCPIP_STACK_Init Failed" );
 
     /* Initialize the USB device layer */
     sysObj.usbDevObject0 = USB_DEVICE_Initialize (USB_DEVICE_INDEX_0 , ( SYS_MODULE_INIT* ) & usbDevInitData);

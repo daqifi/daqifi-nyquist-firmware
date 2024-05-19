@@ -12,6 +12,7 @@
 #ifndef __BOARDCONFIG_H__
 #define __BOARDCONFIG_H__
 
+#define DIO_TIMING_TEST
 #include "AInConfig.h"
 #include "DIOConfig.h"
 #include "StreamingConfig.h"

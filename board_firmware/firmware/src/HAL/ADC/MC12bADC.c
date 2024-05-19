@@ -10,6 +10,7 @@
 #include "system_config.h"
 #include "framework/driver/adc/drv_adc_static.h"
 #include "Util/Delay.h"
+#include "state/data/BoardData.h"
 
 //#define UNUSED(x) (void)(x)
 #define UNUSED(identifier) /* identifier */
@@ -85,7 +86,7 @@ bool MC12b_WriteModuleState( void )
         DRV_ADC2_Close();
         DRV_ADC3_Close();
         DRV_ADC4_Close();
-        DRV_ADC5_Close();
+       // DRV_ADC5_Close();
         
         /* Enable clock to analog circuit */
         ADCANCONbits.ANEN0 = 1; // Enable the clock to analog bias
@@ -93,7 +94,7 @@ bool MC12b_WriteModuleState( void )
         ADCANCONbits.ANEN2 = 1; // Enable the clock to analog bias
         ADCANCONbits.ANEN3 = 1; // Enable the clock to analog bias
         ADCANCONbits.ANEN4 = 1; // Enable the clock to analog bias
-        ADCANCONbits.ANEN7 = 1; // Enable the clock to analog bias
+        //ADCANCONbits.ANEN7 = 1; // Enable the clock to analog bias
         
         isEnabled = false;
     }
@@ -202,6 +203,10 @@ bool MC12b_ReadSamples( AInSampleArray* samples,                            \
         {
             continue;
         }
+        if (channelConfig->Data[i].Config.MC12b.ChannelType==1)
+        {
+            continue;  //dedicated channels are handled separately
+        }
         
         const AInChannel* currentChannelConfig = &channelConfig->Data[i];
         uint8_t bufIndex = currentChannelConfig->Config.MC12b.BufferIndex;
@@ -212,8 +217,9 @@ bool MC12b_ReadSamples( AInSampleArray* samples,                            \
         
         AInSample* sample = &samples->Data[samples->Size];
         sample->Channel = channelConfig->Data[i].ChannelId;
-        sample->Timestamp = triggerTimeStamp;   // We are using the module trigger timestamp here to allow streaming to know which are part of the same set
         volatile uint32_t data = DRV_ADC_SamplesRead(bufIndex);
+        //volatile  uint32_t *timeStamp=(uint32_t*)BoardData_Get(BOARDDATA_AIN_LATEST_TIMESTAMP,sample->Channel);
+        //sample->Timestamp=*timeStamp;
         sample->Value = data; // The XYZ_ConvertToVoltage functions are called downstream for conversion (FPU doesn't work in an ISR)
         
         samples->Size += 1;

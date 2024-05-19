@@ -47,6 +47,65 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 
 const char BOARD_HARDWARE_REV[16] = "2.0.0";
 const char BOARD_FIRMWARE_REV[16] = "1.0.3";
+
+#define DATA_BUFFER_ALIGN             __attribute__((aligned(32)))
+typedef enum
+{
+	/* Application's state machine's initial state. */
+	/* The app mounts the disk */
+    APP_SD_MOUNT_DISK = 0,
+
+	/* The app unmounts the disk */
+    APP_SD_UNMOUNT_DISK,
+
+	/* The app mounts the disk again */
+    APP_SD_MOUNT_DISK_AGAIN,
+
+        /* Set the current drive */
+    APP_SD_SET_CURRENT_DRIVE,
+
+	/* The app opens the file to read */
+    APP_SD_OPEN_FIRST_FILE,
+
+        /* Create directory */
+    APP_SD_CREATE_DIRECTORY,
+
+        /* The app opens the file to write */
+    APP_SD_OPEN_SECOND_FILE,
+
+    /* The app reads from a file and writes to another file */
+    APP_SD_READ_WRITE_TO_FILE,
+
+    /* The app closes the file*/
+    APP_SD_CLOSE_FILE,
+
+    /* The app closes the file and idles */
+    APP_SD_IDLE,
+
+    /* An app error has occurred */
+    APP_SD_ERROR
+
+} APP_SD_STATES;
+typedef struct
+{
+    /* SYS_FS File handle for 1st file */
+    SYS_FS_HANDLE      fileHandle;
+
+    /* SYS_FS File handle for 2nd file */
+    SYS_FS_HANDLE      fileHandle1;
+
+    /* Application's current state */
+    APP_SD_STATES         state;
+    
+    /* Application data buffer */
+    uint32_t           data[256] DATA_BUFFER_ALIGN;
+
+    uint32_t           nBytesWritten;
+
+    uint32_t           nBytesRead;
+} APP_SD_DATA;
+APP_SD_DATA __attribute__((coherent, aligned(16))) appSdData;
+
 #define BOARD_VARIANT       1
 
 #define UNUSED(x) (void)(x)
@@ -131,7 +190,7 @@ void APP_Initialize(void)
 {
     DaqifiSettings tmpTopLevelSettings;    
     DaqifiSettings tmpWifiSettings;
-    
+    appSdData.state=APP_SD_MOUNT_DISK;
     pBoardData = BoardData_Get(                                             \
                             BOARDDATA_ALL_DATA,                             \
                             0);
@@ -241,23 +300,194 @@ void APP_Initialize(void)
                 pBoardConfig,                                               \
                 pBoardRuntimeConfig,                                        \
                 pBoardData );
+    
+   DIO_TIMING_TEST_INIT();
+//    PLIB_PORTS_PinWrite(PORTS_ID_0,DIO_EN_0_PORT,DIO_EN_0_PIN,true ); 
+//    PLIB_PORTS_PinWrite(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN,false );   
+//    PLIB_PORTS_PinDirectionOutputSet(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN );
+   
 }
 
 /*! This function manage the application tasks. 
  */
+
+void APP_SD_Tasks ( void )
+{
+    /* The application task state machine */
+    switch(appSdData.state)
+    {
+        case APP_SD_MOUNT_DISK:
+            if(SYS_FS_Mount("/dev/mmcblka1", "/mnt/myDrive", FAT, 0, NULL) != 0)
+            {
+                /* The disk could not be mounted. Try
+                 * mounting again untill success. */
+
+                appSdData.state = APP_SD_MOUNT_DISK;
+            }
+            else
+            {
+                /* Mount was successful. Unmount the disk, for testing. */
+
+                appSdData.state = APP_SD_UNMOUNT_DISK;
+            }
+            break;
+
+        case APP_SD_UNMOUNT_DISK:
+            if(SYS_FS_Unmount("/mnt/myDrive") != 0)
+            {
+                /* The disk could not be un mounted. Try
+                 * un mounting again untill success. */
+
+                appSdData.state = APP_SD_UNMOUNT_DISK;
+            }
+            else
+            {
+                /* UnMount was successful. Mount the disk again */
+
+                appSdData.state = APP_SD_MOUNT_DISK_AGAIN;
+            }
+            break;
+
+        case APP_SD_MOUNT_DISK_AGAIN:
+            if(SYS_FS_Mount("/dev/mmcblka1", "/mnt/myDrive", FAT, 0, NULL) != 0)
+            {
+                /* The disk could not be mounted. Try
+                 * mounting again untill success. */
+
+                appSdData.state = APP_SD_MOUNT_DISK_AGAIN;
+            }
+            else
+            {
+                /* Mount was successful. Set current drive so that we do not have to use absolute path. */
+
+                appSdData.state = APP_SD_SET_CURRENT_DRIVE;
+            }
+            break;
+
+        case APP_SD_SET_CURRENT_DRIVE:
+            if(SYS_FS_CurrentDriveSet("/mnt/myDrive") == SYS_FS_RES_FAILURE)
+            {
+                /* Error while setting current drive */
+                appSdData.state = APP_SD_ERROR;
+            }
+            else
+            {
+                /* Open a file for reading. */
+                appSdData.state = APP_SD_OPEN_FIRST_FILE;
+            }
+
+        case APP_SD_OPEN_FIRST_FILE:
+            appSdData.fileHandle = SYS_FS_FileOpen("FILE_TOO_LONG_NAME_EXAMPLE_123.JPG",
+                    (SYS_FS_FILE_OPEN_READ));
+            if(appSdData.fileHandle == SYS_FS_HANDLE_INVALID)
+            {
+                /* Could not open the file. Error out*/
+                appSdData.state = APP_SD_ERROR;
+            }
+            else
+            {
+                /* Create a directory. */
+                appSdData.state = APP_SD_CREATE_DIRECTORY;
+            }
+            break;
+
+        case APP_SD_CREATE_DIRECTORY:
+            if(SYS_FS_DirectoryMake("Dir1") == SYS_FS_RES_FAILURE)
+            {
+                /* Error while setting current drive */
+                appSdData.state = APP_SD_ERROR;
+            }
+            else
+            {
+                /* Open a second file for writing. */
+                appSdData.state = APP_SD_OPEN_SECOND_FILE;
+            }
+            break;
+
+        case APP_SD_OPEN_SECOND_FILE:
+            /* Open a second file inside "Dir1" */
+            appSdData.fileHandle1 = SYS_FS_FileOpen("Dir1/FILE_TOO_LONG_NAME_EXAMPLE_123_1.JPG",
+                    (SYS_FS_FILE_OPEN_WRITE));
+
+            if(appSdData.fileHandle1 == SYS_FS_HANDLE_INVALID)
+            {
+                /* Could not open the file. Error out*/
+                appSdData.state = APP_SD_ERROR;
+            }
+            else
+            {
+                /* Read from one file and write to another file */
+                appSdData.state = APP_SD_READ_WRITE_TO_FILE;
+            }
+
+        case APP_SD_READ_WRITE_TO_FILE:
+
+            if(SYS_FS_FileRead(appSdData.fileHandle, (void *)appSdData.data, 512) == -1)
+            {
+                /* There was an error while reading the file.
+                 * Close the file and error out. */
+
+                SYS_FS_FileClose(appSdData.fileHandle);
+                appSdData.state = APP_SD_ERROR;
+            }
+            else
+            {
+                /* If read was success, try writing to the new file */
+                if(SYS_FS_FileWrite(appSdData.fileHandle1, (const void *)appSdData.data, 512) == -1)
+                {
+                    /* Write was not successful. Close the file
+                     * and error out.*/
+                    SYS_FS_FileClose(appSdData.fileHandle1);
+                    appSdData.state = APP_SD_ERROR;
+                }
+                else if(SYS_FS_FileEOF(appSdData.fileHandle) == 1)    /* Test for end of file */
+                {
+                    /* Continue the read and write process, untill the end of file is reached */
+
+                    appSdData.state = APP_SD_CLOSE_FILE;
+                }
+            }
+            break;
+
+        case APP_SD_CLOSE_FILE:
+            /* Close both files */
+            SYS_FS_FileClose(appSdData.fileHandle);
+            SYS_FS_FileClose(appSdData.fileHandle1);
+             /* The test was successful. Lets idle. */
+            appSdData.state = APP_SD_IDLE;
+            break;
+
+        case APP_SD_IDLE:
+            /* The appliction comes here when the demo
+             * has completed successfully. Switch on
+             * green LED. */
+            //BSP_LEDOn(APP_SUCCESS_LED);
+            break;
+        case APP_SD_ERROR:
+            /* The appliction comes here when the demo
+             * has failed. Switch on the red LED.*/
+            //BSP_LEDOn(APP_FAILURE_LED);
+            break;
+        default:
+            break;
+
+    }
+
+} //End of APP_Tasks
 void APP_Tasks(void)
 {   
     ADC_Tasks();
-    
+   
     Streaming_Tasks( pBoardRuntimeConfig, pBoardData);
+    
     
     // Don't do anything else until the board powers on
     if (pBoardData->PowerData.powerState < POWERED_UP)
     {
         return;
     }
-
-    WifiTasks();
+    APP_SD_Tasks();
+    //WifiTasks();
 
 }
 

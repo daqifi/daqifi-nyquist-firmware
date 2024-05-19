@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
     
-#define USB_WBUFFER_SIZE 2048
+#define USB_WBUFFER_SIZE 5000
 #define USB_RBUFFER_SIZE 512 // 32 * 64
 /**
  * State machine states

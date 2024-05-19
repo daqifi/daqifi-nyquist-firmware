@@ -64,7 +64,7 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #include "system_definitions.h"
 
 #include "HAL/ADC.h"
-
+#include "HAL/DIO.h"
 #define UNUSED(x) (void)(x)
 
 // *****************************************************************************
@@ -207,6 +207,10 @@ void IntHandlerDrvTmrInstance2(void)
     DRV_TMR_Tasks(sysObj.drvTmr2);
     --(*boardDataInISR);
 }
+void IntHandlerDrvTmrInstance3(void)
+{
+    DRV_TMR_Tasks(sysObj.drvTmr3);
+}
  
 void IntHandlerSPIRxInstance0(void)
 {
@@ -292,6 +296,36 @@ void IntHandlerUSBInstance0_USBDMA ( void )
     ++(*boardDataInISR);
     DRV_USBHS_Tasks_ISR_USBDMA(sysObj.drvUSBObject);
     --(*boardDataInISR);
+}
+
+void IntHandlerADC_DATA0(){
+    ADC_ReadClass1ADCSampleFromISR(DRV_ADC_SamplesRead(0),0);
+    //DRV_ADC_SamplesRead(0);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA0);
+    //DIO_TIMING_TEST_TOGGLE_STATE();
+    
+}
+
+void IntHandlerADC_DATA1(){
+    //DRV_ADC_SamplesRead(1);
+    ADC_ReadClass1ADCSampleFromISR(DRV_ADC_SamplesRead(1),1);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA1);
+}
+
+void IntHandlerADC_DATA2(){
+    //DRV_ADC_SamplesRead(2);
+    ADC_ReadClass1ADCSampleFromISR(DRV_ADC_SamplesRead(2),2);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA2);
+}
+
+void IntHandlerADC_DATA3(){
+    ADC_ReadClass1ADCSampleFromISR(DRV_ADC_SamplesRead(3),3);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA3);
+}
+
+void IntHandlerADC_DATA4(){
+    ADC_ReadClass1ADCSampleFromISR(DRV_ADC_SamplesRead(4),4);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_ADC_1_DATA4);
 }
 
 void IntHandlerDrvAdcEOS(void)

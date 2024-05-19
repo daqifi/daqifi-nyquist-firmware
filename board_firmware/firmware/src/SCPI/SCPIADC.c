@@ -83,6 +83,8 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
 scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
 {
     int param1, param2;
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
@@ -152,7 +154,27 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
             }  
         }
     }
-    
+    uint16_t activeType1ChannelCount=0;
+    int i;
+    for(i=0;i<pBoardConfigAInChannels->Size;i++){
+        if(pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType==1){
+            if(pRuntimeAInChannels->Data[i].IsEnabled==1){
+                activeType1ChannelCount++;
+            }
+        }
+    }
+    uint64_t freq=pRunTimeStreamConfig->Frequency;
+    uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(                         \
+                        pRunTimeStreamConfig->TimerHandle); 
+    if((freq*activeType1ChannelCount)>15000){
+        freq=15000/activeType1ChannelCount;
+        pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
+        pRunTimeStreamConfig->Frequency=freq;
+        pRunTimeStreamConfig->TSClockDivider = 0xFFFFFFFF; 
+        if(freq>1000){
+            pRunTimeStreamConfig->ChannelScanTimeDiv=freq/1000;
+        }
+    }
     if (ADC_WriteChannelStateAll())
     {
         return SCPI_RES_OK;

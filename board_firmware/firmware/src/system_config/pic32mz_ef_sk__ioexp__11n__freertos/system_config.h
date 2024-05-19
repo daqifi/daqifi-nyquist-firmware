@@ -123,7 +123,7 @@ extern "C" {
 
 #define SYS_PORT_D_ANSEL        0x4100
 #define SYS_PORT_D_TRIS         0xDD7A
-#define SYS_PORT_D_LAT          0x2280
+#define SYS_PORT_D_LAT          0x2080
 #define SYS_PORT_D_ODC          0x0000
 #define SYS_PORT_D_CNPU         0x0230
 #define SYS_PORT_D_CNPD         0x0000
@@ -206,7 +206,7 @@ int LogMessage(const char* format, ...);
 
 /*** File System Service Configuration ***/
 
-#define SYS_FS_MEDIA_NUMBER         	1
+#define SYS_FS_MEDIA_NUMBER         	2
 
 #define SYS_FS_VOLUME_NUMBER		5
 
@@ -221,6 +221,15 @@ int LogMessage(const char* format, ...);
 
 #define SYS_FS_MEDIA_TYPE_IDX0 				
 #define SYS_FS_TYPE_IDX0 					
+
+
+
+
+
+
+
+#define SYS_FS_MEDIA_TYPE_IDX1 				
+#define SYS_FS_TYPE_IDX1 					
 
 
 
@@ -309,6 +318,7 @@ int LogMessage(const char* format, ...);
 #define DRV_NVM_SYS_FS_REGISTER
 
 
+#define DRV_OC_DRIVER_MODE_STATIC 
 
 /*** SDCARD Driver Configuration ***/
 #define DRV_SDCARD_INSTANCES_NUMBER     1
@@ -358,7 +368,7 @@ int LogMessage(const char* format, ...);
 #define DRV_SPI_BUFFER_TYPE_IDX0 			DRV_SPI_BUFFER_TYPE_ENHANCED
 #define DRV_SPI_CLOCK_MODE_IDX0 			DRV_SPI_CLOCK_MODE_IDLE_LOW_EDGE_FALL
 #define DRV_SPI_INPUT_PHASE_IDX0 			SPI_INPUT_SAMPLING_PHASE_AT_END
-#define DRV_SPI_TRANSMIT_DUMMY_BYTE_VALUE_IDX0      0x00
+#define DRV_SPI_TRANSMIT_DUMMY_BYTE_VALUE_IDX0      0xFF
 
 #define DRV_SPI_TX_INT_SOURCE_IDX0 			INT_SOURCE_SPI_4_TRANSMIT
 #define DRV_SPI_RX_INT_SOURCE_IDX0 			INT_SOURCE_SPI_4_RECEIVE
@@ -373,7 +383,7 @@ int LogMessage(const char* format, ...);
 #define DRV_SPI_ERROR_INT_PRIORITY_IDX0 	INT_PRIORITY_LEVEL3
 #define DRV_SPI_ERROR_INT_SUB_PRIORITY_IDX0 INT_SUBPRIORITY_LEVEL0
 #define DRV_SPI_QUEUE_SIZE_IDX0 			10
-#define DRV_SPI_RESERVED_JOB_IDX0 			1
+#define DRV_SPI_RESERVED_JOB_IDX0 			2
 #define DRV_SPI_TX_DMA_CHANNEL_IDX0 		DMA_CHANNEL_1
 #define DRV_SPI_TX_DMA_THRESHOLD_IDX0 		16
 #define DRV_SPI_RX_DMA_CHANNEL_IDX0 		DMA_CHANNEL_0
@@ -409,7 +419,7 @@ int LogMessage(const char* format, ...);
 #define DRV_SPI_RESERVED_JOB_IDX1 			1
 /*** Timer Driver Configuration ***/
 #define DRV_TMR_INTERRUPT_MODE             true
-#define DRV_TMR_INSTANCES_NUMBER           3
+#define DRV_TMR_INSTANCES_NUMBER           4
 #define DRV_TMR_CLIENTS_NUMBER             1
 
 /*** Timer Driver 0 Configuration ***/
@@ -432,7 +442,7 @@ int LogMessage(const char* format, ...);
 #define DRV_TMR_INTERRUPT_PRIORITY_IDX1     INT_PRIORITY_LEVEL3
 #define DRV_TMR_INTERRUPT_SUB_PRIORITY_IDX1 INT_SUBPRIORITY_LEVEL0
 #define DRV_TMR_CLOCK_SOURCE_IDX1           DRV_TMR_CLKSOURCE_INTERNAL
-#define DRV_TMR_PRESCALE_IDX1               TMR_PRESCALE_VALUE_2
+#define DRV_TMR_PRESCALE_IDX1               TMR_PRESCALE_VALUE_256
 #define DRV_TMR_OPERATION_MODE_IDX1         DRV_TMR_OPERATION_MODE_32_BIT
 
 #define DRV_TMR_ASYNC_WRITE_ENABLE_IDX1     false
@@ -449,12 +459,25 @@ int LogMessage(const char* format, ...);
 #define DRV_TMR_OPERATION_MODE_IDX2         DRV_TMR_OPERATION_MODE_32_BIT
 #define DRV_TMR_ASYNC_WRITE_ENABLE_IDX2     false
 #define DRV_TMR_POWER_STATE_IDX2            SYS_MODULE_POWER_RUN_FULL
+/*** Timer Driver 3 Configuration ***/
+#define DRV_TMR_PERIPHERAL_ID_IDX3          TMR_ID_3
+#define DRV_TMR_INTERRUPT_SOURCE_IDX3       INT_SOURCE_TIMER_3
+#define DRV_TMR_INTERRUPT_VECTOR_IDX3       INT_VECTOR_T3
+#define DRV_TMR_ISR_VECTOR_IDX3             _TIMER_3_VECTOR
+#define DRV_TMR_INTERRUPT_PRIORITY_IDX3     INT_PRIORITY_LEVEL4
+#define DRV_TMR_INTERRUPT_SUB_PRIORITY_IDX3 INT_SUBPRIORITY_LEVEL0
+#define DRV_TMR_CLOCK_SOURCE_IDX3           DRV_TMR_CLKSOURCE_INTERNAL
+#define DRV_TMR_PRESCALE_IDX3               TMR_PRESCALE_VALUE_256
+#define DRV_TMR_OPERATION_MODE_IDX3         DRV_TMR_OPERATION_MODE_16_BIT
+#define DRV_TMR_ASYNC_WRITE_ENABLE_IDX3     false
+#define DRV_TMR_POWER_STATE_IDX3            SYS_MODULE_POWER_RUN_FULL
+
 
  /*** Wi-Fi Driver Configuration ***/
 #define WINC1500_INT_SOURCE INT_SOURCE_EXTERNAL_4
 #define WINC1500_INT_VECTOR INT_VECTOR_INT4
 
-#define WDRV_SPI_INDEX 0
+#define WDRV_SPI_INDEX 3
 #define WDRV_SPI_INSTANCE sysObj.spiObjectIdx0
 
 #define WDRV_BOARD_TYPE WDRV_BD_TYPE_CUSTOM
@@ -755,8 +778,8 @@ int LogMessage(const char* format, ...);
 #define SYS_FS_MAX_PATH						80
 #define LOCAL_WEBSITE_PATH_FS				"/mnt/mchpSite1"
 #define LOCAL_WEBSITE_PATH					"/mnt/mchpSite1/"
-#define SYS_FS_DRIVE						"FLASH"
-#define SYS_FS_NVM_VOL						"/dev/nvma1"
+#define SYS_FS_DRIVE						"SDCARD"
+#define SYS_FS_SD_VOL						"/dev/mmcblka1"
 #define SYS_FS_FATFS_STRING					"FATFS"
 #define SYS_FS_MPFS_STRING					"MPFS2"
 
@@ -838,6 +861,13 @@ int LogMessage(const char* format, ...);
 // *****************************************************************************
 // *****************************************************************************
 /*** Application Defined Pins ***/
+
+/*** Functions for SD_CS pin ***/
+#define SD_CSToggle() PLIB_PORTS_PinToggle(PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_9)
+#define SD_CSOn() PLIB_PORTS_PinSet(PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_9)
+#define SD_CSOff() PLIB_PORTS_PinClear(PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_9)
+#define SD_CSStateGet() PLIB_PORTS_PinGetLatched(PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_9)
+#define SD_CSStateSet(Value) PLIB_PORTS_PinWrite(PORTS_ID_0, PORT_CHANNEL_D, PORTS_BIT_POS_9, Value)
 
 /*** Functions for DIO_EN_10 pin ***/
 #define DIO_EN_10_PORT PORT_CHANNEL_G
@@ -1013,11 +1043,6 @@ int LogMessage(const char* format, ...);
 #define I2C_EN1_PORT PORT_CHANNEL_A
 #define I2C_EN1_PIN PORTS_BIT_POS_14
 #define I2C_EN1_PIN_MASK (0x1 << 14)
-
-/*** Functions for SD_CS pin ***/
-#define SD_CS_PORT PORT_CHANNEL_D
-#define SD_CS_PIN PORTS_BIT_POS_9
-#define SD_CS_PIN_MASK (0x1 << 9)
 
 /*** Functions for PWR_3_3V_EN pin ***/
 #define PWR_3_3V_EN_PORT PORT_CHANNEL_H

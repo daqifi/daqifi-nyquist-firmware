@@ -74,6 +74,8 @@ bool ADC_IsDataValid(const AInSample* sample);
  * @return The converted voltage
  */
 double ADC_ConvertToVoltage(const AInSample* sample);
+
+bool ADC_ReadClass1ADCSampleFromISR(uint32_t value,uint8_t bufferIndex);
     
 #ifdef	__cplusplus
 }

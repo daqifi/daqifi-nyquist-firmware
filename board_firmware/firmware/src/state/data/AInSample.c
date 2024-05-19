@@ -54,7 +54,24 @@ bool AInSampleList_PushBack(AInSampleList* list, const AInSample* data){
                     (TickType_t)0 );
     return ( queueResult == pdTRUE ) ? true : false; 
 }
-
+bool AInSampleList_PushBackFromIsr(AInSampleList* list, const AInSample* data){
+    BaseType_t queueResult;
+    BaseType_t xTaskWokenByReceive = pdFALSE;
+    if( data == NULL ){
+        return false;
+    }
+    
+    (void)list;
+    
+    queueResult = xQueueSendFromISR( \
+                    analogInputsQueue, \
+                    data, \
+                    &xTaskWokenByReceive );
+   
+    portEND_SWITCHING_ISR(xTaskWokenByReceive);
+ 
+    return ( queueResult == pdTRUE ) ? true : false; 
+}
 bool AInSampleList_PopFront(AInSampleList* list, AInSample* data)
 {
     BaseType_t queueResult;

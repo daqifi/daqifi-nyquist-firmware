@@ -441,7 +441,7 @@ bool WifiConnectionDown()
 
 static bool disk_mount(void)
 {
-	if (SYS_FS_Mount(SYS_FS_NVM_VOL, LOCAL_WEBSITE_PATH_FS, MPFS2, 0, NULL) == 0) {
+	if (SYS_FS_Mount(SYS_FS_SD_VOL, LOCAL_WEBSITE_PATH_FS, MPFS2, 0, NULL) == 0) {
 		SYS_CONSOLE_PRINT("SYS_Initialize: The %s File System is mounted\r\n", SYS_FS_MPFS_STRING);
 		APP_CONSOLE_HeaderDisplay();
 		s_appData.state = APP_TCPIP_WAIT_INIT;

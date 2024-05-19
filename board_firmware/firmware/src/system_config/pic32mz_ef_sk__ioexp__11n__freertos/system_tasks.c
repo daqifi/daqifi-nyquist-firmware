@@ -135,9 +135,9 @@ void SYS_Tasks ( void )
  
     /* Create task for gfx state machine*/
     /* Create OS Thread for DRV_SDCARD Tasks. */
-//    xTaskCreate((TaskFunction_t) _DRV_SDCARD_Tasks,
-//                "DRV_SDCARD Tasks",
-//                1024, NULL, 2, NULL);
+    xTaskCreate((TaskFunction_t) _DRV_SDCARD_Tasks,
+                "DRV_SDCARD Tasks",
+                1024, NULL, 2, NULL);
 
 
  
@@ -246,7 +246,7 @@ void _DRV_SDCARD_Tasks(void)
 {
     while(1)
     {
-        // DRV_SDCARD_Tasks(sysObj.drvSDCard);
+        DRV_SDCARD_Tasks(sysObj.drvSDCard);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
@@ -273,7 +273,7 @@ void _TCPIP_Tasks(void)
     while(1)
     {
         /* Maintain the TCP/IP Stack*/
-        TCPIP_STACK_Task(sysObj.tcpip);
+        //TCPIP_STACK_Task(sysObj.tcpip);
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 }
@@ -282,7 +282,7 @@ void _NET_PRES_Tasks(void)
     while(1)
     {
         /* Maintain the TCP/IP Stack*/
-        NET_PRES_Tasks(sysObj.netPres);
+        //NET_PRES_Tasks(sysObj.netPres);
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
@@ -297,10 +297,10 @@ void _NET_PRES_Tasks(void)
 
 static void _APP_Tasks(void)
 {
-    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
-                        BOARDRUNTIME_WIFI_SETTINGS);
-    portTASK_USES_FLOATING_POINT();
-    WifiInit(&(pRunTimeWifiSettings->settings.wifi));
+//    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         \
+//                        BOARDRUNTIME_WIFI_SETTINGS);
+//    portTASK_USES_FLOATING_POINT();
+//    WifiInit(&(pRunTimeWifiSettings->settings.wifi));
     while(1)
     {
         APP_Tasks();
@@ -375,15 +375,15 @@ void _Streaming_Deferred_Interrupt_Task( void ){
 
     while( 1 ){
         ulTaskNotifyTake( pdFALSE, xBlockTime );
-
         for (i=0; i < pRunTimeAInModules->Size; ++i)
         {
             // Only trigger conversions if the previous conversion is complete
             // TODO: Replace with ADCPrescale[i]
             if (pBoardData->AInState.Data[i].AInTaskState == AINTASK_IDLE &&\
                 pRunTimeStreamConf->StreamCount ==                          \
-                pRunTimeStreamConf->StreamCountTrigger)
+                pRunTimeStreamConf->StreamCountTrigger && pRunTimeStreamConf->IsEnabled)
             {
+                
                 Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
             }
 

@@ -26,9 +26,9 @@ void InitializeBoardData(tBoardData* boardData)
     memset(&boardData->AInState, 0, sizeof(AInModDataArray));
     
     memset(&boardData->AInLatest, 0, sizeof(AInSampleArray));
-    boardData->AInLatest.Size = MAX_AIN_DATA_MOD;
+    boardData->AInLatest.Size = MAX_AIN_CHANNEL;
     AInSampleList_Initialize(&boardData->AInSamples, MAX_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
-    
+     boardData->AInState.Size=MAX_AIN_DATA_MOD;
     // Set default battery values for debugging - allows power on without ADC active
     // TODO: This should be omitted for production
     // size_t index = ADC_FindChannelIndex(&g_BoardConfig.AInChannels, ADC_CHANNEL_VBATT);
@@ -84,6 +84,11 @@ const void *BoardData_Get(                                                  \
             return NULL;
         case BOARDDATA_AIN_LATEST_SIZE:
             return &g_BoardData.AInLatest.Size ;
+        case BOARDDATA_AIN_LATEST_TIMESTAMP:
+            if( index < g_BoardData.AInLatest.Size ){
+                return &g_BoardData.AInLatest.Data[ index ].Timestamp;
+            }
+            return NULL;    
         case BOARDDATA_AIN_SAMPLES:
             return &g_BoardData.AInSamples;
         case BOARDATA_POWER_DATA:
@@ -141,10 +146,19 @@ void BoardData_Set(                                                         \
             break;
         case BOARDDATA_AIN_LATEST:
             if( index < g_BoardData.AInLatest.Size ){
+                uint32_t timeStamp=g_BoardData.AInLatest.Data[ index ].Timestamp;
                 memcpy(                                                     \
                             &g_BoardData.AInLatest.Data[ index ],           \
                             pSetValue,                                      \
                             sizeof(AInSample) );
+                //timestamp is not changed while updating data because timestamp is being updated during the start of trigger
+                g_BoardData.AInLatest.Data[ index ].Timestamp=timeStamp;
+               
+            }
+            break;
+        case BOARDDATA_AIN_LATEST_TIMESTAMP:
+            if( index < g_BoardData.AInLatest.Size ){
+                g_BoardData.AInLatest.Data[ index ].Timestamp=*(uint32_t*)pSetValue;
             }
             break;
         case BOARDDATA_AIN_SAMPLES:

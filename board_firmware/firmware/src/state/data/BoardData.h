@@ -40,6 +40,8 @@ enum eBoardData{
     BOARDDATA_AIN_LATEST,
     //! Latest AIN samples size
     BOARDDATA_AIN_LATEST_SIZE,
+    //! Timestamp corresponding to the a sample
+    BOARDDATA_AIN_LATEST_TIMESTAMP,
     //! Collected analog input samples
     BOARDDATA_AIN_SAMPLES,
     //! Global power satructure

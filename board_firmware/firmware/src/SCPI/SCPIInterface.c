@@ -10,7 +10,6 @@
 
 // 3rd Party
 #include "scpi/scpi.h"
-
 #include "HAL/NVM/DaqifiSettings.h"
 #include "HAL/Power/PowerApi.h"
 #include "nanopb/DaqifiOutMessage.pb.h"
@@ -439,19 +438,39 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context)
     
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
                         BOARDRUNTIME_STREAMING_CONFIGURATION);
+    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);  
+    volatile AInArray *pBoardConfigADC=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS,0);  
     
      // timer running frequency
     uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(                         \
                         pRunTimeStreamConfig->TimerHandle); 
     
+    int i;
+    uint16_t activeType1ChannelCount=0;
+    for(i=0;i<pBoardConfigADC->Size;i++){
+        if(pBoardConfigADC->Data[i].Config.MC12b.ChannelType==1){
+            if(pRuntimeAInChannels->Data[i].IsEnabled==1){
+                activeType1ChannelCount++;
+            }
+        }
+    }
+    if(activeType1ChannelCount==0)
+        activeType1ChannelCount=1;
     if (SCPI_ParamInt32(context, &freq, FALSE))
     {
-        if (freq >= 1 && freq <= 1000)///TODO: Test higher throughput
+        if (freq >= 1 && freq <= 15000)///TODO: Test higher throughput
         {
             // calculate the divider needed
+            
+            if((freq*activeType1ChannelCount)>15000){
+                freq=15000/activeType1ChannelCount;
+            }
             pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
-            // Set timer to maximum period
+            pRunTimeStreamConfig->Frequency=freq;
             pRunTimeStreamConfig->TSClockDivider = 0xFFFFFFFF; 
+            if(freq>1000){
+                pRunTimeStreamConfig->ChannelScanTimeDiv=freq/1000;
+            }
         }
         else
         {
@@ -631,6 +650,30 @@ scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
     SCPI_ResultUInt64Base(context, pBoardConfig->boardSerialNumber, 16);
     return SCPI_RES_OK;
 }
+scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context){
+    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(                           \
+                            BOARDRUNTIMECONFIG_ALL_CONFIG);
+        
+    tPowerData * pPowerData = BoardData_Get(                                \
+                            BOARDATA_POWER_DATA,                            \
+                            0 );
+    
+    uint32_t param1;
+    bool status = false;
+    if (!SCPI_ParamUInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    if(pPowerData->powerState != POWERED_UP){
+        return SCPI_RES_ERR;
+    }
+    if(param1)
+        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val=1;
+    else
+        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val=0;
+    Power_Write();
+     return SCPI_RES_OK;   
+}
 
 scpi_result_t SCPI_GetFreeRtosStats(scpi_t * context)
 {
@@ -705,6 +748,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet, },
     {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState, },
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState, },
+    {.pattern = "SYSTem:FORce5V5POWer:STATe",.callback=SCPI_Force5v5PowerStateSet},
     
     // DIO
     {.pattern = "DIO:PORt:DIRection", .callback = SCPI_GPIODirectionSet, },
@@ -713,6 +757,12 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "DIO:PORt:STATe?", .callback = SCPI_GPIOStateGet, },
     {.pattern = "DIO:PORt:ENAble", .callback = SCPI_GPIOEnableSet, },
     {.pattern = "DIO:PORt:ENAble?", .callback = SCPI_GPIOEnableGet, },
+    {.pattern = "PWM:CHannel:ENable", .callback=SCPI_PWMChannelEnableSet,},
+    {.pattern = "PWM:CHannel:ENable?", .callback=SCPI_PWMChannelEnableGet,},
+    {.pattern = "PWM:CHannel:FREQuency", .callback=SCPI_PWMChannelFrequencySet,},
+    {.pattern = "PWM:CHannel:FREQuency?", .callback=SCPI_PWMChannelFrequencyGet,},
+    {.pattern = "PWM:CHannel:DUTY", .callback=SCPI_PWMChannelDUTYSet,},
+    {.pattern = "PWM:CHannel:DUTY?", .callback=SCPI_PWMChannelDUTYGet,},
     
     // Wifi
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet, },

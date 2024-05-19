@@ -8,6 +8,7 @@
 #include "Util/StringFormatters.h"
 #include "encoder.h"
 #include "JSON_Encoder.h"
+#include "../HAL/ADC.h"
 
 //! Buffer size used for streaming purposes
 #define JSON_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
@@ -27,6 +28,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         charBuffer,                                         \
                         JSON_ENCODER_BUFFER_SIZE,                           \
                         "\n\r{\n\r");
+    size_t initialOffsetIndex=startIndex;
     size_t i=0;
     bool encodeDIO = false;
     bool encodeADC = false;    
@@ -34,9 +36,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
     if( ppBuffer == NULL ){
         return 0;
     }
-    else{
-        *ppBuffer = (char *)buffer;
-    }
+   
     
     for (i=0; i<fields->Size; ++i)
     {
@@ -226,7 +226,7 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
                         "  {\"time\"=%u, \"mask\"=%u, \"data\"=%u},\n\r",   \
-                        data.Timestamp-state->StreamTrigStamp,              \
+                        state->StreamTrigStamp-data.Timestamp,              \
                         data.Mask,                                          \
                         data.Values);
         }
@@ -239,29 +239,58 @@ size_t Json_Encode(     tBoardData* state,                                  \
     
     if (encodeADC)
     {
-        startIndex += snprintf(                                             \
-                        charBuffer + startIndex,                            \
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                        " \"adc\"=[\n\r");
-        
+        startIndex=initialOffsetIndex;//remove timestamp added Initially
+        uint32_t previousTimeStamp=0;   
+        uint32_t qSize=AInSampleList_Size(NULL);
         while (((JSON_ENCODER_BUFFER_SIZE - startIndex) >= 65) &&           \
-               (!AInSampleList_IsEmpty(&state->AInSamples)))
+               (qSize>0))
         {
-            AInSample data;
-            AInSampleList_PopFront(&state->AInSamples, &data);
-            startIndex += snprintf(                                         \
-                        charBuffer + startIndex,                            \
+            AInSample data;           
+            if(!AInSampleList_PopFront(&state->AInSamples, &data)){
+                AInSampleList_Destroy( &state->AInSamples );
+                AInSampleList_Initialize(   &state->AInSamples,     \
+                    MAX_AIN_SAMPLE_COUNT,   \
+                    false,                  \
+                    NULL ); 
+                break;
+            }
+            qSize--;
+             __add_data_no_pop:
+            if(data.Timestamp==previousTimeStamp){
+                double voltage=(ADC_ConvertToVoltage(&data))*1000; //convert to millivolts
+                startIndex += snprintf(                                         \
+                            charBuffer + startIndex,                            \
+                            JSON_ENCODER_BUFFER_SIZE - startIndex,              \
+                            "{\"ch\":%u, \"data\":%u},\n\r",     \
+                            data.Channel,                                       \
+                            (int)voltage);
+            }
+            else{  
+                if(((JSON_ENCODER_BUFFER_SIZE - startIndex) < 65))
+                    break;
+                if(previousTimeStamp!=0){ //to first the first json
+                    startIndex += snprintf(                                             \
+                            charBuffer + startIndex,                            \
+                            JSON_ENCODER_BUFFER_SIZE - startIndex,              \
+                            " ],\n\r");
+                }
+                startIndex += snprintf(charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                        "  {\"time\"=%u, \"ch\"=%u, \"data\"=%u},\n\r",     \
-                        data.Timestamp-state->StreamTrigStamp,              \
-                        data.Channel,                                       \
-                        data.Value);
+                        "\r\n\"timestamp\":%u,\n\r",                           \
+                        data.Timestamp);
+                startIndex += snprintf(charBuffer + startIndex,                            \
+                        JSON_ENCODER_BUFFER_SIZE - startIndex,              \
+                        " \"adc\":[\n\r");
+                previousTimeStamp=data.Timestamp;
+                goto __add_data_no_pop;
+
+            }    
         }
         
         startIndex += snprintf(                                             \
                         charBuffer + startIndex,                            \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
-                        " ],\n\r");
+                        " ]\n\r");
     }
     
     startIndex += snprintf(                                                 \
@@ -269,6 +298,6 @@ size_t Json_Encode(     tBoardData* state,                                  \
                         JSON_ENCODER_BUFFER_SIZE - startIndex,              \
                         "}");
     charBuffer[startIndex] = '\0';
-    
+    memcpy(ppBuffer,charBuffer,startIndex);
     return startIndex;
 }
