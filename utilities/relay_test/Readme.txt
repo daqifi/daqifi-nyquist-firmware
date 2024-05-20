@@ -1,1 +1,0 @@
-Running this batch file will connect to the board via USB and toggle the relays.
