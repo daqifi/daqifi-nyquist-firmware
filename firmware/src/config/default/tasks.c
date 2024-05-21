@@ -76,7 +76,7 @@ static void F_USB_DEVICE_Tasks(  void *pvParameters  )
     {
                 /* USB Device layer tasks routine */
         USB_DEVICE_Tasks(sysObj.usbDevObject0);
-        vTaskDelay(10U / portTICK_PERIOD_MS);
+        vTaskDelay(1U / portTICK_PERIOD_MS);
     }
 }
 

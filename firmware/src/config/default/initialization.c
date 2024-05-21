@@ -65,9 +65,9 @@
 #pragma config DBGPER =     PG_ALL
 #pragma config SMCLR =      MCLR_NORM
 #pragma config SOSCGAIN =   GAIN_LEVEL_3
-#pragma config SOSCBOOST =  ON
+#pragma config SOSCBOOST =  OFF
 #pragma config POSCGAIN =   GAIN_LEVEL_3
-#pragma config POSCBOOST =  ON
+#pragma config POSCBOOST =  OFF
 #pragma config EJTAGBEN =   NORMAL
 #pragma config CP =         OFF
 
@@ -78,13 +78,13 @@
 #pragma config IESO =       OFF
 #pragma config POSCMOD =    EC
 #pragma config OSCIOFNC =   OFF
-#pragma config FCKSM =      CSECME
+#pragma config FCKSM =      CSECMD
 #pragma config WDTPS =      PS1048576
 #pragma config WDTSPGM =    STOP
 #pragma config FWDTEN =     OFF
 #pragma config WINDIS =     NORMAL
 #pragma config FWDTWINSZ =  WINSZ_25
-#pragma config DMTCNT =     DMT31
+#pragma config DMTCNT =     DMT9
 #pragma config FDMTEN =     OFF
 
 /*** DEVCFG2 ***/
@@ -102,12 +102,12 @@
 #pragma config PGL1WAY =    ON
 #pragma config PMDL1WAY =   ON
 #pragma config IOL1WAY =    ON
-#pragma config FUSBIDIO =   ON
+#pragma config FUSBIDIO =   OFF
 
 /*** BF1SEQ0 ***/
 
 #pragma config TSEQ =       0xffff
-#pragma config CSEQ =       0x0
+#pragma config CSEQ =       0xffff
 
 
 

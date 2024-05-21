@@ -62,7 +62,7 @@
 // *****************************************************************************
 // *****************************************************************************
 
-uint8_t __attribute__((aligned(16))) switchPromptUSB[] = "\r\nPUSH BUTTON PRESSED";
+uint8_t __attribute__((aligned(16))) switchPromptUSB[] = "Hello World\r\n";
 
 uint8_t CACHE_ALIGN cdcReadBuffer[APP_READ_BUFFER_SIZE];
 uint8_t CACHE_ALIGN cdcWriteBuffer[APP_READ_BUFFER_SIZE];
@@ -415,14 +415,14 @@ void USBDevice_Task(void* p_arg)
 //                                    appData.switchDebounceTimer = 0;
 //                                    appData.ignoreSwitchPress = false;
 //                                    
-//                                    USB_DEVICE_CDC_Write
-//                                    (
-//                                        USB_DEVICE_CDC_INDEX_0,
-//                                        &COM1Write_Handle,
-//                                        switchPromptUSB, 
-//                                        sizeof(switchPromptUSB),
-//                                        USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE
-//                                    );
+                                    USB_DEVICE_CDC_Write
+                                    (
+                                        USB_DEVICE_CDC_INDEX_0,
+                                        &COM1Write_Handle,
+                                        switchPromptUSB, 
+                                        sizeof(switchPromptUSB),
+                                        USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE
+                                    );
 //                                        
 //                                }
 //                            }
@@ -449,7 +449,10 @@ void USBDevice_Task(void* p_arg)
                         {
                             if((cdcReadBuffer[i] != 0x0A) && (cdcReadBuffer[i] != 0x0D))
                             {
-                                cdcWriteBuffer[i] = cdcReadBuffer[i] + 1;
+                                if(cdcReadBuffer[i]>='A'&& cdcReadBuffer[i]<='Z')
+                                    cdcWriteBuffer[i] = cdcReadBuffer[i] + 32;
+                                else if(cdcReadBuffer[i]>='a'&& cdcReadBuffer[i]<='z')
+                                    cdcWriteBuffer[i] = cdcReadBuffer[i] - 32;
                             }
                         }
                         USB_DEVICE_CDC_Write

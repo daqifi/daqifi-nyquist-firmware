@@ -100,7 +100,7 @@ static const USB_DEVICE_DESCRIPTOR usbDeviceDescriptor =
 
     USB_DEVICE_EP0_BUFFER_SIZE,                             // Max packet size for EP0, see configuration.h
     0x04D8,                                                 // Vendor ID
-    0x000A,                                                 // Product ID
+    0xF794,                                                 // Product ID
     0x0100,                                                 // Device release number in BCD format
     0x01,                                                   // Manufacturer string index
     0x02,                                                   // Product string index
@@ -363,14 +363,14 @@ const struct
 {
     uint8_t bLength;                                    // Size of this descriptor in bytes
     uint8_t bDscType;                                   // STRING descriptor type
-    uint16_t string[25];                                // String
+    uint16_t string[6];                                // String
 }
 
 static sd001 =
 {
     (uint8_t)sizeof(sd001),
     (uint8_t)USB_DESCRIPTOR_STRING,
-    {'M','i','c','r','o','c','h','i','p',' ','T','e','c','h','n','o','l','o','g','y',' ','I','n','c','.'}
+    {'D','A','Q','i','F','i'}
 };
 
 /*******************************************
@@ -380,14 +380,14 @@ const struct
 {
     uint8_t bLength;                                    // Size of this descriptor in bytes
     uint8_t bDscType;                                   // STRING descriptor type
-    uint16_t string[22];                                // String
+    uint16_t string[7];                                // String
 }
 
 static sd002 =
 {
     (uint8_t)sizeof(sd002),
     USB_DESCRIPTOR_STRING,
-    {'S','i','m','p','l','e',' ','C','D','C',' ','D','e','v','i','c','e',' ','D','e','m','o'}
+    {'N','y','q','u','i','s','t'}
 };
 
 /***************************************
