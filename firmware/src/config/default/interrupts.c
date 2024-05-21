@@ -68,7 +68,6 @@
 // Section: System Interrupt Vector declarations
 // *****************************************************************************
 // *****************************************************************************
-void TIMER_2_Handler (void);
 void USB_Handler (void);
 void USB_DMA_Handler (void);
 
@@ -79,11 +78,6 @@ void USB_DMA_Handler (void);
 // *****************************************************************************
 // *****************************************************************************
 
-
-void TIMER_2_Handler (void)
-{
-    TIMER_2_InterruptHandler();
-}
 
 void USB_Handler (void)
 {

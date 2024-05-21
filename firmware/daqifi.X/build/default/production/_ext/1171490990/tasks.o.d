@@ -40,8 +40,6 @@ build/default/production/_ext/1171490990/tasks.o: \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_TxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
- ../src/config/default/peripheral/tmr/plib_tmr2.h \
- ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/peripheral/clk/plib_clk.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
  ../src/config/default/peripheral/evic/plib_evic.h \
@@ -56,8 +54,6 @@ build/default/production/_ext/1171490990/tasks.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/mpu_wrappers.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/list.h \
- ../src/config/default/system/time/sys_time.h \
- ../src/config/default/system/time/sys_time_definitions.h \
  ../src/config/default/system/int/sys_int.h \
  ../src/config/default/osal/osal.h \
  ../src/config/default/osal/osal_definitions.h \
@@ -66,7 +62,7 @@ build/default/production/_ext/1171490990/tasks.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/semphr.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
- ../src/config/default/system/debug/sys_debug.h ../src/app.h \
+ ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
  ../src/config/default/definitions.h ../src/config/default/sys_tasks.h
 
 ../src/config/default/configuration.h:
@@ -155,10 +151,6 @@ build/default/production/_ext/1171490990/tasks.o: \
 
 ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h:
 
-../src/config/default/peripheral/tmr/plib_tmr2.h:
-
-../src/config/default/peripheral/tmr/plib_tmr_common.h:
-
 ../src/config/default/peripheral/clk/plib_clk.h:
 
 ../src/config/default/peripheral/gpio/plib_gpio.h:
@@ -187,10 +179,6 @@ build/default/production/_ext/1171490990/tasks.o: \
 
 ../src/third_party/rtos/FreeRTOS/Source/include/list.h:
 
-../src/config/default/system/time/sys_time.h:
-
-../src/config/default/system/time/sys_time_definitions.h:
-
 ../src/config/default/system/int/sys_int.h:
 
 ../src/config/default/osal/osal.h:
@@ -209,7 +197,7 @@ build/default/production/_ext/1171490990/tasks.o: \
 
 ../src/config/default/system/debug/sys_debug.h:
 
-../src/app.h:
+../src/app_freertos.h:
 
 ../src/config/default/definitions.h:
 

@@ -57,8 +57,8 @@
 // Section: RTOS "Tasks" Handles
 // *****************************************************************************
 // *****************************************************************************
-/* Declaration of  APP_Tasks task handle */
-extern TaskHandle_t xAPP_Tasks;
+/* Declaration of  APP_FREERTOS_Tasks task handle */
+extern TaskHandle_t xAPP_FREERTOS_Tasks;
 
 
 

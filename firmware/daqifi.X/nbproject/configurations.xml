@@ -64,10 +64,6 @@
             <logicalFolder name="gpio" displayName="gpio" projectFiles="true">
               <itemPath>../src/config/default/peripheral/gpio/plib_gpio.h</itemPath>
             </logicalFolder>
-            <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
-              <itemPath>../src/config/default/peripheral/tmr/plib_tmr_common.h</itemPath>
-              <itemPath>../src/config/default/peripheral/tmr/plib_tmr2.h</itemPath>
-            </logicalFolder>
           </logicalFolder>
           <logicalFolder name="system" displayName="system" projectFiles="true">
             <logicalFolder name="debug" displayName="debug" projectFiles="true">
@@ -76,11 +72,6 @@
             <logicalFolder name="int" displayName="int" projectFiles="true">
               <itemPath>../src/config/default/system/int/sys_int_mapping.h</itemPath>
               <itemPath>../src/config/default/system/int/sys_int.h</itemPath>
-            </logicalFolder>
-            <logicalFolder name="time" displayName="time" projectFiles="true">
-              <itemPath>../src/config/default/system/time/sys_time_definitions.h</itemPath>
-              <itemPath>../src/config/default/system/time/src/sys_time_local.h</itemPath>
-              <itemPath>../src/config/default/system/time/sys_time.h</itemPath>
             </logicalFolder>
             <itemPath>../src/config/default/system/system_module.h</itemPath>
             <itemPath>../src/config/default/system/system_common.h</itemPath>
@@ -105,11 +96,11 @@
             <itemPath>../src/config/default/usb/usb_host.h</itemPath>
           </logicalFolder>
           <itemPath>../src/config/default/FreeRTOSConfig.h</itemPath>
-          <itemPath>../src/config/default/interrupts.h</itemPath>
-          <itemPath>../src/config/default/definitions.h</itemPath>
-          <itemPath>../src/config/default/device.h</itemPath>
           <itemPath>../src/config/default/toolchain_specifics.h</itemPath>
+          <itemPath>../src/config/default/interrupts.h</itemPath>
+          <itemPath>../src/config/default/device.h</itemPath>
           <itemPath>../src/config/default/user.h</itemPath>
+          <itemPath>../src/config/default/definitions.h</itemPath>
           <itemPath>../src/config/default/sys_tasks.h</itemPath>
           <itemPath>../src/config/default/configuration.h</itemPath>
         </logicalFolder>
@@ -117,22 +108,22 @@
       <logicalFolder name="FreeRTOS" displayName="FreeRTOS" projectFiles="true">
         <logicalFolder name="Source" displayName="Source" projectFiles="true">
           <logicalFolder name="include" displayName="include" projectFiles="true">
-            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/deprecated_definitions.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/semphr.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/projdefs.h</itemPath>
-            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/stack_macros.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/message_buffer.h</itemPath>
-            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/croutine.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/timers.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/mpu_wrappers.h</itemPath>
-            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/task.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/portable.h</itemPath>
-            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/FreeRTOS.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/list.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/mpu_prototypes.h</itemPath>
+            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/stream_buffer.h</itemPath>
+            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/stack_macros.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/queue.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/event_groups.h</itemPath>
-            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/stream_buffer.h</itemPath>
+            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/deprecated_definitions.h</itemPath>
+            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/croutine.h</itemPath>
+            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/task.h</itemPath>
+            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/FreeRTOS.h</itemPath>
           </logicalFolder>
           <logicalFolder name="portable" displayName="portable" projectFiles="true">
             <logicalFolder name="MPLAB" displayName="MPLAB" projectFiles="true">
@@ -144,7 +135,7 @@
           </logicalFolder>
         </logicalFolder>
       </logicalFolder>
-      <itemPath>../src/app.h</itemPath>
+      <itemPath>../src/app_freertos.h</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -170,8 +161,8 @@
             <logicalFolder name="usb" displayName="usb" projectFiles="true">
               <logicalFolder name="usbhs" displayName="usbhs" projectFiles="true">
                 <logicalFolder name="src" displayName="src" projectFiles="true">
-                  <itemPath>../src/config/default/driver/usb/usbhs/src/drv_usbhs.c</itemPath>
                   <itemPath>../src/config/default/driver/usb/usbhs/src/drv_usbhs_device.c</itemPath>
+                  <itemPath>../src/config/default/driver/usb/usbhs/src/drv_usbhs.c</itemPath>
                 </logicalFolder>
               </logicalFolder>
             </logicalFolder>
@@ -189,9 +180,6 @@
             <logicalFolder name="gpio" displayName="gpio" projectFiles="true">
               <itemPath>../src/config/default/peripheral/gpio/plib_gpio.c</itemPath>
             </logicalFolder>
-            <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
-              <itemPath>../src/config/default/peripheral/tmr/plib_tmr2.c</itemPath>
-            </logicalFolder>
           </logicalFolder>
           <logicalFolder name="stdio" displayName="stdio" projectFiles="true">
             <itemPath>../src/config/default/stdio/xc32_monitor.c</itemPath>
@@ -199,9 +187,6 @@
           <logicalFolder name="system" displayName="system" projectFiles="true">
             <logicalFolder name="int" displayName="int" projectFiles="true">
               <itemPath>../src/config/default/system/int/src/sys_int.c</itemPath>
-            </logicalFolder>
-            <logicalFolder name="time" displayName="time" projectFiles="true">
-              <itemPath>../src/config/default/system/time/src/sys_time.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="usb" displayName="usb" projectFiles="true">
@@ -211,11 +196,11 @@
               <itemPath>../src/config/default/usb/src/usb_device_cdc.c</itemPath>
             </logicalFolder>
           </logicalFolder>
+          <itemPath>../src/config/default/freertos_hooks.c</itemPath>
+          <itemPath>../src/config/default/initialization.c</itemPath>
+          <itemPath>../src/config/default/interrupts.c</itemPath>
           <itemPath>../src/config/default/interrupts_a.S</itemPath>
           <itemPath>../src/config/default/exceptions.c</itemPath>
-          <itemPath>../src/config/default/freertos_hooks.c</itemPath>
-          <itemPath>../src/config/default/interrupts.c</itemPath>
-          <itemPath>../src/config/default/initialization.c</itemPath>
           <itemPath>../src/config/default/tasks.c</itemPath>
           <itemPath>../src/config/default/usb_device_init_data.c</itemPath>
         </logicalFolder>
@@ -224,7 +209,7 @@
         <logicalFolder name="Source" displayName="Source" projectFiles="true">
           <logicalFolder name="portable" displayName="portable" projectFiles="true">
             <logicalFolder name="MemMang" displayName="MemMang" projectFiles="true">
-              <itemPath>../src/third_party/rtos/FreeRTOS/Source/portable/MemMang/heap_4.c</itemPath>
+              <itemPath>../src/third_party/rtos/FreeRTOS/Source/portable/MemMang/heap_1.c</itemPath>
             </logicalFolder>
             <logicalFolder name="MPLAB" displayName="MPLAB" projectFiles="true">
               <logicalFolder name="PIC32MZ" displayName="PIC32MZ" projectFiles="true">
@@ -233,17 +218,17 @@
               </logicalFolder>
             </logicalFolder>
           </logicalFolder>
-          <itemPath>../src/third_party/rtos/FreeRTOS/Source/croutine.c</itemPath>
-          <itemPath>../src/third_party/rtos/FreeRTOS/Source/queue.c</itemPath>
           <itemPath>../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c</itemPath>
+          <itemPath>../src/third_party/rtos/FreeRTOS/Source/list.c</itemPath>
+          <itemPath>../src/third_party/rtos/FreeRTOS/Source/queue.c</itemPath>
+          <itemPath>../src/third_party/rtos/FreeRTOS/Source/croutine.c</itemPath>
           <itemPath>../src/third_party/rtos/FreeRTOS/Source/event_groups.c</itemPath>
           <itemPath>../src/third_party/rtos/FreeRTOS/Source/stream_buffer.c</itemPath>
           <itemPath>../src/third_party/rtos/FreeRTOS/Source/timers.c</itemPath>
-          <itemPath>../src/third_party/rtos/FreeRTOS/Source/list.c</itemPath>
         </logicalFolder>
       </logicalFolder>
+      <itemPath>../src/app_freertos.c</itemPath>
       <itemPath>../src/main.c</itemPath>
-      <itemPath>../src/app.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <projectmakefile>Makefile</projectmakefile>
@@ -254,9 +239,9 @@
         <targetDevice>PIC32MZ2048EFM144</targetDevice>
         <targetHeader></targetHeader>
         <targetPluginBoard></targetPluginBoard>
-        <platformTool>noID</platformTool>
+        <platformTool>pk4hybrid</platformTool>
         <languageToolchain>XC32</languageToolchain>
-        <languageToolchainVersion>4.40</languageToolchainVersion>
+        <languageToolchainVersion>2.50</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
       <packs>
@@ -311,7 +296,7 @@
         <property key="preprocessor-macros" value=""/>
         <property key="strict-ansi" value="false"/>
         <property key="support-ansi" value="false"/>
-        <property key="tentative-definitions" value="-fno-common"/>
+        <property key="tentative-definitions" value=""/>
         <property key="toplevel-reordering" value=""/>
         <property key="unaligned-access" value=""/>
         <property key="use-cci" value="false"/>

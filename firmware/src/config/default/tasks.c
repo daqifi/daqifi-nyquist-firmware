@@ -66,7 +66,7 @@ static void F_DRV_USBHS_Tasks(  void *pvParameters  )
     {
                  /* USB FS Driver Task Routine */
         DRV_USBHS_Tasks(sysObj.drvUSBHSObject);
-        vTaskDelay(1U / portTICK_PERIOD_MS);
+        vTaskDelay(10U / portTICK_PERIOD_MS);
     }
 }
 
@@ -76,18 +76,18 @@ static void F_USB_DEVICE_Tasks(  void *pvParameters  )
     {
                 /* USB Device layer tasks routine */
         USB_DEVICE_Tasks(sysObj.usbDevObject0);
-        vTaskDelay(1U / portTICK_PERIOD_MS);
+        vTaskDelay(10U / portTICK_PERIOD_MS);
     }
 }
 
-/* Handle for the APP_Tasks. */
-TaskHandle_t xAPP_Tasks;
+/* Handle for the APP_FREERTOS_Tasks. */
+TaskHandle_t xAPP_FREERTOS_Tasks;
 
-static void lAPP_Tasks(  void *pvParameters  )
+static void lAPP_FREERTOS_Tasks(  void *pvParameters  )
 {   
     while(true)
     {
-        APP_Tasks();
+        APP_FREERTOS_Tasks();
     }
 }
 
@@ -121,7 +121,7 @@ void SYS_Tasks ( void )
         "DRV_USBHS_TASKS",
         1024,
         (void*)NULL,
-        4,
+        1,
         (TaskHandle_t*)NULL
     );
 
@@ -137,13 +137,13 @@ void SYS_Tasks ( void )
 
 
     /* Maintain the application's state machine. */
-        /* Create OS Thread for APP_Tasks. */
-    (void) xTaskCreate((TaskFunction_t) lAPP_Tasks,
-                "APP_Tasks",
+        /* Create OS Thread for APP_FREERTOS_Tasks. */
+    (void) xTaskCreate((TaskFunction_t) lAPP_FREERTOS_Tasks,
+                "APP_FREERTOS_Tasks",
                 1024,
                 NULL,
                 1,
-                &xAPP_Tasks);
+                &xAPP_FREERTOS_Tasks);
 
 
 

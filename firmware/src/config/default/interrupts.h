@@ -57,7 +57,6 @@
 // *****************************************************************************
 // *****************************************************************************
 
-void TIMER_2_InterruptHandler( void );
 void DRV_USBHS_InterruptHandler( void );
 void DRV_USBHS_DMAInterruptHandler( void );
 

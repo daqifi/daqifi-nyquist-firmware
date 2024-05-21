@@ -79,12 +79,6 @@ extern "C" {
 // Section: System Service Configuration
 // *****************************************************************************
 // *****************************************************************************
-/* TIME System Service Configuration Options */
-#define SYS_TIME_INDEX_0                            (0)
-#define SYS_TIME_MAX_TIMERS                         (5)
-#define SYS_TIME_HW_COUNTER_WIDTH                   (32)
-#define SYS_TIME_TICK_FREQ_IN_HZ                    (5.96055)
-
 
 
 // *****************************************************************************
@@ -142,6 +136,9 @@ extern "C" {
 
 /* EP0 size in bytes */
 #define USB_DEVICE_EP0_BUFFER_SIZE                          64U
+
+/* Enable SOF Events */
+#define USB_DEVICE_SOF_EVENT_ENABLE
 
 
 

@@ -46,11 +46,11 @@
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION 1
 #define configUSE_TICKLESS_IDLE                 0
 #define configTICK_RATE_HZ                      ( ( TickType_t ) 1000 )
-#define configMAX_PRIORITIES                    ( 10UL )
-#define configMINIMAL_STACK_SIZE                ( 512 )
+#define configMAX_PRIORITIES                    ( 5UL )
+#define configMINIMAL_STACK_SIZE                ( 128 )
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
-#define configTOTAL_HEAP_SIZE                   ( ( size_t ) 124000 )
+#define configTOTAL_HEAP_SIZE                   ( ( size_t ) 28000 )
 #define configMAX_TASK_NAME_LEN                 ( 16 )
 #define configUSE_16_BIT_TICKS                  0
 #define configIDLE_SHOULD_YIELD                 1
@@ -62,7 +62,7 @@
 #define configUSE_QUEUE_SETS                    0
 #define configUSE_TIME_SLICING                  1
 #define configUSE_NEWLIB_REENTRANT              0
-#define configUSE_TASK_FPU_SUPPORT              1
+#define configUSE_TASK_FPU_SUPPORT              0
 
 
 /* Hook function related definitions. */
@@ -93,12 +93,12 @@
 
 /* Interrupt nesting behaviour configuration. */
 #define configPERIPHERAL_CLOCK_HZ               ( 100000000UL )
-#define configISR_STACK_SIZE                    ( 8192 )
+#define configISR_STACK_SIZE                    ( 512 )
 /* The priority at which the tick interrupt runs.  This should probably be kept at lowest priority. */
 #define configKERNEL_INTERRUPT_PRIORITY         (1)
 /* The maximum interrupt priority from which FreeRTOS.org API functions can be called.
  *Only API functions that end in ...FromISR() can be used within interrupts. */
-#define configMAX_SYSCALL_INTERRUPT_PRIORITY    (4)
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY    (3)
 
 
 /* Optional functions - most linkers will remove unused functions anyway. */
@@ -108,9 +108,9 @@
 #define INCLUDE_vTaskSuspend                    1
 #define INCLUDE_vTaskDelayUntil                 1
 #define INCLUDE_vTaskDelay                      1
-#define INCLUDE_xTaskGetSchedulerState          1
+#define INCLUDE_xTaskGetSchedulerState          0
 #define INCLUDE_xTaskGetCurrentTaskHandle       1
-#define INCLUDE_uxTaskGetStackHighWaterMark     1
+#define INCLUDE_uxTaskGetStackHighWaterMark     0
 #define INCLUDE_xTaskGetIdleTaskHandle          0
 #define INCLUDE_eTaskGetState                   0
 #define INCLUDE_xTimerPendFunctionCall          0

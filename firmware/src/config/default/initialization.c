@@ -76,7 +76,7 @@
 #pragma config DMTINTV =    WIN_127_128
 #pragma config FSOSCEN =    OFF
 #pragma config IESO =       OFF
-#pragma config POSCMOD =    OFF
+#pragma config POSCMOD =    EC
 #pragma config OSCIOFNC =   OFF
 #pragma config FCKSM =      CSECME
 #pragma config WDTPS =      PS1048576
@@ -88,17 +88,17 @@
 #pragma config FDMTEN =     OFF
 
 /*** DEVCFG2 ***/
-#pragma config FPLLIDIV =   DIV_1
+#pragma config FPLLIDIV =   DIV_3
 #pragma config FPLLRNG =    RANGE_5_10_MHZ
-#pragma config FPLLICLK =   PLL_FRC
+#pragma config FPLLICLK =   PLL_POSC
 #pragma config FPLLMULT =   MUL_50
 #pragma config FPLLODIV =   DIV_2
 #pragma config UPLLFSEL =   FREQ_24MHZ
 
 /*** DEVCFG3 ***/
 #pragma config USERID =     0xffff
-#pragma config FMIIEN =     ON
-#pragma config FETHIO =     ON
+#pragma config FMIIEN =     OFF
+#pragma config FETHIO =     OFF
 #pragma config PGL1WAY =    ON
 #pragma config PMDL1WAY =   ON
 #pragma config IOL1WAY =    ON
@@ -177,23 +177,6 @@ static const DRV_USBHS_INIT drvUSBInit =
 // Section: System Initialization
 // *****************************************************************************
 // *****************************************************************************
-// <editor-fold defaultstate="collapsed" desc="SYS_TIME Initialization Data">
-
-static const SYS_TIME_PLIB_INTERFACE sysTimePlibAPI = {
-    .timerCallbackSet = (SYS_TIME_PLIB_CALLBACK_REGISTER)TMR2_CallbackRegister,
-    .timerStart = (SYS_TIME_PLIB_START)TMR2_Start,
-    .timerStop = (SYS_TIME_PLIB_STOP)TMR2_Stop ,
-    .timerFrequencyGet = (SYS_TIME_PLIB_FREQUENCY_GET)TMR2_FrequencyGet,
-    .timerPeriodSet = (SYS_TIME_PLIB_PERIOD_SET)TMR2_PeriodSet,
-};
-
-static const SYS_TIME_INIT sysTimeInitData =
-{
-    .timePlib = &sysTimePlibAPI,
-    .hwTimerIntNum = 9,
-};
-
-// </editor-fold>
 
 
 
@@ -235,8 +218,6 @@ void SYS_Initialize ( void* data )
 
 	GPIO_Initialize();
 
-    TMR2_Initialize();
-
 
 
     /* MISRAC 2012 deviation block start */
@@ -245,12 +226,6 @@ void SYS_Initialize ( void* data )
     /* MISRA C-2012 Rule 11.8 - Deviation record ID - H3_MISRAC_2012_R_11_8_DR_1 */
 
 
-    /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -  
-    H3_MISRAC_2012_R_11_3_DR_1 & H3_MISRAC_2012_R_11_8_DR_1*/
-        
-    sysObj.sysTime = SYS_TIME_Initialize(SYS_TIME_INDEX_0, (SYS_MODULE_INIT *)&sysTimeInitData);
-    
-    /* MISRAC 2012 deviation block end */
 
     /* Initialize USB Driver */ 
     sysObj.drvUSBHSObject = DRV_USBHS_Initialize(DRV_USBHS_INDEX_0, (SYS_MODULE_INIT *) &drvUSBInit);    
@@ -262,7 +237,7 @@ void SYS_Initialize ( void* data )
 
 
     /* MISRAC 2012 deviation block end */
-    APP_Initialize();
+    APP_FREERTOS_Initialize();
 
 
     EVIC_Initialize();
