@@ -52,6 +52,24 @@
 #include <xc.h>
 #include "ISR_Support.h"
 
+    .extern  CORE_TIMER_Handler
+
+    .section   .vector_0,code, keep
+    .equ     __vector_dispatch_0, IntVectorCORE_TIMER_Handler
+    .global  __vector_dispatch_0
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorCORE_TIMER_Handler
+
+IntVectorCORE_TIMER_Handler:
+    portSAVE_CONTEXT
+    la    s6,  CORE_TIMER_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorCORE_TIMER_Handler
     .extern  USB_Handler
 
     .section   .vector_132,code, keep
@@ -88,4 +106,76 @@ IntVectorUSB_DMA_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorUSB_DMA_Handler
+    .extern  DMA0_Handler
+
+    .section   .vector_134,code, keep
+    .equ     __vector_dispatch_134, IntVectorDMA0_Handler
+    .global  __vector_dispatch_134
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorDMA0_Handler
+
+IntVectorDMA0_Handler:
+    portSAVE_CONTEXT
+    la    s6,  DMA0_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorDMA0_Handler
+    .extern  DMA1_Handler
+
+    .section   .vector_135,code, keep
+    .equ     __vector_dispatch_135, IntVectorDMA1_Handler
+    .global  __vector_dispatch_135
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorDMA1_Handler
+
+IntVectorDMA1_Handler:
+    portSAVE_CONTEXT
+    la    s6,  DMA1_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorDMA1_Handler
+    .extern  SPI4_RX_Handler
+
+    .section   .vector_164,code, keep
+    .equ     __vector_dispatch_164, IntVectorSPI4_RX_Handler
+    .global  __vector_dispatch_164
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorSPI4_RX_Handler
+
+IntVectorSPI4_RX_Handler:
+    portSAVE_CONTEXT
+    la    s6,  SPI4_RX_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorSPI4_RX_Handler
+    .extern  SPI4_TX_Handler
+
+    .section   .vector_165,code, keep
+    .equ     __vector_dispatch_165, IntVectorSPI4_TX_Handler
+    .global  __vector_dispatch_165
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorSPI4_TX_Handler
+
+IntVectorSPI4_TX_Handler:
+    portSAVE_CONTEXT
+    la    s6,  SPI4_TX_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorSPI4_TX_Handler
 

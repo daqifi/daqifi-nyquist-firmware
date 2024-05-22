@@ -48,17 +48,33 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "peripheral/spi/spi_master/plib_spi4_master.h"
+#include "peripheral/clk/plib_clk.h"
+#include "peripheral/gpio/plib_gpio.h"
+#include "peripheral/cache/plib_cache.h"
+#include "peripheral/evic/plib_evic.h"
+#include "peripheral/dmac/plib_dmac.h"
+#include "usb/usb_chapter_9.h"
+#include "usb/usb_device.h"
+#include "driver/sdspi/drv_sdspi.h"
+#include "system/time/sys_time.h"
 #include "usb/usb_device_cdc.h"
 #include "usb/usb_cdc.h"
 #include "driver/usb/usbhs/drv_usbhs.h"
-#include "peripheral/clk/plib_clk.h"
-#include "peripheral/gpio/plib_gpio.h"
-#include "peripheral/evic/plib_evic.h"
-#include "usb/usb_chapter_9.h"
-#include "usb/usb_device.h"
+#include "peripheral/coretimer/plib_coretimer.h"
+#include "system/fs/sys_fs.h"
+#include "system/fs/sys_fs_media_manager.h"
+#include "system/fs/sys_fs_fat_interface.h"
+#include "system/fs/fat_fs/file_system/ff.h"
+#include "system/fs/fat_fs/file_system/ffconf.h"
+#include "system/fs/fat_fs/hardware_access/diskio.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "driver/spi/drv_spi.h"
 #include "system/int/sys_int.h"
+#include "system/ports/sys_ports.h"
+#include "system/cache/sys_cache.h"
+#include "system/dma/sys_dma.h"
 #include "osal/osal.h"
 #include "system/debug/sys_debug.h"
 #include "app_freertos.h"
@@ -192,9 +208,16 @@ Remarks:
 
 typedef struct
 {
-    SYS_MODULE_OBJ  drvUSBHSObject;
+    /* SDSPI0 Driver Object */
+    SYS_MODULE_OBJ drvSDSPI0;
 
     SYS_MODULE_OBJ  usbDevObject0;
+
+    /* SPI0 Driver Object */
+    SYS_MODULE_OBJ drvSPI0;
+
+    SYS_MODULE_OBJ  sysTime;
+    SYS_MODULE_OBJ  drvUSBHSObject;
 
 
 } SYSTEM_OBJECTS;

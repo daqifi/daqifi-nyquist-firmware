@@ -62,14 +62,18 @@
 
 
 /* All the handlers are defined here.  Each will call its PLIB-specific function. */
-
 // *****************************************************************************
 // *****************************************************************************
 // Section: System Interrupt Vector declarations
 // *****************************************************************************
 // *****************************************************************************
+void CORE_TIMER_Handler (void);
 void USB_Handler (void);
 void USB_DMA_Handler (void);
+void DMA0_Handler (void);
+void DMA1_Handler (void);
+void SPI4_RX_Handler (void);
+void SPI4_TX_Handler (void);
 
 
 // *****************************************************************************
@@ -77,6 +81,11 @@ void USB_DMA_Handler (void);
 // Section: System Interrupt Vector definitions
 // *****************************************************************************
 // *****************************************************************************
+void CORE_TIMER_Handler (void)
+{
+    CORE_TIMER_InterruptHandler();
+}
+
 
 
 void USB_Handler (void)
@@ -88,6 +97,27 @@ void USB_DMA_Handler (void)
 {
     DRV_USBHS_DMAInterruptHandler();
 }
+
+void DMA0_Handler (void)
+{
+    DMA0_InterruptHandler();
+}
+
+void DMA1_Handler (void)
+{
+    DMA1_InterruptHandler();
+}
+
+void SPI4_RX_Handler (void)
+{
+    SPI4_RX_InterruptHandler();
+}
+
+void SPI4_TX_Handler (void)
+{
+    SPI4_TX_InterruptHandler();
+}
+
 
 
 

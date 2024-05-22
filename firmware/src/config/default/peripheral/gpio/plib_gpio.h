@@ -62,6 +62,27 @@
 // *****************************************************************************
 
 
+/*** Macros for SDI4 pin ***/
+#define SDI4_Get()               ((PORTA >> 15) & 0x1U)
+#define SDI4_PIN                  GPIO_PIN_RA15
+
+/*** Macros for SD_CS pin ***/
+#define SD_CS_Set()               (LATDSET = (1U<<9))
+#define SD_CS_Clear()             (LATDCLR = (1U<<9))
+#define SD_CS_Toggle()            (LATDINV= (1U<<9))
+#define SD_CS_OutputEnable()      (TRISDCLR = (1U<<9))
+#define SD_CS_InputEnable()       (TRISDSET = (1U<<9))
+#define SD_CS_Get()               ((PORTD >> 9) & 0x1U)
+#define SD_CS_PIN                  GPIO_PIN_RD9
+
+/*** Macros for SCK4 pin ***/
+#define SCK4_Get()               ((PORTD >> 10) & 0x1U)
+#define SCK4_PIN                  GPIO_PIN_RD10
+
+/*** Macros for SDO4 pin ***/
+#define SDO4_Get()               ((PORTC >> 13) & 0x1U)
+#define SDO4_PIN                  GPIO_PIN_RC13
+
 
 // *****************************************************************************
 /* GPIO Port

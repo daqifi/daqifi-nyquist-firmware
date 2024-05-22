@@ -122,6 +122,95 @@
 /* MISRA C-2012 Rule 11.1 */
 /* MISRA C-2012 Rule 11.3 */
 /* MISRA C-2012 Rule 11.8 */
+// <editor-fold defaultstate="collapsed" desc="DRV_SDSPI Instance 0 Initialization Data">
+
+/* SDSPI Client Objects Pool */
+static DRV_SDSPI_CLIENT_OBJ drvSDSPI0ClientObjPool[DRV_SDSPI_CLIENTS_NUMBER_IDX0];
+
+
+
+/* SDSPI Driver Initialization Data */
+static const DRV_SDSPI_INIT drvSDSPI0InitData =
+{
+    .spiDrvIndex            = 0,
+
+    /* SDSPI Number of clients */
+    .numClients             = DRV_SDSPI_CLIENTS_NUMBER_IDX0,
+
+    /* SDSPI Client Objects Pool */
+    .clientObjPool          = (uintptr_t)&drvSDSPI0ClientObjPool[0],
+
+
+    .chipSelectPin          = DRV_SDSPI_CHIP_SELECT_PIN_IDX0,
+
+    .sdcardSpeedHz          = DRV_SDSPI_SPEED_HZ_IDX0,
+
+    .pollingIntervalMs      = DRV_SDSPI_POLLING_INTERVAL_MS_IDX0,
+
+    .writeProtectPin        = SYS_PORT_PIN_NONE,
+
+    .isFsEnabled            = true,
+
+};
+// </editor-fold>
+
+// <editor-fold defaultstate="collapsed" desc="DRV_SPI Instance 0 Initialization Data">
+
+/* SPI Client Objects Pool */
+static DRV_SPI_CLIENT_OBJ drvSPI0ClientObjPool[DRV_SPI_CLIENTS_NUMBER_IDX0];
+
+/* SPI PLIB Interface Initialization */
+static const DRV_SPI_PLIB_INTERFACE drvSPI0PlibAPI = {
+
+    /* SPI PLIB Setup */
+    .setup = (DRV_SPI_PLIB_SETUP)SPI4_TransferSetup,
+
+    /* SPI PLIB WriteRead function */
+    .writeRead = (DRV_SPI_PLIB_WRITE_READ)SPI4_WriteRead,
+
+    /* SPI PLIB Transfer Status function */
+    .isTransmitterBusy = (DRV_SPI_PLIB_TRANSMITTER_IS_BUSY)SPI4_IsTransmitterBusy,
+
+    /* SPI PLIB Callback Register */
+    .callbackRegister = (DRV_SPI_PLIB_CALLBACK_REGISTER)SPI4_CallbackRegister,
+};
+
+static const uint32_t drvSPI0remapDataBits[]= { 0x00000000, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0x00000400, 0x00000800 };
+static const uint32_t drvSPI0remapClockPolarity[] = { 0x00000000, 0x00000040 };
+static const uint32_t drvSPI0remapClockPhase[] = { 0x00000000, 0x00000100 };
+
+/* SPI Driver Initialization Data */
+static const DRV_SPI_INIT drvSPI0InitData =
+{
+    /* SPI PLIB API */
+    .spiPlib = &drvSPI0PlibAPI,
+
+    .remapDataBits = drvSPI0remapDataBits,
+
+    .remapClockPolarity = drvSPI0remapClockPolarity,
+
+    .remapClockPhase = drvSPI0remapClockPhase,
+
+    /* SPI Number of clients */
+    .numClients = DRV_SPI_CLIENTS_NUMBER_IDX0,
+
+    /* SPI Client Objects Pool */
+    .clientObjPool = (uintptr_t)&drvSPI0ClientObjPool[0],
+
+    /* DMA Channel for Transmit */
+    .dmaChannelTransmit = DRV_SPI_XMIT_DMA_CH_IDX0,
+
+    /* DMA Channel for Receive */
+    .dmaChannelReceive  = DRV_SPI_RCV_DMA_CH_IDX0,
+
+    /* SPI Transmit Register */
+    .spiTransmitAddress =  (void *)&(SPI4BUF),
+
+    /* SPI Receive Register */
+    .spiReceiveAddress  = (void *)&(SPI4BUF),
+
+};
+// </editor-fold>
 
 
 
@@ -170,6 +259,64 @@ static const DRV_USBHS_INIT drvUSBInit =
 };
 
 
+// <editor-fold defaultstate="collapsed" desc="File System Initialization Data">
+
+
+const SYS_FS_MEDIA_MOUNT_DATA sysfsMountTable[SYS_FS_VOLUME_NUMBER] =
+{
+    {NULL}
+};
+
+static const SYS_FS_FUNCTIONS FatFsFunctions =
+{
+    .mount             = FATFS_mount,
+    .unmount           = FATFS_unmount,
+    .open              = FATFS_open,
+    .read_t              = FATFS_read,
+    .close             = FATFS_close,
+    .seek              = FATFS_lseek,
+    .fstat             = FATFS_stat,
+    .getlabel          = FATFS_getlabel,
+    .currWD            = FATFS_getcwd,
+    .getstrn           = FATFS_gets,
+    .openDir           = FATFS_opendir,
+    .readDir           = FATFS_readdir,
+    .closeDir          = FATFS_closedir,
+    .chdir             = FATFS_chdir,
+    .chdrive           = FATFS_chdrive,
+    .write_t             = FATFS_write,
+    .tell              = FATFS_tell,
+    .eof               = FATFS_eof,
+    .size              = FATFS_size,
+    .mkdir             = FATFS_mkdir,
+    .remove_t            = FATFS_unlink,
+    .setlabel          = FATFS_setlabel,
+    .truncate          = FATFS_truncate,
+    .chmode            = FATFS_chmod,
+    .chtime            = FATFS_utime,
+    .rename_t            = FATFS_rename,
+    .sync              = FATFS_sync,
+    .putchr            = FATFS_putc,
+    .putstrn           = FATFS_puts,
+    .formattedprint    = FATFS_printf,
+    .testerror         = FATFS_error,
+    .formatDisk        = (FORMAT_DISK)FATFS_mkfs,
+    .partitionDisk     = FATFS_fdisk,
+    .getCluster        = FATFS_getclusters
+};
+
+
+
+
+static const SYS_FS_REGISTRATION_TABLE sysFSInit [ SYS_FS_MAX_FILE_SYSTEM_TYPE ] =
+{
+    {
+        .nativeFileSystemType = FAT,
+        .nativeFileSystemFunctions = &FatFsFunctions
+    }
+};
+// </editor-fold>
+
 
 
 // *****************************************************************************
@@ -177,6 +324,25 @@ static const DRV_USBHS_INIT drvUSBInit =
 // Section: System Initialization
 // *****************************************************************************
 // *****************************************************************************
+// <editor-fold defaultstate="collapsed" desc="SYS_TIME Initialization Data">
+
+static const SYS_TIME_PLIB_INTERFACE sysTimePlibAPI = {
+    .timerCallbackSet = (SYS_TIME_PLIB_CALLBACK_REGISTER)CORETIMER_CallbackSet,
+    .timerStart = (SYS_TIME_PLIB_START)CORETIMER_Start,
+    .timerStop = (SYS_TIME_PLIB_STOP)CORETIMER_Stop ,
+    .timerFrequencyGet = (SYS_TIME_PLIB_FREQUENCY_GET)CORETIMER_FrequencyGet,
+    .timerPeriodSet = (SYS_TIME_PLIB_PERIOD_SET)NULL,
+    .timerCompareSet = (SYS_TIME_PLIB_COMPARE_SET)CORETIMER_CompareSet,
+    .timerCounterGet = (SYS_TIME_PLIB_COUNTER_GET)CORETIMER_CounterGet,
+};
+
+static const SYS_TIME_INIT sysTimeInitData =
+{
+    .timePlib = &sysTimePlibAPI,
+    .hwTimerIntNum = 0,
+};
+
+// </editor-fold>
 
 
 
@@ -218,6 +384,11 @@ void SYS_Initialize ( void* data )
 
 	GPIO_Initialize();
 
+	SPI4_Initialize();
+
+    DMAC_Initialize();
+
+    CORETIMER_Initialize();
 
 
     /* MISRAC 2012 deviation block start */
@@ -225,15 +396,30 @@ void SYS_Initialize ( void* data )
     /* MISRA C-2012 Rule 11.3 - Deviation record ID - H3_MISRAC_2012_R_11_3_DR_1 */
     /* MISRA C-2012 Rule 11.8 - Deviation record ID - H3_MISRAC_2012_R_11_8_DR_1 */
 
+    /* Initialize SDSPI0 Driver Instance */
+    sysObj.drvSDSPI0 = DRV_SDSPI_Initialize(DRV_SDSPI_INDEX_0, (SYS_MODULE_INIT *)&drvSDSPI0InitData);
+
+    /* Initialize SPI0 Driver Instance */
+    sysObj.drvSPI0 = DRV_SPI_Initialize(DRV_SPI_INDEX_0, (SYS_MODULE_INIT *)&drvSPI0InitData);
 
 
-    /* Initialize USB Driver */ 
-    sysObj.drvUSBHSObject = DRV_USBHS_Initialize(DRV_USBHS_INDEX_0, (SYS_MODULE_INIT *) &drvUSBInit);    
+    /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -  
+    H3_MISRAC_2012_R_11_3_DR_1 & H3_MISRAC_2012_R_11_8_DR_1*/
+        
+    sysObj.sysTime = SYS_TIME_Initialize(SYS_TIME_INDEX_0, (SYS_MODULE_INIT *)&sysTimeInitData);
+    
+    /* MISRAC 2012 deviation block end */
 
 
     /* Initialize the USB device layer */
     sysObj.usbDevObject0 = USB_DEVICE_Initialize (USB_DEVICE_INDEX_0 , ( SYS_MODULE_INIT* ) & usbDevInitData);
 
+
+    /* Initialize USB Driver */ 
+    sysObj.drvUSBHSObject = DRV_USBHS_Initialize(DRV_USBHS_INDEX_0, (SYS_MODULE_INIT *) &drvUSBInit);    
+
+    /*** File System Service Initialization Code ***/
+    (void) SYS_FS_Initialize( (const void *) sysFSInit );
 
 
     /* MISRAC 2012 deviation block end */

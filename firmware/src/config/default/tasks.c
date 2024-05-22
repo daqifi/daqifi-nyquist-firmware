@@ -60,12 +60,11 @@
 // Section: RTOS "Tasks" Routine
 // *****************************************************************************
 // *****************************************************************************
-static void F_DRV_USBHS_Tasks(  void *pvParameters  )
+static void lDRV_SDSPI_0_Tasks(  void *pvParameters  )
 {
     while(true)
     {
-                 /* USB FS Driver Task Routine */
-        DRV_USBHS_Tasks(sysObj.drvUSBHSObject);
+        DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
         vTaskDelay(10U / portTICK_PERIOD_MS);
     }
 }
@@ -79,6 +78,27 @@ static void F_USB_DEVICE_Tasks(  void *pvParameters  )
         vTaskDelay(1U / portTICK_PERIOD_MS);
     }
 }
+
+static void F_DRV_USBHS_Tasks(  void *pvParameters  )
+{
+    while(true)
+    {
+                 /* USB FS Driver Task Routine */
+        DRV_USBHS_Tasks(sysObj.drvUSBHSObject);
+        vTaskDelay(10U / portTICK_PERIOD_MS);
+    }
+}
+
+
+static void lSYS_FS_Tasks(  void *pvParameters  )
+{
+    while(true)
+    {
+        SYS_FS_Tasks();
+        vTaskDelay(10U / portTICK_PERIOD_MS);
+    }
+}
+
 
 /* Handle for the APP_FREERTOS_Tasks. */
 TaskHandle_t xAPP_FREERTOS_Tasks;
@@ -111,23 +131,40 @@ void SYS_Tasks ( void )
 {
     /* Maintain system services */
     
+    (void) xTaskCreate( lSYS_FS_Tasks,
+        "SYS_FS_TASKS",
+        SYS_FS_STACK_SIZE,
+        (void*)NULL,
+        SYS_FS_PRIORITY,
+        (TaskHandle_t*)NULL
+    );
+
+
 
     /* Maintain Device Drivers */
-    
+        (void) xTaskCreate( lDRV_SDSPI_0_Tasks,
+        "DRV_SD_0_TASKS",
+        DRV_SDSPI_STACK_SIZE_IDX0,
+        (void*)NULL,
+        DRV_SDSPI_PRIORITY_IDX0,
+        (TaskHandle_t*)NULL
+    );
+
+
 
     /* Maintain Middleware & Other Libraries */
-        /* Create OS Thread for USB Driver Tasks. */
-    (void) xTaskCreate( F_DRV_USBHS_Tasks,
-        "DRV_USBHS_TASKS",
+        /* Create OS Thread for USB_DEVICE_Tasks. */
+    (void) xTaskCreate( F_USB_DEVICE_Tasks,
+        "USB_DEVICE_TASKS",
         1024,
         (void*)NULL,
         1,
         (TaskHandle_t*)NULL
     );
 
-    /* Create OS Thread for USB_DEVICE_Tasks. */
-    (void) xTaskCreate( F_USB_DEVICE_Tasks,
-        "USB_DEVICE_TASKS",
+    /* Create OS Thread for USB Driver Tasks. */
+    (void) xTaskCreate( F_DRV_USBHS_Tasks,
+        "DRV_USBHS_TASKS",
         1024,
         (void*)NULL,
         1,
