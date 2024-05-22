@@ -58,10 +58,7 @@ build/default/production/_ext/2071311437/drv_usbhs_device.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/system/time/sys_time.h \
- ../src/config/default/usb/usb_device_cdc.h \
- ../src/config/default/usb/usb_device.h \
- ../src/config/default/usb/src/usb_device_function_driver.h \
- ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/driver/usb/usbhs/drv_usbhs.h \
  ../src/config/default/usb/usb_hub.h \
  ../src/config/default/driver/usb/usbhs/src/plib_usbhs.h \
@@ -78,7 +75,10 @@ build/default/production/_ext/2071311437/drv_usbhs_device.o: \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_TxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
+ ../src/config/default/usb/usb_device_cdc.h \
+ ../src/config/default/usb/usb_device.h \
+ ../src/config/default/usb/src/usb_device_function_driver.h \
+ ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -223,15 +223,7 @@ build/default/production/_ext/2071311437/drv_usbhs_device.o: \
 
 ../src/config/default/system/time/sys_time.h:
 
-../src/config/default/usb/usb_device_cdc.h:
-
-../src/config/default/usb/usb_device.h:
-
-../src/config/default/usb/src/usb_device_function_driver.h:
-
-../src/config/default/usb/usb_cdc.h:
-
-../src/config/default/usb/usb_cdc.h:
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/driver/usb/usbhs/drv_usbhs.h:
 
@@ -265,7 +257,15 @@ build/default/production/_ext/2071311437/drv_usbhs_device.o: \
 
 ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h:
 
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
+../src/config/default/usb/usb_device_cdc.h:
+
+../src/config/default/usb/usb_device.h:
+
+../src/config/default/usb/src/usb_device_function_driver.h:
+
+../src/config/default/usb/usb_cdc.h:
+
+../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/system/fs/sys_fs.h:
 

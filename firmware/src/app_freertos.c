@@ -484,7 +484,189 @@ void USBDevice_Task(void* p_arg)
         }
     }
 }
+void SD_Task(void* p_arg) 
+{
+    /* Check the application's current state. */
+    #define SDCARD_MOUNT_NAME    "/mnt/mydrive"
+    #define SDCARD_DEV_NAME      "/dev/mmcblka1"
+    #define SDCARD_FILE_NAME     "FILE_TOO_LONG_NAME_EXAMPLE_123.JPG"
+    #define SDCARD_DIR_NAME      "Dir3"
+    #define SD_DATA_LEN         512
+    enum{
+        SD_MOUNT_DISK,
+        SD_UNMOUNT_DISK,
+        SD_MOUNT_DISK_AGAIN,
+        SD_SET_CURRENT_DRIVE,
+        SD_OPEN_FIRST_FILE,
+        SD_CREATE_DIRECTORY,
+        SD_OPEN_SECOND_FILE,
+        SD_READ_WRITE_TO_FILE,
+        SD_CLOSE_FILE,
+        SD_IDLE,
+        SD_ERROR,
+        
+    };
+    uint8_t state=SD_MOUNT_DISK;
+    SYS_FS_HANDLE fileHandle=SYS_FS_HANDLE_INVALID;
+    SYS_FS_HANDLE fileHandle1=SYS_FS_HANDLE_INVALID;
+    int32_t nBytesRead;
+    uint8_t readWriteBuffer[SD_DATA_LEN];
+    while(1){
+        switch ( state )
+        {
+            case SD_MOUNT_DISK:
+                if(SYS_FS_Mount(SDCARD_DEV_NAME, SDCARD_MOUNT_NAME, FAT, 0, NULL) != 0)
+                {
+                    /* The disk could not be mounted. Try
+                     * mounting again until success. */
+                    state = SD_MOUNT_DISK;
+                }
+                else
+                {
+                    /* Mount was successful. Unmount the disk, for testing. */
+                    state = SD_UNMOUNT_DISK;
+                }
+                break;
 
+            case SD_UNMOUNT_DISK:
+                if(SYS_FS_Unmount(SDCARD_MOUNT_NAME) != 0)
+                {
+                    /* The disk could not be un mounted. Try
+                     * un mounting again untill success. */
+
+                    state = SD_UNMOUNT_DISK;
+                }
+                else
+                {
+                    /* UnMount was successful. Mount the disk again */
+                    state = SD_MOUNT_DISK_AGAIN;
+                }
+                break;
+
+            case SD_MOUNT_DISK_AGAIN:
+                if(SYS_FS_Mount(SDCARD_DEV_NAME, SDCARD_MOUNT_NAME, FAT, 0, NULL) != 0)
+                {
+                    /* The disk could not be mounted. Try
+                     * mounting again until success. */
+                    state = SD_MOUNT_DISK_AGAIN;
+                }
+                else
+                {
+                    /* Mount was successful. Set current drive so that we do not have to use absolute path. */
+                    state = SD_SET_CURRENT_DRIVE;
+                }
+                break;
+
+            case SD_SET_CURRENT_DRIVE:
+                if(SYS_FS_CurrentDriveSet(SDCARD_MOUNT_NAME) == SYS_FS_RES_FAILURE)
+                {
+                    /* Error while setting current drive */
+                    state = SD_ERROR;
+                }
+                else
+                {
+                    /* Open a file for reading. */
+                    state = SD_OPEN_FIRST_FILE;
+                }
+                break;
+
+            case SD_OPEN_FIRST_FILE:
+                fileHandle = SYS_FS_FileOpen(SDCARD_FILE_NAME, (SYS_FS_FILE_OPEN_READ));
+                if(fileHandle == SYS_FS_HANDLE_INVALID)
+                {
+                    /* Could not open the file. Error out*/
+                    state = SD_ERROR;
+                }
+                else
+                {
+                    /* Create a directory. */
+                    state = SD_CREATE_DIRECTORY;
+                }
+                break;
+
+            case SD_CREATE_DIRECTORY:
+                if(SYS_FS_DirectoryMake(SDCARD_DIR_NAME) == SYS_FS_RES_FAILURE)
+                {
+                    /* Error while creating a new drive */
+                    state = SD_MOUNT_DISK_AGAIN;
+                }
+                else
+                {
+                    /* Open a second file for writing. */
+                    state = SD_OPEN_SECOND_FILE;
+                }
+                break;
+
+            case SD_OPEN_SECOND_FILE:
+                /* Open a second file inside "Dir1" */
+                fileHandle1 = SYS_FS_FileOpen(SDCARD_DIR_NAME"/"SDCARD_FILE_NAME,
+                        (SYS_FS_FILE_OPEN_WRITE));
+
+                if(fileHandle1 == SYS_FS_HANDLE_INVALID)
+                {
+                    /* Could not open the file. Error out*/
+                    state = SD_ERROR;
+                }
+                else
+                {                
+                    /* Read from one file and write to another file */
+                    state = SD_READ_WRITE_TO_FILE;
+                }
+                break;
+            case SD_READ_WRITE_TO_FILE:
+
+                nBytesRead = SYS_FS_FileRead(fileHandle, (void *)readWriteBuffer, SD_DATA_LEN);
+
+                if (nBytesRead == -1)
+                {
+                    /* There was an error while reading the file.
+                     * Close the file and error out. */
+                    SYS_FS_FileClose(fileHandle);
+                    state = SD_ERROR;
+                }
+                else
+                {
+                    /* If read was success, try writing to the new file */
+                    if(SYS_FS_FileWrite(fileHandle1, (const void *)readWriteBuffer, nBytesRead) == -1)
+                    {                    
+                        /* Write was not successful. Close the file
+                         * and error out.*/
+                        SYS_FS_FileClose(fileHandle1);
+                        state = SD_ERROR;
+                    }
+                    else if(SYS_FS_FileEOF(fileHandle) == 1)    /* Test for end of file */
+                    {                                        
+                        /* Continue the read and write process, until the end of file is reached */
+                        state = SD_CLOSE_FILE;
+                    }
+                }
+                break;
+
+            case SD_CLOSE_FILE:
+                /* Close both files */
+                SYS_FS_FileClose(fileHandle);
+                SYS_FS_FileClose(fileHandle1);
+
+                /* The test was successful. Lets idle. */
+                state = SD_IDLE;
+                break;
+
+            case SD_IDLE:
+                /* The application comes here when the demo has completed
+                 * successfully. Glow LED1. */
+                //LED_ON();
+                break;
+
+            case SD_ERROR:
+                /* The application comes here when the demo has failed. */
+                break;
+
+            default:
+                break;
+        }
+        vTaskDelay(1);
+    }
+}
 // *****************************************************************************
 // *****************************************************************************
 // Section: Application Initialization and State Machine Functions
@@ -538,6 +720,17 @@ void APP_FREERTOS_Tasks ( void )
     {
         errStatus = xTaskCreate((TaskFunction_t) USBDevice_Task,
                 "USB_AttachTask",
+                USBDEVICETASK_SIZE,
+                NULL,
+                USBDEVICETASK_PRIO,
+                NULL);
+        /*Don't proceed if Task was not created...*/
+        if(errStatus != pdTRUE)
+        {
+            while(1);
+        }
+        errStatus = xTaskCreate((TaskFunction_t) SD_Task,
+                "SD_AttachTask",
                 USBDEVICETASK_SIZE,
                 NULL,
                 USBDEVICETASK_PRIO,
