@@ -69,6 +69,23 @@ static void lDRV_SDSPI_0_Tasks(  void *pvParameters  )
     }
 }
 
+static void _WDRV_WINC_Tasks(void *pvParameters)
+{
+    while(1)
+    {
+        SYS_STATUS status;
+
+        WDRV_WINC_Tasks(sysObj.drvWifiWinc);
+
+        status = WDRV_WINC_Status(sysObj.drvWifiWinc);
+
+        if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status))
+        {
+            vTaskDelay(50 / portTICK_PERIOD_MS);
+        }
+    }
+}
+
 static void F_USB_DEVICE_Tasks(  void *pvParameters  )
 {
     while(true)
@@ -149,6 +166,15 @@ void SYS_Tasks ( void )
         DRV_SDSPI_PRIORITY_IDX0,
         (TaskHandle_t*)NULL
     );
+
+    xTaskCreate( _WDRV_WINC_Tasks,
+        "WDRV_WINC_Tasks",
+        DRV_WIFI_WINC_RTOS_STACK_SIZE,
+        (void*)NULL,
+        DRV_WIFI_WINC_RTOS_TASK_PRIORITY,
+        (TaskHandle_t*)NULL
+    );
+
 
 
 

@@ -62,6 +62,24 @@
 // *****************************************************************************
 
 
+/*** Macros for WDRV_WINC_RESETN pin ***/
+#define WDRV_WINC_RESETN_Set()               (LATHSET = (1U<<8))
+#define WDRV_WINC_RESETN_Clear()             (LATHCLR = (1U<<8))
+#define WDRV_WINC_RESETN_Toggle()            (LATHINV= (1U<<8))
+#define WDRV_WINC_RESETN_OutputEnable()      (TRISHCLR = (1U<<8))
+#define WDRV_WINC_RESETN_InputEnable()       (TRISHSET = (1U<<8))
+#define WDRV_WINC_RESETN_Get()               ((PORTH >> 8) & 0x1U)
+#define WDRV_WINC_RESETN_PIN                  GPIO_PIN_RH8
+
+/*** Macros for GPIO_RK4 pin ***/
+#define GPIO_RK4_Set()               (LATKSET = (1U<<4))
+#define GPIO_RK4_Clear()             (LATKCLR = (1U<<4))
+#define GPIO_RK4_Toggle()            (LATKINV= (1U<<4))
+#define GPIO_RK4_OutputEnable()      (TRISKCLR = (1U<<4))
+#define GPIO_RK4_InputEnable()       (TRISKSET = (1U<<4))
+#define GPIO_RK4_Get()               ((PORTK >> 4) & 0x1U)
+#define GPIO_RK4_PIN                  GPIO_PIN_RK4
+
 /*** Macros for SDI4 pin ***/
 #define SDI4_Get()               ((PORTA >> 15) & 0x1U)
 #define SDI4_PIN                  GPIO_PIN_RA15
@@ -78,6 +96,24 @@
 /*** Macros for SCK4 pin ***/
 #define SCK4_Get()               ((PORTD >> 10) & 0x1U)
 #define SCK4_PIN                  GPIO_PIN_RD10
+
+/*** Macros for WDRV_WINC_IRQ pin ***/
+#define WDRV_WINC_IRQ_Set()               (LATDSET = (1U<<11))
+#define WDRV_WINC_IRQ_Clear()             (LATDCLR = (1U<<11))
+#define WDRV_WINC_IRQ_Toggle()            (LATDINV= (1U<<11))
+#define WDRV_WINC_IRQ_OutputEnable()      (TRISDCLR = (1U<<11))
+#define WDRV_WINC_IRQ_InputEnable()       (TRISDSET = (1U<<11))
+#define WDRV_WINC_IRQ_Get()               ((PORTD >> 11) & 0x1U)
+#define WDRV_WINC_IRQ_PIN                  GPIO_PIN_RD11
+
+/*** Macros for WDRV_WINC_CHIP_EN pin ***/
+#define WDRV_WINC_CHIP_EN_Set()               (LATHSET = (1U<<13))
+#define WDRV_WINC_CHIP_EN_Clear()             (LATHCLR = (1U<<13))
+#define WDRV_WINC_CHIP_EN_Toggle()            (LATHINV= (1U<<13))
+#define WDRV_WINC_CHIP_EN_OutputEnable()      (TRISHCLR = (1U<<13))
+#define WDRV_WINC_CHIP_EN_InputEnable()       (TRISHSET = (1U<<13))
+#define WDRV_WINC_CHIP_EN_Get()               ((PORTH >> 13) & 0x1U)
+#define WDRV_WINC_CHIP_EN_PIN                  GPIO_PIN_RH13
 
 /*** Macros for SDO4 pin ***/
 #define SDO4_Get()               ((PORTC >> 13) & 0x1U)

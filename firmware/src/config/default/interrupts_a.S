@@ -70,6 +70,24 @@ IntVectorCORE_TIMER_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorCORE_TIMER_Handler
+    .extern  CHANGE_NOTICE_D_Handler
+
+    .section   .vector_121,code, keep
+    .equ     __vector_dispatch_121, IntVectorCHANGE_NOTICE_D_Handler
+    .global  __vector_dispatch_121
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorCHANGE_NOTICE_D_Handler
+
+IntVectorCHANGE_NOTICE_D_Handler:
+    portSAVE_CONTEXT
+    la    s6,  CHANGE_NOTICE_D_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorCHANGE_NOTICE_D_Handler
     .extern  USB_Handler
 
     .section   .vector_132,code, keep

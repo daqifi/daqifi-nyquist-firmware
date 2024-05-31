@@ -138,6 +138,32 @@ extern "C" {
 #define DRV_SDSPI_STACK_SIZE_IDX0               256
 #define DRV_SDSPI_PRIORITY_IDX0                     1
 
+/*** WiFi WINC Driver Configuration ***/
+#define WDRV_WINC_GPIO_SOURCE
+#define WDRV_WINC_NETWORK_MODE_SOCKET
+#define WDRV_WINC_DEVICE_WINC1500
+#define WDRV_WINC_DEVICE_SPLIT_INIT
+#define WDRV_WINC_DEVICE_ENTERPRISE_CONNECT
+#define WDRV_WINC_DEVICE_EXT_CONNECT_PARAMS
+#define WDRV_WINC_DEVICE_BSS_ROAMING
+#define WDRV_WINC_DEVICE_FLEXIBLE_FLASH_MAP
+#define WDRV_WINC_DEVICE_DYNAMIC_BYPASS_MODE
+#define WDRV_WINC_DEVICE_WPA_SOFT_AP
+#define WDRV_WINC_DEVICE_CONF_NTP_SERVER
+#define WDRV_WINC_DEVICE_HOST_FILE_DOWNLOAD
+#define WDRV_WINC_DEVICE_SOFT_AP_EXT
+#define WDRV_WINC_DEVICE_MULTI_GAIN_TABLE
+#define WDRV_WINC_DEVICE_URL_TYPE           unsigned char
+#define WDRV_WINC_DEVICE_SCAN_STOP_ON_FIRST
+#define WDRV_WINC_DEVICE_DEPRECATE_WEP
+#define WDRV_WINC_DEVICE_OTA_SSL_OPTIONS
+#define WDRV_WINC_DEVICE_OTA_STATUS_EXTENDED
+#define WDRV_WINC_DEVICE_SCAN_SSID_LIST
+#define WDRV_WINC_DEBUG_LEVEL               WDRV_WINC_DEBUG_TYPE_NONE
+/*** WiFi WINC Driver RTOS Configuration ***/
+#define DRV_WIFI_WINC_RTOS_STACK_SIZE           1024
+#define DRV_WIFI_WINC_RTOS_TASK_PRIORITY        1
+
 /* SPI Driver Instance 0 Configuration Options */
 #define DRV_SPI_INDEX_0                       0
 #define DRV_SPI_CLIENTS_NUMBER_IDX0           2
@@ -171,6 +197,15 @@ extern "C" {
 #define USB_DEVICE_EP0_BUFFER_SIZE                          64U
 
 
+/* Maximum instances of CDC function driver */
+#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
+
+
+/* CDC Transfer Queue Size for both read and
+   write. Applicable to all instances of the
+   function driver */
+#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
+
 /*** USB Driver Configuration ***/
 
 /* Maximum USB driver instances */
@@ -193,15 +228,6 @@ extern "C" {
 /* Alignment for buffers that are submitted to USB Driver*/ 
 #define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
 
-
-/* Maximum instances of CDC function driver */
-#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
-
-
-/* CDC Transfer Queue Size for both read and
-   write. Applicable to all instances of the
-   function driver */
-#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
 
 
 

@@ -132,7 +132,7 @@ static DRV_SDSPI_CLIENT_OBJ drvSDSPI0ClientObjPool[DRV_SDSPI_CLIENTS_NUMBER_IDX0
 /* SDSPI Driver Initialization Data */
 static const DRV_SDSPI_INIT drvSDSPI0InitData =
 {
-    .spiDrvIndex            = 0,
+    .spiDrvIndex            = DRV_SPI_INDEX_0,
 
     /* SDSPI Number of clients */
     .numClients             = DRV_SDSPI_CLIENTS_NUMBER_IDX0,
@@ -153,6 +153,17 @@ static const DRV_SDSPI_INIT drvSDSPI0InitData =
 
 };
 // </editor-fold>
+
+static const WDRV_WINC_SPI_CFG wdrvWincSpiInitData =
+{
+    .drvIndex           = DRV_SPI_INDEX_0,
+    .chipSelect         = SYS_PORT_PIN_RK4
+};
+
+static const WDRV_WINC_SYS_INIT wdrvWincInitData = {
+    .pSPICfg    = &wdrvWincSpiInitData,
+    .intSrc     = GPIO_PIN_RD11
+};
 
 // <editor-fold defaultstate="collapsed" desc="DRV_SPI Instance 0 Initialization Data">
 
@@ -398,6 +409,9 @@ void SYS_Initialize ( void* data )
 
     /* Initialize SDSPI0 Driver Instance */
     sysObj.drvSDSPI0 = DRV_SDSPI_Initialize(DRV_SDSPI_INDEX_0, (SYS_MODULE_INIT *)&drvSDSPI0InitData);
+
+    /* Initialize the WINC Driver */
+    sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, (SYS_MODULE_INIT*)&wdrvWincInitData);
 
     /* Initialize SPI0 Driver Instance */
     sysObj.drvSPI0 = DRV_SPI_Initialize(DRV_SPI_INDEX_0, (SYS_MODULE_INIT *)&drvSPI0InitData);

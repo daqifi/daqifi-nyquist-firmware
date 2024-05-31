@@ -68,6 +68,7 @@
 // *****************************************************************************
 // *****************************************************************************
 void CORE_TIMER_Handler (void);
+void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
 void USB_DMA_Handler (void);
 void DMA0_Handler (void);
@@ -87,6 +88,10 @@ void CORE_TIMER_Handler (void)
 }
 
 
+
+void CHANGE_NOTICE_D_Handler (void)
+{
+}
 
 void USB_Handler (void)
 {
