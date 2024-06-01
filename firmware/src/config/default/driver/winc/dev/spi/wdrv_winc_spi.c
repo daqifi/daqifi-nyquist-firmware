@@ -66,6 +66,7 @@ typedef struct
 // *****************************************************************************
 
 static WDRV_WINC_SPIDCPT spiDcpt;
+static CACHE_ALIGN uint8_t alignedBuffer[CACHE_ALIGNED_SIZE_GET(2048)];
 
 // *****************************************************************************
 // *****************************************************************************
@@ -117,7 +118,8 @@ static void _WDRV_WINC_SPITransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
 
 bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
 {
-    DRV_SPI_WriteTransferAdd(spiDcpt.spiHandle, pTransmitData, txSize, &spiDcpt.transferTxHandle);
+    memcpy(alignedBuffer, pTransmitData, txSize);
+    DRV_SPI_WriteTransferAdd(spiDcpt.spiHandle, alignedBuffer, txSize, &spiDcpt.transferTxHandle);
 
     if (DRV_SPI_TRANSFER_HANDLE_INVALID == spiDcpt.transferTxHandle)
     {
@@ -150,7 +152,7 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
 {
     static uint8_t dummy = 0;
 
-    DRV_SPI_WriteReadTransferAdd(spiDcpt.spiHandle, &dummy, 1, pReceiveData, rxSize, &spiDcpt.transferRxHandle);
+    DRV_SPI_WriteReadTransferAdd(spiDcpt.spiHandle, &dummy, 1, alignedBuffer, rxSize, &spiDcpt.transferRxHandle);
 
     if (DRV_SPI_TRANSFER_HANDLE_INVALID == spiDcpt.transferRxHandle)
     {
@@ -161,6 +163,7 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
     {
     }
 
+    memcpy(pReceiveData, alignedBuffer, rxSize);
 
     return true;
 }

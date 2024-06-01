@@ -60,6 +60,8 @@ void EVIC_Initialize( void )
     IPC30SET = 0x400U | 0x0U;  /* CHANGE_NOTICE_D:  Priority 1 / Subpriority 0 */
     IPC33SET = 0x4U | 0x1U;  /* USB:  Priority 1 / Subpriority 1 */
     IPC33SET = 0x400U | 0x100U;  /* USB_DMA:  Priority 1 / Subpriority 1 */
+    IPC33SET = 0x80000U | 0x0U;  /* DMA0:  Priority 2 / Subpriority 0 */
+    IPC33SET = 0x8000000U | 0x0U;  /* DMA1:  Priority 2 / Subpriority 0 */
     IPC41SET = 0x8U | 0x0U;  /* SPI4_RX:  Priority 2 / Subpriority 0 */
     IPC41SET = 0x800U | 0x0U;  /* SPI4_TX:  Priority 2 / Subpriority 0 */
 

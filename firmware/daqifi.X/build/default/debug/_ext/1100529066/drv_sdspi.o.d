@@ -41,6 +41,9 @@ build/default/debug/_ext/1100529066/drv_sdspi.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/driver/spi/drv_spi_definitions.h \
+ ../src/config/default/system/dma/sys_dma.h \
+ ../src/config/default/system/dma/sys_dma_mapping.h \
+ ../src/config/default/peripheral/dmac/plib_dmac.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/spi/src/drv_spi_local.h \
  ../src/config/default/driver/sdspi/src/drv_sdspi_file_system.h \
@@ -130,6 +133,12 @@ build/default/debug/_ext/1100529066/drv_sdspi.o: \
 ../src/config/default/driver/spi/drv_spi.h:
 
 ../src/config/default/driver/spi/drv_spi_definitions.h:
+
+../src/config/default/system/dma/sys_dma.h:
+
+../src/config/default/system/dma/sys_dma_mapping.h:
+
+../src/config/default/peripheral/dmac/plib_dmac.h:
 
 ../src/config/default/driver/driver.h:
 

@@ -209,6 +209,10 @@ static const DRV_SPI_INTERRUPT_SOURCES drvSPI0InterruptSources =
     .intSources.multi.spiTxReadyInt      = -1,
     .intSources.multi.spiTxCompleteInt   = (int32_t)_SPI4_TX_VECTOR,
     .intSources.multi.spiRxInt           = (int32_t)_SPI4_RX_VECTOR,
+    /* DMA Tx interrupt line */
+    .intSources.multi.dmaTxChannelInt      = (int32_t)_DMA0_VECTOR,
+    /* DMA Rx interrupt line */
+    .intSources.multi.dmaRxChannelInt      = (int32_t)_DMA1_VECTOR,
 };
 
 /* SPI Driver Initialization Data */
@@ -229,6 +233,17 @@ static const DRV_SPI_INIT drvSPI0InitData =
     /* SPI Client Objects Pool */
     .clientObjPool = (uintptr_t)&drvSPI0ClientObjPool[0],
 
+    /* DMA Channel for Transmit */
+    .dmaChannelTransmit = DRV_SPI_XMIT_DMA_CH_IDX0,
+
+    /* DMA Channel for Receive */
+    .dmaChannelReceive  = DRV_SPI_RCV_DMA_CH_IDX0,
+
+    /* SPI Transmit Register */
+    .spiTransmitAddress =  (void *)&(SPI4BUF),
+
+    /* SPI Receive Register */
+    .spiReceiveAddress  = (void *)&(SPI4BUF),
 
     /* SPI Queue Size */
     .transferObjPoolSize = DRV_SPI_QUEUE_SIZE_IDX0,
@@ -414,6 +429,8 @@ void SYS_Initialize ( void* data )
 	GPIO_Initialize();
 
 	SPI4_Initialize();
+
+    DMAC_Initialize();
 
     CORETIMER_Initialize();
 

@@ -71,6 +71,8 @@ void CORE_TIMER_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
 void USB_DMA_Handler (void);
+void DMA0_Handler (void);
+void DMA1_Handler (void);
 void SPI4_RX_Handler (void);
 void SPI4_TX_Handler (void);
 
@@ -100,6 +102,16 @@ void USB_Handler (void)
 void USB_DMA_Handler (void)
 {
     DRV_USBHS_DMAInterruptHandler();
+}
+
+void DMA0_Handler (void)
+{
+    DMA0_InterruptHandler();
+}
+
+void DMA1_Handler (void)
+{
+    DMA1_InterruptHandler();
 }
 
 void SPI4_RX_Handler (void)

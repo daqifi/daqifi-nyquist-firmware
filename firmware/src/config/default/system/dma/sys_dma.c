@@ -52,6 +52,7 @@
 
 #include "system/dma/sys_dma.h"
 
+static SYS_DMA_CHANNEL_OBJECT  gSysDMAChannelObj[8];
 
 //******************************************************************************
 /* Function:
@@ -65,6 +66,8 @@
 */
 void SYS_DMA_AddressingModeSetup(SYS_DMA_CHANNEL channel, SYS_DMA_SOURCE_ADDRESSING_MODE sourceAddrMode, SYS_DMA_DESTINATION_ADDRESSING_MODE destAddrMode)
 {
+    gSysDMAChannelObj[channel].srcAddrMode = sourceAddrMode;
+    gSysDMAChannelObj[channel].destAddrMode = destAddrMode;
 }
 
 //******************************************************************************
@@ -79,6 +82,7 @@ void SYS_DMA_AddressingModeSetup(SYS_DMA_CHANNEL channel, SYS_DMA_SOURCE_ADDRESS
 */
 void SYS_DMA_DataWidthSetup(SYS_DMA_CHANNEL channel, SYS_DMA_WIDTH dataWidth)
 {
+    gSysDMAChannelObj[channel].dataWidth = dataWidth;
 }
 
 //******************************************************************************
@@ -93,5 +97,25 @@ void SYS_DMA_DataWidthSetup(SYS_DMA_CHANNEL channel, SYS_DMA_WIDTH dataWidth)
 */
 bool SYS_DMA_ChannelTransfer (SYS_DMA_CHANNEL channel, const void *srcAddr, const void *destAddr, size_t blockSize)
 {
+    if ((gSysDMAChannelObj[channel].srcAddrMode == SYS_DMA_SOURCE_ADDRESSING_MODE_FIXED) && (gSysDMAChannelObj[channel].destAddrMode == SYS_DMA_DESTINATION_ADDRESSING_MODE_FIXED))
+    {
+        (void) DMAC_ChannelTransfer((DMAC_CHANNEL)channel, srcAddr, (size_t)gSysDMAChannelObj[channel].dataWidth, destAddr, (size_t)gSysDMAChannelObj[channel].dataWidth, (size_t)gSysDMAChannelObj[channel].dataWidth);
+    }
+    else if((gSysDMAChannelObj[channel].srcAddrMode == SYS_DMA_SOURCE_ADDRESSING_MODE_FIXED) && (gSysDMAChannelObj[channel].destAddrMode == SYS_DMA_DESTINATION_ADDRESSING_MODE_INCREMENTED))
+    {
+        (void) DMAC_ChannelTransfer((DMAC_CHANNEL)channel, srcAddr, (size_t)gSysDMAChannelObj[channel].dataWidth, destAddr, blockSize, (size_t)gSysDMAChannelObj[channel].dataWidth);
+    }
+    else if ((gSysDMAChannelObj[channel].srcAddrMode == SYS_DMA_SOURCE_ADDRESSING_MODE_INCREMENTED) && (gSysDMAChannelObj[channel].destAddrMode == SYS_DMA_DESTINATION_ADDRESSING_MODE_FIXED))
+    {
+        (void) DMAC_ChannelTransfer((DMAC_CHANNEL)channel, srcAddr, blockSize, destAddr, (size_t)gSysDMAChannelObj[channel].dataWidth, (size_t)gSysDMAChannelObj[channel].dataWidth);
+    }
+    else if ((gSysDMAChannelObj[channel].srcAddrMode == SYS_DMA_SOURCE_ADDRESSING_MODE_INCREMENTED) && (gSysDMAChannelObj[channel].destAddrMode == SYS_DMA_DESTINATION_ADDRESSING_MODE_INCREMENTED))
+    {
+        (void) DMAC_ChannelTransfer((DMAC_CHANNEL)channel, srcAddr, blockSize, destAddr, blockSize, blockSize);
+    }
+    else
+    {
+        /* Nothing to do */
+    }
     return true;
 }

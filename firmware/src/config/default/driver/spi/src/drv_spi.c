@@ -65,6 +65,8 @@ static CACHE_ALIGN DRV_SPI_OBJ gDrvSPIObj[DRV_SPI_INSTANCES_NUMBER];
 // *****************************************************************************
 // *****************************************************************************
 
+static void lDRV_SPI_TX_DMA_CallbackHandler(SYS_DMA_TRANSFER_EVENT event, uintptr_t context);
+static void lDRV_SPI_RX_DMA_CallbackHandler(SYS_DMA_TRANSFER_EVENT event, uintptr_t context);
 
 static inline uint32_t  lDRV_SPI_MAKE_HANDLE(uint16_t token, uint8_t drvIndex, uint8_t index)
 {
@@ -88,29 +90,48 @@ static void lDRV_SPI_DisableInterrupts(DRV_SPI_OBJ* dObj)
     bool interruptStatus;
     const DRV_SPI_INTERRUPT_SOURCES* intInfo = dObj->interruptSources;
     const DRV_SPI_MULTI_INT_SRC* multiVector = &intInfo->intSources.multi;
-    if (intInfo->isSingleIntSrc == true)
+    /* Disable DMA interrupt */
+    if((dObj->txDMAChannel != SYS_DMA_CHANNEL_NONE) && (dObj->rxDMAChannel != SYS_DMA_CHANNEL_NONE))
     {
-        /* Disable SPI interrupt */
-        dObj->spiInterruptStatus = SYS_INT_SourceDisable((INT_SOURCE)intInfo->intSources.spiInterrupt);
+        if (intInfo->isSingleIntSrc == true)
+        {
+            dObj->dmaInterruptStatus = SYS_INT_SourceDisable((INT_SOURCE)intInfo->intSources.dmaInterrupt);
+        }
+        else
+        {
+            /* Disable DMA interrupt sources */
+            interruptStatus = SYS_INT_Disable();
+
+            dObj->dmaTxChannelIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->dmaTxChannelInt);
+            dObj->dmaRxChannelIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->dmaRxChannelInt);
+
+            SYS_INT_Restore(interruptStatus);
+        }
     }
     else
     {
-        /* Disable SPI interrupt sources */
-
-        interruptStatus = SYS_INT_Disable();
-        if(multiVector->spiTxReadyInt != -1)
+        /* Disable SPI interrupt */
+        if (intInfo->isSingleIntSrc == true)
         {
-            dObj->spiTxReadyIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->spiTxReadyInt);
+            dObj->spiInterruptStatus = SYS_INT_SourceDisable((INT_SOURCE)intInfo->intSources.spiInterrupt);
         }
-        if(multiVector->spiTxCompleteInt != -1)
+        else
         {
-            dObj->spiTxCompleteIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->spiTxCompleteInt);
+            interruptStatus = SYS_INT_Disable();
+            if(multiVector->spiTxReadyInt != -1)
+            {
+                dObj->spiTxReadyIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->spiTxReadyInt);
+            }
+            if(multiVector->spiTxCompleteInt != -1)
+            {
+                dObj->spiTxCompleteIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->spiTxCompleteInt);
+            }
+            if(multiVector->spiRxInt != -1)
+            {
+                dObj->spiRxIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->spiRxInt);
+            }
+            SYS_INT_Restore(interruptStatus);
         }
-        if(multiVector->spiRxInt != -1)
-        {
-            dObj->spiRxIntStatus = SYS_INT_SourceDisable((INT_SOURCE)multiVector->spiRxInt);
-        }
-        SYS_INT_Restore(interruptStatus);
     }
 }
 
@@ -119,28 +140,48 @@ static void lDRV_SPI_EnableInterrupts(DRV_SPI_OBJ* dObj)
     bool interruptStatus;
     const DRV_SPI_INTERRUPT_SOURCES* intInfo = dObj->interruptSources;
     const DRV_SPI_MULTI_INT_SRC* multiVector = &intInfo->intSources.multi;
-    if (intInfo->isSingleIntSrc == true)
+    /* Enable DMA interrupt */
+    if((dObj->txDMAChannel != SYS_DMA_CHANNEL_NONE) && (dObj->rxDMAChannel != SYS_DMA_CHANNEL_NONE))
     {
-        /* Enable SPI interrupt */
-        SYS_INT_SourceRestore((INT_SOURCE)intInfo->intSources.spiInterrupt, dObj->spiInterruptStatus);
+        if (intInfo->isSingleIntSrc == true)
+        {
+            SYS_INT_SourceRestore((INT_SOURCE)intInfo->intSources.dmaInterrupt, dObj->dmaInterruptStatus);
+        }
+        else
+        {
+            interruptStatus = SYS_INT_Disable();
+
+            /* Enable DMA interrupt sources */
+            SYS_INT_SourceRestore((INT_SOURCE)multiVector->dmaTxChannelInt, dObj->dmaTxChannelIntStatus);
+            SYS_INT_SourceRestore((INT_SOURCE)multiVector->dmaRxChannelInt, dObj->dmaRxChannelIntStatus);
+
+            SYS_INT_Restore(interruptStatus);
+        }
     }
     else
     {
-        /* Enable SPI interrupt sources */
-        interruptStatus = SYS_INT_Disable();
-        if(multiVector->spiTxReadyInt != -1)
+        /* Enable SPI interrupt */
+        if (intInfo->isSingleIntSrc == true)
         {
-            SYS_INT_SourceRestore((INT_SOURCE)multiVector->spiTxReadyInt, dObj->spiTxReadyIntStatus);
+            SYS_INT_SourceRestore((INT_SOURCE)intInfo->intSources.spiInterrupt, dObj->spiInterruptStatus);
         }
-        if(multiVector->spiTxCompleteInt != -1)
+        else
         {
-            SYS_INT_SourceRestore((INT_SOURCE)multiVector->spiTxCompleteInt,dObj->spiTxCompleteIntStatus);
+            interruptStatus = SYS_INT_Disable();
+            if(multiVector->spiTxReadyInt != -1)
+            {
+                SYS_INT_SourceRestore((INT_SOURCE)multiVector->spiTxReadyInt, dObj->spiTxReadyIntStatus);
+            }
+            if(multiVector->spiTxCompleteInt != -1)
+            {
+                SYS_INT_SourceRestore((INT_SOURCE)multiVector->spiTxCompleteInt,dObj->spiTxCompleteIntStatus);
+            }
+            if(multiVector->spiRxInt != -1)
+            {
+                SYS_INT_SourceRestore((INT_SOURCE)multiVector->spiRxInt, dObj->spiRxIntStatus);
+            }
+            SYS_INT_Restore(interruptStatus);
         }
-        if(multiVector->spiRxInt != -1)
-        {
-            SYS_INT_SourceRestore((INT_SOURCE)multiVector->spiRxInt, dObj->spiRxIntStatus);
-        }
-        SYS_INT_Restore(interruptStatus);
     }
 }
 
@@ -355,6 +396,107 @@ static void lDRV_SPI_RemoveClientTransfersFromList(
     }
 }
 
+/* MISRA C-2012 Rule 11.1 deviated:2 Deviation record ID -  H3_MISRAC_2012_R_11_1_DR_1 */
+
+static void lDRV_SPI_StartDMATransfer(DRV_SPI_TRANSFER_OBJ* transferObj)
+{
+    DRV_SPI_CLIENT_OBJ* clientObj;
+    DRV_SPI_OBJ* dObj;
+    uint32_t size = 0;
+    /* To avoid unused build error */
+    (void) size;
+
+    /* Get the client object that owns this buffer */
+    clientObj = &((DRV_SPI_CLIENT_OBJ *)gDrvSPIObj[((transferObj->clientHandle & DRV_SPI_INSTANCE_MASK) >> 8)].clientObjPool)
+    [transferObj->clientHandle & DRV_SPI_INDEX_MASK];
+
+    dObj = (DRV_SPI_OBJ*)&gDrvSPIObj[clientObj->drvIndex];
+
+    /* Initialize the dummy data buffer with 0xFF */
+    (void)memset(dObj->dummyDataBuffer, 0xFF, sizeof(dObj->dummyDataBuffer));
+
+    transferObj->nBytesTransferred = 0;
+
+    transferObj->txPending = transferObj->txSize;
+    transferObj->rxPending = transferObj->rxSize;
+
+    /* Register callbacks for DMA */
+    SYS_DMA_ChannelCallbackRegister(dObj->txDMAChannel, lDRV_SPI_TX_DMA_CallbackHandler, (uintptr_t)transferObj);
+    SYS_DMA_ChannelCallbackRegister(dObj->rxDMAChannel, lDRV_SPI_RX_DMA_CallbackHandler, (uintptr_t)transferObj);
+
+    SYS_DMA_AddressingModeSetup(dObj->rxDMAChannel, SYS_DMA_SOURCE_ADDRESSING_MODE_FIXED, SYS_DMA_DESTINATION_ADDRESSING_MODE_INCREMENTED);
+    SYS_DMA_AddressingModeSetup(dObj->txDMAChannel, SYS_DMA_SOURCE_ADDRESSING_MODE_INCREMENTED, SYS_DMA_DESTINATION_ADDRESSING_MODE_FIXED);
+
+    if(clientObj->setup.dataBits == DRV_SPI_DATA_BITS_8)
+    {
+        SYS_DMA_DataWidthSetup(dObj->rxDMAChannel, SYS_DMA_WIDTH_8_BIT);
+        SYS_DMA_DataWidthSetup(dObj->txDMAChannel, SYS_DMA_WIDTH_8_BIT);
+    }
+    else if (clientObj->setup.dataBits <= DRV_SPI_DATA_BITS_16)
+    {
+        SYS_DMA_DataWidthSetup(dObj->rxDMAChannel, SYS_DMA_WIDTH_16_BIT);
+        SYS_DMA_DataWidthSetup(dObj->txDMAChannel, SYS_DMA_WIDTH_16_BIT);
+    }
+    else
+    {
+        SYS_DMA_DataWidthSetup(dObj->rxDMAChannel, SYS_DMA_WIDTH_32_BIT);
+        SYS_DMA_DataWidthSetup(dObj->txDMAChannel, SYS_DMA_WIDTH_32_BIT);
+    }
+
+    if ((transferObj->txPending > 0U) && (transferObj->rxPending > 0U))
+    {
+        /* Find the lower value among rxPending and txPending*/
+
+        (transferObj->txPending >= transferObj->rxPending) ?
+            (size = transferObj->rxPending) : (size = transferObj->txPending);
+
+        /* Calculate the remaining tx/rx bytes and total bytes transferred */
+        transferObj->rxPending -= size;
+        transferObj->txPending -= size;
+        transferObj->nBytesTransferred += size;
+
+        /* Always set up the rx channel first */
+        (void) SYS_DMA_ChannelTransfer(dObj->rxDMAChannel, dObj->rxAddress, transferObj->pReceiveData, size);
+        (void) SYS_DMA_ChannelTransfer(dObj->txDMAChannel, transferObj->pTransmitData, dObj->txAddress, size);
+    }
+    else
+    {
+        if (transferObj->rxPending > 0U)
+        {
+            /* txPending is 0. Need to use the dummy data buffer for transmission.
+             * Find out the max data that can be received, given the limited size of the dummy data buffer.
+             */
+            (transferObj->rxPending > sizeof(dObj->dummyDataBuffer)) ?
+                (size = sizeof(dObj->dummyDataBuffer)): (size = transferObj->rxPending);
+
+            /* Calculate the remaining rx bytes and total bytes transferred */
+            transferObj->rxPending -= size;
+            transferObj->nBytesTransferred += size;
+
+            /* Always set up the rx channel first */
+            (void) SYS_DMA_ChannelTransfer(dObj->rxDMAChannel, dObj->rxAddress, transferObj->pReceiveData, size);
+            (void) SYS_DMA_ChannelTransfer(dObj->txDMAChannel, dObj->dummyDataBuffer, dObj->txAddress, size);
+
+        }
+        else
+        {
+            /* rxPending is 0. Need to use the dummy data buffer for reception.
+             * Find out the max data that can be transmitted, given the limited size of the dummy data buffer.
+             */
+            (transferObj->txPending > sizeof(dObj->dummyDataBuffer)) ?
+                (size = sizeof(dObj->dummyDataBuffer)): (size = transferObj->txPending);
+
+            /* Calculate the remaining tx bytes and total bytes transferred */
+            transferObj->txPending -= size;
+            transferObj->nBytesTransferred += size;
+
+            /* Always set up the rx channel first */
+            (void) SYS_DMA_ChannelTransfer(dObj->rxDMAChannel, dObj->rxAddress, dObj->dummyDataBuffer, size);
+            (void) SYS_DMA_ChannelTransfer(dObj->txDMAChannel, transferObj->pTransmitData, dObj->txAddress, size);
+        }
+    }
+}
+/* MISRAC 2012 deviation block end */
 
 static void lDRV_SPI_UpdateTransferSetupAndAssertCS(
     DRV_SPI_TRANSFER_OBJ* transferObj
@@ -550,6 +692,152 @@ static bool DRV_SPI_ExclusiveUse( const DRV_HANDLE handle, bool useExclusive )
     return isSuccess;
 }
 
+static void lDRV_SPI_TX_DMA_CallbackHandler(
+    SYS_DMA_TRANSFER_EVENT event,
+    uintptr_t context
+)
+{
+    (void)event;
+    (void)context;
+}
+
+static void lDRV_SPI_RX_DMA_CallbackHandler(
+    SYS_DMA_TRANSFER_EVENT event,
+    uintptr_t context
+)
+{
+    DRV_SPI_TRANSFER_OBJ* transferObj = (DRV_SPI_TRANSFER_OBJ*)context;
+    DRV_SPI_CLIENT_OBJ* clientObj;
+    DRV_SPI_OBJ* dObj;
+    DRV_SPI_TRANSFER_EVENT transferEvent;
+    DRV_SPI_TRANSFER_HANDLE transferHandle;
+    uint32_t size;
+    uint32_t index;
+
+    /* Get the client object that owns this buffer */
+    clientObj = &((DRV_SPI_CLIENT_OBJ *)gDrvSPIObj[((transferObj->clientHandle & DRV_SPI_INSTANCE_MASK) >> 8)].clientObjPool)
+    [transferObj->clientHandle & DRV_SPI_INDEX_MASK];
+
+    dObj = &gDrvSPIObj[clientObj->drvIndex];
+
+    if (transferObj->rxPending > 0U)
+    {
+        /* txPending is 0. Need to use the dummy data buffer for transmission.
+         * Find out the max data that can be received, given the limited size of the dummy data buffer.
+         */
+        (transferObj->rxPending > sizeof(dObj->dummyDataBuffer)) ?
+            (size = sizeof(dObj->dummyDataBuffer)): (size = transferObj->rxPending);
+
+        index = transferObj->nBytesTransferred;
+
+        /* Calculate the remaining rx bytes and total bytes transferred */
+        transferObj->rxPending -= size;
+        transferObj->nBytesTransferred += size;
+
+        /* Always set up the rx channel first */
+        (void) SYS_DMA_ChannelTransfer(dObj->rxDMAChannel, dObj->rxAddress, &((uint8_t*)transferObj->pReceiveData)[index], size);
+        (void) SYS_DMA_ChannelTransfer(dObj->txDMAChannel, dObj->dummyDataBuffer, dObj->txAddress, size);
+
+    }
+    else if (transferObj->txPending > 0U)
+    {
+        /* rxPending is 0. Need to use the dummy data buffer for reception.
+         * Find out the max data that can be transmitted, given the limited size of the dummy data buffer.
+         */
+        (transferObj->txPending > sizeof(dObj->dummyDataBuffer)) ?
+            (size = sizeof(dObj->dummyDataBuffer)): (size = transferObj->txPending);
+
+        index = transferObj->nBytesTransferred;
+
+        /* Calculate the remaining tx bytes and total bytes transferred */
+        transferObj->txPending -= size;
+        transferObj->nBytesTransferred += size;
+
+        /* Always set up the rx channel first */
+        (void) SYS_DMA_ChannelTransfer(dObj->rxDMAChannel, dObj->rxAddress, dObj->dummyDataBuffer, size);
+        (void) SYS_DMA_ChannelTransfer(dObj->txDMAChannel, &((uint8_t*)transferObj->pTransmitData)[index], dObj->txAddress, size);
+    }
+    else
+    {
+        /* Make sure the shift register is empty before de-asserting the CS line */
+        while (dObj->spiPlib->isTransmitterBusy())
+        {
+            /* Do Nothing */
+        }
+
+        /* Transfer complete. De-assert Chip Select if it is defined by user. */
+        if(clientObj->setup.chipSelect != SYS_PORT_PIN_NONE)
+        {
+            if (clientObj->setup.csPolarity == DRV_SPI_CS_POLARITY_ACTIVE_LOW)
+            {
+                SYS_PORT_PinSet(clientObj->setup.chipSelect);
+            }
+            else
+            {
+                SYS_PORT_PinClear(clientObj->setup.chipSelect);
+            }
+        }
+
+        /* Check if the client that submitted the request is active? */
+        if (clientObj->clientHandle == transferObj->clientHandle)
+        {
+            /* Set the events */
+            if(event == SYS_DMA_TRANSFER_COMPLETE)
+            {
+                transferObj->event = DRV_SPI_TRANSFER_EVENT_COMPLETE;
+            }
+            else if(event == SYS_DMA_TRANSFER_ERROR)
+            {
+                transferObj->event = DRV_SPI_TRANSFER_EVENT_ERROR;
+            }
+            else
+            {
+                /* Do Nothing */
+            }
+
+            /* Save the transfer handle and event locally before freeing the transfer object*/
+            transferEvent = transferObj->event;
+            transferHandle = transferObj->transferHandle;
+
+            /* Free the completed buffer.
+             * This is done before giving callback to allow application to use the freed
+             * buffer and queue in a new request from within the callback */
+
+            lDRV_SPI_RemoveTransferObjFromList(dObj);
+
+            if(clientObj->eventHandler != NULL)
+            {
+                /* Call the event handler. We additionally increment the
+                interrupt nesting count which lets the driver functions
+                that are called from the event handler know that an
+                interrupt context is active. */
+                dObj->interruptNestingCount++;
+
+                clientObj->eventHandler(transferEvent, transferHandle, clientObj->context);
+
+                /* Event handler has completed, so decrement the nesting count now */
+                dObj->interruptNestingCount--;
+            }
+        }
+        else
+        {
+            /* Free the completed buffer */
+            lDRV_SPI_RemoveTransferObjFromList(dObj);
+        }
+
+        /* Get the next transfer object at the head of the list */
+        transferObj = lDRV_SPI_TransferObjListGet(dObj);
+
+        if((transferObj != NULL) && (transferObj->currentState == DRV_SPI_TRANSFER_OBJ_IS_IN_QUEUE))
+        {
+            /* Process the next transfer buffer */
+            lDRV_SPI_UpdateTransferSetupAndAssertCS(transferObj);
+            transferObj->currentState = DRV_SPI_TRANSFER_OBJ_IS_PROCESSING;
+            lDRV_SPI_StartDMATransfer(transferObj);
+        }
+    }
+}
+
 
 // *****************************************************************************
 // *****************************************************************************
@@ -612,6 +900,10 @@ SYS_MODULE_OBJ DRV_SPI_Initialize (
     dObj->lastClientHandle          = DRV_HANDLE_INVALID;
     dObj->interruptNestingCount     = 0;
     dObj->isExclusive               = false;
+    dObj->txDMAChannel              = spiInit->dmaChannelTransmit;
+    dObj->rxDMAChannel              = spiInit->dmaChannelReceive;
+    dObj->txAddress                 = spiInit->spiTransmitAddress;
+    dObj->rxAddress                 = spiInit->spiReceiveAddress;
     dObj->remapDataBits             = spiInit->remapDataBits;
     dObj->remapClockPolarity        = spiInit->remapClockPolarity;
     dObj->remapClockPhase           = spiInit->remapClockPhase;
@@ -621,10 +913,18 @@ SYS_MODULE_OBJ DRV_SPI_Initialize (
     dObj->transferObjLastUsedIndex  = 0;
 
 
-    /* Register a callback with SPI PLIB.
-     * dObj as a context parameter will be used to distinguish the events
-     * from different instances. */
-    dObj->spiPlib->callbackRegister(&lDRV_SPI_PlibCallbackHandler, (uintptr_t)dObj);
+    if((dObj->txDMAChannel == SYS_DMA_CHANNEL_NONE) || (dObj->rxDMAChannel == SYS_DMA_CHANNEL_NONE))
+    {
+        /* Register a callback with SPI PLIB.
+         * dObj as a context parameter will be used to distinguish the events
+         * from different instances. */
+        dObj->spiPlib->callbackRegister(&lDRV_SPI_PlibCallbackHandler, (uintptr_t)dObj);
+    }
+    else
+    {
+        /* This means DMA has to be used for SPI transfer.
+         * DMA Callbacks will be set for every transfer later. */
+    }
 
     /* Update the status */
     dObj->status = SYS_STATUS_READY;
@@ -960,7 +1260,14 @@ void DRV_SPI_WriteReadTransferAdd (
              /* This is the first request in the queue, hence initiate a transfer */
             lDRV_SPI_UpdateTransferSetupAndAssertCS(transferObj);
 
-            (void) dObj->spiPlib->writeRead(transferObj->pTransmitData, transferObj->txSize, transferObj->pReceiveData, transferObj->rxSize);
+            if((dObj->txDMAChannel != SYS_DMA_CHANNEL_NONE) && (dObj->rxDMAChannel != SYS_DMA_CHANNEL_NONE))
+            {
+                lDRV_SPI_StartDMATransfer(transferObj);
+            }
+            else
+            {
+                (void) dObj->spiPlib->writeRead(transferObj->pTransmitData, transferObj->txSize, transferObj->pReceiveData, transferObj->rxSize);
+            }
         }
 
         lDRV_SPI_ResourceUnlock(dObj);
