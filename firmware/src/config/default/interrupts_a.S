@@ -124,42 +124,6 @@ IntVectorUSB_DMA_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorUSB_DMA_Handler
-    .extern  DMA0_Handler
-
-    .section   .vector_134,code, keep
-    .equ     __vector_dispatch_134, IntVectorDMA0_Handler
-    .global  __vector_dispatch_134
-    .set     nomicromips
-    .set     noreorder
-    .set     nomips16
-    .set     noat
-    .ent  IntVectorDMA0_Handler
-
-IntVectorDMA0_Handler:
-    portSAVE_CONTEXT
-    la    s6,  DMA0_Handler
-    jalr  s6
-    nop
-    portRESTORE_CONTEXT
-    .end   IntVectorDMA0_Handler
-    .extern  DMA1_Handler
-
-    .section   .vector_135,code, keep
-    .equ     __vector_dispatch_135, IntVectorDMA1_Handler
-    .global  __vector_dispatch_135
-    .set     nomicromips
-    .set     noreorder
-    .set     nomips16
-    .set     noat
-    .ent  IntVectorDMA1_Handler
-
-IntVectorDMA1_Handler:
-    portSAVE_CONTEXT
-    la    s6,  DMA1_Handler
-    jalr  s6
-    nop
-    portRESTORE_CONTEXT
-    .end   IntVectorDMA1_Handler
     .extern  SPI4_RX_Handler
 
     .section   .vector_164,code, keep

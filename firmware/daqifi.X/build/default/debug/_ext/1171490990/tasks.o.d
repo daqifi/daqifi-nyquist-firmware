@@ -3,21 +3,20 @@ build/default/debug/_ext/1171490990/tasks.o: \
  ../src/config/default/user.h ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/config/default/definitions.h \
- ../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h \
- ../src/config/default/device.h \
- ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_api.h \
  ../src/config/default/system/system_module.h \
  ../src/config/default/system/system_common.h \
  ../src/config/default/driver/winc/include/dev/wdrv_winc_spi.h \
  ../src/config/default/system/ports/sys_ports.h \
+ ../src/config/default/device.h \
  ../src/config/default/system/ports/sys_ports_mapping.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
+ ../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h \
+ ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
  ../src/config/default/peripheral/clk/plib_clk.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
  ../src/config/default/peripheral/cache/plib_cache.h \
  ../src/config/default/peripheral/evic/plib_evic.h \
- ../src/config/default/peripheral/dmac/plib_dmac.h \
  ../src/config/default/usb/usb_chapter_9.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/configuration.h \
@@ -91,9 +90,6 @@ build/default/debug/_ext/1171490990/tasks.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
  ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/driver/spi/drv_spi_definitions.h \
- ../src/config/default/system/dma/sys_dma.h \
- ../src/config/default/system/dma/sys_dma_mapping.h \
- ../src/config/default/peripheral/dmac/plib_dmac.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/spi/src/drv_spi_local.h \
  ../src/config/default/driver/spi/drv_spi.h \
@@ -101,6 +97,7 @@ build/default/debug/_ext/1171490990/tasks.o: \
  ../src/config/default/system/ports/sys_ports.h \
  ../src/config/default/system/cache/sys_cache.h \
  ../src/config/default/system/dma/sys_dma.h \
+ ../src/config/default/system/dma/sys_dma_mapping.h \
  ../src/config/default/osal/osal.h \
  ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
  ../src/config/default/definitions.h ../src/config/default/sys_tasks.h
@@ -115,12 +112,6 @@ build/default/debug/_ext/1171490990/tasks.o: \
 
 ../src/config/default/definitions.h:
 
-../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h:
-
-../src/config/default/device.h:
-
-../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h:
-
 ../src/config/default/driver/winc/include/wdrv_winc_api.h:
 
 ../src/config/default/system/system_module.h:
@@ -131,9 +122,15 @@ build/default/debug/_ext/1171490990/tasks.o: \
 
 ../src/config/default/system/ports/sys_ports.h:
 
+../src/config/default/device.h:
+
 ../src/config/default/system/ports/sys_ports_mapping.h:
 
 ../src/config/default/peripheral/gpio/plib_gpio.h:
+
+../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h:
+
+../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h:
 
 ../src/config/default/peripheral/clk/plib_clk.h:
 
@@ -142,8 +139,6 @@ build/default/debug/_ext/1171490990/tasks.o: \
 ../src/config/default/peripheral/cache/plib_cache.h:
 
 ../src/config/default/peripheral/evic/plib_evic.h:
-
-../src/config/default/peripheral/dmac/plib_dmac.h:
 
 ../src/config/default/usb/usb_chapter_9.h:
 
@@ -293,12 +288,6 @@ build/default/debug/_ext/1171490990/tasks.o: \
 
 ../src/config/default/driver/spi/drv_spi_definitions.h:
 
-../src/config/default/system/dma/sys_dma.h:
-
-../src/config/default/system/dma/sys_dma_mapping.h:
-
-../src/config/default/peripheral/dmac/plib_dmac.h:
-
 ../src/config/default/driver/driver.h:
 
 ../src/config/default/driver/spi/src/drv_spi_local.h:
@@ -312,6 +301,8 @@ build/default/debug/_ext/1171490990/tasks.o: \
 ../src/config/default/system/cache/sys_cache.h:
 
 ../src/config/default/system/dma/sys_dma.h:
+
+../src/config/default/system/dma/sys_dma_mapping.h:
 
 ../src/config/default/osal/osal.h:
 

@@ -48,13 +48,12 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "peripheral/spi/spi_master/plib_spi4_master.h"
 #include "driver/winc/include/wdrv_winc_api.h"
+#include "peripheral/spi/spi_master/plib_spi4_master.h"
 #include "peripheral/clk/plib_clk.h"
 #include "peripheral/gpio/plib_gpio.h"
 #include "peripheral/cache/plib_cache.h"
 #include "peripheral/evic/plib_evic.h"
-#include "peripheral/dmac/plib_dmac.h"
 #include "usb/usb_chapter_9.h"
 #include "usb/usb_device.h"
 #include "driver/sdspi/drv_sdspi.h"

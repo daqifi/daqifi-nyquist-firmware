@@ -61,8 +61,6 @@ void CORE_TIMER_InterruptHandler( void );
 void CHANGE_NOTICE_D_InterruptHandler( void );
 void DRV_USBHS_InterruptHandler( void );
 void DRV_USBHS_DMAInterruptHandler( void );
-void DMA0_InterruptHandler( void );
-void DMA1_InterruptHandler( void );
 void SPI4_RX_InterruptHandler( void );
 void SPI4_TX_InterruptHandler( void );
 
