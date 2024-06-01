@@ -58,6 +58,7 @@
 // *****************************************************************************
 
 void CORE_TIMER_InterruptHandler( void );
+void CHANGE_NOTICE_D_InterruptHandler( void );
 void DRV_USBHS_InterruptHandler( void );
 void DRV_USBHS_DMAInterruptHandler( void );
 void DMA0_InterruptHandler( void );

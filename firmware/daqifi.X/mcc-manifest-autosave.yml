@@ -2,12 +2,12 @@
 
 manifest_file_version: 1.0.0
 project: daqifi
-creation_date: 2024-06-01T00:21:38.955+05:30[Asia/Calcutta]
+creation_date: 2024-06-01T20:14:29.118+05:30[Asia/Calcutta]
 operating_system: Windows 10
 mcc_mode: IDE
 mcc_mode_version: v6.20
 device_name: PIC32MZ2048EFM144
-compiler: XC32 2.50
+compiler: XC32 4.40
 mcc_version: 5.5.1
 mcc_core_version: 5.7.1
 content_manager_version: 5.0.0
@@ -19,7 +19,7 @@ device_library: {library_class: com.microchip.mcc.harmony.Harmony3Library, name:
 packs: {name: PIC32MZ-EF_DFP, version: 1.4.168}
 modules:
 - {name: core, type: HARMONY, version: v3.13.4}
-- {name: wireless_wifi, type: HARMONY, version: v3.10.1}
 - {name: csp, type: HARMONY, version: v3.18.5}
+- {name: wireless_wifi, type: HARMONY, version: v3.10.1}
 - {name: usb, type: HARMONY, version: v3.12.0}
 - {name: CMSIS-FreeRTOS, type: HARMONY, version: v10.5.1}

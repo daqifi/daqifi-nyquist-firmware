@@ -61,16 +61,16 @@ static const SYS_FS_MEDIA_FUNCTIONS sdspiMediaFunctions =
 {
     .mediaStatusGet     = DRV_SDSPI_IsAttached,
     .mediaGeometryGet   = DRV_SDSPI_GeometryGet,
-    .sectorRead         = DRV_SDSPI_Read,
-    .sectorWrite        = DRV_SDSPI_Write,
+    .sectorRead         = DRV_SDSPI_AsyncRead,
+    .sectorWrite        = DRV_SDSPI_AsyncWrite,
     .eventHandlerset    = DRV_SDSPI_EventHandlerSet,
     .commandStatusGet   = (CommandStatusGetType) DRV_SDSPI_CommandStatusGet,
-    .Read               = DRV_SDSPI_Read,
+    .Read               = DRV_SDSPI_AsyncRead,
     .erase              = NULL,
     .addressGet         = NULL,
     .open               = DRV_SDSPI_Open,
     .close              = DRV_SDSPI_Close,
-    .tasks              = NULL,
+    .tasks              = DRV_SDSPI_Tasks,
 };
 
 /* MISRAC 2012 deviation block end */

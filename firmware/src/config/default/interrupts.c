@@ -91,6 +91,7 @@ void CORE_TIMER_Handler (void)
 
 void CHANGE_NOTICE_D_Handler (void)
 {
+    CHANGE_NOTICE_D_InterruptHandler();
 }
 
 void USB_Handler (void)

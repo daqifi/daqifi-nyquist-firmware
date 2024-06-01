@@ -99,6 +99,7 @@ build/default/production/_ext/2071311437/drv_usbhs.o: \
  ../src/config/default/peripheral/dmac/plib_dmac.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/spi/src/drv_spi_local.h \
+ ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/system/int/sys_int.h \
  ../src/config/default/system/ports/sys_ports.h \
  ../src/config/default/system/cache/sys_cache.h \
@@ -310,6 +311,8 @@ build/default/production/_ext/2071311437/drv_usbhs.o: \
 ../src/config/default/driver/driver.h:
 
 ../src/config/default/driver/spi/src/drv_spi_local.h:
+
+../src/config/default/driver/spi/drv_spi.h:
 
 ../src/config/default/system/int/sys_int.h:
 

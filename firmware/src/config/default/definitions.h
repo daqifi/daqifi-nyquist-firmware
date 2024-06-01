@@ -48,8 +48,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "driver/winc/include/wdrv_winc_api.h"
 #include "peripheral/spi/spi_master/plib_spi4_master.h"
+#include "driver/winc/include/wdrv_winc_api.h"
 #include "peripheral/clk/plib_clk.h"
 #include "peripheral/gpio/plib_gpio.h"
 #include "peripheral/cache/plib_cache.h"
@@ -59,9 +59,9 @@
 #include "usb/usb_device.h"
 #include "driver/sdspi/drv_sdspi.h"
 #include "system/time/sys_time.h"
+#include "driver/usb/usbhs/drv_usbhs.h"
 #include "usb/usb_device_cdc.h"
 #include "usb/usb_cdc.h"
-#include "driver/usb/usbhs/drv_usbhs.h"
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "system/fs/sys_fs.h"
 #include "system/fs/sys_fs_media_manager.h"

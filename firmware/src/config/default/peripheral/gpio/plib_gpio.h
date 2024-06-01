@@ -71,27 +71,27 @@
 #define WDRV_WINC_RESETN_Get()               ((PORTH >> 8) & 0x1U)
 #define WDRV_WINC_RESETN_PIN                  GPIO_PIN_RH8
 
-/*** Macros for GPIO_RK4 pin ***/
-#define GPIO_RK4_Set()               (LATKSET = (1U<<4))
-#define GPIO_RK4_Clear()             (LATKCLR = (1U<<4))
-#define GPIO_RK4_Toggle()            (LATKINV= (1U<<4))
-#define GPIO_RK4_OutputEnable()      (TRISKCLR = (1U<<4))
-#define GPIO_RK4_InputEnable()       (TRISKSET = (1U<<4))
-#define GPIO_RK4_Get()               ((PORTK >> 4) & 0x1U)
-#define GPIO_RK4_PIN                  GPIO_PIN_RK4
+/*** Macros for WDRV_WINC_SS pin ***/
+#define WDRV_WINC_SS_Set()               (LATKSET = (1U<<4))
+#define WDRV_WINC_SS_Clear()             (LATKCLR = (1U<<4))
+#define WDRV_WINC_SS_Toggle()            (LATKINV= (1U<<4))
+#define WDRV_WINC_SS_OutputEnable()      (TRISKCLR = (1U<<4))
+#define WDRV_WINC_SS_InputEnable()       (TRISKSET = (1U<<4))
+#define WDRV_WINC_SS_Get()               ((PORTK >> 4) & 0x1U)
+#define WDRV_WINC_SS_PIN                  GPIO_PIN_RK4
 
 /*** Macros for SDI4 pin ***/
 #define SDI4_Get()               ((PORTA >> 15) & 0x1U)
 #define SDI4_PIN                  GPIO_PIN_RA15
 
-/*** Macros for SD_CS pin ***/
-#define SD_CS_Set()               (LATDSET = (1U<<9))
-#define SD_CS_Clear()             (LATDCLR = (1U<<9))
-#define SD_CS_Toggle()            (LATDINV= (1U<<9))
-#define SD_CS_OutputEnable()      (TRISDCLR = (1U<<9))
-#define SD_CS_InputEnable()       (TRISDSET = (1U<<9))
-#define SD_CS_Get()               ((PORTD >> 9) & 0x1U)
-#define SD_CS_PIN                  GPIO_PIN_RD9
+/*** Macros for SD_SS pin ***/
+#define SD_SS_Set()               (LATDSET = (1U<<9))
+#define SD_SS_Clear()             (LATDCLR = (1U<<9))
+#define SD_SS_Toggle()            (LATDINV= (1U<<9))
+#define SD_SS_OutputEnable()      (TRISDCLR = (1U<<9))
+#define SD_SS_InputEnable()       (TRISDSET = (1U<<9))
+#define SD_SS_Get()               ((PORTD >> 9) & 0x1U)
+#define SD_SS_PIN                  GPIO_PIN_RD9
 
 /*** Macros for SCK4 pin ***/
 #define SCK4_Get()               ((PORTD >> 10) & 0x1U)
@@ -105,6 +105,8 @@
 #define WDRV_WINC_IRQ_InputEnable()       (TRISDSET = (1U<<11))
 #define WDRV_WINC_IRQ_Get()               ((PORTD >> 11) & 0x1U)
 #define WDRV_WINC_IRQ_PIN                  GPIO_PIN_RD11
+#define WDRV_WINC_IRQ_InterruptEnable()   (CNENDSET = (1U<<11))
+#define WDRV_WINC_IRQ_InterruptDisable()  (CNENDCLR = (1U<<11))
 
 /*** Macros for WDRV_WINC_CHIP_EN pin ***/
 #define WDRV_WINC_CHIP_EN_Set()               (LATHSET = (1U<<13))
@@ -303,6 +305,7 @@ typedef enum
 
 typedef uint32_t GPIO_PIN;
 
+typedef  void (*GPIO_PIN_CALLBACK) ( GPIO_PIN pin, uintptr_t context);
 
 void GPIO_Initialize(void);
 
@@ -327,6 +330,29 @@ void GPIO_PortToggle(GPIO_PORT port, uint32_t mask);
 void GPIO_PortInputEnable(GPIO_PORT port, uint32_t mask);
 
 void GPIO_PortOutputEnable(GPIO_PORT port, uint32_t mask);
+
+void GPIO_PortInterruptEnable(GPIO_PORT port, uint32_t mask);
+
+void GPIO_PortInterruptDisable(GPIO_PORT port, uint32_t mask);
+
+// *****************************************************************************
+// *****************************************************************************
+// Section: Local Data types and Prototypes
+// *****************************************************************************
+// *****************************************************************************
+
+typedef struct {
+
+    /* target pin */
+    GPIO_PIN                 pin;
+
+    /* Callback for event on target pin*/
+    GPIO_PIN_CALLBACK        callback;
+
+    /* Callback Context */
+    uintptr_t               context;
+
+} GPIO_PIN_CALLBACK_OBJ;
 
 // *****************************************************************************
 // *****************************************************************************
@@ -375,6 +401,17 @@ static inline void GPIO_PinOutputEnable(GPIO_PIN pin)
     GPIO_PortOutputEnable((pin>>4U), (uint32_t)0x1U << (pin & 0xFU));
 }
 
+#define GPIO_PinInterruptEnable(pin)       GPIO_PinIntEnable(pin, GPIO_INTERRUPT_ON_MISMATCH)
+#define GPIO_PinInterruptDisable(pin)      GPIO_PinIntDisable(pin)
+
+void GPIO_PinIntEnable(GPIO_PIN pin, GPIO_INTERRUPT_STYLE style);
+void GPIO_PinIntDisable(GPIO_PIN pin);
+
+bool GPIO_PinInterruptCallbackRegister(
+    GPIO_PIN pin,
+    const   GPIO_PIN_CALLBACK callback,
+    uintptr_t context
+);
 
 // DOM-IGNORE-BEGIN
 #ifdef __cplusplus  // Provide C++ Compatibility

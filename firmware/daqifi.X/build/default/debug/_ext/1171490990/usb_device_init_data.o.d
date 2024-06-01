@@ -7,6 +7,13 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
  ../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h \
  ../src/config/default/device.h \
  ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_api.h \
+ ../src/config/default/system/system_module.h \
+ ../src/config/default/system/system_common.h \
+ ../src/config/default/driver/winc/include/dev/wdrv_winc_spi.h \
+ ../src/config/default/system/ports/sys_ports.h \
+ ../src/config/default/system/ports/sys_ports_mapping.h \
+ ../src/config/default/peripheral/gpio/plib_gpio.h \
  ../src/config/default/peripheral/clk/plib_clk.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
  ../src/config/default/peripheral/cache/plib_cache.h \
@@ -16,8 +23,6 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/configuration.h \
  ../src/config/default/system/system.h \
- ../src/config/default/system/system_common.h \
- ../src/config/default/system/system_module.h \
  ../src/config/default/system/system_common.h \
  ../src/config/default/driver/driver_common.h \
  ../src/config/default/usb/usb_common.h \
@@ -35,9 +40,6 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
  ../src/config/default/system/time/sys_time.h \
  ../src/config/default/system/time/sys_time_definitions.h \
  ../src/config/default/driver/sdspi/drv_sdspi_definitions.h \
- ../src/config/default/system/ports/sys_ports.h \
- ../src/config/default/system/ports/sys_ports_mapping.h \
- ../src/config/default/peripheral/gpio/plib_gpio.h \
  ../src/config/default/driver/sdspi/src/drv_sdspi_local.h \
  ../src/config/default/driver/sdspi/drv_sdspi.h \
  ../src/config/default/osal/osal.h \
@@ -57,7 +59,6 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/system/time/sys_time.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/driver/usb/usbhs/drv_usbhs.h \
  ../src/config/default/usb/usb_hub.h \
  ../src/config/default/driver/usb/usbhs/src/plib_usbhs.h \
@@ -78,6 +79,7 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -95,6 +97,7 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
  ../src/config/default/peripheral/dmac/plib_dmac.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/spi/src/drv_spi_local.h \
+ ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/system/int/sys_int.h \
  ../src/config/default/system/ports/sys_ports.h \
  ../src/config/default/system/cache/sys_cache.h \
@@ -119,6 +122,20 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
 
 ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h:
 
+../src/config/default/driver/winc/include/wdrv_winc_api.h:
+
+../src/config/default/system/system_module.h:
+
+../src/config/default/system/system_common.h:
+
+../src/config/default/driver/winc/include/dev/wdrv_winc_spi.h:
+
+../src/config/default/system/ports/sys_ports.h:
+
+../src/config/default/system/ports/sys_ports_mapping.h:
+
+../src/config/default/peripheral/gpio/plib_gpio.h:
+
 ../src/config/default/peripheral/clk/plib_clk.h:
 
 ../src/config/default/peripheral/gpio/plib_gpio.h:
@@ -136,10 +153,6 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
 ../src/config/default/configuration.h:
 
 ../src/config/default/system/system.h:
-
-../src/config/default/system/system_common.h:
-
-../src/config/default/system/system_module.h:
 
 ../src/config/default/system/system_common.h:
 
@@ -174,12 +187,6 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
 ../src/config/default/system/time/sys_time_definitions.h:
 
 ../src/config/default/driver/sdspi/drv_sdspi_definitions.h:
-
-../src/config/default/system/ports/sys_ports.h:
-
-../src/config/default/system/ports/sys_ports_mapping.h:
-
-../src/config/default/peripheral/gpio/plib_gpio.h:
 
 ../src/config/default/driver/sdspi/src/drv_sdspi_local.h:
 
@@ -218,8 +225,6 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
 ../src/third_party/rtos/FreeRTOS/Source/include/task.h:
 
 ../src/config/default/system/time/sys_time.h:
-
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/driver/usb/usbhs/drv_usbhs.h:
 
@@ -263,6 +268,8 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
 
 ../src/config/default/usb/usb_cdc.h:
 
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
+
 ../src/config/default/system/fs/sys_fs.h:
 
 ../src/config/default/system/fs/sys_fs_media_manager.h:
@@ -296,6 +303,8 @@ build/default/debug/_ext/1171490990/usb_device_init_data.o: \
 ../src/config/default/driver/driver.h:
 
 ../src/config/default/driver/spi/src/drv_spi_local.h:
+
+../src/config/default/driver/spi/drv_spi.h:
 
 ../src/config/default/system/int/sys_int.h:
 

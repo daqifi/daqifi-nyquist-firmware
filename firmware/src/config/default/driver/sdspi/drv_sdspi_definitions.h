@@ -102,6 +102,11 @@ typedef struct
 
     uint32_t                        pollingIntervalMs;
 
+    /* Size of buffer objects queue */
+    uint32_t                        bufferObjPoolSize;
+
+    /* Pointer to the buffer pool */
+    uintptr_t                       bufferObjPool;
 
 } DRV_SDSPI_INIT;
 
