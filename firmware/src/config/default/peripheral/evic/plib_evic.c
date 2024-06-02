@@ -66,14 +66,6 @@ void EVIC_Initialize( void )
     IPC41SET = 0x800U | 0x0U;  /* SPI4_TX:  Priority 2 / Subpriority 0 */
 
 
-
-    /* Configure Shadow Register Set */
-    PRISS = 0x76543210;
-
-    while (PRISS != 0x76543210U)
-    {
-        /* Wait for PRISS value to take effect */
-    }
 }
 
 void EVIC_SourceEnable( INT_SOURCE source )

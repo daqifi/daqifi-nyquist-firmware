@@ -3,16 +3,16 @@ build/default/debug/_ext/1171490990/interrupts.o: \
  ../src/config/default/user.h ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/config/default/interrupts.h ../src/config/default/definitions.h \
- ../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h \
- ../src/config/default/device.h \
- ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_api.h \
  ../src/config/default/system/system_module.h \
  ../src/config/default/system/system_common.h \
  ../src/config/default/driver/winc/include/dev/wdrv_winc_spi.h \
  ../src/config/default/system/ports/sys_ports.h \
+ ../src/config/default/device.h \
  ../src/config/default/system/ports/sys_ports_mapping.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
+ ../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h \
+ ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
  ../src/config/default/peripheral/clk/plib_clk.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
  ../src/config/default/peripheral/cache/plib_cache.h \
@@ -117,12 +117,6 @@ build/default/debug/_ext/1171490990/interrupts.o: \
 
 ../src/config/default/definitions.h:
 
-../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h:
-
-../src/config/default/device.h:
-
-../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h:
-
 ../src/config/default/driver/winc/include/wdrv_winc_api.h:
 
 ../src/config/default/system/system_module.h:
@@ -133,9 +127,15 @@ build/default/debug/_ext/1171490990/interrupts.o: \
 
 ../src/config/default/system/ports/sys_ports.h:
 
+../src/config/default/device.h:
+
 ../src/config/default/system/ports/sys_ports_mapping.h:
 
 ../src/config/default/peripheral/gpio/plib_gpio.h:
+
+../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h:
+
+../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h:
 
 ../src/config/default/peripheral/clk/plib_clk.h:
 

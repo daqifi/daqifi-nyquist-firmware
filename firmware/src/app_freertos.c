@@ -770,16 +770,16 @@ void APP_FREERTOS_Tasks(void) {
         if (errStatus != pdTRUE) {
             while (1);
         }
-//        errStatus = xTaskCreate((TaskFunction_t) SD_Task,
-//                "SD_AttachTask",
-//                USBDEVICETASK_SIZE,
-//                NULL,
-//                USBDEVICETASK_PRIO,
-//                NULL);
-//        /*Don't proceed if Task was not created...*/
-//        if (errStatus != pdTRUE) {
-//            while (1);
-//        }
+        errStatus = xTaskCreate((TaskFunction_t) SD_Task,
+                "SD_AttachTask",
+                USBDEVICETASK_SIZE,
+                NULL,
+                USBDEVICETASK_PRIO,
+                NULL);
+        /*Don't proceed if Task was not created...*/
+        if (errStatus != pdTRUE) {
+            while (1);
+        }
         
         errStatus = xTaskCreate((TaskFunction_t) wifi_task,
                 "wifi_task",
