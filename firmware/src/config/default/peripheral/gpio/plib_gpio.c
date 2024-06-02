@@ -74,8 +74,7 @@ void GPIO_Initialize ( void )
     CNPUDSET = 0x800U; /* Pull-Up Enable */
 
     /* Change Notice Enable */
-    CNCONDSET = _CNCOND_ON_MASK;
-    PORTD;
+    CNCONDSET = _CNCOND_EDGEDETECT_MASK | _CNCOND_ON_MASK;
     IEC3SET = _IEC3_CNDIE_MASK;
     /* PORTE Initialization */
     /* PORTF Initialization */
@@ -409,7 +408,6 @@ bool GPIO_PinInterruptCallbackRegister(
   Remarks:
     It is an internal function called from ISR, user should not call it directly.
 */
-    
 void __attribute__((used)) CHANGE_NOTICE_D_InterruptHandler(void)
 {
     uint8_t i;
@@ -417,10 +415,9 @@ void __attribute__((used)) CHANGE_NOTICE_D_InterruptHandler(void)
     GPIO_PIN pin;
     uintptr_t context;
 
-    status  = CNSTATD;
-    status &= CNEND;
+    status  = CNFD;
+    CNFD = 0U;
 
-    PORTD;
     IFS3CLR = _IFS3_CNDIF_MASK;
 
     /* Check pending events and call callback if registered */
