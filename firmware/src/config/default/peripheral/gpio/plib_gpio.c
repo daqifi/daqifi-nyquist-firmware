@@ -81,8 +81,9 @@ void GPIO_Initialize ( void )
     /* PORTF Initialization */
     /* PORTG Initialization */
     /* PORTH Initialization */
-    LATH = 0x0U; /* Initial Latch Value */
-    TRISHCLR = 0x2100U; /* Direction Control */
+    LATH = 0x2110U; /* Initial Latch Value */
+    TRISHCLR = 0x2110U; /* Direction Control */
+    ANSELHCLR = 0x10U; /* Digital Mode Enable */
     /* PORTJ Initialization */
     /* PORTK Initialization */
     LATK = 0x10U; /* Initial Latch Value */

@@ -106,7 +106,6 @@
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h</itemPath>
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_host_file.h</itemPath>
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_client_api.h</itemPath>
-                <itemPath>../src/config/default/driver/winc/include/wdrv_winc_enterprise.h</itemPath>
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_systime.h</itemPath>
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_wps.h</itemPath>
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_powersave.h</itemPath>
@@ -116,6 +115,7 @@
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_bssctx.h</itemPath>
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_custie.h</itemPath>
                 <itemPath>../src/config/default/driver/winc/include/wdrv_winc_ssl.h</itemPath>
+                <itemPath>../src/config/default/driver/winc/include/wdrv_winc_enterprise.h</itemPath>
               </logicalFolder>
             </logicalFolder>
             <itemPath>../src/config/default/driver/driver.h</itemPath>
@@ -348,12 +348,12 @@
               <itemPath>../src/config/default/driver/winc/wdrv_winc_nvm.c</itemPath>
               <itemPath>../src/config/default/driver/winc/wdrv_winc_httpprovctx.c</itemPath>
               <itemPath>../src/config/default/driver/winc/wdrv_winc_host_file.c</itemPath>
-              <itemPath>../src/config/default/driver/winc/wdrv_winc_enterprise.c</itemPath>
               <itemPath>../src/config/default/driver/winc/wdrv_winc.c</itemPath>
               <itemPath>../src/config/default/driver/winc/wdrv_winc_ssl.c</itemPath>
               <itemPath>../src/config/default/driver/winc/wdrv_winc_authctx.c</itemPath>
               <itemPath>../src/config/default/driver/winc/wdrv_winc_bssctx.c</itemPath>
               <itemPath>../src/config/default/driver/winc/wdrv_winc_custie.c</itemPath>
+              <itemPath>../src/config/default/driver/winc/wdrv_winc_enterprise.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="osal" displayName="osal" projectFiles="true">
@@ -458,6 +458,7 @@
       </logicalFolder>
       <itemPath>../src/app_freertos.c</itemPath>
       <itemPath>../src/main.c</itemPath>
+      <itemPath>C:/Users/asus3/.mcc/HarmonyContent/wireless_apps_winc1500/apps/wifi_socket_demos/firmware/src/app_wifi.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <sourceRootList>
@@ -650,6 +651,24 @@
         <property key="stack-smashing" value=""/>
         <property key="wpo-lto" value="false"/>
       </C32Global>
+      <item path="C:/Users/asus3/.mcc/HarmonyContent/wireless_apps_winc1500/apps/wifi_socket_demos/firmware/src/app_wifi.c"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
       <Simulator>
         <property key="codecoverage.enabled" value="Disable"/>
         <property key="codecoverage.enableoutputtofile" value="false"/>
@@ -1829,6 +1848,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>

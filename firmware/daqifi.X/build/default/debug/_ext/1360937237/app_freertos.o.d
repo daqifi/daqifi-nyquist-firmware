@@ -57,11 +57,6 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/system/time/sys_time.h \
- ../src/config/default/usb/usb_device_cdc.h \
- ../src/config/default/usb/usb_device.h \
- ../src/config/default/usb/src/usb_device_function_driver.h \
- ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/driver/usb/usbhs/drv_usbhs.h \
  ../src/config/default/usb/usb_hub.h \
  ../src/config/default/driver/usb/usbhs/src/plib_usbhs.h \
@@ -78,6 +73,11 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_TxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
+ ../src/config/default/usb/usb_device_cdc.h \
+ ../src/config/default/usb/usb_device.h \
+ ../src/config/default/usb/src/usb_device_function_driver.h \
+ ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -101,7 +101,39 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/config/default/system/cache/sys_cache.h \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/osal/osal.h \
- ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h
+ ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
+ ../src/config/default/driver/winc/include/wdrv_winc.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_common.h \
+ ../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_debug.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_bssctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_assoc.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_systime.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_softap.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_custie.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
+ ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h
 
 ../src/app_freertos.h:
 
@@ -223,18 +255,6 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 
 ../src/config/default/system/time/sys_time.h:
 
-../src/config/default/usb/usb_device_cdc.h:
-
-../src/config/default/usb/usb_device.h:
-
-../src/config/default/usb/src/usb_device_function_driver.h:
-
-../src/config/default/usb/usb_cdc.h:
-
-../src/config/default/usb/usb_cdc.h:
-
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
-
 ../src/config/default/driver/usb/usbhs/drv_usbhs.h:
 
 ../src/config/default/usb/usb_hub.h:
@@ -266,6 +286,18 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h:
 
 ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h:
+
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
+
+../src/config/default/usb/usb_device_cdc.h:
+
+../src/config/default/usb/usb_device.h:
+
+../src/config/default/usb/src/usb_device_function_driver.h:
+
+../src/config/default/usb/usb_cdc.h:
+
+../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/system/fs/sys_fs.h:
 
@@ -316,3 +348,67 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 ../src/config/default/system/debug/sys_debug.h:
 
 ../src/app_freertos.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
+
+../src/config/default/driver/winc/include/wdrv_winc.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_bssfind.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_common.h:
+
+../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_debug.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_bssctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_assoc.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_systime.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_softap.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_custie.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_sta.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_wps.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h:
+
+../src/config/default/driver/winc/include/drv/driver/ecc_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_host_file.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_ota.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_nvm.h:

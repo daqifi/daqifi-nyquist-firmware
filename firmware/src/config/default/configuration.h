@@ -137,7 +137,7 @@ extern "C" {
 
 /* SDSPI Driver Instance 0 RTOS Configurations*/
 #define DRV_SDSPI_STACK_SIZE_IDX0               256
-#define DRV_SDSPI_PRIORITY_IDX0                     6
+#define DRV_SDSPI_PRIORITY_IDX0                     2
 
 /*** WiFi WINC Driver Configuration ***/
 #define WDRV_WINC_GPIO_SOURCE
@@ -163,7 +163,7 @@ extern "C" {
 #define WDRV_WINC_DEBUG_LEVEL               WDRV_WINC_DEBUG_TYPE_NONE
 /*** WiFi WINC Driver RTOS Configuration ***/
 #define DRV_WIFI_WINC_RTOS_STACK_SIZE           1024
-#define DRV_WIFI_WINC_RTOS_TASK_PRIORITY        6
+#define DRV_WIFI_WINC_RTOS_TASK_PRIORITY        2
 
 /* SPI Driver Instance 0 Configuration Options */
 #define DRV_SPI_INDEX_0                       0
@@ -199,15 +199,6 @@ extern "C" {
 #define USB_DEVICE_EP0_BUFFER_SIZE                          64U
 
 
-/* Maximum instances of CDC function driver */
-#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
-
-
-/* CDC Transfer Queue Size for both read and
-   write. Applicable to all instances of the
-   function driver */
-#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
-
 /*** USB Driver Configuration ***/
 
 /* Maximum USB driver instances */
@@ -230,6 +221,15 @@ extern "C" {
 /* Alignment for buffers that are submitted to USB Driver*/ 
 #define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
 
+
+/* Maximum instances of CDC function driver */
+#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
+
+
+/* CDC Transfer Queue Size for both read and
+   write. Applicable to all instances of the
+   function driver */
+#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
 
 
 

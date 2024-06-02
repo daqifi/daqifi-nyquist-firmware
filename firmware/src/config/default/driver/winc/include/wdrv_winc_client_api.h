@@ -83,7 +83,7 @@ Microchip or any third party.
 #endif
 #include "wdrv_winc_nvm.h"
 #ifdef WDRV_WINC_DEVICE_ENTERPRISE_CONNECT
-#include "wdrv_winc_enterprise.h"
+//#include "wdrv_winc_enterprise.h"
 #endif
 
 #endif /* _WDRV_WINC_CLIENT_API_H */

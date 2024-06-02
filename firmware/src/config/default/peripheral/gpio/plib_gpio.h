@@ -62,6 +62,15 @@
 // *****************************************************************************
 
 
+/*** Macros for GPIO_RH4 pin ***/
+#define GPIO_RH4_Set()               (LATHSET = (1U<<4))
+#define GPIO_RH4_Clear()             (LATHCLR = (1U<<4))
+#define GPIO_RH4_Toggle()            (LATHINV= (1U<<4))
+#define GPIO_RH4_OutputEnable()      (TRISHCLR = (1U<<4))
+#define GPIO_RH4_InputEnable()       (TRISHSET = (1U<<4))
+#define GPIO_RH4_Get()               ((PORTH >> 4) & 0x1U)
+#define GPIO_RH4_PIN                  GPIO_PIN_RH4
+
 /*** Macros for WDRV_WINC_RESETN pin ***/
 #define WDRV_WINC_RESETN_Set()               (LATHSET = (1U<<8))
 #define WDRV_WINC_RESETN_Clear()             (LATHCLR = (1U<<8))
