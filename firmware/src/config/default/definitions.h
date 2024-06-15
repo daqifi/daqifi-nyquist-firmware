@@ -48,8 +48,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "driver/winc/include/wdrv_winc_api.h"
 #include "peripheral/spi/spi_master/plib_spi4_master.h"
+#include "driver/winc/include/wdrv_winc_api.h"
 #include "peripheral/clk/plib_clk.h"
 #include "peripheral/gpio/plib_gpio.h"
 #include "peripheral/cache/plib_cache.h"
@@ -59,6 +59,7 @@
 #include "usb/usb_device.h"
 #include "driver/sdspi/drv_sdspi.h"
 #include "system/time/sys_time.h"
+#include "driver/i2c/drv_i2c.h"
 #include "driver/usb/usbhs/drv_usbhs.h"
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "usb/usb_device_cdc.h"
@@ -69,6 +70,7 @@
 #include "system/fs/fat_fs/file_system/ff.h"
 #include "system/fs/fat_fs/file_system/ffconf.h"
 #include "system/fs/fat_fs/hardware_access/diskio.h"
+#include "peripheral/i2c/master/plib_i2c5_master.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "driver/spi/drv_spi.h"
@@ -211,6 +213,9 @@ typedef struct
 {
     /* SDSPI0 Driver Object */
     SYS_MODULE_OBJ drvSDSPI0;
+
+    /* I2C0 Driver Object */
+    SYS_MODULE_OBJ drvI2C0;
 
     SYS_MODULE_OBJ  drvWifiWinc;
     SYS_MODULE_OBJ  usbDevObject0;

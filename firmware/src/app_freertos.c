@@ -64,7 +64,9 @@
 // *****************************************************************************
 
 uint8_t __attribute__((aligned(16))) switchPromptUSB[] = "Hello World\r\n";
-
+#define WLAN_SSID           "Typical"
+#define WLAN_AUTH_WPA_PSK    M2M_WIFI_SEC_WPA_PSK
+#define WLAN_PSK            "Arghya@19"
 uint8_t CACHE_ALIGN cdcReadBuffer[APP_READ_BUFFER_SIZE];
 uint8_t CACHE_ALIGN cdcWriteBuffer[APP_READ_BUFFER_SIZE];
 
@@ -321,11 +323,12 @@ USB_DEVICE_CDC_EVENT_RESPONSE APP_USBDeviceCDCEventHandler
      None
  */
 USB_DEVICE_CDC_TRANSFER_HANDLE COM1Read_Handle, COM1Write_Handle;
+
 void USBDevice_Task(void* p_arg) {
     BaseType_t errStatus;
     uint32_t USBDeviceTask_State = USBDEVICETASK_OPENUSB_STATE;
     uint32_t USBDeviceTask_Event = 0;
-    
+
 
 
     COM1Read_Handle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
@@ -647,7 +650,9 @@ void wifi_task(void* p_arg) {
     } APP_WIFI_STATES;
     APP_WIFI_STATES state = APP_WIFI_STATE_INIT;
     DRV_HANDLE wdrvHandle;
-    //bool foundBSS=false;
+    WDRV_WINC_STATUS status;
+    static char UsbStr[2000];
+    bool foundBSS = false;
     while (1) {
         switch (state) {
             case APP_WIFI_STATE_INIT:
@@ -665,6 +670,7 @@ void wifi_task(void* p_arg) {
                 wdrvHandle = WDRV_WINC_Open(0, 0);
 
                 if (DRV_HANDLE_INVALID != wdrvHandle) {
+                    WDRV_WINC_IPUseDHCPSet(wdrvHandle, &APP_ExampleDHCPAddressEventCallback);
                     state = APP_WIFI_STATE_START_SCAN;
                 }
                 break;
@@ -672,13 +678,13 @@ void wifi_task(void* p_arg) {
 
             case APP_WIFI_STATE_START_SCAN:
             {
-                WDRV_WINC_IPUseDHCPSet(wdrvHandle, &APP_ExampleDHCPAddressEventCallback);
+
 
                 /* Start a BSS find operation on all channels. */
 
                 if (WDRV_WINC_STATUS_OK == WDRV_WINC_BSSFindFirst(wdrvHandle, WDRV_WINC_ALL_CHANNELS, true, NULL, NULL)) {
                     state = APP_WIFI_STATE_SCANNING;
-                    //foundBSS = false;
+                    foundBSS = false;
                 }
                 break;
             }
@@ -688,23 +694,65 @@ void wifi_task(void* p_arg) {
                  of results found. */
 
                 if (false == WDRV_WINC_BSSFindInProgress(wdrvHandle)) {
-                    static char str[100];
-                    memset(str,0,100);
-                    int count=WDRV_WINC_BSSFindGetNumBSSResults(wdrvHandle);
-                    sprintf(str,"\r\nfound %d\r\n",count);
-                    USB_DEVICE_CDC_Write
-                                (
-                                USB_DEVICE_CDC_INDEX_0,
-                                &COM1Write_Handle,
-                                str,
-                                strlen(str),
-                                USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE
-                                );
-                    //state = EXAMP_STATE_SCAN_GET_RESULTS;
+
+                    memset(UsbStr, 0, sizeof (UsbStr));
+                    int count = WDRV_WINC_BSSFindGetNumBSSResults(wdrvHandle);
+                    sprintf(UsbStr, "\r\nfound %d\r\n", count);
+                    
+                    state = APP_WIFI_STATE_GET_SCAN_RESULT;
+                    
                 }
                 break;
             }
+            case APP_WIFI_STATE_GET_SCAN_RESULT:
+            {
+                WDRV_WINC_BSS_INFO BSSInfo;
 
+                /* Request the current BSS find results. */
+
+                if (WDRV_WINC_STATUS_OK == WDRV_WINC_BSSFindGetInfo(wdrvHandle, &BSSInfo)) {
+                   
+                    sprintf(UsbStr+strlen(UsbStr), "\r\nAP found: RSSI: %d %s\r\n", BSSInfo.rssi, BSSInfo.ctx.ssid.name);
+                   
+
+                    /* Check if this SSID matches the search target SSID. */
+
+                    if (((sizeof (WLAN_SSID) - 1) == BSSInfo.ctx.ssid.length) && (0 == memcmp(BSSInfo.ctx.ssid.name, WLAN_SSID, BSSInfo.ctx.ssid.length))) {
+                        foundBSS = true;
+                    }
+
+                    /* Request the next set of BSS find results. */
+
+                    status = WDRV_WINC_BSSFindNext(wdrvHandle, NULL);
+
+                    if (WDRV_WINC_STATUS_BSS_FIND_END == status) {
+                        /* If there are no more results available check if the target
+                         SSID has been found. */
+                       
+                        sprintf(UsbStr+strlen(UsbStr), "AP found: RSSI: %d %s\r\n", BSSInfo.rssi, BSSInfo.ctx.ssid.name);
+                        if (true == foundBSS) {
+                            sprintf(UsbStr+strlen(UsbStr), "Target AP found, trying to connect\r\n");
+                            state = APP_WIFI_STATE_START_SCAN;
+                        } else {
+                            sprintf(UsbStr+strlen(UsbStr), "Target BSS not found\r\n\r\n");
+                            state = APP_WIFI_STATE_START_SCAN;
+                        }
+                        USB_DEVICE_CDC_Write
+                                (
+                                USB_DEVICE_CDC_INDEX_0,
+                                &COM1Write_Handle,
+                                UsbStr,
+                                strlen(UsbStr),
+                                USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE
+                                );
+                    } else if ((WDRV_WINC_STATUS_NOT_OPEN == status) || (WDRV_WINC_STATUS_INVALID_ARG == status)) {
+                        /* An error occurred requesting results. */
+
+                        state = APP_WIFI_STATE_START_SCAN;
+                    }
+                }
+                break;
+            }
             default:
             {
                 /* TODO: Handle error in application's state machine. */
@@ -780,7 +828,7 @@ void APP_FREERTOS_Tasks(void) {
         if (errStatus != pdTRUE) {
             while (1);
         }
-        
+
         errStatus = xTaskCreate((TaskFunction_t) wifi_task,
                 "wifi_task",
                 USBDEVICETASK_SIZE,
@@ -795,6 +843,7 @@ void APP_FREERTOS_Tasks(void) {
         /* The APP_Tasks() function need to exceute only once. Block it now */
         blockAppTask = true;
     }
+    vTaskDelay(50);
 }
 
 

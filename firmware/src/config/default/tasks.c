@@ -184,7 +184,7 @@ void SYS_Tasks ( void )
         "USB_DEVICE_TASKS",
         1024,
         (void*)NULL,
-        1,
+        6,
         (TaskHandle_t*)NULL
     );
 

@@ -68,6 +68,7 @@
 // *****************************************************************************
 // *****************************************************************************
 void CORE_TIMER_Handler (void);
+void CHANGE_NOTICE_A_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
 void USB_DMA_Handler (void);
@@ -75,6 +76,8 @@ void DMA0_Handler (void);
 void DMA1_Handler (void);
 void SPI4_RX_Handler (void);
 void SPI4_TX_Handler (void);
+void I2C5_BUS_Handler (void);
+void I2C5_MASTER_Handler (void);
 
 
 // *****************************************************************************
@@ -88,6 +91,11 @@ void CORE_TIMER_Handler (void)
 }
 
 
+
+void CHANGE_NOTICE_A_Handler (void)
+{
+    CHANGE_NOTICE_A_InterruptHandler();
+}
 
 void CHANGE_NOTICE_D_Handler (void)
 {
@@ -122,6 +130,16 @@ void SPI4_RX_Handler (void)
 void SPI4_TX_Handler (void)
 {
     SPI4_TX_InterruptHandler();
+}
+
+void I2C5_BUS_Handler (void)
+{
+    I2C5_BUS_InterruptHandler();
+}
+
+void I2C5_MASTER_Handler (void)
+{
+    I2C5_MASTER_InterruptHandler();
 }
 
 

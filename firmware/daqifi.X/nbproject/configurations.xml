@@ -7,6 +7,11 @@
       <logicalFolder name="config" displayName="config" projectFiles="true">
         <logicalFolder name="default" displayName="default" projectFiles="true">
           <logicalFolder name="driver" displayName="driver" projectFiles="true">
+            <logicalFolder name="i2c" displayName="i2c" projectFiles="true">
+              <itemPath>../src/config/default/driver/i2c/drv_i2c_definitions.h</itemPath>
+              <itemPath>../src/config/default/driver/i2c/src/drv_i2c_local.h</itemPath>
+              <itemPath>../src/config/default/driver/i2c/drv_i2c.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="sdspi" displayName="sdspi" projectFiles="true">
               <itemPath>../src/config/default/driver/sdspi/drv_sdspi_definitions.h</itemPath>
               <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_local.h</itemPath>
@@ -147,6 +152,12 @@
             <logicalFolder name="gpio" displayName="gpio" projectFiles="true">
               <itemPath>../src/config/default/peripheral/gpio/plib_gpio.h</itemPath>
             </logicalFolder>
+            <logicalFolder name="i2c" displayName="i2c" projectFiles="true">
+              <logicalFolder name="master" displayName="master" projectFiles="true">
+                <itemPath>../src/config/default/peripheral/i2c/master/plib_i2c5_master.h</itemPath>
+                <itemPath>../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h</itemPath>
+              </logicalFolder>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h</itemPath>
@@ -260,6 +271,115 @@
           </logicalFolder>
         </logicalFolder>
       </logicalFolder>
+      <logicalFolder name="HAL" displayName="HAL" projectFiles="true">
+        <logicalFolder name="ADC" displayName="ADC" projectFiles="true">
+          <itemPath>../src/HAL/ADC/AD7173.h</itemPath>
+          <itemPath>../src/HAL/ADC/AD7609.h</itemPath>
+          <itemPath>../src/HAL/ADC/MC12bADC.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="BQ24297" displayName="BQ24297" projectFiles="true">
+          <itemPath>../src/HAL/BQ24297/BQ24297.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="DAC7718" displayName="DAC7718" projectFiles="true">
+          <itemPath>../src/HAL/DAC7718/DAC7718.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="NVM" displayName="NVM" projectFiles="true">
+          <itemPath>../src/HAL/NVM/DaqifiSettings.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="Power" displayName="Power" projectFiles="true">
+          <itemPath>../src/HAL/Power/PowerApi.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="UI" displayName="UI" projectFiles="true">
+          <itemPath>../src/HAL/UI/UI.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
+          <itemPath>../src/HAL/Wifi/WifiApi.h</itemPath>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
+        <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
+          <logicalFolder name="src" displayName="src" projectFiles="true">
+            <itemPath>../src/libraries/microrl/src/config.h</itemPath>
+            <itemPath>../src/libraries/microrl/src/microrl.h</itemPath>
+          </logicalFolder>
+        </logicalFolder>
+        <logicalFolder name="scpi" displayName="scpi" projectFiles="true">
+          <logicalFolder name="libscpi" displayName="libscpi" projectFiles="true">
+            <logicalFolder name="inc" displayName="inc" projectFiles="true">
+              <logicalFolder name="scpi" displayName="scpi" projectFiles="true">
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/cc.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/config.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/constants.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/error.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/expression.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/ieee488.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/minimal.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/parser.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/scpi.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/types.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/units.h</itemPath>
+                <itemPath>../src/libraries/scpi/libscpi/inc/scpi/utils.h</itemPath>
+              </logicalFolder>
+            </logicalFolder>
+            <logicalFolder name="src" displayName="src" projectFiles="true">
+              <itemPath>../src/libraries/scpi/libscpi/src/fifo_private.h</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/lexer_private.h</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/parser_private.h</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/utils_private.h</itemPath>
+            </logicalFolder>
+          </logicalFolder>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="services" displayName="services" projectFiles="true">
+        <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
+          <itemPath>../src/services/SCPI/SCPIADC.h</itemPath>
+          <itemPath>../src/services/SCPI/SCPIDIO.h</itemPath>
+          <itemPath>../src/services/SCPI/SCPIInterface.h</itemPath>
+          <itemPath>../src/services/SCPI/SCPILAN.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
+          <itemPath>../src/services/UsbCdc/UsbCdc.h</itemPath>
+          <itemPath>../src/services/UsbCdc/UsbCdc_runtimeConfig.h</itemPath>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="state" displayName="state" projectFiles="true">
+        <logicalFolder name="board" displayName="board" projectFiles="true">
+          <itemPath>../src/state/board/AInConfig.h</itemPath>
+          <itemPath>../src/state/board/BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/DIOConfig.h</itemPath>
+          <itemPath>../src/state/board/NQ1BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/NQ2BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/NQ3BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/StreamingConfig.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="data" displayName="data" projectFiles="true">
+          <itemPath>../src/state/data/AInSample.h</itemPath>
+          <itemPath>../src/state/data/BoardData.h</itemPath>
+          <itemPath>../src/state/data/DIOSample.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="runtime" displayName="runtime" projectFiles="true">
+          <itemPath>../src/state/runtime/AInRuntimeConfig.h</itemPath>
+          <itemPath>../src/state/runtime/BoardRuntimeConfig.h</itemPath>
+          <itemPath>../src/state/runtime/DIORuntimeConfig.h</itemPath>
+          <itemPath>../src/state/runtime/StreamingRuntimeConfig.h</itemPath>
+          <itemPath>../src/state/runtime/TcpServerConfig.h</itemPath>
+          <itemPath>../src/state/runtime/UsbRuntimeConfig.h</itemPath>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="Util" displayName="Util" projectFiles="true">
+        <itemPath>../src/Util/ArrayWrapper.h</itemPath>
+        <itemPath>../src/Util/CircularBuffer.h</itemPath>
+        <itemPath>../src/Util/Delay.h</itemPath>
+        <itemPath>../src/Util/FreeRTOSLockContext.h</itemPath>
+        <itemPath>../src/Util/FreeRTOSLockProvider.h</itemPath>
+        <itemPath>../src/Util/HeapList.h</itemPath>
+        <itemPath>../src/Util/LinkedList.h</itemPath>
+        <itemPath>../src/Util/LockProvider.h</itemPath>
+        <itemPath>../src/Util/Logger.h</itemPath>
+        <itemPath>../src/Util/NullLockProvider.h</itemPath>
+        <itemPath>../src/Util/StackList.h</itemPath>
+        <itemPath>../src/Util/StringFormatters.h</itemPath>
+      </logicalFolder>
       <itemPath>../src/app_freertos.h</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
@@ -283,6 +403,9 @@
       <logicalFolder name="config" displayName="config" projectFiles="true">
         <logicalFolder name="default" displayName="default" projectFiles="true">
           <logicalFolder name="driver" displayName="driver" projectFiles="true">
+            <logicalFolder name="i2c" displayName="i2c" projectFiles="true">
+              <itemPath>../src/config/default/driver/i2c/src/drv_i2c.c</itemPath>
+            </logicalFolder>
             <logicalFolder name="sdspi" displayName="sdspi" projectFiles="true">
               <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi.c</itemPath>
               <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_file_system.c</itemPath>
@@ -379,6 +502,11 @@
             <logicalFolder name="gpio" displayName="gpio" projectFiles="true">
               <itemPath>../src/config/default/peripheral/gpio/plib_gpio.c</itemPath>
             </logicalFolder>
+            <logicalFolder name="i2c" displayName="i2c" projectFiles="true">
+              <logicalFolder name="master" displayName="master" projectFiles="true">
+                <itemPath>../src/config/default/peripheral/i2c/master/plib_i2c5_master.c</itemPath>
+              </logicalFolder>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi4_master.c</itemPath>
@@ -456,6 +584,95 @@
           <itemPath>../src/third_party/rtos/FreeRTOS/Source/timers.c</itemPath>
         </logicalFolder>
       </logicalFolder>
+      <logicalFolder name="HAL" displayName="HAL" projectFiles="true">
+        <logicalFolder name="ADC" displayName="ADC" projectFiles="true">
+          <itemPath>../src/HAL/ADC/AD7173.c</itemPath>
+          <itemPath>../src/HAL/ADC/AD7609.c</itemPath>
+          <itemPath>../src/HAL/ADC/MC12bADC.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="BQ24297" displayName="BQ24297" projectFiles="true">
+          <itemPath>../src/HAL/BQ24297/BQ24297.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="DAC7718" displayName="DAC7718" projectFiles="true">
+          <itemPath>../src/HAL/DAC7718/DAC7718.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="NVM" displayName="NVM" projectFiles="true">
+          <itemPath>../src/HAL/NVM/DaqifiSettings.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="Power" displayName="Power" projectFiles="true">
+          <itemPath>../src/HAL/Power/PowerApi.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="UI" displayName="UI" projectFiles="true">
+          <itemPath>../src/HAL/UI/UI.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
+          <itemPath>../src/HAL/Wifi/WifiApi.c</itemPath>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
+        <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
+          <logicalFolder name="src" displayName="src" projectFiles="true">
+            <itemPath>../src/libraries/microrl/src/microrl.c</itemPath>
+          </logicalFolder>
+        </logicalFolder>
+        <logicalFolder name="scpi" displayName="scpi" projectFiles="true">
+          <logicalFolder name="libscpi" displayName="libscpi" projectFiles="true">
+            <logicalFolder name="src" displayName="src" projectFiles="true">
+              <itemPath>../src/libraries/scpi/libscpi/src/error.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/expression.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/fifo.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/ieee488.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/lexer.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/minimal.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/parser.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/units.c</itemPath>
+              <itemPath>../src/libraries/scpi/libscpi/src/utils.c</itemPath>
+            </logicalFolder>
+          </logicalFolder>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="services" displayName="services" projectFiles="true">
+        <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
+          <itemPath>../src/services/SCPI/SCPIADC.c</itemPath>
+          <itemPath>../src/services/SCPI/SCPIDIO.c</itemPath>
+          <itemPath>../src/services/SCPI/SCPIInterface.c</itemPath>
+          <itemPath>../src/services/SCPI/SCPILAN.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
+          <itemPath>../src/services/UsbCdc/UsbCdc.c</itemPath>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="state" displayName="state" projectFiles="true">
+        <logicalFolder name="board" displayName="board" projectFiles="true">
+          <itemPath>../src/state/board/BoardConfig.c</itemPath>
+          <itemPath>../src/state/board/NQ1BoardConfig.c</itemPath>
+          <itemPath>../src/state/board/NQ2BoardConfig.c</itemPath>
+          <itemPath>../src/state/board/NQ3BoardConfig.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="data" displayName="data" projectFiles="true">
+          <itemPath>../src/state/data/AInSample.c</itemPath>
+          <itemPath>../src/state/data/BoardData.c</itemPath>
+          <itemPath>../src/state/data/DIOSample.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="runtime" displayName="runtime" projectFiles="true">
+          <itemPath>../src/state/runtime/BoardRuntimeConfig.c</itemPath>
+          <itemPath>../src/state/runtime/NQ1RuntimeDefaults.c</itemPath>
+          <itemPath>../src/state/runtime/NQ2RuntimeDefaults.c</itemPath>
+          <itemPath>../src/state/runtime/NQ3RuntimeDefaults.c</itemPath>
+        </logicalFolder>
+      </logicalFolder>
+      <logicalFolder name="Util" displayName="Util" projectFiles="true">
+        <itemPath>../src/Util/CircularBuffer.c</itemPath>
+        <itemPath>../src/Util/Delay.c</itemPath>
+        <itemPath>../src/Util/FreeRTOSLockContext.c</itemPath>
+        <itemPath>../src/Util/FreeRTOSLockProvider.c</itemPath>
+        <itemPath>../src/Util/HeapList.c</itemPath>
+        <itemPath>../src/Util/LinkedList.c</itemPath>
+        <itemPath>../src/Util/Logger.c</itemPath>
+        <itemPath>../src/Util/NullLockProvider.c</itemPath>
+        <itemPath>../src/Util/StackList.c</itemPath>
+        <itemPath>../src/Util/StringFormatters.c</itemPath>
+      </logicalFolder>
       <itemPath>../src/app_freertos.c</itemPath>
       <itemPath>../src/main.c</itemPath>
       <itemPath>C:/Users/asus3/.mcc/HarmonyContent/wireless_apps_winc1500/apps/wifi_socket_demos/firmware/src/app_wifi.c</itemPath>
@@ -463,6 +680,11 @@
   </logicalFolder>
   <sourceRootList>
     <Elem>../src/config/default/driver/sdspi/src</Elem>
+    <Elem>../src/services</Elem>
+    <Elem>../src/libraries</Elem>
+    <Elem>../src/state</Elem>
+    <Elem>../src/HAL</Elem>
+    <Elem>../src/Util</Elem>
   </sourceRootList>
   <projectmakefile>Makefile</projectmakefile>
   <confs>
@@ -507,6 +729,1136 @@
         <makeCustomizationEnableLongLines>false</makeCustomizationEnableLongLines>
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
+      <item path="../src/HAL/ADC/AD7173.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/ADC/AD7173.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/ADC/AD7609.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/ADC/AD7609.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/ADC/MC12bADC.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/DAC7718/DAC7718.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/DAC7718/DAC7718.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/NVM/DaqifiSettings.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/NVM/DaqifiSettings.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/Power/PowerApi.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/UI/UI.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/UI/UI.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/HAL/Wifi/WifiApi.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/ArrayWrapper.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/CircularBuffer.c" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/CircularBuffer.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/Delay.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/Delay.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/FreeRTOSLockContext.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/FreeRTOSLockContext.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/FreeRTOSLockProvider.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/FreeRTOSLockProvider.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/HeapList.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/HeapList.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/LinkedList.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/LinkedList.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/LockProvider.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/Logger.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/Logger.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/NullLockProvider.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/NullLockProvider.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/StackList.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/StackList.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/StringFormatters.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/StringFormatters.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/services/SCPI/SCPIADC.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/services/SCPI/SCPIADC.h" ex="true" overriding="false">
+      </item>
+      <item path="../src/services/SCPI/SCPIDIO.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/services/SCPI/SCPIDIO.h" ex="true" overriding="false">
+      </item>
+      <item path="../src/services/SCPI/SCPIInterface.c" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/services/SCPI/SCPILAN.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/services/SCPI/SCPILAN.h" ex="true" overriding="false">
+      </item>
+      <item path="../src/services/UsbCdc/UsbCdc.c" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/services/UsbCdc/UsbCdc.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/AInConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/BoardConfig.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/BoardConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/DIOConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ1BoardConfig.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ1BoardConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ2BoardConfig.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ2BoardConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ3BoardConfig.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ3BoardConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/StreamingConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/data/AInSample.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/data/AInSample.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/data/BoardData.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/data/BoardData.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/data/DIOSample.c" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/data/DIOSample.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/AInRuntimeConfig.h"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/BoardRuntimeConfig.c"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/BoardRuntimeConfig.h"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/DIORuntimeConfig.h"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/NQ1RuntimeDefaults.c"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/NQ2RuntimeDefaults.c"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/NQ3RuntimeDefaults.c"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/StreamingRuntimeConfig.h"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/TcpServerConfig.h"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/runtime/UsbRuntimeConfig.h"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
       <C32>
         <property key="additional-warnings" value="true"/>
         <property key="addresss-attribute-use" value="false"/>

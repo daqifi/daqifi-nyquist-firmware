@@ -80,6 +80,35 @@
 #define WDRV_WINC_RESETN_Get()               ((PORTH >> 8) & 0x1U)
 #define WDRV_WINC_RESETN_PIN                  GPIO_PIN_RH8
 
+/*** Macros for BATT_MAN_STAT pin ***/
+#define BATT_MAN_STAT_Set()               (LATHSET = (1U<<11))
+#define BATT_MAN_STAT_Clear()             (LATHCLR = (1U<<11))
+#define BATT_MAN_STAT_Toggle()            (LATHINV= (1U<<11))
+#define BATT_MAN_STAT_OutputEnable()      (TRISHCLR = (1U<<11))
+#define BATT_MAN_STAT_InputEnable()       (TRISHSET = (1U<<11))
+#define BATT_MAN_STAT_Get()               ((PORTH >> 11) & 0x1U)
+#define BATT_MAN_STAT_PIN                  GPIO_PIN_RH11
+
+/*** Macros for BATT_MAN_INT pin ***/
+#define BATT_MAN_INT_Set()               (LATASET = (1U<<4))
+#define BATT_MAN_INT_Clear()             (LATACLR = (1U<<4))
+#define BATT_MAN_INT_Toggle()            (LATAINV= (1U<<4))
+#define BATT_MAN_INT_OutputEnable()      (TRISACLR = (1U<<4))
+#define BATT_MAN_INT_InputEnable()       (TRISASET = (1U<<4))
+#define BATT_MAN_INT_Get()               ((PORTA >> 4) & 0x1U)
+#define BATT_MAN_INT_PIN                  GPIO_PIN_RA4
+#define BATT_MAN_INT_InterruptEnable()   (CNENASET = (1U<<4))
+#define BATT_MAN_INT_InterruptDisable()  (CNENACLR = (1U<<4))
+
+/*** Macros for BATT_MAN_OTG pin ***/
+#define BATT_MAN_OTG_Set()               (LATFSET = (1U<<5))
+#define BATT_MAN_OTG_Clear()             (LATFCLR = (1U<<5))
+#define BATT_MAN_OTG_Toggle()            (LATFINV= (1U<<5))
+#define BATT_MAN_OTG_OutputEnable()      (TRISFCLR = (1U<<5))
+#define BATT_MAN_OTG_InputEnable()       (TRISFSET = (1U<<5))
+#define BATT_MAN_OTG_Get()               ((PORTF >> 5) & 0x1U)
+#define BATT_MAN_OTG_PIN                  GPIO_PIN_RF5
+
 /*** Macros for WDRV_WINC_SS pin ***/
 #define WDRV_WINC_SS_Set()               (LATKSET = (1U<<4))
 #define WDRV_WINC_SS_Clear()             (LATKCLR = (1U<<4))

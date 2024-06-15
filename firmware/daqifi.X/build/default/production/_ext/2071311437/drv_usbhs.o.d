@@ -61,6 +61,10 @@ build/default/production/_ext/2071311437/drv_usbhs.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/system/time/sys_time.h \
+ ../src/config/default/driver/i2c/drv_i2c.h \
+ ../src/config/default/driver/i2c/drv_i2c_definitions.h \
+ ../src/config/default/driver/driver.h \
+ ../src/config/default/driver/i2c/src/drv_i2c_local.h \
  ../src/config/default/driver/usb/usbhs/drv_usbhs.h \
  ../src/config/default/usb/usb_hub.h \
  ../src/config/default/driver/usb/usbhs/src/plib_usbhs.h \
@@ -92,12 +96,13 @@ build/default/production/_ext/2071311437/drv_usbhs.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ffconf.h \
  ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/driver/spi/drv_spi_definitions.h \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/system/dma/sys_dma_mapping.h \
  ../src/config/default/peripheral/dmac/plib_dmac.h \
- ../src/config/default/driver/driver.h \
  ../src/config/default/driver/spi/src/drv_spi_local.h \
  ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/system/int/sys_int.h \
@@ -234,6 +239,14 @@ build/default/production/_ext/2071311437/drv_usbhs.o: \
 
 ../src/config/default/system/time/sys_time.h:
 
+../src/config/default/driver/i2c/drv_i2c.h:
+
+../src/config/default/driver/i2c/drv_i2c_definitions.h:
+
+../src/config/default/driver/driver.h:
+
+../src/config/default/driver/i2c/src/drv_i2c_local.h:
+
 ../src/config/default/driver/usb/usbhs/drv_usbhs.h:
 
 ../src/config/default/usb/usb_hub.h:
@@ -298,6 +311,10 @@ build/default/production/_ext/2071311437/drv_usbhs.o: \
 
 ../src/config/default/system/fs/fat_fs/file_system/ff.h:
 
+../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
+
 ../src/config/default/driver/spi/drv_spi.h:
 
 ../src/config/default/driver/spi/drv_spi_definitions.h:
@@ -307,8 +324,6 @@ build/default/production/_ext/2071311437/drv_usbhs.o: \
 ../src/config/default/system/dma/sys_dma_mapping.h:
 
 ../src/config/default/peripheral/dmac/plib_dmac.h:
-
-../src/config/default/driver/driver.h:
 
 ../src/config/default/driver/spi/src/drv_spi_local.h:
 

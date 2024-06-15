@@ -4,16 +4,16 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/config/default/definitions.h \
+ ../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h \
+ ../src/config/default/device.h \
+ ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_api.h \
  ../src/config/default/system/system_module.h \
  ../src/config/default/system/system_common.h \
  ../src/config/default/driver/winc/include/dev/wdrv_winc_spi.h \
  ../src/config/default/system/ports/sys_ports.h \
- ../src/config/default/device.h \
  ../src/config/default/system/ports/sys_ports_mapping.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
- ../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h \
- ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
  ../src/config/default/peripheral/clk/plib_clk.h \
  ../src/config/default/peripheral/gpio/plib_gpio.h \
  ../src/config/default/peripheral/cache/plib_cache.h \
@@ -58,6 +58,10 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/system/time/sys_time.h \
+ ../src/config/default/driver/i2c/drv_i2c.h \
+ ../src/config/default/driver/i2c/drv_i2c_definitions.h \
+ ../src/config/default/driver/driver.h \
+ ../src/config/default/driver/i2c/src/drv_i2c_local.h \
  ../src/config/default/driver/usb/usbhs/drv_usbhs.h \
  ../src/config/default/usb/usb_hub.h \
  ../src/config/default/driver/usb/usbhs/src/plib_usbhs.h \
@@ -89,12 +93,13 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ffconf.h \
  ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/driver/spi/drv_spi_definitions.h \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/system/dma/sys_dma_mapping.h \
  ../src/config/default/peripheral/dmac/plib_dmac.h \
- ../src/config/default/driver/driver.h \
  ../src/config/default/driver/spi/src/drv_spi_local.h \
  ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/system/int/sys_int.h \
@@ -114,6 +119,12 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
 
 ../src/config/default/definitions.h:
 
+../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h:
+
+../src/config/default/device.h:
+
+../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h:
+
 ../src/config/default/driver/winc/include/wdrv_winc_api.h:
 
 ../src/config/default/system/system_module.h:
@@ -124,15 +135,9 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
 
 ../src/config/default/system/ports/sys_ports.h:
 
-../src/config/default/device.h:
-
 ../src/config/default/system/ports/sys_ports_mapping.h:
 
 ../src/config/default/peripheral/gpio/plib_gpio.h:
-
-../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h:
-
-../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h:
 
 ../src/config/default/peripheral/clk/plib_clk.h:
 
@@ -222,6 +227,14 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
 
 ../src/config/default/system/time/sys_time.h:
 
+../src/config/default/driver/i2c/drv_i2c.h:
+
+../src/config/default/driver/i2c/drv_i2c_definitions.h:
+
+../src/config/default/driver/driver.h:
+
+../src/config/default/driver/i2c/src/drv_i2c_local.h:
+
 ../src/config/default/driver/usb/usbhs/drv_usbhs.h:
 
 ../src/config/default/usb/usb_hub.h:
@@ -286,6 +299,10 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
 
 ../src/config/default/system/fs/fat_fs/file_system/ff.h:
 
+../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
+
 ../src/config/default/driver/spi/drv_spi.h:
 
 ../src/config/default/driver/spi/drv_spi_definitions.h:
@@ -295,8 +312,6 @@ build/default/debug/_ext/1068697685/wdrv_winc_eint.o: \
 ../src/config/default/system/dma/sys_dma_mapping.h:
 
 ../src/config/default/peripheral/dmac/plib_dmac.h:
-
-../src/config/default/driver/driver.h:
 
 ../src/config/default/driver/spi/src/drv_spi_local.h:
 

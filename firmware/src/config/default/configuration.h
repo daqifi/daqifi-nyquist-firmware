@@ -139,6 +139,11 @@ extern "C" {
 #define DRV_SDSPI_STACK_SIZE_IDX0               256
 #define DRV_SDSPI_PRIORITY_IDX0                     2
 
+/* I2C Driver Instance 0 Configuration Options */
+#define DRV_I2C_INDEX_0                       0
+#define DRV_I2C_CLIENTS_NUMBER_IDX0           1
+#define DRV_I2C_CLOCK_SPEED_IDX0              50000
+
 /*** WiFi WINC Driver Configuration ***/
 #define WDRV_WINC_GPIO_SOURCE
 #define WDRV_WINC_NETWORK_MODE_SOCKET
@@ -175,6 +180,10 @@ extern "C" {
 
 /* SDSPI Driver Common Configuration Options */
 #define DRV_SDSPI_INSTANCES_NUMBER              (1U)
+
+/* I2C Driver Common Configuration Options */
+#define DRV_I2C_INSTANCES_NUMBER              (1U)
+
 
 /* SPI Driver Common Configuration Options */
 #define DRV_SPI_INSTANCES_NUMBER              (1U)

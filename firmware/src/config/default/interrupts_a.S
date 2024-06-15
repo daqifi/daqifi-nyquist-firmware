@@ -70,6 +70,24 @@ IntVectorCORE_TIMER_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorCORE_TIMER_Handler
+    .extern  CHANGE_NOTICE_A_Handler
+
+    .section   .vector_118,code, keep
+    .equ     __vector_dispatch_118, IntVectorCHANGE_NOTICE_A_Handler
+    .global  __vector_dispatch_118
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorCHANGE_NOTICE_A_Handler
+
+IntVectorCHANGE_NOTICE_A_Handler:
+    portSAVE_CONTEXT
+    la    s6,  CHANGE_NOTICE_A_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorCHANGE_NOTICE_A_Handler
     .extern  CHANGE_NOTICE_D_Handler
 
     .section   .vector_121,code, keep
@@ -196,4 +214,40 @@ IntVectorSPI4_TX_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorSPI4_TX_Handler
+    .extern  I2C5_BUS_Handler
+
+    .section   .vector_182,code, keep
+    .equ     __vector_dispatch_182, IntVectorI2C5_BUS_Handler
+    .global  __vector_dispatch_182
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorI2C5_BUS_Handler
+
+IntVectorI2C5_BUS_Handler:
+    portSAVE_CONTEXT
+    la    s6,  I2C5_BUS_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorI2C5_BUS_Handler
+    .extern  I2C5_MASTER_Handler
+
+    .section   .vector_184,code, keep
+    .equ     __vector_dispatch_184, IntVectorI2C5_MASTER_Handler
+    .global  __vector_dispatch_184
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorI2C5_MASTER_Handler
+
+IntVectorI2C5_MASTER_Handler:
+    portSAVE_CONTEXT
+    la    s6,  I2C5_MASTER_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorI2C5_MASTER_Handler
 
