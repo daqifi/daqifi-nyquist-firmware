@@ -362,7 +362,7 @@ inline static void microrl_delete(microrl_t * pThis)
         else
         {
             // Otherwise we have to move all data after the cursor forward one
-            int i;
+            
             --pThis->cmdlen;
             memmove(pThis->cmdline + pThis->dataCursor,
                     pThis->cmdline + pThis->cmdlen,

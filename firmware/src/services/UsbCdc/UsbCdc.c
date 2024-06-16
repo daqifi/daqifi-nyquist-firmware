@@ -1,6 +1,8 @@
+
 #include "UsbCdc.h"
 
 // libraries
+#include "libraries/microrl/src/microrl.h"
 #include "libraries/scpi/libscpi/inc/scpi/scpi.h"
 
 // services
@@ -11,7 +13,12 @@
  * Finalizes a write operation by clearing the buffer for additional content 
  */
 static UsbCdcData gRunTimeUsbSttings;
-static bool UsbCdc_FinalizeWrite(UsbCdcData* client);
+
+static uint8_t gUsbCdcReadBuffer[USB_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));;
+static uint8_t gUsbCdcWriteBuffer[USB_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
+   
+    
+ static bool UsbCdc_FinalizeWrite(UsbCdcData* client);
 __WEAK void UsbCdc_SleepStateUpdateCB(bool state){
     UNUSED(state);
 }
@@ -23,8 +30,8 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
     uintptr_t userData
 )
 {
-    UsbCdcData * usbCdcDataObject;
-    usbCdcDataObject = (UsbCdcData *)userData;
+    UsbCdcData * pUsbCdcDataObject;
+    pUsbCdcDataObject = (UsbCdcData *)userData;
     USB_CDC_CONTROL_LINE_STATE * controlLineStateData;    
     
     switch ( event )
@@ -36,8 +43,8 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
              * USB_DEVICE_ControlSend() function to send the data to
              * host.  */
 
-            USB_DEVICE_ControlSend(usbCdcDataObject->deviceHandle,
-                    &usbCdcDataObject->getLineCodingData, sizeof(USB_CDC_LINE_CODING));
+            USB_DEVICE_ControlSend(pUsbCdcDataObject->deviceHandle,
+                    &pUsbCdcDataObject->getLineCodingData, sizeof(USB_CDC_LINE_CODING));
 
             break;
 
@@ -48,8 +55,8 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
              * USB_DEVICE_ControlReceive() function to receive the
              * data from the host */
 
-            USB_DEVICE_ControlReceive(usbCdcDataObject->deviceHandle,
-                    &usbCdcDataObject->setLineCodingData, sizeof(USB_CDC_LINE_CODING));
+            USB_DEVICE_ControlReceive(pUsbCdcDataObject->deviceHandle,
+                    &pUsbCdcDataObject->setLineCodingData, sizeof(USB_CDC_LINE_CODING));
 
             break;
 
@@ -60,10 +67,10 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
              * for now. */
 
             controlLineStateData = (USB_CDC_CONTROL_LINE_STATE *)pData;
-            usbCdcDataObject->controlLineStateData.dtr = controlLineStateData->dtr;
-            usbCdcDataObject->controlLineStateData.carrier = controlLineStateData->carrier;
+            pUsbCdcDataObject->controlLineStateData.dtr = controlLineStateData->dtr;
+            pUsbCdcDataObject->controlLineStateData.carrier = controlLineStateData->carrier;
 
-            if (usbCdcDataObject->controlLineStateData.dtr == 0)
+            if (pUsbCdcDataObject->controlLineStateData.dtr == 0)
             {
                 if (gRunTimeUsbSttings.state == USB_CDC_STATE_PROCESS)
                 {
@@ -75,7 +82,7 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
                 gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
             }
             
-            USB_DEVICE_ControlStatus(usbCdcDataObject->deviceHandle, USB_DEVICE_CONTROL_STATUS_OK);
+            USB_DEVICE_ControlStatus(pUsbCdcDataObject->deviceHandle, USB_DEVICE_CONTROL_STATUS_OK);
 
             break;
 
@@ -84,15 +91,15 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             /* This means that the host is requesting that a break of the
              * specified duration be sent. Read the break duration */
 
-            usbCdcDataObject->breakData = ((USB_DEVICE_CDC_EVENT_DATA_SEND_BREAK *)pData)->breakDuration;
+            pUsbCdcDataObject->breakData = ((USB_DEVICE_CDC_EVENT_DATA_SEND_BREAK *)pData)->breakDuration;
             break;
 
         case USB_DEVICE_CDC_EVENT_READ_COMPLETE:
         {
             /* This means that the host has sent some data*/
             USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE* readResult = (USB_DEVICE_CDC_EVENT_DATA_READ_COMPLETE*)pData;
-            usbCdcDataObject->readBufferLength = readResult->length;
-            usbCdcDataObject->readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+            pUsbCdcDataObject->readBufferLength = readResult->length;
+            pUsbCdcDataObject->readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             break;
         }
         case USB_DEVICE_CDC_EVENT_CONTROL_TRANSFER_DATA_RECEIVED:
@@ -100,7 +107,7 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             /* The data stage of the last control transfer is
              * complete. For now we accept all the data */
 
-            USB_DEVICE_ControlStatus(usbCdcDataObject->deviceHandle, USB_DEVICE_CONTROL_STATUS_OK);
+            USB_DEVICE_ControlStatus(pUsbCdcDataObject->deviceHandle, USB_DEVICE_CONTROL_STATUS_OK);
             break;
 
         case USB_DEVICE_CDC_EVENT_CONTROL_TRANSFER_DATA_SENT:
@@ -113,7 +120,9 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
         {
             /* This means that the data write got completed. We can schedule
              * the next write. */
-            UsbCdc_FinalizeWrite(usbCdcDataObject);
+            USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE val=*(USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE*)(pData);
+            if(val.handle==pUsbCdcDataObject->writeTransferHandle && val.length==pUsbCdcDataObject->writeBufferLength)
+                UsbCdc_FinalizeWrite(pUsbCdcDataObject);
             break;
         }
         default:
@@ -193,11 +202,11 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
 int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len)
 {    
 
-    memcpy(&gRunTimeUsbSttings.writeBuffer,buf,len);
-    
+    memcpy(gUsbCdcWriteBuffer,buf,len);
+    gRunTimeUsbSttings.writeBufferLength=len;
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
                         &gRunTimeUsbSttings.writeTransferHandle, 
-                        &gRunTimeUsbSttings.writeBuffer, 
+                        gUsbCdcWriteBuffer, 
                         len, 
                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
     
@@ -295,6 +304,7 @@ static bool UsbCdc_WaitForWrite(UsbCdcData* client)
 static bool UsbCdc_FinalizeWrite(UsbCdcData* client)
 {
     client->writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+    client->writeBufferLength=0;
     return true; 
 }
 
@@ -315,7 +325,7 @@ static bool UsbCdc_BeginRead(UsbCdcData* client)
         USB_DEVICE_CDC_RESULT readResult = USB_DEVICE_CDC_Read (            \
                         USB_DEVICE_CDC_INDEX_0,                             \
                         &gRunTimeUsbSttings.readTransferHandle,\
-                        client->readBuffer, USB_RBUFFER_SIZE);
+                        gUsbCdcReadBuffer, USB_RBUFFER_SIZE);
 
         switch (readResult)
         {
@@ -387,7 +397,7 @@ static bool UsbCdc_FinalizeRead(UsbCdcData* client)
         size_t i = 0;
         for (i=0; i<client->readBufferLength; ++i)
         {
-            microrl_insert_char(&client->console, client->readBuffer[i]);
+            microrl_insert_char(&client->console, gUsbCdcReadBuffer[i]);
         }
 
         client->readBufferLength = 0;
@@ -645,11 +655,12 @@ void UsbCdc_ProcessState()
             if(gRunTimeUsbSttings.writeTransferHandle ==                   \
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
             {
-                // Schedule any output
+                // Schedule any output;
                 if (!UsbCdc_BeginWrite(&gRunTimeUsbSttings))
                 {
                     break;
                 }
+                
             }
             
             break;

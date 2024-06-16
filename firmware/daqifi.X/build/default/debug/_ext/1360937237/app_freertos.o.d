@@ -56,11 +56,16 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/third_party/rtos/FreeRTOS/Source/include/semphr.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
- ../src/config/default/system/time/sys_time.h \
  ../src/config/default/driver/i2c/drv_i2c.h \
  ../src/config/default/driver/i2c/drv_i2c_definitions.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
+ ../src/config/default/system/time/sys_time.h \
+ ../src/config/default/usb/usb_device_cdc.h \
+ ../src/config/default/usb/usb_device.h \
+ ../src/config/default/usb/src/usb_device_function_driver.h \
+ ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/driver/usb/usbhs/drv_usbhs.h \
  ../src/config/default/usb/usb_hub.h \
  ../src/config/default/driver/usb/usbhs/src/plib_usbhs.h \
@@ -77,11 +82,8 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_TxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
- ../src/config/default/usb/usb_device_cdc.h \
- ../src/config/default/usb/usb_device.h \
- ../src/config/default/usb/src/usb_device_function_driver.h \
- ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -92,8 +94,6 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/config/default/system/fs/fat_fs/file_system/ffconf.h \
  ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/driver/spi/drv_spi.h \
  ../src/config/default/driver/spi/drv_spi_definitions.h \
  ../src/config/default/system/dma/sys_dma.h \
@@ -138,7 +138,23 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
- ../src/config/default/driver/winc/include/wdrv_winc_nvm.h
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/services/UsbCdc/UsbCdc.h \
+ ../src/services/UsbCdc/UsbCdc_runtimeConfig.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/types.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/error.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/units.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
+ ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h
 
 ../src/app_freertos.h:
 
@@ -258,8 +274,6 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 
 ../src/third_party/rtos/FreeRTOS/Source/include/task.h:
 
-../src/config/default/system/time/sys_time.h:
-
 ../src/config/default/driver/i2c/drv_i2c.h:
 
 ../src/config/default/driver/i2c/drv_i2c_definitions.h:
@@ -267,6 +281,20 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 ../src/config/default/driver/driver.h:
 
 ../src/config/default/driver/i2c/src/drv_i2c_local.h:
+
+../src/config/default/system/time/sys_time.h:
+
+../src/config/default/usb/usb_device_cdc.h:
+
+../src/config/default/usb/usb_device.h:
+
+../src/config/default/usb/src/usb_device_function_driver.h:
+
+../src/config/default/usb/usb_cdc.h:
+
+../src/config/default/usb/usb_cdc.h:
+
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/driver/usb/usbhs/drv_usbhs.h:
 
@@ -300,17 +328,9 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 
 ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h:
 
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
+../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
 
-../src/config/default/usb/usb_device_cdc.h:
-
-../src/config/default/usb/usb_device.h:
-
-../src/config/default/usb/src/usb_device_function_driver.h:
-
-../src/config/default/usb/usb_cdc.h:
-
-../src/config/default/usb/usb_cdc.h:
+../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
 
 ../src/config/default/system/fs/sys_fs.h:
 
@@ -331,10 +351,6 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h:
 
 ../src/config/default/system/fs/fat_fs/file_system/ff.h:
-
-../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
-
-../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
 
 ../src/config/default/driver/spi/drv_spi.h:
 
@@ -427,3 +443,37 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/services/UsbCdc/UsbCdc.h:
+
+../src/services/UsbCdc/UsbCdc_runtimeConfig.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/parser.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/types.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/config.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/cc.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/error.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/constants.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/units.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/utils.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/expression.h:
+
+../src/libraries/microrl/src/microrl.h:
+
+../src/libraries/microrl/src/config.h:
+
+../src/Util/CircularBuffer.h:

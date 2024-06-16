@@ -208,6 +208,15 @@ extern "C" {
 #define USB_DEVICE_EP0_BUFFER_SIZE                          64U
 
 
+/* Maximum instances of CDC function driver */
+#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
+
+
+/* CDC Transfer Queue Size for both read and
+   write. Applicable to all instances of the
+   function driver */
+#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
+
 /*** USB Driver Configuration ***/
 
 /* Maximum USB driver instances */
@@ -230,15 +239,6 @@ extern "C" {
 /* Alignment for buffers that are submitted to USB Driver*/ 
 #define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
 
-
-/* Maximum instances of CDC function driver */
-#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
-
-
-/* CDC Transfer Queue Size for both read and
-   write. Applicable to all instances of the
-   function driver */
-#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
 
 
 

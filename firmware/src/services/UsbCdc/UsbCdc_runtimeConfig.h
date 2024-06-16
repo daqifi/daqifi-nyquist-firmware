@@ -24,7 +24,7 @@
 extern "C" {
 #endif
    
-#define USB_WBUFFER_SIZE 5000
+#define USB_WBUFFER_SIZE 512
 #define USB_RBUFFER_SIZE 512 // 32 * 64
 /**
  * State machine states
@@ -89,12 +89,7 @@ typedef struct s_UsbCdcData
     /** The current length of the write buffer */
     size_t writeBufferLength;
     
-    /** Client read buffer */
-    uint8_t readBuffer[USB_RBUFFER_SIZE] __attribute__((aligned(16)));
-    
-    /** Client write buffer */
-    uint8_t writeBuffer[USB_WBUFFER_SIZE] __attribute__((aligned(16)));
-    
+    /** Client read buffer */ 
     CircularBuf wCirbuf;
     SemaphoreHandle_t wMutex;
 } UsbCdcData;
