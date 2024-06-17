@@ -12,13 +12,8 @@
 /**
  * Finalizes a write operation by clearing the buffer for additional content 
  */
-static UsbCdcData gRunTimeUsbSttings;
-
-static uint8_t gUsbCdcReadBuffer[USB_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));;
-static uint8_t gUsbCdcWriteBuffer[USB_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
-   
-    
- static bool UsbCdc_FinalizeWrite(UsbCdcData* client);
+static UsbCdcData gRunTimeUsbSttings __attribute__((coherent));
+static bool UsbCdc_FinalizeWrite(UsbCdcData* client);
 __WEAK void UsbCdc_SleepStateUpdateCB(bool state){
     UNUSED(state);
 }
@@ -202,11 +197,11 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
 int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len)
 {    
 
-    memcpy(gUsbCdcWriteBuffer,buf,len);
+    memcpy(gRunTimeUsbSttings.writeBuffer,buf,len);
     gRunTimeUsbSttings.writeBufferLength=len;
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
                         &gRunTimeUsbSttings.writeTransferHandle, 
-                        gUsbCdcWriteBuffer, 
+                        gRunTimeUsbSttings.writeBuffer, 
                         len, 
                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
     
@@ -325,7 +320,7 @@ static bool UsbCdc_BeginRead(UsbCdcData* client)
         USB_DEVICE_CDC_RESULT readResult = USB_DEVICE_CDC_Read (            \
                         USB_DEVICE_CDC_INDEX_0,                             \
                         &gRunTimeUsbSttings.readTransferHandle,\
-                        gUsbCdcReadBuffer, USB_RBUFFER_SIZE);
+                        client->readBuffer, USB_RBUFFER_SIZE);
 
         switch (readResult)
         {
@@ -397,7 +392,7 @@ static bool UsbCdc_FinalizeRead(UsbCdcData* client)
         size_t i = 0;
         for (i=0; i<client->readBufferLength; ++i)
         {
-            microrl_insert_char(&client->console, gUsbCdcReadBuffer[i]);
+            microrl_insert_char(&client->console, client->readBuffer[i]);
         }
 
         client->readBufferLength = 0;

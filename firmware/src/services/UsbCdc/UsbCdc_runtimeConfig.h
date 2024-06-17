@@ -89,7 +89,12 @@ typedef struct s_UsbCdcData
     /** The current length of the write buffer */
     size_t writeBufferLength;
     
-    /** Client read buffer */ 
+    /** Client read buffer */
+    uint8_t readBuffer[USB_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));;
+    
+    /** Client write buffer */
+    uint8_t writeBuffer[USB_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
+    
     CircularBuf wCirbuf;
     SemaphoreHandle_t wMutex;
 } UsbCdcData;
