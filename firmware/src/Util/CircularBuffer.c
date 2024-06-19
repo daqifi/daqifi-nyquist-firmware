@@ -33,7 +33,7 @@
 #define BUF_START   cirbuf->buf_ptr
 #define BUF_END    (cirbuf->buf_ptr + cirbuf->buf_size - 1)
 
-void CircularBuf_Init(CircularBuf* cirbuf, int(*fp)(uint8_t*,uint16_t), uint16_t size)
+void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint16_t), uint16_t size)
 {
     cirbuf->buf_ptr                = OSAL_Malloc(size);
     cirbuf->process_callback       = fp;
@@ -54,7 +54,7 @@ void CircularBuf_Init(CircularBuf* cirbuf, int(*fp)(uint8_t*,uint16_t), uint16_t
  *           while we are reading it, we read until we get the same answer twice in a row.  
  *           This method allows us to get a good reading without turning off interrupts to do it.
  *===========================================================================*/
-uint16_t CircularBuf_NumBytesAvailable(CircularBuf* cirbuf)
+uint16_t CircularBuf_NumBytesAvailable(CircularBuf_t* cirbuf)
 {
 
     uint16_t num1,num2;
@@ -66,13 +66,13 @@ uint16_t CircularBuf_NumBytesAvailable(CircularBuf* cirbuf)
     return num1;
 }
 
-uint16_t CircularBuf_NumBytesFree(CircularBuf* cirbuf)
+uint16_t CircularBuf_NumBytesFree(CircularBuf_t* cirbuf)
 {
     return (cirbuf->buf_size - CircularBuf_NumBytesAvailable(cirbuf));
 }
 
 
-uint16_t CircularBuf_ProcessBytes(CircularBuf* cirbuf, uint8_t* bytesBuf, uint16_t maxBytes, int* error)
+uint16_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint16_t maxBytes, int* error)
 {
     uint16_t bytesToSend  = 0;
     uint16_t bytesRemoved = 0; 
@@ -145,7 +145,7 @@ uint16_t CircularBuf_ProcessBytes(CircularBuf* cirbuf, uint8_t* bytesBuf, uint16
   CircularBuf_AddBytes
   Send out CF UDP Server message. Returns number of bytes sent.
   =====================================================================================*/
-uint16_t CircularBuf_AddBytes(CircularBuf* cirbuf, uint8_t* bytesBuf, uint16_t bytesToSend)
+uint16_t CircularBuf_AddBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint16_t bytesToSend)
 {
     int numBytesCopied = 0;
     int wMaxPut;

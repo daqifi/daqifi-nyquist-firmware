@@ -139,8 +139,8 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/services/UsbCdc/UsbCdc.h \
- ../src/services/UsbCdc/UsbCdc_runtimeConfig.h \
+ ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h \
  ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
  ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
  ../src/libraries/scpi/libscpi/inc/scpi/types.h \
@@ -153,8 +153,7 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h
+ ../src/Util/CircularBuffer.h
 
 ../src/app_freertos.h:
 
@@ -446,7 +445,9 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 
 ../src/services/UsbCdc/UsbCdc.h:
 
-../src/services/UsbCdc/UsbCdc_runtimeConfig.h:
+../src/libraries/microrl/src/microrl.h:
+
+../src/libraries/microrl/src/config.h:
 
 ../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
 
@@ -471,9 +472,5 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 ../src/libraries/scpi/libscpi/inc/scpi/utils.h:
 
 ../src/libraries/scpi/libscpi/inc/scpi/expression.h:
-
-../src/libraries/microrl/src/microrl.h:
-
-../src/libraries/microrl/src/config.h:
 
 ../src/Util/CircularBuffer.h:

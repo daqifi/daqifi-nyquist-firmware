@@ -339,7 +339,6 @@
         </logicalFolder>
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.h</itemPath>
-          <itemPath>../src/services/UsbCdc/UsbCdc_runtimeConfig.h</itemPath>
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
@@ -1740,7 +1739,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/BoardRuntimeConfig.c"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -1758,7 +1757,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/BoardRuntimeConfig.h"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -1794,7 +1793,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ1RuntimeDefaults.c"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>

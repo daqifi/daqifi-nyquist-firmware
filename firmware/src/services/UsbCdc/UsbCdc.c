@@ -12,8 +12,8 @@
 /**
  * Finalizes a write operation by clearing the buffer for additional content 
  */
-static UsbCdcData gRunTimeUsbSttings __attribute__((coherent));
-static bool UsbCdc_FinalizeWrite(UsbCdcData* client);
+static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
+static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 __WEAK void UsbCdc_SleepStateUpdateCB(bool state){
     UNUSED(state);
 }
@@ -25,8 +25,8 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
     uintptr_t userData
 )
 {
-    UsbCdcData * pUsbCdcDataObject;
-    pUsbCdcDataObject = (UsbCdcData *)userData;
+    UsbCdcData_t * pUsbCdcDataObject;
+    pUsbCdcDataObject = (UsbCdcData_t *)userData;
     USB_CDC_CONTROL_LINE_STATE * controlLineStateData;    
     
     switch ( event )
@@ -39,7 +39,7 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
              * host.  */
 
             USB_DEVICE_ControlSend(pUsbCdcDataObject->deviceHandle,
-                    &pUsbCdcDataObject->getLineCodingData, sizeof(USB_CDC_LINE_CODING));
+                    &pUsbCdcDataObject->deviceLineCodingData, sizeof(USB_CDC_LINE_CODING));
 
             break;
 
@@ -51,7 +51,7 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
              * data from the host */
 
             USB_DEVICE_ControlReceive(pUsbCdcDataObject->deviceHandle,
-                    &pUsbCdcDataObject->setLineCodingData, sizeof(USB_CDC_LINE_CODING));
+                    &pUsbCdcDataObject->hostSetLineCodingData, sizeof(USB_CDC_LINE_CODING));
 
             break;
 
@@ -211,7 +211,7 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len)
 /**
  * Enqueues client data for writing 
  */
-static bool UsbCdc_BeginWrite(UsbCdcData* client)
+static bool UsbCdc_BeginWrite(UsbCdcData_t* client)
 {
 
     USB_DEVICE_CDC_RESULT writeResult;
@@ -273,7 +273,7 @@ static bool UsbCdc_BeginWrite(UsbCdcData* client)
 /**
  * Waits for a write operation to complete
  */
-static bool UsbCdc_WaitForWrite(UsbCdcData* client)
+static bool UsbCdc_WaitForWrite(UsbCdcData_t* client)
 {
     if (client->state != USB_CDC_STATE_PROCESS)
     {
@@ -296,7 +296,7 @@ static bool UsbCdc_WaitForWrite(UsbCdcData* client)
 /**
  * Finalizes a write operation by clearing the buffer for additional content 
  */
-static bool UsbCdc_FinalizeWrite(UsbCdcData* client)
+static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client)
 {
     client->writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
     client->writeBufferLength=0;
@@ -306,7 +306,7 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData* client)
 /**
  * Starts listening for a read
  */
-static bool UsbCdc_BeginRead(UsbCdcData* client)
+static bool UsbCdc_BeginRead(UsbCdcData_t* client)
 {
     if (client->state != USB_CDC_STATE_PROCESS)
     {
@@ -362,7 +362,7 @@ static bool UsbCdc_BeginRead(UsbCdcData* client)
 /**
  * Waits for a read operation to complete
  */
-static bool UsbCdc_WaitForRead(UsbCdcData* client)
+static bool UsbCdc_WaitForRead(UsbCdcData_t* client)
 {
     if (client->state != USB_CDC_STATE_PROCESS)
     {
@@ -385,7 +385,7 @@ static bool UsbCdc_WaitForRead(UsbCdcData* client)
 /**
  * Called to complete a read operation, feeding data to the rest of the system
  */
-static bool UsbCdc_FinalizeRead(UsbCdcData* client)
+static bool UsbCdc_FinalizeRead(UsbCdcData_t* client)
 {
     if (client->readBufferLength > 0)
     {
@@ -402,7 +402,7 @@ static bool UsbCdc_FinalizeRead(UsbCdcData* client)
     return false;
 }
 
-size_t UsbCdc_WriteToBuffer(UsbCdcData* client, const char* data, size_t len)
+size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len)
 {
     size_t bytesAdded = 0;
     
@@ -437,7 +437,7 @@ size_t UsbCdc_WriteDefault(const char* data, size_t len)
  * @param client The client to flush
  * @return  True if data is flushed, false otherwise
  */
-static bool UsbCdc_Flush(UsbCdcData* client)
+static bool UsbCdc_Flush(UsbCdcData_t* client)
 {
     return UsbCdc_BeginWrite(client) &&
            UsbCdc_WaitForWrite(client);
@@ -566,10 +566,10 @@ void UsbCdc_Initialize()
 
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID ;
 
-    gRunTimeUsbSttings.getLineCodingData.dwDTERate = 9600;
-    gRunTimeUsbSttings.getLineCodingData.bParityType =  0;
-    gRunTimeUsbSttings.getLineCodingData.bParityType = 0;
-    gRunTimeUsbSttings.getLineCodingData.bDataBits = 8;
+    gRunTimeUsbSttings.deviceLineCodingData.dwDTERate = 9600;
+    gRunTimeUsbSttings.deviceLineCodingData.bParityType =  0;
+    gRunTimeUsbSttings.deviceLineCodingData.bParityType = 0;
+    gRunTimeUsbSttings.deviceLineCodingData.bDataBits = 8;
 
     gRunTimeUsbSttings.readTransferHandle =                                \
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;

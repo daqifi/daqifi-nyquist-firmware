@@ -38,14 +38,14 @@ typedef struct s_CircularBuf
     uint8_t*    buf_ptr;
     uint16_t    buf_size;
     int        (*process_callback)(uint8_t*, uint16_t);
-}CircularBuf;
+}CircularBuf_t;
 
 
-void     CircularBuf_Init(CircularBuf*, int (*fp)(uint8_t*,uint16_t), uint16_t);
-uint16_t CircularBuf_AddBytes(CircularBuf*, uint8_t*, uint16_t);
-uint16_t CircularBuf_NumBytesAvailable(CircularBuf*);
-uint16_t CircularBuf_NumBytesFree(CircularBuf*);
-uint16_t CircularBuf_ProcessBytes(CircularBuf*,uint8_t*, uint16_t,int*);
+void     CircularBuf_Init(CircularBuf_t*, int (*fp)(uint8_t*,uint16_t), uint16_t);
+uint16_t CircularBuf_AddBytes(CircularBuf_t*, uint8_t*, uint16_t);
+uint16_t CircularBuf_NumBytesAvailable(CircularBuf_t*);
+uint16_t CircularBuf_NumBytesFree(CircularBuf_t*);
+uint16_t CircularBuf_ProcessBytes(CircularBuf_t*,uint8_t*, uint16_t,int*);
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

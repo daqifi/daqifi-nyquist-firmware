@@ -20,9 +20,85 @@ extern "C" {
 #include <stdio.h>
 #include "configuration.h"
 #include "definitions.h"
-#include "UsbCdc_runtimeConfig.h"
-// Forward declarations
-typedef struct s_UsbCdcData UsbCdcData;
+#include "libraries/microrl/src/microrl.h"
+#include "libraries/scpi/libscpi/inc/scpi/scpi.h"
+#include "Util/CircularBuffer.h"
+
+#define USB_WBUFFER_SIZE 512
+#define USB_RBUFFER_SIZE 512 // 32 * 64
+/**
+ * State machine states
+ */
+typedef enum e_UsbCdcState
+{
+    /** Application's state machine's initial state. */
+    USB_CDC_STATE_INIT=0,
+
+    /** Wait for a character receive */
+    USB_CDC_STATE_PROCESS,
+
+    /** Triggers the close process */
+    USB_CDC_STATE_BEGIN_CLOSE,
+            
+    /** Waits for an event, not processing data */
+    USB_CDC_STATE_WAIT,
+            
+    /** Called when the device is closed*/
+    USB_CDC_STATE_CLOSED
+
+} UsbCdcState_t;
+
+/**
+ * Contains the parameters for the CDC endpoint
+ */
+
+typedef struct s_UsbCdcData
+{
+    /** Device layer handle returned by device layer open function */
+    USB_DEVICE_HANDLE deviceHandle;
+
+    /** Application's current state*/
+    UsbCdcState_t state;
+
+    /** Set Line Coding Data */
+    USB_CDC_LINE_CODING hostSetLineCodingData;
+
+    /** Get Line Coding Data */
+    USB_CDC_LINE_CODING deviceLineCodingData;
+
+    /** Control Line State */
+    USB_CDC_CONTROL_LINE_STATE controlLineStateData;
+
+    /** Read transfer handle */
+    USB_DEVICE_CDC_TRANSFER_HANDLE readTransferHandle;
+
+    /** Write transfer handle */
+    USB_DEVICE_CDC_TRANSFER_HANDLE writeTransferHandle;
+
+    /** Break data */
+    uint16_t breakData;
+    
+    /** The Microrl console */
+    microrl_t console;
+
+    /** The associated SCPI context */
+    scpi_t scpiContext;
+    
+    /** The current length of the read buffer */
+    size_t readBufferLength;
+
+    /** The current length of the write buffer */
+    size_t writeBufferLength;
+    
+    /** Client read buffer */
+    uint8_t readBuffer[USB_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));;
+    
+    /** Client write buffer */
+    uint8_t writeBuffer[USB_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
+    
+    CircularBuf_t wCirbuf;
+    SemaphoreHandle_t wMutex;
+} UsbCdcData_t;
 
 /**
  * Initialization of the USB Process
@@ -46,7 +122,7 @@ bool UsbCdc_IsActive();
  * @param len The length of data
  * @return The number of bytes written
  */
-size_t UsbCdc_WriteToBuffer(UsbCdcData* client, const char* data, size_t len);
+size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len);
 
 /**
  * Writes to the default (only) client

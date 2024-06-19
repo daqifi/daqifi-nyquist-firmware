@@ -1,5 +1,6 @@
-build/default/debug/_ext/1146253835/UsbCdc.o: \
- ../src/services/UsbCdc/UsbCdc.c ../src/services/UsbCdc/UsbCdc.h \
+build/default/debug/_ext/1013116128/NQ1RuntimeDefaults.o: \
+ ../src/state/runtime/NQ1RuntimeDefaults.c \
+ ../src/state/runtime/BoardRuntimeConfig.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -108,7 +109,7 @@ build/default/debug/_ext/1146253835/UsbCdc.o: \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/osal/osal.h \
  ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
- ../src/libraries/microrl/src/microrl.h \
+ ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h \
  ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
  ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
@@ -122,9 +123,10 @@ build/default/debug/_ext/1146253835/UsbCdc.o: \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h ../src/services/SCPI/SCPIInterface.h
+ ../src/Util/CircularBuffer.h ../src/Util/ArrayWrapper.h \
+ ../src/HAL/BQ24297/BQ24297.h
 
-../src/services/UsbCdc/UsbCdc.h:
+../src/state/runtime/BoardRuntimeConfig.h:
 
 ../src/config/default/configuration.h:
 
@@ -348,6 +350,8 @@ build/default/debug/_ext/1146253835/UsbCdc.o: \
 
 ../src/app_freertos.h:
 
+../src/services/UsbCdc/UsbCdc.h:
+
 ../src/libraries/microrl/src/microrl.h:
 
 ../src/libraries/microrl/src/config.h:
@@ -378,4 +382,6 @@ build/default/debug/_ext/1146253835/UsbCdc.o: \
 
 ../src/Util/CircularBuffer.h:
 
-../src/services/SCPI/SCPIInterface.h:
+../src/Util/ArrayWrapper.h:
+
+../src/HAL/BQ24297/BQ24297.h:

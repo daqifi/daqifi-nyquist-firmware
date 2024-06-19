@@ -49,25 +49,25 @@ const void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
         case BOARDRUNTIMECONFIG_ALL_CONFIG:
             return &pBoardRuntimeConfig;
         case BOARDRUNTIMECONFIG_DIO_CHANNELS:
-            return &pBoardRuntimeConfig.DIOChannels;
+            //return &pBoardRuntimeConfig.DIOChannels;
         case BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE:
-            return &pBoardRuntimeConfig.DIOGlobalEnable;
+            //return &pBoardRuntimeConfig.DIOGlobalEnable;
         case BOARDRUNTIMECONFIG_AIN_MODULES:
-            return &pBoardRuntimeConfig.AInModules;
+            //return &pBoardRuntimeConfig.AInModules;
         case BOARDRUNTIMECONFIG_AIN_CHANNELS:
-            return &pBoardRuntimeConfig.AInChannels;
+            //return &pBoardRuntimeConfig.AInChannels;
         case BOARDRUNTIME_POWER_WRITE_VARIABLES:
-            return &pBoardRuntimeConfig.PowerWriteVars;
+            //return &pBoardRuntimeConfig.PowerWriteVars;
         case BOARDRUNTIME_UI_WRITE_VARIABLES: 
-            return &pBoardRuntimeConfig.UIWriteVars; 
+            //return &pBoardRuntimeConfig.UIWriteVars; 
         case BOARDRUNTIME_STREAMING_CONFIGURATION:
-            return &pBoardRuntimeConfig.StreamingConfig;
+            //return &pBoardRuntimeConfig.StreamingConfig;
         case BOARDRUNTIME_WIFI_SETTINGS:
-            return &pBoardRuntimeConfig.wifiSettings;
+            //return &pBoardRuntimeConfig.wifiSettings;
         case BOARDRUNTIME_USB_SETTINGS:
             return &pBoardRuntimeConfig.usbSettings; 
         case BOARDRUNTIME_SERVER_DATA:
-            return &pBoardRuntimeConfig.serverData;
+            //return &pBoardRuntimeConfig.serverData;
         case BOARDRUNTIMECONFIG_NUM_OF_ELEMENTS:
         default:
             return NULL;
