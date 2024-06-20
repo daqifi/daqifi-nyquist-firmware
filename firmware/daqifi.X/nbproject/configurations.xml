@@ -303,6 +303,12 @@
             <itemPath>../src/libraries/microrl/src/microrl.h</itemPath>
           </logicalFolder>
         </logicalFolder>
+        <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
+          <itemPath>../src/libraries/nanopb/pb.h</itemPath>
+          <itemPath>../src/libraries/nanopb/pb_common.h</itemPath>
+          <itemPath>../src/libraries/nanopb/pb_decode.h</itemPath>
+          <itemPath>../src/libraries/nanopb/pb_encode.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="scpi" displayName="scpi" projectFiles="true">
           <logicalFolder name="libscpi" displayName="libscpi" projectFiles="true">
             <logicalFolder name="inc" displayName="inc" projectFiles="true">
@@ -613,6 +619,11 @@
           <logicalFolder name="src" displayName="src" projectFiles="true">
             <itemPath>../src/libraries/microrl/src/microrl.c</itemPath>
           </logicalFolder>
+        </logicalFolder>
+        <logicalFolder name="nanopb" displayName="nanopb" projectFiles="true">
+          <itemPath>../src/libraries/nanopb/pb_common.c</itemPath>
+          <itemPath>../src/libraries/nanopb/pb_decode.c</itemPath>
+          <itemPath>../src/libraries/nanopb/pb_encode.c</itemPath>
         </logicalFolder>
         <logicalFolder name="scpi" displayName="scpi" projectFiles="true">
           <logicalFolder name="libscpi" displayName="libscpi" projectFiles="true">

@@ -1,0 +1,94 @@
+
+
+
+
+
+
+// Begin streaming data
+
+
+DaqifiOutMessage.analog_in_data				max_count:16
+DaqifiOutMessage.analog_in_data_float		max_count:16
+DaqifiOutMessage.analog_in_data_ts			max_count:16
+
+DaqifiOutMessage.digital_data				max_size:2
+DaqifiOutMessage.digital_data_ts			max_count:16
+
+DaqifiOutMessage.analog_out_data			max_count:8		int_size:16
+
+
+
+DaqifiOutMessage.batt_status				int_size:8
+
+		
+
+
+
+// Analog In Information
+
+
+DaqifiOutMessage.analog_in_port_type 		max_size:16
+DaqifiOutMessage.analog_in_port_av_rse 		max_size:2
+DaqifiOutMessage.analog_in_port_rse 		max_size:2
+DaqifiOutMessage.analog_in_port_enabled 	max_size:2
+DaqifiOutMessage.analog_in_port_av_range        max_count:2
+DaqifiOutMessage.analog_in_port_av_range_priv   max_count:1
+DaqifiOutMessage.analog_in_port_range		max_count:16
+DaqifiOutMessage.analog_in_port_range_priv	max_count:8
+
+
+DaqifiOutMessage.analog_in_int_scale_m		max_count:16
+DaqifiOutMessage.analog_in_int_scale_m_priv	max_count:16
+DaqifiOutMessage.analog_in_cal_m			max_count:16
+DaqifiOutMessage.analog_in_cal_b			max_count:16
+DaqifiOutMessage.analog_in_cal_m_priv		max_count:8
+DaqifiOutMessage.analog_in_cal_b_priv		max_count:8
+
+// Digital I/O Information
+
+DaqifiOutMessage.digital_port_type          max_size:16
+DaqifiOutMessage.digital_port_dir 			max_size:2
+
+// Analog Out Information
+
+DaqifiOutMessage.analog_out_port_type       max_size:16
+
+DaqifiOutMessage.analog_out_port_av_range   max_count:1
+
+
+// IPv4 Device Information
+DaqifiOutMessage.ip_addr 					max_size:4
+DaqifiOutMessage.net_mask					max_size:4
+DaqifiOutMessage.gateway					max_size:4
+DaqifiOutMessage.primary_dns				max_size:4
+DaqifiOutMessage.secondary_dns				max_size:4
+DaqifiOutMessage.mac_addr					max_size:6
+
+// IPv6 Device Information
+DaqifiOutMessage.ip_addr_v6 				max_size:16
+DaqifiOutMessage.sub_pre_length_v6			max_size:1
+DaqifiOutMessage.gateway_v6					max_size:16
+DaqifiOutMessage.primary_dns_v6				max_size:16
+DaqifiOutMessage.secondary_dns_v6			max_size:16
+DaqifiOutMessage.eui_64						max_size:8
+
+// Device Network Information
+DaqifiOutMessage.host_name 					max_size:34
+
+DaqifiOutMessage.friendly_device_name 		max_size:32
+DaqifiOutMessage.ssid 						max_size:34
+
+DaqifiOutMessage.wifi_security_mode			int_size:8
+
+
+// Aviable SSID Information
+DaqifiOutMessage.av_ssid 					max_size:34		max_count:8
+DaqifiOutMessage.av_ssid_strength 			max_count:8
+DaqifiOutMessage.av_wifi_security_mode		max_count:8
+DaqifiOutMessage.av_wifi_inf_mode           max_count:8
+
+// Device Hardware/Firmware Information
+DaqifiOutMessage.device_pn 					max_size:16
+DaqifiOutMessage.device_hw_rev 				max_size:16
+DaqifiOutMessage.device_fw_rev 				max_size:16
+

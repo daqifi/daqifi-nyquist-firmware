@@ -124,6 +124,7 @@ DRV_HANDLE wdrvHandle;
 static SOCKET serverSocket = -1;
 //static SOCKET udp_client_socket = -1;
 static uint8_t recvBuffer[UDP_BUFFER_SIZE];
+static uint8_t sendBuffer[UDP_BUFFER_SIZE];
 
 static void APP_ExampleDHCPAddressEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
@@ -166,6 +167,12 @@ static void APP_ExampleSocketEventCallback(SOCKET socket, uint8_t messageType, v
                 len=sprintf(cdcWriteBuffer,"Frame Data : %.*s\r\n",pstrRx->s16BufferSize,(char*)pstrRx->pu8Buffer);
                 UsbCdc_WriteToBuffer(NULL,cdcWriteBuffer,len);
                 recvfrom(serverSocket, recvBuffer, UDP_BUFFER_SIZE, 0);
+                len=sprintf((char*)sendBuffer,"echo=>\"%.*s\"",pstrRx->s16BufferSize,(char*)pstrRx->pu8Buffer);
+                struct sockaddr_in addr; 
+                addr.sin_family = AF_INET;
+                addr.sin_port = pstrRx->strRemoteAddr.sin_port;
+                addr.sin_addr.s_addr = pstrRx->strRemoteAddr.sin_addr.s_addr;
+                sendto(serverSocket,sendBuffer,len,0,(struct sockaddr*) &addr, sizeof (struct sockaddr_in));
             } else {
                 //printf("Socket recv Error: %d\n",pstrRx->s16BufferSize);
                 shutdown(serverSocket);
@@ -173,9 +180,10 @@ static void APP_ExampleSocketEventCallback(SOCKET socket, uint8_t messageType, v
         }
             break;
 
-        case SOCKET_MSG_SEND:
+        case SOCKET_MSG_SENDTO:
         {
-            //SYS_CONSOLE_Print(appData.consoleHandle, "Socket %d send completed\r\n", socket);
+            uint16_t len=sprintf(cdcWriteBuffer,"UDP Send Success\r\n");
+            UsbCdc_WriteToBuffer(NULL,cdcWriteBuffer,len);
             break;
         }
 
