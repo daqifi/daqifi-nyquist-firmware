@@ -3,19 +3,12 @@
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
         <group>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/BoardRuntimeConfig.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/wdrv_winc_bssctx.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/UsbCdc/UsbCdc.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/usb/usb_cdc.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/BoardRuntimeConfig.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/wdrv_winc_common.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/wdrv_winc_authctx.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/wdrv_winc_authctx.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/app_freertos.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/NQ1RuntimeDefaults.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/usb/usb_device_cdc.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/app_freertos.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/Util/CircularBuffer.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/UsbRuntimeConfig.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/Util/CircularBuffer.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/UsbCdc/UsbCdc_runtimeConfig.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/UsbCdc/UsbCdc.h</file>
         </group>
     </open-files>
 </project-private>

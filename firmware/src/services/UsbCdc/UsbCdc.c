@@ -404,6 +404,9 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client)
 
 size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len)
 {
+    if(client==NULL){
+        client=&gRunTimeUsbSttings;
+    }
     size_t bytesAdded = 0;
     
     if(len==0)return 0;
