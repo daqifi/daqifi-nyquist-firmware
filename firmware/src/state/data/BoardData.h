@@ -12,11 +12,11 @@
 #ifndef __BOARDDATA_H__
 #define __BOARDDATA_H__
 
-#include "AInSample.h"
-#include "DIOSample.h"
+//#include "AInSample.h"
+//#include "DIOSample.h"
 #include "Util/HeapList.h"
-#include "HAL/Power/PowerApi.h"
-#include "HAL/UI/UI.h"
+//#include "HAL/Power/PowerApi.h"
+//#include "HAL/UI/UI.h"
 #include "HAL/NVM/DaqifiSettings.h"
 
 #ifdef __cplusplus
@@ -66,19 +66,19 @@ typedef struct sBoardData
     //! Indicates whether the application is currently inside of an isr
     int InISR;
     //! The latest DIO sample
-    DIOSample DIOLatest;
+    //DIOSample DIOLatest;
     //! Collected DIO samples
-    DIOSampleList DIOSamples;
+    //DIOSampleList DIOSamples;
     //! The current state of the module
-    AInModDataArray AInState;
+    //AInModDataArray AInState;
     //! The latest AIn samples
-    AInSampleArray AInLatest;
+    //AInSampleArray AInLatest;
     //! Collected Analog-input samples
-    AInSampleList AInSamples;
+    //AInSampleList AInSamples;
     //! Global Power structure
-    tPowerData PowerData;
+    //tPowerData PowerData;
     //! Global UI Structure
-    tUIReadVars UIReadVars;
+    //tUIReadVars UIReadVars;
     //! The active wifi settings
     DaqifiSettings wifiSettings;
     //! The streaming trigger timestamp

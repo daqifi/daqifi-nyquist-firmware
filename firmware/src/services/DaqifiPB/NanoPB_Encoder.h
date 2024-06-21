@@ -22,7 +22,7 @@ extern "C" {
  */
 size_t Nanopb_Encode(   tBoardData* state,                                  \
                         const NanopbFlagsArray* fields,                     \
-                        uint8_t** ppBuffer);
+                        uint8_t* ppBuffer);
 /**
  * Decodes the the nanopb format into the system settings object
  * @param buffer The buffer to hold the result
@@ -31,11 +31,11 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
  * @param state The state object to hold the result
  * @return True on success, false otherwise
  */
-uint8_array Nanopb_Decode(                                                  \
-                        const uint8_t* buffer,                              \
-                        const size_t bufferLen,                             \
-                        const NanopbFlagsArray* fields,                     \
-                        tBoardRuntimeConfig* state);
+//uint8_array Nanopb_Decode(                                                  
+//                        const uint8_t* buffer,                              
+//                        const size_t bufferLen,                             
+//                        const NanopbFlagsArray* fields,                     
+//                        tBoardRuntimeConfig* state);
 
 void int2PBByteArray(   const size_t integer,                               \
                         pb_bytes_array_t* byteArray,                        \

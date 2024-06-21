@@ -12,8 +12,8 @@
 //// 3rd Party
 //#include "HAL/NVM/DaqifiSettings.h"
 //#include "HAL/Power/PowerApi.h"
-//#include "nanopb/DaqifiOutMessage.pb.h"
-//#include "nanopb/NanoPB_Encoder.h"
+#include "services/DaqifiPB/DaqifiOutMessage.pb.h"
+#include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
 //#include "Util/Logger.h"
 //#include "state/data/BoardData.h"
@@ -176,49 +176,49 @@
 //    }
 //};
 //
-//const NanopbFlagsArray fields_discovery = {
-//    .Size = 37,
-//    .Data={
-//        DaqifiOutMessage_msg_time_stamp_tag,
-//        DaqifiOutMessage_device_status_tag,
-//        DaqifiOutMessage_pwr_status_tag,
-//        DaqifiOutMessage_batt_status_tag,
-//        DaqifiOutMessage_temp_status_tag,
-//        DaqifiOutMessage_analog_in_port_num_tag,
-//        DaqifiOutMessage_analog_in_port_num_priv_tag,
-//        DaqifiOutMessage_analog_in_port_type_tag,
-//        DaqifiOutMessage_analog_in_port_av_range_tag,
-//        DaqifiOutMessage_analog_in_port_av_range_priv_tag,
-//        DaqifiOutMessage_analog_in_res_tag,
-//        DaqifiOutMessage_analog_in_res_priv_tag,
-//        DaqifiOutMessage_digital_port_num_tag,
-//        DaqifiOutMessage_digital_port_type_tag,
-//        DaqifiOutMessage_analog_out_port_num_tag,
-//        DaqifiOutMessage_analog_out_port_type_tag,
-//        DaqifiOutMessage_analog_out_res_tag,
-//        DaqifiOutMessage_analog_out_port_av_range_tag,
-//        DaqifiOutMessage_ip_addr_tag,
-//        DaqifiOutMessage_net_mask_tag,
-//        DaqifiOutMessage_gateway_tag,
-//        DaqifiOutMessage_primary_dns_tag,
-//        DaqifiOutMessage_secondary_dns_tag,
-//        DaqifiOutMessage_mac_addr_tag,
-//        DaqifiOutMessage_ip_addr_v6_tag,
-//        DaqifiOutMessage_sub_pre_length_v6_tag,
-//        DaqifiOutMessage_gateway_v6_tag,
-//        DaqifiOutMessage_primary_dns_v6_tag,
-//        DaqifiOutMessage_secondary_dns_v6_tag,
-//        DaqifiOutMessage_eui_64_tag,
-//        DaqifiOutMessage_host_name_tag,
-//        DaqifiOutMessage_device_port_tag,
-//        DaqifiOutMessage_friendly_device_name_tag,
-//        DaqifiOutMessage_device_pn_tag,
-//        DaqifiOutMessage_device_hw_rev_tag,
-//        DaqifiOutMessage_device_fw_rev_tag,
-//        DaqifiOutMessage_device_sn_tag,
-//    }
-//};    
-//    
+const NanopbFlagsArray fields_discovery = {
+    .Size = 37,
+    .Data={
+        DaqifiOutMessage_msg_time_stamp_tag,
+        DaqifiOutMessage_device_status_tag,
+        DaqifiOutMessage_pwr_status_tag,
+        DaqifiOutMessage_batt_status_tag,
+        DaqifiOutMessage_temp_status_tag,
+        DaqifiOutMessage_analog_in_port_num_tag,
+        DaqifiOutMessage_analog_in_port_num_priv_tag,
+        DaqifiOutMessage_analog_in_port_type_tag,
+        DaqifiOutMessage_analog_in_port_av_range_tag,
+        DaqifiOutMessage_analog_in_port_av_range_priv_tag,
+        DaqifiOutMessage_analog_in_res_tag,
+        DaqifiOutMessage_analog_in_res_priv_tag,
+        DaqifiOutMessage_digital_port_num_tag,
+        DaqifiOutMessage_digital_port_type_tag,
+        DaqifiOutMessage_analog_out_port_num_tag,
+        DaqifiOutMessage_analog_out_port_type_tag,
+        DaqifiOutMessage_analog_out_res_tag,
+        DaqifiOutMessage_analog_out_port_av_range_tag,
+        DaqifiOutMessage_ip_addr_tag,
+        DaqifiOutMessage_net_mask_tag,
+        DaqifiOutMessage_gateway_tag,
+        DaqifiOutMessage_primary_dns_tag,
+        DaqifiOutMessage_secondary_dns_tag,
+        DaqifiOutMessage_mac_addr_tag,
+        DaqifiOutMessage_ip_addr_v6_tag,
+        DaqifiOutMessage_sub_pre_length_v6_tag,
+        DaqifiOutMessage_gateway_v6_tag,
+        DaqifiOutMessage_primary_dns_v6_tag,
+        DaqifiOutMessage_secondary_dns_v6_tag,
+        DaqifiOutMessage_eui_64_tag,
+        DaqifiOutMessage_host_name_tag,
+        DaqifiOutMessage_device_port_tag,
+        DaqifiOutMessage_friendly_device_name_tag,
+        DaqifiOutMessage_device_pn_tag,
+        DaqifiOutMessage_device_hw_rev_tag,
+        DaqifiOutMessage_device_fw_rev_tag,
+        DaqifiOutMessage_device_sn_tag,
+    }
+};    
+    
 ///**
 // * Helper function to allow us to know which user interface the command originated from
 // */

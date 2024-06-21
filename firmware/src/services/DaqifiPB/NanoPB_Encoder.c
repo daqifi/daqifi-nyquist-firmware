@@ -3,18 +3,25 @@
  * This file implements the functions to manage the NanoPB encoder
  */
 
-#include "pb_encode.h"
-#include "pb_decode.h"
+#include "libraries/nanopb/pb_encode.h"
+#include "libraries/nanopb/pb_decode.h"
 
 
 #include "state/data/BoardData.h"
 #include "Util/Logger.h"
 
 #include "DaqifiOutMessage.pb.h"
-#include "state/board/BoardConfig.h"
+//#include "state/board/BoardConfig.h"
 #include "encoder.h"
 #include "NanoPB_Encoder.h"
+#include "HAL/NVM/DaqifiSettings.h"
+#ifndef min
+    #define min(x,y) x <= y ? x : y
+#endif // min
 
+#ifndef max
+    #define max(x,y) x >= y ? x : y
+#endif // min
 //! Buffer size used for streaming purposes
 #define NANOPB_ENCODER_BUFFER_SIZE                      (ENCODER_BUFFER_SIZE>1350?1350:ENCODER_BUFFER_SIZE)
 //#if ENCODER_BUFFER_SIZE >1300
@@ -349,19 +356,19 @@ static int Nanopb_EncodeLength(const NanopbFlagsArray* fields)
 
 size_t Nanopb_Encode(   tBoardData* state,                                  \
                         const NanopbFlagsArray* fields,                     \
-                        uint8_t** ppBuffer)
+                        uint8_t* ppBuffer)
 {
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
-                        BOARDCONFIG_ALL_CONFIG,                             \
-                        0 );
-    StreamingRuntimeConfig * pRuntimeStreamConfig = BoardRunTimeConfig_Get( \
-                        BOARDRUNTIME_STREAMING_CONFIGURATION); 
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
-                        BOARDRUNTIMECONFIG_AIN_CHANNELS);    
-    AInModRuntimeArray * pRuntimeAInModules = BoardRunTimeConfig_Get(       \
-                        BOARDRUNTIMECONFIG_AIN_MODULES);      
-    DIORuntimeArray * pRuntimeDIOChannels = BoardRunTimeConfig_Get(         \
-                        BOARDRUNTIMECONFIG_DIO_CHANNELS);     
+//    tBoardConfig * pBoardConfig = BoardConfig_Get(                          
+//                        BOARDCONFIG_ALL_CONFIG,                             
+//                        0 );
+//    StreamingRuntimeConfig * pRuntimeStreamConfig = BoardRunTimeConfig_Get( 
+//                        BOARDRUNTIME_STREAMING_CONFIGURATION); 
+//    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
+//                        BOARDRUNTIMECONFIG_AIN_CHANNELS);    
+//    AInModRuntimeArray * pRuntimeAInModules = BoardRunTimeConfig_Get(       
+//                        BOARDRUNTIMECONFIG_AIN_MODULES);      
+//    DIORuntimeArray * pRuntimeDIOChannels = BoardRunTimeConfig_Get(         
+//                        BOARDRUNTIMECONFIG_DIO_CHANNELS);     
     volatile uint32_t pBuffOffset=0; //used to pack multiple PB packets
     // If we cannot encode a whole message, bail out
     if (NANOPB_ENCODER_BUFFER_SIZE < Nanopb_EncodeLength(fields))
@@ -371,7 +378,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
     if( ppBuffer == NULL ){
         return 0;
     }
-    *ppBuffer = Encoder_Get_Buffer();
+    //*ppBuffer = Encoder_Get_Buffer();
 
     DaqifiOutMessage message = DaqifiOutMessage_init_default;
     size_t i=0;
@@ -384,72 +391,17 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.msg_time_stamp = state->StreamTrigStamp;
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
-                message.analog_in_data_count = 0;
-                uint32_t qSize=AInSampleList_Size(NULL);                
-                uint32_t previousTimeStamp=0;
-                uint32_t index = 0;               
-                AInSample data;
-                while(qSize>0){                    
-                    if(!AInSampleList_PopFront(&state->AInSamples, &data)){
-                        AInSampleList_Destroy( &state->AInSamples );
-                        AInSampleList_Initialize(   &state->AInSamples,     \
-                                                    MAX_AIN_SAMPLE_COUNT,   \
-                                                    false,                  \
-                                                    NULL );  
-                        asm("NOP");
-                        break;
-                    }
-                    qSize--;  
-                    __add_data_no_pop:
-                    if(data.Timestamp==previousTimeStamp){
-                        message.analog_in_data[index++] = data.Value;
-                        message.analog_in_data_count++;
-                    }else{                       
-                        if(message.analog_in_data_count!=0){                        
-                            pb_ostream_t stream = pb_ostream_from_buffer(ppBuffer+pBuffOffset,NANOPB_ENCODER_BUFFER_SIZE-pBuffOffset);          
-                            bool status = pb_encode_delimited(&stream,DaqifiOutMessage_fields,&message);
-                            if(!status){
-                                return 0;
-                            }
-                            pBuffOffset+=stream.bytes_written;
-                            if ((NANOPB_ENCODER_BUFFER_SIZE-pBuffOffset) < Nanopb_EncodeLength(fields))
-                            {
-                                break;
-                            }
-                        }   
-                        index=0;                     
-                        message.analog_in_data_count=0;
-                        message.has_msg_time_stamp = true;
-                        message.msg_time_stamp = data.Timestamp;  
-                        previousTimeStamp=data.Timestamp;     
-                        goto  __add_data_no_pop;      
-                    }
-                    
-                }                
-
-                 asm("NOP");
+//               
                 break;
             case DaqifiOutMessage_analog_in_data_float_tag:
-                message.analog_in_data_float_count = 0;
+//                message.analog_in_data_float_count = 0;
                 break;
             case DaqifiOutMessage_analog_in_data_ts_tag:
-                message.analog_in_data_ts_count = 0;
+//                message.analog_in_data_ts_count = 0;
                 break;
             case DaqifiOutMessage_digital_data_tag:
             {
-                message.has_digital_data = false;
-                DIOSample DIOdata;
-               
-                if(DIOSampleList_PopFront(&state->DIOSamples, &DIOdata))
-                {
-                    memcpy(                                                 \
-                        message.digital_data.bytes,                         \
-                        &DIOdata.Values,                                    \
-                        sizeof(message.digital_data.bytes));
-                    message.digital_data.size =                             \
-                        sizeof(message.digital_data.bytes);
-                    message.has_digital_data = true; 
-                }
+//               
                 break;
             }
             case DaqifiOutMessage_digital_data_ts_tag:
@@ -464,60 +416,28 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 // message.device_status;
                 break;
             case DaqifiOutMessage_pwr_status_tag:
-                message.has_pwr_status = true;
-                message.pwr_status = state->PowerData.powerState;
+//                message.has_pwr_status = true;
+//                message.pwr_status = state->PowerData.powerState;
                 break;
             case DaqifiOutMessage_batt_status_tag:
-                message.has_batt_status = true;
-                message.batt_status = state->PowerData.chargePct;
+//                message.has_batt_status = true;
+//                message.batt_status = state->PowerData.chargePct;
                 break;
             case DaqifiOutMessage_temp_status_tag:
                 message.has_temp_status = false;
                 //TODO:  message.temp_status;
                 break;
             case DaqifiOutMessage_timestamp_freq_tag:
-                message.has_timestamp_freq = true;
-                // timestamp timer running frequency
-                message.timestamp_freq = DRV_TMR_CounterFrequencyGet(       \
-                        pRuntimeStreamConfig->TSTimerHandle);
+//               
 				break;
             case DaqifiOutMessage_analog_in_port_num_tag:
-            {   
-                uint32_t x = 0;
-                message.has_analog_in_port_num = true;
-                message.analog_in_port_num = 0;
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
-                    {
-                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)
-                        {
-                            //  and it is marked as public, count as public channel
-                            message.analog_in_port_num ++;          
-                        }
-                    }else
-                    {
-                        message.analog_in_port_num ++;     //  All other modules' channels are automatically public
-                    }
-                }            
+            {                
+                      
 				break;
             }
             case DaqifiOutMessage_analog_in_port_num_priv_tag:
             {   
-                uint32_t x = 0;
-                message.has_analog_in_port_num_priv = true;
-                message.analog_in_port_num_priv = 0;
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (the only type to have priv ch)
-                    {
-                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)
-                        {
-                            //  and it is marked as private, count as private channel
-                            message.analog_in_port_num_priv ++;
-                        }
-                    }
-                }  
+                break;
             }
             case DaqifiOutMessage_analog_in_port_type_tag:
                 message.has_analog_in_port_type = false;
@@ -527,43 +447,17 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 break;
             case DaqifiOutMessage_analog_in_port_rse_tag:
             {
-                uint32_t x = 0;
-                uint32_t data = 0;
-                message.has_analog_in_port_rse = true;
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    data |=                                                 \
-                        (pRuntimeAInChannels->Data[x].IsDifferential << x);
-                }               
-                int2PBByteArray(                                            \
-                            data,                                           \
-                            (pb_bytes_array_t*)&message.analog_in_port_rse, \
-                            sizeof(message.analog_in_port_rse.bytes));
+
 				break;
             }
             case DaqifiOutMessage_analog_in_port_enabled_tag:
             {
-                uint32_t x = 0;
-                uint32_t data = 0;                
-                message.has_analog_in_port_enabled = true;
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    data |=                                                 \
-                    (pRuntimeAInChannels->Data[x].IsEnabled << x);
-                }     
-                int2PBByteArray(                                            \
-                        data,                                               \
-                        (pb_bytes_array_t*)&message.analog_in_port_enabled, \
-                        sizeof(message.analog_in_port_enabled.bytes));
+//             
 				break;
             }
             case DaqifiOutMessage_analog_in_port_av_range_tag:
             {
-                // TODO: Make this work for cases besides Nq1
-                //  Get available ranges for that module
-                message.analog_in_port_av_range[0] =                        \
-                        pRuntimeAInModules->Data[0].Range;
-                message.analog_in_port_av_range_count = 1;
+//               
                 break;
             }
 
@@ -572,261 +466,69 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 break;
             case DaqifiOutMessage_analog_in_port_range_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through public channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
-                    {
-                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
-                        {   
-                            //  Get range for that channel
-                            message.analog_in_port_range[chan] =            \
-                            pRuntimeAInModules->Data[pBoardConfig->AInChannels.Data[x].DataModule].Range;
-                            chan ++; 
-
-                        }
-                    }else
-                    {
-                        //  All other modules' channels are automatically public
-                        //  Get range for that channel
-                        message.analog_in_port_range[chan] =                \
-                        pRuntimeAInModules->Data[pBoardConfig->AInChannels.Data[x].DataModule].Range;
-                        chan ++;
-                    }
-                }            
-                message.analog_in_port_range_count = chan;
+//               
 				break;
             }
             case DaqifiOutMessage_analog_in_port_range_priv_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through private channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
-                    {
-                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
-                        {
-                             //  Get range for that channel
-                            message.analog_in_port_range_priv[chan] =       \
-                            pRuntimeAInModules->Data[pBoardConfig->AInChannels.Data[x].DataModule].Range;    
-                            chan ++;                            
-                        }
-                    }
-                }            
-                message.analog_in_port_range_priv_count = chan;
+//              
 				break;
             }
             case DaqifiOutMessage_analog_in_res_tag:
-                message.has_analog_in_res = true;
-                switch (pBoardConfig->BoardVariant)
-                {
-                    case 1:
-                        message.analog_in_res = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
-                        break;
-                    case 2:
-                        message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7173.Resolution;
-                        break;
-                    case 3:
-                        message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
-                        break;
-                }
+//               
 				break;
             case DaqifiOutMessage_analog_in_res_priv_tag:
-                message.has_analog_in_res_priv = true;
-                message.analog_in_res_priv = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
+//                message.has_analog_in_res_priv = true;
+//                message.analog_in_res_priv = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
 				break;
             case DaqifiOutMessage_analog_in_int_scale_m_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through public channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (only channels with internal scale)
-                    {
-                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
-                        {         
-                            message.analog_in_int_scale_m[chan] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale; //  Get internal scale m for that channel
-                            chan ++; 
-                        }
-                    }
-                }            
-                message.analog_in_int_scale_m_count = chan;
+//              
 				break;
             }
             case DaqifiOutMessage_analog_in_int_scale_m_priv_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through private channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC (only channels with internal scale)
-                    {
-                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
-                        {
-                            message.analog_in_int_scale_m_priv[chan] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale; //  Get internal scale m for that channel
-                            chan ++;                            
-                        }
-                    }
-                }            
-                message.analog_in_int_scale_m_priv_count = chan;
+//               
 				break;
             }                      
             case DaqifiOutMessage_analog_in_cal_m_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through public channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
-                    {
-                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
-                        {   
-                            //  Get cal m for that channel
-                            message.analog_in_cal_m[chan] =                 \
-                            pRuntimeAInChannels->Data[x].CalM; 
-                            chan ++; 
-
-                        }
-                    }else
-                    {
-                        //  All other modules' channels are automatically public
-                        //  Get cal m for that channel
-                        message.analog_in_cal_m[chan] =                     \
-                        pRuntimeAInChannels->Data[x].CalM;
-                        chan ++;
-                    }
-                }            
-                message.analog_in_cal_m_count = chan;
+//              
 				break;
             }                          
             case DaqifiOutMessage_analog_in_cal_b_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through public channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; x++)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
-                    {
-                        if(pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)     //  and it is marked as public, count as public channel
-                        {         
-                            //  Get cal b for that channel
-                            message.analog_in_cal_b[chan] =                 \
-                            pRuntimeAInChannels->Data[x].CalB; 
-                            chan ++; 
-
-                        }
-                    }else
-                    {
-                        //  All other modules' channels are automatically public 
-                        //  Get cal b for that channel
-                        message.analog_in_cal_b[chan] =                     \
-                        pRuntimeAInChannels->Data[x].CalB;
-                        chan ++;
-                    }
-                }            
-                message.analog_in_cal_b_count = chan;
+//             
 				break;
             }                
             case DaqifiOutMessage_analog_in_cal_m_priv_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through private channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
-                    {
-                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
-                        {
-                            //  Get cal m for that channel
-                            message.analog_in_cal_m_priv[chan] =            \
-                            pRuntimeAInChannels->Data[x].CalM;             
-                            chan ++;                            
-                        }
-                    }
-                }            
-                message.analog_in_cal_m_priv_count = chan;
+//               
 				break;
             }                
             case DaqifiOutMessage_analog_in_cal_b_priv_tag:
             {
-                uint32_t x = 0;  
-                uint32_t chan = 0;
-                
-                //  Loop through private channels
-                for (x = 0; x < pBoardConfig->AInChannels.Size; ++x)
-                {
-                    if(pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].DataModule].Type == AIn_MC12bADC)    //  If channel belongs to the AIn_MC12bADC
-                    {
-                        if(!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic)                                        //  and it is marked as private, count as private channel
-                        {
-                            //  Get cal b for that channel
-                            message.analog_in_cal_b_priv[chan] =            \
-                            pRuntimeAInChannels->Data[x].CalB;             
-                            chan ++;                            
-                        }
-                    }
-                }            
-                message.analog_in_cal_b_priv_count = chan;
+//              
 				break;
             }                   
             case DaqifiOutMessage_digital_port_num_tag:
-                message.has_digital_port_num = true;
-                message.digital_port_num = pBoardConfig->DIOChannels.Size;
+//                message.has_digital_port_num = true;
+//                message.digital_port_num = pBoardConfig->DIOChannels.Size;
 				break;
             case DaqifiOutMessage_digital_port_dir_tag:
             {
-                uint32_t x = 0;
-                uint32_t data = 0;  
-                
-                message.has_digital_port_dir = true;
-              
-                for (x = 0; x < pBoardConfig->DIOChannels.Size; x++)
-                {
-                    data |= (pRuntimeDIOChannels->Data[x].IsInput << x);
-                }     
-                int2PBByteArray(                                            \
-                        data,                                               \
-                        (pb_bytes_array_t*)&message.digital_port_dir,       \
-                        sizeof(message.digital_port_dir.bytes));
+//               
 				break;
             }
             case DaqifiOutMessage_analog_out_res_tag:
-                message.has_analog_out_res = false;
-                switch (pBoardConfig->BoardVariant)
-                {
-                    case 1:
-                        // No AO on the Nq1
-                        break;
-                    case 2:
-                        message.analog_out_res = pBoardConfig->AInModules.Data[1].Config.AD7173.Resolution;
-                        break;
-                    case 3:
-                        message.analog_out_res = pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
-                        break;
-                }
+//                
 				break;                   
             case DaqifiOutMessage_ip_addr_tag:
             {
                 message.has_ip_addr = true;
                 
                 WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.ip_addr.bytes, wifiSettings->ipAddr.v4Add.v, 4);
+                memcpy(message.ip_addr.bytes, wifiSettings->ipAddr.v, 4);
                 message.ip_addr.size = 4;
                 break;
             }
@@ -835,7 +537,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.has_net_mask = true;
                 
                 WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.net_mask.bytes, wifiSettings->ipMask.v4Add.v, 4);
+                memcpy(message.net_mask.bytes, wifiSettings->ipMask.v, 4);
                 message.net_mask.size = 4;
                 break;
             }
@@ -844,7 +546,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.has_gateway = true;
                 
                 WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.gateway.bytes, wifiSettings->gateway.v4Add.v, 4);
+                memcpy(message.gateway.bytes, wifiSettings->gateway.v, 4);
                 message.gateway.size = 4;
 				break;
             }
@@ -853,7 +555,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.has_primary_dns = true;
                 
                 WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.primary_dns.bytes, wifiSettings->priDns.v4Add.v, 4);
+                memcpy(message.primary_dns.bytes, wifiSettings->priDns.v, 4);
                 message.primary_dns.size = 4;
 				break;
             }
@@ -862,7 +564,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.has_secondary_dns = true;
                 
                 WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.secondary_dns.bytes, wifiSettings->secDns.v4Add.v, 4);
+                memcpy(message.secondary_dns.bytes, wifiSettings->secDns.v, 4);
                 message.secondary_dns.size = 4;
 				break;
             }
@@ -871,7 +573,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.has_mac_addr = true;
                                
                 WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.mac_addr.bytes, wifiSettings->macAddr.v, 6);
+                memcpy(message.mac_addr.bytes, wifiSettings->macAddr.addr, 6);
                 message.mac_addr.size = 6;
                 
                 break;
@@ -880,13 +582,13 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_ip_addr_v6 = false;
            
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                if (wifiSettings->configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS)
-                {
-                    message.has_ip_addr_v6 = true;        
-                    memcpy(message.ip_addr.bytes, wifiSettings->ipAddr.v6Add.v, 16);
-                    message.ip_addr_v6.size = 16;
-                }
+//                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+//                if (wifiSettings->configFlags & TCPIP_NETWORK_CONFIG_IPV6_ADDRESS)
+//                {
+//                    message.has_ip_addr_v6 = true;        
+//                    memcpy(message.ip_addr.bytes, wifiSettings->ipAddr.v6Add.v, 16);
+//                    message.ip_addr_v6.size = 16;
+//                }
                 break;
             }
             case DaqifiOutMessage_sub_pre_length_v6_tag:
@@ -907,12 +609,12 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             
             case DaqifiOutMessage_host_name_tag:
             {
-                message.has_host_name = true;
+                //message.has_host_name = true;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                size_t len = min(strlen(wifiSettings->hostName), TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
-                memcpy(message.host_name, wifiSettings->hostName, len);
-                message.host_name[len] = '\0';
+//                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+//                size_t len = min(strlen(wifiSettings->hostName), TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
+//                memcpy(message.host_name, wifiSettings->hostName, len);
+//                message.host_name[len] = '\0';
 
                 break;
             }
@@ -935,7 +637,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.has_ssid = true;
                 
                 WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                size_t len = min(strlen(wifiSettings->ssid), WDRV_MAX_SSID_LENGTH);
+                size_t len = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
                 memcpy(message.ssid, wifiSettings->ssid, len);
                 message.ssid[len] = '\0';
 
@@ -964,7 +666,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                 message.av_ssid_count = 0;
                 for(index=0;index<wifiSettings->av_num;index++)
                 {
-                    size_t len = min(strlen(wifiSettings->av_ssid[index]), WDRV_MAX_SSID_LENGTH);
+                    size_t len = min(strlen(wifiSettings->av_ssid[index]), WDRV_WINC_MAX_SSID_LEN);
                     memcpy(message.av_ssid[index], wifiSettings->av_ssid[index], len);
                     message.av_ssid[index][len] = '\0';
                     message.av_ssid_count++;
@@ -1011,20 +713,20 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_device_pn = true;
                 
-                snprintf(message.device_pn, 4, "Nq%d", pBoardConfig->BoardVariant);
+                snprintf(message.device_pn, 4, "Nq%d", 1);
                 break;
             }
             case DaqifiOutMessage_device_hw_rev_tag:
                 message.has_device_hw_rev = true;
-                memcpy(&message.device_hw_rev, &pBoardConfig->boardHardwareRev, 16);
+                memcpy(&message.device_hw_rev, "1.0.0", 5);
 				break;
             case DaqifiOutMessage_device_fw_rev_tag:
                 message.has_device_fw_rev = true;
-                memcpy(&message.device_fw_rev, &pBoardConfig->boardFirmwareRev, 16);
+                memcpy(&message.device_fw_rev, "1.1.0", 5);
                 break;
             case DaqifiOutMessage_device_sn_tag:
                 message.has_device_sn = true;
-                message.device_sn = pBoardConfig->boardSerialNumber;
+                message.device_sn = 200;
                 break;
             default:
                 // Skip unknown fields
@@ -1032,9 +734,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
         }
     }
 
-    pb_ostream_t stream = pb_ostream_from_buffer(                           \
-                        ppBuffer+pBuffOffset,                                           \
-                        NANOPB_ENCODER_BUFFER_SIZE-pBuffOffset);
+    pb_ostream_t stream = pb_ostream_from_buffer(((pb_byte_t*)ppBuffer)+pBuffOffset,NANOPB_ENCODER_BUFFER_SIZE-pBuffOffset);
     
     bool status = pb_encode_delimited(                                      \
                         &stream,                                            \
@@ -1048,7 +748,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
     else
     {
 #ifndef PB_NO_ERRMSG
-        LogMessage(stream.errmsg);
+        //LogMessage(stream.errmsg);
 #else
         LogMessage("NonoPb encode error\n\r");
 #endif
@@ -1056,223 +756,6 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
     }
 }
 
-uint8_array Nanopb_Decode(                                                  \
-                        const uint8_t* buffer,                              \
-                        const size_t bufferLen,                             \
-                        const NanopbFlagsArray* fields,                     \
-                        tBoardRuntimeConfig* state)
-{
-    DaqifiOutMessage message = DaqifiOutMessage_init_default;
-    
-    pb_istream_t stream = pb_istream_from_buffer(buffer, bufferLen);
-    uint8_array result = {.Size=0};
-    if (!pb_decode_delimited(&stream, DaqifiOutMessage_fields, &message))
-    {
-        return result;
-    }
-            
-    size_t i=0;
-    for (i=0; i<fields->Size; ++i)
-    {
-        bool processed = false;
-        switch(fields->Data[i])
-        {
-            case DaqifiOutMessage_msg_time_stamp_tag:
-                processed = true;
-                // No action
-                break;
-            case DaqifiOutMessage_analog_in_data_tag:
-                //message.analog_in_data_count > 0;
-                //TODO: message.analog_in_data[8];
-                break;
-            case DaqifiOutMessage_digital_data_tag:
-                //message.has_digital_data;
-                //TODO: message.digital_data;
-                break;
-            case DaqifiOutMessage_device_status_tag:
-                //message.has_device_status;
-                // message.device_status;
-                break;
-            case DaqifiOutMessage_batt_status_tag:
-                //message.has_bat_level;
-                //TODO: message.bat_level;
-                break;
-            case DaqifiOutMessage_pwr_status_tag:
-                //message.has_pwr_status
-                //TODO:  message.pwr_status;
-                break;
-            case DaqifiOutMessage_temp_status_tag:
-                //message.has_temp_status
-                //TODO:  message.temp_status;
-                break;
-            case DaqifiOutMessage_analog_out_data_tag:
-                //message.analog_out_data_count > 0
-                //TODO:  message.analog_out_data[8];
-                break;
-            case DaqifiOutMessage_ip_addr_tag:
-            {
-                if (!message.has_ip_addr)
-                {
-                    break;
-                }
-
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                if (message.ip_addr.size == 16)
-                {
-                    memcpy(                                                 \
-                        wifiSettings->ipAddr.v6Add.v,                       \
-                        message.ip_addr.bytes,                              \
-                        16);
-                    // Set the V6 flag
-                    wifiSettings->configFlags |=                            \
-                        TCPIP_NETWORK_CONFIG_IPV6_ADDRESS; 
-                    processed = true;
-                }
-                else if (message.ip_addr.size == 4)
-                {
-                    memcpy(                                                 \
-                        wifiSettings->ipAddr.v4Add.v,                       \
-                        message.ip_addr.bytes,                              \
-                        4);
-                    // Clear the V6 flag
-                    wifiSettings->configFlags &=                            \
-                        ~TCPIP_NETWORK_CONFIG_IPV6_ADDRESS;
-                    message.ip_addr.size = 4;
-                    processed = true;
-                }
-
-                break;
-            }
-            case DaqifiOutMessage_host_name_tag:
-            {
-                if (!message.has_host_name)
-                {
-                    break;
-                }
-                
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                size_t len = min(                                           \
-                        strlen(message.host_name),                          \
-                        TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
-                if (len > 0)
-                {
-                    memcpy(wifiSettings->hostName, message.host_name, len);
-                    wifiSettings->hostName[len] = '\0';
-                    
-                    processed = true;
-                }
-                
-                break;
-            }
-            case DaqifiOutMessage_mac_addr_tag:
-            {
-                if (!message.has_mac_addr || message.mac_addr.size < 6)
-                {
-                    break;
-                }
-                
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(wifiSettings->macAddr.v, message.mac_addr.bytes, 6);
-                processed = true;
-                
-                break;
-            }
-            case DaqifiOutMessage_ssid_tag:
-            {
-                if (!message.has_ssid)
-                {
-                    break;
-                }
-                
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                size_t len = min(strlen(message.ssid), WDRV_MAX_SSID_LENGTH);
-                if (len > 0)
-                {
-                    memcpy(wifiSettings->ssid, message.ssid, len);
-                    message.ssid[len] = '\0';
-                    processed = true;
-                }
-
-                
-                break;
-            }
-            case DaqifiOutMessage_digital_port_dir_tag:
-                message.has_digital_port_dir = false;
-                //TODO:  message.digital_port_dir;
-                break;
-            case DaqifiOutMessage_analog_in_port_rse_tag:
-                message.has_analog_in_port_rse = false;
-                //TODO:  message.analog_in_port_rse;
-                break;
-            case DaqifiOutMessage_analog_in_port_enabled_tag:
-                message.has_analog_in_port_enabled = false;
-                //TODO:  message.analog_in_port_enabled;
-                break;
-            case DaqifiOutMessage_analog_in_port_range_tag:
-                message.analog_in_port_range_count = 0;
-                //TODO:  message.analog_in_port_range;
-                break;
-            case DaqifiOutMessage_analog_in_res_tag:
-                message.has_analog_in_res = false;
-                //TODO:  message.analog_in_res;
-                break;
-            case DaqifiOutMessage_analog_out_res_tag:
-                message.has_analog_out_res = false;
-                //TODO:  message.analog_out_res;
-                break;
-            case DaqifiOutMessage_device_pn_tag:
-            {
-                message.has_device_pn = true;
-                //TODO:  message.device_pn[32];
-                break;
-            }
-            case DaqifiOutMessage_device_port_tag:
-            {
-                if (!message.has_device_port)
-                {
-                    break;
-                }
-                
-                WifiSettings* wifiSettings =                                \
-                        &state->wifiSettings.settings.wifi;
-                wifiSettings->tcpPort = message.device_port;
-                processed = true;
-                
-                break;
-            }
-            case DaqifiOutMessage_wifi_security_mode_tag:
-            {
-                if (!message.has_wifi_security_mode)
-                {
-                    break;
-                }
-                
-                WifiSettings* wifiSettings =                                \
-                        &state->wifiSettings.settings.wifi;
-                wifiSettings->securityMode =                                \
-                        message.wifi_security_mode;
-                processed = true;
-                
-                break;
-            }
-            case DaqifiOutMessage_friendly_device_name_tag:
-                message.has_friendly_device_name = false;
-                //TODO:  message.friendly_device_name[32];
-                break;
-            default:
-                // Skip unknown fields
-                break;
-        }
-        
-        if (processed)
-        {
-            result.Data[result.Size] = fields->Data[i];
-            ++result.Size;
-        }
-    }
-    
-    return result;
-}
 
 void int2PBByteArray(   const size_t integer,                               \
                         pb_bytes_array_t* byteArray,                        \

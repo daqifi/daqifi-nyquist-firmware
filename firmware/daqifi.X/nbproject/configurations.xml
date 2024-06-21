@@ -337,6 +337,10 @@
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="services" displayName="services" projectFiles="true">
+        <logicalFolder name="DaqifiPB" displayName="DaqifiPB" projectFiles="true">
+          <itemPath>../src/services/DaqifiPB/DaqifiOutMessage.pb.h</itemPath>
+          <itemPath>../src/services/DaqifiPB/NanoPB_Encoder.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/services/SCPI/SCPIADC.h</itemPath>
           <itemPath>../src/services/SCPI/SCPIDIO.h</itemPath>
@@ -348,15 +352,6 @@
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
-        <logicalFolder name="board" displayName="board" projectFiles="true">
-          <itemPath>../src/state/board/AInConfig.h</itemPath>
-          <itemPath>../src/state/board/BoardConfig.h</itemPath>
-          <itemPath>../src/state/board/DIOConfig.h</itemPath>
-          <itemPath>../src/state/board/NQ1BoardConfig.h</itemPath>
-          <itemPath>../src/state/board/NQ2BoardConfig.h</itemPath>
-          <itemPath>../src/state/board/NQ3BoardConfig.h</itemPath>
-          <itemPath>../src/state/board/StreamingConfig.h</itemPath>
-        </logicalFolder>
         <logicalFolder name="data" displayName="data" projectFiles="true">
           <itemPath>../src/state/data/AInSample.h</itemPath>
           <itemPath>../src/state/data/BoardData.h</itemPath>
@@ -386,6 +381,7 @@
         <itemPath>../src/Util/StringFormatters.h</itemPath>
       </logicalFolder>
       <itemPath>../src/app_freertos.h</itemPath>
+      <itemPath>../src/encoder.h</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -642,6 +638,10 @@
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="services" displayName="services" projectFiles="true">
+        <logicalFolder name="DaqifiPB" displayName="DaqifiPB" projectFiles="true">
+          <itemPath>../src/services/DaqifiPB/DaqifiOutMessage.pb.c</itemPath>
+          <itemPath>../src/services/DaqifiPB/NanoPB_Encoder.c</itemPath>
+        </logicalFolder>
         <logicalFolder name="SCPI" displayName="SCPI" projectFiles="true">
           <itemPath>../src/services/SCPI/SCPIADC.c</itemPath>
           <itemPath>../src/services/SCPI/SCPIDIO.c</itemPath>
@@ -686,15 +686,11 @@
       <itemPath>../src/app_freertos.c</itemPath>
       <itemPath>../src/main.c</itemPath>
       <itemPath>C:/Users/asus3/.mcc/HarmonyContent/wireless_apps_winc1500/apps/wifi_socket_demos/firmware/src/app_wifi.c</itemPath>
+      <itemPath>../src/encoder.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <sourceRootList>
-    <Elem>../src/config/default/driver/sdspi/src</Elem>
-    <Elem>../src/services</Elem>
-    <Elem>../src/libraries</Elem>
-    <Elem>../src/state</Elem>
-    <Elem>../src/HAL</Elem>
-    <Elem>../src/Util</Elem>
+    <Elem>../src</Elem>
   </sourceRootList>
   <projectmakefile>Makefile</projectmakefile>
   <confs>
@@ -883,7 +879,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/NVM/DaqifiSettings.h" ex="true" overriding="false">
+      <item path="../src/HAL/NVM/DaqifiSettings.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1459,55 +1455,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/AInConfig.h" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <item path="../src/state/board/BoardConfig.c" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/state/board/BoardConfig.h" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/state/board/DIOConfig.h" ex="true" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1539,22 +1487,6 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ1BoardConfig.h" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <item path="../src/state/board/NQ2BoardConfig.c" ex="true" overriding="false">
         <C32>
         </C32>
@@ -1571,55 +1503,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ2BoardConfig.h" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <item path="../src/state/board/NQ3BoardConfig.c" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/state/board/NQ3BoardConfig.h" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/state/board/StreamingConfig.h" ex="true" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1667,7 +1551,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/data/BoardData.c" ex="true" overriding="false">
+      <item path="../src/state/data/BoardData.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1683,7 +1567,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/data/BoardData.h" ex="true" overriding="false">
+      <item path="../src/state/data/BoardData.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

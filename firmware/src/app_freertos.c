@@ -58,6 +58,8 @@
 #include "queue.h"
 #include <inttypes.h>
 #include <services/UsbCdc/UsbCdc.h>
+#include "services/DaqifiPB/DaqifiOutMessage.pb.h"
+#include "services/DaqifiPB/NanoPB_Encoder.h"
 // *****************************************************************************
 // *****************************************************************************
 // Section: Global Data Definitions
@@ -99,13 +101,11 @@ void USBDevice_Task(void* p_arg) {
     }
 }
 
-
-
 typedef enum {
     /* Application's state machine's initial state. */
     APP_WIFI_STATE_INIT = 0,
     APP_WIFI_STATE_INIT2,
-            
+
     APP_WIFI_STATE_SOCKET_LISTENING,
     APP_WIFI_STATE_AP_STARTED,
     APP_WIFI_STATE_ERROR,
@@ -126,13 +126,29 @@ static SOCKET serverSocket = -1;
 static uint8_t recvBuffer[UDP_BUFFER_SIZE];
 static uint8_t sendBuffer[UDP_BUFFER_SIZE];
 
+extern const NanopbFlagsArray fields_discovery;
+//extern size_t Nanopb_Encode(tBoardData* state, const NanopbFlagsArray* fields, uint8_t* buffer, size_t bufferLen);
+
+size_t DAQiFi_TCPIP_ANNOUNCE_Create(uint8_t *buffer, size_t bufferLen) {
+    tBoardData * pBoardData = (tBoardData *)BoardData_Get(                                \
+                            BOARDDATA_ALL_DATA,                             \
+                            0);
+    size_t count = Nanopb_Encode(                                           \
+                        pBoardData,                                         \
+                        &fields_discovery,                                  \
+                        buffer);
+    return (count);
+}
+
+
 static void APP_ExampleDHCPAddressEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
-    inet_ntop(AF_INET, &ipAddress, s, sizeof(s));
-    uint16_t len=sprintf(cdcWriteBuffer,"DHP Address : %s\r\n",s);
-    UsbCdc_WriteToBuffer(NULL,cdcWriteBuffer,len);
-    
+    inet_ntop(AF_INET, &ipAddress, s, sizeof (s));
+    uint16_t len = sprintf(cdcWriteBuffer, "DHP Address : %s\r\n", s);
+    UsbCdc_WriteToBuffer(NULL, cdcWriteBuffer, len);
+
 }
+
 static void APP_ExampleSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
     switch (messageType) {
         case SOCKET_MSG_BIND:
@@ -159,20 +175,34 @@ static void APP_ExampleSocketEventCallback(SOCKET socket, uint8_t messageType, v
             if (pstrRx->s16BufferSize > 0) {
                 //get the remote host address and port number
                 uint16_t u16port = pstrRx->strRemoteAddr.sin_port;
-                uint32_t strRemoteHostAddr = pstrRx->strRemoteAddr.sin_addr.s_addr;  
+                uint32_t strRemoteHostAddr = pstrRx->strRemoteAddr.sin_addr.s_addr;
                 char s[20];
-                inet_ntop(AF_INET, &strRemoteHostAddr, s, sizeof(s));
-                uint16_t len=sprintf(cdcWriteBuffer,"\r\nReceived frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n",pstrRx->s16BufferSize,s,u16port);
-                UsbCdc_WriteToBuffer(NULL,cdcWriteBuffer,len);
-                len=sprintf(cdcWriteBuffer,"Frame Data : %.*s\r\n",pstrRx->s16BufferSize,(char*)pstrRx->pu8Buffer);
-                UsbCdc_WriteToBuffer(NULL,cdcWriteBuffer,len);
+
+                inet_ntop(AF_INET, &strRemoteHostAddr, s, sizeof (s));
+                uint16_t len = sprintf(cdcWriteBuffer, "\r\nReceived frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
+                UsbCdc_WriteToBuffer(NULL, cdcWriteBuffer, len);
+                len = sprintf(cdcWriteBuffer, "Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
+                UsbCdc_WriteToBuffer(NULL, cdcWriteBuffer, len);
                 recvfrom(serverSocket, recvBuffer, UDP_BUFFER_SIZE, 0);
-                len=sprintf((char*)sendBuffer,"echo=>\"%.*s\"",pstrRx->s16BufferSize,(char*)pstrRx->pu8Buffer);
-                struct sockaddr_in addr; 
+                //len = sprintf((char*) sendBuffer, "echo=>\"%.*s\"", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
+                struct sockaddr_in addr;
                 addr.sin_family = AF_INET;
                 addr.sin_port = pstrRx->strRemoteAddr.sin_port;
                 addr.sin_addr.s_addr = pstrRx->strRemoteAddr.sin_addr.s_addr;
-                sendto(serverSocket,sendBuffer,len,0,(struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+
+                DaqifiSettings * pWifiSettings = (DaqifiSettings * )BoardData_Get(                         \
+                        BOARDDATA_WIFI_SETTINGS,                            \
+                        0);
+                // Store IPv4 Address
+                pWifiSettings->settings.wifi.ipAddr.Val=inet_addr(WLAN_DHCP_SRV_ADDR);
+                // Store subnet mask 
+                pWifiSettings->settings.wifi.ipMask.Val=inet_addr(WLAN_DHCP_SRV_NETMASK);
+                // Store default gateway        
+                pWifiSettings->settings.wifi.gateway.Val=inet_addr(WLAN_DHCP_SRV_ADDR);
+                
+                WDRV_WINC_EthernetAddressGet(wdrvHandle,pWifiSettings->settings.wifi.macAddr.addr);
+                len=DAQiFi_TCPIP_ANNOUNCE_Create(sendBuffer, sizeof(sendBuffer));
+                sendto(serverSocket, sendBuffer, len, 0, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
             } else {
                 //printf("Socket recv Error: %d\n",pstrRx->s16BufferSize);
                 shutdown(serverSocket);
@@ -182,8 +212,8 @@ static void APP_ExampleSocketEventCallback(SOCKET socket, uint8_t messageType, v
 
         case SOCKET_MSG_SENDTO:
         {
-            uint16_t len=sprintf(cdcWriteBuffer,"UDP Send Success\r\n");
-            UsbCdc_WriteToBuffer(NULL,cdcWriteBuffer,len);
+            uint16_t len = sprintf(cdcWriteBuffer, "UDP Send Success\r\n");
+            UsbCdc_WriteToBuffer(NULL, cdcWriteBuffer, len);
             break;
         }
 
@@ -227,13 +257,13 @@ void wifi_task(void* p_arg) {
 
     while (1) {
         switch (state) {
-            case APP_WIFI_STATE_INIT:{
-                if (SYS_STATUS_READY == WDRV_WINC_Status(sysObj.drvWifiWinc))
-                {
+            case APP_WIFI_STATE_INIT:
+            {
+                if (SYS_STATUS_READY == WDRV_WINC_Status(sysObj.drvWifiWinc)) {
                     wdrvHandle = WDRV_WINC_Open(0, 0);
                     state = APP_WIFI_STATE_INIT2;
                 }
-                break;                
+                break;
             }
             case APP_WIFI_STATE_INIT2:
             {
@@ -241,7 +271,7 @@ void wifi_task(void* p_arg) {
 
                 /* Create the BSS context using default values and then set SSID
                  and channel. */
-                
+
 
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&bssCtx)) {
                     break;
@@ -267,7 +297,7 @@ void wifi_task(void* p_arg) {
                 WDRV_WINC_SocketRegisterEventCallback(wdrvHandle, &APP_ExampleSocketEventCallback);
 
                 /* Create the AP using the BSS and authentication context. */
-                WDRV_WINC_AuthCtxSetWPA(&authCtx, (uint8_t*)WLAN_PSK , strlen(WLAN_PSK));
+                WDRV_WINC_AuthCtxSetWPA(&authCtx, (uint8_t*) WLAN_PSK, strlen(WLAN_PSK));
                 if (WDRV_WINC_STATUS_OK == WDRV_WINC_APStart(wdrvHandle, &bssCtx, &authCtx, NULL, &APP_ExampleAPConnectNotifyCallback)) {
                     //UsbCdc_WriteToBuffer(NULL,"",   
                     state = APP_WIFI_STATE_AP_STARTED;

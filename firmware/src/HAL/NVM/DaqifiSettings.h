@@ -12,13 +12,19 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include "system_config.h"
-#include "system_definitions.h"
-#include "crypto/crypto.h"
-#include "../../state/runtime/AInRuntimeConfig.h"
+#include "configuration.h"
+#include "definitions.h"
+#include "wdrv_winc_common.h"
+//#include "crypto/crypto.h"
+//#include "../../state/runtime/AInRuntimeConfig.h"
 
 #define MAX_AV_NETWORK_SSID 8
-
+typedef union
+{
+    uint32_t Val;
+    uint16_t w[2];
+    uint8_t  v[4];
+} IPV4_ADDR;
 #ifdef	__cplusplus
 extern "C" {
 #endif
@@ -84,7 +90,7 @@ extern "C" {
         /**
          * The network ssid
          */
-        char ssid[WDRV_MAX_SSID_LENGTH];
+        char ssid[WDRV_WINC_MAX_SSID_LEN];
         
         /**
          * The network ssid strength
@@ -94,7 +100,7 @@ extern "C" {
         /**
          * The available network SSIDs
          */
-        char av_ssid[MAX_AV_NETWORK_SSID][WDRV_MAX_SSID_LENGTH];   // This should match the definition in protobuf
+        char av_ssid[MAX_AV_NETWORK_SSID][WDRV_WINC_MAX_SSID_LEN];   // This should match the definition in protobuf
         
         /**
          * The available network ssid strengths
@@ -139,12 +145,12 @@ extern "C" {
         /**
          * The passkey for the given security type
          */
-        uint8_t passKey[WDRV_MAX_SECURITY_KEY_LENGTH];
+        uint8_t passKey[WDRV_WINC_PSK_LEN];
         
         /**
          * The MAX Address
          */
-        TCPIP_MAC_ADDR macAddr;
+        WDRV_WINC_MAC_ADDR macAddr;
         
         /**
          * IPV6 or IPV4
@@ -156,37 +162,37 @@ extern "C" {
          * TCPIP_NETWORK_CONFIG_DNS_SERVER_ON = 0x0010
          * TCPIP_NETWORK_CONFIG_IPV6_ADDRESS = 0x0100
          */
-        TCPIP_NETWORK_CONFIG_FLAGS configFlags;
+        //TCPIP_NETWORK_CONFIG_FLAGS configFlags;
         
         /**
          * The ip address
          */
-        IP_MULTI_ADDRESS ipAddr;
+        IPV4_ADDR ipAddr;
         
         /**
          * The ip mask
          */
-        IP_MULTI_ADDRESS ipMask;
+        IPV4_ADDR ipMask;
         
         /**
          * The ip gateway
          */
-        IP_MULTI_ADDRESS gateway;
+        IPV4_ADDR gateway;
         
         /**
          * The primary dns
          */
-        IP_MULTI_ADDRESS priDns;
+        IPV4_ADDR priDns;
         
         /**
          * The secondary dns
          */
-        IP_MULTI_ADDRESS secDns;
+        IPV4_ADDR secDns;
         
         /**
          * The board hostname
          */
-        char hostName[TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN];
+        //char hostName[TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN];
         
         /**
          * The port to open for incoming TCP connections
@@ -202,8 +208,8 @@ extern "C" {
     {
         TopLevelSettings topLevelSettings;
         WifiSettings wifi;
-        AInCalArray factAInCalParams;
-        AInCalArray userAInCalParams;
+        //AInCalArray factAInCalParams;
+        //AInCalArray userAInCalParams;
 
         // TODO: Other settings here
     } DaqifiSettingsImpl;
@@ -227,7 +233,7 @@ extern "C" {
         /**
          * The MD5 Checksum of this structure. This is how the system determines whether the values are valid.
          */
-        uint8_t md5Sum[CRYPT_MD5_DIGEST_SIZE];
+        //uint8_t md5Sum[CRYPT_MD5_DIGEST_SIZE];
         
         /**
          * The type of settings stored in this object
@@ -241,80 +247,80 @@ extern "C" {
 
     } DaqifiSettings;
     
-    /**
-     * Loads the specified NVM settings into the provided storage
-     * @param type The type of settings to load
-     * @param settings The location to store the settings
-     * @return True on success, false otheriwse
-     */
-    bool LoadNvmSettings(DaqifiSettingsType type, DaqifiSettings* settings);
-    
-    /**
-     * Loads the specified factory default settings into the provided storage
-     * @param type The type of settings to load
-     * @param settings The location to store the settings
-     * @return True on success, false otheriwse
-     */
-    bool LoadFactorySettings(DaqifiSettingsType type, DaqifiSettings* settings);
-    
-    /**
-     * Saves the provided NVM settins
-     * @param settings The settings to save
-     * @return True on success, false otherwise
-     */
-    bool SaveNvmSettings(DaqifiSettings* settings);
-    
-    /**
-     * Clears the provided settings type from NVM
-     * @param type The type of settings to clear
-     * @return True on success, false otherwise
-     */
-    bool ClearNvmSettings(DaqifiSettingsType type);
-
-    /**
-     * Loads the ADC calibration settings
-     * @param type The type of settings to load
-     * @param channelRuntimeConfig Channel config into which to load the saved settings
-     * @return True on success, false otherwise
-     */    
-    bool LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
-    
-    /**
-     * Saves the ADC calibration settings
-     * @param type The type of settings to save
-     * @param channelRuntimeConfig Channel config from which to save the settings
-     * @return True on success, false otherwise
-     */    
-    bool SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
-    
-    /**
-     * Saves data to address specified (test/diagnostic function)
-     * @param addr The address of flash to write to
-     * @param data Word of data to be written
-     * @return True on success, false otherwise
-     */       
-    bool WriteWordtoAddr(uint32_t addr, uint32_t data);
-  
-    /**
-     * Reads data from address specified (test/diagnostic function)
-     * @param addr The address of flash to read from
-     * @return Data word read from NVM.
-     */           
-    uint32_t ReadfromAddr(uint32_t addr);
-    
-    /**
-     * Erases a page of data from address specified (test/diagnostic function)
-     * @param addr The address of flash to begin the page erase
-     */  
-    bool ErasePage(uint32_t addr);
-    
-     /**
-     * Saves row of data to address specified
-     * @param addr The address of flash to write to
-     * @param rowdata[] Row of data to be written
-     * @return True on success, false otherwise
-     */  
-    bool WriteRowtoAddr(uint32_t addr, uint8_t rowdata[]);
+//    /**
+//     * Loads the specified NVM settings into the provided storage
+//     * @param type The type of settings to load
+//     * @param settings The location to store the settings
+//     * @return True on success, false otheriwse
+//     */
+//    bool LoadNvmSettings(DaqifiSettingsType type, DaqifiSettings* settings);
+//    
+//    /**
+//     * Loads the specified factory default settings into the provided storage
+//     * @param type The type of settings to load
+//     * @param settings The location to store the settings
+//     * @return True on success, false otheriwse
+//     */
+//    bool LoadFactorySettings(DaqifiSettingsType type, DaqifiSettings* settings);
+//    
+//    /**
+//     * Saves the provided NVM settins
+//     * @param settings The settings to save
+//     * @return True on success, false otherwise
+//     */
+//    bool SaveNvmSettings(DaqifiSettings* settings);
+//    
+//    /**
+//     * Clears the provided settings type from NVM
+//     * @param type The type of settings to clear
+//     * @return True on success, false otherwise
+//     */
+//    bool ClearNvmSettings(DaqifiSettingsType type);
+//
+//    /**
+//     * Loads the ADC calibration settings
+//     * @param type The type of settings to load
+//     * @param channelRuntimeConfig Channel config into which to load the saved settings
+//     * @return True on success, false otherwise
+//     */    
+//    bool LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
+//    
+//    /**
+//     * Saves the ADC calibration settings
+//     * @param type The type of settings to save
+//     * @param channelRuntimeConfig Channel config from which to save the settings
+//     * @return True on success, false otherwise
+//     */    
+//    bool SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
+//    
+//    /**
+//     * Saves data to address specified (test/diagnostic function)
+//     * @param addr The address of flash to write to
+//     * @param data Word of data to be written
+//     * @return True on success, false otherwise
+//     */       
+//    bool WriteWordtoAddr(uint32_t addr, uint32_t data);
+//  
+//    /**
+//     * Reads data from address specified (test/diagnostic function)
+//     * @param addr The address of flash to read from
+//     * @return Data word read from NVM.
+//     */           
+//    uint32_t ReadfromAddr(uint32_t addr);
+//    
+//    /**
+//     * Erases a page of data from address specified (test/diagnostic function)
+//     * @param addr The address of flash to begin the page erase
+//     */  
+//    bool ErasePage(uint32_t addr);
+//    
+//     /**
+//     * Saves row of data to address specified
+//     * @param addr The address of flash to write to
+//     * @param rowdata[] Row of data to be written
+//     * @return True on success, false otherwise
+//     */  
+//    bool WriteRowtoAddr(uint32_t addr, uint8_t rowdata[]);
 
 
 #ifdef	__cplusplus
