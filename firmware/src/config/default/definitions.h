@@ -48,6 +48,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "crypto/crypto.h"
 #include "driver/winc/include/wdrv_winc_api.h"
 #include "peripheral/spi/spi_master/plib_spi4_master.h"
 #include "peripheral/clk/plib_clk.h"
@@ -58,13 +59,14 @@
 #include "usb/usb_chapter_9.h"
 #include "usb/usb_device.h"
 #include "driver/sdspi/drv_sdspi.h"
-#include "driver/i2c/drv_i2c.h"
-#include "system/time/sys_time.h"
 #include "peripheral/nvm/plib_nvm.h"
-#include "driver/usb/usbhs/drv_usbhs.h"
-#include "peripheral/coretimer/plib_coretimer.h"
+#include "system/time/sys_time.h"
+#include "driver/i2c/drv_i2c.h"
 #include "usb/usb_device_cdc.h"
 #include "usb/usb_cdc.h"
+#include "peripheral/coretimer/plib_coretimer.h"
+#include "driver/usb/usbhs/drv_usbhs.h"
+#include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
 #include "system/fs/sys_fs.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs_fat_interface.h"

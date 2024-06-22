@@ -233,7 +233,7 @@ extern "C" {
         /**
          * The MD5 Checksum of this structure. This is how the system determines whether the values are valid.
          */
-        //uint8_t md5Sum[CRYPT_MD5_DIGEST_SIZE];
+        uint8_t md5Sum[CRYPT_MD5_DIGEST_SIZE];
         
         /**
          * The type of settings stored in this object

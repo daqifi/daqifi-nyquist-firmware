@@ -2,7 +2,7 @@
 
 manifest_file_version: 1.0.0
 project: daqifi
-creation_date: 2024-06-22T22:51:02.400+05:30[Asia/Calcutta]
+creation_date: 2024-06-23T00:16:31.076+05:30[Asia/Calcutta]
 operating_system: Windows 10
 mcc_mode: IDE
 mcc_mode_version: v6.20
@@ -21,5 +21,8 @@ modules:
 - {name: core, type: HARMONY, version: v3.13.4}
 - {name: wireless_wifi, type: HARMONY, version: v3.10.1}
 - {name: csp, type: HARMONY, version: v3.18.5}
+- {name: zlib, type: HARMONY, version: v1.3.1}
 - {name: usb, type: HARMONY, version: v3.12.0}
+- {name: wolfssl, type: HARMONY, version: v5.4.0}
+- {name: crypto, type: HARMONY, version: v3.8.1}
 - {name: CMSIS-FreeRTOS, type: HARMONY, version: v10.5.1}

@@ -506,9 +506,6 @@ void SYS_Initialize ( void* data )
     sysObj.drvSPI0 = DRV_SPI_Initialize(DRV_SPI_INDEX_0, (SYS_MODULE_INIT *)&drvSPI0InitData);
 
 
-  
-
-
     /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -  
     H3_MISRAC_2012_R_11_3_DR_1 & H3_MISRAC_2012_R_11_8_DR_1*/
         
@@ -524,6 +521,7 @@ void SYS_Initialize ( void* data )
     /* Initialize USB Driver */ 
     sysObj.drvUSBHSObject = DRV_USBHS_Initialize(DRV_USBHS_INDEX_0, (SYS_MODULE_INIT *) &drvUSBInit);    
 
+    CRYPT_WCCB_Initialize();
     /*** File System Service Initialization Code ***/
     (void) SYS_FS_Initialize( (const void *) sysFSInit );
 

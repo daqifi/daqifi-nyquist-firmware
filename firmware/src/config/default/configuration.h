@@ -208,6 +208,15 @@ extern "C" {
 #define USB_DEVICE_EP0_BUFFER_SIZE                          64U
 
 
+/* Maximum instances of CDC function driver */
+#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
+
+
+/* CDC Transfer Queue Size for both read and
+   write. Applicable to all instances of the
+   function driver */
+#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
+
 /*** USB Driver Configuration ***/
 
 /* Maximum USB driver instances */
@@ -231,14 +240,58 @@ extern "C" {
 #define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
 
 
-/* Maximum instances of CDC function driver */
-#define USB_DEVICE_CDC_INSTANCES_NUMBER                     1U
 
-
-/* CDC Transfer Queue Size for both read and
-   write. Applicable to all instances of the
-   function driver */
-#define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
+/*** wolfCrypt Library Configuration ***/
+#define MICROCHIP_PIC32
+#define MICROCHIP_MPLAB_HARMONY
+#define MICROCHIP_MPLAB_HARMONY_3
+#define HAVE_MCAPI
+#define SIZEOF_LONG_LONG 8
+#define WOLFSSL_USER_IO
+#define NO_WRITEV
+#define NO_FILESYSTEM
+#define USE_FAST_MATH
+#define NO_PWDBASED
+#define HAVE_MCAPI
+#define WOLF_CRYPTO_CB  // provide call-back support
+#define WOLFCRYPT_ONLY
+#if (__XC32_VERSION > 100000000)
+#define WOLFSSL_HAVE_MIN
+#define WOLFSSL_HAVE_MAX
+#endif
+#undef WOLFSSL_HAVE_MIN
+#undef WOLFSSL_HAVE_MAX
+// ---------- FUNCTIONAL CONFIGURATION START ----------
+#define WOLFSSL_AES_SMALL_TABLES
+#define NO_MD4
+#define WOLFSSL_SHA224
+#define WOLFSSL_AES_128
+#define WOLFSSL_AES_192
+#define WOLFSSL_AES_256
+#define WOLFSSL_AES_DIRECT
+#define HAVE_AES_DECRYPT
+#define HAVE_AES_ECB
+#define HAVE_AES_CBC
+#define WOLFSSL_AES_COUNTER
+#define WOLFSSL_AES_OFB
+#define HAVE_AESGCM
+#define HAVE_AESCCM
+#define NO_RC4
+#define NO_HC128
+#define NO_RABBIT
+#define HAVE_ECC
+#define NO_DH
+#define NO_DSA
+#define FP_MAX_BITS 4096
+#define USE_CERT_BUFFERS_2048
+#define NO_DEV_RANDOM
+#define HAVE_HASHDRBG
+#define WC_NO_HARDEN
+#define SINGLE_THREADED
+#define NO_SIG_WRAPPER
+#define NO_ERROR_STRINGS
+#define NO_WOLFSSL_MEMORY
+// ---------- FUNCTIONAL CONFIGURATION END ----------
 
 
 

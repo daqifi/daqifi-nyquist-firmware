@@ -12,16 +12,16 @@
 #define RESERVED_SETTINGS_ADDR KSEG0_PROGRAM_MEM_BASE_END - RESERVED_SETTINGS_SPACE // RESERVED_SETTINGS_SPACE from end of prog memory (0x9D1E0000))
 
 #define TOP_LEVEL_SETTINGS_ADDR RESERVED_SETTINGS_ADDR
-#define TOP_LEVEL_SETTINGS_SIZE DRV_FLASH_PAGE_SIZE  // 16KB allotment - uses ~512 bytes
+#define TOP_LEVEL_SETTINGS_SIZE NVM_FLASH_PAGESIZE  // 16KB allotment - uses ~512 bytes
 
 #define WIFI_SETTINGS_ADDR TOP_LEVEL_SETTINGS_ADDR + TOP_LEVEL_SETTINGS_SIZE
-#define WIFI_SETTINGS_SIZE DRV_FLASH_PAGE_SIZE  // 16KB allotment - uses ~512 bytes
+#define WIFI_SETTINGS_SIZE NVM_FLASH_PAGESIZE  // 16KB allotment - uses ~512 bytes
 
 #define FAINCAL_SETTINGS_ADDR WIFI_SETTINGS_ADDR + WIFI_SETTINGS_SIZE    
-#define FAINCAL_SETTINGS_SIZE DRV_FLASH_PAGE_SIZE // 16KB allotment - uses ~512 bytes
+#define FAINCAL_SETTINGS_SIZE NVM_FLASH_PAGESIZE // 16KB allotment - uses ~512 bytes
 
 #define UAINCAL_SETTINGS_ADDR FAINCAL_SETTINGS_ADDR + FAINCAL_SETTINGS_SIZE
-#define UAINCAL_SETTINGS_SIZE DRV_FLASH_PAGE_SIZE // 16KB allotment - uses ~512 bytes
+#define UAINCAL_SETTINGS_SIZE NVM_FLASH_PAGESIZE // 16KB allotment - uses ~512 bytes
 
 bool LoadNvmSettings(DaqifiSettingsType type, DaqifiSettings* settings)
 {
@@ -36,23 +36,22 @@ bool LoadNvmSettings(DaqifiSettingsType type, DaqifiSettings* settings)
     switch(type)
     {
     case DaqifiSettings_TopLevelSettings:
-        address = TOP_LEVEL_SETTINGS_ADDR;
-        memSize = TOP_LEVEL_SETTINGS_SIZE;
+        address = TOP_LEVEL_SETTINGS_ADDR;        
         dataSize = sizeof(TopLevelSettings);
         break;        
     case DaqifiSettings_FactAInCalParams:
-        address = FAINCAL_SETTINGS_ADDR;
-        memSize = FAINCAL_SETTINGS_SIZE;
+        address = FAINCAL_SETTINGS_ADDR;     
+        //TODO : Remove commented part
         //dataSize = sizeof(AInCalArray);
         break;
     case DaqifiSettings_UserAInCalParams:
-        address = UAINCAL_SETTINGS_ADDR;
-        memSize = UAINCAL_SETTINGS_SIZE;
+        address = UAINCAL_SETTINGS_ADDR;    
+        //TODO : Remove commented part
         //dataSize = sizeof(AInCalArray);
         break;
     case DaqifiSettings_Wifi:
         address = WIFI_SETTINGS_ADDR;
-        memSize = WIFI_SETTINGS_SIZE;
+      
         dataSize = sizeof(WifiSettings);
         break;
     default:
