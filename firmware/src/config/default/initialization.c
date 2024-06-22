@@ -481,6 +481,8 @@ void SYS_Initialize ( void* data )
 
     DMAC_Initialize();
 
+    NVM_Initialize();
+
     CORETIMER_Initialize();
     I2C5_Initialize();
 
@@ -502,6 +504,9 @@ void SYS_Initialize ( void* data )
 
     /* Initialize SPI0 Driver Instance */
     sysObj.drvSPI0 = DRV_SPI_Initialize(DRV_SPI_INDEX_0, (SYS_MODULE_INIT *)&drvSPI0InitData);
+
+
+  
 
 
     /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -  

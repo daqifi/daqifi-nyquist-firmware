@@ -214,6 +214,24 @@ IntVectorSPI4_TX_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorSPI4_TX_Handler
+    .extern  FLASH_CONTROL_Handler
+
+    .section   .vector_167,code, keep
+    .equ     __vector_dispatch_167, IntVectorFLASH_CONTROL_Handler
+    .global  __vector_dispatch_167
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorFLASH_CONTROL_Handler
+
+IntVectorFLASH_CONTROL_Handler:
+    portSAVE_CONTEXT
+    la    s6,  FLASH_CONTROL_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorFLASH_CONTROL_Handler
     .extern  I2C5_BUS_Handler
 
     .section   .vector_182,code, keep

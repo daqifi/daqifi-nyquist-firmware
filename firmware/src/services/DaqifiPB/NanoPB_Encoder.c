@@ -14,7 +14,7 @@
 //#include "state/board/BoardConfig.h"
 #include "encoder.h"
 #include "NanoPB_Encoder.h"
-#include "HAL/NVM/DaqifiSettings.h"
+#include "services/daqifi_nvm_settings.h"
 #ifndef min
     #define min(x,y) x <= y ? x : y
 #endif // min

@@ -5,8 +5,8 @@
  * Created on May 13, 2016, 12:09 PM
  */
 
-#ifndef DAQIFISETTINGS_H
-#define	DAQIFISETTINGS_H
+#ifndef _DAQIFI_NVM_SETTINGS_H
+#define	_DAQIFI_NVM_SETTINGS_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -247,13 +247,13 @@ extern "C" {
 
     } DaqifiSettings;
     
-//    /**
-//     * Loads the specified NVM settings into the provided storage
-//     * @param type The type of settings to load
-//     * @param settings The location to store the settings
-//     * @return True on success, false otheriwse
-//     */
-//    bool LoadNvmSettings(DaqifiSettingsType type, DaqifiSettings* settings);
+    /**
+     * Loads the specified NVM settings into the provided storage
+     * @param type The type of settings to load
+     * @param settings The location to store the settings
+     * @return True on success, false otheriwse
+     */
+    bool LoadNvmSettings(DaqifiSettingsType type, DaqifiSettings* settings);
 //    
 //    /**
 //     * Loads the specified factory default settings into the provided storage
@@ -293,34 +293,7 @@ extern "C" {
 //     */    
 //    bool SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 //    
-//    /**
-//     * Saves data to address specified (test/diagnostic function)
-//     * @param addr The address of flash to write to
-//     * @param data Word of data to be written
-//     * @return True on success, false otherwise
-//     */       
-//    bool WriteWordtoAddr(uint32_t addr, uint32_t data);
-//  
-//    /**
-//     * Reads data from address specified (test/diagnostic function)
-//     * @param addr The address of flash to read from
-//     * @return Data word read from NVM.
-//     */           
-//    uint32_t ReadfromAddr(uint32_t addr);
-//    
-//    /**
-//     * Erases a page of data from address specified (test/diagnostic function)
-//     * @param addr The address of flash to begin the page erase
-//     */  
-//    bool ErasePage(uint32_t addr);
-//    
-//     /**
-//     * Saves row of data to address specified
-//     * @param addr The address of flash to write to
-//     * @param rowdata[] Row of data to be written
-//     * @return True on success, false otherwise
-//     */  
-//    bool WriteRowtoAddr(uint32_t addr, uint8_t rowdata[]);
+ 
 
 
 #ifdef	__cplusplus

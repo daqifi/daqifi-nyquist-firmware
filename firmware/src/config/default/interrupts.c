@@ -76,6 +76,7 @@ void DMA0_Handler (void);
 void DMA1_Handler (void);
 void SPI4_RX_Handler (void);
 void SPI4_TX_Handler (void);
+void FLASH_CONTROL_Handler (void);
 void I2C5_BUS_Handler (void);
 void I2C5_MASTER_Handler (void);
 
@@ -130,6 +131,11 @@ void SPI4_RX_Handler (void)
 void SPI4_TX_Handler (void)
 {
     SPI4_TX_InterruptHandler();
+}
+
+void FLASH_CONTROL_Handler (void)
+{
+    NVM_InterruptHandler();
 }
 
 void I2C5_BUS_Handler (void)

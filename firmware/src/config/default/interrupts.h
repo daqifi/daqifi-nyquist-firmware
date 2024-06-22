@@ -66,6 +66,7 @@ void DMA0_InterruptHandler( void );
 void DMA1_InterruptHandler( void );
 void SPI4_RX_InterruptHandler( void );
 void SPI4_TX_InterruptHandler( void );
+void NVM_InterruptHandler( void );
 void I2C5_BUS_InterruptHandler( void );
 void I2C5_MASTER_InterruptHandler( void );
 

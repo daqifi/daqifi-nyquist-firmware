@@ -65,6 +65,7 @@ void EVIC_Initialize( void )
     IPC33SET = 0x8000000U | 0x0U;  /* DMA1:  Priority 2 / Subpriority 0 */
     IPC41SET = 0x8U | 0x0U;  /* SPI4_RX:  Priority 2 / Subpriority 0 */
     IPC41SET = 0x800U | 0x0U;  /* SPI4_TX:  Priority 2 / Subpriority 0 */
+    IPC41SET = 0x4000000U | 0x0U;  /* FLASH_CONTROL:  Priority 1 / Subpriority 0 */
     IPC45SET = 0x40000U | 0x0U;  /* I2C5_BUS:  Priority 1 / Subpriority 0 */
     IPC46SET = 0x4U | 0x0U;  /* I2C5_MASTER:  Priority 1 / Subpriority 0 */
 
