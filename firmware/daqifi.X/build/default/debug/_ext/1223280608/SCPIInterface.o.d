@@ -17,9 +17,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
  ../src/Util/ArrayWrapper.h ../src/state/data/BoardData.h \
  ../src/Util/HeapList.h ../src/Util/LockProvider.h \
- ../src/services/daqifi_nvm_settings.h \
- ../src/config/default/configuration.h ../src/config/default/user.h \
- ../src/config/default/device.h \
+ ../src/services/daqifi_settings.h ../src/config/default/configuration.h \
+ ../src/config/default/user.h ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/config/default/definitions.h \
  ../src/config/default/crypto/crypto.h \
@@ -139,6 +138,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/state/runtime/BoardRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h
@@ -183,7 +184,7 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 
 ../src/Util/LockProvider.h:
 
-../src/services/daqifi_nvm_settings.h:
+../src/services/daqifi_settings.h:
 
 ../src/config/default/configuration.h:
 
@@ -432,6 +433,10 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 ../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
 ../src/state/runtime/BoardRuntimeConfig.h:
 

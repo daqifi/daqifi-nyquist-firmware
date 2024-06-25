@@ -17,7 +17,7 @@
 #include "Util/HeapList.h"
 //#include "HAL/Power/PowerApi.h"
 //#include "HAL/UI/UI.h"
-#include "services/daqifi_nvm_settings.h"
+#include "services/daqifi_settings.h"
 
 
 #ifdef __cplusplus

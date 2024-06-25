@@ -14,7 +14,7 @@
 //#include "state/board/BoardConfig.h"
 #include "encoder.h"
 #include "NanoPB_Encoder.h"
-#include "services/daqifi_nvm_settings.h"
+#include "services/daqifi_settings.h"
 #ifndef min
     #define min(x,y) x <= y ? x : y
 #endif // min
@@ -654,9 +654,9 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             }
             case DaqifiOutMessage_wifi_inf_mode_tag:
             {            
-                message.has_wifi_inf_mode = true;
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                message.wifi_inf_mode = wifiSettings->networkType;
+                message.has_wifi_inf_mode = false;
+                //WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                //message.wifi_inf_mode = wifiSettings->networkType;
                 break;
             }      
             case DaqifiOutMessage_av_ssid_tag:

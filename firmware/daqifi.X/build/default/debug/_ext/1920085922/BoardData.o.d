@@ -1,9 +1,8 @@
 build/default/debug/_ext/1920085922/BoardData.o: \
  ../src/state/data/BoardData.c ../src/state/data/BoardData.h \
  ../src/Util/HeapList.h ../src/Util/LockProvider.h \
- ../src/services/daqifi_nvm_settings.h \
- ../src/config/default/configuration.h ../src/config/default/user.h \
- ../src/config/default/device.h \
+ ../src/services/daqifi_settings.h ../src/config/default/configuration.h \
+ ../src/config/default/user.h ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/config/default/definitions.h \
  ../src/config/default/crypto/crypto.h \
@@ -123,6 +122,8 @@ build/default/debug/_ext/1920085922/BoardData.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/Util/NullLockProvider.h
 
 ../src/state/data/BoardData.h:
@@ -131,7 +132,7 @@ build/default/debug/_ext/1920085922/BoardData.o: \
 
 ../src/Util/LockProvider.h:
 
-../src/services/daqifi_nvm_settings.h:
+../src/services/daqifi_settings.h:
 
 ../src/config/default/configuration.h:
 
@@ -380,5 +381,9 @@ build/default/debug/_ext/1920085922/BoardData.o: \
 ../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
 ../src/Util/NullLockProvider.h:

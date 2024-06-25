@@ -121,7 +121,32 @@ build/default/debug/_ext/1260820504/daqifi_nvm_settings.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
- ../src/config/default/driver/winc/include/drv/driver/m2m_types.h
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
+ ../src/config/default/driver/winc/include/wdrv_winc.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_bssctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_assoc.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_systime.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_softap.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_custie.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
+ ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/HAL/NVM/nvm.h
 
 ../src/services/daqifi_nvm_settings.h:
 
@@ -372,3 +397,53 @@ build/default/debug/_ext/1260820504/daqifi_nvm_settings.o: \
 ../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
+
+../src/config/default/driver/winc/include/wdrv_winc.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_bssfind.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_bssctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_assoc.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_systime.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_softap.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_custie.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_sta.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_wps.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h:
+
+../src/config/default/driver/winc/include/drv/driver/ecc_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_host_file.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_ota.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/HAL/NVM/nvm.h:

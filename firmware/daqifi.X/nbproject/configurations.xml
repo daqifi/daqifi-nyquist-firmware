@@ -357,7 +357,7 @@
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.h</itemPath>
         </logicalFolder>
-        <itemPath>../src/services/daqifi_nvm_settings.h</itemPath>
+        <itemPath>../src/services/daqifi_settings.h</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="data" displayName="data" projectFiles="true">
@@ -822,7 +822,7 @@
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.c</itemPath>
         </logicalFolder>
-        <itemPath>../src/services/daqifi_nvm_settings.c</itemPath>
+        <itemPath>../src/services/daqifi_settings.c</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
