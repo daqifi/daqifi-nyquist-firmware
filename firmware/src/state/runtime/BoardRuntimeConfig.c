@@ -63,7 +63,7 @@ const void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
         case BOARDRUNTIME_STREAMING_CONFIGURATION:
             //return &pBoardRuntimeConfig.StreamingConfig;
         case BOARDRUNTIME_WIFI_SETTINGS:
-            //return &pBoardRuntimeConfig.wifiSettings;
+             return &pBoardRuntimeConfig.wifiSettings;
         case BOARDRUNTIME_USB_SETTINGS:
             return &pBoardRuntimeConfig.usbSettings; 
         case BOARDRUNTIME_SERVER_DATA:

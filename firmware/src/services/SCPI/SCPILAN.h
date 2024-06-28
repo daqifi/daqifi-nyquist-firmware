@@ -1,10 +1,11 @@
 #pragma once
 
-#include "scpi/scpi.h"
+#include "libraries/scpi/libscpi/inc/scpi/scpi.h"
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
+//TODO(Daqifi): Relocate for proper place
 
 /**
  * SCPI Callback: Get the Enabled/Disabled status of LAN
@@ -22,35 +23,35 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context);
  * SCPI Callback: Get the type of LAN network
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-scpi_result_t SCPI_LANNetTypeGet(scpi_t * context);
+//scpi_result_t SCPI_LANNetTypeGet(scpi_t * context);
 
 /**
  * SCPI Callback: Get the type of available LAN networks
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context);
-
-/**
- * SCPI Callback: Set the type of LAN network
- *   Infrastructure: 1
- *   AD-Hoc: 2 (Invalid for now. Validation is TBD.)
- *   P2P: 3 (Invalid for now. Validation is TBD.)
- *   Soft AP: 4 (default)
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANNetTypeSet(scpi_t * context);
-
-/**
- * SCPI Callback: Get the Ip address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANIpv6Get(scpi_t * context);
-
-/**
- * SCPI Callback: Set the IP address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANIpv6Set(scpi_t * context);
+//
+///**
+// * SCPI Callback: Set the type of LAN network
+// *   Infrastructure: 1
+// *   AD-Hoc: 2 (Invalid for now. Validation is TBD.)
+// *   P2P: 3 (Invalid for now. Validation is TBD.)
+// *   Soft AP: 4 (default)
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANNetTypeSet(scpi_t * context);
+//
+///**
+// * SCPI Callback: Get the Ip address of the device
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANIpv6Get(scpi_t * context);
+//
+///**
+// * SCPI Callback: Set the IP address of the device
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANIpv6Set(scpi_t * context);
 
 /**
  * SCPI Callback: Get the Ip address of the device
@@ -181,47 +182,47 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context);
  */
 scpi_result_t SCPI_LANPasskeyCheck(scpi_t * context);
 
-/**
- * SCPI Callback: Applies wifi settings of the device (optionally saving them)
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
-
-/**
- * SCPI Callback: Saves the wifi settings of the device (but does not apply them)
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANSettingsSave(scpi_t * context);
-
-/**
- * SCPI Callback: Loads the wifi settings of the device (but does not apply them)
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANSettingsLoad(scpi_t * context);
-
-/**
- * SCPI Callback: Restores the wifi settings to the factory defaults (but does not apply them)
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context);
-
-/**
- * SCPI Callback: Clears the settings saved in memory, but does not overwrite the current in-memory values
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANSettingsClear(scpi_t * context);
-
-/**
- * SCPI Callback: Returns SSIDs which were previously scanned with SCPI_LANAVSsidScan
- * @return 
- */
-scpi_result_t SCPI_LANAVSsidGet(scpi_t * context);
-
-/**
- * SCPI Callback: Scans for SSIDs
- * @return 
- */
-scpi_result_t SCPI_LANAVSsidScan(scpi_t * context);
+///**
+// * SCPI Callback: Applies wifi settings of the device (optionally saving them)
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
+//
+///**
+// * SCPI Callback: Saves the wifi settings of the device (but does not apply them)
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANSettingsSave(scpi_t * context);
+//
+///**
+// * SCPI Callback: Loads the wifi settings of the device (but does not apply them)
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANSettingsLoad(scpi_t * context);
+//
+///**
+// * SCPI Callback: Restores the wifi settings to the factory defaults (but does not apply them)
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context);
+//
+///**
+// * SCPI Callback: Clears the settings saved in memory, but does not overwrite the current in-memory values
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANSettingsClear(scpi_t * context);
+//
+///**
+// * SCPI Callback: Returns SSIDs which were previously scanned with SCPI_LANAVSsidScan
+// * @return 
+// */
+//scpi_result_t SCPI_LANAVSsidGet(scpi_t * context);
+//
+///**
+// * SCPI Callback: Scans for SSIDs
+// * @return 
+// */
+//scpi_result_t SCPI_LANAVSsidScan(scpi_t * context);
 
 #ifdef	__cplusplus
 }

@@ -142,7 +142,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/state/runtime/BoardRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h
+ ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h \
+ ../src/services/SCPI/SCPILAN.h
 
 ../src/services/SCPI/SCPIInterface.h:
 
@@ -447,3 +448,5 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 ../src/libraries/microrl/src/config.h:
 
 ../src/Util/CircularBuffer.h:
+
+../src/services/SCPI/SCPILAN.h:

@@ -11,7 +11,7 @@
 #include "Util/ArrayWrapper.h"
 //#include "HAL/Power/PowerApi.h"
 //#include "HAL/UI/UI.h"
-//#include "HAL/NVM/DaqifiSettings.h"
+#include "services/daqifi_settings.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -74,7 +74,7 @@ typedef struct sBoardRuntimeConfig
     //! Streaming configuration parameters
     //StreamingRuntimeConfig StreamingConfig;
     //! The desired wifi settings
-    //DaqifiSettings wifiSettings;
+    DaqifiSettings wifiSettings;
     //!The desired USB settings
     UsbCdcData_t usbSettings;
     //!The TCP server state

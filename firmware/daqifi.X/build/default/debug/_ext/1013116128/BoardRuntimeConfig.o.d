@@ -126,7 +126,20 @@ build/default/debug/_ext/1013116128/BoardRuntimeConfig.o: \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h ../src/Util/ArrayWrapper.h
+ ../src/Util/CircularBuffer.h ../src/Util/ArrayWrapper.h \
+ ../src/services/daqifi_settings.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_common.h \
+ ../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_debug.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h
 
 ../src/state/runtime/BoardRuntimeConfig.h:
 
@@ -391,3 +404,29 @@ build/default/debug/_ext/1013116128/BoardRuntimeConfig.o: \
 ../src/Util/CircularBuffer.h:
 
 ../src/Util/ArrayWrapper.h:
+
+../src/services/daqifi_settings.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_common.h:
+
+../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_debug.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:

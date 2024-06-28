@@ -1548,7 +1548,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/StringFormatters.c" ex="true" overriding="false">
+      <item path="../src/Util/StringFormatters.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1660,7 +1660,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/services/SCPI/SCPILAN.c" ex="true" overriding="false">
+      <item path="../src/services/SCPI/SCPILAN.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1676,7 +1676,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/services/SCPI/SCPILAN.h" ex="true" overriding="false">
+      <item path="../src/services/SCPI/SCPILAN.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

@@ -1,6 +1,6 @@
-build/default/debug/_ext/1013116128/NQ1RuntimeDefaults.o: \
- ../src/state/runtime/NQ1RuntimeDefaults.c \
- ../src/state/runtime/BoardRuntimeConfig.h \
+build/default/debug/_ext/1019815716/StringFormatters.o: \
+ ../src/Util/StringFormatters.c ../src/Util/StringFormatters.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -112,23 +112,6 @@ build/default/debug/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/osal/osal.h \
  ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h \
- ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
- ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
- ../src/libraries/scpi/libscpi/inc/scpi/types.h \
- ../src/libraries/scpi/libscpi/inc/scpi/config.h \
- ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
- ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
- ../src/libraries/scpi/libscpi/inc/scpi/error.h \
- ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
- ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
- ../src/libraries/scpi/libscpi/inc/scpi/units.h \
- ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
- ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h ../src/Util/ArrayWrapper.h \
- ../src/services/daqifi_settings.h \
- ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
  ../src/config/default/driver/winc/include/drv/common/nm_common.h \
@@ -137,12 +120,11 @@ build/default/debug/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
- ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
- ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
- ../src/config/default/driver/winc/include/wdrv_winc_common.h \
- ../src/HAL/BQ24297/BQ24297.h
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h
 
-../src/state/runtime/BoardRuntimeConfig.h:
+../src/Util/StringFormatters.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
 ../src/config/default/configuration.h:
 
@@ -372,44 +354,6 @@ build/default/debug/_ext/1013116128/NQ1RuntimeDefaults.o: \
 
 ../src/app_freertos.h:
 
-../src/services/UsbCdc/UsbCdc.h:
-
-../src/libraries/microrl/src/microrl.h:
-
-../src/libraries/microrl/src/config.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/parser.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/types.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/config.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/cc.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/error.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/constants.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/units.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/utils.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/expression.h:
-
-../src/Util/CircularBuffer.h:
-
-../src/Util/ArrayWrapper.h:
-
-../src/services/daqifi_settings.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_common.h:
-
 ../src/config/default/driver/winc/include/wdrv_winc_debug.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h:
@@ -427,9 +371,3 @@ build/default/debug/_ext/1013116128/NQ1RuntimeDefaults.o: \
 ../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_common.h:
-
-../src/HAL/BQ24297/BQ24297.h:
