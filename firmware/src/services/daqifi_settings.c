@@ -124,15 +124,13 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
         
         
         //mac address will be populated after reading from ATWINC
+        wifi->networkMode = DEFAULT_WIFI_NETWORK_MODE;
+        
         memset(&wifi->macAddr, 0, sizeof(WDRV_WINC_MAC_ADDR));
        
         wifi->ipAddr.Val=inet_addr(DEFAULT_NETWORK_IP_ADDRESS);
         wifi->ipMask.Val=inet_addr(DEFAULT_NETWORK_IP_MASK);
         wifi->gateway.Val=inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
-        wifi->priDns.Val=inet_addr(DEFAULT_NETWORK_DEFAULT_DNS);
-        wifi->secDns.Val=inet_addr(DEFAULT_NETWORK_DEFAULT_SECOND_DNS);
-        
-        strncpy(wifi->hostName, DEFAULT_NETWORK_HOST_NAME, strlen(DEFAULT_NETWORK_HOST_NAME)+1);
         wifi->ssid[DNS_CLIENT_MAX_HOSTNAME_LEN]='\0';
         
         wifi->tcpPort = 9760;

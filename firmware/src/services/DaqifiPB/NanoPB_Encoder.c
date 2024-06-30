@@ -561,11 +561,8 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             }
             case DaqifiOutMessage_secondary_dns_tag:
             {
-                message.has_secondary_dns = true;
+                message.has_secondary_dns = false;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.secondary_dns.bytes, wifiSettings->secDns.v, 4);
-                message.secondary_dns.size = 4;
 				break;
             }
              case DaqifiOutMessage_mac_addr_tag:
@@ -699,14 +696,8 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             }         
             case DaqifiOutMessage_av_wifi_inf_mode_tag:
             {
-                uint8_t index;
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
                 message.av_wifi_inf_mode_count = 0;
-                for(index=0;index<wifiSettings->av_num;index++)
-                {
-                    message.av_wifi_inf_mode[index] = wifiSettings->av_networkType[index];
-                    message.av_wifi_inf_mode_count++;
-                }
+                
                 break;
             }                 
             case DaqifiOutMessage_device_pn_tag:

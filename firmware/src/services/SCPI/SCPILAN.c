@@ -14,9 +14,9 @@
 #include "state/data/BoardData.h"
 //#include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
-//#include "HAL/Wifi/WifiApi.h"
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
+#include "HAL/Wifi/WifiApi.h"
 
 
 /**
@@ -188,24 +188,61 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context)
     pRunTimeWifiSettings->settings.wifi.isEnabled = (bool)param1;
     return SCPI_RES_OK;
 }
-
-scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context)
+scpi_result_t SCPI_LANNetModeGet(scpi_t * context)
 {
-    uint8_t index = 0;
     DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
                         BOARDDATA_WIFI_SETTINGS,                            
                         0); 
-    uint8_t numberOfResults = pWifiSettings->settings.wifi.av_num;
-
-    for(index = 0;index<numberOfResults;index++)
-    {
-        SCPI_ResultInt32(                                                   
-                context,                                                    
-                (int)pWifiSettings->settings.wifi.av_networkType[index]);
-    }
+    uint8_t type = pWifiSettings->settings.wifi.networkMode;
+    SCPI_ResultInt32(context, (int)type);
     
     return SCPI_RES_OK;
 }
+/**
+ * SCPI Callback: Set the type of LAN network
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANNetModeSet(scpi_t * context)
+{
+    int param1;
+    
+    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    switch (param1)
+    {
+    case WIFI_API_NETWORK_MODE_AP:
+    case WIFI_API_NETWORK_MODE_STA:
+        break;
+    default:
+        return SCPI_RES_ERR;
+    }
+    
+    pRunTimeWifiSettings->settings.wifi.networkMode = (uint8_t)param1;
+    return SCPI_RES_OK;
+}
+//scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context)
+//{
+//    uint8_t index = 0;
+//    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
+//                        BOARDDATA_WIFI_SETTINGS,                            
+//                        0); 
+//    uint8_t numberOfResults = pWifiSettings->settings.wifi.av_num;
+//
+//    for(index = 0;index<numberOfResults;index++)
+//    {
+//        SCPI_ResultInt32(                                                   
+//                context,                                                    
+//                (int)pWifiSettings->settings.wifi.av_networkType[index]);
+//    }
+//    
+//    return SCPI_RES_OK;
+//}
 
 
 /**
@@ -325,28 +362,28 @@ scpi_result_t SCPI_LANDns1Set(scpi_t * context)
  * SCPI Callback: Get the Ip address of the device
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-scpi_result_t SCPI_LANDns2Get(scpi_t * context)
-{
-    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
-                        BOARDDATA_WIFI_SETTINGS,                            
-                        0); 
-    return SCPI_LANAddrGetImpl(                                             
-                        context,                          
-                        &pWifiSettings->settings.wifi.secDns);
-}
+//scpi_result_t SCPI_LANDns2Get(scpi_t * context)
+//{
+//    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
+//                        BOARDDATA_WIFI_SETTINGS,                            
+//                        0); 
+//    return SCPI_LANAddrGetImpl(                                             
+//                        context,                          
+//                        &pWifiSettings->settings.wifi.secDns);
+//}
 
 /**
  * SCPI Callback: Set the IP address of the device
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-scpi_result_t SCPI_LANDns2Set(scpi_t * context)
-{
-    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
-                        BOARDRUNTIME_WIFI_SETTINGS);
-    return SCPI_LANAddrGetImpl(                                             
-                        context,                                            
-                        &pRunTimeWifiSettings->settings.wifi.secDns);
-}
+//scpi_result_t SCPI_LANDns2Set(scpi_t * context)
+//{
+//    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
+//                        BOARDRUNTIME_WIFI_SETTINGS);
+//    return SCPI_LANAddrGetImpl(                                             
+//                        context,                                            
+//                        &pRunTimeWifiSettings->settings.wifi.secDns);
+//}
 
 /**
  * SCPI Callback: Get the mac address of the device
@@ -399,24 +436,24 @@ scpi_result_t SCPI_LANMacSet(scpi_t * context)
 }
 
 
-scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
-{
-    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
-                        BOARDDATA_WIFI_SETTINGS,                            
-                        0); 
-    return SCPI_LANStringGetImpl(context, pWifiSettings->settings.wifi.hostName);
-}
-
-scpi_result_t SCPI_LANHostnameSet(scpi_t * context)
-{
-    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
-                        BOARDRUNTIME_WIFI_SETTINGS);
-    
-    return SCPI_LANStringSetImpl(                                           
-                        context,                                            
-                        pRunTimeWifiSettings->settings.wifi.hostName,       
-                        DNS_CLIENT_MAX_HOSTNAME_LEN);
-}
+//scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
+//{
+//    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
+//                        BOARDDATA_WIFI_SETTINGS,                            
+//                        0); 
+//    return SCPI_LANStringGetImpl(context, pWifiSettings->settings.wifi.hostName);
+//}
+//
+//scpi_result_t SCPI_LANHostnameSet(scpi_t * context)
+//{
+//    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
+//                        BOARDRUNTIME_WIFI_SETTINGS);
+//    
+//    return SCPI_LANStringSetImpl(                                           
+//                        context,                                            
+//                        pRunTimeWifiSettings->settings.wifi.hostName,       
+//                        DNS_CLIENT_MAX_HOSTNAME_LEN);
+//}
 
 scpi_result_t SCPI_LANSsidGet(scpi_t * context)
 {
@@ -511,8 +548,8 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context)
         break;
     case WDRV_WINC_AUTH_TYPE_WPA_PSK:   // 2
         break;
-    case WDRV_WINC_AUTH_TYPE_802_1X:   // 4 - keep for backwards compatibility with MRF series modules
-        break;
+//    case WDRV_WINC_AUTH_TYPE_802_1X:   // 4 - keep for backwards compatibility with MRF series modules
+//        break;
     default:
         return SCPI_RES_ERR;
     }
@@ -540,7 +577,7 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context)
     switch (pRunTimeWifiSettings->settings.wifi.securityMode)
     {
     case WDRV_WINC_AUTH_TYPE_WPA_PSK:
-    case WDRV_WINC_AUTH_TYPE_802_1X:
+//    case WDRV_WINC_AUTH_TYPE_802_1X:
         break;
     case WDRV_WINC_AUTH_TYPE_OPEN: // No Key
     default:
@@ -585,32 +622,32 @@ scpi_result_t SCPI_LANPasskeyCheck(scpi_t * context)
     return SCPI_RES_OK;
 }
 
-//scpi_result_t SCPI_LANSettingsApply(scpi_t * context)
-//{
-//    bool saveSettings = false;
-//    int param1;
-//    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(         
-//                        BOARDRUNTIME_WIFI_SETTINGS);
-//    if (SCPI_ParamInt32(context, &param1, FALSE))
-//    {
-//        saveSettings = (bool)param1;
-//    }
-//    
-//    if (saveSettings)
-//    {
-//        if (!daqifi_settings_SaveToNvm(pRunTimeWifiSettings))
-//        {
-//            return SCPI_RES_ERR;
-//        }
-//    }
-//    
-//    if (!WifiApplyNetworkSettings(&pRunTimeWifiSettings->settings.wifi))
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    BoardData_Set(                                                          
-//                            BOARDDATA_WIFI_SETTINGS,                        
-//                            0,                                              
-//                            pRunTimeWifiSettings);
-//    return SCPI_RES_OK;
-//}
+scpi_result_t SCPI_LANSettingsApply(scpi_t * context)
+{
+    bool saveSettings = false;
+    int param1;
+    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
+                        BOARDRUNTIME_WIFI_SETTINGS);
+    if (SCPI_ParamInt32(context, &param1, FALSE))
+    {
+        saveSettings = (bool)param1;
+    }
+    
+    if (saveSettings)
+    {
+        if (!daqifi_settings_SaveToNvm(pRunTimeWifiSettings))
+        {
+            return SCPI_RES_ERR;
+        }
+    }
+    
+    if (!WifiApi_UpdateNetworkSettings(&pRunTimeWifiSettings->settings.wifi))
+    {
+        return SCPI_RES_ERR;
+    }
+    BoardData_Set(                                                          
+                            BOARDDATA_WIFI_SETTINGS,                        
+                            0,                                              
+                            pRunTimeWifiSettings);
+    return SCPI_RES_OK;
+}

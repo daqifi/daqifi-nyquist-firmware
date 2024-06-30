@@ -23,23 +23,23 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context);
  * SCPI Callback: Get the type of LAN network
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-//scpi_result_t SCPI_LANNetTypeGet(scpi_t * context);
+scpi_result_t SCPI_LANNetModeGet(scpi_t * context);
 
-/**
- * SCPI Callback: Get the type of available LAN networks
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context);
-//
 ///**
-// * SCPI Callback: Set the type of LAN network
-// *   Infrastructure: 1
-// *   AD-Hoc: 2 (Invalid for now. Validation is TBD.)
-// *   P2P: 3 (Invalid for now. Validation is TBD.)
-// *   Soft AP: 4 (default)
+// * SCPI Callback: Get the type of available LAN networks
 // * @return SCPI_RES_OK on success SCPI_RES_ERR on error
 // */
-//scpi_result_t SCPI_LANNetTypeSet(scpi_t * context);
+//scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context);
+
+/**
+ * SCPI Callback: Set the type of LAN network
+ *   Infrastructure: 1
+ *   AD-Hoc: 2 (Invalid for now. Validation is TBD.)
+ *   P2P: 3 (Invalid for now. Validation is TBD.)
+ *   Soft AP: 4 (default)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANNetModeSet(scpi_t * context);
 //
 ///**
 // * SCPI Callback: Get the Ip address of the device
@@ -101,17 +101,6 @@ scpi_result_t SCPI_LANDns1Get(scpi_t * context);
  */
 scpi_result_t SCPI_LANDns1Set(scpi_t * context);
 
-/**
- * SCPI Callback: Get the Ip address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANDns2Get(scpi_t * context);
-
-/**
- * SCPI Callback: Set the IP address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANDns2Set(scpi_t * context);
 
 /**
  * SCPI Callback: Get the mac address of the device
@@ -124,18 +113,6 @@ scpi_result_t SCPI_LANMacGet(scpi_t * context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMacSet(scpi_t * context);
-
-/**
- * SCPI Callback: Set the hostname address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANHostnameGet(scpi_t * context);
-
-/**
- * SCPI Callback: Set the hostname address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANHostnameSet(scpi_t * context);
 
 /**
  * SCPI Callback: Set the ssid address of the device
@@ -182,11 +159,11 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context);
  */
 scpi_result_t SCPI_LANPasskeyCheck(scpi_t * context);
 
-///**
-// * SCPI Callback: Applies wifi settings of the device (optionally saving them)
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
+/**
+ * SCPI Callback: Applies wifi settings of the device (optionally saving them)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
 //
 ///**
 // * SCPI Callback: Saves the wifi settings of the device (but does not apply them)

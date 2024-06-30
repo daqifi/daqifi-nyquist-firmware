@@ -16,16 +16,24 @@
 #include "definitions.h"
 #include "wdrv_winc_common.h"
 #include "wdrv_winc_authctx.h"
+
+typedef enum {
+    WIFI_API_NETWORK_MODE_AP = 0,
+    WIFI_API_NETWORK_MODE_STA = 1
+
+} WifiApi_networkMode_t;
+
 //TODO(Daqifi): Add this back
 //#include "../../state/runtime/AInRuntimeConfig.h"
+#define DEFAULT_WIFI_NETWORK_MODE WIFI_API_NETWORK_MODE_AP
 #define DEFAULT_WIFI_AP_SSID "DAQiFi" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_WIFI_AP_SECURITY_MODE WDRV_WINC_AUTH_TYPE_OPEN //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_WIFI_WPA_PSK_PASSKEY "12345678" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_IP_ADDRESS		"0.0.0.0" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_IP_MASK	"255.255.255.0" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_GATEWAY_IP_ADDRESS	"192.168.1.1" //TODO(Daqifi): Relocate in proper place
-#define DEFAULT_NETWORK_DEFAULT_DNS		"192.168.1.1" //TODO(Daqifi): Relocate in proper place
-#define DEFAULT_NETWORK_DEFAULT_SECOND_DNS	"0.0.0.0"  //TODO(Daqifi): Relocate in proper place
+//#define DEFAULT_NETWORK_DEFAULT_DNS		"192.168.1.1" //TODO(Daqifi): Relocate in proper place
+//#define DEFAULT_NETWORK_DEFAULT_SECOND_DNS	"0.0.0.0"  //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_HOST_NAME	    "NYQUIST"  //TODO(Daqifi): Relocate in proper place
 #define DNS_CLIENT_MAX_HOSTNAME_LEN			32
 
@@ -36,6 +44,8 @@ typedef union {
     uint16_t w[2];
     uint8_t v[4];
 } IPV4_ADDR;
+
+
 #ifdef	__cplusplus
 extern "C" {
 #endif
@@ -75,22 +85,27 @@ extern "C" {
          */
         bool isEnabled;
 
-
+        /**
+         * One of:
+         * WIFI_API_NETWORK_MODE_AP = 0,
+         * WIFI_API_NETWORK_MODE_STA=1
+         */
+        uint8_t networkMode;
 
         /**
          * The number of available networks after scan
          */
         uint8_t av_num;
 
-        /**
-         * The available network types
-         */
-        uint8_t av_networkType[MAX_AV_NETWORK_SSID];
+        //        /**
+        //         * The available network types
+        //         */
+        //        uint8_t av_networkType[MAX_AV_NETWORK_SSID];
 
         /**
          * The network ssid
          */
-        char ssid[WDRV_WINC_MAX_SSID_LEN+1];
+        char ssid[WDRV_WINC_MAX_SSID_LEN + 1];
 
         /**
          * The network ssid strength
@@ -100,7 +115,7 @@ extern "C" {
         /**
          * The available network SSIDs
          */
-        char av_ssid[MAX_AV_NETWORK_SSID][WDRV_WINC_MAX_SSID_LEN+1]; // This should match the definition in protobuf
+        char av_ssid[MAX_AV_NETWORK_SSID][WDRV_WINC_MAX_SSID_LEN + 1]; // This should match the definition in protobuf
 
         /**
          * The available network ssid strengths
@@ -122,19 +137,6 @@ extern "C" {
         uint8_t av_securityMode[MAX_AV_NETWORK_SSID];
 
         /**
-         * One of:
-         * 
-         * WDRV_SECURITY_WEP_OPENKEY
-         * WDRV_WINC_AUTH_TYPE_WPA_PSK
-         */
-        uint8_t wepKeyType;
-
-        /**
-         * The index of the wep key
-         */
-        uint8_t wepKeyIndex;
-
-        /**
          * The length of the passkey
          */
         uint8_t passKeyLength;
@@ -142,24 +144,12 @@ extern "C" {
         /**
          * The passkey for the given security type
          */
-        uint8_t passKey[WDRV_WINC_PSK_LEN+1];
+        uint8_t passKey[WDRV_WINC_PSK_LEN + 1];
 
         /**
          * The MAX Address
          */
         WDRV_WINC_MAC_ADDR macAddr;
-
-        /**
-         * IPV6 or IPV4
-         * TCPIP_NETWORK_CONFIG_IP_STATIC = 0x0000
-         * TCPIP_NETWORK_CONFIG_DHCP_CLIENT_ON = 0x0001
-         * TCPIP_NETWORK_CONFIG_ZCLL_ON      = 0x0002
-         * TCPIP_NETWORK_CONFIG_DHCP_SERVER_ON = 0x0004                                              
-         * TCPIP_NETWORK_CONFIG_DNS_CLIENT_ON = 0x0008
-         * TCPIP_NETWORK_CONFIG_DNS_SERVER_ON = 0x0010
-         * TCPIP_NETWORK_CONFIG_IPV6_ADDRESS = 0x0100
-         */
-        //TCPIP_NETWORK_CONFIG_FLAGS configFlags;
 
         /**
          * The ip address
@@ -181,15 +171,6 @@ extern "C" {
          */
         IPV4_ADDR priDns;
 
-        /**
-         * The secondary dns
-         */
-        IPV4_ADDR secDns;
-
-        /**
-         * The board hostname
-         */
-        char hostName[DNS_CLIENT_MAX_HOSTNAME_LEN+1];
 
         /**
          * The port to open for incoming TCP connections
