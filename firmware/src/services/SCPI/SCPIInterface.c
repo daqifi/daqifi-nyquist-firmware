@@ -797,7 +797,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:PASs", .callback = SCPI_LANPasskeySet, }, // No get for security reasons use PASSCHECK instead
     {.pattern = "SYSTem:COMMunicate:LAN:PASSCHECK", .callback = SCPI_LANPasskeyCheck, },
     {.pattern = "SYSTem:COMMunicate:LAN:DISPlay", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_NotImplemented, },
+    {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_LANSettingsApply, },
 //    {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad, },
 //    {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave, },
 //    {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad, },

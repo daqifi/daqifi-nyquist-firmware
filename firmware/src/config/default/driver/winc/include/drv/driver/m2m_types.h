@@ -547,7 +547,7 @@ typedef enum {
 
 */
 typedef enum {
-     M2M_ERR_SCAN_FAIL = ((uint8_t)1),
+    M2M_ERR_SCAN_FAIL = ((uint8_t)1),
     /*!< Indicate that the WINC board has failed to perform the scan operation.
     */
     M2M_ERR_JOIN_FAIL,

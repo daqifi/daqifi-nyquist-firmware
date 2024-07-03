@@ -7,6 +7,7 @@
 //static WifiApi_dhcpServerConfig_t gDhcpServerConfig;
 //static WifiApi_networkMode_t gNetworkMode;
 #define UNUSED(x) (void)(x)
+
 typedef enum {
     WIFIAPI_STATE_IDLE,
     WIFIAPI_STATE_INIT,
@@ -57,11 +58,12 @@ static void ResetAllEventFlags(wifiApi_eventFlagState_t *pEventFlagState) {
 static bool wifiDeinit() {
     if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
         WDRV_WINC_Close(gWdrvHandle);
-        WDRV_WINC_Deinitialize(0);
+        WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
         SYS_CONSOLE_MESSAGE("WiFi going down.\r\n");
     }
     return true;
 }
+
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
     UNUSED(s);
@@ -85,18 +87,12 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
         SYS_CONSOLE_PRINT("STA mode: Station connected\r\n");
         SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
         ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
-    } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState) {
+    } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState && errorCode != WDRV_WINC_CONN_ERROR_INPROGRESS) {
         SYS_CONSOLE_PRINT(appData.consoleHandle, "STA mode: Station disconnected\r\n");
         ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
         SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
     }
 }
-
-
-
-
-
-
 
 bool WifiApi_Init(WifiSettings* pSettings) {
     //TODO(Daqifi): Uncomment this part
@@ -109,12 +105,13 @@ bool WifiApi_Init(WifiSettings* pSettings) {
     //        LogMessage("Board must be powered-on for WiFi operations\n\r");
     //        return false;
     //    }
-    if(pSettings!=NULL)
+    if (pSettings != NULL)
         memcpy(&gWifiSettings, pSettings, sizeof (gWifiState));
-    
+
     gWifiState = WIFIAPI_STATE_INIT;
     return true;
 }
+
 bool WifiApi_Deinit() {
     //TODO(Daqifi): Uncomment this part
     //    const tPowerData *pPowerState = BoardData_Get(                          
@@ -131,6 +128,7 @@ bool WifiApi_Deinit() {
     gWifiState = WIFIAPI_STATE_DEINITIALIZING;
     return true;
 }
+
 bool WifiApi_ReInit() {
     //TODO(Daqifi): Uncomment this part
     //    const tPowerData *pPowerState = BoardData_Get(                          
@@ -148,6 +146,7 @@ bool WifiApi_ReInit() {
 
     return true;
 }
+
 bool WifiApi_UpdateNetworkSettings(WifiSettings* pSettings) {
     //TODO(Daqifi): Uncomment this part
     //    const tPowerData *pPowerState = (tPowerData *)BoardData_Get(                          
@@ -160,7 +159,7 @@ bool WifiApi_UpdateNetworkSettings(WifiSettings* pSettings) {
     //        return false;
     //    }
 
-    memcpy(&gWifiSettings, pSettings, sizeof (gWifiState));
+    memcpy(&gWifiSettings, pSettings, sizeof (WifiSettings));
     return WifiApi_ReInit();
 }
 
@@ -171,7 +170,7 @@ void WifiApi_ProcessStates() {
         case WIFIAPI_STATE_INIT:
             ResetAllEventFlags(&gEventFlags);
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
-                WDRV_WINC_Initialize(0, NULL);
+                sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
             }
             gWifiState = WIFIAPI_STATE_INITIALIZING;
             break;
@@ -190,6 +189,11 @@ void WifiApi_ProcessStates() {
                 }
                 if (gWifiSettings.networkMode == WIFI_API_NETWORK_MODE_STA) {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&bssCtx, (uint8_t*) gWifiSettings.ssid, strlen(gWifiSettings.ssid))) {
+                        gWifiState = WIFIAPI_STATE_ERROR;
+                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        break;
+                    }
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&bssCtx, WDRV_WINC_CID_ANY)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
                         SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
@@ -217,17 +221,21 @@ void WifiApi_ProcessStates() {
                         SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
-
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(gWdrvHandle, &bssCtx, &authCtx, &StaEventCallback)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
                         SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
-
                     SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED);
+
 
                 } else {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&bssCtx, (uint8_t*) DEFAULT_WIFI_AP_SSID, strlen(DEFAULT_WIFI_AP_SSID))) {
+                        gWifiState = WIFIAPI_STATE_ERROR;
+                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        break;
+                    }
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&bssCtx, WDRV_WINC_CID_2_4G_CH1)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
                         SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
@@ -249,7 +257,10 @@ void WifiApi_ProcessStates() {
                         break;
                     }
                     SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_AP_STARTED);
+
+
                 }
+                gWifiState = WIFIAPI_STATE_IDLE;
 
             }
             break;
@@ -284,6 +295,9 @@ void WifiApi_ProcessStates() {
                     }
                 }
             }
+            break;
+        case WIFIAPI_STATE_ERROR:
+            WifiApi_ReInit();
             break;
         default:
             break;
