@@ -101,8 +101,14 @@ void USBDevice_Task(void* p_arg) {
         vTaskDelay(5);
     }
 }
-void wifi_task(void* p_arg){
-    WifiApi_Init(NULL);
+void wifi_task(void* p_arg){   
+    DaqifiSettings LoadSettings={0};
+    
+    //daqifi_settings_SaveToNvm(&saveSettings);
+    daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &LoadSettings);
+//    uint8_t sampleStr[NVM_FLASH_ROWSIZE+1]="This is a test string i am trying to write into nvm";
+//    nvm_WriteRowtoAddr(WIFI_SETTINGS_ADDR,sampleStr);
+    WifiApi_Init(&LoadSettings.settings.wifi);
     while (1) {
         WifiApi_ProcessStates();
         vTaskDelay(5);

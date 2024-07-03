@@ -635,6 +635,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context)
     
     if (saveSettings)
     {
+        pRunTimeWifiSettings->type=DaqifiSettings_Wifi;
         if (!daqifi_settings_SaveToNvm(pRunTimeWifiSettings))
         {
             return SCPI_RES_ERR;

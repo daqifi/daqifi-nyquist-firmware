@@ -2,28 +2,7 @@
 #include "wdrv_winc_client_api.h"
 #include "HAL/NVM/nvm.h"
 
-#define NVM_PROGRAM_UNLOCK_KEY1 0xAA996655
-#define NVM_PROGRAM_UNLOCK_KEY2 0x556699AA
 
-// We store settings at the end of program flash
-/* Row size for MZ device is 2Kbytes */
-/* Page size for MZ device is 16Kbytes */
-
-#define KSEG0_PROGRAM_MEM_BASE_END __KSEG0_PROGRAM_MEM_BASE + __KSEG0_PROGRAM_MEM_LENGTH
-#define RESERVED_SETTINGS_SPACE (128*1024)  // 128kB
-#define RESERVED_SETTINGS_ADDR KSEG0_PROGRAM_MEM_BASE_END - RESERVED_SETTINGS_SPACE // RESERVED_SETTINGS_SPACE from end of prog memory (0x9D1E0000))
-
-#define TOP_LEVEL_SETTINGS_ADDR RESERVED_SETTINGS_ADDR
-#define TOP_LEVEL_SETTINGS_SIZE NVM_FLASH_PAGESIZE  // 16KB allotment - uses ~512 bytes
-
-#define WIFI_SETTINGS_ADDR TOP_LEVEL_SETTINGS_ADDR + TOP_LEVEL_SETTINGS_SIZE
-#define WIFI_SETTINGS_SIZE NVM_FLASH_PAGESIZE  // 16KB allotment - uses ~512 bytes
-
-#define FAINCAL_SETTINGS_ADDR WIFI_SETTINGS_ADDR + WIFI_SETTINGS_SIZE    
-#define FAINCAL_SETTINGS_SIZE NVM_FLASH_PAGESIZE // 16KB allotment - uses ~512 bytes
-
-#define UAINCAL_SETTINGS_ADDR FAINCAL_SETTINGS_ADDR + FAINCAL_SETTINGS_SIZE
-#define UAINCAL_SETTINGS_SIZE NVM_FLASH_PAGESIZE // 16KB allotment - uses ~512 bytes
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -180,7 +159,6 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings)
     {
         return false;
     }
-    
       
     // Calculate the MD5 sum
     CRYPT_MD5_CTX md5Sum;

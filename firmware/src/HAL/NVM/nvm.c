@@ -50,7 +50,7 @@ bool nvm_ErasePage(uint32_t addr)
     {
         // TODO: Trap error/write to error log
         //LogMessage("Settings erase error. DaqifiSettings.c ln 445\n\r");
-        return false;
+        return true;
     }
 }
 

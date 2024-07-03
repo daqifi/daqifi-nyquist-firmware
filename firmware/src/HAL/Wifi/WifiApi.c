@@ -106,7 +106,7 @@ bool WifiApi_Init(WifiSettings* pSettings) {
     //        return false;
     //    }
     if (pSettings != NULL)
-        memcpy(&gWifiSettings, pSettings, sizeof (gWifiState));
+        memcpy(&gWifiSettings, pSettings, sizeof (gWifiSettings));
 
     gWifiState = WIFIAPI_STATE_INIT;
     return true;
@@ -158,8 +158,8 @@ bool WifiApi_UpdateNetworkSettings(WifiSettings* pSettings) {
     //        LogMessage("Board must be powered-on for WiFi operations\n\r");
     //        return false;
     //    }
-
-    memcpy(&gWifiSettings, pSettings, sizeof (WifiSettings));
+    if (pSettings != NULL)
+        memcpy(&gWifiSettings, pSettings, sizeof (WifiSettings));
     return WifiApi_ReInit();
 }
 
@@ -176,6 +176,7 @@ void WifiApi_ProcessStates() {
             break;
         case WIFIAPI_STATE_INITIALIZING:
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_READY) {
+
                 gWdrvHandle = WDRV_WINC_Open(0, 0);
                 if (gWdrvHandle == DRV_HANDLE_INVALID) {
                     gWifiState = WIFIAPI_STATE_ERROR;
