@@ -1,7 +1,7 @@
 
 #include "WifiApi.h"
 #include "wdrv_winc_client_api.h"
-
+#include "Util/Logger.h"
 //static WDRV_WINC_BSS_CONTEXT gBssCtx;
 //static WDRV_WINC_AUTH_CONTEXT gAuthCtx;
 //static WifiApi_dhcpServerConfig_t gDhcpServerConfig;
@@ -59,7 +59,7 @@ static bool wifiDeinit() {
     if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
         WDRV_WINC_Close(gWdrvHandle);
         WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
-        SYS_CONSOLE_MESSAGE("WiFi going down.\r\n");
+        LOG_D("WiFi deinitializing\r\n");
     }
     return true;
 }
@@ -67,16 +67,16 @@ static bool wifiDeinit() {
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
     UNUSED(s);
-    SYS_CONSOLE_PRINT("STA Mode: Station IP address is %s\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
+    LOG_D("STA Mode: Station IP address is %s\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
 }
 
 static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
-        SYS_CONSOLE_PRINT("AP mode: Station connected\r\n");
+        LOG_D("AP mode: Station connected\r\n");
         SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
         ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState) {
-        SYS_CONSOLE_PRINT(appData.consoleHandle, "AP mode: Station disconnected\r\n");
+        LOG_D("AP mode: Station disconnected\r\n");
         ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
         SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
     }
@@ -84,11 +84,11 @@ static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandl
 
 static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
-        SYS_CONSOLE_PRINT("STA mode: Station connected\r\n");
+        LOG_D("STA mode: Station connected\r\n");
         SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
         ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState && errorCode != WDRV_WINC_CONN_ERROR_INPROGRESS) {
-        SYS_CONSOLE_PRINT(appData.consoleHandle, "STA mode: Station disconnected\r\n");
+        LOG_D("STA mode: Station disconnected\r\n");
         ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
         SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
     }
@@ -180,51 +180,51 @@ void WifiApi_ProcessStates() {
                 gWdrvHandle = WDRV_WINC_Open(0, 0);
                 if (gWdrvHandle == DRV_HANDLE_INVALID) {
                     gWifiState = WIFIAPI_STATE_ERROR;
-                    SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&bssCtx)) {
                     gWifiState = WIFIAPI_STATE_ERROR;
-                    SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
                 if (gWifiSettings.networkMode == WIFI_API_NETWORK_MODE_STA) {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&bssCtx, (uint8_t*) gWifiSettings.ssid, strlen(gWifiSettings.ssid))) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&bssCtx, WDRV_WINC_CID_ANY)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     if (gWifiSettings.securityMode == WDRV_WINC_AUTH_TYPE_OPEN) {
                         if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&authCtx)) {
                             gWifiState = WIFIAPI_STATE_ERROR;
-                            SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                            LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                             break;
                         }
                     } else if (gWifiSettings.securityMode == WDRV_WINC_AUTH_TYPE_WPA_PSK) {
                         if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&authCtx, (uint8_t*) gWifiSettings.passKey, gWifiSettings.passKeyLength)) {
                             gWifiState = WIFIAPI_STATE_ERROR;
-                            SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                            LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                             break;
                         }
 
                     } else {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPUseDHCPSet(gWdrvHandle, &DhcpEventCallback)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(gWdrvHandle, &bssCtx, &authCtx, &StaEventCallback)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED);
@@ -233,28 +233,28 @@ void WifiApi_ProcessStates() {
                 } else {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&bssCtx, (uint8_t*) DEFAULT_WIFI_AP_SSID, strlen(DEFAULT_WIFI_AP_SSID))) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&bssCtx, WDRV_WINC_CID_2_4G_CH1)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&authCtx)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
 
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(gWdrvHandle, inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS), inet_addr(DEFAULT_NETWORK_IP_MASK), &DhcpEventCallback)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(gWdrvHandle, &bssCtx, &authCtx, NULL, &ApEventCallback)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                     SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_AP_STARTED);
@@ -291,7 +291,7 @@ void WifiApi_ProcessStates() {
                     ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(gWdrvHandle, &bssCtx, &authCtx, &StaEventCallback)) {
                         gWifiState = WIFIAPI_STATE_ERROR;
-                        SYS_CONSOLE_PRINT("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
                 }

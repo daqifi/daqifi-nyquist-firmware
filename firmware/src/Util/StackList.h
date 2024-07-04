@@ -14,7 +14,7 @@ extern "C" {
 #define STACK_LIST_NODE_SIZE 128
 
 // Defines the maximum number of items in the list
-#define STACK_LIST_MAX_SIZE 16
+#define STACK_LIST_MAX_SIZE 12
 
 /**
  * A single item in the list

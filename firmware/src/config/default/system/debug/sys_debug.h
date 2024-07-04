@@ -530,7 +530,7 @@ SYS_MODULE_INDEX SYS_DEBUG_ConsoleInstanceGet(void);
 #endif
 
 #ifndef SYS_CONSOLE_PRINT
-    #define SYS_CONSOLE_PRINT(fmt, ...)
+    #define SYS_CONSOLE_PRINT(fmt, ...) 
 #endif
 
 #ifndef SYS_CONSOLE_MESSAGE

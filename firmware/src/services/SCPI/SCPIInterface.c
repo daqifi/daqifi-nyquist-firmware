@@ -15,7 +15,7 @@
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
-//#include "Util/Logger.h"
+#include "Util/Logger.h"
 //#include "state/data/BoardData.h"
 //#include "state/board/BoardConfig.h"
 //#include "state/runtime/BoardRuntimeConfig.h"
@@ -309,28 +309,28 @@ static scpi_result_t SCPI_NotImplemented(scpi_t * context)
 //    return SCPI_RES_OK;
 //}
 //
-///**
-// * Gets the system log
-// * @param context
-// * @return 
-// */
-//static scpi_result_t SCPI_SysLogGet(scpi_t * context)
-//{
-//    char buffer[128];
-//     
-//    size_t logSize = LogMessageCount();
-//    size_t i = 0;
-//    for (i=0; i<logSize; ++i)
-//    {
-//        size_t messageSize = LogMessagePop((uint8_t*)buffer, 128);
-//        if (messageSize > 0)
-//        {
-//            context->interface->write(context, buffer, messageSize);
-//        }
-//    }
-//    
-//    return SCPI_RES_OK;
-//}
+/**
+ * Gets the system log
+ * @param context
+ * @return 
+ */
+static scpi_result_t SCPI_SysLogGet(scpi_t * context)
+{
+    char buffer[128];
+     
+    size_t logSize = LogMessageCount();
+    size_t i = 0;
+    for (i=0; i<logSize; ++i)
+    {
+        size_t messageSize = LogMessagePop((uint8_t*)buffer, 128);
+        if (messageSize > 0)
+        {
+            context->interface->write(context, buffer, messageSize);
+        }
+    }
+    
+    return SCPI_RES_OK;
+}
 //
 ///**
 // * Gets the external power status
@@ -723,7 +723,7 @@ static const scpi_command_t scpi_commands[] = {
 //    {.pattern = "SYSTem:REboot", .callback = SCPI_Reset, },
 //    {.pattern = "HELP", .callback = SCPI_Help, },
 //    {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet, },
-//    {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet, },
+    {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet, },
 //    {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho, },
 //    {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho, },    
 //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  

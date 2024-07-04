@@ -6,6 +6,5 @@ build/default/production/_ext/1984157808/plib_cache_pic32mz.o:  \
  C:/Program\ Files/Microchip/MPLABX/v6.20/packs/Microchip/PIC32MZ-EF_DFP/1.4.168/include/proc/p32mz2048efm144.h  \
  C:/Program\ Files/Microchip/MPLABX/v6.20/packs/Microchip/PIC32MZ-EF_DFP/1.4.168/include/xc-pic32m.h  \
  C:/Program\ Files/Microchip/MPLABX/v6.20/packs/Microchip/PIC32MZ-EF_DFP/1.4.168/include/xc.h  \
- <command-line>  \
+  \
  ../src/config/default/peripheral/cache/plib_cache_pic32mz.S  \
- C:/Users/asus3/AppData/Local/Temp/cctepNqP.s 

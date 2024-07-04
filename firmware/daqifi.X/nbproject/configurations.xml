@@ -1012,7 +1012,7 @@
       </compileType>
       <makeCustomizationType>
         <makeCustomizationPreStepEnabled>false</makeCustomizationPreStepEnabled>
-        <makeUseCleanTarget>false</makeUseCleanTarget>
+        <makeUseCleanTarget>true</makeUseCleanTarget>
         <makeCustomizationPreStep></makeCustomizationPreStep>
         <makeCustomizationPostStepEnabled>false</makeCustomizationPostStepEnabled>
         <makeCustomizationPostStep></makeCustomizationPostStep>
@@ -1452,7 +1452,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/Logger.c" ex="true" overriding="false">
+      <item path="../src/Util/Logger.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1468,7 +1468,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/Logger.h" ex="true" overriding="false">
+      <item path="../src/Util/Logger.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1484,7 +1484,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/NullLockProvider.c" ex="true" overriding="false">
+      <item path="../src/Util/NullLockProvider.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1500,7 +1500,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/NullLockProvider.h" ex="true" overriding="false">
+      <item path="../src/Util/NullLockProvider.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1516,7 +1516,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/StackList.c" ex="true" overriding="false">
+      <item path="../src/Util/StackList.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1532,7 +1532,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/StackList.h" ex="true" overriding="false">
+      <item path="../src/Util/StackList.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1578,6 +1578,151 @@
         <C32CPP>
         </C32CPP>
         <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/config/default/peripheral/cache/plib_cache_pic32mz.S"
+            ex="false"
+            overriding="false">
+        <C32>
+          <property key="additional-warnings" value="true"/>
+          <property key="addresss-attribute-use" value="false"/>
+          <property key="enable-app-io" value="false"/>
+          <property key="enable-omit-frame-pointer" value="false"/>
+          <property key="enable-symbols" value="true"/>
+          <property key="enable-unroll-loops" value="false"/>
+          <property key="exclude-floating-point" value="false"/>
+          <property key="extra-include-directories"
+                    value="../src;../src/config/default;../src/config/default/driver/winc/include/;../src/config/default/driver/winc/include/dev;../src/config/default/driver/winc/include/drv/bsp;../src/config/default/driver/winc/include/drv/bsp/include;../src/config/default/driver/winc/include/drv/common;../src/config/default/driver/winc/include/drv/driver;../src/config/default/driver/winc/include/drv/socket;../src/config/default/driver/winc/include/drv/spi_flash;../src/config/default/system/fs/fat_fs/file_system;../src/config/default/system/fs/fat_fs/hardware_access;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ;../src/third_party/wolfssl;../src/third_party/wolfssl/wolfssl;../src/third_party/zlib"/>
+          <property key="generate-16-bit-code" value="false"/>
+          <property key="generate-micro-compressed-code" value="false"/>
+          <property key="isolate-each-function" value="true"/>
+          <property key="make-warnings-into-errors" value="true"/>
+          <property key="optimization-level" value=""/>
+          <property key="place-data-into-section" value="true"/>
+          <property key="post-instruction-scheduling" value="default"/>
+          <property key="pre-instruction-scheduling" value="default"/>
+          <property key="preprocessor-macros"
+                    value="HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN"/>
+          <property key="strict-ansi" value="false"/>
+          <property key="support-ansi" value="false"/>
+          <property key="tentative-definitions" value=""/>
+          <property key="toplevel-reordering" value=""/>
+          <property key="unaligned-access" value=""/>
+          <property key="use-cci" value="false"/>
+          <property key="use-iar" value="false"/>
+          <property key="use-indirect-calls" value="false"/>
+        </C32>
+        <C32-AR>
+          <property key="additional-options-chop-files" value="false"/>
+        </C32-AR>
+        <C32-AS>
+          <property key="assembler-symbols" value=""/>
+          <property key="enable-symbols" value="true"/>
+          <property key="exclude-floating-point-library" value="false"/>
+          <property key="expand-macros" value="false"/>
+          <property key="extra-include-directories-for-assembler"
+                    value="../src/config/default;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ"/>
+          <property key="extra-include-directories-for-preprocessor"
+                    value="../src/config/default;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ"/>
+          <property key="false-conditionals" value="false"/>
+          <property key="generate-16-bit-code" value="false"/>
+          <property key="generate-micro-compressed-code" value="false"/>
+          <property key="keep-locals" value="false"/>
+          <property key="list-assembly" value="false"/>
+          <property key="list-source" value="false"/>
+          <property key="list-symbols" value="false"/>
+          <property key="oXC32asm-list-to-file" value="false"/>
+          <property key="omit-debug-dirs" value="false"/>
+          <property key="omit-forms" value="false"/>
+          <property key="preprocessor-macros" value=""/>
+          <property key="warning-level" value=""/>
+        </C32-AS>
+        <C32-CO>
+          <property key="coverage-enable" value=""/>
+          <property key="stack-guidance" value="false"/>
+        </C32-CO>
+        <C32-LD>
+          <property key="additional-options-use-response-files" value="false"/>
+          <property key="additional-options-write-sla" value="false"/>
+          <property key="allocate-dinit" value="false"/>
+          <property key="code-dinit" value="false"/>
+          <property key="ebase-addr" value=""/>
+          <property key="enable-check-sections" value="false"/>
+          <property key="exclude-floating-point-library" value="false"/>
+          <property key="exclude-standard-libraries" value="false"/>
+          <property key="extra-lib-directories" value=""/>
+          <property key="fill-flash-options-addr" value=""/>
+          <property key="fill-flash-options-const" value=""/>
+          <property key="fill-flash-options-how" value="0"/>
+          <property key="fill-flash-options-inc-const" value="1"/>
+          <property key="fill-flash-options-increment" value=""/>
+          <property key="fill-flash-options-seq" value=""/>
+          <property key="fill-flash-options-what" value="0"/>
+          <property key="generate-16-bit-code" value="false"/>
+          <property key="generate-cross-reference-file" value="false"/>
+          <property key="generate-micro-compressed-code" value="false"/>
+          <property key="heap-size" value="512"/>
+          <property key="input-libraries" value=""/>
+          <property key="kseg-length" value=""/>
+          <property key="kseg-origin" value=""/>
+          <property key="linker-symbols" value=""/>
+          <property key="map-file" value="${DISTDIR}/${PROJECTNAME}.${IMAGE_TYPE}.map"/>
+          <property key="no-device-startup-code" value="true"/>
+          <property key="no-startup-files" value="false"/>
+          <property key="oXC32ld-extra-opts" value=""/>
+          <property key="optimization-level" value=""/>
+          <property key="preprocessor-macros" value=""/>
+          <property key="remove-unused-sections" value="true"/>
+          <property key="report-memory-usage" value="false"/>
+          <property key="serial-length" value=""/>
+          <property key="serial-origin" value=""/>
+          <property key="stack-size" value=""/>
+          <property key="symbol-stripping" value=""/>
+          <property key="trace-symbols" value=""/>
+          <property key="warn-section-align" value="false"/>
+        </C32-LD>
+        <C32CPP>
+          <property key="additional-warnings" value="false"/>
+          <property key="addresss-attribute-use" value="false"/>
+          <property key="check-new" value="false"/>
+          <property key="eh-specs" value="true"/>
+          <property key="enable-app-io" value="false"/>
+          <property key="enable-omit-frame-pointer" value="false"/>
+          <property key="enable-symbols" value="true"/>
+          <property key="enable-unroll-loops" value="false"/>
+          <property key="exceptions" value="true"/>
+          <property key="exclude-floating-point" value="false"/>
+          <property key="extra-include-directories"
+                    value="../src;../src/config/default;../src/config/default/system/fs/fat_fs/file_system;../src/config/default/system/fs/fat_fs/hardware_access;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ"/>
+          <property key="generate-16-bit-code" value="false"/>
+          <property key="generate-micro-compressed-code" value="false"/>
+          <property key="isolate-each-function" value="true"/>
+          <property key="make-warnings-into-errors" value="false"/>
+          <property key="optimization-level" value=""/>
+          <property key="place-data-into-section" value="false"/>
+          <property key="post-instruction-scheduling" value="default"/>
+          <property key="pre-instruction-scheduling" value="default"/>
+          <property key="preprocessor-macros" value=""/>
+          <property key="rtti" value="true"/>
+          <property key="strict-ansi" value="false"/>
+          <property key="toplevel-reordering" value=""/>
+          <property key="unaligned-access" value=""/>
+          <property key="use-cci" value="false"/>
+          <property key="use-iar" value="false"/>
+          <property key="use-indirect-calls" value="false"/>
+        </C32CPP>
+        <C32Global>
+          <property key="common-include-directories" value=""/>
+          <property key="gp-relative-option" value=""/>
+          <property key="legacy-libc" value="true"/>
+          <property key="mdtcm" value=""/>
+          <property key="mitcm" value=""/>
+          <property key="mstacktcm" value="false"/>
+          <property key="omit-pack-options" value="1"/>
+          <property key="relaxed-math" value="false"/>
+          <property key="save-temps" value="false"/>
+          <property key="stack-smashing" value=""/>
+          <property key="wpo-lto" value="false"/>
         </C32Global>
       </item>
       <item path="../src/services/SCPI/SCPIADC.c" ex="true" overriding="false">
@@ -2067,7 +2212,6 @@
       <C32>
         <property key="additional-warnings" value="true"/>
         <property key="addresss-attribute-use" value="false"/>
-        <property key="appendMe" value=""/>
         <property key="enable-app-io" value="false"/>
         <property key="enable-omit-frame-pointer" value="false"/>
         <property key="enable-symbols" value="true"/>
@@ -2098,13 +2242,12 @@
         <property key="additional-options-chop-files" value="false"/>
       </C32-AR>
       <C32-AS>
-        <property key="appendMe" value=""/>
         <property key="assembler-symbols" value=""/>
         <property key="enable-symbols" value="true"/>
         <property key="exclude-floating-point-library" value="false"/>
         <property key="expand-macros" value="false"/>
         <property key="extra-include-directories-for-assembler"
-                  value="../src/config/default;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ"/>
+                  value="../src/config/default;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ;../src/config/default/peripheral/cache"/>
         <property key="extra-include-directories-for-preprocessor"
                   value="../src/config/default;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ"/>
         <property key="false-conditionals" value="false"/>
@@ -2128,7 +2271,6 @@
         <property key="additional-options-use-response-files" value="false"/>
         <property key="additional-options-write-sla" value="false"/>
         <property key="allocate-dinit" value="false"/>
-        <property key="appendMe" value=""/>
         <property key="code-dinit" value="false"/>
         <property key="ebase-addr" value=""/>
         <property key="enable-check-sections" value="false"/>
@@ -2168,7 +2310,6 @@
       <C32CPP>
         <property key="additional-warnings" value="false"/>
         <property key="addresss-attribute-use" value="false"/>
-        <property key="appendMe" value=""/>
         <property key="check-new" value="false"/>
         <property key="eh-specs" value="true"/>
         <property key="enable-app-io" value="false"/>
@@ -3406,8 +3547,6 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
-        <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>

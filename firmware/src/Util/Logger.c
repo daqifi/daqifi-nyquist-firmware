@@ -6,8 +6,14 @@
 
 #include "NullLockProvider.h"
 #include "StackList.h"
-#include "system/debug/sys_debug.h"
 
+#ifndef min
+    #define min(x,y) x <= y ? x : y
+#endif // min
+
+#ifndef max
+    #define max(x,y) x >= y ? x : y
+#endif // min
 #define UNUSED(x) (void)(x)
 
 static StackList m_Data;
@@ -95,43 +101,4 @@ size_t LogMessagePop(uint8_t* buffer, size_t maxSize)
     return StackList_PopFront(m_ListPtr, buffer, maxSize);
 }
 
-#ifndef SYS_CMD_ENABLE
 
-int SYS_CMD_MESSAGE(const char* message)
-{
-    return LogMessageImpl(message);
-}
-
-int SYS_CMD_PRINT(const char* format, ...)
-{
-    va_list args;
-    va_start(args, format);
-    int result = LogMessageFormatImpl(format, &args);
-    va_end(args);
-    
-    return result;
-}
-#endif
-
-extern void vAssertCalled( const char * pcFile, unsigned long ulLine )
-{
-volatile char *pcFileName;
-volatile unsigned long ulLineNumber;
-
-	/* Prevent things that are useful to view in the debugger from being
-	optimised away. */
-	pcFileName = ( char * ) pcFile;
-	( void ) pcFileName;
-	ulLineNumber = ulLine;
-    SYS_DEBUG_BreakPoint();
-	/* Set ulLineNumber to 0 in the debugger to break out of this loop and
-	return to the line that triggered the assert. */
-	while( ulLineNumber != 0 )
-	{
-		__asm volatile( "NOP" );
-		__asm volatile( "NOP" );
-		__asm volatile( "NOP" );
-		__asm volatile( "NOP" );
-		__asm volatile( "NOP" );
-	}
-}
