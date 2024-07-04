@@ -101,6 +101,8 @@ void USBDevice_Task(void* p_arg) {
         vTaskDelay(5);
     }
 }
+void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings settings, uint8_t* pBuff, uint16_t *len){
+}
 void wifi_task(void* p_arg){   
     DaqifiSettings LoadSettings={0};
     
@@ -110,7 +112,7 @@ void wifi_task(void* p_arg){
 //    nvm_WriteRowtoAddr(WIFI_SETTINGS_ADDR,sampleStr);
     WifiApi_Init(&LoadSettings.settings.wifi);
     while (1) {
-        WifiApi_ProcessStates();
+        WifiApi_Dispatcher();
         vTaskDelay(5);
     }
 }
