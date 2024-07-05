@@ -3,7 +3,7 @@
 #include "Util/Logger.h"
 
 #define UNUSED(x) (void)(x)
-#define UDP_LISTEN_PORT         30303
+#define UDP_LISTEN_PORT         (uint16_t)30303
 
 typedef enum {
     WIFIAPI_CONSUMED_EVENT_ENTRY,
@@ -115,20 +115,20 @@ static void udpSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMe
             tstrSocketRecvMsg *pstrRx = (tstrSocketRecvMsg*) pMessage;
             if (pstrRx->s16BufferSize > 0) {
                 //get the remote host address and port number
-                uint16_t u16port = pstrRx->strRemoteAddr.sin_port;
+                uint16_t u16port =_htons(pstrRx->strRemoteAddr.sin_port);
                 uint32_t strRemoteHostAddr = pstrRx->strRemoteAddr.sin_addr.s_addr;
                 char s[20];
                 inet_ntop(AF_INET, &strRemoteHostAddr, s, sizeof (s));
                 LOG_D("\r\nReceived frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
-                LOG_D("Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
-                recvfrom(gStateMachineData.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
+                LOG_D("Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);                
                 uint16_t announcePacktLen=UDP_BUFFER_SIZE;
                 WifiApi_FormUdpAnnouncePacketCallback(gStateMachineData.wifiSettings,udpBuffer,&announcePacktLen);
                 struct sockaddr_in addr;
                 addr.sin_family = AF_INET;
-                addr.sin_port = pstrRx->strRemoteAddr.sin_port;
-                addr.sin_addr.s_addr = pstrRx->strRemoteAddr.sin_addr.s_addr;
+                addr.sin_port = _htons(UDP_LISTEN_PORT);//pstrRx->strRemoteAddr.sin_port;
+                addr.sin_addr.s_addr = inet_addr(s);
                 sendto(gStateMachineData.udpServerSocket, udpBuffer, announcePacktLen, 0, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+                recvfrom(gStateMachineData.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
             }
         }
             break;
@@ -223,11 +223,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
                 sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
-            } else {
-                //wait for de-initialization to complete 
-                SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
-                break;
-            }
+            } 
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_READY) {
                 //wait for initialization to complete 
                 SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
@@ -335,6 +331,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
             ResetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
             CloseUdpSocket(&pInstance->udpServerSocket);
+            ResetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN);
             if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED)) {
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
                     SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
@@ -370,7 +367,12 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
 
 
 //===========================================================
-
+//TODO(Daqifi): Remove this comment
+//SYSTem:COMMunicate:LAN:NETMode 1
+//SYSTem:COMMunicate:LAN:SECurity 2
+//SYSTem:COMMunicate:LAN:SSID "Typical_G"
+//SYSTem:COMMunicate:LAN:PASs "Arghya@19"
+//SYSTem:COMMunicate:LAN:APPLY 1
 bool WifiApi_Init(WifiSettings * pSettings) {
     //TODO(Daqifi): Uncomment this part
     //    const tPowerData *pPowerState = BoardData_Get(                          
@@ -387,7 +389,12 @@ bool WifiApi_Init(WifiSettings * pSettings) {
     else return true;
     if (pSettings != NULL)
         memcpy(&gStateMachineData.wifiSettings, pSettings, sizeof (WifiSettings));
-
+//TODO(Daqifi): Remove this comment
+//    gStateMachineData.wifiSettings.networkMode=1;
+//    gStateMachineData.wifiSettings.securityMode=2;
+//    strcpy(gStateMachineData.wifiSettings.ssid,"Typical_G");
+//    strcpy((char*)gStateMachineData.wifiSettings.passKey,"Arghya@19");
+//    gStateMachineData.wifiSettings.passKeyLength=strlen("Arghya@19");
     gStateMachineData.active = MainState;
     gStateMachineData.active(&gStateMachineData, WIFIAPI_CONSUMED_EVENT_ENTRY);
     gStateMachineData.nextState = NULL;
@@ -450,149 +457,3 @@ void WifiApi_Dispatcher() {
         }
     }
 }
-//void WifiApi_ProcessStates() {
-//    static WDRV_WINC_BSS_CONTEXT bssCtx;
-//    static WDRV_WINC_AUTH_CONTEXT authCtx;
-//    switch (gWifiState) {
-//        case WIFIAPI_TASK_STATE_INIT:
-//            ResetAllEventFlags(&gEventFlags);
-//            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
-//                sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
-//            }
-//            gWifiState = WIFIAPI_TASK_STATE_INITIALIZING;
-//            break;
-//        case WIFIAPI_TASK_STATE_INITIALIZING:
-//            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_READY) {
-//
-//                gWdrvHandle = WDRV_WINC_Open(0, 0);
-//                if (gWdrvHandle == DRV_HANDLE_INVALID) {
-//                    gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                    break;
-//                }
-//                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&bssCtx)) {
-//                    gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                    break;
-//                }
-//                if (gWifiSettings.networkMode == WIFI_API_NETWORK_MODE_STA) {
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&bssCtx, (uint8_t*) gWifiSettings.ssid, strlen(gWifiSettings.ssid))) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&bssCtx, WDRV_WINC_CID_ANY)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (gWifiSettings.securityMode == WDRV_WINC_AUTH_TYPE_OPEN) {
-//                        if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&authCtx)) {
-//                            gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                            LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                            break;
-//                        }
-//                    } else if (gWifiSettings.securityMode == WDRV_WINC_AUTH_TYPE_WPA_PSK) {
-//                        if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&authCtx, (uint8_t*) gWifiSettings.passKey, gWifiSettings.passKeyLength)) {
-//                            gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                            LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                            break;
-//                        }
-//
-//                    } else {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPUseDHCPSet(gWdrvHandle, &DhcpEventCallback)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(gWdrvHandle, &bssCtx, &authCtx, &StaEventCallback)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED);
-//
-//
-//                } else {
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&bssCtx, (uint8_t*) DEFAULT_WIFI_AP_SSID, strlen(DEFAULT_WIFI_AP_SSID))) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&bssCtx, WDRV_WINC_CID_2_4G_CH1)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&authCtx)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(gWdrvHandle, inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS), inet_addr(DEFAULT_NETWORK_IP_MASK), &DhcpEventCallback)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(gWdrvHandle, &bssCtx, &authCtx, NULL, &ApEventCallback)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//
-//                    SetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_AP_STARTED);
-//
-//                }
-//                gWifiState = WIFIAPI_TASK_STATE_IDLE;
-//            }
-//            break;
-//        case WIFIAPI_TASK_STATE_REINITIALIZING:
-//            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
-//                ResetAllEventFlags(&gEventFlags);
-//                gWifiState = WIFIAPI_TASK_STATE_INIT;
-//            }
-//            break;
-//        case WIFIAPI_TASK_STATE_DEINITIALIZING:
-//            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
-//                ResetAllEventFlags(&gEventFlags);
-//                gWifiState = WIFIAPI_TASK_STATE_IDLE;
-//            }
-//            break;
-//        case WIFIAPI_TASK_STATE_IDLE:
-//            if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_AP_STARTED)) {
-//                if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED)) {
-//                    if (!GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
-//                        OpenUdpSocket();
-//                } else if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED)) {
-//                    if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
-//                        CloseUdpSocket();
-//                }
-//            } else if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED)) {
-//                if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED)) {
-//                    if (!GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
-//                        OpenUdpSocket();
-//                } else if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED)) {
-//                    ResetEventFlag(&gEventFlags, WIFIAPI_EVENT_FLAG_STA_DISCONNECTED);
-//                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(gWdrvHandle, &bssCtx, &authCtx, &StaEventCallback)) {
-//                        gWifiState = WIFIAPI_TASK_STATE_ERROR;
-//                        LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-//                        break;
-//                    }
-//                    if (GetEventFlagStatus(gEventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
-//                        CloseUdpSocket();
-//                }
-//            }
-//            break;
-//        case WIFIAPI_TASK_STATE_ERROR:
-//            WifiApi_ReInit();
-//            break;
-//        default:
-//            break;
-//    }
-//
-//}
