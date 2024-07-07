@@ -1,5 +1,5 @@
-build/default/production/_ext/1360937237/app_freertos.o: \
- ../src/app_freertos.c ../src/app_freertos.h \
+build/default/production/_ext/590017803/tcpServer.o: \
+ ../src/HAL/Wifi/tcpServer.c ../src/HAL/Wifi/tcpServer.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -111,6 +111,21 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/osal/osal.h \
  ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
+ ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/types.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/error.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/units.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
+ ../src/Util/CircularBuffer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -143,32 +158,9 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h \
- ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
- ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
- ../src/libraries/scpi/libscpi/inc/scpi/types.h \
- ../src/libraries/scpi/libscpi/inc/scpi/config.h \
- ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
- ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
- ../src/libraries/scpi/libscpi/inc/scpi/error.h \
- ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
- ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
- ../src/libraries/scpi/libscpi/inc/scpi/units.h \
- ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
- ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h \
- ../src/services/DaqifiPB/DaqifiOutMessage.pb.h \
- ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
- ../src/Util/ArrayWrapper.h ../src/state/data/BoardData.h \
- ../src/Util/HeapList.h ../src/Util/LockProvider.h \
- ../src/services/daqifi_settings.h \
- ../src/config/default/driver/winc/include/wdrv_winc_common.h \
- ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
- ../src/state/runtime/BoardRuntimeConfig.h ../src/HAL/Wifi/WifiApi.h \
- ../src/HAL/Wifi/tcpServer.h ../src/HAL/Wifi/WifiApi.h
+ ../src/services/SCPI/SCPIInterface.h ../src/Util/Logger.h
 
-../src/app_freertos.h:
+../src/HAL/Wifi/tcpServer.h:
 
 ../src/config/default/configuration.h:
 
@@ -398,6 +390,36 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 
 ../src/app_freertos.h:
 
+../src/libraries/microrl/src/microrl.h:
+
+../src/libraries/microrl/src/config.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/parser.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/types.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/config.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/cc.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/error.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/constants.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/units.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/utils.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/expression.h:
+
+../src/Util/CircularBuffer.h:
+
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc.h:
@@ -462,62 +484,6 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
-../src/services/UsbCdc/UsbCdc.h:
+../src/services/SCPI/SCPIInterface.h:
 
-../src/libraries/microrl/src/microrl.h:
-
-../src/libraries/microrl/src/config.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/parser.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/types.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/config.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/cc.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/error.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/constants.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/units.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/utils.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/expression.h:
-
-../src/Util/CircularBuffer.h:
-
-../src/services/DaqifiPB/DaqifiOutMessage.pb.h:
-
-../src/libraries/nanopb/pb.h:
-
-../src/services/DaqifiPB/NanoPB_Encoder.h:
-
-../src/Util/ArrayWrapper.h:
-
-../src/state/data/BoardData.h:
-
-../src/Util/HeapList.h:
-
-../src/Util/LockProvider.h:
-
-../src/services/daqifi_settings.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_common.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
-
-../src/state/runtime/BoardRuntimeConfig.h:
-
-../src/HAL/Wifi/WifiApi.h:
-
-../src/HAL/Wifi/tcpServer.h:
-
-../src/HAL/Wifi/WifiApi.h:
+../src/Util/Logger.h:

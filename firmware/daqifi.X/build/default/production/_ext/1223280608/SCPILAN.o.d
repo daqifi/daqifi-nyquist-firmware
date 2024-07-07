@@ -141,7 +141,8 @@ build/default/production/_ext/1223280608/SCPILAN.o: \
  ../src/state/runtime/BoardRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h \
- ../src/Util/ArrayWrapper.h \
+ ../src/Util/ArrayWrapper.h ../src/HAL/Wifi/WifiApi.h \
+ ../src/HAL/Wifi/tcpServer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -163,8 +164,7 @@ build/default/production/_ext/1223280608/SCPILAN.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
- ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/HAL/Wifi/WifiApi.h
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h
 
 ../src/services/SCPI/SCPILAN.h:
 
@@ -468,6 +468,10 @@ build/default/production/_ext/1223280608/SCPILAN.o: \
 
 ../src/Util/ArrayWrapper.h:
 
+../src/HAL/Wifi/WifiApi.h:
+
+../src/HAL/Wifi/tcpServer.h:
+
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc.h:
@@ -511,5 +515,3 @@ build/default/production/_ext/1223280608/SCPILAN.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
-
-../src/HAL/Wifi/WifiApi.h:

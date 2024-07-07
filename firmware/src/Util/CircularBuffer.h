@@ -46,6 +46,7 @@ uint16_t CircularBuf_AddBytes(CircularBuf_t*, uint8_t*, uint16_t);
 uint16_t CircularBuf_NumBytesAvailable(CircularBuf_t*);
 uint16_t CircularBuf_NumBytesFree(CircularBuf_t*);
 uint16_t CircularBuf_ProcessBytes(CircularBuf_t*,uint8_t*, uint16_t,int*);
+void CircularBuf_Reset(CircularBuf_t* cirbuf);
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

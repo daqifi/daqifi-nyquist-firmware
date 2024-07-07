@@ -1,6 +1,7 @@
 #include "WifiApi.h"
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
+#include "tcpServer.h"
 
 #define UNUSED(x) (void)(x)
 #define UDP_LISTEN_PORT         (uint16_t)30303
@@ -30,7 +31,9 @@ typedef struct {
         WIFIAPI_EVENT_FLAG_STA_STARTED = 1 << 1,
         WIFIAPI_EVENT_FLAG_STA_CONNECTED = 1 << 2,
         WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN = 1 << 3,
-        WIFIAPI_EVENT_FLAG_UDP_SOCKET_CONNECTED = 1 << 4
+        WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN = 1 << 4,
+        WIFIAPI_EVENT_FLAG_UDP_SOCKET_CONNECTED = 1 << 5,
+        WIFIAPI_EVENT_FLAG_TCP_SOCKET_CONNECTED = 1 << 6,
     } flag;
     uint16_t value;
 } wifiApi_eventFlagState_t;
@@ -52,6 +55,7 @@ struct stateMachineInst {
     WifiSettings wifiSettings;
     DRV_HANDLE wdrvHandle;
     SOCKET udpServerSocket;
+    TcpServerData *pTcpServerData;
     WDRV_WINC_BSS_CONTEXT bssCtx;
     WDRV_WINC_AUTH_CONTEXT authCtx;
 };
@@ -61,10 +65,18 @@ static void __attribute__((unused)) ResetEventFlag(wifiApi_eventFlagState_t *pEv
 static uint8_t __attribute__((unused)) GetEventFlagStatus(wifiApi_eventFlagState_t eventFlagState, uint16_t flag);
 static bool SendEvent(WifiApi_consumedEvent_t event);
 static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event);
+
+extern bool TcpServer_Flush();
+extern size_t TcpServer_WriteBuffer(const char* data, size_t len);
+extern void TcpServer_OpenSocket();
+extern void TcpServer_CloseSocket();
+extern void TcpServer_Initialize(TcpServerData *pServerData);
 //===========================================================
 //=====================Private Variables=====================
 static stateMachineInst_t gStateMachineData;
 static QueueHandle_t gEventQH = NULL;
+//(TODO(Daqifi):Remove from here
+static TcpServerData gTcpServerData;
 //===========================================================
 //=====================Private Callbacks=====================
 
@@ -72,7 +84,7 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
     UNUSED(s);
     if (GetEventFlagStatus(gStateMachineData.eventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED)) {
-       gStateMachineData.wifiSettings.ipAddr.Val=ipAddress;
+        gStateMachineData.wifiSettings.ipAddr.Val = ipAddress;
     }
     LOG_D("STA Mode: Station IP address is %s\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
 }
@@ -99,14 +111,57 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
 
 static void udpSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
 #define UDP_BUFFER_SIZE 1460
-    static uint8_t udpBuffer[UDP_BUFFER_SIZE];    
+    static uint8_t udpBuffer[UDP_BUFFER_SIZE];
     switch (messageType) {
         case SOCKET_MSG_BIND:
         {
             tstrSocketBindMsg *pBindMessage = (tstrSocketBindMsg*) pMessage;
-            if ((NULL != pBindMessage) && (0 == pBindMessage->status)) {               
-                recvfrom(gStateMachineData.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
-                SendEvent(WIFIAPI_CONSUMED_EVENT_UDP_SOCKET_CONNECTED);
+            if ((NULL != pBindMessage) && (0 == pBindMessage->status)) {
+                if (socket == gStateMachineData.udpServerSocket) {
+                    recvfrom(gStateMachineData.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
+                    SendEvent(WIFIAPI_CONSUMED_EVENT_UDP_SOCKET_CONNECTED);
+                } else if (socket == gStateMachineData.pTcpServerData->serverSocket) {
+                    listen(gStateMachineData.pTcpServerData->serverSocket, 0);
+                }
+            } else {
+                LOG_E("[%s:%d]Error Socket Bind", __FILE__, __LINE__);
+                SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
+            }
+            break;
+        }
+        case SOCKET_MSG_LISTEN:
+        {
+            tstrSocketListenMsg *pListenMessage = (tstrSocketListenMsg*) pMessage;
+
+            if ((NULL != pListenMessage) && (0 == pListenMessage->status) && (socket == gStateMachineData.udpServerSocket)) {
+                accept(gStateMachineData.pTcpServerData->serverSocket, NULL, NULL);
+            } else {
+                LOG_E("[%s:%d]Error Socket Listen", __FILE__, __LINE__);
+                SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
+            }
+            break;
+        }
+        case SOCKET_MSG_ACCEPT:
+        {
+            tstrSocketAcceptMsg *pAcceptMessage = (tstrSocketAcceptMsg*)pMessage;
+
+            if (NULL != pAcceptMessage)
+            {
+                char s[20];
+                if (gStateMachineData.pTcpServerData->client.clientSocket > 0) // close any open client (only one client supported at one time)
+                {
+                    shutdown(gStateMachineData.pTcpServerData->client.clientSocket);
+                }
+
+                gStateMachineData.pTcpServerData->client.clientSocket = pAcceptMessage->sock;
+                LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof(s)), _ntohs(pAcceptMessage->strAddr.sin_port));
+                recv(gStateMachineData.pTcpServerData->client.clientSocket, gStateMachineData.pTcpServerData->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
+
+            }
+            else
+            {
+                LOG_E("[%s:%d]Error Socket accept", __FILE__, __LINE__);
+                SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
             }
             break;
         }
@@ -115,17 +170,17 @@ static void udpSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMe
             tstrSocketRecvMsg *pstrRx = (tstrSocketRecvMsg*) pMessage;
             if (pstrRx->s16BufferSize > 0) {
                 //get the remote host address and port number
-                uint16_t u16port =_htons(pstrRx->strRemoteAddr.sin_port);
+                uint16_t u16port = _htons(pstrRx->strRemoteAddr.sin_port);
                 uint32_t strRemoteHostAddr = pstrRx->strRemoteAddr.sin_addr.s_addr;
                 char s[20];
                 inet_ntop(AF_INET, &strRemoteHostAddr, s, sizeof (s));
                 LOG_D("\r\nReceived frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
-                LOG_D("Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);                
-                uint16_t announcePacktLen=UDP_BUFFER_SIZE;
-                WifiApi_FormUdpAnnouncePacketCallback(gStateMachineData.wifiSettings,udpBuffer,&announcePacktLen);
+                LOG_D("Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
+                uint16_t announcePacktLen = UDP_BUFFER_SIZE;
+                WifiApi_FormUdpAnnouncePacketCallback(gStateMachineData.wifiSettings, udpBuffer, &announcePacktLen);
                 struct sockaddr_in addr;
                 addr.sin_family = AF_INET;
-                addr.sin_port = _htons(UDP_LISTEN_PORT);//pstrRx->strRemoteAddr.sin_port;
+                addr.sin_port = _htons(UDP_LISTEN_PORT); //pstrRx->strRemoteAddr.sin_port;
                 addr.sin_addr.s_addr = inet_addr(s);
                 sendto(gStateMachineData.udpServerSocket, udpBuffer, announcePacktLen, 0, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
                 recvfrom(gStateMachineData.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
@@ -214,16 +269,18 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
     switch (event) {
         case WIFIAPI_CONSUMED_EVENT_ENTRY:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
+            pInstance->pTcpServerData=&gTcpServerData; //TODO(Daqifi): Remove from there here
+            TcpServer_Initialize(pInstance->pTcpServerData);
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
-            SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);            
+            SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
             break;
         case WIFIAPI_CONSUMED_EVENT_INIT:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
                 sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
-            } 
+            }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_READY) {
                 //wait for initialization to complete 
                 SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
@@ -299,7 +356,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                gStateMachineData.wifiSettings.ipAddr.Val= inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
+                gStateMachineData.wifiSettings.ipAddr.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS), inet_addr(DEFAULT_NETWORK_IP_MASK), &DhcpEventCallback)) {
                     SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -325,12 +382,23 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                     break;
                 }
             }
+            if (!GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN)) {  
+                TcpServer_OpenSocket();
+                if (pInstance->pTcpServerData->serverSocket < 0) {
+                    SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
+                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                    break;
+                }
+            }
+            SetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN);
             SetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN);
             break;
         case WIFIAPI_CONSUMED_EVENT_STA_DISCONNECTED:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
             ResetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_STA_CONNECTED);
             CloseUdpSocket(&pInstance->udpServerSocket);
+            TcpServer_CloseSocket();
+            ResetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN);
             ResetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN);
             if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED)) {
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
@@ -350,6 +418,8 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
             }
             if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN))
+                TcpServer_CloseSocket();
             break;
         case WIFIAPI_CONSUMED_EVENT_UDP_SOCKET_CONNECTED:
             SetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_CONNECTED);
@@ -357,6 +427,12 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
         case WIFIAPI_CONSUMED_EVENT_EXIT:
             xQueueReset(gEventQH);
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
+            break;
+        case WIFIAPI_CONSUMED_EVENT_ERROR:
+            SendEvent(WIFIAPI_CONSUMED_EVENT_REINIT);
+            LOG_E("[%s:%d]Error WiFi", __FILE__, __LINE__);
+            break;
+        default:
             break;
     }
     return returnStatus;
@@ -373,6 +449,8 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
 //SYSTem:COMMunicate:LAN:SSID "Typical_G"
 //SYSTem:COMMunicate:LAN:PASs "Arghya@19"
 //SYSTem:COMMunicate:LAN:APPLY 1
+//SYSTem:LOG?
+
 bool WifiApi_Init(WifiSettings * pSettings) {
     //TODO(Daqifi): Uncomment this part
     //    const tPowerData *pPowerState = BoardData_Get(                          
@@ -389,12 +467,12 @@ bool WifiApi_Init(WifiSettings * pSettings) {
     else return true;
     if (pSettings != NULL)
         memcpy(&gStateMachineData.wifiSettings, pSettings, sizeof (WifiSettings));
-//TODO(Daqifi): Remove this comment
-//    gStateMachineData.wifiSettings.networkMode=1;
-//    gStateMachineData.wifiSettings.securityMode=2;
-//    strcpy(gStateMachineData.wifiSettings.ssid,"Typical_G");
-//    strcpy((char*)gStateMachineData.wifiSettings.passKey,"Arghya@19");
-//    gStateMachineData.wifiSettings.passKeyLength=strlen("Arghya@19");
+    //TODO(Daqifi): Remove this comment
+    //    gStateMachineData.wifiSettings.networkMode=1;
+    //    gStateMachineData.wifiSettings.securityMode=2;
+    //    strcpy(gStateMachineData.wifiSettings.ssid,"Typical_G");
+    //    strcpy((char*)gStateMachineData.wifiSettings.passKey,"Arghya@19");
+    //    gStateMachineData.wifiSettings.passKeyLength=strlen("Arghya@19");
     gStateMachineData.active = MainState;
     gStateMachineData.active(&gStateMachineData, WIFIAPI_CONSUMED_EVENT_ENTRY);
     gStateMachineData.nextState = NULL;

@@ -1,7 +1,6 @@
-build/default/production/_ext/1360937237/app_freertos.o: \
- ../src/app_freertos.c ../src/app_freertos.h \
- ../src/config/default/configuration.h ../src/config/default/user.h \
- ../src/config/default/device.h \
+build/default/production/_ext/1360937237/tcpServer.o: ../src/tcpServer.c \
+ ../src/tcpServer.h ../src/config/default/configuration.h \
+ ../src/config/default/user.h ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/config/default/definitions.h \
  ../src/config/default/crypto/crypto.h \
@@ -111,39 +110,7 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/osal/osal.h \
  ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
- ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
- ../src/config/default/driver/winc/include/wdrv_winc.h \
- ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
- ../src/config/default/driver/winc/include/wdrv_winc_common.h \
- ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
- ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
- ../src/config/default/driver/winc/include/drv/common/nm_common.h \
- ../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h \
- ../src/config/default/driver/winc/include/drv/common/nm_debug.h \
- ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
- ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
- ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
- ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
- ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
- ../src/config/default/driver/winc/include/wdrv_winc_bssctx.h \
- ../src/config/default/driver/winc/include/wdrv_winc_assoc.h \
- ../src/config/default/driver/winc/include/wdrv_winc_systime.h \
- ../src/config/default/driver/winc/include/wdrv_winc_softap.h \
- ../src/config/default/driver/winc/include/wdrv_winc_custie.h \
- ../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h \
- ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
- ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
- ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
- ../src/config/default/driver/winc/include/drv/socket/socket.h \
- ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
- ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
- ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
- ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
- ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
- ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
- ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h \
  ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
  ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
@@ -157,18 +124,17 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h \
- ../src/services/DaqifiPB/DaqifiOutMessage.pb.h \
- ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
- ../src/Util/ArrayWrapper.h ../src/state/data/BoardData.h \
- ../src/Util/HeapList.h ../src/Util/LockProvider.h \
- ../src/services/daqifi_settings.h \
- ../src/config/default/driver/winc/include/wdrv_winc_common.h \
- ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
- ../src/state/runtime/BoardRuntimeConfig.h ../src/HAL/Wifi/WifiApi.h \
- ../src/HAL/Wifi/tcpServer.h ../src/HAL/Wifi/WifiApi.h
+ ../src/Util/CircularBuffer.h ../src/services/SCPI/SCPIInterface.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/scpi.h ../src/Util/Logger.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_common.h \
+ ../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_debug.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h
 
-../src/app_freertos.h:
+../src/tcpServer.h:
 
 ../src/config/default/configuration.h:
 
@@ -398,72 +364,6 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 
 ../src/app_freertos.h:
 
-../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
-
-../src/config/default/driver/winc/include/wdrv_winc.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_bssfind.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_common.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_debug.h:
-
-../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h:
-
-../src/config/default/driver/winc/include/drv/common/nm_common.h:
-
-../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h:
-
-../src/config/default/driver/winc/include/drv/common/nm_debug.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_debug.h:
-
-../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
-
-../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
-
-../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_bssctx.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_assoc.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_systime.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_softap.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_custie.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_sta.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_wps.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
-
-../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h:
-
-../src/config/default/driver/winc/include/drv/driver/ecc_types.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_host_file.h:
-
-../src/config/default/driver/winc/include/drv/driver/m2m_ota.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
-
-../src/services/UsbCdc/UsbCdc.h:
-
 ../src/libraries/microrl/src/microrl.h:
 
 ../src/libraries/microrl/src/config.h:
@@ -494,30 +394,22 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 
 ../src/Util/CircularBuffer.h:
 
-../src/services/DaqifiPB/DaqifiOutMessage.pb.h:
+../src/services/SCPI/SCPIInterface.h:
 
-../src/libraries/nanopb/pb.h:
+../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
 
-../src/services/DaqifiPB/NanoPB_Encoder.h:
+../src/Util/Logger.h:
 
-../src/Util/ArrayWrapper.h:
+../src/config/default/driver/winc/include/drv/socket/socket.h:
 
-../src/state/data/BoardData.h:
+../src/config/default/driver/winc/include/drv/common/nm_common.h:
 
-../src/Util/HeapList.h:
+../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h:
 
-../src/Util/LockProvider.h:
+../src/config/default/driver/winc/include/drv/common/nm_debug.h:
 
-../src/services/daqifi_settings.h:
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
 
-../src/config/default/driver/winc/include/wdrv_winc_common.h:
+../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
 
-../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
-
-../src/state/runtime/BoardRuntimeConfig.h:
-
-../src/HAL/Wifi/WifiApi.h:
-
-../src/HAL/Wifi/tcpServer.h:
-
-../src/HAL/Wifi/WifiApi.h:
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:

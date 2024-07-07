@@ -16,10 +16,8 @@
 // Harmony
 #include "configuration.h"
 #include "definitions.h"
-
-#include "state/data/BoardData.h"
-#include "state/runtime/BoardRuntimeConfig.h"
 #include "services/daqifi_settings.h"
+#include "tcpServer.h"
 #ifdef	__cplusplus
 extern "C" {
 #endif

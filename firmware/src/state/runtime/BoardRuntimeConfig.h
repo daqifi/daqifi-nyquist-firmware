@@ -12,6 +12,7 @@
 //#include "HAL/Power/PowerApi.h"
 //#include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
+#include "HAL/Wifi/WifiApi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,8 +78,8 @@ typedef struct sBoardRuntimeConfig
     DaqifiSettings wifiSettings;
     //!The desired USB settings
     UsbCdcData_t usbSettings;
-    //!The TCP server state
-    //TcpServerData serverData;
+//    !The TCP server state
+    TcpServerData serverData;
 } tBoardRuntimeConfig;
 
 /*!

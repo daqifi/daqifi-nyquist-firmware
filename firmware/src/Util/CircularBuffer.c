@@ -186,6 +186,15 @@ uint16_t CircularBuf_AddBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint16_t
 
     return numBytesCopied;
 }
+void CircularBuf_Reset(CircularBuf_t* cirbuf)
+{
+    if (cirbuf != NULL) {
+        // Reset the insert and remove pointers to the start of the buffer
+        cirbuf->insertPtr = cirbuf->removePtr = cirbuf->buf_ptr;
+        // Reset the total byte count to zero
+        cirbuf->totalBytes = 0;
+    }
+}
 /* *****************************************************************************
  End of File
  */

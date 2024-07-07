@@ -301,6 +301,7 @@
         </logicalFolder>
         <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
           <itemPath>../src/HAL/Wifi/WifiApi.h</itemPath>
+          <itemPath>../src/HAL/Wifi/tcpServer.h</itemPath>
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
@@ -353,6 +354,9 @@
           <itemPath>../src/services/SCPI/SCPIDIO.h</itemPath>
           <itemPath>../src/services/SCPI/SCPIInterface.h</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="TcpServer" displayName="TcpServer" projectFiles="true">
+          <itemPath>../src/tcpServer.h</itemPath>
         </logicalFolder>
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.h</itemPath>
@@ -779,6 +783,7 @@
         </logicalFolder>
         <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
           <itemPath>../src/HAL/Wifi/WifiApi.c</itemPath>
+          <itemPath>../src/HAL/Wifi/tcpServer.c</itemPath>
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">

@@ -67,7 +67,7 @@ const void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
         case BOARDRUNTIME_USB_SETTINGS:
             return &pBoardRuntimeConfig.usbSettings; 
         case BOARDRUNTIME_SERVER_DATA:
-            //return &pBoardRuntimeConfig.serverData;
+            return &pBoardRuntimeConfig.serverData;
         case BOARDRUNTIMECONFIG_NUM_OF_ELEMENTS:
         default:
             return NULL;
