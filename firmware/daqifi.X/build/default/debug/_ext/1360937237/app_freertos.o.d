@@ -164,7 +164,8 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
- ../src/state/runtime/BoardRuntimeConfig.h ../src/HAL/Wifi/WifiApi.h
+ ../src/state/runtime/BoardRuntimeConfig.h ../src/HAL/Wifi/WifiApi.h \
+ ../src/HAL/Wifi/tcpServer.h ../src/HAL/Wifi/WifiApi.h
 
 ../src/app_freertos.h:
 
@@ -513,5 +514,9 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 ../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
 
 ../src/state/runtime/BoardRuntimeConfig.h:
+
+../src/HAL/Wifi/WifiApi.h:
+
+../src/HAL/Wifi/tcpServer.h:
 
 ../src/HAL/Wifi/WifiApi.h:

@@ -110,8 +110,7 @@ build/default/debug/_ext/590017803/WifiApi.o: ../src/HAL/Wifi/WifiApi.c \
  ../src/config/default/system/dma/sys_dma.h \
  ../src/config/default/osal/osal.h \
  ../src/config/default/system/debug/sys_debug.h ../src/app_freertos.h \
- ../src/state/data/BoardData.h ../src/Util/HeapList.h \
- ../src/Util/LockProvider.h ../src/services/daqifi_settings.h \
+ ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
@@ -124,8 +123,7 @@ build/default/debug/_ext/590017803/WifiApi.o: ../src/HAL/Wifi/WifiApi.c \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
- ../src/state/runtime/BoardRuntimeConfig.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
+ ../src/HAL/Wifi/tcpServer.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h \
  ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
  ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
@@ -139,7 +137,7 @@ build/default/debug/_ext/590017803/WifiApi.o: ../src/HAL/Wifi/WifiApi.c \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h ../src/Util/ArrayWrapper.h \
+ ../src/Util/CircularBuffer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -394,12 +392,6 @@ build/default/debug/_ext/590017803/WifiApi.o: ../src/HAL/Wifi/WifiApi.c \
 
 ../src/app_freertos.h:
 
-../src/state/data/BoardData.h:
-
-../src/Util/HeapList.h:
-
-../src/Util/LockProvider.h:
-
 ../src/services/daqifi_settings.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
@@ -426,9 +418,7 @@ build/default/debug/_ext/590017803/WifiApi.o: ../src/HAL/Wifi/WifiApi.c \
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
-../src/state/runtime/BoardRuntimeConfig.h:
-
-../src/services/UsbCdc/UsbCdc.h:
+../src/HAL/Wifi/tcpServer.h:
 
 ../src/libraries/microrl/src/microrl.h:
 
@@ -459,8 +449,6 @@ build/default/debug/_ext/590017803/WifiApi.o: ../src/HAL/Wifi/WifiApi.c \
 ../src/libraries/scpi/libscpi/inc/scpi/expression.h:
 
 ../src/Util/CircularBuffer.h:
-
-../src/Util/ArrayWrapper.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 

@@ -116,13 +116,14 @@ void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings settings, uint8_t* pBuff
 }
 
 void wifi_task(void* p_arg) {
-    DaqifiSettings LoadSettings = {0};
-
+    DaqifiSettings loadSettings = {0};
+    
     //daqifi_settings_SaveToNvm(&saveSettings);
-    daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &LoadSettings);
+    daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &loadSettings);
+    loadSettings.settings.wifi.tcpPort=30304;
     //    uint8_t sampleStr[NVM_FLASH_ROWSIZE+1]="This is a test string i am trying to write into nvm";
     //    nvm_WriteRowtoAddr(WIFI_SETTINGS_ADDR,sampleStr);
-    WifiApi_Init(&LoadSettings.settings.wifi);
+    WifiApi_Init(&loadSettings.settings.wifi);
     while (1) {
         WifiApi_Dispatcher();
         vTaskDelay(5);

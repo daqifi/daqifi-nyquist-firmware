@@ -83,6 +83,8 @@ typedef struct s_TcpClientData
 
     /** The associated SCPI context */
     scpi_t scpiContext;
+    
+    bool tcpSendPending;
 } TcpClientData;
 
 /**
