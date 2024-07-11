@@ -4,24 +4,16 @@
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
         <group>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/usb/src/usb_device.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/drv/socket/netinet_in.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/UsbCdc/UsbCdc.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/drv/driver/m2m_wifi.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/wdrv_winc_socket.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/wolfssl/wolfssl/wolfcrypt/src/cryptocb.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/drv/socket/inet_ntop.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Wifi/WifiApi.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Wifi/WifiApi.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/daqifi_settings.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/app_freertos.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/drv/socket/socket.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/libraries/microrl/src/microrl.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPILAN.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/freertos_hooks.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Wifi/tcpServer.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/spi/src/drv_spi.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Wifi/tcpServer.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/Util/Logger.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/wdrv_winc.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/wdrv_winc_socket.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/drv/socket/socket.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/usb/usbhs/src/plib_usbhs_header.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/drv/socket/socket.h</file>
         </group>
     </open-files>
 </project-private>

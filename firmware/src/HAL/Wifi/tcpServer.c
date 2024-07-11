@@ -28,7 +28,7 @@ bool TcpServer_ProcessReceivedBuff();
 static bool TcpServer_Flush() {
     int16_t sockRet;
     bool funRet = false;
-    if (gpServerData->client.clientSocket <= 0) {
+    if (gpServerData->client.clientSocket < 0) {
         return false;
     }
     do {
@@ -37,7 +37,7 @@ static bool TcpServer_Flush() {
             vTaskDelay(TCPSERVER_EWOULDBLOCK_ERROR_TIMEOUT);
         }
 
-    } while (sockRet != SOCK_ERR_NO_ERROR || sockRet != SOCK_ERR_CONN_ABORTED);
+    } while (sockRet != SOCK_ERR_NO_ERROR && sockRet != SOCK_ERR_CONN_ABORTED);
 
 
     if (sockRet == SOCK_ERR_CONN_ABORTED) {

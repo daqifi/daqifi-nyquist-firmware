@@ -111,7 +111,7 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
     }
 }
 
-static void udpSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
+static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
 #define UDP_BUFFER_SIZE 1460
     static uint8_t udpBuffer[UDP_BUFFER_SIZE];
     switch (messageType) {
@@ -145,22 +145,19 @@ static void udpSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMe
         }
         case SOCKET_MSG_ACCEPT:
         {
-            tstrSocketAcceptMsg *pAcceptMessage = (tstrSocketAcceptMsg*)pMessage;
+            tstrSocketAcceptMsg *pAcceptMessage = (tstrSocketAcceptMsg*) pMessage;
 
-            if (NULL != pAcceptMessage)
-            {
+            if (NULL != pAcceptMessage) {
                 char s[20];
-                if (gStateMachineData.pTcpServerData->client.clientSocket > 0) // close any open client (only one client supported at one time)
+                if (gStateMachineData.pTcpServerData->client.clientSocket >= 0) // close any open client (only one client supported at one time)
                 {
                     TcpServer_CloseClientSocket();
                 }
                 gStateMachineData.pTcpServerData->client.clientSocket = pAcceptMessage->sock;
-                LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof(s)), pAcceptMessage->strAddr.sin_port);
+                LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
                 recv(gStateMachineData.pTcpServerData->client.clientSocket, gStateMachineData.pTcpServerData->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
 
-            }
-            else
-            {
+            } else {
                 LOG_E("[%s:%d]Error Socket accept", __FILE__, __LINE__);
                 SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
             }
@@ -168,21 +165,18 @@ static void udpSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMe
         }
         case SOCKET_MSG_RECV:
         {
-            tstrSocketRecvMsg *pRecvMessage = (tstrSocketRecvMsg*)pMessage;
+            tstrSocketRecvMsg *pRecvMessage = (tstrSocketRecvMsg*) pMessage;
 
-            if ((NULL != pRecvMessage) && (pRecvMessage->s16BufferSize > 0))
-            {
+            if ((NULL != pRecvMessage) && (pRecvMessage->s16BufferSize > 0)) {
                 LOG_D("Receive on socket %d successful\r\n", socket);
                 LOG_D("Client sent %d bytes\r\n", pRecvMessage->s16BufferSize);
                 LOG_D("Client sent %s\r\n", pRecvMessage->pu8Buffer);
                 LOG_D("Sending a test message to client\r\n");
-                gStateMachineData.pTcpServerData->client.readBufferLength=pRecvMessage->s16BufferSize;
-                TcpServer_ProcessReceivedBuff();                
+                gStateMachineData.pTcpServerData->client.readBufferLength = pRecvMessage->s16BufferSize;
+                TcpServer_ProcessReceivedBuff();
                 recv(gStateMachineData.pTcpServerData->client.clientSocket, gStateMachineData.pTcpServerData->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
-                
-            }
-            else
-            {
+
+            } else {
                 LOG_E("[%s:%d]Error Socket MSG Recv", __FILE__, __LINE__);
                 TcpServer_CloseClientSocket();
             }
@@ -217,7 +211,7 @@ static void udpSocketEventCallback(SOCKET socket, uint8_t messageType, void *pMe
             break;
         }
         case SOCKET_MSG_SEND:
-            gStateMachineData.pTcpServerData->client.tcpSendPending=0;
+            gStateMachineData.pTcpServerData->client.tcpSendPending = 0;
             break;
         default:
         {
@@ -294,12 +288,13 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
     switch (event) {
         case WIFIAPI_CONSUMED_EVENT_ENTRY:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
-            pInstance->pTcpServerData=&gTcpServerData; //TODO(Daqifi): Remove from there here
+            pInstance->pTcpServerData = &gTcpServerData; //TODO(Daqifi): Remove from there here
             TcpServer_Initialize(pInstance->pTcpServerData);
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
+           
             break;
         case WIFIAPI_CONSUMED_EVENT_INIT:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
@@ -395,7 +390,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
 
                 SetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_AP_STARTED);
             }
-            WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &udpSocketEventCallback);
+            WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
             break;
         case WIFIAPI_CONSUMED_EVENT_STA_CONNECTED:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
@@ -407,7 +402,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                     break;
                 }
             }
-            if (!GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN)) {  
+            if (!GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN)) {
                 TcpServer_OpenSocket(pInstance->wifiSettings.tcpPort);
                 if (pInstance->pTcpServerData->serverSocket < 0) {
                     SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
@@ -425,26 +420,21 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
             TcpServer_CloseSocket();
             ResetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN);
             ResetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN);
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED)) {
-                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
-                    SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
-                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-                    break;
-                }
-            }
+            SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
             break;
         case WIFIAPI_CONSUMED_EVENT_REINIT:
             returnStatus = WIFIAPI_EVENT_STATUS_TRAN;
             pInstance->nextState = MainState;
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
+                CloseUdpSocket(&pInstance->udpServerSocket);
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN))
+                TcpServer_CloseSocket();
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
                 WDRV_WINC_Close(pInstance->wdrvHandle);
                 WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
                 LOG_D("WiFi de-initializing\r\n");
             }
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
-                CloseUdpSocket(&pInstance->udpServerSocket);
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN))
-                TcpServer_CloseSocket();
+
             break;
         case WIFIAPI_CONSUMED_EVENT_UDP_SOCKET_CONNECTED:
             SetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_CONNECTED);
