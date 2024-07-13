@@ -18,19 +18,19 @@ void InitBoardRuntimeConfig(int boardVariant)
     switch (boardVariant)
     {
     case 3:
-        memcpy(         &pBoardRuntimeConfig,                               \
-                        &g_NQ3BoardRuntimeConfig,                           \
+        memcpy(         &pBoardRuntimeConfig,                               
+                        &g_NQ3BoardRuntimeConfig,                           
                         sizeof(tBoardRuntimeConfig));
         break;
     case 2:
-        memcpy(         &pBoardRuntimeConfig,                               \
-                        &g_NQ2BoardRuntimeConfig,                           \
+        memcpy(         &pBoardRuntimeConfig,                               
+                        &g_NQ2BoardRuntimeConfig,                           
                         sizeof(tBoardRuntimeConfig));
         break;
     case 1: // Everything else is an NQ1
     default:
-        memcpy(         &pBoardRuntimeConfig,                               \
-                        &g_NQ1BoardRuntimeConfig,                           \
+        memcpy(         &pBoardRuntimeConfig,                               
+                        &g_NQ1BoardRuntimeConfig,                           
                         sizeof(tBoardRuntimeConfig));
         break;
     }
@@ -43,7 +43,7 @@ void InitBoardRuntimeConfig(int boardVariant)
  * specified here for getting a specific member of the array
  * @return Parameter which is part of the global Board Configuration structure
  */
-const void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
+void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
 {
     switch( parameter ){
         case BOARDRUNTIMECONFIG_ALL_CONFIG:
@@ -66,8 +66,6 @@ const void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
              return &pBoardRuntimeConfig.wifiSettings;
         case BOARDRUNTIME_USB_SETTINGS:
             return &pBoardRuntimeConfig.usbSettings; 
-        case BOARDRUNTIME_SERVER_DATA:
-            return &pBoardRuntimeConfig.serverData;
         case BOARDRUNTIMECONFIG_NUM_OF_ELEMENTS:
         default:
             return NULL;

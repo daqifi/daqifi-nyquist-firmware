@@ -32,11 +32,13 @@ typedef enum {
 #define DEFAULT_NETWORK_IP_ADDRESS		"0.0.0.0" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_IP_MASK	"255.255.255.0" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_GATEWAY_IP_ADDRESS	"192.168.1.1" //TODO(Daqifi): Relocate in proper place
-//#define DEFAULT_NETWORK_DEFAULT_DNS		"192.168.1.1" //TODO(Daqifi): Relocate in proper place
-//#define DEFAULT_NETWORK_DEFAULT_SECOND_DNS	"0.0.0.0"  //TODO(Daqifi): Relocate in proper place
+#define DEFAULT_TCP_PORT 9760 //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_HOST_NAME	    "NYQUIST"  //TODO(Daqifi): Relocate in proper place
 #define DNS_CLIENT_MAX_HOSTNAME_LEN			32
 
+#define BOARD_HARDWARE_REV  "2.0.0" //TODO(Daqifi) : Relocate to proper location
+#define BOARD_FIRMWARE_REV "1.0.3"  //TODO(Daqifi) : Relocate to proper location
+#define BOARD_VARIANT       1       //TODO(Daqifi) : Relocate to proper location
 #define MAX_AV_NETWORK_SSID 8
 
 typedef union {
@@ -114,16 +116,6 @@ extern "C" {
         uint8_t networkMode;
 
         /**
-         * The number of available networks after scan
-         */
-        uint8_t av_num;
-
-        //        /**
-        //         * The available network types
-        //         */
-        //        uint8_t av_networkType[MAX_AV_NETWORK_SSID];
-
-        /**
          * The network ssid
          */
         char ssid[WDRV_WINC_MAX_SSID_LEN + 1];
@@ -134,16 +126,6 @@ extern "C" {
         uint8_t ssid_str;
 
         /**
-         * The available network SSIDs
-         */
-        char av_ssid[MAX_AV_NETWORK_SSID][WDRV_WINC_MAX_SSID_LEN + 1]; // This should match the definition in protobuf
-
-        /**
-         * The available network ssid strengths
-         */
-        uint8_t av_ssid_str[MAX_AV_NETWORK_SSID];
-
-        /**
          * One of:
          * 
          * WDRV_WINC_AUTH_TYPE_OPEN,
@@ -151,11 +133,6 @@ extern "C" {
          *  
          */
         uint8_t securityMode;
-
-        /**
-         * The available network security modes
-         */
-        uint8_t av_securityMode[MAX_AV_NETWORK_SSID];
 
         /**
          * The length of the passkey
@@ -186,12 +163,6 @@ extern "C" {
          * The ip gateway
          */
         IPV4_ADDR gateway;
-
-        /**
-         * The primary dns
-         */
-        IPV4_ADDR priDns;
-
 
         /**
          * The port to open for incoming TCP connections

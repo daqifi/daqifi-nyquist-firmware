@@ -11,6 +11,7 @@ typedef enum {
     WIFIAPI_CONSUMED_EVENT_EXIT,
     WIFIAPI_CONSUMED_EVENT_INIT,
     WIFIAPI_CONSUMED_EVENT_REINIT,
+    WIFIAPI_CONSUMED_EVENT_DEINIT,
     WIFIAPI_CONSUMED_EVENT_STA_CONNECTED,
     WIFIAPI_CONSUMED_EVENT_STA_DISCONNECTED,
     WIFIAPI_CONSUMED_EVENT_UDP_SOCKET_CONNECTED,
@@ -52,7 +53,7 @@ struct stateMachineInst {
     stateMachineHandle_t nextState;
     stateMachineHandle_t childState;
     wifiApi_eventFlagState_t eventFlags;
-    WifiSettings wifiSettings;
+    WifiSettings *pWifiSettings;
     DRV_HANDLE wdrvHandle;
     SOCKET udpServerSocket;
     TcpServerData *pTcpServerData;
@@ -86,7 +87,7 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
     UNUSED(s);
     if (GetEventFlagStatus(gStateMachineData.eventFlags, WIFIAPI_EVENT_FLAG_STA_STARTED)) {
-        gStateMachineData.wifiSettings.ipAddr.Val = ipAddress;
+        gStateMachineData.pWifiSettings->ipAddr.Val = ipAddress;
     }
     LOG_D("STA Mode: Station IP address is %s\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
 }
@@ -194,7 +195,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 LOG_D("\r\nReceived frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
                 LOG_D("Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
                 uint16_t announcePacktLen = UDP_BUFFER_SIZE;
-                WifiApi_FormUdpAnnouncePacketCallback(gStateMachineData.wifiSettings, udpBuffer, &announcePacktLen);
+                WifiApi_FormUdpAnnouncePacketCallback(gStateMachineData.pWifiSettings, udpBuffer, &announcePacktLen);
                 struct sockaddr_in addr;
                 addr.sin_family = AF_INET;
                 addr.sin_port = _htons(UDP_LISTEN_PORT); //pstrRx->strRemoteAddr.sin_port;
@@ -286,15 +287,15 @@ static bool SendEvent(WifiApi_consumedEvent_t event) {
 static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event) {
     WifiApi_eventStatus_t returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
     switch (event) {
-        case WIFIAPI_CONSUMED_EVENT_ENTRY:
+        case WIFIAPI_CONSUMED_EVENT_ENTRY:            
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
             pInstance->pTcpServerData = &gTcpServerData; //TODO(Daqifi): Remove from there here
             TcpServer_Initialize(pInstance->pTcpServerData);
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
-            SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
-           
+            if(pInstance->pWifiSettings->isEnabled)
+                SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);            
             break;
         case WIFIAPI_CONSUMED_EVENT_INIT:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
@@ -307,7 +308,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                 break;
             }
             pInstance->wdrvHandle = WDRV_WINC_Open(0, 0);
-            WDRV_WINC_EthernetAddressGet(pInstance->wdrvHandle, pInstance->wifiSettings.macAddr.addr);
+            WDRV_WINC_EthernetAddressGet(pInstance->wdrvHandle, pInstance->pWifiSettings->macAddr.addr);
             if (pInstance->wdrvHandle == DRV_HANDLE_INVALID) {
                 SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                 LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -318,8 +319,8 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                 LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                 break;
             }
-            if (pInstance->wifiSettings.networkMode == WIFI_API_NETWORK_MODE_STA) {
-                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&pInstance->bssCtx, (uint8_t*) pInstance->wifiSettings.ssid, strlen(pInstance->wifiSettings.ssid))) {
+            if (pInstance->pWifiSettings->networkMode == WIFI_API_NETWORK_MODE_STA) {
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&pInstance->bssCtx, (uint8_t*) pInstance->pWifiSettings->ssid, strlen(pInstance->pWifiSettings->ssid))) {
                     SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
@@ -329,14 +330,14 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                if (pInstance->wifiSettings.securityMode == WDRV_WINC_AUTH_TYPE_OPEN) {
+                if (pInstance->pWifiSettings->securityMode == WDRV_WINC_AUTH_TYPE_OPEN) {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&pInstance->authCtx)) {
                         SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                         LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
-                } else if (pInstance->wifiSettings.securityMode == WDRV_WINC_AUTH_TYPE_WPA_PSK) {
-                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&pInstance->authCtx, (uint8_t*) pInstance->wifiSettings.passKey, pInstance->wifiSettings.passKeyLength)) {
+                } else if (pInstance->pWifiSettings->securityMode == WDRV_WINC_AUTH_TYPE_WPA_PSK) {
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&pInstance->authCtx, (uint8_t*) pInstance->pWifiSettings->passKey, pInstance->pWifiSettings->passKeyLength)) {
                         SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                         LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
@@ -376,7 +377,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                gStateMachineData.wifiSettings.ipAddr.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
+                gStateMachineData.pWifiSettings->ipAddr.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS), inet_addr(DEFAULT_NETWORK_IP_MASK), &DhcpEventCallback)) {
                     SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -403,7 +404,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                 }
             }
             if (!GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN)) {
-                TcpServer_OpenSocket(pInstance->wifiSettings.tcpPort);
+                TcpServer_OpenSocket(pInstance->pWifiSettings->tcpPort);
                 if (pInstance->pTcpServerData->serverSocket < 0) {
                     SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -435,6 +436,19 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                 LOG_D("WiFi de-initializing\r\n");
             }
 
+            break;
+        case WIFIAPI_CONSUMED_EVENT_DEINIT:
+            returnStatus = WIFIAPI_EVENT_STATUS_TRAN;
+            pInstance->nextState = MainState;
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
+                CloseUdpSocket(&pInstance->udpServerSocket);
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN))
+                TcpServer_CloseSocket();
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
+                WDRV_WINC_Close(pInstance->wdrvHandle);
+                WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                LOG_D("WiFi de-initializing\r\n");
+            }
             break;
         case WIFIAPI_CONSUMED_EVENT_UDP_SOCKET_CONNECTED:
             SetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_CONNECTED);
@@ -481,36 +495,36 @@ bool WifiApi_Init(WifiSettings * pSettings) {
         gEventQH = xQueueCreate(20, sizeof (WifiApi_consumedEvent_t));
     else return true;
     if (pSettings != NULL)
-        memcpy(&gStateMachineData.wifiSettings, pSettings, sizeof (WifiSettings));
+        gStateMachineData.pWifiSettings=pSettings;
     //TODO(Daqifi): Remove this comment
     //    gStateMachineData.wifiSettings.networkMode=1;
     //    gStateMachineData.wifiSettings.securityMode=2;
     //    strcpy(gStateMachineData.wifiSettings.ssid,"Typical_G");
     //    strcpy((char*)gStateMachineData.wifiSettings.passKey,"Arghya@19");
     //    gStateMachineData.wifiSettings.passKeyLength=strlen("Arghya@19");
-    gStateMachineData.active = MainState;
+    gStateMachineData.pWifiSettings->isEnabled=1;
+    gStateMachineData.active = MainState;    
     gStateMachineData.active(&gStateMachineData, WIFIAPI_CONSUMED_EVENT_ENTRY);
     gStateMachineData.nextState = NULL;
     return true;
 }
 
-//bool WifiApi_Deinit() {
-//    //TODO(Daqifi): Uncomment this part
-//    //    const tPowerData *pPowerState = BoardData_Get(                          
-//    //              BOARDATA_POWER_DATA,                                          
-//    //              0 );
-//    //    if( NULL != pPowerState &&                                              
-//    //        pPowerState->powerState <  POWERED_UP )
-//    //    {
-//    //        LogMessage("Board must be powered-on for WiFi operations\n\r");
-//    //        return false;
-//    //    }
-//
-//    wifiDeinit();
-//    gWifiState = WIFIAPI_TASK_STATE_DEINITIALIZING;
-//    return true;
-//}
-//
+bool WifiApi_Deinit() {
+    //TODO(Daqifi): Uncomment this part
+    //    const tPowerData *pPowerState = BoardData_Get(                          
+    //              BOARDATA_POWER_DATA,                                          
+    //              0 );
+    //    if( NULL != pPowerState &&                                              
+    //        pPowerState->powerState <  POWERED_UP )
+    //    {
+    //        LogMessage("Board must be powered-on for WiFi operations\n\r");
+    //        return false;
+    //    }
+    gStateMachineData.pWifiSettings->isEnabled=0;
+    SendEvent(WIFIAPI_CONSUMED_EVENT_DEINIT);
+    return true;
+}
+
 
 bool WifiApi_UpdateNetworkSettings(WifiSettings * pSettings) {
     //TODO(Daqifi): Uncomment this part
@@ -523,12 +537,15 @@ bool WifiApi_UpdateNetworkSettings(WifiSettings * pSettings) {
     //        LogMessage("Board must be powered-on for WiFi operations\n\r");
     //        return false;
     //    }
-    if (pSettings != NULL)
-        memcpy(&gStateMachineData.wifiSettings, pSettings, sizeof (WifiSettings));
+    if (pSettings != NULL && gStateMachineData.pWifiSettings!=NULL){
+        memcpy(gStateMachineData.pWifiSettings,pSettings,sizeof(WifiSettings));
+    }
     SendEvent(WIFIAPI_CONSUMED_EVENT_REINIT);
     return true;
 }
-
+ size_t WifiApi_WriteToBuffer(const char* pData, size_t len){
+     return TcpServer_WriteBuffer(pData, len);
+ }
 void WifiApi_Dispatcher() {
     WifiApi_consumedEvent_t event;
     WifiApi_eventStatus_t ret;

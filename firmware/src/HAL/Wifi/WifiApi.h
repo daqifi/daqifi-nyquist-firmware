@@ -22,7 +22,7 @@
 extern "C" {
 #endif
 
-    void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings settings, uint8_t* pBuff, uint16_t *len);
+    void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len);
     void WifiApi_Dispatcher();
     /**
      * Applies provided network settings (and resets the wifi connection)
@@ -41,9 +41,7 @@ extern "C" {
      */
     bool WifiApi_Deinit();
     bool WifiApi_ReInit();
-    
-
-
+    size_t WifiApi_WriteToBuffer(const char* data, size_t len);
 
 
 #ifdef	__cplusplus

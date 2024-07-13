@@ -48,7 +48,7 @@ void InitializeBoardData(tBoardData* boardData)
 //    boardData->UIReadVars.LED1 = false;
 //    boardData->UIReadVars.LED2 = false;
 //    boardData->UIReadVars.button = false;
-    boardData->wifiSettings.type = DaqifiSettings_Wifi;
+
     
 }
 
@@ -59,7 +59,7 @@ void InitializeBoardData(tBoardData* boardData)
  * specified here for getting a specific member of the array
  * @return Parameter which is part of the global Board Configuration structure
  */
-const void *BoardData_Get(                                                  
+void *BoardData_Get(                                                  
                             enum eBoardData parameter,                      
                             uint8_t index )
 {

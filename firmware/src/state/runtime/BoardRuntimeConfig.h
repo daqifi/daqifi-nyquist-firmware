@@ -42,8 +42,6 @@ enum eBoardRunTimeParameter{
     BOARDRUNTIME_WIFI_SETTINGS, 
     //! Desired USB settings in runtime 
     BOARDRUNTIME_USB_SETTINGS, 
-    //! Runtime TCP server state
-    BOARDRUNTIME_SERVER_DATA,
     //! Number of elements
     BOARDRUNTIMECONFIG_NUM_OF_ELEMENTS
 };
@@ -75,11 +73,9 @@ typedef struct sBoardRuntimeConfig
     //! Streaming configuration parameters
     //StreamingRuntimeConfig StreamingConfig;
     //! The desired wifi settings
-    DaqifiSettings wifiSettings;
+    WifiSettings wifiSettings;
     //!The desired USB settings
     UsbCdcData_t usbSettings;
-//    !The TCP server state
-    TcpServerData serverData;
 } tBoardRuntimeConfig;
 
 /*!
@@ -93,7 +89,7 @@ void InitBoardRuntimeConfig(int boardVariant);
  * @param[in] parameter Parameter to be get
  * @return Parameter which is part of the global Board Configuration structure
  */
-const void *BoardRunTimeConfig_Get( enum eBoardRunTimeParameter parameter ); 
+void *BoardRunTimeConfig_Get( enum eBoardRunTimeParameter parameter ); 
     
 /**
  * The Nyquist 1 board configuration

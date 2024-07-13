@@ -358,6 +358,10 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
                         const NanopbFlagsArray* fields,                     \
                         uint8_t* ppBuffer)
 {
+    DaqifiSettings tmpTopLevelSettings;
+    daqifi_settings_LoadFromNvm(
+            DaqifiSettings_TopLevelSettings,
+            &tmpTopLevelSettings);
 //    tBoardConfig * pBoardConfig = BoardConfig_Get(                          
 //                        BOARDCONFIG_ALL_CONFIG,                             
 //                        0 );
@@ -527,7 +531,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_ip_addr = true;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                WifiSettings* wifiSettings = &state->wifiSettings;
                 memcpy(message.ip_addr.bytes, wifiSettings->ipAddr.v, 4);
                 message.ip_addr.size = 4;
                 break;
@@ -536,7 +540,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_net_mask = true;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                WifiSettings* wifiSettings = &state->wifiSettings;
                 memcpy(message.net_mask.bytes, wifiSettings->ipMask.v, 4);
                 message.net_mask.size = 4;
                 break;
@@ -545,18 +549,15 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_gateway = true;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                WifiSettings* wifiSettings = &state->wifiSettings;
                 memcpy(message.gateway.bytes, wifiSettings->gateway.v, 4);
                 message.gateway.size = 4;
 				break;
             }
             case DaqifiOutMessage_primary_dns_tag:
             {
-                message.has_primary_dns = true;
-                
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                memcpy(message.primary_dns.bytes, wifiSettings->priDns.v, 4);
-                message.primary_dns.size = 4;
+                message.has_primary_dns = false;                
+               
 				break;
             }
             case DaqifiOutMessage_secondary_dns_tag:
@@ -569,7 +570,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_mac_addr = true;
                                
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                WifiSettings* wifiSettings = &state->wifiSettings;
                 memcpy(message.mac_addr.bytes, wifiSettings->macAddr.addr, 6);
                 message.mac_addr.size = 6;
                 
@@ -619,7 +620,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_device_port = true;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                WifiSettings* wifiSettings = &state->wifiSettings;
                 message.device_port = wifiSettings->tcpPort;
                 
                 break;
@@ -633,7 +634,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_ssid = true;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                WifiSettings* wifiSettings = &state->wifiSettings;
                 size_t len = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
                 memcpy(message.ssid, wifiSettings->ssid, len);
                 message.ssid[len] = '\0';
@@ -644,7 +645,7 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             {
                 message.has_wifi_security_mode = true;
                 
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+                WifiSettings* wifiSettings = &state->wifiSettings;
                 message.wifi_security_mode = wifiSettings->securityMode;
                 
                 break;
@@ -658,40 +659,40 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             }      
             case DaqifiOutMessage_av_ssid_tag:
             {
-                uint8_t index;
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+//                uint8_t index;
+//                WifiSettings* wifiSettings = &state->wifiSettings;
                 message.av_ssid_count = 0;
-                for(index=0;index<wifiSettings->av_num;index++)
-                {
-                    size_t len = min(strlen(wifiSettings->av_ssid[index]), WDRV_WINC_MAX_SSID_LEN);
-                    memcpy(message.av_ssid[index], wifiSettings->av_ssid[index], len);
-                    message.av_ssid[index][len] = '\0';
-                    message.av_ssid_count++;
-                }
+//                for(index=0;index<wifiSettings->av_num;index++)
+//                {
+//                    size_t len = min(strlen(wifiSettings->av_ssid[index]), WDRV_WINC_MAX_SSID_LEN);
+//                    memcpy(message.av_ssid[index], wifiSettings->av_ssid[index], len);
+//                    message.av_ssid[index][len] = '\0';
+//                    message.av_ssid_count++;
+//                }
                 break;
             }            
             case DaqifiOutMessage_av_ssid_strength_tag:
             {
-                uint8_t index;
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+//                uint8_t index;
+//                WifiSettings* wifiSettings = &state->wifiSettings;
                 message.av_ssid_strength_count = 0;
-                for(index=0;index<wifiSettings->av_num;index++)
-                {
-                    message.av_ssid_strength[index] = wifiSettings->av_ssid_str[index];
-                    message.av_ssid_strength_count++;
-                }
+//                for(index=0;index<wifiSettings->av_num;index++)
+//                {
+//                    message.av_ssid_strength[index] = wifiSettings->av_ssid_str[index];
+//                    message.av_ssid_strength_count++;
+//                }
                 break;
             }                      
             case DaqifiOutMessage_av_wifi_security_mode_tag:
             {
-                uint8_t index;
-                WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
+//                uint8_t index;
+//                WifiSettings* wifiSettings = &state->wifiSettings;
                 message.av_wifi_security_mode_count = 0;
-                for(index=0;index<wifiSettings->av_num;index++)
-                {
-                    message.av_wifi_security_mode[index] = wifiSettings->av_securityMode[index];
-                    message.av_wifi_security_mode_count++;
-                }
+//                for(index=0;index<wifiSettings->av_num;index++)
+//                {
+//                    message.av_wifi_security_mode[index] = wifiSettings->av_securityMode[index];
+//                    message.av_wifi_security_mode_count++;
+//                }
                 break;
             }         
             case DaqifiOutMessage_av_wifi_inf_mode_tag:
@@ -702,22 +703,25 @@ size_t Nanopb_Encode(   tBoardData* state,                                  \
             }                 
             case DaqifiOutMessage_device_pn_tag:
             {
-                message.has_device_pn = true;
-                
-                snprintf(message.device_pn, 4, "Nq%d", 1);
+                message.has_device_pn = true;                
+                snprintf(message.device_pn, 4, "Nq%d", tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
                 break;
             }
             case DaqifiOutMessage_device_hw_rev_tag:
-                message.has_device_hw_rev = true;
-                memcpy(&message.device_hw_rev, "1.0.0", 5);
+                message.has_device_hw_rev = true;                
+                memcpy(&message.device_hw_rev, 
+                        tmpTopLevelSettings.settings.topLevelSettings.boardHardwareRev, 
+                        strlen(tmpTopLevelSettings.settings.topLevelSettings.boardHardwareRev));
 				break;
             case DaqifiOutMessage_device_fw_rev_tag:
-                message.has_device_fw_rev = true;
-                memcpy(&message.device_fw_rev, "1.1.0", 5);
+                message.has_device_fw_rev = true;                
+                memcpy(&message.device_fw_rev, 
+                        tmpTopLevelSettings.settings.topLevelSettings.boardFirmwareRev, 
+                        strlen(tmpTopLevelSettings.settings.topLevelSettings.boardFirmwareRev));
                 break;
             case DaqifiOutMessage_device_sn_tag:
                 message.has_device_sn = true;
-                message.device_sn = 200;
+                message.device_sn = 200; //TODO(Daqifi):Change this properly
                 break;
             default:
                 // Skip unknown fields

@@ -25,11 +25,6 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context);
  */
 scpi_result_t SCPI_LANNetModeGet(scpi_t * context);
 
-///**
-// * SCPI Callback: Get the type of available LAN networks
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context);
 
 /**
  * SCPI Callback: Set the type of LAN network
@@ -40,18 +35,6 @@ scpi_result_t SCPI_LANNetModeGet(scpi_t * context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANNetModeSet(scpi_t * context);
-//
-///**
-// * SCPI Callback: Get the Ip address of the device
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANIpv6Get(scpi_t * context);
-//
-///**
-// * SCPI Callback: Set the IP address of the device
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANIpv6Set(scpi_t * context);
 
 /**
  * SCPI Callback: Get the Ip address of the device
@@ -89,30 +72,12 @@ scpi_result_t SCPI_LANGatewayGet(scpi_t * context);
  */
 scpi_result_t SCPI_LANGatewaySet(scpi_t * context);
 
-/**
- * SCPI Callback: Get the Ip address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANDns1Get(scpi_t * context);
-
-/**
- * SCPI Callback: Set the IP address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANDns1Set(scpi_t * context);
-
 
 /**
  * SCPI Callback: Get the mac address of the device
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMacGet(scpi_t * context);
-
-/**
- * SCPI Callback: Set the mac address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANMacSet(scpi_t * context);
 
 /**
  * SCPI Callback: Set the ssid address of the device
@@ -127,25 +92,17 @@ scpi_result_t SCPI_LANSsidGet(scpi_t * context);
 scpi_result_t SCPI_LANSsidSet(scpi_t * context);
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context);
-scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context);
-
-/**
- * SCPI Callback: Get the security mode of the device of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANSecurityGet(scpi_t * context);
-
-/**
- * SCPI Callback: Get the security mode of the available networks
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-scpi_result_t SCPI_LANAVSecurityGet(scpi_t * context);
 
 /**
  * SCPI Callback: Set the security mode of the device
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANSecuritySet(scpi_t * context);
+/**
+ * SCPI Callback: Get the security mode of the device of the device
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANSecurityGet(scpi_t * context);
 
 /**
  * SCPI Callback: Set the passkey of the device
@@ -157,13 +114,28 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context);
  * SCPI Callback: Check the passkey of the device (for debugging)
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-scpi_result_t SCPI_LANPasskeyCheck(scpi_t * context);
+scpi_result_t SCPI_LANPasskeyGet(scpi_t * context);
 
 /**
  * SCPI Callback: Applies wifi settings of the device (optionally saving them)
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
+
+//scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context);
+//
+///**
+// * SCPI Callback: Get the security mode of the device of the device
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANSecurityGet(scpi_t * context);
+//
+///**
+// * SCPI Callback: Get the security mode of the available networks
+// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+// */
+//scpi_result_t SCPI_LANAVSecurityGet(scpi_t * context);
+
 //
 ///**
 // * SCPI Callback: Saves the wifi settings of the device (but does not apply them)

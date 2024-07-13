@@ -67,10 +67,6 @@
 // *****************************************************************************
 // *****************************************************************************
 
-uint8_t __attribute__((aligned(16))) switchPromptUSB[] = "Hello World\r\n";
-
-char CACHE_ALIGN cdcReadBuffer[APP_READ_BUFFER_SIZE];
-char CACHE_ALIGN cdcWriteBuffer[APP_READ_BUFFER_SIZE];
 
 // *****************************************************************************
 /* Application Data
@@ -86,15 +82,18 @@ char CACHE_ALIGN cdcWriteBuffer[APP_READ_BUFFER_SIZE];
     
     Application strings and buffers are be defined outside this structure.
  */
-QueueHandle_t USBDeviceTask_EventQueue_Handle;
-
-APP_DATA appData;
 
 
+//! Pointer to board data information 
+static tBoardData * gpBoardData;
+////! Pointer to board configuration 
+//static tBoardConfig * pBoardConfig;
+//! Pointer to board configuration in runtime
+static tBoardRuntimeConfig * gpBoardRuntimeConfig;
 
-void USBDevice_Task(void* p_arg);
+static void USBDevice_Task(void* p_arg);
 
-void USBDevice_Task(void* p_arg) {
+static void USBDevice_Task(void* p_arg) {
     UsbCdc_Initialize();
     while (1) {
         UsbCdc_ProcessState();
@@ -102,28 +101,23 @@ void USBDevice_Task(void* p_arg) {
     }
 }
 extern const NanopbFlagsArray fields_discovery;
-void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings settings, uint8_t* pBuff, uint16_t *len) {
+
+void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
-    pBoardData->wifiSettings.settings.wifi.ipAddr.Val = settings.ipAddr.Val;
-    memcpy(pBoardData->wifiSettings.settings.wifi.macAddr.addr, settings.macAddr.addr, WDRV_WINC_MAC_ADDR_LEN);
+    pBoardData->wifiSettings.ipAddr.Val = pSettings->ipAddr.Val;
+    memcpy(pBoardData->wifiSettings.macAddr.addr, pSettings->macAddr.addr, WDRV_WINC_MAC_ADDR_LEN);
     size_t count = Nanopb_Encode(
             pBoardData,
             &fields_discovery,
             pBuff);
-    *len=count;
+    *len = count;
 }
 
 void wifi_task(void* p_arg) {
-    DaqifiSettings loadSettings = {0};
     
-    //daqifi_settings_SaveToNvm(&saveSettings);
-    daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &loadSettings);
-    loadSettings.settings.wifi.tcpPort=30304;
-    //    uint8_t sampleStr[NVM_FLASH_ROWSIZE+1]="This is a test string i am trying to write into nvm";
-    //    nvm_WriteRowtoAddr(WIFI_SETTINGS_ADDR,sampleStr);
-    WifiApi_Init(&loadSettings.settings.wifi);
+    WifiApi_Init(&gpBoardData->wifiSettings);
     while (1) {
         WifiApi_Dispatcher();
         vTaskDelay(5);
@@ -145,7 +139,99 @@ void wifi_task(void* p_arg) {
  */
 
 void APP_FREERTOS_Initialize(void) {
+    DaqifiSettings tmpTopLevelSettings;
+    DaqifiSettings tmpSettings;
 
+    gpBoardData = BoardData_Get(
+            BOARDDATA_ALL_DATA,
+            0);
+
+    gpBoardRuntimeConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_ALL_CONFIG);
+
+
+
+    // Initialize the variable to 0s
+    memset(&tmpTopLevelSettings, 0, sizeof (tmpTopLevelSettings));
+    tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
+
+    // Try to load TopLevelSettings from NVM - if this fails, store default 
+    // settings to NVM (first run after a program)
+    if (!daqifi_settings_LoadFromNvm(
+            DaqifiSettings_TopLevelSettings,
+            &tmpTopLevelSettings)) {
+        // Get board variant and cal param type from TopLevelSettings NVM 
+        daqifi_settings_LoadFactoryDeafult(
+                DaqifiSettings_TopLevelSettings,
+                &tmpTopLevelSettings);
+        daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
+    }
+
+    // Load board config structures with the correct board variant values
+    //    InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
+    InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
+    InitializeBoardData(gpBoardData);
+
+    // Try to load WiFiSettings from NVM - if this fails, store default 
+    // settings to NVM (first run after a program)
+
+    // Initialize the variable to 0s
+    memset(&tmpSettings, 0, sizeof (tmpSettings));
+    tmpSettings.type = DaqifiSettings_Wifi;
+
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &tmpSettings)) {
+        // Get board wifi settings from Wifi NVM variable
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_Wifi, &tmpSettings);
+        daqifi_settings_SaveToNvm(&tmpSettings);
+    }
+    // Move temp variable to global variables
+    memcpy(&gpBoardRuntimeConfig->wifiSettings,   
+                        &tmpSettings.settings.wifi,                     
+                        sizeof (WifiSettings));
+    memcpy(&gpBoardData->wifiSettings,            
+                        &tmpSettings.settings.wifi,                     
+                        sizeof (WifiSettings));
+
+//    // Load factory calibration parameters - if they are not initialized, 
+//    // store them (first run after a program)
+//    if (!LoadADCCalSettings(                                                 
+//                        DaqifiSettings_FactAInCalParams,                    
+//                        &pBoardRuntimeConfig->AInChannels)) {
+//        SaveADCCalSettings(                                                 
+//                        DaqifiSettings_FactAInCalParams,                    
+//                        &pBoardRuntimeConfig->AInChannels);
+//    }
+//    // If calVals has been set to 1 (user cal params), overwrite with user 
+//    // calibration parameters
+//    if (tmpTopLevelSettings.settings.topLevelSettings.calVals) {
+//        LoadADCCalSettings(                                                 
+//                        DaqifiSettings_UserAInCalParams,                    
+//                        &pBoardRuntimeConfig->AInChannels);
+//    }
+//    // Power initialization - enables 3.3V rail by default - other power 
+//    // functions are in power task
+//    Power_Init(&pBoardConfig->PowerConfig,                     
+//                            &pBoardData->PowerData,                         
+//                            &pBoardRuntimeConfig->PowerWriteVars);
+//
+//    UI_Init(&pBoardConfig->UIConfig,                                       
+//             &pBoardData->UIReadVars,                                       
+//             &pBoardData->PowerData);
+//
+//    // Init DIO Hardware
+//    DIO_InitHardware(pBoardConfig, pBoardRuntimeConfig);
+//
+//    // Write initial values
+//    DIO_WriteStateAll();
+//
+//    Streaming_Init(&pBoardConfig->StreamingConfig,                     
+//                        &pBoardRuntimeConfig->StreamingConfig);
+//    Streaming_UpdateState();
+//
+//    ADC_Init(                                                               
+//                pBoardConfig,                                               
+//                pBoardRuntimeConfig,                                        
+//                pBoardData);
 
 }
 
@@ -170,17 +256,6 @@ void APP_FREERTOS_Tasks(void) {
         if (errStatus != pdTRUE) {
             while (1);
         }
-        //        errStatus = xTaskCreate((TaskFunction_t) SD_Task,
-        //                "SD_AttachTask",
-        //                USBDEVICETASK_SIZE,
-        //                NULL,
-        //                USBDEVICETASK_PRIO,
-        //                NULL);
-        //        /*Don't proceed if Task was not created...*/
-        //        if (errStatus != pdTRUE) {
-        //            while (1);
-        //        }
-
         errStatus = xTaskCreate((TaskFunction_t) wifi_task,
                 "wifi_task",
                 2048,

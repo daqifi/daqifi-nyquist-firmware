@@ -2125,7 +2125,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ2RuntimeDefaults.c"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -2143,7 +2143,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ3RuntimeDefaults.c"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
