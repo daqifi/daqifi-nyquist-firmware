@@ -60,7 +60,7 @@
 #include <services/UsbCdc/UsbCdc.h>
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
-#include "HAL/Wifi/WifiApi.h"
+#include "services/Wifi/WifiApi.h"
 // *****************************************************************************
 // *****************************************************************************
 // Section: Global Data Definitions

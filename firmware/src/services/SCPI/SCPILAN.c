@@ -16,7 +16,7 @@
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
-#include "HAL/Wifi/WifiApi.h"
+#include "services/Wifi/WifiApi.h"
 
 
 /**

@@ -299,10 +299,6 @@
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.h</itemPath>
         </logicalFolder>
-        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
-          <itemPath>../src/HAL/Wifi/WifiApi.h</itemPath>
-          <itemPath>../src/HAL/Wifi/tcpServer.h</itemPath>
-        </logicalFolder>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
         <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
@@ -355,11 +351,18 @@
           <itemPath>../src/services/SCPI/SCPIInterface.h</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.h</itemPath>
         </logicalFolder>
+        <logicalFolder name="SDcard" displayName="SDcard" projectFiles="true">
+          <itemPath>../src/services/SDcard/SDCard.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="TcpServer" displayName="TcpServer" projectFiles="true">
           <itemPath>../src/tcpServer.h</itemPath>
         </logicalFolder>
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.h</itemPath>
+        </logicalFolder>
+        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
+          <itemPath>../src/services/Wifi/tcpServer.h</itemPath>
+          <itemPath>../src/services/Wifi/WifiApi.h</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.h</itemPath>
       </logicalFolder>
@@ -781,10 +784,6 @@
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.c</itemPath>
         </logicalFolder>
-        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
-          <itemPath>../src/HAL/Wifi/WifiApi.c</itemPath>
-          <itemPath>../src/HAL/Wifi/tcpServer.c</itemPath>
-        </logicalFolder>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
         <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
@@ -824,8 +823,15 @@
           <itemPath>../src/services/SCPI/SCPIInterface.c</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.c</itemPath>
         </logicalFolder>
+        <logicalFolder name="SDcard" displayName="SDcard" projectFiles="true">
+          <itemPath>../src/services/SDcard/SDCard.c</itemPath>
+        </logicalFolder>
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
+          <itemPath>../src/services/Wifi/tcpServer.c</itemPath>
+          <itemPath>../src/services/Wifi/WifiApi.c</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.c</itemPath>
       </logicalFolder>
@@ -1202,22 +1208,6 @@
         </C32Global>
       </item>
       <item path="../src/HAL/UI/UI.h" ex="true" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/HAL/Wifi/WifiApi.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

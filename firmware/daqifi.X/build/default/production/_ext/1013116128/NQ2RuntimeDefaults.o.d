@@ -140,7 +140,7 @@ build/default/production/_ext/1013116128/NQ2RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
- ../src/HAL/Wifi/WifiApi.h ../src/HAL/Wifi/tcpServer.h \
+ ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -454,9 +454,9 @@ build/default/production/_ext/1013116128/NQ2RuntimeDefaults.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
-../src/HAL/Wifi/WifiApi.h:
+../src/services/Wifi/WifiApi.h:
 
-../src/HAL/Wifi/tcpServer.h:
+../src/services/Wifi/tcpServer.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 

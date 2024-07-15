@@ -12,7 +12,7 @@
 //#include "HAL/Power/PowerApi.h"
 //#include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
-#include "HAL/Wifi/WifiApi.h"
+#include "services/Wifi/WifiApi.h"
 
 #ifdef __cplusplus
 extern "C" {
