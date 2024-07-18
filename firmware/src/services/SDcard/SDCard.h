@@ -42,24 +42,29 @@ extern "C" {
 #endif
 
     typedef enum {
+        SD_CARD_STATE_INIT,
         SD_CARD_STATE_MOUNT_DISK,
         SD_CARD_STATE_UNMOUNT_DISK,
-        SD_CARD_STATE_MOUNT_DISK_AGAIN,
         SD_CARD_STATE_SET_CURRENT_DRIVE,
         SD_CARD_STATE_CREATE_DIRECTORY,
         SD_CARD_STATE_OPEN_FILE,
         SD_CARD_STATE_WRITE_TO_FILE,
         SD_CARD_STATE_READ_FROM_FILE,
-        SD_CARD_STATE_CLOSE_FILE,
+        SD_CARD_STATE_DEINIT,
         SD_CARD_STATE_IDLE,
         SD_CARD_STATE_ERROR,
-    }sdCardState_t;
+    }SDCard_state_t;
+    typedef enum{
+        SD_CARD_MODE_NONE,
+        SD_CARD_MODE_READ,
+        SD_CARD_MODE_WRITE,                
+    }SDCard_mode_t;
 
     /**
      * Data for a particular TCP client
      */
     typedef struct {
-        sdCardState_t processState;
+        SDCard_state_t currentProcessState;
         /** Client read buffer */
         uint8_t readBuffer[SD_CARD_CONF_RBUFFER_SIZE];
 
@@ -82,14 +87,19 @@ extern "C" {
 
         bool sdCardWritePending;
         uint16_t sdCardWriteBufferOffset;
-    } sdCardData_t;
+        bool discMounted;
+    } SDCard_data_t;
     typedef struct{
+        bool enable;
+        SDCard_mode_t mode;
         char directory[SD_CARD_CONF_DIR_NAME_LEN_MAX+1];
         char file[SD_CARD_CONF_FILE_NAME_LEN_MAX+1];
-    }sdCardSettings_t;
-    bool SDCard_Init();
+    }SDCard_Settings_t;
+    bool SDCard_Init(SDCard_Settings_t *pSettings);
     bool SDCard_Deinit();
+    bool SDCard_UpdateSettings(SDCard_Settings_t *pSettings);
     void SDCard_ProcessState();
+    size_t SDCard_WriteToBuffer(const char* pData, size_t len);
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

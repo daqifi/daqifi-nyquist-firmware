@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
     void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len);
-    void WifiApi_Dispatcher();
+    void WifiApi_ProcessState();
     /**
      * Applies provided network settings (and resets the wifi connection)
      * @return True on success, false otherwise

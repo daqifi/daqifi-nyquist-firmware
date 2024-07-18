@@ -65,7 +65,8 @@ static int LogMessageFormatImpl(const char* format, va_list args)
     }
     
     char buffer[STACK_LIST_NODE_SIZE];
-    int size = vsnprintf(buffer, STACK_LIST_NODE_SIZE-1, format, args);
+    int size=sprintf(buffer,"\r\n");
+    size += vsnprintf(buffer+size, STACK_LIST_NODE_SIZE-size-1, format, args);
     buffer[size] = '\0';
     if (size > 0)
     {

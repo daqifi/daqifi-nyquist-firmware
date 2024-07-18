@@ -496,12 +496,7 @@ bool WifiApi_Init(WifiSettings * pSettings) {
     else return true;
     if (pSettings != NULL)
         gStateMachineData.pWifiSettings=pSettings;
-    //TODO(Daqifi): Remove this comment
-    //    gStateMachineData.wifiSettings.networkMode=1;
-    //    gStateMachineData.wifiSettings.securityMode=2;
-    //    strcpy(gStateMachineData.wifiSettings.ssid,"Typical_G");
-    //    strcpy((char*)gStateMachineData.wifiSettings.passKey,"Arghya@19");
-    //    gStateMachineData.wifiSettings.passKeyLength=strlen("Arghya@19");
+    
     gStateMachineData.pWifiSettings->isEnabled=1;
     gStateMachineData.active = MainState;    
     gStateMachineData.active(&gStateMachineData, WIFIAPI_CONSUMED_EVENT_ENTRY);
@@ -546,7 +541,7 @@ bool WifiApi_UpdateNetworkSettings(WifiSettings * pSettings) {
  size_t WifiApi_WriteToBuffer(const char* pData, size_t len){
      return TcpServer_WriteBuffer(pData, len);
  }
-void WifiApi_Dispatcher() {
+void WifiApi_ProcessState() {
     WifiApi_consumedEvent_t event;
     WifiApi_eventStatus_t ret;
     while (gEventQH == NULL) {

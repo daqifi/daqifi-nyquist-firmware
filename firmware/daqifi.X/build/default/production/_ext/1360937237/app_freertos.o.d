@@ -166,7 +166,8 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/state/runtime/BoardRuntimeConfig.h ../src/services/Wifi/WifiApi.h \
- ../src/services/Wifi/tcpServer.h ../src/services/Wifi/WifiApi.h
+ ../src/services/Wifi/tcpServer.h ../src/services/Wifi/WifiApi.h \
+ ../src/services/SDcard/SDCard.h
 
 ../src/app_freertos.h:
 
@@ -521,3 +522,5 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 ../src/services/Wifi/tcpServer.h:
 
 ../src/services/Wifi/WifiApi.h:
+
+../src/services/SDcard/SDCard.h:

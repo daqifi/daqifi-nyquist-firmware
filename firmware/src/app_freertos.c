@@ -61,6 +61,7 @@
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 #include "services/Wifi/WifiApi.h"
+#include "services/SDcard/SDCard.h"
 // *****************************************************************************
 // *****************************************************************************
 // Section: Global Data Definitions
@@ -86,21 +87,13 @@
 
 //! Pointer to board data information 
 static tBoardData * gpBoardData;
-////! Pointer to board configuration 
-//static tBoardConfig * pBoardConfig;
-//! Pointer to board configuration in runtime
 static tBoardRuntimeConfig * gpBoardRuntimeConfig;
-
-static void USBDevice_Task(void* p_arg);
-
-static void USBDevice_Task(void* p_arg) {
-    UsbCdc_Initialize();
-    while (1) {
-        UsbCdc_ProcessState();
-        vTaskDelay(5);
-    }
-}
 extern const NanopbFlagsArray fields_discovery;
+
+static void SystemInit();
+static void USBDeviceTask(void* p_arg);
+static void WifiTask(void* p_arg);
+static void SdCardTask(void* p_arg);
 
 void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
@@ -115,30 +108,43 @@ void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBu
     *len = count;
 }
 
-void wifi_task(void* p_arg) {
-    
-    WifiApi_Init(&gpBoardData->wifiSettings);
+static void USBDeviceTask(void* p_arg) {
+    UsbCdc_Initialize();
     while (1) {
-        WifiApi_Dispatcher();
+        UsbCdc_ProcessState();
         vTaskDelay(5);
     }
 }
 
-// *****************************************************************************
-// *****************************************************************************
-// Section: Application Initialization and State Machine Functions
-// *****************************************************************************
-// *****************************************************************************
+static void WifiTask(void* p_arg) {
+    int count=0;
+    WifiApi_Init(&gpBoardData->wifiSettings);
+    char buff[100];
+    while (1) {
+        WifiApi_ProcessState();
+        memset(buff,0,100);
+        sprintf(buff,"\r\nCount%d",count++);
+        SDCard_WriteToBuffer(buff,strlen(buff));
+        vTaskDelay(5);
+    }
+}
 
-/*******************************************************************************
-  Function:
-    void APP_Initialize ( void )
+static void SdCardTask(void* p_arg) {
+    static SDCard_Settings_t sdSettings;
+    sdSettings.enable = 1;
+    sdSettings.mode = SD_CARD_MODE_WRITE;
+    memset(sdSettings.directory, 0, sizeof (sdSettings.directory));
+    strncpy(sdSettings.directory, "test", strlen("test") + 1);
+    memset(sdSettings.file, 0, sizeof (sdSettings.file));
+    strncpy(sdSettings.file, "F1.txt", strlen("F1.txt") + 1);
+    SDCard_Init(&sdSettings);
+    while (1) {
+        SDCard_ProcessState();
+        vTaskDelay(5);
+    }
+}
 
-  Remarks:
-    See prototype in app.h.
- */
-
-void APP_FREERTOS_Initialize(void) {
+void SystemInit() {
     DaqifiSettings tmpTopLevelSettings;
     DaqifiSettings tmpSettings;
 
@@ -185,69 +191,67 @@ void APP_FREERTOS_Initialize(void) {
         daqifi_settings_SaveToNvm(&tmpSettings);
     }
     // Move temp variable to global variables
-    memcpy(&gpBoardRuntimeConfig->wifiSettings,   
-                        &tmpSettings.settings.wifi,                     
-                        sizeof (WifiSettings));
-    memcpy(&gpBoardData->wifiSettings,            
-                        &tmpSettings.settings.wifi,                     
-                        sizeof (WifiSettings));
+    memcpy(&gpBoardRuntimeConfig->wifiSettings,
+            &tmpSettings.settings.wifi,
+            sizeof (WifiSettings));
+    memcpy(&gpBoardData->wifiSettings,
+            &tmpSettings.settings.wifi,
+            sizeof (WifiSettings));
 
-//    // Load factory calibration parameters - if they are not initialized, 
-//    // store them (first run after a program)
-//    if (!LoadADCCalSettings(                                                 
-//                        DaqifiSettings_FactAInCalParams,                    
-//                        &pBoardRuntimeConfig->AInChannels)) {
-//        SaveADCCalSettings(                                                 
-//                        DaqifiSettings_FactAInCalParams,                    
-//                        &pBoardRuntimeConfig->AInChannels);
-//    }
-//    // If calVals has been set to 1 (user cal params), overwrite with user 
-//    // calibration parameters
-//    if (tmpTopLevelSettings.settings.topLevelSettings.calVals) {
-//        LoadADCCalSettings(                                                 
-//                        DaqifiSettings_UserAInCalParams,                    
-//                        &pBoardRuntimeConfig->AInChannels);
-//    }
-//    // Power initialization - enables 3.3V rail by default - other power 
-//    // functions are in power task
-//    Power_Init(&pBoardConfig->PowerConfig,                     
-//                            &pBoardData->PowerData,                         
-//                            &pBoardRuntimeConfig->PowerWriteVars);
-//
-//    UI_Init(&pBoardConfig->UIConfig,                                       
-//             &pBoardData->UIReadVars,                                       
-//             &pBoardData->PowerData);
-//
-//    // Init DIO Hardware
-//    DIO_InitHardware(pBoardConfig, pBoardRuntimeConfig);
-//
-//    // Write initial values
-//    DIO_WriteStateAll();
-//
-//    Streaming_Init(&pBoardConfig->StreamingConfig,                     
-//                        &pBoardRuntimeConfig->StreamingConfig);
-//    Streaming_UpdateState();
-//
-//    ADC_Init(                                                               
-//                pBoardConfig,                                               
-//                pBoardRuntimeConfig,                                        
-//                pBoardData);
+    //    // Load factory calibration parameters - if they are not initialized, 
+    //    // store them (first run after a program)
+    //    if (!LoadADCCalSettings(                                                 
+    //                        DaqifiSettings_FactAInCalParams,                    
+    //                        &pBoardRuntimeConfig->AInChannels)) {
+    //        SaveADCCalSettings(                                                 
+    //                        DaqifiSettings_FactAInCalParams,                    
+    //                        &pBoardRuntimeConfig->AInChannels);
+    //    }
+    //    // If calVals has been set to 1 (user cal params), overwrite with user 
+    //    // calibration parameters
+    //    if (tmpTopLevelSettings.settings.topLevelSettings.calVals) {
+    //        LoadADCCalSettings(                                                 
+    //                        DaqifiSettings_UserAInCalParams,                    
+    //                        &pBoardRuntimeConfig->AInChannels);
+    //    }
+    //    // Power initialization - enables 3.3V rail by default - other power 
+    //    // functions are in power task
+    //    Power_Init(&pBoardConfig->PowerConfig,                     
+    //                            &pBoardData->PowerData,                         
+    //                            &pBoardRuntimeConfig->PowerWriteVars);
+    //
+    //    UI_Init(&pBoardConfig->UIConfig,                                       
+    //             &pBoardData->UIReadVars,                                       
+    //             &pBoardData->PowerData);
+    //
+    //    // Init DIO Hardware
+    //    DIO_InitHardware(pBoardConfig, pBoardRuntimeConfig);
+    //
+    //    // Write initial values
+    //    DIO_WriteStateAll();
+    //
+    //    Streaming_Init(&pBoardConfig->StreamingConfig,                     
+    //                        &pBoardRuntimeConfig->StreamingConfig);
+    //    Streaming_UpdateState();
+    //
+    //    ADC_Init(                                                               
+    //                pBoardConfig,                                               
+    //                pBoardRuntimeConfig,                                        
+    //                pBoardData);
+}
+
+void APP_FREERTOS_Initialize(void) {
+
 
 }
 
-/******************************************************************************
-  Function:
-    void APP_Tasks ( void )
-
-  Remarks:
-    See prototype in app.h.
- */
 void APP_FREERTOS_Tasks(void) {
     static bool blockAppTask = false;
     BaseType_t errStatus;
+    SystemInit();
     if (blockAppTask == false) {
-        errStatus = xTaskCreate((TaskFunction_t) USBDevice_Task,
-                "USB_AttachTask",
+        errStatus = xTaskCreate((TaskFunction_t) USBDeviceTask,
+                "USBDeviceTask",
                 USBDEVICETASK_SIZE,
                 NULL,
                 2,
@@ -256,8 +260,18 @@ void APP_FREERTOS_Tasks(void) {
         if (errStatus != pdTRUE) {
             while (1);
         }
-        errStatus = xTaskCreate((TaskFunction_t) wifi_task,
-                "wifi_task",
+        errStatus = xTaskCreate((TaskFunction_t) WifiTask,
+                "WifiTask",
+                2048,
+                NULL,
+                2,
+                NULL);
+        /*Don't proceed if Task was not created...*/
+        if (errStatus != pdTRUE) {
+            while (1);
+        }
+        errStatus = xTaskCreate((TaskFunction_t) SdCardTask,
+                "SdCardTask",
                 2048,
                 NULL,
                 2,

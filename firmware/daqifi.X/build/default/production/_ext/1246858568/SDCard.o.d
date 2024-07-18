@@ -1,7 +1,7 @@
 build/default/production/_ext/1246858568/SDCard.o: \
- ../src/services/SDcard/SDCard.c ../src/services/SDcard/SDCard.h \
- ../src/config/default/configuration.h ../src/config/default/user.h \
- ../src/config/default/device.h \
+ ../src/services/SDcard/SDCard.c ../src/Util/Logger.h \
+ ../src/services/SDcard/SDCard.h ../src/config/default/configuration.h \
+ ../src/config/default/user.h ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
  ../src/config/default/definitions.h \
  ../src/config/default/crypto/crypto.h \
@@ -125,6 +125,8 @@ build/default/production/_ext/1246858568/SDCard.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/Util/CircularBuffer.h
+
+../src/Util/Logger.h:
 
 ../src/services/SDcard/SDCard.h:
 

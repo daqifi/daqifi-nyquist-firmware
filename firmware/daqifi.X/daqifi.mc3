@@ -13275,7 +13275,9 @@
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="sys_fs" name="SYS_FS_RTOS_TASK_PRIORITY"/>
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;sys_fs&gt;
   &lt;sys_fs dnOrder=&quot;0&quot; id=&quot;SYS_FS_RTOS_TASK_PRIORITY&quot;&gt;
-    &lt;Values dnOrder=&quot;0&quot;/&gt;
+    &lt;Values dnOrder=&quot;0&quot;&gt;
+      &lt;User dnOrder=&quot;0&quot; value=&quot;1&quot;/&gt;
+    &lt;/Values&gt;
   &lt;/sys_fs&gt;
 &lt;/sys_fs&gt;
 </value>
@@ -13997,7 +13999,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\configuration.h</file>
-         <hash>cde995c53ca4c3fca3472c694e248863188b52a6c361adb0a21d66e1b477ab46</hash>
+         <hash>7342a77b3f5a80019bbc74af6ed4f9b223d54562677bd7173f583cef6761544c</hash>
       </entry>
       <entry>
          <file>..\src\config\default\crypto\crypto.h</file>
@@ -14009,7 +14011,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\definitions.h</file>
-         <hash>081f9c11d5cb0aa8201488514c508d10ceb4e40cc379b687087b691a2da530ef</hash>
+         <hash>746d7df83ba73fc211c12b600c4a4085813152caa643ee7e9b34c9abd7413728</hash>
       </entry>
       <entry>
          <file>..\src\config\default\device.h</file>
