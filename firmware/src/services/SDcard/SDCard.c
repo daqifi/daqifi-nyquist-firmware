@@ -23,17 +23,14 @@
 SDCard_data_t gSdCardData;
 SDCard_Settings_t *gpSdCardSettings;
 
-static int SDCardFlush() {
+static int SDCardWrite() {
     int writeLen = -1;
     if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
         goto __exit;
-    }    
-    SYS_FS_FileWrite(gSdCardData.fileHandle,
+    }
+    writeLen = SYS_FS_FileWrite(gSdCardData.fileHandle,
             (const void *) (gSdCardData.writeBuffer + gSdCardData.sdCardWriteBufferOffset),
             gSdCardData.writeBufferLength);
-    if(SYS_FS_FileSync(gSdCardData.fileHandle)!=SYS_FS_RES_SUCCESS){
-        writeLen=-1;
-    }
 __exit:
     return writeLen;
 }
@@ -44,7 +41,7 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint16_t len) {
     memcpy(gSdCardData.writeBuffer, buf, len);
     gSdCardData.writeBufferLength = len;
     gSdCardData.sdCardWriteBufferOffset = 0;
-    return SDCardFlush();
+    return SDCardWrite();
 }
 
 bool SDCard_Init(SDCard_Settings_t *pSettings) {
@@ -144,6 +141,8 @@ void SDCard_ProcessState() {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_APPEND_PLUS));
                 gSdCardData.currentProcessState = SD_CARD_STATE_WRITE_TO_FILE;
+                gSdCardData.totalBytesFlushPending = 0;
+                gSdCardData.lastFlushMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
             } else if (gpSdCardSettings->mode == SD_CARD_MODE_READ) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
@@ -168,11 +167,11 @@ void SDCard_ProcessState() {
                 xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
                 gSdCardData.sdCardWritePending = 1;
                 CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_CONF_WBUFFER_SIZE, &writeLen);
+                gSdCardData.totalBytesFlushPending += gSdCardData.writeBufferLength;
                 xSemaphoreGive(gSdCardData.wMutex);
             } else if (gSdCardData.sdCardWritePending == 1) {
-                writeLen = SDCardFlush();
+                writeLen = SDCardWrite();
             }
-
             if (writeLen >= gSdCardData.writeBufferLength) {
                 gSdCardData.sdCardWritePending = 0;
                 gSdCardData.writeBufferLength = 0;
@@ -180,9 +179,23 @@ void SDCard_ProcessState() {
             } else if (writeLen >= 0) {
                 gSdCardData.writeBufferLength -= writeLen;
                 gSdCardData.sdCardWriteBufferOffset = writeLen;
-            } else {
+            } else if (writeLen == -1) {
                 gSdCardData.currentProcessState = SD_CARD_STATE_ERROR;
                 LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
+                break;
+            }
+            uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+            if ((currentMillis - gSdCardData.lastFlushMillis > 5000 ||
+                    gSdCardData.totalBytesFlushPending > 2000)) {
+                if (gSdCardData.totalBytesFlushPending > 0) {
+                    if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
+                        gSdCardData.currentProcessState = SD_CARD_STATE_ERROR;
+                        LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
+                    }
+                    gSdCardData.totalBytesFlushPending = 0;
+                    gSdCardData.lastFlushMillis = currentMillis;
+                }
             }
         }
             break;

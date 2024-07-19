@@ -87,6 +87,8 @@ extern "C" {
 
         bool sdCardWritePending;
         uint16_t sdCardWriteBufferOffset;
+        uint16_t totalBytesFlushPending;
+        uint64_t lastFlushMillis;
         bool discMounted;
     } SDCard_data_t;
     typedef struct{

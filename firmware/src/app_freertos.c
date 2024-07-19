@@ -134,9 +134,9 @@ static void SdCardTask(void* p_arg) {
     sdSettings.enable = 1;
     sdSettings.mode = SD_CARD_MODE_WRITE;
     memset(sdSettings.directory, 0, sizeof (sdSettings.directory));
-    strncpy(sdSettings.directory, "test", strlen("test") + 1);
+    strncpy(sdSettings.directory, "MyTest1", strlen("MyTest1") + 1);
     memset(sdSettings.file, 0, sizeof (sdSettings.file));
-    strncpy(sdSettings.file, "F1.txt", strlen("F1.txt") + 1);
+    strncpy(sdSettings.file, "file2.txt", strlen("file2.txt") + 1);
     SDCard_Init(&sdSettings);
     while (1) {
         SDCard_ProcessState();
