@@ -2,7 +2,6 @@
 
 #include "configuration.h"
 #include "definitions.h"
-
 #include "Util/ArrayWrapper.h"
 
 #ifdef __cplusplus
@@ -15,55 +14,34 @@ extern "C" {
     typedef struct s_DIOConfig
     {
         /**
-         * The port module to use for the data line (probably always PORTS_ID_0)
-         */
-        PORTS_MODULE_ID DataModule;
-        
-        /**
          * The channel associated with the data line
          */
-        PORTS_CHANNEL DataChannel;
+        GPIO_PORT DataChannel;
         
         /**
          * The pin associated with the data line
          */
-        PORTS_BIT_POS DataPin;
-        
-        /**
-         * The port module to use for the enable line (probably always PORTS_ID_0)
-         */
-        PORTS_MODULE_ID EnableModule;
+        GPIO_PIN DataPin;
         
         /**
          * The channel associated with the enable line 
          */
-        PORTS_CHANNEL EnableChannel;
+        GPIO_PORT EnableChannel;
         
         /**
          * The pin associated with the enable line 
          */
-        PORTS_BIT_POS EnablePin;
+        GPIO_PIN EnablePin;
         
         /**
          * Indicates whether the 'enable' line is inverted
          */
         bool EnableInverted;
-        /**
-         *Indicates if the channel is  PWM capable
-         */
-        SYS_MODULE_INDEX PwmDrvIndex;
          /**
          * PWM driver index
          */
         bool IsPwmCapable;
-         /**
-         * PPS remap function
-         */
-        PORTS_REMAP_OUTPUT_FUNCTION pwmRemapFuction;
-         /**
-         * PPS remap pin
-         */
-        PORTS_REMAP_OUTPUT_PIN pwmRemapPin;
+        
     } DIOConfig;
     
     // Define a storage class for DIO Configs

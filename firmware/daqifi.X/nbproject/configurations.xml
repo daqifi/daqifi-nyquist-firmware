@@ -164,11 +164,24 @@
             <logicalFolder name="nvm" displayName="nvm" projectFiles="true">
               <itemPath>../src/config/default/peripheral/nvm/plib_nvm.h</itemPath>
             </logicalFolder>
+            <logicalFolder name="ocmp" displayName="ocmp" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp8.h</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp7.h</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp_common.h</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp4.h</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp3.h</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp6.h</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp1.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h</itemPath>
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h</itemPath>
               </logicalFolder>
+            </logicalFolder>
+            <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr3.h</itemPath>
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr_common.h</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="system" displayName="system" projectFiles="true">
@@ -367,6 +380,15 @@
         <itemPath>../src/services/daqifi_settings.h</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
+        <logicalFolder name="board" displayName="board" projectFiles="true">
+          <itemPath>../src/state/board/AInConfig.h</itemPath>
+          <itemPath>../src/state/board/BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/DIOConfig.h</itemPath>
+          <itemPath>../src/state/board/NQ1BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/NQ2BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/NQ3BoardConfig.h</itemPath>
+          <itemPath>../src/state/board/StreamingConfig.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="data" displayName="data" projectFiles="true">
           <itemPath>../src/state/data/AInSample.h</itemPath>
           <itemPath>../src/state/data/BoardData.h</itemPath>
@@ -686,10 +708,21 @@
             <logicalFolder name="nvm" displayName="nvm" projectFiles="true">
               <itemPath>../src/config/default/peripheral/nvm/plib_nvm.c</itemPath>
             </logicalFolder>
+            <logicalFolder name="ocmp" displayName="ocmp" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp8.c</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp7.c</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp4.c</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp3.c</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp6.c</itemPath>
+              <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp1.c</itemPath>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi4_master.c</itemPath>
               </logicalFolder>
+            </logicalFolder>
+            <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr3.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="stdio" displayName="stdio" projectFiles="true">
@@ -1223,7 +1256,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/ArrayWrapper.h" ex="true" overriding="false">
+      <item path="../src/Util/ArrayWrapper.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1367,7 +1400,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/HeapList.c" ex="true" overriding="false">
+      <item path="../src/Util/HeapList.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1383,7 +1416,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/HeapList.h" ex="true" overriding="false">
+      <item path="../src/Util/HeapList.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1559,7 +1592,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/StringFormatters.h" ex="true" overriding="false">
+      <item path="../src/Util/StringFormatters.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1864,7 +1897,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/BoardConfig.c" ex="true" overriding="false">
+      <item path="../src/state/board/BoardConfig.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1880,7 +1913,39 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ1BoardConfig.c" ex="true" overriding="false">
+      <item path="../src/state/board/BoardConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ1BoardConfig.c" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/state/board/NQ1BoardConfig.h" ex="true" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1992,7 +2057,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/data/DIOSample.c" ex="true" overriding="false">
+      <item path="../src/state/data/DIOSample.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2008,7 +2073,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/data/DIOSample.h" ex="true" overriding="false">
+      <item path="../src/state/data/DIOSample.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

@@ -144,6 +144,16 @@ extern "C" {
 #define DRV_I2C_CLIENTS_NUMBER_IDX0           1
 #define DRV_I2C_CLOCK_SPEED_IDX0              50000
 
+/* SDSPI Driver Common Configuration Options */
+#define DRV_SDSPI_INSTANCES_NUMBER              (1U)
+
+/* I2C Driver Common Configuration Options */
+#define DRV_I2C_INSTANCES_NUMBER              (1U)
+
+
+/* SPI Driver Common Configuration Options */
+#define DRV_SPI_INSTANCES_NUMBER              (1U)
+
 /*** WiFi WINC Driver Configuration ***/
 #define WDRV_WINC_GPIO_SOURCE
 #define WDRV_WINC_NETWORK_MODE_SOCKET
@@ -178,16 +188,6 @@ extern "C" {
 #define DRV_SPI_RCV_DMA_CH_IDX0               SYS_DMA_CHANNEL_1
 #define DRV_SPI_QUEUE_SIZE_IDX0               8
 
-/* SDSPI Driver Common Configuration Options */
-#define DRV_SDSPI_INSTANCES_NUMBER              (1U)
-
-/* I2C Driver Common Configuration Options */
-#define DRV_I2C_INSTANCES_NUMBER              (1U)
-
-
-/* SPI Driver Common Configuration Options */
-#define DRV_SPI_INSTANCES_NUMBER              (1U)
-
 
 
 // *****************************************************************************
@@ -206,29 +206,6 @@ extern "C" {
 
 /* EP0 size in bytes */
 #define USB_DEVICE_EP0_BUFFER_SIZE                          64U
-
-
-/*** USB Driver Configuration ***/
-
-/* Maximum USB driver instances */
-#define DRV_USBHS_INSTANCES_NUMBER                        1U
-
-/* Interrupt mode enabled */
-#define DRV_USBHS_INTERRUPT_MODE                          true
-
-
-/* Enables Device Support */
-#define DRV_USBHS_DEVICE_SUPPORT                          true
-
-/* Disable Host Support */
-#define DRV_USBHS_HOST_SUPPORT                            false
-
-
-
-
-
-/* Alignment for buffers that are submitted to USB Driver*/ 
-#define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
 
 
 /* Maximum instances of CDC function driver */
@@ -292,6 +269,29 @@ extern "C" {
 #define NO_ERROR_STRINGS
 #define NO_WOLFSSL_MEMORY
 // ---------- FUNCTIONAL CONFIGURATION END ----------
+
+/*** USB Driver Configuration ***/
+
+/* Maximum USB driver instances */
+#define DRV_USBHS_INSTANCES_NUMBER                        1U
+
+/* Interrupt mode enabled */
+#define DRV_USBHS_INTERRUPT_MODE                          true
+
+
+/* Enables Device Support */
+#define DRV_USBHS_DEVICE_SUPPORT                          true
+
+/* Disable Host Support */
+#define DRV_USBHS_HOST_SUPPORT                            false
+
+
+
+
+
+/* Alignment for buffers that are submitted to USB Driver*/ 
+#define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
+
 
 
 

@@ -13,7 +13,7 @@
 #define __BOARDDATA_H__
 
 //#include "AInSample.h"
-//#include "DIOSample.h"
+#include "DIOSample.h"
 #include "Util/HeapList.h"
 //#include "HAL/Power/PowerApi.h"
 //#include "HAL/UI/UI.h"
@@ -68,9 +68,9 @@ extern "C" {
         //! Indicates whether the application is currently inside of an isr
         int InISR;
         //! The latest DIO sample
-        //DIOSample DIOLatest;
+        DIOSample DIOLatest;
         //! Collected DIO samples
-        //DIOSampleList DIOSamples;
+        DIOSampleList DIOSamples;
         //! The current state of the module
         //AInModDataArray AInState;
         //! The latest AIn samples

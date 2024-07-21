@@ -69,6 +69,27 @@ static void lDRV_SDSPI_0_Tasks(  void *pvParameters  )
     }
 }
 
+static void F_USB_DEVICE_Tasks(  void *pvParameters  )
+{
+    while(true)
+    {
+                /* USB Device layer tasks routine */
+        USB_DEVICE_Tasks(sysObj.usbDevObject0);
+        vTaskDelay(1U / portTICK_PERIOD_MS);
+    }
+}
+
+/* Handle for the APP_FREERTOS_Tasks. */
+TaskHandle_t xAPP_FREERTOS_Tasks;
+
+static void lAPP_FREERTOS_Tasks(  void *pvParameters  )
+{   
+    while(true)
+    {
+        APP_FREERTOS_Tasks();
+    }
+}
+
 static void _WDRV_WINC_Tasks(void *pvParameters)
 {
     while(1)
@@ -83,16 +104,6 @@ static void _WDRV_WINC_Tasks(void *pvParameters)
         {
             vTaskDelay(50 / portTICK_PERIOD_MS);
         }
-    }
-}
-
-static void F_USB_DEVICE_Tasks(  void *pvParameters  )
-{
-    while(true)
-    {
-                /* USB Device layer tasks routine */
-        USB_DEVICE_Tasks(sysObj.usbDevObject0);
-        vTaskDelay(1U / portTICK_PERIOD_MS);
     }
 }
 
@@ -116,17 +127,6 @@ static void lSYS_FS_Tasks(  void *pvParameters  )
     }
 }
 
-
-/* Handle for the APP_FREERTOS_Tasks. */
-TaskHandle_t xAPP_FREERTOS_Tasks;
-
-static void lAPP_FREERTOS_Tasks(  void *pvParameters  )
-{   
-    while(true)
-    {
-        APP_FREERTOS_Tasks();
-    }
-}
 
 
 

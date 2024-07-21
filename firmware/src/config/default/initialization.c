@@ -477,13 +477,27 @@ void SYS_Initialize ( void* data )
 
 	GPIO_Initialize();
 
+    OCMP8_Initialize();
+
+    OCMP6_Initialize();
+
+    OCMP7_Initialize();
+
 	SPI4_Initialize();
 
-    DMAC_Initialize();
+    OCMP1_Initialize();
+
+    OCMP4_Initialize();
 
     NVM_Initialize();
 
+    OCMP3_Initialize();
+
     CORETIMER_Initialize();
+    TMR3_Initialize();
+
+    DMAC_Initialize();
+
     I2C5_Initialize();
 
 
@@ -518,10 +532,10 @@ void SYS_Initialize ( void* data )
     sysObj.usbDevObject0 = USB_DEVICE_Initialize (USB_DEVICE_INDEX_0 , ( SYS_MODULE_INIT* ) & usbDevInitData);
 
 
+    CRYPT_WCCB_Initialize();
     /* Initialize USB Driver */ 
     sysObj.drvUSBHSObject = DRV_USBHS_Initialize(DRV_USBHS_INDEX_0, (SYS_MODULE_INIT *) &drvUSBInit);    
 
-    CRYPT_WCCB_Initialize();
     /*** File System Service Initialization Code ***/
     (void) SYS_FS_Initialize( (const void *) sysFSInit );
 

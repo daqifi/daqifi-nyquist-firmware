@@ -70,6 +70,24 @@ IntVectorCORE_TIMER_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorCORE_TIMER_Handler
+    .extern  TIMER_3_Handler
+
+    .section   .vector_14,code, keep
+    .equ     __vector_dispatch_14, IntVectorTIMER_3_Handler
+    .global  __vector_dispatch_14
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorTIMER_3_Handler
+
+IntVectorTIMER_3_Handler:
+    portSAVE_CONTEXT
+    la    s6,  TIMER_3_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorTIMER_3_Handler
     .extern  CHANGE_NOTICE_A_Handler
 
     .section   .vector_118,code, keep

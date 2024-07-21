@@ -1,7 +1,7 @@
 #pragma once
 
-#include "system_config.h"
-#include "system_definitions.h"
+#include "configuration.h"
+#include "definitions.h"
 
 #ifdef	__cplusplus
 extern "C" {

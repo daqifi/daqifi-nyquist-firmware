@@ -49,33 +49,23 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "crypto/crypto.h"
+#include "peripheral/ocmp/plib_ocmp8.h"
+#include "peripheral/ocmp/plib_ocmp6.h"
+#include "peripheral/ocmp/plib_ocmp7.h"
 #include "peripheral/spi/spi_master/plib_spi4_master.h"
-#include "driver/winc/include/wdrv_winc_api.h"
-#include "peripheral/clk/plib_clk.h"
-#include "peripheral/gpio/plib_gpio.h"
-#include "peripheral/cache/plib_cache.h"
-#include "peripheral/evic/plib_evic.h"
-#include "peripheral/dmac/plib_dmac.h"
 #include "usb/usb_chapter_9.h"
 #include "usb/usb_device.h"
+#include "peripheral/ocmp/plib_ocmp1.h"
+#include "peripheral/ocmp/plib_ocmp4.h"
 #include "driver/sdspi/drv_sdspi.h"
+#include "driver/i2c/drv_i2c.h"
+#include "peripheral/ocmp/plib_ocmp3.h"
 #include "system/time/sys_time.h"
 #include "peripheral/nvm/plib_nvm.h"
-#include "driver/i2c/drv_i2c.h"
 #include "peripheral/coretimer/plib_coretimer.h"
-#include "driver/usb/usbhs/drv_usbhs.h"
 #include "usb/usb_device_cdc.h"
 #include "usb/usb_cdc.h"
-#include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
-#include "system/fs/sys_fs.h"
-#include "system/fs/sys_fs_media_manager.h"
-#include "system/fs/sys_fs_fat_interface.h"
-#include "system/fs/fat_fs/file_system/ff.h"
-#include "system/fs/fat_fs/file_system/ffconf.h"
-#include "system/fs/fat_fs/hardware_access/diskio.h"
-#include "peripheral/i2c/master/plib_i2c5_master.h"
-#include "FreeRTOS.h"
-#include "task.h"
+#include "peripheral/tmr/plib_tmr3.h"
 #include "driver/spi/drv_spi.h"
 #include "system/int/sys_int.h"
 #include "system/ports/sys_ports.h"
@@ -83,6 +73,23 @@
 #include "system/dma/sys_dma.h"
 #include "osal/osal.h"
 #include "system/debug/sys_debug.h"
+#include "driver/winc/include/wdrv_winc_api.h"
+#include "peripheral/clk/plib_clk.h"
+#include "peripheral/gpio/plib_gpio.h"
+#include "peripheral/cache/plib_cache.h"
+#include "peripheral/evic/plib_evic.h"
+#include "peripheral/dmac/plib_dmac.h"
+#include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
+#include "driver/usb/usbhs/drv_usbhs.h"
+#include "peripheral/i2c/master/plib_i2c5_master.h"
+#include "system/fs/sys_fs.h"
+#include "system/fs/sys_fs_media_manager.h"
+#include "system/fs/sys_fs_fat_interface.h"
+#include "system/fs/fat_fs/file_system/ff.h"
+#include "system/fs/fat_fs/file_system/ffconf.h"
+#include "system/fs/fat_fs/hardware_access/diskio.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "app_freertos.h"
 
 
@@ -220,13 +227,13 @@ typedef struct
     /* I2C0 Driver Object */
     SYS_MODULE_OBJ drvI2C0;
 
-    SYS_MODULE_OBJ  drvWifiWinc;
     SYS_MODULE_OBJ  usbDevObject0;
 
+    SYS_MODULE_OBJ  sysTime;
+    SYS_MODULE_OBJ  drvWifiWinc;
     /* SPI0 Driver Object */
     SYS_MODULE_OBJ drvSPI0;
 
-    SYS_MODULE_OBJ  sysTime;
     SYS_MODULE_OBJ  drvUSBHSObject;
 
 

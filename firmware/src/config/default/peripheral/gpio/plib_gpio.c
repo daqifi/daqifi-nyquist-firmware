@@ -66,33 +66,45 @@ void GPIO_Initialize ( void )
 {
 
     /* PORTA Initialization */
+    LATA = 0x0U; /* Initial Latch Value */
+    TRISACLR = 0x20U; /* Direction Control */
+    ANSELACLR = 0x20U; /* Digital Mode Enable */
 
     /* Change Notice Enable */
     CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK;
     IEC3SET = _IEC3_CNAIE_MASK;
     /* PORTB Initialization */
     /* PORTC Initialization */
+    ANSELCCLR = 0x6U; /* Digital Mode Enable */
     /* PORTD Initialization */
     LATD = 0x0U; /* Initial Latch Value */
-    TRISDCLR = 0x200U; /* Direction Control */
+    TRISDCLR = 0x2284U; /* Direction Control */
     CNPUDSET = 0x800U; /* Pull-Up Enable */
 
     /* Change Notice Enable */
     CNCONDSET = _CNCOND_EDGEDETECT_MASK | _CNCOND_ON_MASK;
     IEC3SET = _IEC3_CNDIE_MASK;
     /* PORTE Initialization */
+    LATE = 0x0U; /* Initial Latch Value */
+    TRISECLR = 0x85U; /* Direction Control */
+    ANSELECLR = 0xf0U; /* Digital Mode Enable */
     /* PORTF Initialization */
     LATF = 0x20U; /* Initial Latch Value */
     TRISFCLR = 0x20U; /* Direction Control */
     /* PORTG Initialization */
+    LATG = 0x0U; /* Initial Latch Value */
+    TRISGCLR = 0x8000U; /* Direction Control */
+    ANSELGCLR = 0x8000U; /* Digital Mode Enable */
     /* PORTH Initialization */
     LATH = 0x2110U; /* Initial Latch Value */
     TRISHCLR = 0x2110U; /* Direction Control */
     ANSELHCLR = 0x10U; /* Digital Mode Enable */
     /* PORTJ Initialization */
+    LATJ = 0x0U; /* Initial Latch Value */
+    TRISJCLR = 0x14b5U; /* Direction Control */
     /* PORTK Initialization */
     LATK = 0x10U; /* Initial Latch Value */
-    TRISKCLR = 0x10U; /* Direction Control */
+    TRISKCLR = 0x90U; /* Direction Control */
 
     /* Unlock system for PPS configuration */
     SYSKEY = 0x00000000U;
@@ -106,6 +118,11 @@ void GPIO_Initialize ( void )
 
     /* PPS Output Remapping */
     RPC13R = 8;
+    RPD12R = 12;
+    RPF0R = 11;
+    RPF1R = 12;
+    RPG1R = 11;
+    RPG0R = 12;
 
         /* Lock back the system after PPS configuration */
     CFGCONbits.IOLOCK = 1U;

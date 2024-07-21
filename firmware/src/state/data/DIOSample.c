@@ -10,10 +10,10 @@ static QueueHandle_t DIOQueue;
 //! Size of the queue, in number of items
 static uint32_t queueSize = 0;
 
-void DIOSampleList_Initialize( \
-                            DIOSampleList* list, \
-                            size_t maxSize, \
-                            bool dropOnOverflow, \
+void DIOSampleList_Initialize( 
+                            DIOSampleList* list, 
+                            size_t maxSize, 
+                            bool dropOnOverflow, 
                             const LockProvider* lockPrototype){
     
     (void)list;
@@ -41,9 +41,9 @@ bool DIOSampleList_PushBack(DIOSampleList* list, const DIOSample* data){
     
     (void)list;
     
-    queueResult = xQueueSend( \
-                    DIOQueue, \
-                    data, \
+    queueResult = xQueueSend( 
+                    DIOQueue, 
+                    data, 
                     (TickType_t)0 );
     
     return ( queueResult == pdTRUE ) ? true : false; 
@@ -59,9 +59,9 @@ bool DIOSampleList_PopFront(DIOSampleList* list, DIOSample* data)
         return false;
     }
     
-    queueResult = xQueueReceive( \
-                    DIOQueue, \
-                    data, \
+    queueResult = xQueueReceive( 
+                    DIOQueue, 
+                    data, 
                     DIOSAMPLE_QUEUE_TICKS_TO_WAIT );
     return ( queueResult == pdTRUE ) ? true : false; 
 }
@@ -76,9 +76,9 @@ bool DIOSampleList_PeekFront(DIOSampleList* list, DIOSample* data)
         return false;
     }
     
-    queueResult = xQueuePeek( \
-                    DIOQueue, \
-                    data, \
+    queueResult = xQueuePeek( 
+                    DIOQueue, 
+                    data, 
                     DIOSAMPLE_QUEUE_TICKS_TO_WAIT );
     return ( queueResult == pdTRUE ) ? true : false; 
 }
@@ -99,9 +99,9 @@ bool DIOSampleList_IsEmpty(DIOSampleList* list)
     DIOSample data;
     BaseType_t queueResult;
     
-    queueResult = xQueuePeek( \
-                    DIOQueue, \
-                    &data, \
+    queueResult = xQueuePeek( 
+                    DIOQueue, 
+                    &data, 
                     0 );
     /*if( DIOSampleList_Size(NULL) == queueSize ){
         return true;

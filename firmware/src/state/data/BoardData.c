@@ -20,8 +20,8 @@ void InitializeBoardData(tBoardData* boardData)
     // Initialize variable to known state
     memset(&g_BoardData, 0, sizeof(g_BoardData));
         
-//    memset(&boardData->DIOLatest, 0, sizeof(DIOSample));
-//    DIOSampleList_Initialize(&boardData->DIOSamples, MAX_DIO_SAMPLE_COUNT, false, &g_NullLockProvider);
+    memset(&boardData->DIOLatest, 0, sizeof(DIOSample));
+    DIOSampleList_Initialize(&boardData->DIOSamples, MAX_DIO_SAMPLE_COUNT, false, &g_NullLockProvider);
 //    
 //    memset(&boardData->AInState, 0, sizeof(AInModDataArray));
 //    
