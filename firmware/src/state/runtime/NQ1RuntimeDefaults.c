@@ -4,28 +4,28 @@
 // The default board configuration
 // TODO: It would be handly if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
 const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
-//    .DIOChannels = {
-//        .Data = {
-//            {.IsInput = true, .IsReadOnly = false, .Value = false,.IsPwmActive=false,.PwmFrequency=0,.PwmDutyCycle=0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//            {true, false, false,false,0,0},
-//        },
-//        .Size = 16,
-//    },
-//    .DIOGlobalEnable = false,
+    .DIOChannels = {
+        .Data = {
+            {.IsInput = true, .IsReadOnly = false, .Value = false,.IsPwmActive=false,.PwmFrequency=0,.PwmDutyCycle=0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+            {true, false, false,false,0,0},
+        },
+        .Size = 16,
+    },
+    .DIOGlobalEnable = false,
 //    .AInModules = {
 //        .Data = {
 //            {.IsEnabled = true, .Range = 5.0},
@@ -76,19 +76,17 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
 //        .LED1 = false,
 //        .LED2 = false,
 //    },
-//    .StreamingConfig = {
-//        .IsEnabled = false,
-//        .TimerHandle = 0,
-//        .Running = false,
-//        .ClockDivider = 130,   // default 3k hz (15khz is the max)
-//        .ChannelScanTimeDiv=3, //default 1khz (1khz is the max)
-//        .Frequency=3000,
-//        .StreamCountTrigger = 0,
-//        .StreamCount = 0,
-//        .Encoding = Streaming_ProtoBuffer,
-//        .TSTimerHandle = 0,
-//        .TSClockDivider = 0xFFFFFFFF,   // maximum
-//    },
+    .StreamingConfig = {
+        .IsEnabled = false,
+        .Running = false,
+        .ClockDivider = 130,   // default 3k hz (15khz is the max)
+        .ChannelScanTimeDiv=3, //default 1khz (1khz is the max)
+        .Frequency=3000,
+        .StreamCountTrigger = 0,
+        .StreamCount = 0,
+        .Encoding = Streaming_ProtoBuffer,
+        .TSClockDivider = 0xFFFFFFFF,   // maximum
+    },
 //    .wifiSettings = {
 //        .type = DaqifiSettings_Wifi
 //    },

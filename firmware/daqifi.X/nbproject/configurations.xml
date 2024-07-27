@@ -182,6 +182,9 @@
             <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
               <itemPath>../src/config/default/peripheral/tmr/plib_tmr3.h</itemPath>
               <itemPath>../src/config/default/peripheral/tmr/plib_tmr_common.h</itemPath>
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr2.h</itemPath>
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr6.h</itemPath>
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr4.h</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="system" displayName="system" projectFiles="true">
@@ -309,6 +312,9 @@
         <logicalFolder name="Power" displayName="Power" projectFiles="true">
           <itemPath>../src/HAL/Power/PowerApi.h</itemPath>
         </logicalFolder>
+        <logicalFolder name="TimerApi" displayName="TimerApi" projectFiles="true">
+          <itemPath>../src/HAL/TimerApi/TimerApi.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.h</itemPath>
         </logicalFolder>
@@ -378,6 +384,8 @@
           <itemPath>../src/services/Wifi/WifiApi.h</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.h</itemPath>
+        <itemPath>../src/services/streaming.h</itemPath>
+        <itemPath>../src/services/JSON_Encoder.h</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
@@ -723,6 +731,9 @@
             </logicalFolder>
             <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
               <itemPath>../src/config/default/peripheral/tmr/plib_tmr3.c</itemPath>
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr2.c</itemPath>
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr6.c</itemPath>
+              <itemPath>../src/config/default/peripheral/tmr/plib_tmr4.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="stdio" displayName="stdio" projectFiles="true">
@@ -814,6 +825,9 @@
         <logicalFolder name="Power" displayName="Power" projectFiles="true">
           <itemPath>../src/HAL/Power/PowerApi.c</itemPath>
         </logicalFolder>
+        <logicalFolder name="TimerApi" displayName="TimerApi" projectFiles="true">
+          <itemPath>../src/HAL/TimerApi/TimerApi.c</itemPath>
+        </logicalFolder>
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.c</itemPath>
         </logicalFolder>
@@ -867,6 +881,8 @@
           <itemPath>../src/services/Wifi/WifiApi.c</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.c</itemPath>
+        <itemPath>../src/services/streaming.c</itemPath>
+        <itemPath>../src/services/JSON_Encoder.c</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
@@ -1929,6 +1945,22 @@
         <C32Global>
         </C32Global>
       </item>
+      <item path="../src/state/board/DIOConfig.h" ex="true" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
       <item path="../src/state/board/NQ1BoardConfig.c" ex="false" overriding="false">
         <C32>
         </C32>
@@ -2144,7 +2176,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/DIORuntimeConfig.h"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -2216,7 +2248,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/StreamingRuntimeConfig.h"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>

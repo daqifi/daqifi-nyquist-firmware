@@ -68,7 +68,12 @@
 // *****************************************************************************
 // *****************************************************************************
 void CORE_TIMER_Handler (void);
+void TIMER_2_Handler (void);
 void TIMER_3_Handler (void);
+void TIMER_4_Handler (void);
+void TIMER_5_Handler (void);
+void TIMER_6_Handler (void);
+void TIMER_7_Handler (void);
 void CHANGE_NOTICE_A_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
@@ -94,9 +99,32 @@ void CORE_TIMER_Handler (void)
 
 
 
+void TIMER_2_Handler (void)
+{
+    TIMER_2_InterruptHandler();
+}
+
 void TIMER_3_Handler (void)
 {
     TIMER_3_InterruptHandler();
+}
+
+void TIMER_4_Handler (void)
+{
+}
+
+void TIMER_5_Handler (void)
+{
+    TIMER_5_InterruptHandler();
+}
+
+void TIMER_6_Handler (void)
+{
+}
+
+void TIMER_7_Handler (void)
+{
+    TIMER_7_InterruptHandler();
 }
 
 void CHANGE_NOTICE_A_Handler (void)

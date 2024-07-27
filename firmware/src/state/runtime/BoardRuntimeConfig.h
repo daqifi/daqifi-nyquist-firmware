@@ -4,8 +4,8 @@
 #include "definitions.h"
 
 //#include "AInRuntimeConfig.h"
-//#include "DIORuntimeConfig.h"
-//#include "StreamingRuntimeConfig.h"
+#include "DIORuntimeConfig.h"
+#include "StreamingRuntimeConfig.h"
 //#include "TcpServerConfig.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/ArrayWrapper.h"
@@ -55,11 +55,11 @@ typedef struct sBoardRuntimeConfig
 {
     //!Runtime settings for the digital IO channels
     //!This is an array where index = channel and data = configuration
-    //DIORuntimeArray DIOChannels;
+    DIORuntimeArray DIOChannels;
     //!The defined digital IO global enable
     //!This is an bool which defines the global DIO enable 
     //!(true, DIO is transmitted when streaming)
-    //bool DIOGlobalEnable;
+    bool DIOGlobalEnable;
     //!Runtime settings for the analog input modules
     //!This is an array where index = module and data = configuration
     //AInModRuntimeArray AInModules;
@@ -71,7 +71,7 @@ typedef struct sBoardRuntimeConfig
     //! User interface write variables
     //tUIWriteVars UIWriteVars;
     //! Streaming configuration parameters
-    //StreamingRuntimeConfig StreamingConfig;
+    StreamingRuntimeConfig StreamingConfig;
     //! The desired wifi settings
     WifiSettings wifiSettings;
     //!The desired USB settings

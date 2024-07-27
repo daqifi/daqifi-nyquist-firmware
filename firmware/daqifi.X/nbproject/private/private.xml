@@ -3,31 +3,57 @@
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
         <group>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/sdspi/src/drv_sdspi.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/BoardRuntimeConfig.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/NQ1BoardConfig.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/wdrv_winc_assoc.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/system/fs/sys_fs.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/streaming.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/spi/drv_spi.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/BoardRuntimeConfig.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/device.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/spi/src/drv_spi.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/StreamingRuntimeConfig.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/NQ2RuntimeDefaults.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/TimerApi/TimerApi.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Power/PowerApi.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/AInConfig.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/DIOConfig.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Power/PowerApi.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/interrupts.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/tmr/plib_tmr3.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/JSON_Encoder.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/interrupts.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/tmr/plib_tmr3.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SDcard/SDCard.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/NQ1BoardConfig.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/sdspi/src/drv_sdspi.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/Wifi/tcpServer.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/daqifi_settings.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/system/tmr/sys_tmr.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SDcard/SDCard.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/app_freertos.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/gpio/plib_gpio.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/device.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/Wifi/WifiApi.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/sdspi/src/drv_sdspi_driver_interface.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/spi/src/drv_spi.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/gpio/plib_gpio.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/wdrv_winc_common.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/configuration.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/coretimer/plib_coretimer.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/Util/ArrayWrapper.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/sdspi/src/drv_sdspi_driver_interface.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Power/PowerApi.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/DIOConfig.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/user.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/data/BoardData.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/Power/PowerApi.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/daqifi.mc3</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/TimerApi/TimerApi.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/BQ24297/BQ24297.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/tmr/plib_tmr4.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/BoardConfig.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SDcard/SDCard.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/tmr/plib_tmr2.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/tmr/plib_tmr4.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/NQ1RuntimeDefaults.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/data/BoardData.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/tmr/plib_tmr2.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/tmr/plib_tmr_common.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/BoardConfig.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/NQ1BoardConfig.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/definitions.h</file>
         </group>
     </open-files>

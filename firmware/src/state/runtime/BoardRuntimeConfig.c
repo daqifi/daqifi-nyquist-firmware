@@ -49,9 +49,9 @@ void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
         case BOARDRUNTIMECONFIG_ALL_CONFIG:
             return &pBoardRuntimeConfig;
         case BOARDRUNTIMECONFIG_DIO_CHANNELS:
-            //return &pBoardRuntimeConfig.DIOChannels;
+            return &pBoardRuntimeConfig.DIOChannels;
         case BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE:
-            //return &pBoardRuntimeConfig.DIOGlobalEnable;
+            return &pBoardRuntimeConfig.DIOGlobalEnable;
         case BOARDRUNTIMECONFIG_AIN_MODULES:
             //return &pBoardRuntimeConfig.AInModules;
         case BOARDRUNTIMECONFIG_AIN_CHANNELS:
@@ -61,7 +61,7 @@ void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
         case BOARDRUNTIME_UI_WRITE_VARIABLES: 
             //return &pBoardRuntimeConfig.UIWriteVars; 
         case BOARDRUNTIME_STREAMING_CONFIGURATION:
-            //return &pBoardRuntimeConfig.StreamingConfig;
+            return &pBoardRuntimeConfig.StreamingConfig;
         case BOARDRUNTIME_WIFI_SETTINGS:
              return &pBoardRuntimeConfig.wifiSettings;
         case BOARDRUNTIME_USB_SETTINGS:

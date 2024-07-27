@@ -279,14 +279,10 @@ const tBoardConfig NQ1BoardConfig = {
     //            .period = {2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
     //        },
     //    },
-    //    .StreamingConfig = {
-    //        .TimerIndex = DRV_TMR_INDEX_1,
-    //        .TimerIntent = DRV_IO_INTENT_EXCLUSIVE,
-    //        .DedicatedADCTimerIndex=DRV_TMR_INDEX_4,
-    //        .DedicatedADCTimerIntent = DRV_IO_INTENT_EXCLUSIVE,
-    //        .TSTimerIndex = DRV_TMR_INDEX_2,
-    //        .TSTimerIntent = DRV_IO_INTENT_EXCLUSIVE,
-    //    }
+        .StreamingConfig = {
+            .TimerIndex = 4,
+             .TSTimerIndex = 6,           
+        }
 };
 
 /*! This function is used for getting a board version 1 configuration parameter

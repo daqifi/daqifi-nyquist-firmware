@@ -2,7 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-
+#include "../board/DIOConfig.h"
 #include "Util/ArrayWrapper.h"
 
 #ifdef __cplusplus
@@ -44,10 +44,8 @@ extern "C" {
          */
         uint16_t PwmDutyCycle;
     } DIORuntimeConfig;
-    
-    // Define a storage class for DIO Configs
-    #define MAX_DIO_RUNTIME_CHANNEL 16
-    ARRAYWRAPPERDEF(DIORuntimeArray, DIORuntimeConfig, MAX_DIO_RUNTIME_CHANNEL);
+
+    ARRAYWRAPPERDEF(DIORuntimeArray, DIORuntimeConfig, MAX_DIO_CHANNEL);
     
 #ifdef __cplusplus
 }

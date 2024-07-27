@@ -58,7 +58,10 @@
 // *****************************************************************************
 
 void CORE_TIMER_InterruptHandler( void );
+void TIMER_2_InterruptHandler( void );
 void TIMER_3_InterruptHandler( void );
+void TIMER_5_InterruptHandler( void );
+void TIMER_7_InterruptHandler( void );
 void CHANGE_NOTICE_A_InterruptHandler( void );
 void CHANGE_NOTICE_D_InterruptHandler( void );
 void DRV_USBHS_InterruptHandler( void );

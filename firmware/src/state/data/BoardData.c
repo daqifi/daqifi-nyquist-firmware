@@ -10,8 +10,8 @@
  */
 
 #include "BoardData.h"
-
 #include "Util/NullLockProvider.h"
+#include "state/board/DIOConfig.h"
 //#include "../../HAL/ADC.h"
 tBoardData __attribute__((coherent)) g_BoardData;
 
@@ -69,9 +69,9 @@ void *BoardData_Get(
         case BOARDDATA_IN_ISR:
             //return &g_BoardData.InISR;
         case BOARDDATA_DIO_LATEST:
-            //return &g_BoardData.DIOLatest;
+            return &g_BoardData.DIOLatest;
         case BOARDDATA_DIO_SAMPLES:
-            //return &g_BoardData.DIOSamples.List;
+            return &g_BoardData.DIOSamples.List;
         case BOARDATA_AIN_MODULE:
 //            if( index < g_BoardData.AInState.Size ){
 //                return &g_BoardData.AInState.Data[ index ];

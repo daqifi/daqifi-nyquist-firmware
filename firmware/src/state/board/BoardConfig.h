@@ -15,7 +15,7 @@
 //#define DIO_TIMING_TEST
 //#include "AInConfig.h"
 #include "DIOConfig.h"
-
+#include "StreamingConfig.h"
 #include "services/daqifi_settings.h"
 #include "HAL/BQ24297/BQ24297.h"
 
@@ -85,8 +85,8 @@ typedef struct sBoardConfig
 //    tPowerConfig PowerConfig;
 //    //! User Interface Structure
 //    tUIConfig UIConfig;
-//    //! Stream configuration structure
-//    tStreamingConfig StreamingConfig;
+    //! Stream configuration structure
+    tStreamingConfig StreamingConfig;
 }tBoardConfig;
 
 /*!

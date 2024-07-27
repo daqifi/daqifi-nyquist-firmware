@@ -1,7 +1,7 @@
 #pragma once
 
-#include "system_config.h"
-#include "system_definitions.h"
+#include "configuration.h"
+#include "definitions.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -23,16 +23,6 @@ extern "C" {
          * Indicates whether the board is streaming
          */
         bool IsEnabled;
-        
-        /**
-         * Used to access the appropriate driver
-         */
-        DRV_HANDLE TimerHandle;
-           
-        /**
-         * Used to access the appropriate timestamp timer driver
-         */
-        DRV_HANDLE TSTimerHandle;
         
         /**
          * Indicates whether the alarm has been registered
