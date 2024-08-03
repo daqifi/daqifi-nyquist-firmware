@@ -189,7 +189,8 @@ build/default/production/_ext/1260820504/streaming.o: \
  ../src/state/data/BoardData.h \
  ../src/services/DaqifiPB/DaqifiOutMessage.pb.h \
  ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
- ../src/Util/Logger.h ../src/services/UsbCdc/UsbCdc.h
+ ../src/Util/Logger.h ../src/services/UsbCdc/UsbCdc.h \
+ ../src/services/../HAL/TimerApi/TimerApi.h
 
 ../src/services/streaming.h:
 
@@ -592,3 +593,5 @@ build/default/production/_ext/1260820504/streaming.o: \
 ../src/Util/Logger.h:
 
 ../src/services/UsbCdc/UsbCdc.h:
+
+../src/services/../HAL/TimerApi/TimerApi.h:

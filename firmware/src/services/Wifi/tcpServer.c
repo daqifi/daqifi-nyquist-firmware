@@ -18,6 +18,7 @@ TcpServerData *gpServerData;
 //// Function Prototypes
 
 bool TcpServer_ProcessSendBuffer();
+size_t TcpServer_WriteBuffFreeSize();
 size_t TcpServer_WriteBuffer(const char* data, size_t len);
 void TcpServer_CloseSocket();
 void TcpServer_OpenSocket(uint16_t port);
@@ -194,7 +195,7 @@ void TcpServer_Initialize(TcpServerData *pServerData) {
         gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface, &gpServerData->client);
         CircularBuf_Init(&gpServerData->client.wCirbuf,
                 CircularBufferToTcpWrite,
-                (WIFI_RBUFFER_SIZE * 4));
+                (WIFI_CIRCULAR_BUFF_SIZE));
         gpServerData->client.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gpServerData->client.wMutex);
         isInitDone = true;
@@ -236,6 +237,13 @@ void TcpServer_CloseClientSocket() {
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
 }
 
+size_t TcpServer_WriteBuffFreeSize(){
+    if (gpServerData->client.clientSocket < 0) {
+        return 0;
+    }
+    
+    return CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf);
+}
 /**
  * Writes data to the output buffere
  * @param client The client to write to
@@ -245,9 +253,13 @@ void TcpServer_CloseClientSocket() {
  */
 size_t TcpServer_WriteBuffer(const char* data, size_t len) {
     size_t bytesAdded = 0;
-
+    
+    if (gpServerData->client.clientSocket < 0) {
+        return 0;
+    }
+    
     if (len == 0)return 0;
-
+    
     while (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
         vTaskDelay(10);
     }

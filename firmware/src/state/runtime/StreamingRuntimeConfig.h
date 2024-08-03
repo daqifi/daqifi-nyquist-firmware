@@ -33,7 +33,7 @@ extern "C" {
         /**
          * The base clock divider
          */
-        uint32_t ClockDivider;
+        uint32_t ClockPeriod;
         /**
          *Base Frequency of adc Sampling and streaming
          */
@@ -45,7 +45,7 @@ extern "C" {
         /**
          * The base clock divider for the timestamp timer
          */
-        uint32_t TSClockDivider;
+        uint32_t TSClockPeriod;
         
         /**
          * The number of times through the loop before we do a system read

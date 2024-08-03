@@ -407,8 +407,6 @@
           <itemPath>../src/state/runtime/BoardRuntimeConfig.h</itemPath>
           <itemPath>../src/state/runtime/DIORuntimeConfig.h</itemPath>
           <itemPath>../src/state/runtime/StreamingRuntimeConfig.h</itemPath>
-          <itemPath>../src/state/runtime/TcpServerConfig.h</itemPath>
-          <itemPath>../src/state/runtime/UsbRuntimeConfig.h</itemPath>
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="system" displayName="system" projectFiles="true">
@@ -583,7 +581,6 @@
         <itemPath>../src/third_party/zlib/crc32.h</itemPath>
       </logicalFolder>
       <itemPath>../src/app_freertos.h</itemPath>
-      <itemPath>../src/encoder.h</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -1031,7 +1028,6 @@
       <itemPath>../src/app_freertos.c</itemPath>
       <itemPath>../src/main.c</itemPath>
       <itemPath>C:/Users/asus3/.mcc/HarmonyContent/wireless_apps_winc1500/apps/wifi_socket_demos/firmware/src/app_wifi.c</itemPath>
-      <itemPath>../src/encoder.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <sourceRootList>
@@ -2249,42 +2245,6 @@
       </item>
       <item path="../src/state/runtime/StreamingRuntimeConfig.h"
             ex="false"
-            overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/state/runtime/TcpServerConfig.h"
-            ex="true"
-            overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/state/runtime/UsbRuntimeConfig.h"
-            ex="true"
             overriding="false">
         <C32>
         </C32>

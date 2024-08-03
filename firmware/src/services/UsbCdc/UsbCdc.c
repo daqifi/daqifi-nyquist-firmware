@@ -152,9 +152,9 @@ void UsbCdc_EventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t c
                 /* Register the CDC Device application event handler here.
                  * Note how the usbCdcData object pointer is passed as the
                  * user data */
-                USB_DEVICE_CDC_EventHandlerSet(                             \
-                        USB_DEVICE_CDC_INDEX_0,                             \
-                        UsbCdc_CDCEventHandler,                             \
+                USB_DEVICE_CDC_EventHandlerSet(                             
+                        USB_DEVICE_CDC_INDEX_0,                             
+                        UsbCdc_CDCEventHandler,                             
                         (uintptr_t)&gRunTimeUsbSttings);
 
                 /* Mark that the device is now configured */
@@ -227,7 +227,7 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client)
     {
        
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
-        CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USB_WBUFFER_SIZE, &writeResult);
+        CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USBCDC_WBUFFER_SIZE, &writeResult);
         xSemaphoreGive(client->wMutex);
         
         if(writeResult != USB_DEVICE_CDC_RESULT_OK){
@@ -259,7 +259,7 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client)
             return false;
         }
         
-        if (gRunTimeUsbSttings.writeTransferHandle ==                      \
+        if (gRunTimeUsbSttings.writeTransferHandle ==                      
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
         {
             // SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Non-error w/ invalid transfer handle"); // Means USB write could not be scheduled
@@ -313,14 +313,14 @@ static bool UsbCdc_BeginRead(UsbCdcData_t* client)
         return false;
     }
     // Schedule the next read
-    if(gRunTimeUsbSttings.readTransferHandle ==                            \
-                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID &&           \
+    if(gRunTimeUsbSttings.readTransferHandle ==                            
+                        USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID &&           
                         gRunTimeUsbSttings.readBufferLength == 0)
     {
-        USB_DEVICE_CDC_RESULT readResult = USB_DEVICE_CDC_Read (            \
-                        USB_DEVICE_CDC_INDEX_0,                             \
-                        &gRunTimeUsbSttings.readTransferHandle,\
-                        client->readBuffer, USB_RBUFFER_SIZE);
+        USB_DEVICE_CDC_RESULT readResult = USB_DEVICE_CDC_Read (            
+                        USB_DEVICE_CDC_INDEX_0,                            
+                        &gRunTimeUsbSttings.readTransferHandle,
+                        client->readBuffer, USBCDC_RBUFFER_SIZE);
 
         switch (readResult)
         {
@@ -347,7 +347,7 @@ static bool UsbCdc_BeginRead(UsbCdcData_t* client)
             return false;
         }
         
-        if (gRunTimeUsbSttings.readTransferHandle ==                       \
+        if (gRunTimeUsbSttings.readTransferHandle ==                       
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
         {
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Non-error w/ invalid transfer handle");
@@ -401,7 +401,14 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client)
     
     return false;
 }
-
+size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client){
+    if(client==NULL){
+        client=&gRunTimeUsbSttings;
+    }
+    if(gRunTimeUsbSttings.state!=USB_CDC_STATE_PROCESS)
+        return 0;
+    return CircularBuf_NumBytesFree(&client->wCirbuf);
+}
 size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len)
 {
     if(client==NULL){
@@ -552,9 +559,9 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     
     if (command != NULL && commandLen > 0)
     {
-        return SCPI_Input(                                                  \
-                        &gRunTimeUsbSttings.scpiContext,                   \
-                        command,                                            \
+        return SCPI_Input(                                                  
+                        &gRunTimeUsbSttings.scpiContext,                   
+                        command,                                            
                         commandLen);
     }
     
@@ -574,23 +581,23 @@ void UsbCdc_Initialize()
     gRunTimeUsbSttings.deviceLineCodingData.bParityType = 0;
     gRunTimeUsbSttings.deviceLineCodingData.bDataBits = 8;
 
-    gRunTimeUsbSttings.readTransferHandle =                                \
+    gRunTimeUsbSttings.readTransferHandle =                                
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
-    gRunTimeUsbSttings.writeTransferHandle =                               \
+    gRunTimeUsbSttings.writeTransferHandle =                               
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
     gRunTimeUsbSttings.readBufferLength = 0;
     
     microrl_init(&gRunTimeUsbSttings.console, microrl_echo);
     microrl_set_echo(&gRunTimeUsbSttings.console, true);
-    microrl_set_execute_callback(                                           \
-                        &gRunTimeUsbSttings.console,                       \
+    microrl_set_execute_callback(                                           
+                        &gRunTimeUsbSttings.console,                       
                         microrl_commandComplete);
     gRunTimeUsbSttings.scpiContext = CreateSCPIContext(&scpi_interface,&gRunTimeUsbSttings);
     
     // reset circular buffer variables to known state. 
-    CircularBuf_Init(   &gRunTimeUsbSttings.wCirbuf,                       \
-                        UsbCdc_Wrapper_Write,                               \
-                        (USB_WBUFFER_SIZE*2));
+    CircularBuf_Init(   &gRunTimeUsbSttings.wCirbuf,                       
+                        UsbCdc_Wrapper_Write,                               
+                        (USBCDC_CIRCULAR_BUFF_SIZE));
      /* Create a mutex type semaphore. */
     gRunTimeUsbSttings.wMutex = xSemaphoreCreateMutex();
 
@@ -620,9 +627,9 @@ void UsbCdc_ProcessState()
             if(gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID)
             {
                 /* Register a callback with device layer to get event notification (for end point 0) */
-                USB_DEVICE_EventHandlerSet(                                 \
-                        gRunTimeUsbSttings.deviceHandle,                   \
-                        UsbCdc_EventHandler,                                \
+                USB_DEVICE_EventHandlerSet(                                 
+                        gRunTimeUsbSttings.deviceHandle,                   
+                        UsbCdc_EventHandler,                                
                         0);
 
                 gRunTimeUsbSttings.state = USB_CDC_STATE_WAIT;
@@ -636,7 +643,7 @@ void UsbCdc_ProcessState()
             break;
         case USB_CDC_STATE_PROCESS:           
             // If a write operation is not in progress
-            if(gRunTimeUsbSttings.readTransferHandle ==                    \
+            if(gRunTimeUsbSttings.readTransferHandle ==                    
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
             {
                 // Process any input
@@ -650,7 +657,7 @@ void UsbCdc_ProcessState()
             }
             
             // I a read operation is not in progress
-            if(gRunTimeUsbSttings.writeTransferHandle ==                   \
+            if(gRunTimeUsbSttings.writeTransferHandle ==                   
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
             {
                 // Schedule any output;
@@ -681,9 +688,9 @@ void UsbCdc_ProcessState()
             
             gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
 
-            gRunTimeUsbSttings.readTransferHandle =                        \
+            gRunTimeUsbSttings.readTransferHandle =                        
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
-            gRunTimeUsbSttings.writeTransferHandle =                       \
+            gRunTimeUsbSttings.writeTransferHandle =                       
                         USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             gRunTimeUsbSttings.readBufferLength = 0;
 

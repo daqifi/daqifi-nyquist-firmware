@@ -104,7 +104,7 @@ void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBu
     size_t count = Nanopb_Encode(
             pBoardData,
             &fields_discovery,
-            pBuff);
+            pBuff,*len);
     *len = count;
 }
 

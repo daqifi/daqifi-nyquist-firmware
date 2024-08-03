@@ -79,13 +79,12 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
     .StreamingConfig = {
         .IsEnabled = false,
         .Running = false,
-        .ClockDivider = 130,   // default 3k hz (15khz is the max)
-        .ChannelScanTimeDiv=3, //default 1khz (1khz is the max)
-        .Frequency=3000,
+        .ClockPeriod = 130,   // default 3k hz (15khz is the max)
+        .ChannelScanTimeDiv=3, //default 1khz (1khz is the max)        
         .StreamCountTrigger = 0,
         .StreamCount = 0,
         .Encoding = Streaming_ProtoBuffer,
-        .TSClockDivider = 0xFFFFFFFF,   // maximum
+        .TSClockPeriod = 0xFFFFFFFF,   // maximum
     },
 //    .wifiSettings = {
 //        .type = DaqifiSettings_Wifi

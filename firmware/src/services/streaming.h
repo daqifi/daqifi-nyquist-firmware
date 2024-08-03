@@ -16,8 +16,8 @@ extern "C" {
  * @param[in] pStreamingConfigInit Streaming configuration
  * @param[out] pStreamingRuntimeConfigInit Streaming configuration in runtime
  */
-void Streaming_Init(const tStreamingConfig* pStreamingConfigInit,           \
-                    const StreamingRuntimeConfig* pStreamingRuntimeConfigInit);
+void Streaming_Init(tStreamingConfig* pStreamingConfigInit,           
+                    StreamingRuntimeConfig* pStreamingRuntimeConfigInit);
 
 /*! Updates the streaming timer 
  */
@@ -28,7 +28,7 @@ void Streaming_UpdateState( void );
  * @param runtimeConfig The runtime configuration
  * @param boardData     The board data
  */
-void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 \
+void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 
                         tBoardData* boardData);
 
 /**

@@ -24,8 +24,9 @@ extern "C" {
 #include "libraries/scpi/libscpi/inc/scpi/scpi.h"
 #include "Util/CircularBuffer.h"
 
-#define USB_WBUFFER_SIZE 512
-#define USB_RBUFFER_SIZE 512 // 32 * 64
+#define USBCDC_WBUFFER_SIZE 512
+#define USBCDC_RBUFFER_SIZE 512 
+#define USBCDC_CIRCULAR_BUFF_SIZE USBCDC_WBUFFER_SIZE*4
 /**
  * State machine states
  */
@@ -91,10 +92,10 @@ typedef struct s_UsbCdcData
     size_t writeBufferLength;
     
     /** Client read buffer */
-    uint8_t readBuffer[USB_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));;
+    uint8_t readBuffer[USBCDC_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));;
     
     /** Client write buffer */
-    uint8_t writeBuffer[USB_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
+    uint8_t writeBuffer[USBCDC_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
     
     CircularBuf_t wCirbuf;
     SemaphoreHandle_t wMutex;
@@ -114,7 +115,7 @@ void UsbCdc_ProcessState();
  * Indicates whether USB is up and active
  */
 bool UsbCdc_IsActive();
-
+size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client);
 /**
  * Writes to the default (only) client
  * @param client The usb client to write to

@@ -69,6 +69,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
 
 extern bool TcpServer_ProcessSendBuffer();
 extern size_t TcpServer_WriteBuffer(const char* data, size_t len);
+extern size_t TcpServer_WriteBuffFreeSize();
 extern void TcpServer_OpenSocket(uint16_t port);
 extern void TcpServer_CloseSocket();
 extern void TcpServer_CloseClientSocket();
@@ -538,7 +539,10 @@ bool WifiApi_UpdateNetworkSettings(WifiSettings * pSettings) {
     SendEvent(WIFIAPI_CONSUMED_EVENT_REINIT);
     return true;
 }
- size_t WifiApi_WriteToBuffer(const char* pData, size_t len){
+size_t WifiApi_WriteBuffFreeSize(){
+    return TcpServer_WriteBuffFreeSize();
+}
+size_t WifiApi_WriteToBuffer(const char* pData, size_t len){
      return TcpServer_WriteBuffer(pData, len);
  }
 void WifiApi_ProcessState() {

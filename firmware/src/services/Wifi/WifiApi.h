@@ -41,6 +41,7 @@ extern "C" {
      */
     bool WifiApi_Deinit();
     bool WifiApi_ReInit();
+    size_t WifiApi_WriteBuffFreeSize();
     size_t WifiApi_WriteToBuffer(const char* data, size_t len);
 
 

@@ -18,9 +18,6 @@
 #define max(x,y) x >= y ? x : y
 #endif // min
 
-
-//! Buffer size used for streaming purposes
-#define JSON_ENCODER_BUFFER_SIZE                    ENCODER_BUFFER_SIZE
 //! Size of temporal buffer used for JSON encoding purposes
 #define TMP_MAX_LEN                                 64
 //! Temporal buffer used for JSON encoding purposes
@@ -28,28 +25,28 @@ static char tmp[ TMP_MAX_LEN ];
 
 size_t Json_Encode(     tBoardData* state,                                  
                         NanopbFlagsArray* fields,                           
-                        uint8_t** ppBuffer)
+                        uint8_t* pBuffer, size_t buffSize)
 {
     int tmpLen = 0;
-    char *buffer = (char *)Encoder_Get_Buffer();
-    char* charBuffer = (char*)buffer;
+    //char *buffer = (char *)Encoder_Get_Buffer();
+    char* charBuffer = (char*)pBuffer;
     size_t startIndex = snprintf(                                           
                         charBuffer,                                         
-                        JSON_ENCODER_BUFFER_SIZE,                           
+                        buffSize,                           
                         "\n\r{\n\r");
     //size_t initialOffsetIndex=startIndex;
     size_t i=0;
     bool encodeDIO = false;
     //bool encodeADC = false;    
     
-    if( ppBuffer == NULL ){
+    if( pBuffer == NULL ){
         return 0;
     }
    
     
     for (i=0; i<fields->Size; ++i)
     {
-        if (JSON_ENCODER_BUFFER_SIZE - startIndex < 3)
+        if (buffSize - startIndex < 3)
         {
             break;
         }
@@ -59,7 +56,7 @@ size_t Json_Encode(     tBoardData* state,
             case DaqifiOutMessage_msg_time_stamp_tag:
                 startIndex += snprintf(                                     
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " \"timestamp\"=%u,\n\r",                           
                         state->StreamTrigStamp);
                 break;
@@ -93,7 +90,7 @@ size_t Json_Encode(     tBoardData* state,
                 {
                     startIndex += snprintf(                                 
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " \"ip\"=\"%s\",\n\r",                              
                         tmp);
                 }
@@ -131,7 +128,7 @@ size_t Json_Encode(     tBoardData* state,
                 {
                     startIndex += snprintf(                                 
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " \"mac\"=\"%s\",\n\r",                             
                         tmp);
                 }
@@ -149,7 +146,7 @@ size_t Json_Encode(     tBoardData* state,
                 {
                     startIndex += snprintf(                                 
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " \"ssid\"=\"%s\",\n\r",                            
                         wifiSettings->ssid);
                 }
@@ -184,7 +181,7 @@ size_t Json_Encode(     tBoardData* state,
                 WifiSettings* wifiSettings = &state->wifiSettings;
                 startIndex += snprintf(                                     
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " \"port\"=\"%u\",\n\r",                            
                         wifiSettings->tcpPort);
                 
@@ -195,7 +192,7 @@ size_t Json_Encode(     tBoardData* state,
                 WifiSettings* wifiSettings =  &state->wifiSettings;
                 startIndex += snprintf(                                     
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " \"sec\"=\"%u\",\n\r",                             
                         wifiSettings->securityMode);
                 
@@ -214,17 +211,17 @@ size_t Json_Encode(     tBoardData* state,
     {
         startIndex += snprintf(                                             
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " \"dio\"=[\n\r");
         
-        while (((JSON_ENCODER_BUFFER_SIZE - startIndex) >= 65) &&           
+        while (((buffSize - startIndex) >= 65) &&           
                (!DIOSampleList_IsEmpty(&state->DIOSamples)))
         {
             DIOSample data;
             DIOSampleList_PopFront(&state->DIOSamples, &data);
             startIndex += snprintf(                                         
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         "  {\"time\"=%u, \"mask\"=%u, \"data\"=%u},\n\r",   
                         state->StreamTrigStamp-data.Timestamp,              
                         data.Mask,                                          
@@ -233,7 +230,7 @@ size_t Json_Encode(     tBoardData* state,
         
         startIndex += snprintf(                                             
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         " ],\n\r");
     }
     
@@ -295,9 +292,8 @@ size_t Json_Encode(     tBoardData* state,
     
     startIndex += snprintf(                                                 
                         charBuffer + startIndex,                            
-                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                        buffSize - startIndex,              
                         "}");
     charBuffer[startIndex] = '\0';
-    memcpy(ppBuffer,charBuffer,startIndex);
     return startIndex;
 }

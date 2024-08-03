@@ -184,7 +184,9 @@ build/default/production/_ext/68089601/NanoPB_Encoder.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
- ../src/config/default/driver/winc/include/wdrv_winc_nvm.h
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/HAL/TimerApi/TimerApi.h ../src/state/board/BoardConfig.h \
+ ../src/state/board/StreamingConfig.h ../src/HAL/BQ24297/BQ24297.h
 
 ../src/libraries/nanopb/pb_encode.h:
 
@@ -577,3 +579,11 @@ build/default/production/_ext/68089601/NanoPB_Encoder.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/HAL/TimerApi/TimerApi.h:
+
+../src/state/board/BoardConfig.h:
+
+../src/state/board/StreamingConfig.h:
+
+../src/HAL/BQ24297/BQ24297.h:
