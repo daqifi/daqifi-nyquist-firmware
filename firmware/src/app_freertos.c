@@ -84,7 +84,6 @@
     Application strings and buffers are be defined outside this structure.
  */
 
-
 //! Pointer to board data information 
 static tBoardData * gpBoardData;
 static tBoardRuntimeConfig * gpBoardRuntimeConfig;

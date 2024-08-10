@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scpi/scpi.h"
+#include "SCPIInterface.h"
 
 #ifdef	__cplusplus
 extern "C" {

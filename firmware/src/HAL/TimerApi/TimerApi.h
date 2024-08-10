@@ -26,7 +26,19 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#define TIMER_CLOCK_FRQ 100000000
+typedef enum {
 
+    TMR_PRESCALE_VALUE_1 = 0x00,
+    TMR_PRESCALE_VALUE_2 = 0x01,
+    TMR_PRESCALE_VALUE_4 = 0x02,
+    TMR_PRESCALE_VALUE_8 = 0x03,
+    TMR_PRESCALE_VALUE_16 = 0x04,
+    TMR_PRESCALE_VALUE_32 = 0x05,
+    TMR_PRESCALE_VALUE_64 = 0x06,
+    TMR_PRESCALE_VALUE_256 = 0x07
+
+} timerApi_presScale_t;
 void TimerApi_Initialize(uint8_t index);
 
 void TimerApi_Start(uint8_t index);
@@ -40,6 +52,10 @@ uint16_t TimerApi_PeriodGet(uint8_t index);
 uint16_t TimerApi_CounterGet(uint8_t index);
 
 uint32_t TimerApi_FrequencyGet(uint8_t index);
+
+void TimerApi_PreScalerSet(uint8_t index, timerApi_presScale_t preScale);
+
+uint16_t TimerApi_PreScalerGet(uint8_t index);
 
 void TimerApi_InterruptEnable(uint8_t index);
 

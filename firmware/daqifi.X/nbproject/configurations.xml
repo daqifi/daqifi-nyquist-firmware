@@ -309,6 +309,9 @@
         <logicalFolder name="NVM" displayName="NVM" projectFiles="true">
           <itemPath>../src/HAL/NVM/nvm.h</itemPath>
         </logicalFolder>
+        <logicalFolder name="OcmpApi" displayName="OcmpApi" projectFiles="true">
+          <itemPath>../src/HAL/OcmpApi/OcmpApi.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="Power" displayName="Power" projectFiles="true">
           <itemPath>../src/HAL/Power/PowerApi.h</itemPath>
         </logicalFolder>
@@ -318,6 +321,7 @@
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.h</itemPath>
         </logicalFolder>
+        <itemPath>../src/HAL/DIO.h</itemPath>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
         <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
@@ -819,6 +823,9 @@
         <logicalFolder name="NVM" displayName="NVM" projectFiles="true">
           <itemPath>../src/HAL/NVM/nvm.c</itemPath>
         </logicalFolder>
+        <logicalFolder name="OcmpApi" displayName="OcmpApi" projectFiles="true">
+          <itemPath>../src/HAL/OcmpApi/OcmpApi.c</itemPath>
+        </logicalFolder>
         <logicalFolder name="Power" displayName="Power" projectFiles="true">
           <itemPath>../src/HAL/Power/PowerApi.c</itemPath>
         </logicalFolder>
@@ -828,6 +835,7 @@
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.c</itemPath>
         </logicalFolder>
+        <itemPath>../src/HAL/DIO.c</itemPath>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
         <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
@@ -1797,7 +1805,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/services/SCPI/SCPIDIO.c" ex="true" overriding="false">
+      <item path="../src/services/SCPI/SCPIDIO.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1813,7 +1821,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/services/SCPI/SCPIDIO.h" ex="true" overriding="false">
+      <item path="../src/services/SCPI/SCPIDIO.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

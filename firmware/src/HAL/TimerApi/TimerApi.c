@@ -136,20 +136,65 @@ uint16_t TimerApi_CounterGet(uint8_t index) {
     return ret;
 }
 
+void TimerApi_PreScalerSet(uint8_t index, timerApi_presScale_t preScale) {
+    switch (index) {
+        case 2:
+            T2CONbits.TCKPS = preScale;
+            break;
+        case 3:
+            T3CONbits.TCKPS = preScale;
+            break;
+        case 4:
+            T4CONbits.TCKPS = preScale;
+            break;
+        case 6:
+            T6CONbits.TCKPS = preScale;
+            break;
+        default:
+            break;
+    }
+}
+
+uint16_t TimerApi_PreScalerGet(uint8_t index) {    
+    uint8_t temp_prescaler = 0;
+    uint16_t preScaler = 0;
+    switch (index) {
+        case 2:
+            temp_prescaler = T2CONbits.TCKPS;
+            break;
+        case 3:
+            temp_prescaler = T3CONbits.TCKPS;
+            break;
+        case 4:
+            temp_prescaler = T4CONbits.TCKPS;
+            break;
+        case 6:
+            temp_prescaler = T6CONbits.TCKPS;
+            break;
+        default:
+            break;
+    }
+    if (temp_prescaler == 7u) {
+        temp_prescaler++;
+    }
+    preScaler = (uint16_t) (0x01u << temp_prescaler);
+    return preScaler;
+}
+
 uint32_t TimerApi_FrequencyGet(uint8_t index) {
     uint32_t ret = 0;
     switch (index) {
         case 2:
-            ret = TMR2_FrequencyGet();
+            ret=TIMER_CLOCK_FRQ/TimerApi_PreScalerGet(2);            
             break;
         case 3:
-            ret = TMR3_FrequencyGet();
+            ret=TIMER_CLOCK_FRQ/TimerApi_PreScalerGet(3); 
             break;
         case 4:
-            ret = TMR4_FrequencyGet();
+            ret=TIMER_CLOCK_FRQ/TimerApi_PreScalerGet(4); 
             break;
         case 6:
-            ret = TMR6_FrequencyGet();
+             ret=TIMER_CLOCK_FRQ/TimerApi_PreScalerGet(6); 
             break;
         default:
             break;
@@ -165,10 +210,10 @@ void TimerApi_InterruptEnable(uint8_t index) {
         case 3:
             TMR3_InterruptEnable();
             break;
-        case 4:            
+        case 4:
             TMR4_InterruptEnable();
             break;
-        case 6:            
+        case 6:
             TMR6_InterruptEnable();
             break;
         default:
@@ -184,7 +229,7 @@ void TimerApi_InterruptDisable(uint8_t index) {
         case 3:
             TMR3_InterruptDisable();
             break;
-        case 4:         
+        case 4:
             TMR4_InterruptDisable();
             break;
         case 6:
@@ -204,10 +249,10 @@ void TimerApi_CallbackRegister(uint8_t index, TMR_CALLBACK callback_fn, uintptr_
             TMR3_CallbackRegister(callback_fn, context);
             break;
         case 4:
-            TMR4_CallbackRegister(callback_fn,context);
+            TMR4_CallbackRegister(callback_fn, context);
             break;
         case 6:
-            TMR6_CallbackRegister(callback_fn,context);
+            TMR6_CallbackRegister(callback_fn, context);
             break;
         default:
             break;

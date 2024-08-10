@@ -41,6 +41,15 @@ extern "C" {
          * PWM driver index
          */
         bool IsPwmCapable;
+        /**
+         * Id of the Output compare unit. 0xFF is Invalid
+         */
+        uint8_t PwmOcmpId;
+        
+        /**
+         * Pwm port remap pin number
+         */
+        uint16_t PwmRemapPin;
         
     } DIOConfig;
     

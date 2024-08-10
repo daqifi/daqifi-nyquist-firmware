@@ -5,8 +5,8 @@
 #include <string.h>
 
 // Harmony
-#include "system_config.h"
-#include "system_definitions.h"
+#include "configuration.h"
+#include "definitions.h"
 
 // Project
 #include "Util/StringFormatters.h"
@@ -15,7 +15,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
-
+#include "../../HAL/TimerApi/TimerApi.h"
 /**
  * Sets the GPIO direction for a single pin
  * @param id The id of the pin to change
@@ -257,7 +257,7 @@ scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){
 scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     uint32_t param1,param2;
     int i;
-    uint32_t timerClock=SYS_CLK_PeripheralFrequencyGet(CLK_BUS_PERIPHERAL_3);
+    uint32_t timerClock=TIMER_CLOCK_FRQ;
     if (!SCPI_ParamUInt32(context, &param1, FALSE))
     {
         return SCPI_RES_ERR;

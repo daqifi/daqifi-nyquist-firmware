@@ -34,13 +34,13 @@ void BQ24297_InitHardware(                                                  \
     // ***Disable I2C calls*** as Harmony 2.06 doesn't have a working, 
     // interrupt-safe implementation
     // Open the I2C Driver for Master
-    pData->I2C_Handle = DRV_I2C_Open(                                       \
-                        pConfigBQ24->I2C_Index,                             \
+    pData->I2C_Handle = DRV_I2C_Open(                                       
+                        pConfigBQ24->I2C_Index,                             
                         DRV_IO_INTENT_READWRITE);
 
     // Set I/O such that we can power up when needed
-    GPIO_PortWrite(pConfigBQ24->OTG_Ch,                                \
-                        pConfigBQ24->OTG_Bit,                               \
+    GPIO_PortWrite(pConfigBQ24->OTG_Ch,                                
+                        pConfigBQ24->OTG_Bit,                               
                         pWriteVariables->OTG_Val);
 }
 
