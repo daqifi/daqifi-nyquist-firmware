@@ -183,7 +183,9 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/state/runtime/../board/DIOConfig.h \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
- ../src/services/Wifi/WifiApi.h ../src/services/SDcard/SDCard.h
+ ../src/services/Wifi/WifiApi.h ../src/services/SDcard/SDCard.h \
+ ../src/HAL/DIO.h ../src/state/board/BoardConfig.h \
+ ../src/state/board/StreamingConfig.h ../src/HAL/BQ24297/BQ24297.h
 
 ../src/app_freertos.h:
 
@@ -572,3 +574,11 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 ../src/services/Wifi/WifiApi.h:
 
 ../src/services/SDcard/SDCard.h:
+
+../src/HAL/DIO.h:
+
+../src/state/board/BoardConfig.h:
+
+../src/state/board/StreamingConfig.h:
+
+../src/HAL/BQ24297/BQ24297.h:

@@ -101,7 +101,7 @@ void InitBoardConfig(TopLevelSettings* pTopLevelSettings);
  * specified here for getting a specific member of the array
  * @return Parameter which is part of the global Board Configuration structure
  */
-const void *BoardConfig_Get(                                                
+void *BoardConfig_Get(                                                
                         enum eBoardParameter parameter,                     
                         uint8_t index );
 

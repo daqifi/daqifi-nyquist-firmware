@@ -183,7 +183,10 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/Util/Logger.h ../src/services/SCPI/SCPILAN.h
+ ../src/Util/Logger.h ../src/state/board/BoardConfig.h \
+ ../src/state/board/StreamingConfig.h ../src/HAL/BQ24297/BQ24297.h \
+ ../src/HAL/DIO.h ../src/services/SCPI/SCPIDIO.h \
+ ../src/services/SCPI/SCPILAN.h
 
 ../src/services/SCPI/SCPIInterface.h:
 
@@ -570,5 +573,15 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
 ../src/Util/Logger.h:
+
+../src/state/board/BoardConfig.h:
+
+../src/state/board/StreamingConfig.h:
+
+../src/HAL/BQ24297/BQ24297.h:
+
+../src/HAL/DIO.h:
+
+../src/services/SCPI/SCPIDIO.h:
 
 ../src/services/SCPI/SCPILAN.h:

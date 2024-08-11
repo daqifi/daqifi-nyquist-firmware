@@ -51,7 +51,7 @@ void InitBoardConfig(TopLevelSettings* pTopLevelSettings) {
  * specified here for getting a specific member of the array
  * @return Parameter which is part of the global Board Configuration structure
  */
-const void *BoardConfig_Get(
+void *BoardConfig_Get(
         enum eBoardParameter parameter,
         uint8_t index) {
     switch (parameter) {
@@ -70,20 +70,20 @@ const void *BoardConfig_Get(
                 return &boardConfig.DIOChannels.Data[ index ];
             }
             return NULL;
-//        case BOARDCONFIG_AIN_MODULE:
-//            if (index < boardConfig.AInModules.Size) {
-//                return &boardConfig.AInModules.Data[ index ];
-//            }
-//            return NULL;
-//        case BOARDCONFIG_AIN_CHANNELS:
-//            return &boardConfig.AInChannels;
-//        case BOARDCONFIG_POWER_CONFIG:
-//            return &boardConfig.PowerConfig;
-//        case BOARDCONFIG_UI_CONFIG:
-//            return &boardConfig.UIConfig;
-//        case BOARDCONFIG_STREAMING_CONFIG:
-//            return &boardConfig.StreamingConfig;
-//        case BOARDCONFIG_NUM_OF_ELEMENTS:
+            //        case BOARDCONFIG_AIN_MODULE:
+            //            if (index < boardConfig.AInModules.Size) {
+            //                return &boardConfig.AInModules.Data[ index ];
+            //            }
+            //            return NULL;
+            //        case BOARDCONFIG_AIN_CHANNELS:
+            //            return &boardConfig.AInChannels;
+            //        case BOARDCONFIG_POWER_CONFIG:
+            //            return &boardConfig.PowerConfig;
+            //        case BOARDCONFIG_UI_CONFIG:
+            //            return &boardConfig.UIConfig;
+            //        case BOARDCONFIG_STREAMING_CONFIG:
+            //            return &boardConfig.StreamingConfig;
+            //        case BOARDCONFIG_NUM_OF_ELEMENTS:
         default:
             return NULL;
     }

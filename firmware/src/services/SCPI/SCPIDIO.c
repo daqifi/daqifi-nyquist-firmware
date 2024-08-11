@@ -200,7 +200,7 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
 
 scpi_result_t SCPI_GPIOEnableSet(scpi_t * context)
 {
-    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(                \
+    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(                
                         BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
     bool enable = false; 
     int param1;
@@ -349,7 +349,7 @@ scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context){
 
 static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     if ( id > pRunTimeDIOChannels->Size)
