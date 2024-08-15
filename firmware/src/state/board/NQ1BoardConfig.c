@@ -16,8 +16,8 @@
 #define DIO_11_PORT GPIO_PORT_C
 #define DIO_12_PORT GPIO_PORT_E
 #define DIO_13_PORT GPIO_PORT_E
-#define DIO_14_PORT GPIO_PORT_A
-#define DIO_15_PORT GPIO_PORT_J
+#define DIO_14_PORT GPIO_PORT_E
+#define DIO_15_PORT GPIO_PORT_C
 
 #define DIO_EN_0_PORT GPIO_PORT_D
 #define DIO_EN_1_PORT GPIO_PORT_J
@@ -101,23 +101,23 @@ const tBoardConfig NQ1BoardConfig = {
         .Data =
         {
 #ifndef DIO_TIMING_TEST
-            { DIO_0_PORT, DIO_0_PIN, DIO_EN_0_PORT, DIO_EN_0_PIN, false, true,1,OUTPUT_PIN_RPD1},
+            { DIO_0_PORT, DIO_0_PIN & 15, DIO_EN_0_PORT, DIO_EN_0_PIN & 15, false, true,1,OUTPUT_PIN_RPD1},
 #endif
-            { DIO_1_PORT, DIO_1_PIN, DIO_EN_1_PORT, DIO_EN_1_PIN, true, false, 0xFF},
-            { DIO_2_PORT, DIO_2_PIN, DIO_EN_2_PORT, DIO_EN_2_PIN, true, false, 0xFF},
-            { DIO_3_PORT, DIO_3_PIN, DIO_EN_3_PORT, DIO_EN_3_PIN, false, true, 8, OUTPUT_PIN_RPD12},
-            { DIO_4_PORT, DIO_4_PIN, DIO_EN_4_PORT, DIO_EN_4_PIN, true, true, 4, OUTPUT_PIN_RPF0},
-            { DIO_5_PORT, DIO_5_PIN, DIO_EN_5_PORT, DIO_EN_5_PIN, false, true, 6, OUTPUT_PIN_RPF1},
-            { DIO_6_PORT, DIO_6_PIN, DIO_EN_6_PORT, DIO_EN_6_PIN, true, true, 7, OUTPUT_PIN_RPG0},
-            { DIO_7_PORT, DIO_7_PIN, DIO_EN_7_PORT, DIO_EN_7_PIN, false, true, 3,OUTPUT_PIN_RPG1 },
-            { DIO_8_PORT, DIO_8_PIN, DIO_EN_8_PORT, DIO_EN_8_PIN, false, false, 0xFF},
-            { DIO_9_PORT, DIO_9_PIN, DIO_EN_9_PORT, DIO_EN_9_PIN, true, false, 0xFF},
-            { DIO_10_PORT, DIO_10_PIN, DIO_EN_10_PORT, DIO_EN_10_PIN, false, false, 0xFF},
-            { DIO_11_PORT, DIO_11_PIN, DIO_EN_11_PORT, DIO_EN_11_PIN, true, false, 0xFF},
-            { DIO_12_PORT, DIO_12_PIN, DIO_EN_12_PORT, DIO_EN_12_PIN, true, false, 0xFF},
-            { DIO_13_PORT, DIO_13_PIN, DIO_EN_13_PORT, DIO_EN_13_PIN, false, false, 0xFF},
-            { DIO_14_PORT, DIO_14_PIN, DIO_EN_14_PORT, DIO_EN_14_PIN, true, false, 0xFF},
-            { DIO_15_PORT, DIO_15_PIN, DIO_EN_15_PORT, DIO_EN_15_PIN, false, false, 0xFF},
+            { DIO_1_PORT, DIO_1_PIN & 15, DIO_EN_1_PORT, DIO_EN_1_PIN & 15, true, false, 0xFF},
+            { DIO_2_PORT, DIO_2_PIN & 15, DIO_EN_2_PORT, DIO_EN_2_PIN & 15, true, false, 0xFF},
+            { DIO_3_PORT, DIO_3_PIN & 15, DIO_EN_3_PORT, DIO_EN_3_PIN & 15, false, true, 8, OUTPUT_PIN_RPD12},
+            { DIO_4_PORT, DIO_4_PIN & 15, DIO_EN_4_PORT, DIO_EN_4_PIN & 15, true, true, 4, OUTPUT_PIN_RPF0},
+            { DIO_5_PORT, DIO_5_PIN & 15, DIO_EN_5_PORT, DIO_EN_5_PIN & 15, false, true, 6, OUTPUT_PIN_RPF1},
+            { DIO_6_PORT, DIO_6_PIN & 15, DIO_EN_6_PORT, DIO_EN_6_PIN & 15, true, true, 7, OUTPUT_PIN_RPG0},
+            { DIO_7_PORT, DIO_7_PIN & 15, DIO_EN_7_PORT, DIO_EN_7_PIN & 15, false, true, 3,OUTPUT_PIN_RPG1 },
+            { DIO_8_PORT, DIO_8_PIN & 15, DIO_EN_8_PORT, DIO_EN_8_PIN & 15, false, false, 0xFF},
+            { DIO_9_PORT, DIO_9_PIN & 15, DIO_EN_9_PORT, DIO_EN_9_PIN & 15, true, false, 0xFF},
+            { DIO_10_PORT, DIO_10_PIN & 15, DIO_EN_10_PORT, DIO_EN_10_PIN & 15, false, false, 0xFF},
+            { DIO_11_PORT, DIO_11_PIN & 15, DIO_EN_11_PORT, DIO_EN_11_PIN & 15, true, false, 0xFF},
+            { DIO_12_PORT, DIO_12_PIN & 15, DIO_EN_12_PORT, DIO_EN_12_PIN & 15, true, false, 0xFF},
+            { DIO_13_PORT, DIO_13_PIN & 15, DIO_EN_13_PORT, DIO_EN_13_PIN & 15, false, false, 0xFF},
+            { DIO_14_PORT, DIO_14_PIN & 15, DIO_EN_14_PORT, DIO_EN_14_PIN & 15, true, false, 0xFF},
+            { DIO_15_PORT, DIO_15_PIN & 15, DIO_EN_15_PORT, DIO_EN_15_PIN & 15, false, false, 0xFF},
         },
 #ifdef DIO_TIMING_TEST
         .Size = 15,

@@ -179,7 +179,7 @@ void SystemInit() {
     }
 
     // Load board config structures with the correct board variant values
-    //    InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
+    InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     InitializeBoardData(gpBoardData);
 

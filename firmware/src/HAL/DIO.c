@@ -16,6 +16,24 @@ static tBoardConfig *gpBoardConfig;
 //! Pointer to the runtime board configuration. It must be set in the initialization
 static tBoardRuntimeConfig *gpRuntimeBoardConfig;
 
+static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
+    uint32_t pin = 1 << mask;
+    if (value == 1)
+        GPIO_PortSet(port, pin);
+    else
+        GPIO_PortClear(port, pin);
+
+}
+
+static void SetGpioDir(GPIO_PORT port, uint32_t mask, bool isInput) {
+    uint32_t pin = 1 << mask;
+    if (isInput)
+        GPIO_PortInputEnable(port, pin);
+    else
+        GPIO_PortOutputEnable(port, pin);
+
+}
+
 bool DIO_InitHardware(const tBoardConfig *pInitBoardConfiguration,
         const tBoardRuntimeConfig *pInitBoardRuntimeConfig) {
     bool enableInverted;
@@ -38,12 +56,12 @@ bool DIO_InitHardware(const tBoardConfig *pInitBoardConfiguration,
 
         // Disable all channels by default        
         if (enableInverted) {
-            GPIO_PortSet(enableChannel, enablePin);
+            WriteGpioPin(enableChannel, enablePin,1);
         } else {
-            GPIO_PortClear(enableChannel, enablePin);
+            WriteGpioPin(enableChannel, enablePin,0);
         }
 
-        GPIO_PortOutputEnable(enableChannel, enablePin);
+        SetGpioDir(enableChannel, enablePin,0);
     }
     return true;
 }
@@ -76,17 +94,17 @@ bool DIO_WriteStateSingle(uint8_t dataIndex) {
     if (gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].IsInput) {
         // Set driver disabled - this value will be the value of 
         // EnableInverted config parameter
-        GPIO_PortWrite(enableChannel, enablePin, enableInverted);
+        WriteGpioPin(enableChannel, enablePin, enableInverted);
         // Set data pin direction as input
-        GPIO_PortInputEnable(dataChannel, dataPin);
+        WriteGpioPin(dataChannel, dataPin,1);
     } else {
         // Set driver enabled - this value will be the inverse of 
         // EnableInverted config parameter
-        GPIO_PortWrite(enableChannel, enablePin, !enableInverted);
+        WriteGpioPin(enableChannel, enablePin, !enableInverted);
         // Set driver value
-        GPIO_PortWrite(dataChannel, dataPin, value);
+        WriteGpioPin(dataChannel, dataPin, value);
         // Set data pin direction as output
-        GPIO_PortOutputEnable(dataChannel, dataPin);
+        SetGpioDir(dataChannel, dataPin,0);
     }
 
     return true;
@@ -131,10 +149,10 @@ bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
     }
     if (pwmState) {
         OcmpApi_Enable(pwmModId, pwmPPSPinNo);
-        GPIO_PortWrite(enableChannel, enablePin, !enableInverted);
+        WriteGpioPin(enableChannel, enablePin, !enableInverted);
     } else {
         OcmpApi_Disable(pwmModId, pwmPPSPinNo);
-        GPIO_PortWrite(enableChannel, enablePin, enableInverted);
+        WriteGpioPin(enableChannel, enablePin, enableInverted);
     }
     return true;
 }
@@ -148,7 +166,7 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
         return false;
     }
     uint16_t period = (timerClock / pwmFrequency)*(pwmDutyCycle / 100.00);
-    OcmpApi_CompareValueSet(pwmDriverInstance,period);
+    OcmpApi_CompareValueSet(pwmDriverInstance, period);
     return true;
 }
 
@@ -202,8 +220,8 @@ void DIO_Tasks(DIOSample* latest, DIOSampleList* streamingSamples) {
             streamingSample.Values = latest->Values;
             streamingSample.Timestamp = latest->Timestamp;
             DIOSampleList_PushBack(
-                streamingSamples,
-                (const DIOSample*) &streamingSample);
+                    streamingSamples,
+                    (const DIOSample*) &streamingSample);
         }
     }
 

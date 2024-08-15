@@ -432,7 +432,7 @@ static scpi_result_t SCPI_GPIOMultiDirectionGet(uint32_t* mask)
 
 static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     if ( id > pRunTimeDIOChannels->Size)
