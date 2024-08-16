@@ -96,7 +96,7 @@ bool DIO_WriteStateSingle(uint8_t dataIndex) {
         // EnableInverted config parameter
         WriteGpioPin(enableChannel, enablePin, enableInverted);
         // Set data pin direction as input
-        WriteGpioPin(dataChannel, dataPin,1);
+        SetGpioDir(dataChannel, dataPin,1);
     } else {
         // Set driver enabled - this value will be the inverse of 
         // EnableInverted config parameter
@@ -122,7 +122,7 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
         GPIO_PIN dataPin = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataPin;
         if (mask & (1 << dataIndex)) {
             uint8_t val;
-            if (GPIO_PortLatchRead(dataChannel)& (1 << dataPin)) {
+            if (GPIO_PortRead(dataChannel)& (1 << dataPin)) {
                 val = 1;
             } else {
                 val = 0;
