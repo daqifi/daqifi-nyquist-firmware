@@ -236,16 +236,20 @@
 #define WDRV_WINC_CHIP_EN_Get()               ((PORTH >> 13) & 0x1U)
 #define WDRV_WINC_CHIP_EN_PIN                  GPIO_PIN_RH13
 
+/*** Macros for GPIO_RD0 pin ***/
+#define GPIO_RD0_Set()               (LATDSET = (1U<<0))
+#define GPIO_RD0_Clear()             (LATDCLR = (1U<<0))
+#define GPIO_RD0_Toggle()            (LATDINV= (1U<<0))
+#define GPIO_RD0_OutputEnable()      (TRISDCLR = (1U<<0))
+#define GPIO_RD0_InputEnable()       (TRISDSET = (1U<<0))
+#define GPIO_RD0_Get()               ((PORTD >> 0) & 0x1U)
+#define GPIO_RD0_PIN                  GPIO_PIN_RD0
+
 /*** Macros for SDO4 pin ***/
 #define SDO4_Get()               ((PORTC >> 13) & 0x1U)
 #define SDO4_PIN                  GPIO_PIN_RC13
 
 /*** Macros for DIO_0 pin ***/
-#define DIO_0_Set()               (LATDSET = (1U<<1))
-#define DIO_0_Clear()             (LATDCLR = (1U<<1))
-#define DIO_0_Toggle()            (LATDINV= (1U<<1))
-#define DIO_0_OutputEnable()      (TRISDCLR = (1U<<1))
-#define DIO_0_InputEnable()       (TRISDSET = (1U<<1))
 #define DIO_0_Get()               ((PORTD >> 1) & 0x1U)
 #define DIO_0_PIN                  GPIO_PIN_RD1
 

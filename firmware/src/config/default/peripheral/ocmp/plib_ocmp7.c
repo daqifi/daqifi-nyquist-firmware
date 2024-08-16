@@ -53,14 +53,15 @@
 void OCMP7_Initialize (void)
 {
     /*Setup OC7CON        */
-    /*OCM         = 0        */
+    /*OCM         = 6        */
     /*OCTSEL       = 1        */
     /*OC32         = 0        */
     /*SIDL         = false    */
 
-    OC7CON = 0x8;
+    OC7CON = 0xe;
 
     OC7R = 0;
+    OC7RS = 0;
 
 }
 
@@ -75,14 +76,19 @@ void OCMP7_Disable (void)
 }
 
 
-void OCMP7_CompareValueSet (uint16_t value)
-{
-    OC7R = value;
-}
 
 uint16_t OCMP7_CompareValueGet (void)
 {
     return (uint16_t)OC7R;
 }
 
+void OCMP7_CompareSecondaryValueSet (uint16_t value)
+{
+    OC7RS = value;
+}
+
+uint16_t OCMP7_CompareSecondaryValueGet (void)
+{
+    return (uint16_t)OC7RS;
+}
 

@@ -116,10 +116,11 @@ void OCMP8_Enable (void);
 void OCMP8_Disable (void);
 
 
-void OCMP8_CompareValueSet (uint16_t value);
 
 uint16_t OCMP8_CompareValueGet (void);
 
+uint16_t OCMP8_CompareSecondaryValueGet (void);
+void OCMP8_CompareSecondaryValueSet (uint16_t value);
 
 
 // DOM-IGNORE-BEGIN

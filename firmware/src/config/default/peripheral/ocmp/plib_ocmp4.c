@@ -53,14 +53,15 @@
 void OCMP4_Initialize (void)
 {
     /*Setup OC4CON        */
-    /*OCM         = 0        */
+    /*OCM         = 6        */
     /*OCTSEL       = 1        */
     /*OC32         = 0        */
     /*SIDL         = false    */
 
-    OC4CON = 0x8;
+    OC4CON = 0xe;
 
     OC4R = 0;
+    OC4RS = 0;
 
 }
 
@@ -75,14 +76,19 @@ void OCMP4_Disable (void)
 }
 
 
-void OCMP4_CompareValueSet (uint16_t value)
-{
-    OC4R = value;
-}
 
 uint16_t OCMP4_CompareValueGet (void)
 {
     return (uint16_t)OC4R;
 }
 
+void OCMP4_CompareSecondaryValueSet (uint16_t value)
+{
+    OC4RS = value;
+}
+
+uint16_t OCMP4_CompareSecondaryValueGet (void)
+{
+    return (uint16_t)OC4RS;
+}
 

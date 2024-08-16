@@ -58,6 +58,7 @@
 // *****************************************************************************
 
 void CORE_TIMER_InterruptHandler( void );
+void OUTPUT_COMPARE_1_InterruptHandler( void );
 void TIMER_2_InterruptHandler( void );
 void TIMER_3_InterruptHandler( void );
 void TIMER_5_InterruptHandler( void );

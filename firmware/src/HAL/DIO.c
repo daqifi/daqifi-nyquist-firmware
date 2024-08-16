@@ -159,13 +159,13 @@ bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
 
 bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
     uint8_t pwmDriverInstance = gpBoardConfig->DIOChannels.Data[ dataIndex ].PwmOcmpId;
-    uint32_t timerClock = TimerApi_FrequencyGet(3);
+    uint32_t timerFreq = TimerApi_FrequencyGet(3);
     uint16_t pwmDutyCycle = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].PwmDutyCycle;
     uint32_t pwmFrequency = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].PwmFrequency;
     if (pwmFrequency == 0 || pwmDutyCycle == 0) {
         return false;
     }
-    uint16_t period = (timerClock / pwmFrequency)*(pwmDutyCycle / 100.00);
+    uint16_t period = (timerFreq / pwmFrequency)*(pwmDutyCycle / 100.00);
     OcmpApi_CompareValueSet(pwmDriverInstance, period);
     return true;
 }
@@ -173,7 +173,7 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
 bool DIO_PWMFrequencySet(uint8_t dataIndex) {
 
     const uint16_t tim3PreScalers[8] = {1, 2, 4, 8, 16, 32, 64, 256};
-    uint32_t timerClock = TimerApi_FrequencyGet(3);
+    uint32_t timerClock = TIMER_CLOCK_FRQ;//TimerApi_FrequencyGet(3);
     uint32_t pwmFrequency = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].PwmFrequency;
     uint32_t timer3ScaledClock = timerClock;
     uint64_t temp;

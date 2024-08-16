@@ -496,7 +496,9 @@ void SYS_Initialize ( void* data )
     CORETIMER_Initialize();
     TMR6_Initialize();
 
+
     TMR4_Initialize();
+
 
     TMR2_Initialize();
 

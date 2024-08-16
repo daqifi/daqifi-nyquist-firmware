@@ -68,6 +68,7 @@
 // *****************************************************************************
 // *****************************************************************************
 void CORE_TIMER_Handler (void);
+void OUTPUT_COMPARE_1_Handler (void);
 void TIMER_2_Handler (void);
 void TIMER_3_Handler (void);
 void TIMER_4_Handler (void);
@@ -98,6 +99,11 @@ void CORE_TIMER_Handler (void)
 }
 
 
+
+void OUTPUT_COMPARE_1_Handler (void)
+{
+    OUTPUT_COMPARE_1_InterruptHandler();
+}
 
 void TIMER_2_Handler (void)
 {

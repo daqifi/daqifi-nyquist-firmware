@@ -50,18 +50,22 @@
 // *****************************************************************************
 
 
+volatile static OCMP_OBJECT ocmp1Obj;
+
 void OCMP1_Initialize (void)
 {
     /*Setup OC1CON        */
-    /*OCM         = 0        */
+    /*OCM         = 6        */
     /*OCTSEL       = 1        */
     /*OC32         = 0        */
     /*SIDL         = false    */
 
-    OC1CON = 0x8;
+    OC1CON = 0xe;
 
     OC1R = 0;
+    OC1RS = 0;
 
+    IEC0SET = _IEC0_OC1IE_MASK;
 }
 
 void OCMP1_Enable (void)
@@ -75,14 +79,38 @@ void OCMP1_Disable (void)
 }
 
 
-void OCMP1_CompareValueSet (uint16_t value)
-{
-    OC1R = value;
-}
 
 uint16_t OCMP1_CompareValueGet (void)
 {
     return (uint16_t)OC1R;
 }
 
+void OCMP1_CompareSecondaryValueSet (uint16_t value)
+{
+    OC1RS = value;
+}
+
+uint16_t OCMP1_CompareSecondaryValueGet (void)
+{
+    return (uint16_t)OC1RS;
+}
+
+void OCMP1_CallbackRegister(OCMP_CALLBACK callback, uintptr_t context)
+{
+    ocmp1Obj.callback = callback;
+
+    ocmp1Obj.context = context;
+}
+
+void __attribute__((used)) OUTPUT_COMPARE_1_InterruptHandler (void)
+{
+    /* Additional local variable to prevent MISRA C violations (Rule 13.x) */
+    uintptr_t context = ocmp1Obj.context;      
+    IFS0CLR = _IFS0_OC1IF_MASK;    //Clear IRQ flag
+
+    if( (ocmp1Obj.callback != NULL))
+    {
+        ocmp1Obj.callback(context);
+    }
+}
 

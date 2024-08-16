@@ -53,14 +53,15 @@
 void OCMP3_Initialize (void)
 {
     /*Setup OC3CON        */
-    /*OCM         = 0        */
+    /*OCM         = 6        */
     /*OCTSEL       = 1        */
     /*OC32         = 0        */
     /*SIDL         = false    */
 
-    OC3CON = 0x8;
+    OC3CON = 0xe;
 
     OC3R = 0;
+    OC3RS = 0;
 
 }
 
@@ -75,14 +76,19 @@ void OCMP3_Disable (void)
 }
 
 
-void OCMP3_CompareValueSet (uint16_t value)
-{
-    OC3R = value;
-}
 
 uint16_t OCMP3_CompareValueGet (void)
 {
     return (uint16_t)OC3R;
 }
 
+void OCMP3_CompareSecondaryValueSet (uint16_t value)
+{
+    OC3RS = value;
+}
+
+uint16_t OCMP3_CompareSecondaryValueGet (void)
+{
+    return (uint16_t)OC3RS;
+}
 

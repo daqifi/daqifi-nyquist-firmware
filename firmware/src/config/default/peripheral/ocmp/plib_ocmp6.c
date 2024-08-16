@@ -53,14 +53,15 @@
 void OCMP6_Initialize (void)
 {
     /*Setup OC6CON        */
-    /*OCM         = 0        */
-    /*OCTSEL       = 0        */
+    /*OCM         = 6        */
+    /*OCTSEL       = 1        */
     /*OC32         = 0        */
     /*SIDL         = false    */
 
-    OC6CON = 0x0;
+    OC6CON = 0xe;
 
     OC6R = 0;
+    OC6RS = 0;
 
 }
 
@@ -75,14 +76,19 @@ void OCMP6_Disable (void)
 }
 
 
-void OCMP6_CompareValueSet (uint16_t value)
-{
-    OC6R = value;
-}
 
 uint16_t OCMP6_CompareValueGet (void)
 {
     return (uint16_t)OC6R;
 }
 
+void OCMP6_CompareSecondaryValueSet (uint16_t value)
+{
+    OC6RS = value;
+}
+
+uint16_t OCMP6_CompareSecondaryValueGet (void)
+{
+    return (uint16_t)OC6RS;
+}
 

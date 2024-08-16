@@ -215,7 +215,7 @@ scpi_result_t SCPI_GPIOEnableSet(scpi_t * context)
 
 scpi_result_t SCPI_GPIOEnableGet(scpi_t * context)
 {
-    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(                \
+    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(                
                         BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
     SCPI_ResultInt32(context, *pRunTimeDIOGlobalEnable);
     return SCPI_RES_OK;
@@ -240,7 +240,7 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
 }
 scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){
     int param1;
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
@@ -270,7 +270,7 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     {
         return SCPI_RES_ERR;
     }
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
@@ -371,7 +371,7 @@ static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask)
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
     
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     // Obviously, this breaks down if we have more than 32 channels
@@ -389,7 +389,7 @@ static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask)
 
 static scpi_result_t SCPI_GPIOSingleDirectionGet(uint8_t id, bool* result)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     if ( id > pRunTimeDIOChannels->Size)
@@ -404,7 +404,7 @@ static scpi_result_t SCPI_GPIOSingleDirectionGet(uint8_t id, bool* result)
 
 static scpi_result_t SCPI_GPIOMultiDirectionGet(uint32_t* mask)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     scpi_result_t result = SCPI_RES_OK;
@@ -455,7 +455,7 @@ static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
     
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     // Obviously, this breaks down if we have more than 32 channels
@@ -473,7 +473,7 @@ static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
 
 static scpi_result_t SCPI_GPIOSingleStateGet(uint8_t id, bool* result)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     if ( id > pRunTimeDIOChannels->Size)
@@ -510,7 +510,7 @@ static scpi_result_t SCPI_GPIOMultiStateGet(uint32_t* result)
 
 static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         \
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     if ( id > pRunTimeDIOChannels->Size)

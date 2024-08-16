@@ -116,10 +116,11 @@ void OCMP6_Enable (void);
 void OCMP6_Disable (void);
 
 
-void OCMP6_CompareValueSet (uint16_t value);
 
 uint16_t OCMP6_CompareValueGet (void);
 
+uint16_t OCMP6_CompareSecondaryValueGet (void);
+void OCMP6_CompareSecondaryValueSet (uint16_t value);
 
 
 // DOM-IGNORE-BEGIN

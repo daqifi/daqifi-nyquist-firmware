@@ -116,11 +116,37 @@ void OCMP1_Enable (void);
 void OCMP1_Disable (void);
 
 
-void OCMP1_CompareValueSet (uint16_t value);
 
 uint16_t OCMP1_CompareValueGet (void);
 
+uint16_t OCMP1_CompareSecondaryValueGet (void);
+void OCMP1_CompareSecondaryValueSet (uint16_t value);
 
+// *****************************************************************************
+/* Function:
+  void OCMP1_CallbackRegister( OCMP_CALLBACK callback, uintptr_t context )
+
+  Summary:
+    Sets the callback function for a ocmp interrupt.
+
+  Description:
+    This function sets the callback function that will be called when the OCMP
+    conditions are met.
+
+  Precondition:
+    None.
+
+  Parameters:
+    *callback   - a pointer to the function to be called when value is reached.
+                  Use NULL to Un Register the compare callback
+
+    context     - a pointer to user defined data to be used when the callback
+                  function is called. NULL can be passed in if no data needed.
+
+  Returns:
+    void
+*/
+void OCMP1_CallbackRegister(OCMP_CALLBACK callback, uintptr_t context);
 
 // DOM-IGNORE-BEGIN
 #ifdef __cplusplus  // Provide C++ Compatibility

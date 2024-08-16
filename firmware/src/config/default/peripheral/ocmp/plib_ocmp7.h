@@ -116,10 +116,11 @@ void OCMP7_Enable (void);
 void OCMP7_Disable (void);
 
 
-void OCMP7_CompareValueSet (uint16_t value);
 
 uint16_t OCMP7_CompareValueGet (void);
 
+uint16_t OCMP7_CompareSecondaryValueGet (void);
+void OCMP7_CompareSecondaryValueSet (uint16_t value);
 
 
 // DOM-IGNORE-BEGIN

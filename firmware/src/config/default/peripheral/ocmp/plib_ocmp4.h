@@ -116,10 +116,11 @@ void OCMP4_Enable (void);
 void OCMP4_Disable (void);
 
 
-void OCMP4_CompareValueSet (uint16_t value);
 
 uint16_t OCMP4_CompareValueGet (void);
 
+uint16_t OCMP4_CompareSecondaryValueGet (void);
+void OCMP4_CompareSecondaryValueSet (uint16_t value);
 
 
 // DOM-IGNORE-BEGIN

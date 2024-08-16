@@ -57,20 +57,20 @@ build/default/production/_ext/1697030576/wdrv_winc_spi.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/semphr.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
- ../src/config/default/peripheral/nvm/plib_nvm.h \
- ../src/config/default/system/time/sys_time.h \
  ../src/config/default/driver/i2c/drv_i2c.h \
  ../src/config/default/driver/i2c/drv_i2c_definitions.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
+ ../src/config/default/peripheral/nvm/plib_nvm.h \
+ ../src/config/default/system/time/sys_time.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp3.h \
- ../src/config/default/peripheral/tmr/plib_tmr6.h \
- ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
  ../src/config/default/peripheral/coretimer/plib_coretimer.h \
+ ../src/config/default/peripheral/tmr/plib_tmr6.h \
+ ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/peripheral/tmr/plib_tmr4.h \
  ../src/config/default/peripheral/tmr/plib_tmr2.h \
  ../src/config/default/peripheral/tmr/plib_tmr3.h \
@@ -251,10 +251,6 @@ build/default/production/_ext/1697030576/wdrv_winc_spi.o: \
 
 ../src/third_party/rtos/FreeRTOS/Source/include/task.h:
 
-../src/config/default/peripheral/nvm/plib_nvm.h:
-
-../src/config/default/system/time/sys_time.h:
-
 ../src/config/default/driver/i2c/drv_i2c.h:
 
 ../src/config/default/driver/i2c/drv_i2c_definitions.h:
@@ -263,11 +259,11 @@ build/default/production/_ext/1697030576/wdrv_winc_spi.o: \
 
 ../src/config/default/driver/i2c/src/drv_i2c_local.h:
 
+../src/config/default/peripheral/nvm/plib_nvm.h:
+
+../src/config/default/system/time/sys_time.h:
+
 ../src/config/default/peripheral/ocmp/plib_ocmp3.h:
-
-../src/config/default/peripheral/tmr/plib_tmr6.h:
-
-../src/config/default/peripheral/tmr/plib_tmr_common.h:
 
 ../src/config/default/usb/usb_device_cdc.h:
 
@@ -280,6 +276,10 @@ build/default/production/_ext/1697030576/wdrv_winc_spi.o: \
 ../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/peripheral/coretimer/plib_coretimer.h:
+
+../src/config/default/peripheral/tmr/plib_tmr6.h:
+
+../src/config/default/peripheral/tmr/plib_tmr_common.h:
 
 ../src/config/default/peripheral/tmr/plib_tmr4.h:
 

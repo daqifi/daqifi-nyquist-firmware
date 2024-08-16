@@ -68,11 +68,13 @@ void OcmpApi_Initialize(OcmpApi_id_t id) {
 }
 
 void OcmpApi_Enable(OcmpApi_id_t id, uint16_t portRemapPin) {
+
     switch (id) {
         case OCMPAPI_ID_1:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_OC1,portRemapPin);
-            SystemLock();
+            //SystemLock();
             OCMP1_Enable();
             break;
         case OCMPAPI_ID_3:
@@ -114,8 +116,9 @@ void OcmpApi_Disable(OcmpApi_id_t id, uint16_t portRemapPin) {
     switch (id) {
         case OCMPAPI_ID_1:
             SystemUnlock();
+            DeviceRegistersUnlock();
             PORTS_RemapOutput(OUTPUT_FUNC_NO_CONNECT,portRemapPin);
-            SystemLock();
+            //SystemLock();
             OCMP1_Disable();
             break;
         case OCMPAPI_ID_3:
@@ -156,22 +159,22 @@ void OcmpApi_Disable(OcmpApi_id_t id, uint16_t portRemapPin) {
 void OcmpApi_CompareValueSet(OcmpApi_id_t id, uint16_t value) {
     switch (id) {
         case OCMPAPI_ID_1:
-            OCMP1_CompareValueSet(value);
+            OCMP1_CompareSecondaryValueSet(value);
             break;
         case OCMPAPI_ID_3:
-            OCMP3_CompareValueSet(value);
+            OCMP3_CompareSecondaryValueSet(value);
             break;
         case OCMPAPI_ID_4:
-            OCMP4_CompareValueSet(value);
+            OCMP4_CompareSecondaryValueSet(value);
             break;
         case OCMPAPI_ID_6:
-            OCMP6_CompareValueSet(value);
+            OCMP6_CompareSecondaryValueSet(value);
             break;
         case OCMPAPI_ID_7:
-            OCMP7_CompareValueSet(value);
+            OCMP7_CompareSecondaryValueSet(value);
             break;
         case OCMPAPI_ID_8:
-            OCMP8_CompareValueSet(value);
+            OCMP8_CompareSecondaryValueSet(value);
             break;
         default:
             break;
