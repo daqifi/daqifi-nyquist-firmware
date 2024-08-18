@@ -23,8 +23,9 @@
 //#include "SCPI/SCPIADC.h"
 #include "SCPIDIO.h"
 #include "SCPILAN.h"
-//#include "streaming.h"
-//#include "commTest.h"
+#include "../streaming.h"
+#include "../commTest.h"
+#include "../../HAL/TimerApi/TimerApi.h"
 //
 #define UNUSED(x) (void)(x)
 //
@@ -413,38 +414,39 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context)
 //    return SCPI_RES_OK;
 //}
 //
-//static scpi_result_t SCPI_ClearStreamStats(scpi_t * context)
-//{
-//    memset(commTest.stats,0, sizeof(commTest.stats));
-//    return SCPI_RES_OK;
-//}
-//
-//scpi_result_t SCPI_GetStreamStats(scpi_t * context)
-//{
+static scpi_result_t SCPI_ClearStreamStats(scpi_t * context)
+{
+    //memset(commTest.stats,0, sizeof(commTest.stats));
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_GetStreamStats(scpi_t * context)
+{
 //    SCPI_ResultInt32(context, commTest.stats[0]);
 //    SCPI_ResultInt32(context, commTest.stats[1]);
 //    SCPI_ResultInt32(context, commTest.stats[2]);
 //    SCPI_ResultInt32(context, commTest.stats[3]);
-//
-//    return SCPI_RES_OK;
-//}
-//
-//
-//static scpi_result_t SCPI_StartStreaming(scpi_t * context)
-//{
-//    int32_t freq;
-//    
-//    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-//                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    return SCPI_RES_OK;
+}
+
+
+static scpi_result_t SCPI_StartStreaming(scpi_t * context)
+{
+    int32_t freq;
+    
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    const tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG,0);
 //    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);  
 //    volatile AInArray *pBoardConfigADC=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS,0);  
-//    
-//     // timer running frequency
-//    uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(                         
-//                        pRunTimeStreamConfig->TimerHandle); 
-//    
-//    int i;
-//    uint16_t activeType1ChannelCount=0;
+    
+     // timer running frequency
+    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex); 
+    
+    //int i;
+    uint16_t activeType1ChannelCount=0;
 //    for(i=0;i<pBoardConfigADC->Size;i++){
 //        if(pBoardConfigADC->Data[i].Config.MC12b.ChannelType==1){
 //            if(pRuntimeAInChannels->Data[i].IsEnabled==1){
@@ -452,104 +454,104 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context)
 //            }
 //        }
 //    }
-//    if(activeType1ChannelCount==0)
-//        activeType1ChannelCount=1;
-//    if (SCPI_ParamInt32(context, &freq, FALSE))
-//    {
-//        if (freq >= 1 && freq <= 15000)///TODO: Test higher throughput
-//        {
-//            // calculate the divider needed
-//            
-//            if((freq*activeType1ChannelCount)>15000){
-//                freq=15000/activeType1ChannelCount;
-//            }
-//            pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
-//            pRunTimeStreamConfig->Frequency=freq;
-//            pRunTimeStreamConfig->TSClockDivider = 0xFFFFFFFF; 
-//            if(freq>1000){
-//                pRunTimeStreamConfig->ChannelScanTimeDiv=freq/1000;
-//            }
-//        }
-//        else
-//        {
-//            return SCPI_RES_ERR;
-//        }
-//    }
-//    else
-//    {
-//        //No freq given just stream with the current value
-//    }
-//    
-//    Streaming_UpdateState();
-//    pRunTimeStreamConfig->IsEnabled = true;
-//    return SCPI_RES_OK;
-//}
-//
-//static scpi_result_t SCPI_StopStreaming(scpi_t * context)
-//{
-//    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-//                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-//    
-//    pRunTimeStreamConfig->IsEnabled = false;
-//    
-//    Streaming_UpdateState();
-//    
-//    return SCPI_RES_OK;
-//}
-//
-//static scpi_result_t SCPI_IsStreaming(scpi_t * context)
-//{
-//    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-//                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-//    
-//    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->IsEnabled);
-//    return SCPI_RES_OK;
-//}
-//
-//static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
-//{
-//    int param1, param2;
-//    
-//    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-//                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-//    
-//    if (!SCPI_ParamInt32(context, &param1, TRUE))
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    
-//    if (param1 == Streaming_ProtoBuffer)
-//    {
-//        pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
-//    }
-//    else if(param1 == Streaming_Json)
-//    {
-//        pRunTimeStreamConfig->Encoding = Streaming_Json;
-//    }
-//    else if(param1 == Streaming_TestData)
-//    {
-//        pRunTimeStreamConfig->Encoding = Streaming_TestData;
-//        
-//        if(SCPI_ParamInt32(context, &param2, FALSE) && (param2 <= 1000)){
-//            commTest.TestData_len = param2;
-//        }
-//        else{
-//            // TestData_len is not set. This indicates use dynamic length
-//            commTest.TestData_len = 0;
-//        }
-//    }
-//    
-//    return SCPI_RES_OK;
-//}
-//
-//static scpi_result_t SCPI_GetStreamFormat(scpi_t * context)
-//{
-//    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-//                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-//    
-//    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->Encoding);
-//    return SCPI_RES_OK;
-//}
+    if(activeType1ChannelCount==0)
+        activeType1ChannelCount=1;
+    if (SCPI_ParamInt32(context, &freq, FALSE))
+    {
+        if (freq >= 1 && freq <= 15000)///TODO: Test higher throughput
+        {
+            // calculate the divider needed
+            
+            if((freq*activeType1ChannelCount)>15000){
+                freq=15000/activeType1ChannelCount;
+            }
+            pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
+            pRunTimeStreamConfig->Frequency=freq;
+            pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF; 
+            if(freq>1000){
+                pRunTimeStreamConfig->ChannelScanTimeDiv=freq/1000;
+            }
+        }
+        else
+        {
+            return SCPI_RES_ERR;
+        }
+    }
+    else
+    {
+        //No freq given just stream with the current value
+    }
+    
+    Streaming_UpdateState();
+    pRunTimeStreamConfig->IsEnabled = true;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_StopStreaming(scpi_t * context)
+{
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    pRunTimeStreamConfig->IsEnabled = false;
+    
+    Streaming_UpdateState();
+    
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_IsStreaming(scpi_t * context)
+{
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->IsEnabled);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
+{
+    int param1, param2;
+    
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (param1 == Streaming_ProtoBuffer)
+    {
+        pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
+    }
+    else if(param1 == Streaming_Json)
+    {
+        pRunTimeStreamConfig->Encoding = Streaming_Json;
+    }
+    else if(param1 == Streaming_TestData)
+    {
+        pRunTimeStreamConfig->Encoding = Streaming_TestData;
+        
+        if(SCPI_ParamInt32(context, &param2, FALSE) && (param2 <= 1000)){
+            commTest.TestData_len = param2;
+        }
+        else{
+            // TestData_len is not set. This indicates use dynamic length
+            commTest.TestData_len = 0;
+        }
+    }
+    
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetStreamFormat(scpi_t * context)
+{
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->Encoding);
+    return SCPI_RES_OK;
+}
 //
 //static scpi_result_t SCPI_GetEcho(scpi_t * context)
 //{
@@ -828,14 +830,14 @@ static const scpi_command_t scpi_commands[] = {
 //    // SPI
 //    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },
 //    
-//    // Streaming
-//    {.pattern = "SYSTem:StartStreamData",     .callback = SCPI_StartStreaming, },  
-//    {.pattern = "SYSTem:StopStreamData",      .callback = SCPI_StopStreaming, },
-//    {.pattern = "SYSTem:StreamData?",         .callback = SCPI_IsStreaming, },   
-//    {.pattern = "SYSTem:STReam:FORmat",       .callback = SCPI_SetStreamFormat, }, // 0 = pb = default, 1 = text (json)
-//    {.pattern = "SYSTem:STReam:FORmat?",      .callback = SCPI_GetStreamFormat, },
-//    {.pattern = "SYSTem:STReam:Stats?",       .callback = SCPI_GetStreamStats,},  
-//    {.pattern = "SYSTem:STReam:ClearStats",   .callback = SCPI_ClearStreamStats,},
+    // Streaming
+    {.pattern = "SYSTem:StartStreamData",     .callback = SCPI_StartStreaming, },  
+    {.pattern = "SYSTem:StopStreamData",      .callback = SCPI_StopStreaming, },
+    {.pattern = "SYSTem:StreamData?",         .callback = SCPI_IsStreaming, },   
+    {.pattern = "SYSTem:STReam:FORmat",       .callback = SCPI_SetStreamFormat, }, // 0 = pb = default, 1 = text (json)
+    {.pattern = "SYSTem:STReam:FORmat?",      .callback = SCPI_GetStreamFormat, },
+    {.pattern = "SYSTem:STReam:Stats?",       .callback = SCPI_GetStreamStats,},  
+    {.pattern = "SYSTem:STReam:ClearStats",   .callback = SCPI_ClearStreamStats,},
 //    // FreeRTOS
 //    {.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

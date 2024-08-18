@@ -22,7 +22,7 @@ extern "C" {
  * @param[in] pInitBoardRuntmeConfig Board runtime configuration data
  * structure
  */
-bool DIO_InitHardware( const tBoardConfig *pInitBoardConfiguration,         \
+bool DIO_InitHardware( const tBoardConfig *pInitBoardConfiguration,         
                         const tBoardRuntimeConfig *pInitBoardRuntimeConfig );
 
 /*!
@@ -71,21 +71,31 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex);
 
 #ifdef  DIO_TIMING_TEST
 #define DIO_TIMING_TEST_INIT()    \
-                                    ({ \
-                                        PLIB_PORTS_PinWrite(PORTS_ID_0,DIO_EN_0_PORT,DIO_EN_0_PIN,true ); \
-                                        PLIB_PORTS_PinWrite(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN,false );   \
-                                        PLIB_PORTS_PinDirectionOutputSet(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN );\
-                                    })
+                                    ({  \
+                                        uint32_t pin0=1<<(DIO_0_PIN & 15);  \
+                                        uint32_t pin0En= 1<<(DIO_EN_0_PIN & 15);    \
+                                        GPIO_PortClear(GPIO_PORT_D, pin0); \
+                                        GPIO_PortSet(GPIO_PORT_D, pin0En); \
+                                        GPIO_PortOutputEnable(GPIO_PORT_D, pin0);   \
+                                        })
                                     
 #define DIO_TIMING_TEST_WRITE_STATE(state) \
                                     ({\
-                                        PLIB_PORTS_PinWrite(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN,state );   \
+                                        uint32_t pin0=1<<(DIO_0_PIN & 15);  \
+                                        if(state)   \
+                                            GPIO_PortSet(GPIO_PORT_D, pin0); \
+                                        else    \
+                                            GPIO_PortClear(GPIO_PORT_D, pin0); \
                                     })
 #define DIO_TIMING_TEST_TOGGLE_STATE() \
                                     ({\
                                         volatile static bool state=true; \
                                         state=!state; \
-                                        PLIB_PORTS_PinWrite(PORTS_ID_0, DIO_0_PORT , DIO_0_PIN,state );   \
+                                        uint32_t pin0=1<<(DIO_0_PIN & 15);  \
+                                        if(state)   \
+                                            GPIO_PortSet(GPIO_PORT_D, pin0); \
+                                        else    \
+                                            GPIO_PortClear(GPIO_PORT_D, pin0); \
                                     })                                    
                    
 #else

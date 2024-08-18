@@ -390,6 +390,7 @@
         <itemPath>../src/services/daqifi_settings.h</itemPath>
         <itemPath>../src/services/streaming.h</itemPath>
         <itemPath>../src/services/JSON_Encoder.h</itemPath>
+        <itemPath>../src/services/commTest.h</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
@@ -888,6 +889,7 @@
         <itemPath>../src/services/daqifi_settings.c</itemPath>
         <itemPath>../src/services/streaming.c</itemPath>
         <itemPath>../src/services/JSON_Encoder.c</itemPath>
+        <itemPath>../src/services/commTest.c</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">

@@ -44,7 +44,9 @@ static bool gInTimerHandler = false;
  *  Function for debugging - fills buffer with dummy data
  */
 //static void Streaming_StuffDummyData(void);
-
+static void TSTimerCB(uintptr_t context, uint32_t alarmCount){
+    DIO_TIMING_TEST_TOGGLE_STATE();
+}
 /*!
  * Function to manage timer handler
  * @param[in] context    unused
@@ -130,6 +132,7 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
+        TimerApi_PeriodSet(gpStreamingConfig->TimerIndex,gpRuntimeConfigStream->ClockPeriod );
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
         TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
         TimerApi_Start(gpStreamingConfig->TimerIndex);
@@ -294,7 +297,7 @@ void TimestampTimer_Init(void) {
     //     this doesn't interrupt or callback
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TSTimerIndex);
-    TimerApi_CallbackRegister(gpStreamingConfig->TSTimerIndex, NULL, 0);
+    TimerApi_CallbackRegister(gpStreamingConfig->TSTimerIndex, TSTimerCB, 0);
     TimerApi_PeriodSet(gpStreamingConfig->TSTimerIndex, gpRuntimeConfigStream->TSClockPeriod);
     TimerApi_InterruptEnable(gpStreamingConfig->TSTimerIndex);
     TimerApi_Start(gpStreamingConfig->TSTimerIndex);

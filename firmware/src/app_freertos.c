@@ -63,6 +63,7 @@
 #include "services/Wifi/WifiApi.h"
 #include "services/SDcard/SDCard.h"
 #include "HAL/DIO.h"
+#include "services/streaming.h"
 // *****************************************************************************
 // *****************************************************************************
 // Section: Global Data Definitions
@@ -152,10 +153,10 @@ void SystemInit() {
     gpBoardData = BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
-    
-    gpBoardConfig = BoardConfig_Get(                                         
-                            BOARDCONFIG_ALL_CONFIG,                         
-                            0);
+
+    gpBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG,
+            0);
 
     gpBoardRuntimeConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_ALL_CONFIG);
@@ -234,9 +235,9 @@ void SystemInit() {
 
     // Write initial values
     DIO_WriteStateAll();
-    //
-    //    Streaming_Init(&pBoardConfig->StreamingConfig,                     
-    //                        &pBoardRuntimeConfig->StreamingConfig);
+    DIO_TIMING_TEST_INIT();
+    Streaming_Init(&gpBoardConfig->StreamingConfig,
+            &gpBoardRuntimeConfig->StreamingConfig);
     //    Streaming_UpdateState();
     //
     //    ADC_Init(                                                               

@@ -186,7 +186,11 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/Util/Logger.h ../src/state/board/BoardConfig.h \
  ../src/state/board/StreamingConfig.h ../src/HAL/BQ24297/BQ24297.h \
  ../src/HAL/DIO.h ../src/services/SCPI/SCPIDIO.h \
- ../src/services/SCPI/SCPILAN.h
+ ../src/services/SCPI/SCPILAN.h ../src/services/SCPI/../streaming.h \
+ ../src/services/SCPI/../../state/board/BoardConfig.h \
+ ../src/services/SCPI/../../state/data/BoardData.h \
+ ../src/services/SCPI/../commTest.h \
+ ../src/services/SCPI/../../HAL/TimerApi/TimerApi.h
 
 ../src/services/SCPI/SCPIInterface.h:
 
@@ -585,3 +589,13 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 ../src/services/SCPI/SCPIDIO.h:
 
 ../src/services/SCPI/SCPILAN.h:
+
+../src/services/SCPI/../streaming.h:
+
+../src/services/SCPI/../../state/board/BoardConfig.h:
+
+../src/services/SCPI/../../state/data/BoardData.h:
+
+../src/services/SCPI/../commTest.h:
+
+../src/services/SCPI/../../HAL/TimerApi/TimerApi.h:

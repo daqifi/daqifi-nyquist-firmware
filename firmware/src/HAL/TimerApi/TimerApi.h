@@ -45,11 +45,11 @@ void TimerApi_Start(uint8_t index);
 
 void TimerApi_Stop(uint8_t index);
 
-void TimerApi_PeriodSet(uint8_t index,uint16_t period);
+void TimerApi_PeriodSet(uint8_t index,uint32_t period);
 
-uint16_t TimerApi_PeriodGet(uint8_t index);
+uint32_t TimerApi_PeriodGet(uint8_t index);
 
-uint16_t TimerApi_CounterGet(uint8_t index);
+uint32_t TimerApi_CounterGet(uint8_t index);
 
 uint32_t TimerApi_FrequencyGet(uint8_t index);
 

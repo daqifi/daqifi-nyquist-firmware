@@ -64,13 +64,13 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
  ../src/config/default/peripheral/nvm/plib_nvm.h \
  ../src/config/default/system/time/sys_time.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
  ../src/config/default/peripheral/tmr/plib_tmr6.h \
  ../src/config/default/peripheral/tmr/plib_tmr_common.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/peripheral/tmr/plib_tmr4.h \
  ../src/config/default/peripheral/tmr/plib_tmr2.h \
  ../src/config/default/peripheral/tmr/plib_tmr3.h \
@@ -185,7 +185,9 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
  ../src/services/Wifi/WifiApi.h ../src/services/SDcard/SDCard.h \
  ../src/HAL/DIO.h ../src/state/board/BoardConfig.h \
- ../src/state/board/StreamingConfig.h ../src/HAL/BQ24297/BQ24297.h
+ ../src/state/board/StreamingConfig.h ../src/HAL/BQ24297/BQ24297.h \
+ ../src/services/streaming.h ../src/services/../state/board/BoardConfig.h \
+ ../src/services/../state/data/BoardData.h
 
 ../src/app_freertos.h:
 
@@ -319,8 +321,6 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 
 ../src/config/default/system/time/sys_time.h:
 
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
-
 ../src/config/default/usb/usb_device_cdc.h:
 
 ../src/config/default/usb/usb_device.h:
@@ -334,6 +334,8 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 ../src/config/default/peripheral/tmr/plib_tmr6.h:
 
 ../src/config/default/peripheral/tmr/plib_tmr_common.h:
+
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/peripheral/tmr/plib_tmr4.h:
 
@@ -582,3 +584,9 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 ../src/state/board/StreamingConfig.h:
 
 ../src/HAL/BQ24297/BQ24297.h:
+
+../src/services/streaming.h:
+
+../src/services/../state/board/BoardConfig.h:
+
+../src/services/../state/data/BoardData.h:
