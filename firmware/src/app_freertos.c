@@ -247,11 +247,6 @@ void SystemInit() {
 }
 
 void APP_FREERTOS_Initialize(void) {
-
-
-}
-
-void APP_FREERTOS_Tasks(void) {
     static bool blockAppTask = false;
     BaseType_t errStatus;
 
@@ -291,7 +286,11 @@ void APP_FREERTOS_Tasks(void) {
         /* The APP_Tasks() function need to exceute only once. Block it now */
         blockAppTask = true;
     }
-    vTaskDelay(50);
+}
+
+void APP_FREERTOS_Tasks(void) {
+    Streaming_Tasks(gpBoardRuntimeConfig,gpBoardData);    
+    vTaskDelay(1/portTICK_PERIOD_MS);
 }
 
 

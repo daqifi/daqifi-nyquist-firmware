@@ -38,15 +38,70 @@ static StreamingRuntimeConfig *gpRuntimeConfigStream;
 static tStreamingConfig* gpStreamingConfig;
 //! Indicate if handler is used 
 static bool gInTimerHandler = false;
+static TaskHandle_t gStreamingInterruptHandle;
 
+void _Streaming_Deferred_Interrupt_Task(void) {
+
+    //uint8_t i=0;
+    TickType_t xBlockTime = portMAX_DELAY;
+
+    tBoardData * pBoardData = BoardData_Get(
+            BOARDDATA_ALL_DATA,
+            0);
+    //    const tBoardConfig * pBoardConfig = BoardConfig_Get(                    
+    //                            BOARDCONFIG_ALL_CONFIG,                         
+    //                            0);
+
+    StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    //    AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(       
+    //                        BOARDRUNTIMECONFIG_AIN_MODULES);
+
+    while (1) {
+        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        //        for (i=0; i < pRunTimeAInModules->Size; ++i)
+        //        {
+        //            // Only trigger conversions if the previous conversion is complete
+        //            // TODO: Replace with ADCPrescale[i]
+        //            if (pBoardData->AInState.Data[i].AInTaskState == AINTASK_IDLE &&
+        //                pRunTimeStreamConf->StreamCount ==                          
+        //                pRunTimeStreamConf->StreamCountTrigger && pRunTimeStreamConf->IsEnabled)
+        //            {
+        //                
+        //                Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
+        //            }
+        //
+        //        }
+        // TODO: Replace with DIOPrescale
+        if (pRunTimeStreamConf->StreamCount ==
+                pRunTimeStreamConf->StreamCountTrigger) {
+            DIO_Tasks(&pBoardData->DIOLatest,
+                    &pBoardData->DIOSamples);
+        }
+
+        pRunTimeStreamConf->StreamCount =
+                (pRunTimeStreamConf->StreamCount + 1) %
+                pRunTimeStreamConf->MaxStreamCount;
+
+    }
+}
+
+void Streaming_Defer_Interrupt(void) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(gStreamingInterruptHandle, &xHigherPriorityTaskWoken);
+    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+}
 
 /*!
  *  Function for debugging - fills buffer with dummy data
  */
 //static void Streaming_StuffDummyData(void);
-static void TSTimerCB(uintptr_t context, uint32_t alarmCount){
+
+static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
     DIO_TIMING_TEST_TOGGLE_STATE();
 }
+
 /*!
  * Function to manage timer handler
  * @param[in] context    unused
@@ -57,9 +112,9 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     //    UNUSED(context);
     //    UNUSED(alarmCount);
     //
-    //    static uint64_t scanTimerCount=0;
-    //    volatile uint32_t valueTMR = DRV_TMR_CounterValueGet(pRuntimeConfigStream->TSTimerHandle);
-    //    BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP,0,&valueTMR ); 
+    static uint64_t scanTimerCount = 0;
+    volatile uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
+    BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
     //    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);  
     //    volatile AInArray *pBoardConfigADC=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS,0);
     //    int i=0;
@@ -77,15 +132,15 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     //        }
     //        BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
     //    }
-    //    if(pRuntimeConfigStream->Frequency<=1000){
-    //        Streaming_Defer_Interrupt();
-    //    }else{
-    //        scanTimerCount++;
-    //        if(scanTimerCount>=pRuntimeConfigStream->ChannelScanTimeDiv){
-    //            Streaming_Defer_Interrupt();
-    //            scanTimerCount=0;
-    //        }       
-    //    }
+    if (gpRuntimeConfigStream->Frequency <= 1000) {
+        Streaming_Defer_Interrupt();
+    } else {
+        scanTimerCount++;
+        if (scanTimerCount >= gpRuntimeConfigStream->ChannelScanTimeDiv) {
+            Streaming_Defer_Interrupt();
+            scanTimerCount = 0;
+        }
+    }
     // 
     // On a 'System' prescale match
     // - Read the latest DIO (if it's not streaming- otherwise we'll wind 
@@ -132,7 +187,7 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
-        TimerApi_PeriodSet(gpStreamingConfig->TimerIndex,gpRuntimeConfigStream->ClockPeriod );
+        TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
         TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
         TimerApi_Start(gpStreamingConfig->TimerIndex);
@@ -190,7 +245,7 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     //! Boolean to indicate if the system has USB and Wifi actives. 
     volatile bool hasUsb, hasWifi;
     //Analog input availability. Digital input/output availability
-    bool AINDataAvailable = false;//!AInSampleList_IsEmpty(&boardData->AInSamples);
+    bool AINDataAvailable = false; //!AInSampleList_IsEmpty(&boardData->AInSamples);
     bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
 
     UsbCdcData_t * pRunTimeUsbSettings = BoardRunTimeConfig_Get(
@@ -218,28 +273,28 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
         }
 
         // Decide how many samples we can send out
-        usbSize=UsbCdc_WriteBuffFreeSize(NULL);
-        if (usbSize>BUFFER_SIZE) {   
-            hasUsb = true;           
-        }else{
-            hasUsb=false;
+        usbSize = UsbCdc_WriteBuffFreeSize(NULL);
+        if (usbSize > BUFFER_SIZE) {
+            hasUsb = true;
+        } else {
+            hasUsb = false;
         }
-        
-        wifiSize=WifiApi_WriteBuffFreeSize();
-        if (wifiSize>BUFFER_SIZE) {   
-            hasWifi = true;           
-        }else{
-            hasWifi=false;
+
+        wifiSize = WifiApi_WriteBuffFreeSize();
+        if (wifiSize > BUFFER_SIZE) {
+            hasWifi = true;
+        } else {
+            hasWifi = false;
         }
 
         if (hasUsb && hasWifi) {
-            maxSize = min(usbSize, wifiSize);            
+            maxSize = min(usbSize, wifiSize);
         } else if (hasUsb) {
             maxSize = usbSize;
         } else {
             maxSize = wifiSize;
         }
-        maxSize=min(maxSize,BUFFER_SIZE);
+        maxSize = min(maxSize, BUFFER_SIZE);
 
         if (maxSize < 128) {
             return;
@@ -265,13 +320,13 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
                 size = Json_Encode(
                         boardData,
                         &nanopbFlag,
-                        (uint8_t *) buffer,maxSize);
+                        (uint8_t *) buffer, maxSize);
             } else {
 
                 size = Nanopb_Encode(
                         boardData,
                         &nanopbFlag,
-                        (uint8_t *)buffer,maxSize);
+                        (uint8_t *) buffer, maxSize);
             }
 
             // Write the packet out
@@ -283,9 +338,9 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
                             size);
                 }
                 if (hasWifi) {
-                    WifiApi_WriteToBuffer((const char *)buffer,size);                    
-                }               
-            } 
+                    WifiApi_WriteToBuffer((const char *) buffer, size);
+                }
+            }
         }
     } while (1);
 
@@ -295,6 +350,11 @@ void TimestampTimer_Init(void) {
     //     Initialize and start timestamp timer
     //     This is a free running timer used for reference - 
     //     this doesn't interrupt or callback
+    if (gStreamingInterruptHandle == NULL) {
+        xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
+                "Stream Interrupt",
+                1024, NULL, 8, &gStreamingInterruptHandle);
+    }
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TSTimerIndex);
     TimerApi_CallbackRegister(gpStreamingConfig->TSTimerIndex, TSTimerCB, 0);

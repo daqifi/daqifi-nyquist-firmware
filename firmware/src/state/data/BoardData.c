@@ -67,7 +67,7 @@ void *BoardData_Get(
         case BOARDDATA_ALL_DATA: 
             return &g_BoardData; 
         case BOARDDATA_IN_ISR:
-            //return &g_BoardData.InISR;
+            return &g_BoardData.InISR;
         case BOARDDATA_DIO_LATEST:
             return &g_BoardData.DIOLatest;
         case BOARDDATA_DIO_SAMPLES:
@@ -119,22 +119,22 @@ void BoardData_Set(
 {
     switch( parameter ){
         case BOARDDATA_IN_ISR:
-//            memcpy(                                                         
-//                            &g_BoardData.InISR,                             
-//                            pSetValue,                                      
-//                            sizeof(g_BoardData.InISR) );
+            memcpy(                                                         
+                            &g_BoardData.InISR,                             
+                            pSetValue,                                      
+                            sizeof(g_BoardData.InISR) );
             break;
         case BOARDDATA_DIO_LATEST:
-//            memcpy(                                                         
-//                            &g_BoardData.DIOLatest,                         
-//                            pSetValue,                                      
-//                            sizeof(g_BoardData.DIOLatest) );
+            memcpy(                                                         
+                            &g_BoardData.DIOLatest,                         
+                            pSetValue,                                      
+                            sizeof(g_BoardData.DIOLatest) );
             break;
         case BOARDDATA_DIO_SAMPLES:
-//            memcpy(                                                         
-//                            &g_BoardData.DIOSamples.List,                   
-//                            pSetValue,                                      
-//                            sizeof(g_BoardData.DIOSamples) );
+            memcpy(                                                         
+                            &g_BoardData.DIOSamples.List,                   
+                            pSetValue,                                      
+                            sizeof(g_BoardData.DIOSamples) );
             break;
         case BOARDATA_AIN_MODULE:
 //            if( index < g_BoardData.AInState.Size )
