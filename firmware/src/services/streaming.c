@@ -75,7 +75,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
         //        }
         // TODO: Replace with DIOPrescale
         if (pRunTimeStreamConf->StreamCount ==
-                pRunTimeStreamConf->StreamCountTrigger) {
+                pRunTimeStreamConf->StreamCountTrigger) {          
             DIO_Tasks(&pBoardData->DIOLatest,
                     &pBoardData->DIOSamples);
         }
@@ -191,6 +191,7 @@ static void Streaming_Start(void) {
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
         TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
         TimerApi_Start(gpStreamingConfig->TimerIndex);
+        gpRuntimeConfigStream->Running=1;
     }
 }
 
@@ -248,8 +249,8 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     bool AINDataAvailable = false; //!AInSampleList_IsEmpty(&boardData->AInSamples);
     bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
 
-    UsbCdcData_t * pRunTimeUsbSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_USB_SETTINGS);
+//    UsbCdcData_t * pRunTimeUsbSettings = BoardRunTimeConfig_Get(
+//            BOARDRUNTIME_USB_SETTINGS);
 
     if (!runtimeConfig->StreamingConfig.IsEnabled) {
         return;
@@ -333,7 +334,7 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
             if (size > 0) {
                 if (hasUsb) {
                     UsbCdc_WriteToBuffer(
-                            pRunTimeUsbSettings,
+                            NULL,
                             (const char *) buffer,
                             size);
                 }

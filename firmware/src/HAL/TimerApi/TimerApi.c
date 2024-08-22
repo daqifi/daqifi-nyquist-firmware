@@ -95,7 +95,7 @@ void TimerApi_PeriodSet(uint8_t index, uint32_t period) {
 }
 
 uint32_t TimerApi_PeriodGet(uint8_t index) {
-    uint16_t ret = 0;
+    uint32_t ret = 0;
     switch (index) {
         case 2:
             ret = TMR2_PeriodGet();
@@ -116,7 +116,7 @@ uint32_t TimerApi_PeriodGet(uint8_t index) {
 }
 
 uint32_t TimerApi_CounterGet(uint8_t index) {
-    uint16_t ret = 0;
+    uint32_t ret = 0;
     switch (index) {
         case 2:
             ret = TMR2_CounterGet();

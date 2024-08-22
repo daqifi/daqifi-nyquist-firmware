@@ -101,6 +101,7 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex);
 #else
 #define     DIO_TIMING_TEST_INIT()    ({})
 #define     DIO_TIMING_TEST_WRITE_STATE(state)  ({})
+#define     DIO_TIMING_TEST_TOGGLE_STATE()      ({})
 #endif
     
 #ifdef	__cplusplus

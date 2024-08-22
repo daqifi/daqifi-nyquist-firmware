@@ -341,7 +341,7 @@ const tBoardConfig NQ1BoardConfig = {
     //    },
         .StreamingConfig = {
             .TimerIndex = 4,
-             .TSTimerIndex = 6,           
+            .TSTimerIndex = 6,           
         }
 };
 

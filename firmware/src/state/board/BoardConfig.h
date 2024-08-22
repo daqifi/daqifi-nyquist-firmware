@@ -19,7 +19,7 @@
 #include "services/daqifi_settings.h"
 #include "HAL/BQ24297/BQ24297.h"
 
-#define DIO_TIMING_TEST 1
+//#define DIO_TIMING_TEST 1
 
 #ifdef __cplusplus
 extern "C" {
