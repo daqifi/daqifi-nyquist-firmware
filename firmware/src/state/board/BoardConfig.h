@@ -13,7 +13,7 @@
 #define __BOARDCONFIG_H__
 
 //#define DIO_TIMING_TEST
-//#include "AInConfig.h"
+#include "AInConfig.h"
 #include "DIOConfig.h"
 #include "StreamingConfig.h"
 #include "services/daqifi_settings.h"
@@ -76,12 +76,12 @@ typedef struct sBoardConfig
     //! The defined digital IO channels. This is an array where index = channel
     // and data = configuration
     DIOArray DIOChannels;
-//    //! The defined analog input modules. This is an array where index = module 
-//    // and data = configuration
-//    AInModArray AInModules;
-//    //! The defined analog input channels. This is an array where 
-//    // index = channel and data = configuration
-//    AInArray AInChannels;
+    //! The defined analog input modules. This is an array where index = module 
+    // and data = configuration
+    AInModArray AInModules;
+    //! The defined analog input channels. This is an array where 
+    // index = channel and data = configuration
+    AInArray AInChannels;
     //! Power Structure
 //    tPowerConfig PowerConfig;
 //    //! User Interface Structure

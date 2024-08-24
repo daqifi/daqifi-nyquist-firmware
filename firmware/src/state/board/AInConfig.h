@@ -10,20 +10,20 @@
 extern "C" {
 #endif
 
-    typedef struct sSPIConfig
-    {
-        SPI_MODULE_ID spiID;
-        uint32_t baud;
-        SPI_BAUD_RATE_CLOCK clock;                                   //Selects the type of clock is used by the Baud Rate Generator.
-        CLK_BUSES_PERIPHERAL busClk_id;
-
-        SPI_CLOCK_POLARITY clockPolarity;                    //Enables clock polarity.
-        SPI_COMMUNICATION_WIDTH busWidth;                   //Selects the data width for the SPI communication.
-
-        SPI_INPUT_SAMPLING_PHASE inSamplePhase;        //Selects the SPI data input sample phase.
-
-        SPI_OUTPUT_DATA_PHASE outDataPhase; //Selects serial output data change.
-    } SPIConfig;
+//    typedef struct sSPIConfig
+//    {
+//        SPI_MODULE_ID spiID;
+//        uint32_t baud;
+//        SPI_BAUD_RATE_CLOCK clock;                                   //Selects the type of clock is used by the Baud Rate Generator.
+//        CLK_BUSES_PERIPHERAL busClk_id;
+//
+//        SPI_CLOCK_POLARITY clockPolarity;                    //Enables clock polarity.
+//        SPI_COMMUNICATION_WIDTH busWidth;                   //Selects the data width for the SPI communication.
+//
+//        SPI_INPUT_SAMPLING_PHASE inSamplePhase;        //Selects the SPI data input sample phase.
+//
+//        SPI_OUTPUT_DATA_PHASE outDataPhase; //Selects serial output data change.
+//    } SPIConfig;
     
     /**
      * Defines the available analog input types
@@ -36,15 +36,15 @@ extern "C" {
          */
         AIn_MC12bADC = 0,
                 
-        /**
-         * Channel is provided by an AD7173 chip
-         */
-        AIn_AD7173,
-                
-        /**
-         * Channel is provided by an AD7609 chip
-         */
-        AIn_AD7609,
+//        /**
+//         * Channel is provided by an AD7173 chip
+//         */
+//        AIn_AD7173,
+//                
+//        /**
+//         * Channel is provided by an AD7609 chip
+//         */
+//        AIn_AD7609,
     } AInType;
     
     /**
@@ -52,96 +52,96 @@ extern "C" {
      */
     typedef struct s_MC12bModuleConfig
     {
-        DRV_ADC_MODULE_ID moduleId;
+        //DRV_ADC_MODULE_ID moduleId;
         double Resolution; // Per-module resolution
     } MC12bModuleConfig;
     
-    /**
-     * Configuration for a AD7173 module
-     */
-    typedef struct s_AD7173ModuleConfig
-    {
-        /**
-         * The module SPI config
-         */
-        SPIConfig SPI;
-        
-        /**
-         * The port module to use for the data line (probably always PORTS_ID_0)
-         */
-        PORTS_MODULE_ID DataModule;
-        
-        PORTS_CHANNEL CS_Ch;
-        PORTS_BIT_POS CS_Bit;
-        
-        PORTS_CHANNEL SPI_SDI_Ch;
-        PORTS_BIT_POS SPI_SDI_Bit;
-        uint32_t SPI_SDI_BitMask;
-        
-        PORTS_CHANNEL ERR_Ch;
-        PORTS_BIT_POS ERR_Bit;
-            
-        uint32_t Resolution;
-    } AD7173ModuleConfig;
+//    /**
+//     * Configuration for a AD7173 module
+//     */
+//    typedef struct s_AD7173ModuleConfig
+//    {
+//        /**
+//         * The module SPI config
+//         */
+//        SPIConfig SPI;
+//        
+//        /**
+//         * The port module to use for the data line (probably always PORTS_ID_0)
+//         */
+//        PORTS_MODULE_ID DataModule;
+//        
+//        PORTS_CHANNEL CS_Ch;
+//        PORTS_BIT_POS CS_Bit;
+//        
+//        PORTS_CHANNEL SPI_SDI_Ch;
+//        PORTS_BIT_POS SPI_SDI_Bit;
+//        uint32_t SPI_SDI_BitMask;
+//        
+//        PORTS_CHANNEL ERR_Ch;
+//        PORTS_BIT_POS ERR_Bit;
+//            
+//        uint32_t Resolution;
+//    } AD7173ModuleConfig;
     
-    /**
-     * Configuration for a AD7609 module
-     * NOTE: For the moment this is identical to AD7173Config 
-     */
-    typedef struct s_AD7609ModuleConfig
-    {
-        /**
-         * The module SPI config
-         */
-        SPIConfig SPI;
-        
-        /**
-         * The port module to use for the data line (probably always PORTS_ID_0)
-         */
-        PORTS_MODULE_ID DataModule;
-        
-        PORTS_CHANNEL CS_Ch;
-        PORTS_BIT_POS CS_Bit;
-        
-        PORTS_CHANNEL BSY_Ch;
-        PORTS_BIT_POS BSY_Bit;
-        uint32_t BSY_BitMask;
-        
-        PORTS_CHANNEL RST_Ch;
-        PORTS_BIT_POS RST_Bit;
-        
-        PORTS_CHANNEL Range_Ch;
-        PORTS_BIT_POS Range_Bit;
-        
-        PORTS_CHANNEL OS0_Ch;
-        PORTS_BIT_POS OS0_Bit;
-        
-        PORTS_CHANNEL OS1_Ch;
-        PORTS_BIT_POS OS1_Bit;
-        
-        PORTS_CHANNEL CONVST_Ch;
-        PORTS_BIT_POS CONVST_Bit;
-        
-        /**
-         * The value of the range pin. 0 = 5V, 1 = 10V
-         * TODO: Should this be a runtime variable
-         */
-        bool Range10V;
-        
-        /**
-         * The Oversampling mode.
-         * 00: No Oversample
-         * 01: OS Ratio 2
-         * 10: OS Ratio 4
-         * 11: OS Ratio 8
-         * TODO: According to http://www.analog.com/media/en/technical-documentation/data-sheets/AD7609.pdf 
-         *       there is another OS pin which provides access to OS Ratios 16, 32 and 64). Verify that this is not implemented.
-         */
-        uint8_t OSMode;
-        
-        uint32_t Resolution;
-        
-    } AD7609ModuleConfig;
+//    /**
+//     * Configuration for a AD7609 module
+//     * NOTE: For the moment this is identical to AD7173Config 
+//     */
+//    typedef struct s_AD7609ModuleConfig
+//    {
+//        /**
+//         * The module SPI config
+//         */
+//        SPIConfig SPI;
+//        
+//        /**
+//         * The port module to use for the data line (probably always PORTS_ID_0)
+//         */
+//        PORTS_MODULE_ID DataModule;
+//        
+//        PORTS_CHANNEL CS_Ch;
+//        PORTS_BIT_POS CS_Bit;
+//        
+//        PORTS_CHANNEL BSY_Ch;
+//        PORTS_BIT_POS BSY_Bit;
+//        uint32_t BSY_BitMask;
+//        
+//        PORTS_CHANNEL RST_Ch;
+//        PORTS_BIT_POS RST_Bit;
+//        
+//        PORTS_CHANNEL Range_Ch;
+//        PORTS_BIT_POS Range_Bit;
+//        
+//        PORTS_CHANNEL OS0_Ch;
+//        PORTS_BIT_POS OS0_Bit;
+//        
+//        PORTS_CHANNEL OS1_Ch;
+//        PORTS_BIT_POS OS1_Bit;
+//        
+//        PORTS_CHANNEL CONVST_Ch;
+//        PORTS_BIT_POS CONVST_Bit;
+//        
+//        /**
+//         * The value of the range pin. 0 = 5V, 1 = 10V
+//         * TODO: Should this be a runtime variable
+//         */
+//        bool Range10V;
+//        
+//        /**
+//         * The Oversampling mode.
+//         * 00: No Oversample
+//         * 01: OS Ratio 2
+//         * 10: OS Ratio 4
+//         * 11: OS Ratio 8
+//         * TODO: According to http://www.analog.com/media/en/technical-documentation/data-sheets/AD7609.pdf 
+//         *       there is another OS pin which provides access to OS Ratios 16, 32 and 64). Verify that this is not implemented.
+//         */
+//        uint8_t OSMode;
+//        
+//        uint32_t Resolution;
+//        
+//    } AD7609ModuleConfig;
     
     /**
      * Declares Chip/Module level configuration for an Analog In provider
@@ -160,8 +160,8 @@ extern "C" {
         union u_AInModuleImpl
         {
             MC12bModuleConfig MC12b;
-            AD7173ModuleConfig AD7173;
-            AD7609ModuleConfig AD7609;
+//            AD7173ModuleConfig AD7173;
+//            AD7609ModuleConfig AD7609;
         } Config;
         
         /**
@@ -183,9 +183,15 @@ extern "C" {
         bool AllowDifferential;
         
         /**
-         * The buffer index
+         * The ADC Channel index
          */
-        uint8_t BufferIndex;
+        ADCHS_CHANNEL_NUM ChannelId;
+        
+        /**
+         * ADC Module to which the channel Belongs
+         */
+        
+        ADCHS_MODULE_MASK ModuleId;
                 
         /**
          * Indicates that this is a type 1 channel
@@ -204,39 +210,33 @@ extern "C" {
         double InternalScale;
     } MC12bChannelConfig;
     
-    /**
-     * Holds intrinsic channel information for an AD7173-backed channel
-     */
-    typedef struct s_AD7173ChannelConfig
-    {
-        // The Channel on the Chip (0-15)
-        uint8_t ChannelIndex;
-    } AD7173ChannelConfig;
+//    /**
+//     * Holds intrinsic channel information for an AD7173-backed channel
+//     */
+//    typedef struct s_AD7173ChannelConfig
+//    {
+//        // The Channel on the Chip (0-15)
+//        uint8_t ChannelIndex;
+//    } AD7173ChannelConfig;
     
-    /**
-     * Holds intrinsic channel information for an AD7609-backed channel
-     */
-    typedef struct s_AD7609ChannelConfig
-    {
-        // The Channel on the Chip (0-7)
-        uint8_t ChannelIndex;
-    } AD7609ChannelConfig;
-    
+//    /**
+//     * Holds intrinsic channel information for an AD7609-backed channel
+//     */
+//    typedef struct s_AD7609ChannelConfig
+//    {
+//        // The Channel on the Chip (0-7)
+//        uint8_t ChannelIndex;
+//    } AD7609ChannelConfig;
+//    
     /**
      * Defines the immutable parameters for a single Analog in channel
      */
     typedef struct s_AInChannel
     {
         /**
-         * The Channel ID
+         * ADC channel ID in Daqifi Board
          */
-        uint8_t ChannelId;
-        
-        /**
-         * The module that this channel belongs to
-         */
-        uint8_t DataModule;
-        
+        uint8_t DaqifiAdcChannelId; 
         /**
          * Contains the actual settings
          * Since C doesn't support polymorphism, this is stored as a Union. Make sure you check AInModules[Channel].Type!
@@ -244,8 +244,8 @@ extern "C" {
         union u_AInChannelImpl
         {
             MC12bChannelConfig MC12b;
-            AD7173ChannelConfig AD7173;
-            AD7609ChannelConfig AD7609;
+//            AD7173ChannelConfig AD7173;
+//            AD7609ChannelConfig AD7609;
         } Config;
         
     } AInChannel;

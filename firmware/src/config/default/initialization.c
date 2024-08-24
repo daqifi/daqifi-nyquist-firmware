@@ -489,13 +489,15 @@ void SYS_Initialize ( void* data )
 
     OCMP4_Initialize();
 
-    OCMP3_Initialize();
-
     NVM_Initialize();
+
+    OCMP3_Initialize();
 
     CORETIMER_Initialize();
     TMR6_Initialize();
 
+
+    ADCHS_Initialize();
 
     TMR4_Initialize();
 

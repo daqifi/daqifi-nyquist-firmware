@@ -17,10 +17,10 @@ static QueueHandle_t analogInputsQueue;
 //! Size of the queue, in number of items
 static uint32_t queueSize = 0;
 
-void AInSampleList_Initialize( \
-                            AInSampleList* list, \
-                            size_t maxSize, \
-                            bool dropOnOverflow, \
+void AInSampleList_Initialize( 
+                            AInSampleList* list, 
+                            size_t maxSize, 
+                            bool dropOnOverflow, 
                             const LockProvider* lockPrototype){
     
     (void)list;
@@ -48,9 +48,9 @@ bool AInSampleList_PushBack(AInSampleList* list, const AInSample* data){
     
     (void)list;
     
-    queueResult = xQueueSend( \
-                    analogInputsQueue, \
-                    data, \
+    queueResult = xQueueSend( 
+                    analogInputsQueue, 
+                    data, 
                     (TickType_t)0 );
     return ( queueResult == pdTRUE ) ? true : false; 
 }
@@ -63,9 +63,9 @@ bool AInSampleList_PushBackFromIsr(AInSampleList* list, const AInSample* data){
     
     (void)list;
     
-    queueResult = xQueueSendFromISR( \
-                    analogInputsQueue, \
-                    data, \
+    queueResult = xQueueSendFromISR( 
+                    analogInputsQueue, 
+                    data, 
                     &xTaskWokenByReceive );
    
     portEND_SWITCHING_ISR(xTaskWokenByReceive);
@@ -82,9 +82,9 @@ bool AInSampleList_PopFront(AInSampleList* list, AInSample* data)
         return false;
     }
     
-    queueResult = xQueueReceive( \
-                    analogInputsQueue, \
-                    data, \
+    queueResult = xQueueReceive( 
+                    analogInputsQueue, 
+                    data, 
                     AINSAMPLE_QUEUE_TICKS_TO_WAIT );
     return ( queueResult == pdTRUE ) ? true : false; 
 }
@@ -99,9 +99,9 @@ bool AInSampleList_PeekFront(AInSampleList* list, AInSample* data)
         return false;
     }
     
-    queueResult = xQueuePeek( \
-                    analogInputsQueue, \
-                    data, \
+    queueResult = xQueuePeek( 
+                    analogInputsQueue, 
+                    data, 
                     AINSAMPLE_QUEUE_TICKS_TO_WAIT );
     return ( queueResult == pdTRUE ) ? true : false; 
 }
@@ -123,9 +123,9 @@ bool AInSampleList_IsEmpty(AInSampleList* list)
     
     (void)list;
     
-    queueResult = xQueuePeek( \
-                    analogInputsQueue, \
-                    &data, \
+    queueResult = xQueuePeek( 
+                    analogInputsQueue, 
+                    &data, 
                     0 );
     
     if( queueResult == pdTRUE ){

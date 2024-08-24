@@ -39,7 +39,6 @@
 #define DIO_EN_15_PORT GPIO_PORT_J
 
 typedef enum {
-
     OUTPUT_PIN_RPA14 = 0,
     OUTPUT_PIN_RPA15 = 1,
     OUTPUT_PIN_RPB0 = 2,
@@ -103,7 +102,7 @@ const tBoardConfig NQ1BoardConfig = {
         .Data =
         {
 #ifndef DIO_TIMING_TEST
-            { DIO_0_PORT, DIO_0_PIN & 15, DIO_EN_0_PORT, DIO_EN_0_PIN & 15, false, true,1,OUTPUT_PIN_RPD1},
+            { DIO_0_PORT, DIO_0_PIN & 15, DIO_EN_0_PORT, DIO_EN_0_PIN & 15, false, true, 1, OUTPUT_PIN_RPD1},
 #endif
             { DIO_1_PORT, DIO_1_PIN & 15, DIO_EN_1_PORT, DIO_EN_1_PIN & 15, true, false, 0xFF},
             { DIO_2_PORT, DIO_2_PIN & 15, DIO_EN_2_PORT, DIO_EN_2_PIN & 15, true, false, 0xFF},
@@ -111,7 +110,7 @@ const tBoardConfig NQ1BoardConfig = {
             { DIO_4_PORT, DIO_4_PIN & 15, DIO_EN_4_PORT, DIO_EN_4_PIN & 15, true, true, 4, OUTPUT_PIN_RPF0},
             { DIO_5_PORT, DIO_5_PIN & 15, DIO_EN_5_PORT, DIO_EN_5_PIN & 15, false, true, 6, OUTPUT_PIN_RPF1},
             { DIO_6_PORT, DIO_6_PIN & 15, DIO_EN_6_PORT, DIO_EN_6_PIN & 15, true, true, 7, OUTPUT_PIN_RPG0},
-            { DIO_7_PORT, DIO_7_PIN & 15, DIO_EN_7_PORT, DIO_EN_7_PIN & 15, false, true, 3,OUTPUT_PIN_RPG1 },
+            { DIO_7_PORT, DIO_7_PIN & 15, DIO_EN_7_PORT, DIO_EN_7_PIN & 15, false, true, 3, OUTPUT_PIN_RPG1},
             { DIO_8_PORT, DIO_8_PIN & 15, DIO_EN_8_PORT, DIO_EN_8_PIN & 15, false, false, 0xFF},
             { DIO_9_PORT, DIO_9_PIN & 15, DIO_EN_9_PORT, DIO_EN_9_PIN & 15, true, false, 0xFF},
             { DIO_10_PORT, DIO_10_PIN & 15, DIO_EN_10_PORT, DIO_EN_10_PIN & 15, false, false, 0xFF},
@@ -128,149 +127,179 @@ const tBoardConfig NQ1BoardConfig = {
 #endif
 
     },
-    //    .AInModules = {
-    //        .Data = {
-    //            {
-    //                .Type = AIn_MC12bADC,
-    //                .Config = {.MC12b = { .moduleId = DRV_ADC_ID_1, .Resolution = 4096 } },
-    //                .Size = 16
-    //            },
-    //        },
-    //        .Size = 1
-    //    },
-    //    .AInChannels = {
-    //        .Data = {
-    //            // Internal ADC
-    //            // Internal scale = (R1Ain+R2Ain)/(R2Ain) * ((R1+R2)/(R2)) 
-    //            // where RAin is the resistor divider for the 16 RAin channels
-    //            // and R is the resistor divider for the internal channels
-    //            
-    //            {
-    //                .ChannelId = 0,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {.AllowDifferential = false, .BufferIndex = 11, .ChannelType = 2, .IsPublic = true, .InternalScale = 1}}
-    //            },
-    //            {
-    //                .ChannelId = 1,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 24, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 2,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 25, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 3,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 26, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 4,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 4, 1, true, 1}} // Type 1
-    //            },
-    //            {
-    //                .ChannelId = 5,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 39, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 6,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 38, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 7,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 27, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 8,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {true, 0, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1
-    //            },
-    //            {
-    //                .ChannelId = 9,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 5, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 10,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {true, 1, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1
-    //            },
-    //            {
-    //                .ChannelId = 11,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 6, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 12,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {true, 2, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1
-    //            },
-    //            {
-    //                .ChannelId = 13,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 7, 2, true, 1}}
-    //            },
-    //            {
-    //                .ChannelId = 14,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {true, 3, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1
-    //            },
-    //            {
-    //                .ChannelId = 15,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 8, 2, true, 1}}
-    //            },
-    //
-    //            // ADC Channels for internal use
-    //            // TODO: It may make sense to put these in the power settings.
-    //            {
-    //                .ChannelId = ADC_CHANNEL_3_3V,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 19, 2, false, 1}} // +3.3V_Mon
-    //            },
-    //            {
-    //                .ChannelId = ADC_CHANNEL_2_5VREF,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 31, 2, false, 1}} // +2.5VRef_Mon
-    //            },
-    //            {
-    //                .ChannelId = ADC_CHANNEL_VBATT,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 30, 2, false, 1}} // Vbat_Mon
-    //            },
-    //            {
-    //                .ChannelId = ADC_CHANNEL_5V,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 42, 2, false, 2.16666666667}} // +5V_Prot_Mon
-    //            },
-    //            {
-    //                .ChannelId = ADC_CHANNEL_10V,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 32, 2, false, 3.905000000000}} // +10_Prot_Mon
-    //            },
-    //            {
-    //                .ChannelId = ADC_CHANNEL_TEMP,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 44, 2, false, 1}} // On board temperature sensor 5mV/degC 0->5V=-40degC
-    //            },
-    //            {
-    //                .ChannelId = ADC_CHANNEL_5VREF,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 29, 2, false, 2.16666666667}} // On board +5V ref (only on Nq2)
-    //            },
-    //            {
-    //                .ChannelId = ADC_CHANNEL_VSYS,
-    //                .DataModule = 0,
-    //                .Config = {.MC12b = {false, 41, 2, false, 1.409090909091}} // Board system power
-    //            },
-    //        },
-    //        .Size = 24
-    //    },
+    .AInModules =
+    {
+        .Data =
+        {
+            {
+                .Type = AIn_MC12bADC,
+                .Config =
+                {.MC12b =
+                    { .Resolution = 4096}},
+                .Size = 16
+            },
+        },
+        .Size = 1
+    },
+    .AInChannels =
+    {
+        .Data =
+        {
+            // Internal ADC
+            // Internal scale = (R1Ain+R2Ain)/(R2Ain) * ((R1+R2)/(R2)) 
+            // where RAin is the resistor divider for the 16 RAin channels
+            // and R is the resistor divider for the internal channels
+
+            {
+                .DaqifiAdcChannelId = 0,                
+                .Config =
+                {.MC12b =
+                    {.AllowDifferential = false, .ChannelId = ADCHS_CH11,.ModuleId=ADCHS_MODULE7_MASK, .ChannelType = 2, .IsPublic = true, .InternalScale = 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 1,                
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH24,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 2,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH25,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 3,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH26,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 4,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH4,ADCHS_MODULE4_MASK, 1, true, 1}} // Type 1
+            },
+            {
+                .DaqifiAdcChannelId = 5,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH39,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 6,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH38,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 7,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH27,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 8,
+                .Config =
+                {.MC12b =
+                    {true, ADCHS_CH0,ADCHS_MODULE0_MASK, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1
+            },
+            {
+                .DaqifiAdcChannelId = 9,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH5,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 10,
+                .Config =
+                {.MC12b =
+                    {true, ADCHS_CH1,ADCHS_MODULE1_MASK, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1
+            },
+            {
+                .DaqifiAdcChannelId = 11,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH6,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 12,
+                .Config =
+                {.MC12b =
+                    {true, ADCHS_CH2,ADCHS_MODULE2_MASK, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1
+            },
+            {
+                .DaqifiAdcChannelId = 13,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH7,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 14,
+                .Config =
+                {.MC12b =
+                    {true, ADCHS_CH3,ADCHS_MODULE3_MASK, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1
+            },
+            {
+                .DaqifiAdcChannelId = 15,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH8,ADCHS_MODULE7_MASK, 2, true, 1}}
+            },
+
+            // ADC Channels for internal use
+            // TODO: It may make sense to put these in the power settings.
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_3_3V,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH19,ADCHS_MODULE7_MASK, 2, false, 1}} // +3.3V_Mon
+            },
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_2_5VREF,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH31,ADCHS_MODULE7_MASK, 2, false, 1}} // +2.5VRef_Mon
+            },
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_VBATT,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH30,ADCHS_MODULE7_MASK, 2, false, 1}} // Vbat_Mon
+            },
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_5V,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH42,ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // +5V_Prot_Mon
+            },
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_10V,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH32,ADCHS_MODULE7_MASK, 2, false, 3.905000000000}} // +10_Prot_Mon
+            },
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_TEMP,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH44,ADCHS_MODULE7_MASK, 2, false, 1}} // On board temperature sensor 5mV/degC 0->5V=-40degC
+            },
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_5VREF,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH29,ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // On board +5V ref (only on Nq2)
+            },
+            {
+                .DaqifiAdcChannelId = ADC_CHANNEL_VSYS,
+                .Config =
+                {.MC12b =
+                    {false, ADCHS_CH41,ADCHS_MODULE7_MASK, 2, false, 1.409090909091}} // Board system power
+            },
+        },
+        .Size = 24
+    },
     //    .PowerConfig = {
     //        .EN_Vref_Ch = PWR_VREF_EN_PORT,
     //        .EN_Vref_Bit = PWR_VREF_EN_PIN,
@@ -339,10 +368,11 @@ const tBoardConfig NQ1BoardConfig = {
     //            .period = {2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
     //        },
     //    },
-        .StreamingConfig = {
-            .TimerIndex = 4,
-            .TSTimerIndex = 6,           
-        }
+    .StreamingConfig =
+    {
+        .TimerIndex = 4,
+        .TSTimerIndex = 6,
+    }
 };
 
 /*! This function is used for getting a board version 1 configuration parameter

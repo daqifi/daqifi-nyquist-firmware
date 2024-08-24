@@ -135,6 +135,10 @@
             <itemPath>../src/config/default/osal/osal.h</itemPath>
           </logicalFolder>
           <logicalFolder name="peripheral" displayName="peripheral" projectFiles="true">
+            <logicalFolder name="adchs" displayName="adchs" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/adchs/plib_adchs_common.h</itemPath>
+              <itemPath>../src/config/default/peripheral/adchs/plib_adchs.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="cache" displayName="cache" projectFiles="true">
               <itemPath>../src/config/default/peripheral/cache/plib_cache_pic32mz.h</itemPath>
               <itemPath>../src/config/default/peripheral/cache/plib_cache_local.h</itemPath>
@@ -691,6 +695,9 @@
             <itemPath>../src/config/default/osal/osal_freertos.c</itemPath>
           </logicalFolder>
           <logicalFolder name="peripheral" displayName="peripheral" projectFiles="true">
+            <logicalFolder name="adchs" displayName="adchs" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/adchs/plib_adchs.c</itemPath>
+            </logicalFolder>
             <logicalFolder name="cache" displayName="cache" projectFiles="true">
               <itemPath>../src/config/default/peripheral/cache/plib_cache_pic32mz.S</itemPath>
               <itemPath>../src/config/default/peripheral/cache/plib_cache.c</itemPath>
@@ -1150,7 +1157,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.c" ex="true" overriding="false">
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1166,7 +1173,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.h" ex="true" overriding="false">
+      <item path="../src/HAL/ADC/MC12bADC.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2031,7 +2038,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/data/AInSample.c" ex="true" overriding="false">
+      <item path="../src/state/data/AInSample.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2047,7 +2054,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/data/AInSample.h" ex="true" overriding="false">
+      <item path="../src/state/data/AInSample.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

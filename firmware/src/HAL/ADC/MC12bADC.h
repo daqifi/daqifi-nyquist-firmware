@@ -23,8 +23,8 @@ extern "C" {
  *                                     runtime
  * @return true on success
  */
-bool MC12b_InitHardware(const MC12bModuleConfig* pModuleConfigInit,          \
-                    const AInModuleRuntimeConfig * pModuleRuntimeConfigInit);
+bool MC12b_InitHardware( MC12bModuleConfig* pModuleConfigInit,          
+                     AInModuleRuntimeConfig * pModuleRuntimeConfigInit);
 
 /*!
  * Updates the module state based on the provided config
