@@ -143,6 +143,87 @@
 #define DIO_11_Get()               ((PORTC >> 2) & 0x1U)
 #define DIO_11_PIN                  GPIO_PIN_RC2
 
+/*** Macros for AIN_0 pin ***/
+#define AIN_0_Get()               ((PORTG >> 9) & 0x1U)
+#define AIN_0_PIN                  GPIO_PIN_RG9
+
+/*** Macros for AIN_1 pin ***/
+#define AIN_1_Get()               ((PORTA >> 0) & 0x1U)
+#define AIN_1_PIN                  GPIO_PIN_RA0
+
+/*** Macros for AIN_2 pin ***/
+#define AIN_2_Get()               ((PORTE >> 8) & 0x1U)
+#define AIN_2_PIN                  GPIO_PIN_RE8
+
+/*** Macros for AIN_3 pin ***/
+#define AIN_3_Get()               ((PORTE >> 9) & 0x1U)
+#define AIN_3_PIN                  GPIO_PIN_RE9
+
+/*** Macros for AIN_8 pin ***/
+#define AIN_8_Get()               ((PORTB >> 5) & 0x1U)
+#define AIN_8_PIN                  GPIO_PIN_RB5
+
+/*** Macros for AIN_4 pin ***/
+#define AIN_4_Get()               ((PORTB >> 4) & 0x1U)
+#define AIN_4_PIN                  GPIO_PIN_RB4
+
+/*** Macros for GPIO_RJ15 pin ***/
+#define GPIO_RJ15_Set()               (LATJSET = (1U<<15))
+#define GPIO_RJ15_Clear()             (LATJCLR = (1U<<15))
+#define GPIO_RJ15_Toggle()            (LATJINV= (1U<<15))
+#define GPIO_RJ15_OutputEnable()      (TRISJCLR = (1U<<15))
+#define GPIO_RJ15_InputEnable()       (TRISJSET = (1U<<15))
+#define GPIO_RJ15_Get()               ((PORTJ >> 15) & 0x1U)
+#define GPIO_RJ15_PIN                  GPIO_PIN_RJ15
+
+/*** Macros for AIN_10 pin ***/
+#define AIN_10_Get()               ((PORTB >> 6) & 0x1U)
+#define AIN_10_PIN                  GPIO_PIN_RB6
+
+/*** Macros for AIN_12 pin ***/
+#define AIN_12_Get()               ((PORTB >> 7) & 0x1U)
+#define AIN_12_PIN                  GPIO_PIN_RB7
+
+/*** Macros for AIN_13 pin ***/
+#define AIN_13_Get()               ((PORTA >> 9) & 0x1U)
+#define AIN_13_PIN                  GPIO_PIN_RA9
+
+/*** Macros for AN_6 pin ***/
+#define AN_6_Get()               ((PORTH >> 0) & 0x1U)
+#define AN_6_PIN                  GPIO_PIN_RH0
+
+/*** Macros for AN_5 pin ***/
+#define AN_5_Get()               ((PORTH >> 1) & 0x1U)
+#define AN_5_PIN                  GPIO_PIN_RH1
+
+/*** Macros for AIN_14 pin ***/
+#define AIN_14_Get()               ((PORTB >> 8) & 0x1U)
+#define AIN_14_PIN                  GPIO_PIN_RB8
+
+/*** Macros for AIN_9 pin ***/
+#define AIN_9_Get()               ((PORTB >> 10) & 0x1U)
+#define AIN_9_PIN                  GPIO_PIN_RB10
+
+/*** Macros for AIN_11 pin ***/
+#define AIN_11_Get()               ((PORTB >> 11) & 0x1U)
+#define AIN_11_PIN                  GPIO_PIN_RB11
+
+/*** Macros for PWR_5VREF_MON pin ***/
+#define PWR_5VREF_MON_Get()               ((PORTA >> 1) & 0x1U)
+#define PWR_5VREF_MON_PIN                  GPIO_PIN_RA1
+
+/*** Macros for PWR_BATT_MON pin ***/
+#define PWR_BATT_MON_Get()               ((PORTF >> 13) & 0x1U)
+#define PWR_BATT_MON_PIN                  GPIO_PIN_RF13
+
+/*** Macros for PWR_2_5VREF_MON pin ***/
+#define PWR_2_5VREF_MON_Get()               ((PORTF >> 12) & 0x1U)
+#define PWR_2_5VREF_MON_PIN                  GPIO_PIN_RF12
+
+/*** Macros for AIN_7 pin ***/
+#define AIN_7_Get()               ((PORTB >> 12) & 0x1U)
+#define AIN_7_PIN                  GPIO_PIN_RB12
+
 /*** Macros for GPIO_RH4 pin ***/
 #define GPIO_RH4_Set()               (LATHSET = (1U<<4))
 #define GPIO_RH4_Clear()             (LATHCLR = (1U<<4))
@@ -151,6 +232,18 @@
 #define GPIO_RH4_InputEnable()       (TRISHSET = (1U<<4))
 #define GPIO_RH4_Get()               ((PORTH >> 4) & 0x1U)
 #define GPIO_RH4_PIN                  GPIO_PIN_RH4
+
+/*** Macros for PWR_VSYS_MON pin ***/
+#define PWR_VSYS_MON_Get()               ((PORTH >> 5) & 0x1U)
+#define PWR_VSYS_MON_PIN                  GPIO_PIN_RH5
+
+/*** Macros for PWER_5_5V_PROT_MON pin ***/
+#define PWER_5_5V_PROT_MON_Get()               ((PORTH >> 6) & 0x1U)
+#define PWER_5_5V_PROT_MON_PIN                  GPIO_PIN_RH6
+
+/*** Macros for PWR_10V_MON pin ***/
+#define PWR_10V_MON_Get()               ((PORTD >> 14) & 0x1U)
+#define PWR_10V_MON_PIN                  GPIO_PIN_RD14
 
 /*** Macros for WDRV_WINC_RESETN pin ***/
 #define WDRV_WINC_RESETN_Set()               (LATHSET = (1U<<8))
@@ -169,6 +262,14 @@
 #define BATT_MAN_STAT_InputEnable()       (TRISHSET = (1U<<11))
 #define BATT_MAN_STAT_Get()               ((PORTH >> 11) & 0x1U)
 #define BATT_MAN_STAT_PIN                  GPIO_PIN_RH11
+
+/*** Macros for SCL2 pin ***/
+#define SCL2_Get()               ((PORTA >> 2) & 0x1U)
+#define SCL2_PIN                  GPIO_PIN_RA2
+
+/*** Macros for SDA2 pin ***/
+#define SDA2_Get()               ((PORTA >> 3) & 0x1U)
+#define SDA2_PIN                  GPIO_PIN_RA3
 
 /*** Macros for BATT_MAN_INT pin ***/
 #define BATT_MAN_INT_Set()               (LATASET = (1U<<4))
@@ -226,6 +327,15 @@
 #define WDRV_WINC_IRQ_PIN                  GPIO_PIN_RD11
 #define WDRV_WINC_IRQ_InterruptEnable()   (CNENDSET = (1U<<11))
 #define WDRV_WINC_IRQ_InterruptDisable()  (CNENDCLR = (1U<<11))
+
+/*** Macros for PWR_3_3V_EN pin ***/
+#define PWR_3_3V_EN_Set()               (LATHSET = (1U<<12))
+#define PWR_3_3V_EN_Clear()             (LATHCLR = (1U<<12))
+#define PWR_3_3V_EN_Toggle()            (LATHINV= (1U<<12))
+#define PWR_3_3V_EN_OutputEnable()      (TRISHCLR = (1U<<12))
+#define PWR_3_3V_EN_InputEnable()       (TRISHSET = (1U<<12))
+#define PWR_3_3V_EN_Get()               ((PORTH >> 12) & 0x1U)
+#define PWR_3_3V_EN_PIN                  GPIO_PIN_RH12
 
 /*** Macros for WDRV_WINC_CHIP_EN pin ***/
 #define WDRV_WINC_CHIP_EN_Set()               (LATHSET = (1U<<13))

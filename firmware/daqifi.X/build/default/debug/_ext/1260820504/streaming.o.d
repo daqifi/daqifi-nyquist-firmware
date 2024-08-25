@@ -1,7 +1,7 @@
 build/default/debug/_ext/1260820504/streaming.o: \
  ../src/services/streaming.c ../src/services/streaming.h \
  ../src/services/../state/board/BoardConfig.h \
- ../src/services/../state/board/DIOConfig.h \
+ ../src/services/../state/board/AInConfig.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -60,19 +60,21 @@ build/default/debug/_ext/1260820504/streaming.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp3.h \
+ ../src/config/default/system/time/sys_time.h \
+ ../src/config/default/peripheral/nvm/plib_nvm.h \
  ../src/config/default/driver/i2c/drv_i2c.h \
  ../src/config/default/driver/i2c/drv_i2c_definitions.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
- ../src/config/default/peripheral/nvm/plib_nvm.h \
- ../src/config/default/system/time/sys_time.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
  ../src/config/default/peripheral/tmr/plib_tmr6.h \
  ../src/config/default/peripheral/tmr/plib_tmr_common.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
+ ../src/config/default/peripheral/adchs/plib_adchs.h \
+ ../src/config/default/peripheral/adchs/plib_adchs_common.h \
  ../src/config/default/peripheral/tmr/plib_tmr4.h \
  ../src/config/default/peripheral/tmr/plib_tmr2.h \
  ../src/config/default/peripheral/tmr/plib_tmr3.h \
@@ -126,6 +128,7 @@ build/default/debug/_ext/1260820504/streaming.o: \
  ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/app_freertos.h ../src/Util/ArrayWrapper.h \
+ ../src/services/../state/board/DIOConfig.h \
  ../src/services/../state/board/StreamingConfig.h \
  ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
@@ -196,7 +199,7 @@ build/default/debug/_ext/1260820504/streaming.o: \
 
 ../src/services/../state/board/BoardConfig.h:
 
-../src/services/../state/board/DIOConfig.h:
+../src/services/../state/board/AInConfig.h:
 
 ../src/config/default/configuration.h:
 
@@ -316,6 +319,10 @@ build/default/debug/_ext/1260820504/streaming.o: \
 
 ../src/config/default/peripheral/ocmp/plib_ocmp3.h:
 
+../src/config/default/system/time/sys_time.h:
+
+../src/config/default/peripheral/nvm/plib_nvm.h:
+
 ../src/config/default/driver/i2c/drv_i2c.h:
 
 ../src/config/default/driver/i2c/drv_i2c_definitions.h:
@@ -324,9 +331,7 @@ build/default/debug/_ext/1260820504/streaming.o: \
 
 ../src/config/default/driver/i2c/src/drv_i2c_local.h:
 
-../src/config/default/peripheral/nvm/plib_nvm.h:
-
-../src/config/default/system/time/sys_time.h:
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/usb/usb_device_cdc.h:
 
@@ -342,7 +347,9 @@ build/default/debug/_ext/1260820504/streaming.o: \
 
 ../src/config/default/peripheral/tmr/plib_tmr_common.h:
 
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
+../src/config/default/peripheral/adchs/plib_adchs.h:
+
+../src/config/default/peripheral/adchs/plib_adchs_common.h:
 
 ../src/config/default/peripheral/tmr/plib_tmr4.h:
 
@@ -451,6 +458,8 @@ build/default/debug/_ext/1260820504/streaming.o: \
 ../src/app_freertos.h:
 
 ../src/Util/ArrayWrapper.h:
+
+../src/services/../state/board/DIOConfig.h:
 
 ../src/services/../state/board/StreamingConfig.h:
 

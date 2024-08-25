@@ -247,9 +247,10 @@ void SystemInit() {
 }
 
 void APP_FREERTOS_Initialize(void) {
-    
+
 }
-static void TasksCreate(){
+
+static void TasksCreate() {
     static bool blockAppTask = false;
     BaseType_t errStatus;
 
@@ -290,10 +291,88 @@ static void TasksCreate(){
         blockAppTask = true;
     }
 }
+
+void AdcTest() {
+    static int state = 0;
+
+    switch (state) {
+        case 0:
+            ADCHS_ModulesEnable(ADCHS_MODULE0_MASK);
+            ADCHS_ModulesEnable(ADCHS_MODULE1_MASK);
+            ADCHS_ModulesEnable(ADCHS_MODULE2_MASK);
+            ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
+            ADCHS_ModulesEnable(ADCHS_MODULE4_MASK);
+            ADCHS_ModulesEnable(ADCHS_MODULE7_MASK);
+            state++;
+            break;
+        case 1:
+            //ADCHS_ChannelResultInterruptDisable(ADCHS_CH7);
+            ADCHS_ChannelConversionStart(ADCHS_CH11);           
+            ADCHS_ChannelConversionStart(ADCHS_CH24);   
+            ADCHS_ChannelConversionStart(ADCHS_CH25);   
+            ADCHS_ChannelConversionStart(ADCHS_CH26);
+            ADCHS_ChannelConversionStart(ADCHS_CH4);           
+            ADCHS_ChannelConversionStart(ADCHS_CH39);   
+            ADCHS_ChannelConversionStart(ADCHS_CH38);   
+            ADCHS_ChannelConversionStart(ADCHS_CH27);
+            ADCHS_ChannelConversionStart(ADCHS_CH0);           
+            ADCHS_ChannelConversionStart(ADCHS_CH5);   
+            ADCHS_ChannelConversionStart(ADCHS_CH1);   
+            ADCHS_ChannelConversionStart(ADCHS_CH6);
+            ADCHS_ChannelConversionStart(ADCHS_CH2);           
+            ADCHS_ChannelConversionStart(ADCHS_CH7);   
+            ADCHS_ChannelConversionStart(ADCHS_CH3);   
+            ADCHS_ChannelConversionStart(ADCHS_CH8);
+            //ADCHS_GlobalEdgeConversionStart();
+            state++;
+            break;
+        case 2:
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH11))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH24))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH25))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH26))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH4))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH39))
+                break; 
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH38))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH27))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH0))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH5))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH1))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH6))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH2))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH7))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH3))
+                break;
+            if (!ADCHS_ChannelResultIsReady(ADCHS_CH8))
+                break;
+            state++;
+            break;
+        case 3:
+            ADCHS_ChannelResultGet((ADCHS_CH11));
+            state = 1;
+            break;
+    }
+}
+
 void APP_FREERTOS_Tasks(void) {
     TasksCreate();
-    Streaming_Tasks(gpBoardRuntimeConfig,gpBoardData);    
-    vTaskDelay(1/portTICK_PERIOD_MS);
+    Streaming_Tasks(gpBoardRuntimeConfig, gpBoardData);
+    AdcTest();
+    vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
 

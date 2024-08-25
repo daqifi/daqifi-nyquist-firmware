@@ -96,12 +96,12 @@ void GPIO_Initialize ( void )
     TRISGCLR = 0x8000U; /* Direction Control */
     ANSELGCLR = 0x8000U; /* Digital Mode Enable */
     /* PORTH Initialization */
-    LATH = 0x2110U; /* Initial Latch Value */
-    TRISHCLR = 0x2110U; /* Direction Control */
+    LATH = 0x3110U; /* Initial Latch Value */
+    TRISHCLR = 0x3110U; /* Direction Control */
     ANSELHCLR = 0x10U; /* Digital Mode Enable */
     /* PORTJ Initialization */
-    LATJ = 0x0U; /* Initial Latch Value */
-    TRISJCLR = 0x14b5U; /* Direction Control */
+    LATJ = 0x8000U; /* Initial Latch Value */
+    TRISJCLR = 0x94b5U; /* Direction Control */
     /* PORTK Initialization */
     LATK = 0x10U; /* Initial Latch Value */
     TRISKCLR = 0x90U; /* Direction Control */

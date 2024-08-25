@@ -36,8 +36,8 @@ bool MC12b_WriteModuleState( void );
  * @param[in] channelConfig Pointer to channel configuration
  * @param[in] channelRuntimeConfig Pointer to channel configuration in runtime
  */
-bool MC12b_WriteStateAll(                                                   \
-                        const AInArray* channelConfig,                      \
+bool MC12b_WriteStateAll(                                                   
+                        const AInArray* channelConfig,                      
                         AInRuntimeArray* channelRuntimeConfig);
     
 /*!
@@ -45,8 +45,8 @@ bool MC12b_WriteStateAll(                                                   \
  * @param[] channelConfig       Pointer to channel configuration
  * @param[] channelRuntimeConfig Pointer to channel configuration in runtime
  */
-bool MC12b_WriteStateSingle(                                                \
-                        const MC12bChannelConfig* channelConfig,            \
+bool MC12b_WriteStateSingle(                                                
+                        const MC12bChannelConfig* channelConfig,            
                         AInRuntimeConfig* channelRuntimeConfig); 
     
 /*!
@@ -56,9 +56,9 @@ bool MC12b_WriteStateSingle(                                                \
  * @param[in] channelRuntimeConfig The runtime channel configuration for the board
  * @param[in] triggerTimeStamp The timestamp when the module was most recently triggered to convert
  */
-bool MC12b_ReadSamples( AInSampleArray* samples,                            \
-                        const AInArray* channelConfig,                      \
-                        AInRuntimeArray* channelRuntimeConfig,              \
+bool MC12b_ReadSamples( AInSampleArray* samples,                            
+                        const AInArray* channelConfig,                      
+                        AInRuntimeArray* channelRuntimeConfig,              
                         uint32_t triggerTimeStamp);
     
 /**
@@ -75,9 +75,9 @@ bool MC12b_ReadSamples( AInSampleArray* samples,                            \
  * @param[in] sample The sample to process
  * @return The converted voltage
  */
-double MC12b_ConvertToVoltage(                                              \
-                        const MC12bChannelConfig* channelConfig,            \
-                        const AInRuntimeConfig* runtimeConfig,              \
+double MC12b_ConvertToVoltage(                                              
+                        const MC12bChannelConfig* channelConfig,            
+                        const AInRuntimeConfig* runtimeConfig,              
                         const AInSample* sample);
     
 #ifdef	__cplusplus

@@ -75,26 +75,6 @@ void TIMER_4_Handler (void);
 void TIMER_5_Handler (void);
 void TIMER_6_Handler (void);
 void TIMER_7_Handler (void);
-void ADC_DATA0_Handler (void);
-void ADC_DATA1_Handler (void);
-void ADC_DATA2_Handler (void);
-void ADC_DATA3_Handler (void);
-void ADC_DATA4_Handler (void);
-void ADC_DATA5_Handler (void);
-void ADC_DATA6_Handler (void);
-void ADC_DATA7_Handler (void);
-void ADC_DATA8_Handler (void);
-void ADC_DATA11_Handler (void);
-void ADC_DATA19_Handler (void);
-void ADC_DATA24_Handler (void);
-void ADC_DATA26_Handler (void);
-void ADC_DATA29_Handler (void);
-void ADC_DATA30_Handler (void);
-void ADC_DATA31_Handler (void);
-void ADC_DATA38_Handler (void);
-void ADC_DATA41_Handler (void);
-void ADC_DATA42_Handler (void);
-void ADC_DATA44_Handler (void);
 void CHANGE_NOTICE_A_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
@@ -151,106 +131,6 @@ void TIMER_6_Handler (void)
 void TIMER_7_Handler (void)
 {
     TIMER_7_InterruptHandler();
-}
-
-void ADC_DATA0_Handler (void)
-{
-    ADC_DATA0_InterruptHandler();
-}
-
-void ADC_DATA1_Handler (void)
-{
-    ADC_DATA1_InterruptHandler();
-}
-
-void ADC_DATA2_Handler (void)
-{
-    ADC_DATA2_InterruptHandler();
-}
-
-void ADC_DATA3_Handler (void)
-{
-    ADC_DATA3_InterruptHandler();
-}
-
-void ADC_DATA4_Handler (void)
-{
-    ADC_DATA4_InterruptHandler();
-}
-
-void ADC_DATA5_Handler (void)
-{
-    ADC_DATA5_InterruptHandler();
-}
-
-void ADC_DATA6_Handler (void)
-{
-    ADC_DATA6_InterruptHandler();
-}
-
-void ADC_DATA7_Handler (void)
-{
-    ADC_DATA7_InterruptHandler();
-}
-
-void ADC_DATA8_Handler (void)
-{
-    ADC_DATA8_InterruptHandler();
-}
-
-void ADC_DATA11_Handler (void)
-{
-    ADC_DATA11_InterruptHandler();
-}
-
-void ADC_DATA19_Handler (void)
-{
-    ADC_DATA19_InterruptHandler();
-}
-
-void ADC_DATA24_Handler (void)
-{
-    ADC_DATA24_InterruptHandler();
-}
-
-void ADC_DATA26_Handler (void)
-{
-    ADC_DATA26_InterruptHandler();
-}
-
-void ADC_DATA29_Handler (void)
-{
-    ADC_DATA29_InterruptHandler();
-}
-
-void ADC_DATA30_Handler (void)
-{
-    ADC_DATA30_InterruptHandler();
-}
-
-void ADC_DATA31_Handler (void)
-{
-    ADC_DATA31_InterruptHandler();
-}
-
-void ADC_DATA38_Handler (void)
-{
-    ADC_DATA38_InterruptHandler();
-}
-
-void ADC_DATA41_Handler (void)
-{
-    ADC_DATA41_InterruptHandler();
-}
-
-void ADC_DATA42_Handler (void)
-{
-    ADC_DATA42_InterruptHandler();
-}
-
-void ADC_DATA44_Handler (void)
-{
-    ADC_DATA44_InterruptHandler();
 }
 
 void CHANGE_NOTICE_A_Handler (void)
