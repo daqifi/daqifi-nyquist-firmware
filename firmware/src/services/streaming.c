@@ -40,18 +40,10 @@ static tStreamingConfig* gpStreamingConfig;
 static bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
 
-static void Streaming_TriggerADC(AInModule* module)
+void _Streaming_Deferred_Interrupt_Task(void) 
 {
-    if (module->Type == AIn_MC12bADC)
-    {
-        
-    }
-    
-    ADC_TriggerConversion((const AInModule *)module);
-}
-void _Streaming_Deferred_Interrupt_Task(void) {
 
-    uint8_t i=0;
+    uint8_t i = 0;
     TickType_t xBlockTime = portMAX_DELAY;
 
     tBoardData * pBoardData = BoardData_Get(
@@ -66,31 +58,15 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
     AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_MODULES);
-
+    
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
-        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-            // Only trigger conversions if the previous conversion is complete
-            // TODO: Replace with ADCPrescale[i]
-            if (pBoardData->AInState.Data[i].AInTaskState == AINTASK_IDLE &&
-                    pRunTimeStreamConf->StreamCount ==
-                    pRunTimeStreamConf->StreamCountTrigger && pRunTimeStreamConf->IsEnabled) {
-
-                Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
+        if (pRunTimeStreamConf->IsEnabled) {
+            for (i = 0; i < pRunTimeAInModules->Size; ++i) {                
+                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i]);
             }
-
+            DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
         }
-        // TODO: Replace with DIOPrescale
-        if (pRunTimeStreamConf->StreamCount ==
-                pRunTimeStreamConf->StreamCountTrigger) {          
-            DIO_Tasks(&pBoardData->DIOLatest,
-                    &pBoardData->DIOSamples);
-        }
-
-        pRunTimeStreamConf->StreamCount =
-                (pRunTimeStreamConf->StreamCount + 1) %
-                pRunTimeStreamConf->MaxStreamCount;
-
     }
 }
 
@@ -115,78 +91,14 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
-
-    //    UNUSED(context);
-    //    UNUSED(alarmCount);
-    //
-    static uint64_t scanTimerCount = 0;
+    
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
-    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
-    int i = 0;
-        
     if (gInTimerHandler) return;
-    gInTimerHandler = true;
-
-    for (i = 0; i < pBoardConfigADC->Size; i++) {
-        if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
-            if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-                ADCHS_ChannelConversionStart(pBoardConfigADC->Data[i].Config.MC12b.ChannelId);               
-            }
-            //BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
-        }
-        BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP, i, &valueTMR);
-    }
-    if (gpRuntimeConfigStream->Frequency <= 1000) {
-        Streaming_Defer_Interrupt();
-    } else {
-        scanTimerCount++;
-        if (scanTimerCount >= gpRuntimeConfigStream->ChannelScanTimeDiv) {
-            Streaming_Defer_Interrupt();
-            scanTimerCount = 0;
-        }
-    }
-    // 
-    // On a 'System' prescale match
-    // - Read the latest DIO (if it's not streaming- otherwise we'll wind 
-    //   up with an extra sample)
-    // - Read the latest ADC (if it's not streaming- otherwise we'll wind up
-    //   with an extra sample)
-    // - Disable the charger and read battery voltages (Omit the regular 
-    //   channels so we don't wind up with extra samples)
-    // Otherwise
-    // - Trigger conversions if, and only if, their prescale has been matched
-
-    // TODO: Remove for production
-    //Streaming_StuffDummyData();
-    //inHandler = false;
-    //return;
-
-
-
-
-    //DIO_TIMING_TEST_TOGGLE_STATE();
+    gInTimerHandler = true;    
+    Streaming_Defer_Interrupt();
     gInTimerHandler = false;
 }
-
-//static void Streaming_DedicatedADCHandler(uintptr_t context, uint32_t alarmCount) {
-//    UNUSED(context);
-//    UNUSED(alarmCount);
-//    ADCCON3bits.ADINSEL = 0;
-//    ADCCON3bits.RQCNVRT = 1;
-//    ADCCON3bits.ADINSEL = 1;
-//    ADCCON3bits.RQCNVRT = 1;
-//    ADCCON3bits.ADINSEL = 2;
-//    ADCCON3bits.RQCNVRT = 1;
-//    ADCCON3bits.ADINSEL = 3;
-//    ADCCON3bits.RQCNVRT = 1;
-//    ADCCON3bits.ADINSEL = 4;
-//    ADCCON3bits.RQCNVRT = 1;
-//    asm("nop ");
-//    //DIO_TIMING_TEST_WRITE_STATE(0);
-//
-//}
 
 /*!
  * Starts the streaming timer
@@ -197,7 +109,7 @@ static void Streaming_Start(void) {
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
         TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
         TimerApi_Start(gpStreamingConfig->TimerIndex);
-        gpRuntimeConfigStream->Running=1;
+        gpRuntimeConfigStream->Running = 1;
     }
 }
 
@@ -225,21 +137,6 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
 
 void Streaming_UpdateState(void) {
     Streaming_Stop();
-
-    /* TODO: Calculate an appropriate runtimeConfig->ClockDivider and 
-     * Prescale value for each module/channel
-      - ClockDivider = Least Common Denominator of all the desired 
-                       frequencies
-      - Prescale = The integral multiple of ClockDivider closest to the 
-                   desired frequency
-      - The 'System' prescale should be selected to be approximately 1s 
-        (if possible), and should probably be excluded from the LCD calculation
-     */
-    gpRuntimeConfigStream->StreamCountTrigger = 0;
-    gpRuntimeConfigStream->MaxStreamCount = gpRuntimeConfigStream->StreamCountTrigger + 1;
-
-    // We never actually disable the streaming time because the system 
-    //functions (battery level, voltages, actually depend on it)
     Streaming_Start();
 }
 
@@ -255,8 +152,8 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     bool AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
     bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
 
-//    UsbCdcData_t * pRunTimeUsbSettings = BoardRunTimeConfig_Get(
-//            BOARDRUNTIME_USB_SETTINGS);
+    //    UsbCdcData_t * pRunTimeUsbSettings = BoardRunTimeConfig_Get(
+    //            BOARDRUNTIME_USB_SETTINGS);
 
     if (!runtimeConfig->StreamingConfig.IsEnabled) {
         return;

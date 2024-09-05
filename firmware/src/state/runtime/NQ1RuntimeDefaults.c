@@ -84,9 +84,6 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .IsEnabled = false,
         .Running = false,
         .ClockPeriod = 130,   // default 3k hz (15khz is the max)
-        .ChannelScanTimeDiv=3, //default 1khz (1khz is the max)        
-        .StreamCountTrigger = 0,
-        .StreamCount = 0,
         .Encoding = Streaming_ProtoBuffer,
         .TSClockPeriod = 0xFFFFFFFF,   // maximum
     },

@@ -196,7 +196,7 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex) {
     return true;
 }
 
-void DIO_Tasks(DIOSample* latest, DIOSampleList* streamingSamples) {
+void DIO_StreamingTrigger(DIOSample* latest, DIOSampleList* streamingSamples) {
     //    // For debugging streaming frequency only!
     //    runtimeConfig->Data[0].Value = !runtimeConfig->Data[0].Value;
 

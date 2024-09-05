@@ -43,7 +43,8 @@ volatile uint32_t force_bootloader_flag __attribute__((persistent, coherent, add
 
 const NanopbFlagsArray fields_all = {
     .Size = 65,
-    .Data={
+    .Data =
+    {
         DaqifiOutMessage_msg_time_stamp_tag,
         DaqifiOutMessage_analog_in_data_tag,
         DaqifiOutMessage_analog_in_data_float_tag,
@@ -114,8 +115,9 @@ const NanopbFlagsArray fields_all = {
 
 const NanopbFlagsArray fields_info = {
     .Size = 59,
-    .Data={
-        DaqifiOutMessage_msg_time_stamp_tag,        
+    .Data =
+    {
+        DaqifiOutMessage_msg_time_stamp_tag,
         DaqifiOutMessage_device_status_tag,
         DaqifiOutMessage_pwr_status_tag,
         DaqifiOutMessage_batt_status_tag,
@@ -179,7 +181,8 @@ const NanopbFlagsArray fields_info = {
 
 const NanopbFlagsArray fields_discovery = {
     .Size = 37,
-    .Data={
+    .Data =
+    {
         DaqifiOutMessage_msg_time_stamp_tag,
         DaqifiOutMessage_device_status_tag,
         DaqifiOutMessage_pwr_status_tag,
@@ -218,8 +221,8 @@ const NanopbFlagsArray fields_discovery = {
         DaqifiOutMessage_device_fw_rev_tag,
         DaqifiOutMessage_device_sn_tag,
     }
-};    
-    
+};
+
 ///**
 // * Helper function to allow us to know which user interface the command originated from
 // */
@@ -268,8 +271,7 @@ const NanopbFlagsArray fields_discovery = {
  * @param context The SCPI context
  * @return always SCPI_RES_ERROR
  */
-static scpi_result_t SCPI_NotImplemented(scpi_t * context)
-{
+static scpi_result_t SCPI_NotImplemented(scpi_t * context) {
     context->interface->write(context, "Not Implemented!", 16);
     return SCPI_RES_ERR;
 }
@@ -310,26 +312,24 @@ static scpi_result_t SCPI_NotImplemented(scpi_t * context)
 //    return SCPI_RES_OK;
 //}
 //
+
 /**
  * Gets the system log
  * @param context
  * @return 
  */
-static scpi_result_t SCPI_SysLogGet(scpi_t * context)
-{
+static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
     char buffer[128];
-     
+
     size_t logSize = LogMessageCount();
     size_t i = 0;
-    for (i=0; i<logSize; ++i)
-    {
-        size_t messageSize = LogMessagePop((uint8_t*)buffer, 128);
-        if (messageSize > 0)
-        {
+    for (i = 0; i < logSize; ++i) {
+        size_t messageSize = LogMessagePop((uint8_t*) buffer, 128);
+        if (messageSize > 0) {
             context->interface->write(context, buffer, messageSize);
         }
     }
-    
+
     return SCPI_RES_OK;
 }
 //
@@ -414,142 +414,134 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context)
 //    return SCPI_RES_OK;
 //}
 //
-static scpi_result_t SCPI_ClearStreamStats(scpi_t * context)
-{
+
+static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     //memset(commTest.stats,0, sizeof(commTest.stats));
     return SCPI_RES_OK;
 }
 
-scpi_result_t SCPI_GetStreamStats(scpi_t * context)
-{
-//    SCPI_ResultInt32(context, commTest.stats[0]);
-//    SCPI_ResultInt32(context, commTest.stats[1]);
-//    SCPI_ResultInt32(context, commTest.stats[2]);
-//    SCPI_ResultInt32(context, commTest.stats[3]);
+scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
+    //    SCPI_ResultInt32(context, commTest.stats[0]);
+    //    SCPI_ResultInt32(context, commTest.stats[1]);
+    //    SCPI_ResultInt32(context, commTest.stats[2]);
+    //    SCPI_ResultInt32(context, commTest.stats[3]);
 
     return SCPI_RES_OK;
 }
 
-
-static scpi_result_t SCPI_StartStreaming(scpi_t * context)
-{
+static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     int32_t freq;
-    
-    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
     const tBoardConfig * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_ALL_CONFIG,0);
-//    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);  
-//    volatile AInArray *pBoardConfigADC=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS,0);  
-    
-     // timer running frequency
-    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex); 
-    
+            BOARDCONFIG_ALL_CONFIG, 0);
+    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+
+    // timer running frequency
+    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
+
     //int i;
-    uint16_t activeType1ChannelCount=0;
-//    for(i=0;i<pBoardConfigADC->Size;i++){
-//        if(pBoardConfigADC->Data[i].Config.MC12b.ChannelType==1){
-//            if(pRuntimeAInChannels->Data[i].IsEnabled==1){
-//                activeType1ChannelCount++;
-//            }
-//        }
-//    }
-    if(activeType1ChannelCount==0)
-        activeType1ChannelCount=1;
-    if (SCPI_ParamInt32(context, &freq, FALSE))
-    {
+    uint16_t activeType1ChannelCount = 0;
+    uint16_t activeNonType1ChannelCount = 0;
+    int i;
+    for (i = 0; i < pBoardConfigADC->Size; i++) {
+        if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
+            if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
+                activeType1ChannelCount++;
+            } else
+                activeNonType1ChannelCount++;
+        }
+    }
+
+    if (SCPI_ParamInt32(context, &freq, FALSE)) {
         if (freq >= 1 && freq <= 15000)///TODO: Test higher throughput
         {
-            // calculate the divider needed
-            
-            if((freq*activeType1ChannelCount)>15000){
-                freq=15000/activeType1ChannelCount;
+            /**
+             * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
+             * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
+             * 
+             * When any non-Type 1 ADC channel is enabled, the total allowable trigger frequency across all channels is limited to 1,000 Hz.
+             * For instance, if two Type 1 channels and four non-Type 1 channels are active, the maximum trigger frequency per channel is 1,000 / 6 Hz.
+             */           
+            if (activeNonType1ChannelCount > 0 && (freq * activeNonType1ChannelCount) > 1000) {
+                freq = 1000 / activeNonType1ChannelCount;
+                pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
+                pRunTimeStreamConfig->Frequency = freq;
+                pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
+
+            } else if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
+                freq = 15000 / activeType1ChannelCount;
+                pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
+                pRunTimeStreamConfig->Frequency = freq;
+                pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
+
             }
-            pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
-            pRunTimeStreamConfig->Frequency=freq;
-            pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF; 
-            if(freq>1000){
-                pRunTimeStreamConfig->ChannelScanTimeDiv=freq/1000;
-            }
-        }
-        else
-        {
+        } else {
             return SCPI_RES_ERR;
         }
-    }
-    else
-    {
+    } else {
         //No freq given just stream with the current value
     }
-    
+
     Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_StopStreaming(scpi_t * context)
-{
-    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-    
+static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
     pRunTimeStreamConfig->IsEnabled = false;
-    
+
     Streaming_UpdateState();
-    
+
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_IsStreaming(scpi_t * context)
-{
-    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-    
-    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->IsEnabled);
+static scpi_result_t SCPI_IsStreaming(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    SCPI_ResultInt32(context, (int) pRunTimeStreamConfig->IsEnabled);
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_SetStreamFormat(scpi_t * context)
-{
+static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
     int param1, param2;
-    
-    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-    
-    if (!SCPI_ParamInt32(context, &param1, TRUE))
-    {
+
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
-    if (param1 == Streaming_ProtoBuffer)
-    {
+
+    if (param1 == Streaming_ProtoBuffer) {
         pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
-    }
-    else if(param1 == Streaming_Json)
-    {
+    } else if (param1 == Streaming_Json) {
         pRunTimeStreamConfig->Encoding = Streaming_Json;
-    }
-    else if(param1 == Streaming_TestData)
-    {
+    } else if (param1 == Streaming_TestData) {
         pRunTimeStreamConfig->Encoding = Streaming_TestData;
-        
-        if(SCPI_ParamInt32(context, &param2, FALSE) && (param2 <= 1000)){
+
+        if (SCPI_ParamInt32(context, &param2, FALSE) && (param2 <= 1000)) {
             commTest.TestData_len = param2;
-        }
-        else{
+        } else {
             // TestData_len is not set. This indicates use dynamic length
             commTest.TestData_len = 0;
         }
     }
-    
+
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_GetStreamFormat(scpi_t * context)
-{
-    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
-                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-    
-    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->Encoding);
+static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    SCPI_ResultInt32(context, (int) pRunTimeStreamConfig->Encoding);
     return SCPI_RES_OK;
 }
 //
@@ -720,129 +712,129 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "STATus:QUEStionable:ENABle", .callback = SCPI_StatusQuestionableEnable,},
     {.pattern = "STATus:QUEStionable:ENABle?", .callback = SCPI_StatusQuestionableEnableQ,},
     {.pattern = "STATus:PRESet", .callback = SCPI_StatusPreset,},
-    
-//    // System
-//    {.pattern = "SYSTem:REboot", .callback = SCPI_Reset, },
-//    {.pattern = "HELP", .callback = SCPI_Help, },
-//    {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet, },
-    {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet, },
-//    {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho, },
-//    {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho, },    
-//    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
-//    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
-//    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
-//    {.pattern = "SYSTem:FORceBoot", .callback = SCPI_ForceBootloader, },
-//    {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber, },
-//    
-//    // Intentionally(?) not implemented (stubbed out in original firmware))
-//    {.pattern = "STATus:OPERation?", .callback = SCPI_NotImplemented, },
-//    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_NotImplemented, },
-//    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_NotImplemented, },
-//    {.pattern = "STATus:OPERation:ENABle", .callback = SCPI_NotImplemented, },
-//    {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_NotImplemented, },
-//    {.pattern = "STATus:QUEStionable:CONDition?", .callback = SCPI_NotImplemented, },
-//    {.pattern = "SYSTem:COMMunication:TCPIP:CONTROL?", .callback = SCPI_NotImplemented, },
-//    
-//    // Power
-//    {.pattern = "SYSTem:BAT:STAT?", .callback = SCPI_BatteryStatusGet, },
-//    {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet, },
-//    {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState, },
-//    {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState, },
-//    {.pattern = "SYSTem:FORce5V5POWer:STATe",.callback=SCPI_Force5v5PowerStateSet},
-//    
-//    // DIO
-    {.pattern = "DIO:PORt:DIRection", .callback = SCPI_GPIODirectionSet, },
-    {.pattern = "DIO:PORt:DIRection?", .callback = SCPI_GPIODirectionGet, },
-    {.pattern = "DIO:PORt:STATe", .callback = SCPI_GPIOStateSet, },
-    {.pattern = "DIO:PORt:STATe?", .callback = SCPI_GPIOStateGet, },
-    {.pattern = "DIO:PORt:ENAble", .callback = SCPI_GPIOEnableSet, },
-    {.pattern = "DIO:PORt:ENAble?", .callback = SCPI_GPIOEnableGet, },
-    {.pattern = "PWM:CHannel:ENable", .callback=SCPI_PWMChannelEnableSet,},
-    {.pattern = "PWM:CHannel:ENable?", .callback=SCPI_PWMChannelEnableGet,},
-    {.pattern = "PWM:CHannel:FREQuency", .callback=SCPI_PWMChannelFrequencySet,},
-    {.pattern = "PWM:CHannel:FREQuency?", .callback=SCPI_PWMChannelFrequencyGet,},
-    {.pattern = "PWM:CHannel:DUTY", .callback=SCPI_PWMChannelDUTYSet,},
-    {.pattern = "PWM:CHannel:DUTY?", .callback=SCPI_PWMChannelDUTYGet,},
-//    
-//    // Wifi
-    {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:ENAbled", .callback = SCPI_LANEnabledSet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:NETMode?", .callback = SCPI_LANNetModeGet, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:AvNETType?", .callback = SCPI_LANAVNetTypeGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:NETMode", .callback = SCPI_LANNetModeSet, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:IPV6?", .callback = SCPI_LANIpv6Get, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:IPV6", .callback = SCPI_LANIpv6Set, },
-    {.pattern = "SYSTem:COMMunicate:LAN:ADDRess?", .callback = SCPI_LANAddrGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:ADDRess", .callback = SCPI_LANAddrSet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:MASK?", .callback = SCPI_LANMaskGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:MASK", .callback = SCPI_LANMaskSet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:GATEway?", .callback = SCPI_LANGatewayGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:GATEway", .callback = SCPI_NotImplemented, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:DNS1?", .callback = SCPI_LANDns1Get, },
-    {.pattern = "SYSTem:COMMunicate:LAN:DNS1", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:DNS2?", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:DNS2", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:MAC?", .callback = SCPI_LANMacGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:MAC", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:CONnected?", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:HOST?", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:HOST", .callback = SCPI_NotImplemented, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:AvSSIDScan", .callback = SCPI_LANAVSsidScan, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:AvSSID?", .callback = SCPI_LANAVSsidGet, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:AvSSIDStr?", .callback = SCPI_LANAVSsidStrengthGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:SSID?", .callback = SCPI_LANSsidGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:SSIDStr?", .callback = SCPI_LANSsidStrengthGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:SSID", .callback = SCPI_LANSsidSet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:SECurity?", .callback = SCPI_LANSecurityGet, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:AvSECurity?", .callback = SCPI_LANAVSecurityGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:SECurity", .callback = SCPI_LANSecuritySet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:PASs", .callback = SCPI_LANPasskeySet, }, // No get for security reasons use PASSCHECK instead
-    {.pattern = "SYSTem:COMMunicate:LAN:PASSCHECK", .callback = SCPI_LANPasskeyGet, },
-    {.pattern = "SYSTem:COMMunicate:LAN:DISPlay", .callback = SCPI_NotImplemented, },
-    {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_LANSettingsApply, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad, },
-//    {.pattern = "SYSTem:COMMunicate:LAN:CLEAR", .callback = SCPI_LANSettingsClear, },
-//    
-//    // ADC
-    {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet, },
-    {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet, },
-    {.pattern = "ENAble:VOLTage:DC?", .callback = SCPI_ADCChanEnableGet, },
-    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_NotImplemented, },
-    {.pattern = "CONFigure:ADC:SINGleend", .callback = SCPI_ADCChanSingleEndSet, },
-    {.pattern = "CONFigure:ADC:SINGleend?", .callback = SCPI_ADCChanSingleEndGet, },
-    {.pattern = "CONFigure:ADC:RANGe", .callback = SCPI_ADCChanRangeSet, },
-    {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet, },
-    {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet, },
-    {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet, },
-    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet, },
-    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet, },
-    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet, },
-    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet, },
-    {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave, },
-    {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave, },
-    {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad, },
-    {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad, },
-    {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet, },
-    {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet, },
-//    
-//    // SPI
-//    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },
-//    
+
+    //    // System
+    //    {.pattern = "SYSTem:REboot", .callback = SCPI_Reset, },
+    //    {.pattern = "HELP", .callback = SCPI_Help, },
+    //    {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet, },
+    {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
+    //    {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho, },
+    //    {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho, },    
+    //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
+    //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
+    //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
+    //    {.pattern = "SYSTem:FORceBoot", .callback = SCPI_ForceBootloader, },
+    //    {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber, },
+    //    
+    //    // Intentionally(?) not implemented (stubbed out in original firmware))
+    //    {.pattern = "STATus:OPERation?", .callback = SCPI_NotImplemented, },
+    //    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_NotImplemented, },
+    //    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_NotImplemented, },
+    //    {.pattern = "STATus:OPERation:ENABle", .callback = SCPI_NotImplemented, },
+    //    {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_NotImplemented, },
+    //    {.pattern = "STATus:QUEStionable:CONDition?", .callback = SCPI_NotImplemented, },
+    //    {.pattern = "SYSTem:COMMunication:TCPIP:CONTROL?", .callback = SCPI_NotImplemented, },
+    //    
+    //    // Power
+    //    {.pattern = "SYSTem:BAT:STAT?", .callback = SCPI_BatteryStatusGet, },
+    //    {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet, },
+    //    {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState, },
+    //    {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState, },
+    //    {.pattern = "SYSTem:FORce5V5POWer:STATe",.callback=SCPI_Force5v5PowerStateSet},
+    //    
+    //    // DIO
+    {.pattern = "DIO:PORt:DIRection", .callback = SCPI_GPIODirectionSet,},
+    {.pattern = "DIO:PORt:DIRection?", .callback = SCPI_GPIODirectionGet,},
+    {.pattern = "DIO:PORt:STATe", .callback = SCPI_GPIOStateSet,},
+    {.pattern = "DIO:PORt:STATe?", .callback = SCPI_GPIOStateGet,},
+    {.pattern = "DIO:PORt:ENAble", .callback = SCPI_GPIOEnableSet,},
+    {.pattern = "DIO:PORt:ENAble?", .callback = SCPI_GPIOEnableGet,},
+    {.pattern = "PWM:CHannel:ENable", .callback = SCPI_PWMChannelEnableSet,},
+    {.pattern = "PWM:CHannel:ENable?", .callback = SCPI_PWMChannelEnableGet,},
+    {.pattern = "PWM:CHannel:FREQuency", .callback = SCPI_PWMChannelFrequencySet,},
+    {.pattern = "PWM:CHannel:FREQuency?", .callback = SCPI_PWMChannelFrequencyGet,},
+    {.pattern = "PWM:CHannel:DUTY", .callback = SCPI_PWMChannelDUTYSet,},
+    {.pattern = "PWM:CHannel:DUTY?", .callback = SCPI_PWMChannelDUTYGet,},
+    //    
+    //    // Wifi
+    {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:ENAbled", .callback = SCPI_LANEnabledSet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:NETMode?", .callback = SCPI_LANNetModeGet,},
+    //    {.pattern = "SYSTem:COMMunicate:LAN:AvNETType?", .callback = SCPI_LANAVNetTypeGet, },
+    {.pattern = "SYSTem:COMMunicate:LAN:NETMode", .callback = SCPI_LANNetModeSet,},
+    //    {.pattern = "SYSTem:COMMunicate:LAN:IPV6?", .callback = SCPI_LANIpv6Get, },
+    //    {.pattern = "SYSTem:COMMunicate:LAN:IPV6", .callback = SCPI_LANIpv6Set, },
+    {.pattern = "SYSTem:COMMunicate:LAN:ADDRess?", .callback = SCPI_LANAddrGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:ADDRess", .callback = SCPI_LANAddrSet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:MASK?", .callback = SCPI_LANMaskGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:MASK", .callback = SCPI_LANMaskSet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:GATEway?", .callback = SCPI_LANGatewayGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:GATEway", .callback = SCPI_NotImplemented,},
+    //    {.pattern = "SYSTem:COMMunicate:LAN:DNS1?", .callback = SCPI_LANDns1Get, },
+    {.pattern = "SYSTem:COMMunicate:LAN:DNS1", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:DNS2?", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:DNS2", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:MAC?", .callback = SCPI_LANMacGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:MAC", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:CONnected?", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:HOST?", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:HOST", .callback = SCPI_NotImplemented,},
+    //    {.pattern = "SYSTem:COMMunicate:LAN:AvSSIDScan", .callback = SCPI_LANAVSsidScan, },
+    //    {.pattern = "SYSTem:COMMunicate:LAN:AvSSID?", .callback = SCPI_LANAVSsidGet, },
+    //    {.pattern = "SYSTem:COMMunicate:LAN:AvSSIDStr?", .callback = SCPI_LANAVSsidStrengthGet, },
+    {.pattern = "SYSTem:COMMunicate:LAN:SSID?", .callback = SCPI_LANSsidGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:SSIDStr?", .callback = SCPI_LANSsidStrengthGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:SSID", .callback = SCPI_LANSsidSet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:SECurity?", .callback = SCPI_LANSecurityGet,},
+    //    {.pattern = "SYSTem:COMMunicate:LAN:AvSECurity?", .callback = SCPI_LANAVSecurityGet, },
+    {.pattern = "SYSTem:COMMunicate:LAN:SECurity", .callback = SCPI_LANSecuritySet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:PASs", .callback = SCPI_LANPasskeySet,}, // No get for security reasons use PASSCHECK instead
+    {.pattern = "SYSTem:COMMunicate:LAN:PASSCHECK", .callback = SCPI_LANPasskeyGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:DISPlay", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_LANSettingsApply,},
+    //    {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad, },
+    //    {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave, },
+    //    {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad, },
+    //    {.pattern = "SYSTem:COMMunicate:LAN:CLEAR", .callback = SCPI_LANSettingsClear, },
+    //    
+    //    // ADC
+    {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet,},
+    {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet,},
+    {.pattern = "ENAble:VOLTage:DC?", .callback = SCPI_ADCChanEnableGet,},
+    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:ADC:SINGleend", .callback = SCPI_ADCChanSingleEndSet,},
+    {.pattern = "CONFigure:ADC:SINGleend?", .callback = SCPI_ADCChanSingleEndGet,},
+    {.pattern = "CONFigure:ADC:RANGe", .callback = SCPI_ADCChanRangeSet,},
+    {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet,},
+    {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet,},
+    {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet,},
+    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
+    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
+    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},
+    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet,},
+    {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave,},
+    {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave,},
+    {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad,},
+    {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad,},
+    {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet,},
+    {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
+    //    
+    //    // SPI
+    //    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },
+    //    
     // Streaming
-    {.pattern = "SYSTem:StartStreamData",     .callback = SCPI_StartStreaming, },  
-    {.pattern = "SYSTem:StopStreamData",      .callback = SCPI_StopStreaming, },
-    {.pattern = "SYSTem:StreamData?",         .callback = SCPI_IsStreaming, },   
-    {.pattern = "SYSTem:STReam:FORmat",       .callback = SCPI_SetStreamFormat, }, // 0 = pb = default, 1 = text (json)
-    {.pattern = "SYSTem:STReam:FORmat?",      .callback = SCPI_GetStreamFormat, },
-    {.pattern = "SYSTem:STReam:Stats?",       .callback = SCPI_GetStreamStats,},  
-    {.pattern = "SYSTem:STReam:ClearStats",   .callback = SCPI_ClearStreamStats,},
-//    // FreeRTOS
-//    {.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
+    {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
+    {.pattern = "SYSTem:StopStreamData", .callback = SCPI_StopStreaming,},
+    {.pattern = "SYSTem:StreamData?", .callback = SCPI_IsStreaming,},
+    {.pattern = "SYSTem:STReam:FORmat", .callback = SCPI_SetStreamFormat,}, // 0 = pb = default, 1 = text (json)
+    {.pattern = "SYSTem:STReam:FORmat?", .callback = SCPI_GetStreamFormat,},
+    {.pattern = "SYSTem:STReam:Stats?", .callback = SCPI_GetStreamStats,},
+    {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
+    //    // FreeRTOS
+    //    {.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing
-    {.pattern = "BENCHmark?",       .callback = SCPI_NotImplemented,},
-    {.pattern = NULL, .callback = SCPI_NotImplemented, },
+    {.pattern = "BENCHmark?", .callback = SCPI_NotImplemented,},
+    {.pattern = NULL, .callback = SCPI_NotImplemented,},
 };
 
 #define SCPI_INPUT_BUFFER_LENGTH 64
@@ -904,8 +896,8 @@ scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
 //    
 //    return SCPI_RES_OK;
 //}
-scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context)
-{
+
+scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Create a context
     scpi_t daqifiScpiContext;
     // Init context
@@ -916,7 +908,7 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context)
             SCPI_IDN1, SCPI_IDN2, SCPI_IDN3, SCPI_IDN4,
             scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
             scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
-    
+
     // Return it to the app
     return daqifiScpiContext;
 }

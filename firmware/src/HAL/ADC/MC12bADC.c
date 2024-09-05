@@ -147,52 +147,17 @@ bool MC12b_WriteStateSingle(
             
         }
     }
-
     // TODO: What about channel 2-3
     return true;
 }
 
-bool MC12b_ReadSamples(AInSampleArray* samples,
-        const AInArray* channelConfig,
-        AInRuntimeArray* channelRuntimeConfig,
-        uint32_t triggerTimeStamp) {
-    size_t i = 0;
-
-    for (i = 0; i < channelConfig->Size; ++i) {
-        if (!channelRuntimeConfig->Data[i].IsEnabled) {
-            continue;
-        }
-        
-        const AInChannel* currentChannelConfig = &channelConfig->Data[i];
-        uint8_t bufIndex = currentChannelConfig->Config.MC12b.ChannelId;
-        if (!ADCHS_ChannelResultIsReady(bufIndex)) {
-            continue;
-        }
-
-        AInSample* sample = &samples->Data[samples->Size];
-        sample->Channel = channelConfig->Data[i].DaqifiAdcChannelId;
-        volatile uint32_t data = ADCHS_ChannelResultGet(bufIndex);
-        //volatile  uint32_t *timeStamp=(uint32_t*)BoardData_Get(BOARDDATA_AIN_LATEST_TIMESTAMP,sample->Channel);
-        //sample->Timestamp=*timeStamp;
-        sample->Value = data; // The XYZ_ConvertToVoltage functions are called downstream for conversion (FPU doesn't work in an ISR)
-
-        samples->Size += 1;
-    }
-
-    return true;
-}
-
 bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr) {
-    //    AInRuntimeArray* pRunTimeChannlConfig=BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    //    AInArray* pAIConfigArr=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS);
-  
-    int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size);
+    int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size); 
     for (int i = 0; i < aiChannelSize; i++) {        
-        if (pRunTimeChannlConfig->Data[i].IsEnabled) {           
+        if (pRunTimeChannlConfig->Data[i].IsEnabled) { 
             ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
         }
     }
-    //ADCHS_GlobalEdgeConversionStart();
     return true;
 }
 

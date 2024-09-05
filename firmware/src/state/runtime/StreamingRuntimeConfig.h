@@ -38,32 +38,32 @@ extern "C" {
          *Base Frequency of adc Sampling and streaming
          */
         uint64_t Frequency;
-        /**
-         *Divider for channel Scanning
-         */
-        uint64_t ChannelScanTimeDiv;
+//        /**
+//         *Divider for channel Scanning
+//         */
+//        uint64_t ChannelScanTimeDiv;
         /**
          * The base clock divider for the timestamp timer
          */
         uint32_t TSClockPeriod;
         
-        /**
-         * The number of times through the loop before we do a system read
-         * TODO: Every module (and eventually channel) needs one of these
-         */
-        volatile uint32_t StreamCountTrigger;
-        
-        /**
-         * The current iteration in the streaming loop
-         * TODO: This probably belongs in 'Data'
-         */
-        volatile uint32_t StreamCount;
-        
-        /**
-         * The maximum value of stream count
-         * TODO: This probably belongs in 'Data'
-         */
-        volatile uint32_t MaxStreamCount;
+//        /**
+//         * The number of times through the loop before we do a system read
+//         * TODO: Every module (and eventually channel) needs one of these
+//         */
+//        volatile uint32_t StreamCountTrigger;
+//        
+//        /**
+//         * The current iteration in the streaming loop
+//         * TODO: This probably belongs in 'Data'
+//         */
+//        volatile uint32_t StreamCount;
+//        
+//        /**
+//         * The maximum value of stream count
+//         * TODO: This probably belongs in 'Data'
+//         */
+//        volatile uint32_t MaxStreamCount;
         
         /**
          * The type of encoding to use
