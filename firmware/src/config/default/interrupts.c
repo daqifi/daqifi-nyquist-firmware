@@ -81,25 +81,6 @@ void ADC_DATA1_Handler (void);
 void ADC_DATA2_Handler (void);
 void ADC_DATA3_Handler (void);
 void ADC_DATA4_Handler (void);
-void ADC_DATA5_Handler (void);
-void ADC_DATA6_Handler (void);
-void ADC_DATA7_Handler (void);
-void ADC_DATA8_Handler (void);
-void ADC_DATA11_Handler (void);
-void ADC_DATA19_Handler (void);
-void ADC_DATA24_Handler (void);
-void ADC_DATA25_Handler (void);
-void ADC_DATA26_Handler (void);
-void ADC_DATA27_Handler (void);
-void ADC_DATA29_Handler (void);
-void ADC_DATA30_Handler (void);
-void ADC_DATA31_Handler (void);
-void ADC_DATA32_Handler (void);
-void ADC_DATA38_Handler (void);
-void ADC_DATA39_Handler (void);
-void ADC_DATA41_Handler (void);
-void ADC_DATA42_Handler (void);
-void ADC_DATA44_Handler (void);
 void CHANGE_NOTICE_A_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
@@ -111,6 +92,7 @@ void SPI4_TX_Handler (void);
 void FLASH_CONTROL_Handler (void);
 void I2C5_BUS_Handler (void);
 void I2C5_MASTER_Handler (void);
+void ADC_EOS_Handler (void);
 
 
 // *****************************************************************************
@@ -188,120 +170,6 @@ void ADC_DATA4_Handler (void)
     ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4),4);
 }
 
-void ADC_DATA5_Handler (void)
-{
-    ADC_DATA5_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(5),5);
-}
-
-void ADC_DATA6_Handler (void)
-{
-    ADC_DATA6_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(6),6);
-}
-
-void ADC_DATA7_Handler (void)
-{
-    ADC_DATA7_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(7),7);
-}
-
-void ADC_DATA8_Handler (void)
-{
-    ADC_DATA8_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(8),8);
-}
-
-void ADC_DATA11_Handler (void)
-{
-    ADC_DATA11_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(11),11);
-}
-
-void ADC_DATA19_Handler (void)
-{
-    ADC_DATA19_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(19),19);
-}
-
-void ADC_DATA24_Handler (void)
-{
-    ADC_DATA24_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(24),24);
-}
-
-void ADC_DATA25_Handler (void)
-{
-    ADC_DATA25_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(25),25);
-}
-
-void ADC_DATA26_Handler (void)
-{
-    ADC_DATA26_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(26),26);
-}
-
-void ADC_DATA27_Handler (void)
-{
-    ADC_DATA27_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(27),27);
-}
-
-void ADC_DATA29_Handler (void)
-{
-    ADC_DATA29_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(29),29);
-}
-
-void ADC_DATA30_Handler (void)
-{
-    ADC_DATA30_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(30),30);
-}
-
-void ADC_DATA31_Handler (void)
-{
-    ADC_DATA31_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(31),31);
-}
-
-void ADC_DATA32_Handler (void)
-{
-    ADC_DATA32_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(32),32);
-}
-
-void ADC_DATA38_Handler (void)
-{
-    ADC_DATA38_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(38),38);
-}
-
-void ADC_DATA39_Handler (void)
-{
-    ADC_DATA39_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(39),39);
-}
-
-void ADC_DATA41_Handler (void)
-{
-    ADC_DATA41_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(41),41);
-}
-
-void ADC_DATA42_Handler (void)
-{
-    ADC_DATA42_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(42),42);
-}
-
-void ADC_DATA44_Handler (void)
-{
-    ADC_DATA44_InterruptHandler();
-    ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(44),44);
-}
-
 void CHANGE_NOTICE_A_Handler (void)
 {
     CHANGE_NOTICE_A_InterruptHandler();
@@ -355,6 +223,12 @@ void I2C5_BUS_Handler (void)
 void I2C5_MASTER_Handler (void)
 {
     I2C5_MASTER_InterruptHandler();
+}
+
+void ADC_EOS_Handler (void)
+{
+    ADC_EOS_InterruptHandler();
+    ADC_EOSInterruptCB();
 }
 
 

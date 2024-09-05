@@ -79,7 +79,7 @@ double MC12b_ConvertToVoltage(
                         const MC12bChannelConfig* channelConfig,            
                         const AInRuntimeConfig* runtimeConfig,              
                         const AInSample* sample);
-    
+bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);    
 #ifdef	__cplusplus
 }
 #endif

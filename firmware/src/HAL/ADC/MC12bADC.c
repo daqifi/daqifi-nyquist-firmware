@@ -139,14 +139,15 @@ bool MC12b_WriteStateSingle(
             ADCHS_ModulesDisable(channelConfig->ModuleId);
             ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);        
         }
-    } else {
-        if (channelRuntimeConfig->IsEnabled) {
-            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);          
-        } else {
-            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);           
-            
-        }
-    }
+    } 
+//    else {
+//        if (channelRuntimeConfig->IsEnabled) {
+//            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);          
+//        } else {
+//            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);           
+//            
+//        }
+//    }
     // TODO: What about channel 2-3
     return true;
 }
@@ -155,9 +156,11 @@ bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pA
     int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size); 
     for (int i = 0; i < aiChannelSize; i++) {        
         if (pRunTimeChannlConfig->Data[i].IsEnabled) { 
-            ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
+            if(pAIConfigArr->Data[i].Config.MC12b.ChannelType==1)
+                ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
         }
     }
+    ADCHS_GlobalEdgeConversionStart();
     return true;
 }
 
@@ -174,4 +177,13 @@ double MC12b_ConvertToVoltage(
     dataOut = (range * scale * CalM * (double) sample->Value) /
             (gpModuleConfigMC12->Resolution) + runtimeConfig->CalB;
     return (dataOut);
+}
+bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal)
+{
+    if(ADCHS_ChannelResultIsReady(channel)){
+        *pVal=ADCHS_ChannelResultGet(channel);
+        return true;
+    }
+    *pVal=0;
+    return false;
 }

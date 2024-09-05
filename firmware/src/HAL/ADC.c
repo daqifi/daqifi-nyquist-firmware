@@ -19,7 +19,7 @@ static tBoardConfig *gpBoardConfig;
 static tBoardRuntimeConfig *gpBoardRuntimeConfig;
 // Pointer to the BoardData data structure, to be set in initialization
 static tBoardData* gpBoardData;
-
+static TaskHandle_t gADCInterruptHandle;
 /*!
  * Retrieves the index of a module
  * @param[in] pModule Pointer to the module to search for
@@ -57,6 +57,36 @@ static void GetModuleChannelRuntimeData(
         AInRuntimeArray* moduleChannelRuntime,
         uint8_t moduleId);
 
+void ADC_EosInterruptTask(void) {
+    const TickType_t xBlockTime = portMAX_DELAY;
+
+    while (1) {
+        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        AInSample sample;       
+        int i = 0;
+        uint32_t adcval;
+        uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+        for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
+            if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelType != 1
+                    && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled==1) {
+                if (MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
+                    sample.Timestamp = *valueTMR;
+                    sample.Channel = i;
+                    sample.Value = adcval;
+                    BoardData_Set(
+                            BOARDDATA_AIN_LATEST,
+                            i,
+                            &sample);
+                    if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic) {
+                        AInSampleList_PushBackFromIsr(NULL, &sample);
+                    }
+                }
+            }
+        }
+
+    }
+}
+
 void ADC_Init(
         const tBoardConfig * pBoardConfigADCInit,
         const tBoardRuntimeConfig* pBoardRuntimeConfigADCInit,
@@ -65,6 +95,9 @@ void ADC_Init(
     gpBoardRuntimeConfig =
             (tBoardRuntimeConfig *) pBoardRuntimeConfigADCInit;
     gpBoardData = (tBoardData *) pBoardDataADCInit;
+    xTaskCreate((TaskFunction_t) ADC_EosInterruptTask,
+            "ADC Interrupt",
+            2048, NULL, 8, &gADCInterruptHandle);
 }
 
 bool ADC_WriteChannelStateAll(void) {
@@ -274,20 +307,15 @@ bool ADC_ReadADCSampleFromISR(uint32_t value, uint8_t bufferIndex) {
     bool status = false;
     int i = 0;
     sample.Value = value;
+    uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
     for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-        if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId == bufferIndex) {   
-            uint32_t *valueTMR=(uint32_t*)BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP,0);
+        if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId == bufferIndex) {
             sample.Timestamp = *valueTMR;
             sample.Channel = i;
             BoardData_Set(
                     BOARDDATA_AIN_LATEST,
                     i,
                     &sample);
-            if(i==3){
-                portNOP();
-            }else if(i==0){
-                portNOP();
-            }
             if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic) {
                 AInSampleList_PushBackFromIsr(NULL, &sample);
             }
@@ -352,4 +380,10 @@ static void GetModuleChannelRuntimeData(
                 gpBoardRuntimeConfig->AInChannels.Data[i];
         moduleChannelRuntime->Size += 1;
     }
+}
+
+void ADC_EOSInterruptCB(void) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(gADCInterruptHandle, &xHigherPriorityTaskWoken);
+    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }

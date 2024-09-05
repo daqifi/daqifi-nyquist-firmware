@@ -68,25 +68,6 @@ void ADC_DATA1_InterruptHandler( void );
 void ADC_DATA2_InterruptHandler( void );
 void ADC_DATA3_InterruptHandler( void );
 void ADC_DATA4_InterruptHandler( void );
-void ADC_DATA5_InterruptHandler( void );
-void ADC_DATA6_InterruptHandler( void );
-void ADC_DATA7_InterruptHandler( void );
-void ADC_DATA8_InterruptHandler( void );
-void ADC_DATA11_InterruptHandler( void );
-void ADC_DATA19_InterruptHandler( void );
-void ADC_DATA24_InterruptHandler( void );
-void ADC_DATA25_InterruptHandler( void );
-void ADC_DATA26_InterruptHandler( void );
-void ADC_DATA27_InterruptHandler( void );
-void ADC_DATA29_InterruptHandler( void );
-void ADC_DATA30_InterruptHandler( void );
-void ADC_DATA31_InterruptHandler( void );
-void ADC_DATA32_InterruptHandler( void );
-void ADC_DATA38_InterruptHandler( void );
-void ADC_DATA39_InterruptHandler( void );
-void ADC_DATA41_InterruptHandler( void );
-void ADC_DATA42_InterruptHandler( void );
-void ADC_DATA44_InterruptHandler( void );
 void CHANGE_NOTICE_A_InterruptHandler( void );
 void CHANGE_NOTICE_D_InterruptHandler( void );
 void DRV_USBHS_InterruptHandler( void );
@@ -98,6 +79,7 @@ void SPI4_TX_InterruptHandler( void );
 void NVM_InterruptHandler( void );
 void I2C5_BUS_InterruptHandler( void );
 void I2C5_MASTER_InterruptHandler( void );
+void ADC_EOS_InterruptHandler( void );
 
 
 

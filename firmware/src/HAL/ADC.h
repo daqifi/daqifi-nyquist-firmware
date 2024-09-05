@@ -76,6 +76,9 @@ bool ADC_IsDataValid(const AInSample* sample);
 double ADC_ConvertToVoltage(const AInSample* sample);
 
 bool ADC_ReadADCSampleFromISR(uint32_t value,uint8_t bufferIndex);
+
+/*! Function to be called from the ISR for deferring the ADC interrupt */
+void ADC_EOSInterruptCB( void );
     
 #ifdef	__cplusplus
 }

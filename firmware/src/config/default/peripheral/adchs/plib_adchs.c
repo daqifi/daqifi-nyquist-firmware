@@ -54,6 +54,8 @@
 /* Object to hold callback function and context */
 volatile static ADCHS_CALLBACK_OBJECT ADCHS_CallbackObj[44];
 
+/* Object to hold callback function and context for end of scan interrupt*/
+volatile static ADCHS_EOS_CALLBACK_OBJECT ADCHS_EOSCallbackObj;
 
 
 void ADCHS_Initialize(void)
@@ -73,7 +75,7 @@ void ADCHS_Initialize(void)
     ADC7CFG = DEVADC7;
 
     ADCCON1 = 0x610000U;
-    ADCCON2 = 0x640001U;
+    ADCCON2 = 0x642001U;
     ADCCON3 = 0x4002000U;
 
     ADCTRGMODE = 0x550000U;
@@ -94,19 +96,20 @@ void ADCHS_Initialize(void)
     
 
     /* Input scan */
-    ADCCSS1 = 0x0U;
-    ADCCSS2 = 0x0U; 
+    ADCCSS1 = 0xef0809e0U;
+    ADCCSS2 = 0x16c1U; 
 
 
 
 
 /* Result interrupt enable */
-ADCGIRQEN1 = 0xef0809ffU;
-ADCGIRQEN2 = 0x16c1U;
+ADCGIRQEN1 = 0x1fU;
+ADCGIRQEN2 = 0x0U;
 /* Interrupt Enable */
 IEC1SET = 0xf8000000U;
-IEC2SET = 0xf78404fU;
-IEC3SET = 0xb6U;
+IEC2SET = 0x0U;
+IEC3SET = 0x0U;    IEC6SET = _IEC6_ADCEOSIE_MASK;
+
 
 
 
@@ -287,10 +290,25 @@ void ADCHS_CallbackRegister(ADCHS_CHANNEL_NUM channel, ADCHS_CALLBACK callback, 
 
 
 
-bool ADCHS_EOSStatusGet(void)
+void ADCHS_EOSCallbackRegister(ADCHS_EOS_CALLBACK callback, uintptr_t context)
 {
-    return (bool)(ADCCON2bits.EOSRDY);
+    ADCHS_EOSCallbackObj.callback_fn = callback;
+    ADCHS_EOSCallbackObj.context = context;
 }
+
+
+void __attribute__((used)) ADC_EOS_InterruptHandler(void)
+{
+    uint32_t status = ADCCON2;
+    IFS6CLR = _IFS6_ADCEOSIF_MASK;
+    if (ADCHS_EOSCallbackObj.callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_EOSCallbackObj.context;
+        ADCHS_EOSCallbackObj.callback_fn(context);
+    }
+    (void) status;
+}
+
 
 void __attribute__((used)) ADC_DATA0_InterruptHandler(void)
 {
@@ -347,207 +365,4 @@ void __attribute__((used)) ADC_DATA4_InterruptHandler(void)
     IFS1CLR = _IFS1_ADCD4IF_MASK;
 
 }
-void __attribute__((used)) ADC_DATA5_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[5].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[5].context;
-        ADCHS_CallbackObj[5].callback_fn(ADCHS_CH5, context);
-    }
 
-    IFS2CLR = _IFS2_ADCD5IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA6_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[6].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[6].context;
-        ADCHS_CallbackObj[6].callback_fn(ADCHS_CH6, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD6IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA7_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[7].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[7].context;
-        ADCHS_CallbackObj[7].callback_fn(ADCHS_CH7, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD7IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA8_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[8].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[8].context;
-        ADCHS_CallbackObj[8].callback_fn(ADCHS_CH8, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD8IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA11_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[11].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[11].context;
-        ADCHS_CallbackObj[11].callback_fn(ADCHS_CH11, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD11IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA19_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[19].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[19].context;
-        ADCHS_CallbackObj[19].callback_fn(ADCHS_CH19, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD19IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA24_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[24].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[24].context;
-        ADCHS_CallbackObj[24].callback_fn(ADCHS_CH24, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD24IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA25_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[25].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[25].context;
-        ADCHS_CallbackObj[25].callback_fn(ADCHS_CH25, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD25IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA26_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[26].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[26].context;
-        ADCHS_CallbackObj[26].callback_fn(ADCHS_CH26, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD26IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA27_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[27].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[27].context;
-        ADCHS_CallbackObj[27].callback_fn(ADCHS_CH27, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD27IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA29_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[29].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[29].context;
-        ADCHS_CallbackObj[29].callback_fn(ADCHS_CH29, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD29IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA30_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[30].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[30].context;
-        ADCHS_CallbackObj[30].callback_fn(ADCHS_CH30, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD30IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA31_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[31].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[31].context;
-        ADCHS_CallbackObj[31].callback_fn(ADCHS_CH31, context);
-    }
-
-    IFS2CLR = _IFS2_ADCD31IF_MASK;
-
-}
-
-void __attribute__((used)) ADC_DATA32_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[32].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[32].context;
-        ADCHS_CallbackObj[32].callback_fn(ADCHS_CH32, context);
-    }
-    IFS2CLR = _IFS2_ADCD32IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA38_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[38].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[38].context;
-        ADCHS_CallbackObj[38].callback_fn(ADCHS_CH38, context);
-    }
-    IFS3CLR = _IFS3_ADCD38IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA39_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[39].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[39].context;
-        ADCHS_CallbackObj[39].callback_fn(ADCHS_CH39, context);
-    }
-    IFS3CLR = _IFS3_ADCD39IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA41_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[41].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[41].context;
-        ADCHS_CallbackObj[41].callback_fn(ADCHS_CH41, context);
-    }
-    IFS3CLR = _IFS3_ADCD41IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA42_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[42].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[42].context;
-        ADCHS_CallbackObj[42].callback_fn(ADCHS_CH42, context);
-    }
-    IFS3CLR = _IFS3_ADCD42IF_MASK;
-
-}
-void __attribute__((used)) ADC_DATA44_InterruptHandler(void)
-{
-    if (ADCHS_CallbackObj[44].callback_fn != NULL)
-    {
-        uintptr_t context = ADCHS_CallbackObj[44].context;
-        ADCHS_CallbackObj[44].callback_fn(ADCHS_CH44, context);
-    }
-    IFS3CLR = _IFS3_ADCD44IF_MASK;
-
-}
