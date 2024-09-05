@@ -58,19 +58,19 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp3.h \
- ../src/config/default/system/time/sys_time.h \
- ../src/config/default/peripheral/nvm/plib_nvm.h \
  ../src/config/default/driver/i2c/drv_i2c.h \
  ../src/config/default/driver/i2c/drv_i2c_definitions.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
+ ../src/config/default/system/time/sys_time.h \
+ ../src/config/default/peripheral/nvm/plib_nvm.h \
  ../src/config/default/peripheral/coretimer/plib_coretimer.h \
+ ../src/config/default/peripheral/tmr/plib_tmr6.h \
+ ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
- ../src/config/default/peripheral/tmr/plib_tmr6.h \
- ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/peripheral/adchs/plib_adchs.h \
  ../src/config/default/peripheral/adchs/plib_adchs_common.h \
  ../src/config/default/peripheral/tmr/plib_tmr4.h \
@@ -129,6 +129,7 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
  ../src/state/runtime/AInRuntimeConfig.h ../src/state/data/AInSample.h \
  ../src/Util/HeapList.h ../src/Util/LockProvider.h ../src/Util/Delay.h \
  ../src/state/data/BoardData.h ../src/state/data/DIOSample.h \
+ ../src/HAL/Power/PowerApi.h ../src/HAL/BQ24297/BQ24297.h \
  ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
@@ -265,10 +266,6 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
 
 ../src/config/default/peripheral/ocmp/plib_ocmp3.h:
 
-../src/config/default/system/time/sys_time.h:
-
-../src/config/default/peripheral/nvm/plib_nvm.h:
-
 ../src/config/default/driver/i2c/drv_i2c.h:
 
 ../src/config/default/driver/i2c/drv_i2c_definitions.h:
@@ -277,7 +274,15 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
 
 ../src/config/default/driver/i2c/src/drv_i2c_local.h:
 
+../src/config/default/system/time/sys_time.h:
+
+../src/config/default/peripheral/nvm/plib_nvm.h:
+
 ../src/config/default/peripheral/coretimer/plib_coretimer.h:
+
+../src/config/default/peripheral/tmr/plib_tmr6.h:
+
+../src/config/default/peripheral/tmr/plib_tmr_common.h:
 
 ../src/config/default/usb/usb_device_cdc.h:
 
@@ -288,10 +293,6 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
 ../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/usb/usb_cdc.h:
-
-../src/config/default/peripheral/tmr/plib_tmr6.h:
-
-../src/config/default/peripheral/tmr/plib_tmr_common.h:
 
 ../src/config/default/peripheral/adchs/plib_adchs.h:
 
@@ -418,6 +419,10 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
 ../src/state/data/BoardData.h:
 
 ../src/state/data/DIOSample.h:
+
+../src/HAL/Power/PowerApi.h:
+
+../src/HAL/BQ24297/BQ24297.h:
 
 ../src/services/daqifi_settings.h:
 

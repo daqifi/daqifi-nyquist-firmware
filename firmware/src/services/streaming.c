@@ -5,7 +5,7 @@
 
 #include "streaming.h"
 
-//#include "HAL/ADC.h"
+#include "HAL/ADC.h"
 #include "HAL/DIO.h"
 #include "JSON_Encoder.h"
 #include "DaqifiPB/DaqifiOutMessage.pb.h"
@@ -40,39 +40,46 @@ static tStreamingConfig* gpStreamingConfig;
 static bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
 
+static void Streaming_TriggerADC(AInModule* module)
+{
+    if (module->Type == AIn_MC12bADC)
+    {
+        
+    }
+    
+    ADC_TriggerConversion((const AInModule *)module);
+}
 void _Streaming_Deferred_Interrupt_Task(void) {
 
-    //uint8_t i=0;
+    uint8_t i=0;
     TickType_t xBlockTime = portMAX_DELAY;
 
     tBoardData * pBoardData = BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
-    //    const tBoardConfig * pBoardConfig = BoardConfig_Get(                    
-    //                            BOARDCONFIG_ALL_CONFIG,                         
-    //                            0);
+    tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG,
+            0);
 
     StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
 
-    //    AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(       
-    //                        BOARDRUNTIMECONFIG_AIN_MODULES);
+    AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_AIN_MODULES);
 
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
-        //        for (i=0; i < pRunTimeAInModules->Size; ++i)
-        //        {
-        //            // Only trigger conversions if the previous conversion is complete
-        //            // TODO: Replace with ADCPrescale[i]
-        //            if (pBoardData->AInState.Data[i].AInTaskState == AINTASK_IDLE &&
-        //                pRunTimeStreamConf->StreamCount ==                          
-        //                pRunTimeStreamConf->StreamCountTrigger && pRunTimeStreamConf->IsEnabled)
-        //            {
-        //                
-        //                Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
-        //            }
-        //
-        //        }
+        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+            // Only trigger conversions if the previous conversion is complete
+            // TODO: Replace with ADCPrescale[i]
+            if (pBoardData->AInState.Data[i].AInTaskState == AINTASK_IDLE &&
+                    pRunTimeStreamConf->StreamCount ==
+                    pRunTimeStreamConf->StreamCountTrigger && pRunTimeStreamConf->IsEnabled) {
+
+                Streaming_TriggerADC(&pBoardConfig->AInModules.Data[i]);
+            }
+
+        }
         // TODO: Replace with DIOPrescale
         if (pRunTimeStreamConf->StreamCount ==
                 pRunTimeStreamConf->StreamCountTrigger) {          
@@ -113,25 +120,24 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     //    UNUSED(alarmCount);
     //
     static uint64_t scanTimerCount = 0;
-    volatile uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
+    uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
-    //    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);  
-    //    volatile AInArray *pBoardConfigADC=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS,0);
-    //    int i=0;
-    //    
+    volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+    int i = 0;
+        
     if (gInTimerHandler) return;
     gInTimerHandler = true;
-    //    
-    //    for(i=0;i<pBoardConfigADC->Size;i++){
-    //        if(pBoardConfigADC->Data[i].Config.MC12b.ChannelType==1){
-    //            if(pRuntimeAInChannels->Data[i].IsEnabled==1){
-    //                ADCCON3bits.ADINSEL = pBoardConfigADC->Data[i].Config.MC12b.BufferIndex;
-    //                ADCCON3bits.RQCNVRT = 1;
-    //            } 
-    //            //BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
-    //        }
-    //        BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
-    //    }
+
+    for (i = 0; i < pBoardConfigADC->Size; i++) {
+        if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
+            if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
+                ADCHS_ChannelConversionStart(pBoardConfigADC->Data[i].Config.MC12b.ChannelId);               
+            }
+            //BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP,i,&valueTMR);
+        }
+        BoardData_Set(BOARDDATA_AIN_LATEST_TIMESTAMP, i, &valueTMR);
+    }
     if (gpRuntimeConfigStream->Frequency <= 1000) {
         Streaming_Defer_Interrupt();
     } else {
@@ -246,7 +252,7 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     //! Boolean to indicate if the system has USB and Wifi actives. 
     volatile bool hasUsb, hasWifi;
     //Analog input availability. Digital input/output availability
-    bool AINDataAvailable = false; //!AInSampleList_IsEmpty(&boardData->AInSamples);
+    bool AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
     bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
 
 //    UsbCdcData_t * pRunTimeUsbSettings = BoardRunTimeConfig_Get(
@@ -257,7 +263,7 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     }
 
     do {
-        //        AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
+        AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
         DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
         nanopbFlag.Size = 0;
         usbSize = 0;

@@ -53,9 +53,9 @@ void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
         case BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE:
             return &pBoardRuntimeConfig.DIOGlobalEnable;
         case BOARDRUNTIMECONFIG_AIN_MODULES:
-            //return &pBoardRuntimeConfig.AInModules;
+            return &pBoardRuntimeConfig.AInModules;
         case BOARDRUNTIMECONFIG_AIN_CHANNELS:
-            //return &pBoardRuntimeConfig.AInChannels;
+            return &pBoardRuntimeConfig.AInChannels;
         case BOARDRUNTIME_POWER_WRITE_VARIABLES:
             //return &pBoardRuntimeConfig.PowerWriteVars;
         case BOARDRUNTIME_UI_WRITE_VARIABLES: 

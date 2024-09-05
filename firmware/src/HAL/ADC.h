@@ -23,9 +23,9 @@ extern "C" {
  * @param[in] pInitBoardData Pointer to the BoardData data structure, which
  * will be used when needed the next times any function of ADC layer is
  * called */
-void ADC_Init(                                                              \
-                    const tBoardConfig * pBoardConfigADCInit,               \
-                    const tBoardRuntimeConfig* pBoardRuntimeConfigADCInit,  \
+void ADC_Init(                                                              
+                    const tBoardConfig * pBoardConfigADCInit,               
+                    const tBoardRuntimeConfig* pBoardRuntimeConfigADCInit,  
                     const tBoardData* pBoardDataADCInit);
 
  
@@ -75,7 +75,7 @@ bool ADC_IsDataValid(const AInSample* sample);
  */
 double ADC_ConvertToVoltage(const AInSample* sample);
 
-bool ADC_ReadClass1ADCSampleFromISR(uint32_t value,uint8_t bufferIndex);
+bool ADC_ReadADCSampleFromISR(uint32_t value,uint8_t bufferIndex);
     
 #ifdef	__cplusplus
 }

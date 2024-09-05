@@ -4,7 +4,7 @@
 
 #include "Util/ArrayWrapper.h"
 #include "Util/HeapList.h"
-
+#include "../board/AInConfig.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -28,8 +28,8 @@ extern "C" {
     } AInModData;
     
     // Define a storage class for analog input data
-    #define MAX_AIN_DATA_MOD 3
-    ARRAYWRAPPERDEF(AInModDataArray, AInModData, MAX_AIN_DATA_MOD);
+    //#define MAX_AIN_DATA_MOD MAX_AIN_MOD
+    ARRAYWRAPPERDEF(AInModDataArray, AInModData, MAX_AIN_MOD);
     
     /**
      * Contains DIO information for a given time
@@ -53,7 +53,7 @@ extern "C" {
     } AInSample;
     
     // Define a storage class for analog input channels
-    #define MAX_AIN_CHANNEL    48
+    //#define MAX_AIN_CHANNEL    48
     #define MAX_AIN_SAMPLE_COUNT 255
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
     

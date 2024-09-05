@@ -237,10 +237,13 @@ extern "C" {
          * ADC channel ID in Daqifi Board
          */
         uint8_t DaqifiAdcChannelId; 
+        
+        AInType Type;
         /**
          * Contains the actual settings
          * Since C doesn't support polymorphism, this is stored as a Union. Make sure you check AInModules[Channel].Type!
          */
+        
         union u_AInChannelImpl
         {
             MC12bChannelConfig MC12b;
@@ -251,7 +254,7 @@ extern "C" {
     } AInChannel;
     
     // Define a storage class for analog input modules
-    #define MAX_AIN_MOD 3
+    #define MAX_AIN_MOD 1
     ARRAYWRAPPERDEF(AInModArray, AInModule, MAX_AIN_MOD);
     
     // Define a storage class for analog input channels

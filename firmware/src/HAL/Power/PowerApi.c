@@ -48,9 +48,9 @@ static void Power_UpdateChgPct( void );
  */
 static void Power_Update_Settings( void );
 
-void Power_Init(                                                            \
-                        tPowerConfig *pInitConfig,                          \
-                        tPowerData *pInitData,                              \
+void Power_Init(                                                            
+                        tPowerConfig *pInitConfig,                          
+                        tPowerData *pInitData,                              
                         tPowerWriteVars *pInitVars)
 {
     pConfig = pInitConfig;
@@ -59,30 +59,30 @@ void Power_Init(                                                            \
     
     // NOTE: This is called before the RTOS is running.  
     // Don't call any RTOS functions here!
-    BQ24297_InitHardware(                                                   \
-                        &pConfig->BQ24297Config,                            \
-                        &pWriteVariables->BQ24297WriteVars,                 \
+    BQ24297_InitHardware(                                                   
+                        &pConfig->BQ24297Config,                            
+                        &pWriteVariables->BQ24297WriteVars,                 
                         &(pData->BQ24297Data));
        
-    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
-                        pConfig->EN_3_3V_Ch,                                \
-                        pConfig->EN_3_3V_Bit,                               \
+    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         
+                        pConfig->EN_3_3V_Ch,                                
+                        pConfig->EN_3_3V_Bit,                               
                         pWriteVariables->EN_3_3V_Val);
-    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
-                        pConfig->EN_5_10V_Ch,                               \
-                        pConfig->EN_5_10V_Bit,                              \
+    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         
+                        pConfig->EN_5_10V_Ch,                               
+                        pConfig->EN_5_10V_Bit,                              
                         pWriteVariables->EN_5_10V_Val);
-    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
-                        pConfig->EN_5V_ADC_Ch,                              \
-                        pConfig->EN_5V_ADC_Bit,                             \
+    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         
+                        pConfig->EN_5V_ADC_Ch,                              
+                        pConfig->EN_5V_ADC_Bit,                             
                         pWriteVariables->EN_5V_ADC_Val);
-    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
-                        pConfig->EN_12V_Ch,                                 \
-                        pConfig->EN_12V_Bit,                                \
+    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         
+                        pConfig->EN_12V_Ch,                                 
+                        pConfig->EN_12V_Bit,                                
                         pWriteVariables->EN_12V_Val);
-    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
-                        pConfig->EN_Vref_Ch,                                \
-                        pConfig->EN_Vref_Bit,                               \
+    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         
+                        pConfig->EN_Vref_Ch,                                
+                        pConfig->EN_Vref_Bit,                               
                         pWriteVariables->EN_Vref_Val);
 }
 
@@ -135,66 +135,66 @@ void Power_Write( void )
     bool EN_12V_Val_Current;
     bool EN_Vref_Val_Current;
     
-    EN_3_3V_Val_Current = PLIB_PORTS_PinGetLatched( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_3_3V_Ch, \
+    EN_3_3V_Val_Current = PLIB_PORTS_PinGetLatched( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_3_3V_Ch, 
                                         pConfig->EN_3_3V_Bit );
-    EN_5_10V_Val_Current = PLIB_PORTS_PinGetLatched( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_5_10V_Ch, \
+    EN_5_10V_Val_Current = PLIB_PORTS_PinGetLatched( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_5_10V_Ch, 
                                         pConfig->EN_5_10V_Bit );
-    EN_5V_ADC_Val_Current = PLIB_PORTS_PinGetLatched( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_5V_ADC_Ch, \
+    EN_5V_ADC_Val_Current = PLIB_PORTS_PinGetLatched( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_5V_ADC_Ch, 
                                         pConfig->EN_5V_ADC_Bit );
-    EN_12V_Val_Current = PLIB_PORTS_PinGetLatched( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_12V_Ch, \
+    EN_12V_Val_Current = PLIB_PORTS_PinGetLatched( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_12V_Ch, 
                                         pConfig->EN_12V_Bit );
-    EN_Vref_Val_Current = PLIB_PORTS_PinGetLatched( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_Vref_Ch, \
+    EN_Vref_Val_Current = PLIB_PORTS_PinGetLatched( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_Vref_Ch, 
                                         pConfig->EN_Vref_Bit );
              
     // Check to see if we are changing the state of this power pin
     if( EN_3_3V_Val_Current != pWriteVariables->EN_3_3V_Val ){
-        PLIB_PORTS_PinWrite( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_3_3V_Ch, \
-                                        pConfig->EN_3_3V_Bit, \
+        PLIB_PORTS_PinWrite( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_3_3V_Ch, 
+                                        pConfig->EN_3_3V_Bit, 
                                         pWriteVariables->EN_3_3V_Val );
     }
     
     // Check to see if we are changing the state of these power pins
-    if( EN_5_10V_Val_Current != pWriteVariables->EN_5_10V_Val || \
-        EN_5V_ADC_Val_Current != pWriteVariables->EN_5V_ADC_Val || \
+    if( EN_5_10V_Val_Current != pWriteVariables->EN_5_10V_Val || 
+        EN_5V_ADC_Val_Current != pWriteVariables->EN_5V_ADC_Val || 
         EN_12V_Val_Current != pWriteVariables->EN_12V_Val )
     {
-        PLIB_PORTS_PinWrite( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_5_10V_Ch, \
-                                        pConfig->EN_5_10V_Bit, \
+        PLIB_PORTS_PinWrite( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_5_10V_Ch, 
+                                        pConfig->EN_5_10V_Bit, 
                                         pWriteVariables->EN_5_10V_Val );
 
-        PLIB_PORTS_PinWrite( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_5V_ADC_Ch, \
-                                        pConfig->EN_5V_ADC_Bit, \
+        PLIB_PORTS_PinWrite( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_5V_ADC_Ch, 
+                                        pConfig->EN_5V_ADC_Bit, 
                                         pWriteVariables->EN_5V_ADC_Val );
 
         PLIB_PORTS_PinWrite( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_12V_Ch, \
-                                        pConfig->EN_12V_Bit, \
+                                        PORTS_ID_0, 
+                                        pConfig->EN_12V_Ch, 
+                                        pConfig->EN_12V_Bit, 
                                         pWriteVariables->EN_12V_Val );
     }
     
     // Check to see if we are changing the state of this power pin
     if( EN_Vref_Val_Current != pWriteVariables->EN_Vref_Val ){
-        PLIB_PORTS_PinWrite( \
-                                        PORTS_ID_0, \
-                                        pConfig->EN_Vref_Ch, \
-                                        pConfig->EN_Vref_Bit, \
+        PLIB_PORTS_PinWrite( 
+                                        PORTS_ID_0, 
+                                        pConfig->EN_Vref_Ch, 
+                                        pConfig->EN_Vref_Bit, 
                                         pWriteVariables->EN_Vref_Val );
     }
 
@@ -290,7 +290,7 @@ static void Power_Up( void )
     Power_Write( ); 
 
     // 5V Enable
-    if( ( pData->BQ24297Data.status.batPresent ) ||                         \
+    if( ( pData->BQ24297Data.status.batPresent ) ||                         
         ( pData->BQ24297Data.status.vBusStat == VBUS_CHARGER ) )
     {
         pWriteVariables->EN_5_10V_Val = true;
@@ -385,7 +385,7 @@ static void Power_UpdateState( void )
          */
             if( pData->requestedPowerState == DO_POWER_UP ){
 
-                if( !pData->BQ24297Data.status.vsysStat || \
+                if( !pData->BQ24297Data.status.vsysStat || 
                     pData->BQ24297Data.status.pgStat )    // If batt voltage is greater than VSYSMIN or power is good, we can power up
                 {
                     Power_Up( );
@@ -408,8 +408,8 @@ static void Power_UpdateState( void )
          * ADC readings are now valid!
          */ 
             Power_UpdateChgPct( );
-            if( pData->requestedPowerState == DO_POWER_UP_EXT_DOWN || \
-                ( pData->chargePct<BATT_LOW_TH && \
+            if( pData->requestedPowerState == DO_POWER_UP_EXT_DOWN || 
+                ( pData->chargePct<BATT_LOW_TH && 
                   !pData->BQ24297Data.status.pgStat ) ){
                 // If battery is low on charge and we are not plugged in, disable external supplies
                 pWriteVariables->EN_5_10V_Val = false;
@@ -423,7 +423,7 @@ static void Power_UpdateState( void )
         case POWERED_UP_EXT_DOWN:
         /* Board partially powered. Monitor for any changes */ 
             Power_UpdateChgPct( );
-            if( pData->chargePct > ( BATT_LOW_TH + BATT_LOW_HYST ) || \
+            if( pData->chargePct > ( BATT_LOW_TH + BATT_LOW_HYST ) || 
                 ( pData->BQ24297Data.status.inLim > 1 ) ){
                 if( pData->requestedPowerState == DO_POWER_UP){
                     // If battery is charged or we are plugged in, enable external supplies
@@ -455,8 +455,8 @@ static void Power_UpdateChgPct( void )
 //    {
 //        vTaskDelay(100 / portTICK_PERIOD_MS);
 //    }
-    const AInSample *pAnalogSample = BoardData_Get(                         \
-                  BOARDDATA_AIN_LATEST,                                     \
+    const AInSample *pAnalogSample = BoardData_Get(                         
+                  BOARDDATA_AIN_LATEST,                                     
                   index );
     if( NULL != pAnalogSample ){
         pData->battVoltage = ADC_ConvertToVoltage( pAnalogSample );

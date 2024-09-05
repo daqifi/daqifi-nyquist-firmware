@@ -65,7 +65,7 @@ bool MC12b_ReadSamples( AInSampleArray* samples,
  * Triggers a conversion
  * @return true on success, false otherwise
  */
-    bool MC12b_TriggerConversion( void );
+    bool MC12b_TriggerConversion( AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr );
 
 /**
  * Calculates a voltage based on the given sample

@@ -63,6 +63,7 @@
 #include "services/Wifi/WifiApi.h"
 #include "services/SDcard/SDCard.h"
 #include "HAL/DIO.h"
+#include "HAL/ADC.h"
 #include "services/streaming.h"
 // *****************************************************************************
 // *****************************************************************************
@@ -91,6 +92,7 @@ static tBoardData * gpBoardData;
 static tBoardRuntimeConfig * gpBoardRuntimeConfig;
 static tBoardConfig * gpBoardConfig;
 extern const NanopbFlagsArray fields_discovery;
+static bool gSystemInitComplt = false;
 
 static void SystemInit();
 static void USBDeviceTask(void* p_arg);
@@ -204,22 +206,22 @@ void SystemInit() {
             &tmpSettings.settings.wifi,
             sizeof (WifiSettings));
 
-    //    // Load factory calibration parameters - if they are not initialized, 
-    //    // store them (first run after a program)
-    //    if (!LoadADCCalSettings(                                                 
-    //                        DaqifiSettings_FactAInCalParams,                    
-    //                        &pBoardRuntimeConfig->AInChannels)) {
-    //        SaveADCCalSettings(                                                 
-    //                        DaqifiSettings_FactAInCalParams,                    
-    //                        &pBoardRuntimeConfig->AInChannels);
-    //    }
-    //    // If calVals has been set to 1 (user cal params), overwrite with user 
-    //    // calibration parameters
-    //    if (tmpTopLevelSettings.settings.topLevelSettings.calVals) {
-    //        LoadADCCalSettings(                                                 
-    //                        DaqifiSettings_UserAInCalParams,                    
-    //                        &pBoardRuntimeConfig->AInChannels);
-    //    }
+    // Load factory calibration parameters - if they are not initialized, 
+    // store them (first run after a program)
+    if (!daqifi_settings_LoadADCCalSettings(
+            DaqifiSettings_FactAInCalParams,
+            &gpBoardRuntimeConfig->AInChannels)) {
+        daqifi_settings_SaveADCCalSettings(
+                DaqifiSettings_FactAInCalParams,
+                &gpBoardRuntimeConfig->AInChannels);
+    }
+    // If calVals has been set to 1 (user cal params), overwrite with user 
+    // calibration parameters
+    if (tmpTopLevelSettings.settings.topLevelSettings.calVals) {
+        daqifi_settings_LoadADCCalSettings(
+                DaqifiSettings_UserAInCalParams,
+                &gpBoardRuntimeConfig->AInChannels);
+    }
     //    // Power initialization - enables 3.3V rail by default - other power 
     //    // functions are in power task
     //    Power_Init(&pBoardConfig->PowerConfig,                     
@@ -238,12 +240,14 @@ void SystemInit() {
     DIO_TIMING_TEST_INIT();
     Streaming_Init(&gpBoardConfig->StreamingConfig,
             &gpBoardRuntimeConfig->StreamingConfig);
-    //    Streaming_UpdateState();
-    //
-    //    ADC_Init(                                                               
-    //                pBoardConfig,                                               
-    //                pBoardRuntimeConfig,                                        
-    //                pBoardData);
+    Streaming_UpdateState();
+
+    ADC_Init(
+            gpBoardConfig,
+            gpBoardRuntimeConfig,
+            gpBoardData);
+
+    gSystemInitComplt = true;
 }
 
 void APP_FREERTOS_Initialize(void) {
@@ -307,23 +311,23 @@ void AdcTest() {
             break;
         case 1:
             //ADCHS_ChannelResultInterruptDisable(ADCHS_CH7);
-            ADCHS_ChannelConversionStart(ADCHS_CH11);           
-            ADCHS_ChannelConversionStart(ADCHS_CH24);   
-            ADCHS_ChannelConversionStart(ADCHS_CH25);   
-            ADCHS_ChannelConversionStart(ADCHS_CH26);
-            ADCHS_ChannelConversionStart(ADCHS_CH4);           
-            ADCHS_ChannelConversionStart(ADCHS_CH39);   
-            ADCHS_ChannelConversionStart(ADCHS_CH38);   
-            ADCHS_ChannelConversionStart(ADCHS_CH27);
-            ADCHS_ChannelConversionStart(ADCHS_CH0);           
-            ADCHS_ChannelConversionStart(ADCHS_CH5);   
-            ADCHS_ChannelConversionStart(ADCHS_CH1);   
-            ADCHS_ChannelConversionStart(ADCHS_CH6);
-            ADCHS_ChannelConversionStart(ADCHS_CH2);           
-            ADCHS_ChannelConversionStart(ADCHS_CH7);   
-            ADCHS_ChannelConversionStart(ADCHS_CH3);   
-            ADCHS_ChannelConversionStart(ADCHS_CH8);
-            //ADCHS_GlobalEdgeConversionStart();
+            //            ADCHS_ChannelConversionStart(ADCHS_CH11);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH24);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH25);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH26);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH4);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH39);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH38);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH27);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH0);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH5);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH1);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH6);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH2);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH7);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH3);
+            //            ADCHS_ChannelConversionStart(ADCHS_CH8);
+            ADCHS_GlobalEdgeConversionStart();
             state++;
             break;
         case 2:
@@ -338,7 +342,7 @@ void AdcTest() {
             if (!ADCHS_ChannelResultIsReady(ADCHS_CH4))
                 break;
             if (!ADCHS_ChannelResultIsReady(ADCHS_CH39))
-                break; 
+                break;
             if (!ADCHS_ChannelResultIsReady(ADCHS_CH38))
                 break;
             if (!ADCHS_ChannelResultIsReady(ADCHS_CH27))
@@ -370,8 +374,13 @@ void AdcTest() {
 
 void APP_FREERTOS_Tasks(void) {
     TasksCreate();
+    if (!gSystemInitComplt) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        return;
+    }
+    ADC_Tasks();
     Streaming_Tasks(gpBoardRuntimeConfig, gpBoardData);
-    AdcTest();
+    //AdcTest();
     vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 

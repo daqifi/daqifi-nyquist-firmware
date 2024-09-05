@@ -3,13 +3,13 @@
 #include "configuration.h"
 #include "definitions.h"
 
-//#include "AInRuntimeConfig.h"
+#include "AInRuntimeConfig.h"
 #include "DIORuntimeConfig.h"
 #include "StreamingRuntimeConfig.h"
 //#include "TcpServerConfig.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/ArrayWrapper.h"
-//#include "HAL/Power/PowerApi.h"
+#include "HAL/Power/PowerApi.h"
 //#include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
 #include "services/Wifi/WifiApi.h"
@@ -62,10 +62,10 @@ typedef struct sBoardRuntimeConfig
     bool DIOGlobalEnable;
     //!Runtime settings for the analog input modules
     //!This is an array where index = module and data = configuration
-    //AInModRuntimeArray AInModules;
+    AInModRuntimeArray AInModules;
     //!Runtime settings for the analog input channels
     //!This is an array where index = channel and data = configuration
-    //AInRuntimeArray AInChannels;
+    AInRuntimeArray AInChannels;
     //! Power write variables
     //tPowerWriteVars PowerWriteVars;
     //! User interface write variables

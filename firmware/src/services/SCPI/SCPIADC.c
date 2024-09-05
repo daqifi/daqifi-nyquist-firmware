@@ -5,8 +5,8 @@
 #include <string.h>
 
 // Harmony
-#include "system_config.h"
-#include "system_definitions.h"
+#include "configuration.h"
+#include "definitions.h"
 
 // Project
 #include "Util/StringFormatters.h"
@@ -15,17 +15,18 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/ADC.h"
-#include "../HAL/NVM/DaqifiSettings.h"
+#include "../daqifi_settings.h"
+#include "HAL/TimerApi/TimerApi.h"
 
 scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
 {
     int channel;
     AInSample *pAInLatest; 
     uint32_t *pAInLatestSize;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 ); 
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
     
     if (SCPI_ParamInt32(context, &channel, FALSE))
@@ -43,8 +44,8 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
             SCPI_ResultDouble(context, 0.0);
             return SCPI_RES_OK;
         }
-        pAInLatest = BoardData_Get(                                         \
-                BOARDDATA_AIN_LATEST,                                       \
+        pAInLatest = BoardData_Get(                                         
+                BOARDDATA_AIN_LATEST,                                       
                 index );  
         
         val = ADC_ConvertToVoltage(pAInLatest);
@@ -55,17 +56,17 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
         // Get all
         size_t i=0;
         
-        pAInLatestSize = BoardData_Get(                                     \
-                BOARDDATA_AIN_LATEST_SIZE,                                  \
+        pAInLatestSize = BoardData_Get(                                     
+                BOARDDATA_AIN_LATEST_SIZE,                                  
                 0 );   
         
         for (i=0; i<*pAInLatestSize; ++i)
         {
-            pAInLatest = BoardData_Get(                                     \
-                BOARDDATA_AIN_LATEST,                                       \
+            pAInLatest = BoardData_Get(                                     
+                BOARDDATA_AIN_LATEST,                                       
                 i ); 
             
-            if (!pRuntimeAInChannels->Data[i].IsEnabled ||                  \
+            if (!pRuntimeAInChannels->Data[i].IsEnabled ||                  
                 pAInLatest->Timestamp < 1)
             {
                 SCPI_ResultDouble(context, 0.0);
@@ -83,12 +84,14 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context)
 scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
 {
     int param1, param2;
-    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( \
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get( 
                         BOARDRUNTIME_STREAMING_CONFIGURATION);
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    const tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG,0);
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 ); 
     
     if (!SCPI_ParamInt32(context, &param1, TRUE))
@@ -99,11 +102,10 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
     if (SCPI_ParamInt32(context, &param2, FALSE))
     {
         size_t channelIndex = ADC_FindChannelIndex((uint8_t)param1);
-        AInRuntimeConfig* channelRuntimeConfig =                            \
+        AInRuntimeConfig* channelRuntimeConfig =                            
                         &pRuntimeAInChannels->Data[channelIndex];
         AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
-        const AInModule* module = ADC_FindModule(                           \
-                        channel->DataModule);
+        const AInModule* module = ADC_FindModule(channel->Type);
         
         // Single channel
         if (channelIndex > pBoardConfigAInChannels->Size)
@@ -133,11 +135,10 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
         for (index=0; index<pBoardConfigAInChannels->Size; ++index)
         {
             size_t channelIndex = ADC_FindChannelIndex((uint8_t)index);
-            AInRuntimeConfig* channelRuntimeConfig =                        \
+            AInRuntimeConfig* channelRuntimeConfig =                        
                         &pRuntimeAInChannels->Data[channelIndex];
             AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
-            const AInModule* module = ADC_FindModule(                        \
-                        channel->DataModule);
+            const AInModule* module = ADC_FindModule(channel->Type);
             bool value = (bool)((param1 & (1 << index)) > 0);
             
             // TODO: Perhaps add some sort of feedback if the user is attempting to edit a value beyond their  - this is fairly tricky to implement however
@@ -164,13 +165,12 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
         }
     }
     uint64_t freq=pRunTimeStreamConfig->Frequency;
-    uint32_t clkFreq = DRV_TMR_CounterFrequencyGet(                         \
-                        pRunTimeStreamConfig->TimerHandle); 
+    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex); 
     if((freq*activeType1ChannelCount)>15000){
         freq=15000/activeType1ChannelCount;
-        pRunTimeStreamConfig->ClockDivider = clkFreq / freq;
+        pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
         pRunTimeStreamConfig->Frequency=freq;
-        pRunTimeStreamConfig->TSClockDivider = 0xFFFFFFFF; 
+        pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF; 
         if(freq>1000){
             pRunTimeStreamConfig->ChannelScanTimeDiv=freq/1000;
         }
@@ -188,15 +188,15 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context)
 scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context)
 {
     int param1;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 ); 
     
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          \
-                            BOARDCONFIG_VARIANT,                            \
+    tBoardConfig * pBoardConfig = BoardConfig_Get(                          
+                            BOARDCONFIG_VARIANT,                            
                             0 ); 
     
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
     
     if (SCPI_ParamInt32(context, &param1, FALSE))
@@ -240,11 +240,11 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
 {
     uint32_t *pAInLatestSize; 
     int param1, param2;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 );
     
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
     
     if (!SCPI_ParamInt32(context, &param1, TRUE))
@@ -265,14 +265,14 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context)
     }
     else
     {
-        pAInLatestSize = BoardData_Get(                                     \
-                BOARDDATA_AIN_LATEST_SIZE,                                  \
+        pAInLatestSize = BoardData_Get(                                     
+                BOARDDATA_AIN_LATEST_SIZE,                                  
                 0 ); 
         
         size_t i=0;
         for (i=0; i<*pAInLatestSize; ++i)
         {
-            pRuntimeAInChannels->Data[i].IsDifferential =               \
+            pRuntimeAInChannels->Data[i].IsDifferential =               
                         (param2 & (1 << i)) == 0;
         }
     }
@@ -291,10 +291,10 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context)
 {
     int param1;
     uint32_t *pAInLatestSize; 
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 );
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);   
     if (SCPI_ParamInt32(context, &param1, FALSE))
     {
@@ -319,8 +319,8 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context)
         uint32_t mask = 0;
         size_t i=0;
         
-        pAInLatestSize = BoardData_Get(                                     \
-                BOARDDATA_AIN_LATEST_SIZE,                                  \
+        pAInLatestSize = BoardData_Get(                                     
+                BOARDDATA_AIN_LATEST_SIZE,                                  
                 0 ); 
         for (i=0; i<*pAInLatestSize; ++i)
         {
@@ -352,11 +352,11 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context)
 {
     int param1;
     double param2;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 );
     
-    AInRuntimeArray * pRunTimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRunTimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);
     
     
@@ -384,11 +384,11 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context)
 {
     int param1;
     double param2;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 );
     
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);  
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
@@ -413,10 +413,10 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context)
 scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context)
 {
     int param1;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 );
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);  
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
@@ -436,10 +436,10 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context)
 scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context)
 {
     int param1;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   \
-                            BOARDCONFIG_AIN_CHANNELS,                       \
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(                   
+                            BOARDCONFIG_AIN_CHANNELS,                       
                             0 );
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);  
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
@@ -458,10 +458,10 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context)
 
 scpi_result_t SCPI_ADCCalSave(scpi_t * context)
 {
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);  
-    if(SaveADCCalSettings(                                                  \
-                        DaqifiSettings_UserAInCalParams,                    \
+    if(daqifi_settings_SaveADCCalSettings(                                                  
+                        DaqifiSettings_UserAInCalParams,                    
                         pRuntimeAInChannels))
     {
         return SCPI_RES_OK;
@@ -474,10 +474,10 @@ scpi_result_t SCPI_ADCCalSave(scpi_t * context)
 
 scpi_result_t SCPI_ADCCalFSave(scpi_t * context)
 {
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS);  
-    if(SaveADCCalSettings(                                                  \
-                        DaqifiSettings_FactAInCalParams,                    \
+    if(daqifi_settings_SaveADCCalSettings(                                                  
+                        DaqifiSettings_FactAInCalParams,                    
                         pRuntimeAInChannels))
     {
         return SCPI_RES_OK;
@@ -490,10 +490,10 @@ scpi_result_t SCPI_ADCCalFSave(scpi_t * context)
 
 scpi_result_t SCPI_ADCCalLoad(scpi_t * context)
 { 
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS); 
-    if(LoadADCCalSettings(                                                  \
-                        DaqifiSettings_UserAInCalParams,                    \
+    if(daqifi_settings_LoadADCCalSettings(                                                  
+                        DaqifiSettings_UserAInCalParams,                    
                         pRuntimeAInChannels))
     {
         return SCPI_RES_OK;
@@ -506,10 +506,10 @@ scpi_result_t SCPI_ADCCalLoad(scpi_t * context)
 
 scpi_result_t SCPI_ADCCalFLoad(scpi_t * context)
 {
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS); 
-    if(LoadADCCalSettings(                                                  \
-                        DaqifiSettings_FactAInCalParams,                    \
+    if(daqifi_settings_LoadADCCalSettings(                                                  
+                        DaqifiSettings_FactAInCalParams,                    
                         pRuntimeAInChannels))
     {
         return SCPI_RES_OK;
@@ -524,7 +524,7 @@ scpi_result_t SCPI_ADCUseCalSet(scpi_t * context)
 {
     int param1;
     DaqifiSettings tmpTopLevelSettings;
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         \
+    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_AIN_CHANNELS); 
         
     if (!SCPI_ParamInt32(context, &param1, TRUE))
@@ -533,28 +533,28 @@ scpi_result_t SCPI_ADCUseCalSet(scpi_t * context)
     }
         
      //  Load existing settings
-    if(!LoadNvmSettings(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
+    if(!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
     
     //  Update calVals setting
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
     
     //  Store to NVM
-    if(!SaveNvmSettings(&tmpTopLevelSettings)) return SCPI_RES_ERR;
+    if(!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) return SCPI_RES_ERR;
 
         //  Update runtime values
     switch (param1)
     {
         case 0:
-            if(!LoadADCCalSettings(                                         \
-                        DaqifiSettings_FactAInCalParams,                    \
+            if(!daqifi_settings_LoadADCCalSettings(                                         
+                        DaqifiSettings_FactAInCalParams,                    
                         pRuntimeAInChannels))
             {
                 return SCPI_RES_ERR;
             }
             break;
         case 1:
-            if(!LoadADCCalSettings(                                         \
-                        DaqifiSettings_UserAInCalParams,                    \
+            if(!daqifi_settings_LoadADCCalSettings(                                         
+                        DaqifiSettings_UserAInCalParams,                    
                         pRuntimeAInChannels))
             {
                 return SCPI_RES_ERR;
@@ -571,7 +571,7 @@ scpi_result_t SCPI_ADCUseCalGet(scpi_t * context)
 {
     DaqifiSettings tmpTopLevelSettings;
 
-    if(LoadNvmSettings(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings))
+    if(daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings))
     {
         SCPI_ResultInt32(context, tmpTopLevelSettings.settings.topLevelSettings.calVals);
         return SCPI_RES_OK;

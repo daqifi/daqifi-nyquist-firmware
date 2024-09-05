@@ -70,19 +70,19 @@ void *BoardConfig_Get(
                 return &boardConfig.DIOChannels.Data[ index ];
             }
             return NULL;
-            //        case BOARDCONFIG_AIN_MODULE:
-            //            if (index < boardConfig.AInModules.Size) {
-            //                return &boardConfig.AInModules.Data[ index ];
-            //            }
-            //            return NULL;
-            //        case BOARDCONFIG_AIN_CHANNELS:
-            //            return &boardConfig.AInChannels;
+        case BOARDCONFIG_AIN_MODULE:
+            if (index < boardConfig.AInModules.Size) {
+                return &boardConfig.AInModules.Data[ index ];
+            }
+            return NULL;
+        case BOARDCONFIG_AIN_CHANNELS:
+            return &boardConfig.AInChannels;
             //        case BOARDCONFIG_POWER_CONFIG:
             //            return &boardConfig.PowerConfig;
             //        case BOARDCONFIG_UI_CONFIG:
             //            return &boardConfig.UIConfig;
-            //        case BOARDCONFIG_STREAMING_CONFIG:
-            //            return &boardConfig.StreamingConfig;
+        case BOARDCONFIG_STREAMING_CONFIG:
+            return &boardConfig.StreamingConfig;
             //        case BOARDCONFIG_NUM_OF_ELEMENTS:
         default:
             return NULL;
@@ -129,14 +129,14 @@ void BoardConfig_Set(
                         sizeof ( DIOConfig));
             }
             break;
-            //        case BOARDCONFIG_AIN_MODULE:
-            //            if( index < boardConfig.AInModules.Size ){
-            //                memcpy(                                                     
-            //                            &boardConfig.AInModules.Data[ index ],         
-            //                            pSetValue,                                      
-            //                            sizeof( AInModule ) );
-            //            }
-            //            break;
+        case BOARDCONFIG_AIN_MODULE:
+            if (index < boardConfig.AInModules.Size) {
+                memcpy(
+                        &boardConfig.AInModules.Data[ index ],
+                        pSetValue,
+                        sizeof ( AInModule));
+            }
+            break;
             //        case BOARDCONFIG_POWER_CONFIG:
             //            memcpy(                                                         
             //                            &boardConfig.PowerConfig,                      
@@ -149,11 +149,11 @@ void BoardConfig_Set(
             //                            pSetValue,                                      
             //                            sizeof( tUIConfig ) );
             //            break;
-            //        case BOARDCONFIG_STREAMING_CONFIG:
-            //            memcpy(                                                         
-            //                            &boardConfig.StreamingConfig,                  
-            //                            pSetValue,                                      
-            //                            sizeof( tStreamingConfig ) );
+        case BOARDCONFIG_STREAMING_CONFIG:
+            memcpy(
+                    &boardConfig.StreamingConfig,
+                    pSetValue,
+                    sizeof ( tStreamingConfig));
         case BOARDCONFIG_NUM_OF_ELEMENTS:
         default:
             break;

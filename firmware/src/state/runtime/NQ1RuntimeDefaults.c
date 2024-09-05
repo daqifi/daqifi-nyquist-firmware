@@ -26,44 +26,48 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .Size = 16,
     },
     .DIOGlobalEnable = false,
-//    .AInModules = {
-//        .Data = {
-//            {.IsEnabled = true, .Range = 5.0},
-//        },
-//        .Size = 1,
-//    },
-//    .AInChannels = {
-//        .Data = {
-//            // Public Internal ADC
-//            {.IsEnabled = false, .IsDifferential = false, .Frequency = 0, .CalM = 1, .CalB = 0},
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0}, // Ch 0
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0}, // Ch 1
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0}, // Ch 2
-//            {false, false, 0, 1, 0},
-//            {false, false, 0, 1, 0}, // Ch 3
-//            {false, false, 0, 1, 0},
-//            
-//            // Private Internal ADC
-//            {.IsEnabled = true, .IsDifferential = false, .Frequency = 0, .CalM = 1, .CalB = 0},
-//            {true, false, 0, 1, 0},
-//            {true, false, 0, 1, 0},
-//            {true, false, 0, 1, 0},
-//            {true, false, 0, 1, 0},
-//            {true, false, 0, 1, 0},
-//            {true, false, 0, 1, 0},
-//            {true, false, 0, 1, 0},
-//        },
-//        .Size = 24
-//    },
+    .AInModules =
+    {
+        .Data =
+        {
+            {.IsEnabled = true, .Range = 5.0},
+        },
+        .Size = 1,
+    },
+    .AInChannels =
+    {
+        .Data =
+        {
+            // Public Internal ADC
+            {.IsEnabled = false, .IsDifferential = false, .Frequency = 0, .CalM = 1, .CalB = 0},
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0}, // Ch 0
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0}, // Ch 1
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0}, // Ch 2
+            {false, false, 0, 1, 0},
+            {false, false, 0, 1, 0}, // Ch 3
+            {false, false, 0, 1, 0},
+
+            // Private Internal ADC
+            {.IsEnabled = true, .IsDifferential = false, .Frequency = 0, .CalM = 1, .CalB = 0},
+            {true, false, 0, 1, 0},
+            {true, false, 0, 1, 0},
+            {true, false, 0, 1, 0},
+            {true, false, 0, 1, 0},
+            {false, false, 0, 1, 0}, //TODO(Daqifi): Enabling this channel causes hard fault
+            {true, false, 0, 1, 0},
+            {true, false, 0, 1, 0},
+        },
+        .Size = 24
+    },
 //    .PowerWriteVars = {
 //       .EN_3_3V_Val = true,     // 3.3V rail on
 //       .EN_5_10V_Val = false,   // 5V rail off

@@ -12,10 +12,10 @@
 #ifndef __BOARDDATA_H__
 #define __BOARDDATA_H__
 
-//#include "AInSample.h"
+#include "AInSample.h"
 #include "DIOSample.h"
 #include "Util/HeapList.h"
-//#include "HAL/Power/PowerApi.h"
+#include "HAL/Power/PowerApi.h"
 //#include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
 
@@ -72,13 +72,13 @@ extern "C" {
         //! Collected DIO samples
         DIOSampleList DIOSamples;
         //! The current state of the module
-        //AInModDataArray AInState;
+        AInModDataArray AInState;
         //! The latest AIn samples
-        //AInSampleArray AInLatest;
+        AInSampleArray AInLatest;
         //! Collected Analog-input samples
-        //AInSampleList AInSamples;
+        AInSampleList AInSamples;
         //! Global Power structure
-        //tPowerData PowerData;
+        tPowerData PowerData;
         //! Global UI Structure
         //tUIReadVars UIReadVars;
         //! The active wifi settings

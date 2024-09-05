@@ -20,7 +20,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
-//#include "SCPI/SCPIADC.h"
+#include "SCPIADC.h"
 #include "SCPIDIO.h"
 #include "SCPILAN.h"
 #include "../streaming.h"
@@ -806,26 +806,26 @@ static const scpi_command_t scpi_commands[] = {
 //    {.pattern = "SYSTem:COMMunicate:LAN:CLEAR", .callback = SCPI_LANSettingsClear, },
 //    
 //    // ADC
-//    {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet, },
-//    {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet, },
-//    {.pattern = "ENAble:VOLTage:DC?", .callback = SCPI_ADCChanEnableGet, },
-//    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_NotImplemented, },
-//    {.pattern = "CONFigure:ADC:SINGleend", .callback = SCPI_ADCChanSingleEndSet, },
-//    {.pattern = "CONFigure:ADC:SINGleend?", .callback = SCPI_ADCChanSingleEndGet, },
-//    {.pattern = "CONFigure:ADC:RANGe", .callback = SCPI_ADCChanRangeSet, },
-//    {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet, },
-//    {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet, },
-//    {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet, },
-//    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet, },
-//    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet, },
-//    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet, },
-//    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet, },
-//    {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave, },
-//    {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave, },
-//    {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad, },
-//    {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad, },
-//    {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet, },
-//    {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet, },
+    {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet, },
+    {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet, },
+    {.pattern = "ENAble:VOLTage:DC?", .callback = SCPI_ADCChanEnableGet, },
+    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_NotImplemented, },
+    {.pattern = "CONFigure:ADC:SINGleend", .callback = SCPI_ADCChanSingleEndSet, },
+    {.pattern = "CONFigure:ADC:SINGleend?", .callback = SCPI_ADCChanSingleEndGet, },
+    {.pattern = "CONFigure:ADC:RANGe", .callback = SCPI_ADCChanRangeSet, },
+    {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet, },
+    {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet, },
+    {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet, },
+    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet, },
+    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet, },
+    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet, },
+    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet, },
+    {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave, },
+    {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave, },
+    {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad, },
+    {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad, },
+    {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet, },
+    {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet, },
 //    
 //    // SPI
 //    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },

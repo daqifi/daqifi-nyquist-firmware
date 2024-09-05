@@ -8,7 +8,7 @@
 #include "Util/StringFormatters.h"
 #include "encoder.h"
 #include "JSON_Encoder.h"
-//#include "../HAL/ADC.h"
+#include "../HAL/ADC.h"
 
 #ifndef min
 #define min(x,y) x <= y ? x : y
@@ -34,10 +34,10 @@ size_t Json_Encode(     tBoardData* state,
                         charBuffer,                                         
                         buffSize,                           
                         "\n\r{\n\r");
-    //size_t initialOffsetIndex=startIndex;
+    size_t initialOffsetIndex=startIndex;
     size_t i=0;
     bool encodeDIO = false;
-    //bool encodeADC = false;    
+    bool encodeADC = false;    
     
     if( pBuffer == NULL ){
         return 0;
@@ -61,7 +61,7 @@ size_t Json_Encode(     tBoardData* state,
                         state->StreamTrigStamp);
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
-                //encodeADC = true;
+                encodeADC = true;
                 break;        
             case DaqifiOutMessage_digital_data_tag:
                 encodeDIO = true;
@@ -233,62 +233,59 @@ size_t Json_Encode(     tBoardData* state,
                         buffSize - startIndex,              
                         " ],\n\r");
     }
-    
-//    if (encodeADC)
-//    {
-//        startIndex=initialOffsetIndex;//remove timestamp added Initially
-//        uint32_t previousTimeStamp=0;   
-//        uint32_t qSize=AInSampleList_Size(NULL);
-//        while (((JSON_ENCODER_BUFFER_SIZE - startIndex) >= 65) &&           
-//               (qSize>0))
-//        {
-//            AInSample data;           
-//            if(!AInSampleList_PopFront(&state->AInSamples, &data)){
-//                AInSampleList_Destroy( &state->AInSamples );
-//                AInSampleList_Initialize(   &state->AInSamples,     
-//                    MAX_AIN_SAMPLE_COUNT,   
-//                    false,                  
-//                    NULL ); 
-//                break;
-//            }
-//            qSize--;
-//             __add_data_no_pop:
-//            if(data.Timestamp==previousTimeStamp){
-//                double voltage=(ADC_ConvertToVoltage(&data))*1000; //convert to millivolts
-//                startIndex += snprintf(                                         
-//                            charBuffer + startIndex,                            
-//                            JSON_ENCODER_BUFFER_SIZE - startIndex,              
-//                            "{\"ch\":%u, \"data\":%u},\n\r",     
-//                            data.Channel,                                       
-//                            (int)voltage);
-//            }
-//            else{  
-//                if(((JSON_ENCODER_BUFFER_SIZE - startIndex) < 65))
-//                    break;
-//                if(previousTimeStamp!=0){ //to first the first json
-//                    startIndex += snprintf(                                             
-//                            charBuffer + startIndex,                            
-//                            JSON_ENCODER_BUFFER_SIZE - startIndex,              
-//                            " ],\n\r");
-//                }
-//                startIndex += snprintf(charBuffer + startIndex,                            
-//                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
-//                        "\r\n\"timestamp\":%u,\n\r",                           
-//                        data.Timestamp);
-//                startIndex += snprintf(charBuffer + startIndex,                            
-//                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
-//                        " \"adc\":[\n\r");
-//                previousTimeStamp=data.Timestamp;
-//                goto __add_data_no_pop;
-//
-//            }    
-//        }
-//        
-//        startIndex += snprintf(                                             
-//                        charBuffer + startIndex,                            
-//                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
-//                        " ]\n\r");
-//    }
+
+    if (encodeADC) {
+        startIndex = initialOffsetIndex; //remove timestamp added Initially
+        uint32_t previousTimeStamp = 0;
+        uint32_t qSize = AInSampleList_Size(NULL);
+        while (((buffSize - startIndex) >= 65) &&
+                (qSize > 0)) {
+            AInSample data;
+            if (!AInSampleList_PopFront(&state->AInSamples, &data)) {
+                AInSampleList_Destroy(&state->AInSamples);
+                AInSampleList_Initialize(&state->AInSamples,
+                        MAX_AIN_SAMPLE_COUNT,
+                        false,
+                        NULL);
+                break;
+            }
+            qSize--;
+__add_data_no_pop:
+            if (data.Timestamp == previousTimeStamp) {
+                double voltage = (ADC_ConvertToVoltage(&data))*1000; //convert to millivolts
+                startIndex += snprintf(
+                        charBuffer + startIndex,
+                        buffSize - startIndex,
+                        "{\"ch\":%u, \"data\":%u},\n\r",
+                        data.Channel,
+                        (int) voltage);
+            } else {
+                if (((buffSize - startIndex) < 65))
+                    break;
+                if (previousTimeStamp != 0) { //to first the first json
+                    startIndex += snprintf(
+                            charBuffer + startIndex,
+                            buffSize - startIndex,
+                            " ],\n\r");
+                }
+                startIndex += snprintf(charBuffer + startIndex,
+                        buffSize - startIndex,
+                        "\r\n\"timestamp\":%u,\n\r",
+                        data.Timestamp);
+                startIndex += snprintf(charBuffer + startIndex,
+                        buffSize - startIndex,
+                        " \"adc\":[\n\r");
+                previousTimeStamp = data.Timestamp;
+                goto __add_data_no_pop;
+
+            }
+        }
+
+        startIndex += snprintf(
+                charBuffer + startIndex,
+                buffSize - startIndex,
+                " ]\n\r");
+    }
     
     startIndex += snprintf(                                                 
                         charBuffer + startIndex,                            

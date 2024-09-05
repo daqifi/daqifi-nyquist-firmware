@@ -16,6 +16,7 @@
 #include "definitions.h"
 #include "wdrv_winc_common.h"
 #include "wdrv_winc_authctx.h"
+#include "../../state/runtime/AInRuntimeConfig.h"
 
 typedef enum {
     WIFI_API_NETWORK_MODE_AP = 0,
@@ -177,8 +178,8 @@ extern "C" {
     typedef union uDaqifiSettingsImpl {
         TopLevelSettings topLevelSettings;
         WifiSettings wifi;
-        //AInCalArray factAInCalParams;
-        //AInCalArray userAInCalParams;
+        AInCalArray factAInCalParams;
+        AInCalArray userAInCalParams;
 
         // TODO: Other settings here
     } DaqifiSettingsImpl;
@@ -243,23 +244,22 @@ extern "C" {
      * @return True on success, false otherwise
      */
     bool daqifi_settings_ClearNvm(DaqifiSettingsType type);
-    //TODO(Daqifi): Add  back LoadADCCalSettings AND SaveADCCalSettings
-    //    /**
-    //     * Loads the ADC calibration settings
-    //     * @param type The type of settings to load
-    //     * @param channelRuntimeConfig Channel config into which to load the saved settings
-    //     * @return True on success, false otherwise
-    //     */    
-    //    bool LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
-    //    
-    //    /**
-    //     * Saves the ADC calibration settings
-    //     * @param type The type of settings to save
-    //     * @param channelRuntimeConfig Channel config from which to save the settings
-    //     * @return True on success, false otherwise
-    //     */    
-    //    bool SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
-    //    
+    /**
+     * Loads the ADC calibration settings
+     * @param type The type of settings to load
+     * @param channelRuntimeConfig Channel config into which to load the saved settings
+     * @return True on success, false otherwise
+     */
+    bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
+
+    /**
+     * Saves the ADC calibration settings
+     * @param type The type of settings to save
+     * @param channelRuntimeConfig Channel config from which to save the settings
+     * @return True on success, false otherwise
+     */
+    bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
+
 
 
 

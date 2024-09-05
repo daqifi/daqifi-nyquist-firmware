@@ -211,3 +211,80 @@ bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
     // Erase the flash
     return nvm_ErasePage(address);
 }
+
+bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)
+{
+    bool status = true;
+    uint8_t x = 0;
+    AInCalArray* calArray;
+    // Read the settings into a temporary object
+    DaqifiSettings tmpSettings;
+    
+    status = daqifi_settings_LoadFromNvm(type, &tmpSettings);
+    if(!status) return status;
+            
+    switch(type)
+    {
+        case DaqifiSettings_FactAInCalParams:
+        {
+            calArray = &(tmpSettings.settings.factAInCalParams);
+            break;
+        }
+        case DaqifiSettings_UserAInCalParams:
+        {
+            calArray = &(tmpSettings.settings.userAInCalParams);
+            break;
+        }
+        default:
+            status = false;
+            break;
+    }
+    
+    if(!status) return status;    
+    
+    for(x=0;x<channelRuntimeConfig->Size;x++)
+    {
+        channelRuntimeConfig->Data[x].CalM = calArray->Data[x].CalM;
+        channelRuntimeConfig->Data[x].CalB = calArray->Data[x].CalB;
+    }
+    
+    return status;
+}
+
+bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)
+{
+    bool status = true;
+    uint8_t x = 0;
+    AInCalArray* calArray;
+    // Create the settings in a temporary object
+    DaqifiSettings tmpSettings;
+    
+    tmpSettings.type = type;
+    
+    switch(type)
+    {
+        case DaqifiSettings_FactAInCalParams:
+        {
+            calArray = &(tmpSettings.settings.factAInCalParams);
+            break;
+        }
+        case DaqifiSettings_UserAInCalParams:
+        {
+            calArray = &(tmpSettings.settings.userAInCalParams);
+            break;
+        }
+        default:
+            status = false;
+            break;
+    }
+    
+    if(!status) return status;    
+    
+    for(x=0;x<channelRuntimeConfig->Size;x++)
+    {
+        calArray->Data[x].CalM = channelRuntimeConfig->Data[x].CalM;
+        calArray->Data[x].CalB = channelRuntimeConfig->Data[x].CalB;
+    }
+    status = daqifi_settings_SaveToNvm(&tmpSettings);
+    return status;
+}

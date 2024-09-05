@@ -15,6 +15,15 @@
 //#define UNUSED(x) (void)(x)
 #define UNUSED(identifier) /* identifier */
 
+
+#ifndef min
+#define min(x,y) x <= y ? x : y
+#endif // min
+
+#ifndef max
+#define max(x,y) x >= y ? x : y
+#endif // min
+
 //! Pointer to the module configuration data structure to be set in initialization
 static MC12bModuleConfig* gpModuleConfigMC12;
 //! Pointer to the module configuration data structure in runtime
@@ -23,8 +32,8 @@ static AInModuleRuntimeConfig* gpModuleRuntimeConfigMC12;
 //! Boolean to indicate if this module is enabled
 static bool gIsEnabled = false;
 
-bool MC12b_InitHardware( MC12bModuleConfig* pModuleConfigInit,
-         AInModuleRuntimeConfig * pModuleRuntimeConfigInit) {
+bool MC12b_InitHardware(MC12bModuleConfig* pModuleConfigInit,
+        AInModuleRuntimeConfig * pModuleRuntimeConfigInit) {
     gpModuleConfigMC12 = pModuleConfigInit;
     gpModuleRuntimeConfigMC12 = pModuleRuntimeConfigInit;
 
@@ -65,20 +74,20 @@ bool MC12b_WriteModuleState(void) {
         ADCHS_ModulesEnable(ADCHS_MODULE2_MASK);
         ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
         ADCHS_ModulesEnable(ADCHS_MODULE4_MASK);
-        ADCHS_ModulesEnable(ADCHS_MODULE7_MASK);     
+        ADCHS_ModulesEnable(ADCHS_MODULE7_MASK);
 
         gIsEnabled = true;
     } else {
         //Disable module
-        
+
 
         ADCHS_ModulesDisable(ADCHS_MODULE0_MASK);
         ADCHS_ModulesDisable(ADCHS_MODULE1_MASK);
         ADCHS_ModulesDisable(ADCHS_MODULE2_MASK);
         ADCHS_ModulesDisable(ADCHS_MODULE3_MASK);
         ADCHS_ModulesDisable(ADCHS_MODULE4_MASK);
-        ADCHS_ModulesDisable(ADCHS_MODULE7_MASK);   
-        
+        ADCHS_ModulesDisable(ADCHS_MODULE7_MASK);
+
 
         /* Enable clock to analog circuit */
         ADCANCONbits.ANEN0 = 1; // Enable the clock to analog bias
@@ -94,65 +103,66 @@ bool MC12b_WriteModuleState(void) {
     return true;
 }
 
-bool MC12b_WriteStateAll(                                                   
-                        const AInArray* channelConfig,                      
-                        AInRuntimeArray* channelRuntimeConfig) {
+bool MC12b_WriteStateAll(
+        const AInArray* channelConfig,
+        AInRuntimeArray* channelRuntimeConfig) {
     bool isEnabled = gpModuleRuntimeConfigMC12->IsEnabled;
-    if (isEnabled) {       
+    if (isEnabled) {
         gpModuleRuntimeConfigMC12->IsEnabled = false;
     }
 
     size_t i = 0;
     bool result = true;
     for (i = 0; i < channelConfig->Size; ++i) {
-        result &= MC12b_WriteStateSingle(                                   
-                        &(channelConfig->Data[i].Config.MC12b),             
-                        &channelRuntimeConfig->Data[i]);
+        result &= MC12b_WriteStateSingle(
+                &(channelConfig->Data[i].Config.MC12b),
+                &channelRuntimeConfig->Data[i]);
     }
 
-    if (isEnabled) {        
+    if (isEnabled) {
         gpModuleRuntimeConfigMC12->IsEnabled = isEnabled;
     }
 
     return result;
 }
 
-bool MC12b_WriteStateSingle(                                                
-                        const MC12bChannelConfig* channelConfig,            
-                        AInRuntimeConfig* channelRuntimeConfig) {
-    
+bool MC12b_WriteStateSingle(
+        const MC12bChannelConfig* channelConfig,
+        AInRuntimeConfig* channelRuntimeConfig) {
 
-    if (channelConfig->ChannelType == 1) {       
+
+    if (channelConfig->ChannelType == 1) {
         if (channelRuntimeConfig->IsEnabled) {
             ADCHS_ModulesEnable(channelConfig->ModuleId);
+            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);      
         } else {
             ADCHS_ModulesDisable(channelConfig->ModuleId);
+            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);        
         }
-
-        // TODO: Calculate channelClockDivider (5) and sampleTimeCount (8) 
-        //from channelRuntimeConfig->Frequency
-        // PLIB_ADCHS_ChannelSetup(moduleConfig->moduleId, channelId, 
-        //ADCHS_DATA_RESOLUTION_12BIT, 5, 8, 0);
+    } else {
+        if (channelRuntimeConfig->IsEnabled) {
+            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);          
+        } else {
+            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);           
+            
+        }
     }
 
     // TODO: What about channel 2-3
     return true;
 }
 
-bool MC12b_ReadSamples(AInSampleArray* samples,                            
-                        const AInArray* channelConfig,                      
-                        AInRuntimeArray* channelRuntimeConfig,              
-                        uint32_t triggerTimeStamp) {
+bool MC12b_ReadSamples(AInSampleArray* samples,
+        const AInArray* channelConfig,
+        AInRuntimeArray* channelRuntimeConfig,
+        uint32_t triggerTimeStamp) {
     size_t i = 0;
 
     for (i = 0; i < channelConfig->Size; ++i) {
         if (!channelRuntimeConfig->Data[i].IsEnabled) {
             continue;
         }
-        if (channelConfig->Data[i].Config.MC12b.ChannelType == 1) {
-            continue; //dedicated channels are handled separately
-        }
-
+        
         const AInChannel* currentChannelConfig = &channelConfig->Data[i];
         uint8_t bufIndex = currentChannelConfig->Config.MC12b.ChannelId;
         if (!ADCHS_ChannelResultIsReady(bufIndex)) {
@@ -172,22 +182,31 @@ bool MC12b_ReadSamples(AInSampleArray* samples,
     return true;
 }
 
-bool MC12b_TriggerConversion(void) {
-    ADCHS_GlobalEdgeConversionStart();
+bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr) {
+    //    AInRuntimeArray* pRunTimeChannlConfig=BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    //    AInArray* pAIConfigArr=BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS);
+  
+    int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size);
+    for (int i = 0; i < aiChannelSize; i++) {        
+        if (pRunTimeChannlConfig->Data[i].IsEnabled) {           
+            ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
+        }
+    }
+    //ADCHS_GlobalEdgeConversionStart();
     return true;
 }
 
-double MC12b_ConvertToVoltage(                                              
-                        const MC12bChannelConfig* channelConfig,            
-                        const AInRuntimeConfig* runtimeConfig,              
-                        const AInSample* sample) {
+double MC12b_ConvertToVoltage(
+        const MC12bChannelConfig* channelConfig,
+        const AInRuntimeConfig* runtimeConfig,
+        const AInSample* sample) {
 
     double dataOut = 0.0;
     double range = gpModuleRuntimeConfigMC12->Range;
     double scale = channelConfig->InternalScale;
     double CalM = runtimeConfig->CalM;
 
-    dataOut = (range * scale * CalM * (double) sample->Value) /              
-                        (gpModuleConfigMC12->Resolution) + runtimeConfig->CalB;
+    dataOut = (range * scale * CalM * (double) sample->Value) /
+            (gpModuleConfigMC12->Resolution) + runtimeConfig->CalB;
     return (dataOut);
 }

@@ -130,9 +130,9 @@ typedef struct sPowerWriteVars
  * @param[in] pInitData   Pointer to power data 
  * @param[in] pInitVars   Pointer to write variables 
  */
- void Power_Init(                                                           \
-                        tPowerConfig *pInitConfig,                          \
-                        tPowerData *pInitData,                              \
+ void Power_Init(                                                           
+                        tPowerConfig *pInitConfig,                          
+                        tPowerData *pInitData,                              
                         tPowerWriteVars *pInitVars); 
  
 /*! This function manages the power task

@@ -151,151 +151,175 @@ const tBoardConfig NQ1BoardConfig = {
             // and R is the resistor divider for the internal channels
 
             {
-                .DaqifiAdcChannelId = 0,                
+                .DaqifiAdcChannelId = 0,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {.AllowDifferential = false, .ChannelId = ADCHS_CH11,.ModuleId=ADCHS_MODULE7_MASK, .ChannelType = 2, .IsPublic = true, .InternalScale = 1}}
+                    {.AllowDifferential = false, .ChannelId = ADCHS_CH11, .ModuleId = ADCHS_MODULE7_MASK, .ChannelType = 2, .IsPublic = true, .InternalScale = 1}}
             },
             {
-                .DaqifiAdcChannelId = 1,                
+                .DaqifiAdcChannelId = 1,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH24,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH24, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 2,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH25,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH25, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 3,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH26,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH26, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 4,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH4,ADCHS_MODULE4_MASK, 1, true, 1}} // Type 1
+                    {false, ADCHS_CH4, ADCHS_MODULE4_MASK, 1, true, 1}} // Type 1
             },
             {
                 .DaqifiAdcChannelId = 5,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH39,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH39, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 6,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH38,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH38, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 7,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH27,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH27, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 8,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH0,ADCHS_MODULE0_MASK, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1
+                    {true, ADCHS_CH0, ADCHS_MODULE0_MASK, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1
             },
             {
                 .DaqifiAdcChannelId = 9,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH5,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH5, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 10,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH1,ADCHS_MODULE1_MASK, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1
+                    {true, ADCHS_CH1, ADCHS_MODULE1_MASK, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1
             },
             {
                 .DaqifiAdcChannelId = 11,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH6,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH6, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 12,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH2,ADCHS_MODULE2_MASK, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1
+                    {true, ADCHS_CH2, ADCHS_MODULE2_MASK, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1
             },
             {
                 .DaqifiAdcChannelId = 13,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH7,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH7, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
             {
                 .DaqifiAdcChannelId = 14,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH3,ADCHS_MODULE3_MASK, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1
+                    {true, ADCHS_CH3, ADCHS_MODULE3_MASK, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1
             },
             {
                 .DaqifiAdcChannelId = 15,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH8,ADCHS_MODULE7_MASK, 2, true, 1}}
+                    {false, ADCHS_CH8, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
 
             // ADC Channels for internal use
             // TODO: It may make sense to put these in the power settings.
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_3_3V,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH19,ADCHS_MODULE7_MASK, 2, false, 1}} // +3.3V_Mon
+                    {false, ADCHS_CH19, ADCHS_MODULE7_MASK, 2, false, 1}} // +3.3V_Mon
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_2_5VREF,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH31,ADCHS_MODULE7_MASK, 2, false, 1}} // +2.5VRef_Mon
+                    {false, ADCHS_CH31, ADCHS_MODULE7_MASK, 2, false, 1}} // +2.5VRef_Mon
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_VBATT,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH30,ADCHS_MODULE7_MASK, 2, false, 1}} // Vbat_Mon
+                    {false, ADCHS_CH30, ADCHS_MODULE7_MASK, 2, false, 1}} // Vbat_Mon
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_5V,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH42,ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // +5V_Prot_Mon
+                    {false, ADCHS_CH42, ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // +5V_Prot_Mon
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_10V,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH32,ADCHS_MODULE7_MASK, 2, false, 3.905000000000}} // +10_Prot_Mon
+                    {false, ADCHS_CH32, ADCHS_MODULE7_MASK, 2, false, 3.905000000000}} // +10_Prot_Mon
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_TEMP,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH44,ADCHS_MODULE7_MASK, 2, false, 1}} // On board temperature sensor 5mV/degC 0->5V=-40degC
+                    {false, ADCHS_CH44, ADCHS_MODULE7_MASK, 2, false, 1}} // On board temperature sensor 5mV/degC 0->5V=-40degC
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_5VREF,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH29,ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // On board +5V ref (only on Nq2)
+                    {false, ADCHS_CH29, ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // On board +5V ref (only on Nq2)
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_VSYS,
+                .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH41,ADCHS_MODULE7_MASK, 2, false, 1.409090909091}} // Board system power
+                    {false, ADCHS_CH41, ADCHS_MODULE7_MASK, 2, false, 1.409090909091}} // Board system power
             },
         },
         .Size = 24

@@ -16,8 +16,8 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/services/DaqifiPB/DaqifiOutMessage.pb.h \
  ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
  ../src/Util/ArrayWrapper.h ../src/state/data/BoardData.h \
- ../src/state/data/DIOSample.h ../src/Util/HeapList.h \
- ../src/Util/LockProvider.h ../src/services/daqifi_settings.h \
+ ../src/state/data/AInSample.h ../src/Util/HeapList.h \
+ ../src/Util/LockProvider.h ../src/state/data/../board/AInConfig.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -83,12 +83,12 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/system/time/sys_time.h \
  ../src/config/default/peripheral/nvm/plib_nvm.h \
  ../src/config/default/peripheral/coretimer/plib_coretimer.h \
+ ../src/config/default/peripheral/tmr/plib_tmr6.h \
+ ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
- ../src/config/default/peripheral/tmr/plib_tmr6.h \
- ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/peripheral/adchs/plib_adchs.h \
  ../src/config/default/peripheral/adchs/plib_adchs_common.h \
  ../src/config/default/peripheral/tmr/plib_tmr4.h \
@@ -131,8 +131,6 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
  ../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -143,7 +141,11 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ffconf.h \
  ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
- ../src/app_freertos.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
+ ../src/app_freertos.h ../src/state/data/DIOSample.h \
+ ../src/HAL/Power/PowerApi.h ../src/HAL/BQ24297/BQ24297.h \
+ ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
@@ -156,6 +158,7 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
+ ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
  ../src/state/runtime/BoardRuntimeConfig.h \
  ../src/state/runtime/DIORuntimeConfig.h \
  ../src/state/runtime/../board/DIOConfig.h \
@@ -186,10 +189,9 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
  ../src/Util/Logger.h ../src/state/board/BoardConfig.h \
- ../src/state/board/AInConfig.h ../src/state/board/StreamingConfig.h \
- ../src/HAL/BQ24297/BQ24297.h ../src/HAL/DIO.h \
- ../src/services/SCPI/SCPIDIO.h ../src/services/SCPI/SCPILAN.h \
- ../src/services/SCPI/../streaming.h \
+ ../src/state/board/StreamingConfig.h ../src/HAL/DIO.h \
+ ../src/services/SCPI/SCPIADC.h ../src/services/SCPI/SCPIDIO.h \
+ ../src/services/SCPI/SCPILAN.h ../src/services/SCPI/../streaming.h \
  ../src/services/SCPI/../../state/board/BoardConfig.h \
  ../src/services/SCPI/../../state/data/BoardData.h \
  ../src/services/SCPI/../commTest.h \
@@ -231,13 +233,13 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 
 ../src/state/data/BoardData.h:
 
-../src/state/data/DIOSample.h:
+../src/state/data/AInSample.h:
 
 ../src/Util/HeapList.h:
 
 ../src/Util/LockProvider.h:
 
-../src/services/daqifi_settings.h:
+../src/state/data/../board/AInConfig.h:
 
 ../src/config/default/configuration.h:
 
@@ -371,6 +373,10 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 
 ../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
+../src/config/default/peripheral/tmr/plib_tmr6.h:
+
+../src/config/default/peripheral/tmr/plib_tmr_common.h:
+
 ../src/config/default/usb/usb_device_cdc.h:
 
 ../src/config/default/usb/usb_device.h:
@@ -380,10 +386,6 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 ../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/usb/usb_cdc.h:
-
-../src/config/default/peripheral/tmr/plib_tmr6.h:
-
-../src/config/default/peripheral/tmr/plib_tmr_common.h:
 
 ../src/config/default/peripheral/adchs/plib_adchs.h:
 
@@ -469,10 +471,6 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 
 ../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h:
 
-../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
-
-../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
-
 ../src/config/default/system/fs/sys_fs.h:
 
 ../src/config/default/system/fs/sys_fs_media_manager.h:
@@ -493,7 +491,19 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 
 ../src/config/default/system/fs/fat_fs/file_system/ff.h:
 
+../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
+
 ../src/app_freertos.h:
+
+../src/state/data/DIOSample.h:
+
+../src/HAL/Power/PowerApi.h:
+
+../src/HAL/BQ24297/BQ24297.h:
+
+../src/services/daqifi_settings.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
@@ -518,6 +528,8 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
+
+../src/config/default/../../state/runtime/AInRuntimeConfig.h:
 
 ../src/state/runtime/BoardRuntimeConfig.h:
 
@@ -587,13 +599,11 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 
 ../src/state/board/BoardConfig.h:
 
-../src/state/board/AInConfig.h:
-
 ../src/state/board/StreamingConfig.h:
 
-../src/HAL/BQ24297/BQ24297.h:
-
 ../src/HAL/DIO.h:
+
+../src/services/SCPI/SCPIADC.h:
 
 ../src/services/SCPI/SCPIDIO.h:
 

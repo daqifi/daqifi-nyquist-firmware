@@ -18,7 +18,7 @@ extern "C" {
  * Performs board initialization
  * @param[in] pBoardConfigInit The module configuration
  */
-bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit);
+//bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit);
 
 /*!
  * Updates the module state based on the provided config

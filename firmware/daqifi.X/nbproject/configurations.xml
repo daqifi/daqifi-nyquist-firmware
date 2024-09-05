@@ -326,6 +326,7 @@
           <itemPath>../src/HAL/UI/UI.h</itemPath>
         </logicalFolder>
         <itemPath>../src/HAL/DIO.h</itemPath>
+        <itemPath>../src/HAL/ADC.h</itemPath>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
         <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
@@ -844,6 +845,7 @@
           <itemPath>../src/HAL/UI/UI.c</itemPath>
         </logicalFolder>
         <itemPath>../src/HAL/DIO.c</itemPath>
+        <itemPath>../src/HAL/ADC.c</itemPath>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">
         <logicalFolder name="microrl" displayName="microrl" projectFiles="true">
@@ -1782,7 +1784,7 @@
           <property key="wpo-lto" value="false"/>
         </C32Global>
       </item>
-      <item path="../src/services/SCPI/SCPIADC.c" ex="true" overriding="false">
+      <item path="../src/services/SCPI/SCPIADC.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1798,7 +1800,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/services/SCPI/SCPIADC.h" ex="true" overriding="false">
+      <item path="../src/services/SCPI/SCPIADC.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1942,7 +1944,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/BoardConfig.h" ex="true" overriding="false">
+      <item path="../src/state/board/BoardConfig.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1958,7 +1960,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/DIOConfig.h" ex="true" overriding="false">
+      <item path="../src/state/board/DIOConfig.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1990,7 +1992,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ1BoardConfig.h" ex="true" overriding="false">
+      <item path="../src/state/board/NQ1BoardConfig.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2135,7 +2137,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/AInRuntimeConfig.h"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>

@@ -51,6 +51,8 @@
 // *****************************************************************************
 // *****************************************************************************
 
+/* Object to hold callback function and context */
+volatile static ADCHS_CALLBACK_OBJECT ADCHS_CallbackObj[44];
 
 
 
@@ -98,7 +100,13 @@ void ADCHS_Initialize(void)
 
 
 
-
+/* Result interrupt enable */
+ADCGIRQEN1 = 0xef0809ffU;
+ADCGIRQEN2 = 0x16c1U;
+/* Interrupt Enable */
+IEC1SET = 0xf8000000U;
+IEC2SET = 0xf78404fU;
+IEC3SET = 0xb6U;
 
 
 
@@ -270,6 +278,11 @@ uint16_t ADCHS_ChannelResultGet(ADCHS_CHANNEL_NUM channel)
 
 }
 
+void ADCHS_CallbackRegister(ADCHS_CHANNEL_NUM channel, ADCHS_CALLBACK callback, uintptr_t context)
+{
+    ADCHS_CallbackObj[channel].callback_fn = callback;
+    ADCHS_CallbackObj[channel].context = context;
+}
 
 
 
@@ -279,4 +292,262 @@ bool ADCHS_EOSStatusGet(void)
     return (bool)(ADCCON2bits.EOSRDY);
 }
 
+void __attribute__((used)) ADC_DATA0_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[0].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[0].context;
+        ADCHS_CallbackObj[0].callback_fn(ADCHS_CH0, context);
+    }
 
+    IFS1CLR = _IFS1_ADCD0IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA1_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[1].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[1].context;
+        ADCHS_CallbackObj[1].callback_fn(ADCHS_CH1, context);
+    }
+
+    IFS1CLR = _IFS1_ADCD1IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA2_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[2].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[2].context;
+        ADCHS_CallbackObj[2].callback_fn(ADCHS_CH2, context);
+    }
+
+    IFS1CLR = _IFS1_ADCD2IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA3_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[3].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[3].context;
+        ADCHS_CallbackObj[3].callback_fn(ADCHS_CH3, context);
+    }
+
+    IFS1CLR = _IFS1_ADCD3IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA4_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[4].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[4].context;
+        ADCHS_CallbackObj[4].callback_fn(ADCHS_CH4, context);
+    }
+
+    IFS1CLR = _IFS1_ADCD4IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA5_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[5].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[5].context;
+        ADCHS_CallbackObj[5].callback_fn(ADCHS_CH5, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD5IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA6_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[6].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[6].context;
+        ADCHS_CallbackObj[6].callback_fn(ADCHS_CH6, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD6IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA7_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[7].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[7].context;
+        ADCHS_CallbackObj[7].callback_fn(ADCHS_CH7, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD7IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA8_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[8].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[8].context;
+        ADCHS_CallbackObj[8].callback_fn(ADCHS_CH8, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD8IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA11_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[11].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[11].context;
+        ADCHS_CallbackObj[11].callback_fn(ADCHS_CH11, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD11IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA19_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[19].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[19].context;
+        ADCHS_CallbackObj[19].callback_fn(ADCHS_CH19, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD19IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA24_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[24].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[24].context;
+        ADCHS_CallbackObj[24].callback_fn(ADCHS_CH24, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD24IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA25_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[25].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[25].context;
+        ADCHS_CallbackObj[25].callback_fn(ADCHS_CH25, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD25IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA26_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[26].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[26].context;
+        ADCHS_CallbackObj[26].callback_fn(ADCHS_CH26, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD26IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA27_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[27].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[27].context;
+        ADCHS_CallbackObj[27].callback_fn(ADCHS_CH27, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD27IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA29_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[29].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[29].context;
+        ADCHS_CallbackObj[29].callback_fn(ADCHS_CH29, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD29IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA30_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[30].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[30].context;
+        ADCHS_CallbackObj[30].callback_fn(ADCHS_CH30, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD30IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA31_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[31].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[31].context;
+        ADCHS_CallbackObj[31].callback_fn(ADCHS_CH31, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD31IF_MASK;
+
+}
+
+void __attribute__((used)) ADC_DATA32_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[32].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[32].context;
+        ADCHS_CallbackObj[32].callback_fn(ADCHS_CH32, context);
+    }
+    IFS2CLR = _IFS2_ADCD32IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA38_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[38].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[38].context;
+        ADCHS_CallbackObj[38].callback_fn(ADCHS_CH38, context);
+    }
+    IFS3CLR = _IFS3_ADCD38IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA39_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[39].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[39].context;
+        ADCHS_CallbackObj[39].callback_fn(ADCHS_CH39, context);
+    }
+    IFS3CLR = _IFS3_ADCD39IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA41_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[41].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[41].context;
+        ADCHS_CallbackObj[41].callback_fn(ADCHS_CH41, context);
+    }
+    IFS3CLR = _IFS3_ADCD41IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA42_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[42].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[42].context;
+        ADCHS_CallbackObj[42].callback_fn(ADCHS_CH42, context);
+    }
+    IFS3CLR = _IFS3_ADCD42IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA44_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[44].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[44].context;
+        ADCHS_CallbackObj[44].callback_fn(ADCHS_CH44, context);
+    }
+    IFS3CLR = _IFS3_ADCD44IF_MASK;
+
+}
