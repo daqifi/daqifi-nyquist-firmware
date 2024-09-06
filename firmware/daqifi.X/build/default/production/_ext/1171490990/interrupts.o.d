@@ -186,7 +186,7 @@ build/default/production/_ext/1171490990/interrupts.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
  ../src/state/data/BoardData.h ../src/state/data/AInSample.h \
  ../src/Util/HeapList.h ../src/Util/LockProvider.h \
- ../src/state/data/DIOSample.h ../src/HAL/DIO.h
+ ../src/state/data/DIOSample.h ../src/HAL/ADC/MC12bADC.h ../src/HAL/DIO.h
 
 ../src/config/default/configuration.h:
 
@@ -589,5 +589,7 @@ build/default/production/_ext/1171490990/interrupts.o: \
 ../src/Util/LockProvider.h:
 
 ../src/state/data/DIOSample.h:
+
+../src/HAL/ADC/MC12bADC.h:
 
 ../src/HAL/DIO.h:

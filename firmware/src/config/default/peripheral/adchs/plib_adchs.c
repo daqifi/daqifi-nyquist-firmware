@@ -80,8 +80,8 @@ void ADCHS_Initialize(void)
 
     ADCTRGMODE = 0x550000U;
 
-    ADCTRG1 = 0x1010101U; 
-    ADCTRG2 = 0x1010101U; 
+    ADCTRG1 = 0x0U; 
+    ADCTRG2 = 0x1010100U; 
     ADCTRG3 = 0x1000001U; 
     
     

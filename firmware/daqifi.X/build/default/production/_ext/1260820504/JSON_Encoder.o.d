@@ -190,7 +190,8 @@ build/default/production/_ext/1260820504/JSON_Encoder.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
  ../src/services/../HAL/ADC.h ../src/state/board/BoardConfig.h \
- ../src/state/board/StreamingConfig.h
+ ../src/state/board/StreamingConfig.h \
+ ../src/services/../HAL/ADC/MC12bADC.h
 
 ../src/services/../services/DaqifiPB/DaqifiOutMessage.pb.h:
 
@@ -597,3 +598,5 @@ build/default/production/_ext/1260820504/JSON_Encoder.o: \
 ../src/state/board/BoardConfig.h:
 
 ../src/state/board/StreamingConfig.h:
+
+../src/services/../HAL/ADC/MC12bADC.h:

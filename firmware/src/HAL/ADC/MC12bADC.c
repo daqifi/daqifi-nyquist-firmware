@@ -4,7 +4,7 @@
  */
 
 #include "MC12bADC.h"
-
+#include "../DIO.h"
 #include "configuration.h"
 #include "definitions.h"
 //#include "system_config.h"
@@ -134,33 +134,37 @@ bool MC12b_WriteStateSingle(
     if (channelConfig->ChannelType == 1) {
         if (channelRuntimeConfig->IsEnabled) {
             ADCHS_ModulesEnable(channelConfig->ModuleId);
-            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);      
+            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);
         } else {
             ADCHS_ModulesDisable(channelConfig->ModuleId);
-            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);        
+            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);
         }
-    } 
-//    else {
-//        if (channelRuntimeConfig->IsEnabled) {
-//            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);          
-//        } else {
-//            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);           
-//            
-//        }
-//    }
+    }
+    //    else {
+    //        if (channelRuntimeConfig->IsEnabled) {
+    //            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);          
+    //        } else {
+    //            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);           
+    //            
+    //        }
+    //    }
     // TODO: What about channel 2-3
     return true;
 }
 
-bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr) {
-    int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size); 
-    for (int i = 0; i < aiChannelSize; i++) {        
-        if (pRunTimeChannlConfig->Data[i].IsEnabled) { 
-            if(pAIConfigArr->Data[i].Config.MC12b.ChannelType==1)
-                ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
+bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr, MC12b_adcType_t type) {
+    int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size);
+    if (type == MC12B_ADC_TYPE_DEDICATED || type==MC12B_ADC_TYPE_ALL) {
+        for (int i = 0; i < aiChannelSize; i++) {
+            if (pRunTimeChannlConfig->Data[i].IsEnabled) {
+                if (pAIConfigArr->Data[i].Config.MC12b.ChannelType == 1){                   
+                    ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);     
+                }
+            }
         }
     }
-    ADCHS_GlobalEdgeConversionStart();
+    if(type==MC12B_ADC_TYPE_SHARED || type==MC12B_ADC_TYPE_ALL)
+        ADCHS_GlobalEdgeConversionStart();
     return true;
 }
 
@@ -178,12 +182,12 @@ double MC12b_ConvertToVoltage(
             (gpModuleConfigMC12->Resolution) + runtimeConfig->CalB;
     return (dataOut);
 }
-bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal)
-{
-    if(ADCHS_ChannelResultIsReady(channel)){
-        *pVal=ADCHS_ChannelResultGet(channel);
+
+bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal) {
+    if (ADCHS_ChannelResultIsReady(channel)) {
+        *pVal = ADCHS_ChannelResultGet(channel);
         return true;
     }
-    *pVal=0;
+    *pVal = 0;
     return false;
 }

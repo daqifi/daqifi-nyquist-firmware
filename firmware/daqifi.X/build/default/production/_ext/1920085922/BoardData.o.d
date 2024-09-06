@@ -188,7 +188,7 @@ build/default/production/_ext/1920085922/BoardData.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/state/data/BoardData.h
+ ../src/state/data/BoardData.h ../src/state/data/../../HAL/ADC/MC12bADC.h
 
 ../src/state/data/BoardData.h:
 
@@ -589,3 +589,5 @@ build/default/production/_ext/1920085922/BoardData.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
 ../src/state/data/BoardData.h:
+
+../src/state/data/../../HAL/ADC/MC12bADC.h:

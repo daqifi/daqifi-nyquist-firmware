@@ -97,7 +97,7 @@ static bool gSystemInitComplt = false;
 static void SystemInit();
 static void USBDeviceTask(void* p_arg);
 static void WifiTask(void* p_arg);
-static void SdCardTask(void* p_arg);
+//static void SdCardTask(void* p_arg);
 
 void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
@@ -133,20 +133,20 @@ static void WifiTask(void* p_arg) {
     }
 }
 
-static void SdCardTask(void* p_arg) {
-    static SDCard_Settings_t sdSettings;
-    sdSettings.enable = 1;
-    sdSettings.mode = SD_CARD_MODE_WRITE;
-    memset(sdSettings.directory, 0, sizeof (sdSettings.directory));
-    strncpy(sdSettings.directory, "MyTest1", strlen("MyTest1") + 1);
-    memset(sdSettings.file, 0, sizeof (sdSettings.file));
-    strncpy(sdSettings.file, "file2.txt", strlen("file2.txt") + 1);
-    SDCard_Init(&sdSettings);
-    while (1) {
-        SDCard_ProcessState();
-        vTaskDelay(5);
-    }
-}
+//static void SdCardTask(void* p_arg) {
+//    static SDCard_Settings_t sdSettings;
+//    sdSettings.enable = 1;
+//    sdSettings.mode = SD_CARD_MODE_WRITE;
+//    memset(sdSettings.directory, 0, sizeof (sdSettings.directory));
+//    strncpy(sdSettings.directory, "MyTest1", strlen("MyTest1") + 1);
+//    memset(sdSettings.file, 0, sizeof (sdSettings.file));
+//    strncpy(sdSettings.file, "file2.txt", strlen("file2.txt") + 1);
+//    SDCard_Init(&sdSettings);
+//    while (1) {
+//        SDCard_ProcessState();
+//        vTaskDelay(5);
+//    }
+//}
 
 void SystemInit() {
     DaqifiSettings tmpTopLevelSettings;
@@ -280,16 +280,16 @@ static void TasksCreate() {
         if (errStatus != pdTRUE) {
             while (1);
         }
-        errStatus = xTaskCreate((TaskFunction_t) SdCardTask,
-                "SdCardTask",
-                2048,
-                NULL,
-                2,
-                NULL);
-        /*Don't proceed if Task was not created...*/
-        if (errStatus != pdTRUE) {
-            while (1);
-        }
+//        errStatus = xTaskCreate((TaskFunction_t) SdCardTask,
+//                "SdCardTask",
+//                2048,
+//                NULL,
+//                2,
+//                NULL);
+//        /*Don't proceed if Task was not created...*/
+//        if (errStatus != pdTRUE) {
+//            while (1);
+//        }
 
         /* The APP_Tasks() function need to exceute only once. Block it now */
         blockAppTask = true;

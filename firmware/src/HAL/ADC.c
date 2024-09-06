@@ -130,7 +130,7 @@ bool ADC_WriteChannelStateAll(void) {
     return result;
 }
 
-bool ADC_TriggerConversion(const AInModule* module) {
+bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelType) {
     AInTaskState_t state;
     //uint32_t valueTMR = 0;   
     uint8_t moduleId = ADC_FindModuleIndex(module);
@@ -139,7 +139,7 @@ bool ADC_TriggerConversion(const AInModule* module) {
     const AInModuleRuntimeConfig* moduleRuntime =
             &gpBoardRuntimeConfig->AInModules.Data[moduleId];
     //TODO(Daqifi): PowersState
-    bool isPowered = POWERED_UP; //(powerState > MICRO_ON);
+    bool isPowered = 1; //(powerState > MICRO_ON);
     bool isEnabled = isPowered && moduleRuntime->IsEnabled;
     bool result = false;
 
@@ -155,7 +155,7 @@ bool ADC_TriggerConversion(const AInModule* module) {
 
     switch (module->Type) {
         case AIn_MC12bADC:
-            result &= MC12b_TriggerConversion(&gpBoardRuntimeConfig->AInChannels, &gpBoardConfig->AInChannels);
+            result &= MC12b_TriggerConversion(&gpBoardRuntimeConfig->AInChannels, &gpBoardConfig->AInChannels,adcChannelType);
             break;
         default:
             // Not implemented yet
@@ -247,7 +247,7 @@ void ADC_Tasks(void) {
     }
     if (!gpBoardRuntimeConfig->StreamingConfig.IsEnabled) {
         for (int i = 0; i < gpBoardRuntimeConfig->AInModules.Size; i++)
-            ADC_TriggerConversion(&gpBoardConfig->AInModules.Data[i]);
+            ADC_TriggerConversion(&gpBoardConfig->AInModules.Data[i],MC12B_ADC_TYPE_ALL);
     }
 }
 

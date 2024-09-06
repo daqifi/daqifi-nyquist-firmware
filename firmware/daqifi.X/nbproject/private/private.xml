@@ -8,10 +8,13 @@
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/NQ1BoardConfig.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/adchs/plib_adchs_common.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/streaming.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/initialization.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/BoardRuntimeConfig.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPIADC.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/evic/plib_evic.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/data/AInSample.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPIADC.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/StreamingRuntimeConfig.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/data/AInSample.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/streaming.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/usb/src/usb_device_local.h</file>
@@ -27,7 +30,9 @@
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/interrupts.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/wolfssl/wolfssl/wolfcrypt/src/md5.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/libraries/scpi/libscpi/src/parser.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/DIO.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/DIO.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/osal/osal_freertos.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/AInRuntimeConfig.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/ADC.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/daqifi_settings.c</file>
@@ -36,11 +41,13 @@
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/ADC.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/daqifi_settings.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/app_freertos.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ/port.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/freertos_hooks.c</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ/port_asm.S</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/usb/src/usb_device_cdc.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/ADC/AD7609.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/adchs/plib_adchs.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/ADC/AD7173.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/adchs/plib_adchs.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/Util/ArrayWrapper.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/ADC/MC12bADC.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/wdrv_winc_bssctx.c</file>
@@ -51,6 +58,7 @@
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/BoardConfig.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/NQ1RuntimeDefaults.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/data/BoardData.h</file>
+            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/cache/plib_cache_pic32mz.S</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/DIORuntimeConfig.h</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPIDIO.c</file>
             <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/NVM/nvm.c</file>

@@ -191,7 +191,8 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/services/Wifi/WifiApi.h ../src/services/SDcard/SDCard.h \
  ../src/HAL/DIO.h ../src/state/board/BoardConfig.h \
  ../src/state/board/StreamingConfig.h ../src/HAL/ADC.h \
- ../src/services/streaming.h ../src/services/../state/board/BoardConfig.h \
+ ../src/HAL/ADC/MC12bADC.h ../src/services/streaming.h \
+ ../src/services/../state/board/BoardConfig.h \
  ../src/services/../state/data/BoardData.h
 
 ../src/app_freertos.h:
@@ -603,6 +604,8 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 ../src/state/board/StreamingConfig.h:
 
 ../src/HAL/ADC.h:
+
+../src/HAL/ADC/MC12bADC.h:
 
 ../src/services/streaming.h:
 

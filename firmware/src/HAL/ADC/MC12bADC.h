@@ -15,7 +15,11 @@
 #ifdef	__cplusplus
 extern "C" {
 #endif
-
+    typedef enum{
+        MC12B_ADC_TYPE_SHARED,
+        MC12B_ADC_TYPE_DEDICATED,  
+        MC12B_ADC_TYPE_ALL,        
+    } MC12b_adcType_t;
 /*!
  * Performs board initialization
  * @param[in] pModuleConfigInit Pointer to module configuration
@@ -65,7 +69,7 @@ bool MC12b_ReadSamples( AInSampleArray* samples,
  * Triggers a conversion
  * @return true on success, false otherwise
  */
-    bool MC12b_TriggerConversion( AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr );
+    bool MC12b_TriggerConversion( AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr, MC12b_adcType_t type);
 
 /**
  * Calculates a voltage based on the given sample

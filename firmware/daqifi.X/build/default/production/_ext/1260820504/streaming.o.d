@@ -190,7 +190,7 @@ build/default/production/_ext/1260820504/streaming.o: \
  ../src/services/../state/data/AInSample.h ../src/Util/HeapList.h \
  ../src/Util/LockProvider.h ../src/services/../state/data/DIOSample.h \
  ../src/HAL/ADC.h ../src/state/board/BoardConfig.h \
- ../src/state/data/BoardData.h ../src/HAL/DIO.h \
+ ../src/state/data/BoardData.h ../src/HAL/ADC/MC12bADC.h ../src/HAL/DIO.h \
  ../src/services/JSON_Encoder.h \
  ../src/services/DaqifiPB/DaqifiOutMessage.pb.h \
  ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
@@ -598,6 +598,8 @@ build/default/production/_ext/1260820504/streaming.o: \
 ../src/state/board/BoardConfig.h:
 
 ../src/state/data/BoardData.h:
+
+../src/HAL/ADC/MC12bADC.h:
 
 ../src/HAL/DIO.h:
 

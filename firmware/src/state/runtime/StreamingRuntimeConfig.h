@@ -38,10 +38,12 @@ extern "C" {
          *Base Frequency of adc Sampling and streaming
          */
         uint64_t Frequency;
-//        /**
-//         *Divider for channel Scanning
-//         */
-//        uint64_t ChannelScanTimeDiv;
+        /**
+         *Divider for channel Scanning frequency. 
+         * This is used to divide the Frequency of streaming to get
+         * the frequency of channel scanning trigger
+         */
+        uint64_t ChannelScanFreqDiv;
         /**
          * The base clock divider for the timestamp timer
          */

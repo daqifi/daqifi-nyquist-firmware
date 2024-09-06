@@ -131,39 +131,37 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         }
     }
     uint16_t activeType1ChannelCount = 0;
-    uint16_t activeNonType1ChannelCount = 0;
+    uint64_t freq = pRunTimeStreamConfig->Frequency;
+    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
     int i;
     for (i = 0; i < pBoardConfigAInChannels->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
             if (pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
                 activeType1ChannelCount++;
-            }else
-                activeNonType1ChannelCount++;
+            }
         }
     }
     /**
      * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
      * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
      * 
-     * When any non-Type 1 ADC channel is enabled, the total allowable trigger frequency across all channels is limited to 1,000 Hz.
-     * For instance, if two Type 1 channels and four non-Type 1 channels are active, the maximum trigger frequency per channel is 1,000 / 6 Hz.
+     * The maximum triggering frequency of non type 1 channel is 1000 hz, 
+     * which is obtained by dividing Frequency with ChannelScanFreqDiv. 
+     * Non-Type 1 channels are setup for channel scanning
+     * 
      */
-    uint64_t freq = pRunTimeStreamConfig->Frequency;
-    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
-    if(activeNonType1ChannelCount>0 && (freq*activeNonType1ChannelCount)>1000){
-        freq = 1000/activeNonType1ChannelCount;
-        pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
-        pRunTimeStreamConfig->Frequency = freq;
-        pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
-        
-    }else if(activeType1ChannelCount>0 &&(freq*activeType1ChannelCount) > 15000){
+    if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
         freq = 15000 / activeType1ChannelCount;
-        pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
-        pRunTimeStreamConfig->Frequency = freq;
-        pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
-        
     }
-   
+    pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
+    pRunTimeStreamConfig->Frequency = freq;
+    pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
+    if (freq > 1000) {
+        pRunTimeStreamConfig->ChannelScanFreqDiv = freq / 1000;
+    } else {
+        pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
+    }
+
     if (ADC_WriteChannelStateAll()) {
         return SCPI_RES_OK;
     } else {

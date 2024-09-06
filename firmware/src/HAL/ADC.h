@@ -8,7 +8,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "state/data/BoardData.h"
-
+#include "ADC/MC12bADC.h"
 #ifdef	__cplusplus
 extern "C" {
 #endif
@@ -37,7 +37,7 @@ bool ADC_WriteChannelStateAll( void );
  * @param[in] module Hardware information for the module to trigger
  * return true on success, false otherwise
  */
-bool ADC_TriggerConversion(const AInModule* module);
+bool ADC_TriggerConversion(const AInModule* module,MC12b_adcType_t adcChannelType);
     
 /*! Locates the first module of the given type
  * @param moduleType The module to locate
