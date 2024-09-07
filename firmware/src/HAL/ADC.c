@@ -62,25 +62,27 @@ void ADC_EosInterruptTask(void) {
 
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
-        AInSample sample;       
+        AInSample sample;
         int i = 0;
         uint32_t adcval;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
+            if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
+                continue;
+            }
             if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelType != 1
-                    && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled==1) {
-                if (MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
-                    sample.Timestamp = *valueTMR;
-                    sample.Channel = i;
-                    sample.Value = adcval;
-                    BoardData_Set(
-                            BOARDDATA_AIN_LATEST,
-                            i,
-                            &sample);
-                    if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic) {
-                        AInSampleList_PushBackFromIsr(NULL, &sample);
-                    }
+                    && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
+                sample.Timestamp = *valueTMR;
+                sample.Channel = i;
+                sample.Value = adcval;
+                BoardData_Set(
+                        BOARDDATA_AIN_LATEST,
+                        i,
+                        &sample);
+                if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic) {
+                    AInSampleList_PushBack(NULL, &sample);
                 }
+
             }
         }
 
@@ -155,7 +157,7 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
 
     switch (module->Type) {
         case AIn_MC12bADC:
-            result &= MC12b_TriggerConversion(&gpBoardRuntimeConfig->AInChannels, &gpBoardConfig->AInChannels,adcChannelType);
+            result &= MC12b_TriggerConversion(&gpBoardRuntimeConfig->AInChannels, &gpBoardConfig->AInChannels, adcChannelType);
             break;
         default:
             // Not implemented yet
@@ -247,7 +249,7 @@ void ADC_Tasks(void) {
     }
     if (!gpBoardRuntimeConfig->StreamingConfig.IsEnabled) {
         for (int i = 0; i < gpBoardRuntimeConfig->AInModules.Size; i++)
-            ADC_TriggerConversion(&gpBoardConfig->AInModules.Data[i],MC12B_ADC_TYPE_ALL);
+            ADC_TriggerConversion(&gpBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
     }
 }
 

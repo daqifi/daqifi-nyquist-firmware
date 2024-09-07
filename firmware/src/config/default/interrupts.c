@@ -68,31 +68,30 @@
 // Section: System Interrupt Vector declarations
 // *****************************************************************************
 // *****************************************************************************
-void CORE_TIMER_Handler(void);
-void OUTPUT_COMPARE_1_Handler(void);
-void TIMER_2_Handler(void);
-void TIMER_3_Handler(void);
-void TIMER_4_Handler(void);
-void TIMER_5_Handler(void);
-void TIMER_6_Handler(void);
-void TIMER_7_Handler(void);
-void ADC_DATA0_Handler(void);
-void ADC_DATA1_Handler(void);
-void ADC_DATA2_Handler(void);
-void ADC_DATA3_Handler(void);
-void ADC_DATA4_Handler(void);
-void CHANGE_NOTICE_A_Handler(void);
-void CHANGE_NOTICE_D_Handler(void);
-void USB_Handler(void);
-void USB_DMA_Handler(void);
-void DMA0_Handler(void);
-void DMA1_Handler(void);
-void SPI4_RX_Handler(void);
-void SPI4_TX_Handler(void);
-void FLASH_CONTROL_Handler(void);
-void I2C5_BUS_Handler(void);
-void I2C5_MASTER_Handler(void);
-void ADC_EOS_Handler(void);
+void CORE_TIMER_Handler (void);
+void OUTPUT_COMPARE_1_Handler (void);
+void TIMER_2_Handler (void);
+void TIMER_3_Handler (void);
+void TIMER_5_Handler (void);
+void TIMER_6_Handler (void);
+void TIMER_7_Handler (void);
+void ADC_DATA0_Handler (void);
+void ADC_DATA1_Handler (void);
+void ADC_DATA2_Handler (void);
+void ADC_DATA3_Handler (void);
+void ADC_DATA4_Handler (void);
+void CHANGE_NOTICE_A_Handler (void);
+void CHANGE_NOTICE_D_Handler (void);
+void USB_Handler (void);
+void USB_DMA_Handler (void);
+void DMA0_Handler (void);
+void DMA1_Handler (void);
+void SPI4_RX_Handler (void);
+void SPI4_TX_Handler (void);
+void FLASH_CONTROL_Handler (void);
+void I2C5_BUS_Handler (void);
+void I2C5_MASTER_Handler (void);
+void ADC_EOS_Handler (void);
 
 
 // *****************************************************************************
@@ -117,10 +116,8 @@ void TIMER_3_Handler(void) {
     TIMER_3_InterruptHandler();
 }
 
-void TIMER_4_Handler(void) {
-}
-
-void TIMER_5_Handler(void) {
+void TIMER_5_Handler (void)
+{
     TIMER_5_InterruptHandler();
 }
 
@@ -131,40 +128,41 @@ void TIMER_7_Handler(void) {
     TIMER_7_InterruptHandler();
 }
 
-void ADC_DATA0_Handler(void) {
-    ADC_DATA0_InterruptHandler();
+void ADC_DATA0_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(0)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(0), 0);
     }
+    ADC_DATA0_InterruptHandler();
 }
 
-void ADC_DATA1_Handler(void) {
-    ADC_DATA1_InterruptHandler();
+void ADC_DATA1_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(1)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(1), 1);
     }
+    ADC_DATA1_InterruptHandler();
 }
 
-void ADC_DATA2_Handler(void) {
-    ADC_DATA2_InterruptHandler();
+void ADC_DATA2_Handler(void) {   
     if (ADCHS_ChannelResultIsReady(2)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(2), 2);
     }
+    ADC_DATA2_InterruptHandler();
 }
 
-void ADC_DATA3_Handler(void) {
-    ADC_DATA3_InterruptHandler();
+void ADC_DATA3_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(3)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(3), 3);
     }
+    ADC_DATA3_InterruptHandler();
 }
 
-void ADC_DATA4_Handler(void) {
-    ADC_DATA4_InterruptHandler();
+void ADC_DATA4_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(4)) {
+        //ADCHS_ChannelResultGet(4);
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4), 4);
         DIO_TIMING_TEST_TOGGLE_STATE();
     }
+    ADC_DATA4_InterruptHandler();
 
 }
 
@@ -212,9 +210,9 @@ void I2C5_MASTER_Handler(void) {
     I2C5_MASTER_InterruptHandler();
 }
 
-void ADC_EOS_Handler(void) {
-    ADC_EOS_InterruptHandler();
+void ADC_EOS_Handler(void) {    
     ADC_EOSInterruptCB();
+    ADC_EOS_InterruptHandler();
 }
 
 
