@@ -56,20 +56,20 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
  ../src/third_party/rtos/FreeRTOS/Source/include/semphr.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
- ../src/config/default/system/time/sys_time.h \
  ../src/config/default/peripheral/nvm/plib_nvm.h \
+ ../src/config/default/system/time/sys_time.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp3.h \
  ../src/config/default/driver/i2c/drv_i2c.h \
  ../src/config/default/driver/i2c/drv_i2c_definitions.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/peripheral/tmr/plib_tmr6.h \
  ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/peripheral/adchs/plib_adchs.h \
  ../src/config/default/peripheral/adchs/plib_adchs_common.h \
  ../src/config/default/peripheral/tmr/plib_tmr4.h \
@@ -112,8 +112,6 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_TxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -124,6 +122,8 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
  ../src/config/default/system/fs/fat_fs/file_system/ffconf.h \
  ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/app_freertos.h
 
 ../src/HAL/NVM/nvm.h:
@@ -244,9 +244,9 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
 
 ../src/third_party/rtos/FreeRTOS/Source/include/task.h:
 
-../src/config/default/system/time/sys_time.h:
-
 ../src/config/default/peripheral/nvm/plib_nvm.h:
+
+../src/config/default/system/time/sys_time.h:
 
 ../src/config/default/peripheral/ocmp/plib_ocmp3.h:
 
@@ -257,8 +257,6 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
 ../src/config/default/driver/driver.h:
 
 ../src/config/default/driver/i2c/src/drv_i2c_local.h:
-
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/peripheral/tmr/plib_tmr6.h:
 
@@ -273,6 +271,8 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
 ../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/usb/usb_cdc.h:
+
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/peripheral/adchs/plib_adchs.h:
 
@@ -358,10 +358,6 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
 
 ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h:
 
-../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
-
-../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
-
 ../src/config/default/system/fs/sys_fs.h:
 
 ../src/config/default/system/fs/sys_fs_media_manager.h:
@@ -381,5 +377,9 @@ build/default/debug/_ext/1127402223/nvm.o: ../src/HAL/NVM/nvm.c \
 ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h:
 
 ../src/config/default/system/fs/fat_fs/file_system/ff.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
 
 ../src/app_freertos.h:

@@ -15299,6 +15299,28 @@
 </value>
       </entry>
       <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="core" name="EVIC_192_PRIORITY"/>
+         <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;core&gt;
+  &lt;core dnOrder=&quot;0&quot; id=&quot;EVIC_192_PRIORITY&quot;&gt;
+    &lt;Values dnOrder=&quot;0&quot;&gt;
+      &lt;User dnOrder=&quot;0&quot; value=&quot;3&quot;/&gt;
+    &lt;/Values&gt;
+  &lt;/core&gt;
+&lt;/core&gt;
+</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="core" name="EVIC_192_PRIVALUE"/>
+         <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;core&gt;
+  &lt;core dnOrder=&quot;0&quot; id=&quot;EVIC_192_PRIVALUE&quot;&gt;
+    &lt;Values dnOrder=&quot;0&quot;&gt;
+      &lt;Dynamic dnOrder=&quot;0&quot; id=&quot;core&quot; value=&quot;12&quot;/&gt;
+    &lt;/Values&gt;
+  &lt;/core&gt;
+&lt;/core&gt;
+</value>
+      </entry>
+      <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="core" name="EVIC_19_ENABLE"/>
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;core&gt;
   &lt;core dnOrder=&quot;0&quot; id=&quot;EVIC_19_ENABLE&quot;&gt;
@@ -27948,7 +27970,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\definitions.h</file>
-         <hash>f5449435f455996519fcd0250f04d5733c429f94adaf2594ac606581914f3f73</hash>
+         <hash>5353ed4760ffbb53823194a907bf1a874d9e917502d9116af9ea68c3a7bacb52</hash>
       </entry>
       <entry>
          <file>..\src\config\default\device.h</file>
@@ -28480,7 +28502,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\initialization.c</file>
-         <hash>a7acc304a00c910ec162c4417cc75b0d8013b9d75cf1805bbf446d837abc6340</hash>
+         <hash>05b40c2dc888190d8085c654f5283ecec3708e62dde0146a9129eb8e320c6d56</hash>
       </entry>
       <entry>
          <file>..\src\config\default\interrupts.c</file>
@@ -28572,7 +28594,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\peripheral\evic\plib_evic.c</file>
-         <hash>a06e813811e4eb042127dad109959d0d94e161608d76c59d1ed8b15d8bf0964e</hash>
+         <hash>b7cc18bd42295161b4a0b8c63687ee41d08b4f86ce288010d52ffc22a37b3b6d</hash>
       </entry>
       <entry>
          <file>..\src\config\default\peripheral\evic\plib_evic.h</file>

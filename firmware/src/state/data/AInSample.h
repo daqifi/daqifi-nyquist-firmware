@@ -54,7 +54,7 @@ extern "C" {
     
     // Define a storage class for analog input channels
     //#define MAX_AIN_CHANNEL    48
-    #define MAX_AIN_SAMPLE_COUNT 255
+    #define MAX_AIN_SAMPLE_COUNT 500
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
     
     /**

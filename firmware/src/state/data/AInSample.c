@@ -52,7 +52,10 @@ bool AInSampleList_PushBack(AInSampleList* list, const AInSample* data){
                     analogInputsQueue, 
                     data, 
                     (TickType_t)0 );
-    return ( queueResult == pdTRUE ) ? true : false; 
+    if( queueResult == pdTRUE )
+        return true;
+    else 
+        return false;
 }
 bool AInSampleList_PushBackFromIsr(AInSampleList* list, const AInSample* data){
     BaseType_t queueResult;

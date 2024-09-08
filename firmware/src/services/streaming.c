@@ -285,7 +285,7 @@ void TimestampTimer_Init(void) {
     if (gStreamingInterruptHandle == NULL) {
         xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
                 "Stream Interrupt",
-                2048, NULL, 4, &gStreamingInterruptHandle);
+                2048, NULL, 8, &gStreamingInterruptHandle);
     }
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
     TimerApi_Initialize(gpStreamingConfig->TSTimerIndex);
