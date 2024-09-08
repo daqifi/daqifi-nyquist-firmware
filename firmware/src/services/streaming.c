@@ -18,6 +18,8 @@
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
 
+//#define TEST_STREAMING
+
 #define UNUSED(x) (void)(x)
 #ifndef min
 #define min(x,y) x <= y ? x : y
@@ -40,12 +42,15 @@ static tStreamingConfig* gpStreamingConfig;
 //! Indicate if handler is used 
 static bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
-
+#if  defined(TEST_STREAMING)
+static void Streaming_StuffDummyData(void);
+#endif
 void _Streaming_Deferred_Interrupt_Task(void) {
 
-    uint8_t i = 0;
+    
     TickType_t xBlockTime = portMAX_DELAY;
-
+#if  !defined(TEST_STREAMING)
+    uint8_t i = 0;
     tBoardData * pBoardData = BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
@@ -59,8 +64,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_MODULES);
     uint64_t ChannelScanFreqDivCount = 0;
+#endif
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
+#if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                 for (i = 0; i < pRunTimeAInModules->Size; ++i) {
@@ -69,18 +76,23 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
                 for (i = 0; i < pRunTimeAInModules->Size; ++i) {
                     ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
+                    DIO_TIMING_TEST_TOGGLE_STATE();
                 }
-                
+
                 if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
-                    for (i = 0; i < pRunTimeAInModules->Size; ++i) {                        
+                    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
                         ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_SHARED);
                     }
                     ChannelScanFreqDivCount = 0;
                 }
                 ChannelScanFreqDivCount++;
-            }            
+            }
             DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
         }
+#else
+       Streaming_StuffDummyData(); 
+       DIO_TIMING_TEST_TOGGLE_STATE();
+#endif
     }
 }
 
@@ -112,6 +124,7 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     gInTimerHandler = true;
     Streaming_Defer_Interrupt();
     gInTimerHandler = false;
+
 }
 
 /*!
@@ -119,9 +132,10 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
+        TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
-        TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
+        TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);        
         TimerApi_Start(gpStreamingConfig->TimerIndex);
         gpRuntimeConfigStream->Running = 1;
     }
@@ -274,6 +288,7 @@ void TimestampTimer_Init(void) {
                 2048, NULL, 4, &gStreamingInterruptHandle);
     }
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
+    TimerApi_Initialize(gpStreamingConfig->TSTimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TSTimerIndex);
     TimerApi_CallbackRegister(gpStreamingConfig->TSTimerIndex, TSTimerCB, 0);
     TimerApi_PeriodSet(gpStreamingConfig->TSTimerIndex, gpRuntimeConfigStream->TSClockPeriod);
@@ -281,25 +296,43 @@ void TimestampTimer_Init(void) {
     TimerApi_Start(gpStreamingConfig->TSTimerIndex);
 
 }
+#if  defined(TEST_STREAMING)
+static void Streaming_StuffDummyData(void) {
+    // Stuff stream with some data
+    // Copy dummy samples to the data list
+    uint32_t i = 0;
+    int k = 0;
+    static AInSample data;
 
-//static void Streaming_StuffDummyData(void) {
-// Stuff stream with some data
-// Copy dummy samples to the data list
-//    uint32_t i = 0;
-//    static AInSample data;
-//
-//    AInSampleList * pAInSamples = BoardData_Get(                            
-//                            BOARDDATA_AIN_SAMPLES,                          
-//                            0);
-//
-//    data.Value = 'O';
-//    data.Timestamp++;
-//    // Skip zero so as not to allow multiple duplicate timestamps 
-//    // (uninitialized channels will have 0 timestamp)
-//    if (data.Timestamp == 0) data.Timestamp++;
-//
-//    for (i = 0; i < 16; ++i) {
-//        data.Channel = i;
-//        AInSampleList_PushBack(pAInSamples, (const AInSample *) &data);
-//    }
-//}
+    AInSampleList * pAInSamples = BoardData_Get(
+            BOARDDATA_AIN_SAMPLES,
+            0);
+    StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_AIN_MODULES);
+
+    AInRuntimeArray* pAiRunTimeChannelConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    
+    AInArray * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_AIN_CHANNELS,
+            0);
+
+    if (!pRunTimeStreamConf->IsEnabled) {
+        return;
+    }
+    data.Timestamp++;
+    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+        for (k = 0; k < pAiRunTimeChannelConfig->Size; k++) {
+            if (pAiRunTimeChannelConfig->Data[k].IsEnabled == 1
+                    && pBoardConfig->Data[k].Config.MC12b.IsPublic==1) {                
+                data.Value = k;
+                data.Channel=k;
+                AInSampleList_PushBack(pAInSamples, (const AInSample *) &data);
+            }
+        }
+        //ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
+    }
+}
+#endif

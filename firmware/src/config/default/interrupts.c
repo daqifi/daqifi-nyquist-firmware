@@ -118,6 +118,7 @@ void TIMER_3_Handler(void) {
 
 void TIMER_5_Handler (void)
 {
+    
     TIMER_5_InterruptHandler();
 }
 
@@ -160,7 +161,8 @@ void ADC_DATA4_Handler(void) {
     if (ADCHS_ChannelResultIsReady(4)) {
         //ADCHS_ChannelResultGet(4);
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4), 4);
-        DIO_TIMING_TEST_TOGGLE_STATE();
+        
+        //DIO_TIMING_TEST_WRITE_STATE(0);
     }
     ADC_DATA4_InterruptHandler();
 

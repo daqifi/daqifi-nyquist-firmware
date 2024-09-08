@@ -225,15 +225,19 @@ void TimerApi_InterruptDisable(uint8_t index) {
     switch (index) {
         case 2:
             TMR2_InterruptDisable();
+            //IFS0CLR = _IFS0_T2IF_MASK;
             break;
         case 3:
             TMR3_InterruptDisable();
+            //IFS0CLR = _IFS0_T3IF_MASK;
             break;
         case 4:
             TMR4_InterruptDisable();
+            //IFS0CLR = _IFS0_T5IF_MASK;
             break;
         case 6:
             TMR6_InterruptDisable();
+            //IFS1CLR=_IFS1_T7IF_MASK;
             break;
         default:
             break;
