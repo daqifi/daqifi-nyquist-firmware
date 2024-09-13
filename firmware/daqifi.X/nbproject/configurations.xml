@@ -378,6 +378,7 @@
           <itemPath>../src/services/SCPI/SCPIDIO.h</itemPath>
           <itemPath>../src/services/SCPI/SCPIInterface.h</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.h</itemPath>
+          <itemPath>../src/services/SCPI/SCPIStorageSD.h</itemPath>
         </logicalFolder>
         <logicalFolder name="SDcard" displayName="SDcard" projectFiles="true">
           <itemPath>../src/services/SDcard/SDCard.h</itemPath>
@@ -884,6 +885,7 @@
           <itemPath>../src/services/SCPI/SCPIDIO.c</itemPath>
           <itemPath>../src/services/SCPI/SCPIInterface.c</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.c</itemPath>
+          <itemPath>../src/services/SCPI/SCPIStorageSD.c</itemPath>
         </logicalFolder>
         <logicalFolder name="SDcard" displayName="SDcard" projectFiles="true">
           <itemPath>../src/services/SDcard/SDCard.c</itemPath>

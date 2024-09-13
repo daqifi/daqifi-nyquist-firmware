@@ -191,6 +191,7 @@ build/default/debug/_ext/68089601/NanoPB_Encoder.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/state/runtime/../../services/SDcard/SDCard.h \
  ../src/HAL/TimerApi/TimerApi.h ../src/state/board/BoardConfig.h \
  ../src/state/board/StreamingConfig.h
 
@@ -599,6 +600,8 @@ build/default/debug/_ext/68089601/NanoPB_Encoder.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/state/runtime/../../services/SDcard/SDCard.h:
 
 ../src/HAL/TimerApi/TimerApi.h:
 

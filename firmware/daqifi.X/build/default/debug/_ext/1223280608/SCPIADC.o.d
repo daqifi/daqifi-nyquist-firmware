@@ -188,8 +188,9 @@ build/default/debug/_ext/1223280608/SCPIADC.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/HAL/ADC.h ../src/HAL/ADC/MC12bADC.h \
- ../src/services/SCPI/../daqifi_settings.h ../src/HAL/TimerApi/TimerApi.h
+ ../src/state/runtime/../../services/SDcard/SDCard.h ../src/HAL/ADC.h \
+ ../src/HAL/ADC/MC12bADC.h ../src/services/SCPI/../daqifi_settings.h \
+ ../src/HAL/TimerApi/TimerApi.h
 
 ../src/services/SCPI/SCPIADC.h:
 
@@ -592,6 +593,8 @@ build/default/debug/_ext/1223280608/SCPIADC.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/state/runtime/../../services/SDcard/SDCard.h:
 
 ../src/HAL/ADC.h:
 

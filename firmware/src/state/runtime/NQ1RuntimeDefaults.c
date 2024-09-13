@@ -1,5 +1,6 @@
 #include "BoardRuntimeConfig.h"
 #include "HAL/BQ24297/BQ24297.h"
+#include "services/SDcard/SDCard.h"
 
 // The default board configuration
 // TODO: It would be handly if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
@@ -93,5 +94,12 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
 //        .type = DaqifiSettings_Wifi
 //    },
     //.usbSettings = {0},
-    //.serverData = {0}
+    //.serverData = {0},
+    .sdCardConfig={
+        .enable=false,
+        .directory="Daqifi",
+        .file="default.bin",
+        .mode=SD_CARD_MODE_NONE,
+    },    
+    
 };

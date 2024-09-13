@@ -180,7 +180,8 @@ build/default/debug/_ext/1260820504/commTest.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
- ../src/config/default/driver/winc/include/wdrv_winc_nvm.h
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/state/runtime/../../services/SDcard/SDCard.h
 
 ../src/services/commTest.h:
 
@@ -561,3 +562,5 @@ build/default/debug/_ext/1260820504/commTest.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/state/runtime/../../services/SDcard/SDCard.h:

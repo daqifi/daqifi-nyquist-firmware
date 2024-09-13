@@ -27,8 +27,9 @@
 #include "services/daqifi_settings.h"
 #include "Util/CircularBuffer.h"
 
-#define SD_CARD_CONF_RBUFFER_SIZE 500
-#define SD_CARD_CONF_WBUFFER_SIZE 1024
+#define SD_CARD_CONF_RBUFFER_SIZE 512
+#define SD_CARD_CONF_WBUFFER_SIZE 1200
+#define SD_CARD_CONF_CIRCULAR_BUFFER_SIZE (SD_CARD_CONF_WBUFFER_SIZE*4)
 #define SD_CARD_CONF_DIR_NAME_LEN_MAX 10
 #define SD_CARD_CONF_FILE_NAME_LEN_MAX 10
 
@@ -42,29 +43,30 @@ extern "C" {
 #endif
 
     typedef enum {
-        SD_CARD_STATE_INIT,
-        SD_CARD_STATE_MOUNT_DISK,
-        SD_CARD_STATE_UNMOUNT_DISK,
-        SD_CARD_STATE_SET_CURRENT_DRIVE,
-        SD_CARD_STATE_CREATE_DIRECTORY,
-        SD_CARD_STATE_OPEN_FILE,
-        SD_CARD_STATE_WRITE_TO_FILE,
-        SD_CARD_STATE_READ_FROM_FILE,
-        SD_CARD_STATE_DEINIT,
-        SD_CARD_STATE_IDLE,
-        SD_CARD_STATE_ERROR,
-    }SDCard_state_t;
+        SD_CARD_PROCESS_STATE_INIT,
+        SD_CARD_PROCESS_STATE_MOUNT_DISK,
+        SD_CARD_PROCESS_STATE_UNMOUNT_DISK,
+        SD_CARD_PROCESS_STATE_CURRENT_DRIVE,
+        SD_CARD_PROCESS_STATE_CREATE_DIRECTORY,
+        SD_CARD_PROCESS_STATE_OPEN_FILE,
+        SD_CARD_PROCESS_STATE_WRITE_TO_FILE,
+        SD_CARD_PROCESS_STATE_READ_FROM_FILE,
+        SD_CARD_PROCESS_STATE_DEINIT,
+        SD_CARD_PROCESS_STATE_IDLE,
+        SD_CARD_PROCESS_STATE_ERROR,
+    }SDCard_processState_t;
     typedef enum{
         SD_CARD_MODE_NONE,
         SD_CARD_MODE_READ,
         SD_CARD_MODE_WRITE,                
     }SDCard_mode_t;
+    
 
     /**
      * Data for a particular TCP client
      */
     typedef struct {
-        SDCard_state_t currentProcessState;
+        SDCard_processState_t currentProcessState;
         /** Client read buffer */
         uint8_t readBuffer[SD_CARD_CONF_RBUFFER_SIZE];
 
@@ -91,17 +93,21 @@ extern "C" {
         uint64_t lastFlushMillis;
         bool discMounted;
     } SDCard_data_t;
+    
     typedef struct{
         bool enable;
         SDCard_mode_t mode;
         char directory[SD_CARD_CONF_DIR_NAME_LEN_MAX+1];
         char file[SD_CARD_CONF_FILE_NAME_LEN_MAX+1];
-    }SDCard_Settings_t;
-    bool SDCard_Init(SDCard_Settings_t *pSettings);
+    }SDCard_RuntimeConfig_t;
+    
+    
+    bool SDCard_Init(SDCard_RuntimeConfig_t *pSettings);
     bool SDCard_Deinit();
-    bool SDCard_UpdateSettings(SDCard_Settings_t *pSettings);
+    bool SDCard_UpdateSettings(SDCard_RuntimeConfig_t *pSettings);
     void SDCard_ProcessState();
     size_t SDCard_WriteToBuffer(const char* pData, size_t len);
+    size_t SDCard_WriteBuffFreeSize();
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

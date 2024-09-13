@@ -23,6 +23,7 @@
 #include "SCPIADC.h"
 #include "SCPIDIO.h"
 #include "SCPILAN.h"
+#include "SCPIStorageSD.h"
 #include "../streaming.h"
 #include "../commTest.h"
 #include "../../HAL/TimerApi/TimerApi.h"
@@ -828,6 +829,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:FORmat?", .callback = SCPI_GetStreamFormat,},
     {.pattern = "SYSTem:STReam:Stats?", .callback = SCPI_GetStreamStats,},
     {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
+    //
+    {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
     //    // FreeRTOS
     //    {.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

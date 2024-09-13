@@ -21,7 +21,7 @@
 
 
 SDCard_data_t gSdCardData;
-SDCard_Settings_t *gpSdCardSettings;
+SDCard_RuntimeConfig_t *gpSdCardSettings;
 
 static int SDCardWrite() {
     int writeLen = -1;
@@ -44,18 +44,18 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint16_t len) {
     return SDCardWrite();
 }
 
-bool SDCard_Init(SDCard_Settings_t *pSettings) {
+bool SDCard_Init(SDCard_RuntimeConfig_t *pSettings) {
     static bool isInitDone = false;
     if (!isInitDone) {
         CircularBuf_Init(&gSdCardData.wCirbuf,
                 CircularBufferToSDWrite,
-                (SD_CARD_CONF_WBUFFER_SIZE * 4));
+                SD_CARD_CONF_CIRCULAR_BUFFER_SIZE);
         gSdCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSdCardData.wMutex);
         isInitDone = true;
         gpSdCardSettings = pSettings;
         gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-        gSdCardData.currentProcessState = SD_CARD_STATE_INIT;
+        gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_INIT;
     }
     return true;
 }
@@ -64,101 +64,105 @@ void SDCard_ProcessState() {
     /* Check the application's current state. */
 
     switch (gSdCardData.currentProcessState) {
-        case SD_CARD_STATE_INIT:
+        case SD_CARD_PROCESS_STATE_INIT:
             if (gpSdCardSettings->enable &&
                     strlen(gpSdCardSettings->directory) > 0 &&
                     strlen(gpSdCardSettings->directory) <= SD_CARD_CONF_DIR_NAME_LEN_MAX &&
                     strlen(gpSdCardSettings->file) > 0 &&
                     strlen(gpSdCardSettings->directory) <= SD_CARD_CONF_FILE_NAME_LEN_MAX) {
-                gSdCardData.currentProcessState = SD_CARD_STATE_MOUNT_DISK;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_MOUNT_DISK;
             } else if (gpSdCardSettings->enable) {
                 LOG_E("[%s:%d]Invalid SD Card Directory or file name", __FILE__, __LINE__);
             }
             break;
-        case SD_CARD_STATE_MOUNT_DISK:
+        case SD_CARD_PROCESS_STATE_MOUNT_DISK:
             gSdCardData.sdCardWritePending = 0;
             gSdCardData.writeBufferLength = 0;
             gSdCardData.sdCardWriteBufferOffset = 0;
             if (SYS_FS_Mount(SDCARD_DEV_NAME, SDCARD_MOUNT_NAME, FAT, 0, NULL) != 0) {
                 /* The disk could not be mounted. Try
                  * mounting again until success. */
-                gSdCardData.currentProcessState = SD_CARD_STATE_MOUNT_DISK;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_MOUNT_DISK;
             } else {
                 /* Mount was successful. Unmount the disk, for testing. */
-                gSdCardData.currentProcessState = SD_CARD_STATE_SET_CURRENT_DRIVE;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_CURRENT_DRIVE;
+                gSdCardData.discMounted=true;
             }
             break;
 
-        case SD_CARD_STATE_UNMOUNT_DISK:
+        case SD_CARD_PROCESS_STATE_UNMOUNT_DISK:
             if (gSdCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                 SYS_FS_FileClose(gSdCardData.fileHandle);
                 gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
             }
-            if (SYS_FS_Unmount(SDCARD_MOUNT_NAME) != 0) {
+            if(SYS_FS_Unmount(SDCARD_MOUNT_NAME) == 0){
+                gSdCardData.discMounted=false;
+            }
+            if (gSdCardData.discMounted==true) {
                 /* The disk could not be un mounted. Try
                  * un mounting again untill success. */
-                gSdCardData.currentProcessState = SD_CARD_STATE_UNMOUNT_DISK;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_UNMOUNT_DISK;
             } else {
                 if (!gpSdCardSettings->enable) {
-                    gSdCardData.currentProcessState = SD_CARD_STATE_INIT;
+                    gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_INIT;
                 } else {
-                    gSdCardData.currentProcessState = SD_CARD_STATE_MOUNT_DISK;
+                    gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_MOUNT_DISK;
                 }
             }
             break;
 
-        case SD_CARD_STATE_SET_CURRENT_DRIVE:
+        case SD_CARD_PROCESS_STATE_CURRENT_DRIVE:
             if (SYS_FS_CurrentDriveSet(SDCARD_MOUNT_NAME) == SYS_FS_RES_FAILURE) {
                 /* Error while setting current drive */
                 LOG_E("[%s:%d]Error Setting SD Card drive", __FILE__, __LINE__);
-                gSdCardData.currentProcessState = SD_CARD_STATE_ERROR;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_ERROR;
             } else {
                 /* Open a file for reading. */
-                gSdCardData.currentProcessState = SD_CARD_STATE_CREATE_DIRECTORY;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_CREATE_DIRECTORY;
             }
             break;
 
-        case SD_CARD_STATE_CREATE_DIRECTORY:
+        case SD_CARD_PROCESS_STATE_CREATE_DIRECTORY:
             if (SYS_FS_DirectoryMake(gpSdCardSettings->directory) == SYS_FS_RES_FAILURE) {
                 if (SYS_FS_Error() == SYS_FS_ERROR_EXIST) {
-                    gSdCardData.currentProcessState = SD_CARD_STATE_OPEN_FILE;
+                    gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_OPEN_FILE;
                 } else {
-                    gSdCardData.currentProcessState = SD_CARD_STATE_ERROR;
+                    gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Invalid SD Card Directory name", __FILE__, __LINE__);
                 }
                 /* Error while creating a new drive */
             } else {
-                /* Open a second file for writing. */
-                gSdCardData.currentProcessState = SD_CARD_STATE_OPEN_FILE;
+                /* Open a file for writing. */
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_OPEN_FILE;
             }
             break;
 
-        case SD_CARD_STATE_OPEN_FILE:
+        case SD_CARD_PROCESS_STATE_OPEN_FILE:
             memset(gSdCardData.filePath, 0, sizeof (gSdCardData.filePath));
             snprintf(gSdCardData.filePath, SD_CARD_FILE_PATH_LEN_MAX, "%s/%s",
                     gpSdCardSettings->directory, gpSdCardSettings->file);
             if (gpSdCardSettings->mode == SD_CARD_MODE_WRITE) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_APPEND_PLUS));
-                gSdCardData.currentProcessState = SD_CARD_STATE_WRITE_TO_FILE;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_WRITE_TO_FILE;
                 gSdCardData.totalBytesFlushPending = 0;
                 gSdCardData.lastFlushMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
             } else if (gpSdCardSettings->mode == SD_CARD_MODE_READ) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
-                gSdCardData.currentProcessState = SD_CARD_STATE_READ_FROM_FILE;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_READ_FROM_FILE;
             } else if (gpSdCardSettings->mode == SD_CARD_MODE_NONE) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
-                gSdCardData.currentProcessState = SD_CARD_STATE_IDLE;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_IDLE;
             }
             if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                 /* Could not open the file. Error out*/
-                gSdCardData.currentProcessState = SD_CARD_STATE_ERROR;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_ERROR;
                 LOG_E("[%s:%d]Invalid SD Card file name", __FILE__, __LINE__);
             }
             break;
-        case SD_CARD_STATE_WRITE_TO_FILE:
+        case SD_CARD_PROCESS_STATE_WRITE_TO_FILE:
         {
             /* If read was success, try writing to the new file */
             int writeLen = -2;
@@ -180,7 +184,7 @@ void SDCard_ProcessState() {
                 gSdCardData.writeBufferLength -= writeLen;
                 gSdCardData.sdCardWriteBufferOffset = writeLen;
             } else if (writeLen == -1) {
-                gSdCardData.currentProcessState = SD_CARD_STATE_ERROR;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_ERROR;
                 LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
                 break;
             }
@@ -190,7 +194,7 @@ void SDCard_ProcessState() {
                     gSdCardData.totalBytesFlushPending > 2000)) {
                 if (gSdCardData.totalBytesFlushPending > 0) {
                     if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
-                        gSdCardData.currentProcessState = SD_CARD_STATE_ERROR;
+                        gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_ERROR;
                         LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
                     }
                     gSdCardData.totalBytesFlushPending = 0;
@@ -199,19 +203,19 @@ void SDCard_ProcessState() {
             }
         }
             break;
-        case SD_CARD_STATE_READ_FROM_FILE:
+        case SD_CARD_PROCESS_STATE_READ_FROM_FILE:
             break;
-        case SD_CARD_STATE_IDLE:
+        case SD_CARD_PROCESS_STATE_IDLE:
             /* The application comes here when the demo has completed
              * successfully. Glow LED1. */
             //LED_ON();
             break;
-        case SD_CARD_STATE_DEINIT:
-            gSdCardData.currentProcessState = SD_CARD_STATE_UNMOUNT_DISK;
+        case SD_CARD_PROCESS_STATE_DEINIT:
+            gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_UNMOUNT_DISK;
             break;
-        case SD_CARD_STATE_ERROR:
+        case SD_CARD_PROCESS_STATE_ERROR:
             /* The application comes here when the demo has failed. */
-            gSdCardData.currentProcessState = SD_CARD_STATE_UNMOUNT_DISK;
+            gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_UNMOUNT_DISK;
             break;
 
         default:
@@ -222,6 +226,9 @@ void SDCard_ProcessState() {
 size_t SDCard_WriteToBuffer(const char* pData, size_t len) {
     size_t bytesAdded = 0;
     if (len == 0)return 0;
+    if(gpSdCardSettings->enable!=1 || gpSdCardSettings->mode!=SD_CARD_MODE_WRITE){
+        return 0;
+    }
     while (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
         vTaskDelay(10);
     }
@@ -237,15 +244,18 @@ size_t SDCard_WriteToBuffer(const char* pData, size_t len) {
 }
 
 bool SDCard_Deinit() {
-    gSdCardData.currentProcessState = SD_CARD_STATE_DEINIT;
+    gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_DEINIT;
     gpSdCardSettings->enable = 0;
     return true;
 }
 
-bool SDCard_UpdateSettings(SDCard_Settings_t *pSettings) {
+bool SDCard_UpdateSettings(SDCard_RuntimeConfig_t *pSettings) {
     if (pSettings != NULL && gpSdCardSettings != NULL) {
-        memcpy(gpSdCardSettings, pSettings, sizeof (SDCard_Settings_t));
+        memcpy(gpSdCardSettings, pSettings, sizeof (SDCard_RuntimeConfig_t));
     }
-    gSdCardData.currentProcessState = SD_CARD_STATE_DEINIT;
+    gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_DEINIT;
     return true;
+}
+size_t SDCard_WriteBuffFreeSize(){
+    return CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
 }

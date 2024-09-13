@@ -96,8 +96,8 @@ static bool gSystemInitComplt = false;
 
 static void SystemInit();
 static void USBDeviceTask(void* p_arg);
-static void WifiTask(void* p_arg);
-//static void SdCardTask(void* p_arg);
+//static void WifiTask(void* p_arg);
+static void SdCardTask(void* p_arg);
 
 void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
@@ -120,33 +120,28 @@ static void USBDeviceTask(void* p_arg) {
     }
 }
 
-static void WifiTask(void* p_arg) {
-    int count = 0;
-    WifiApi_Init(&gpBoardData->wifiSettings);
-    char buff[100];
-    while (1) {
-        WifiApi_ProcessState();
-        memset(buff, 0, 100);
-        sprintf(buff, "\r\nCount%d", count++);
-        SDCard_WriteToBuffer(buff, strlen(buff));
-        vTaskDelay(5);
-    }
-}
-
-//static void SdCardTask(void* p_arg) {
-//    static SDCard_Settings_t sdSettings;
-//    sdSettings.enable = 1;
-//    sdSettings.mode = SD_CARD_MODE_WRITE;
-//    memset(sdSettings.directory, 0, sizeof (sdSettings.directory));
-//    strncpy(sdSettings.directory, "MyTest1", strlen("MyTest1") + 1);
-//    memset(sdSettings.file, 0, sizeof (sdSettings.file));
-//    strncpy(sdSettings.file, "file2.txt", strlen("file2.txt") + 1);
-//    SDCard_Init(&sdSettings);
+//static void WifiTask(void* p_arg) {
+//    int count = 0;
+//    WifiApi_Init(&gpBoardData->wifiSettings);
+//    char buff[100];
 //    while (1) {
-//        SDCard_ProcessState();
+//        WifiApi_ProcessState();
+//        memset(buff, 0, 100);
+//        sprintf(buff, "\r\nCount%d", count++);
+//        SDCard_WriteToBuffer(buff, strlen(buff));
 //        vTaskDelay(5);
 //    }
 //}
+
+static void SdCardTask(void* p_arg) {
+    static SDCard_RuntimeConfig_t* pSdRuntimSettings;
+    pSdRuntimSettings=(SDCard_RuntimeConfig_t*)BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    SDCard_Init(pSdRuntimSettings);
+    while (1) {
+        SDCard_ProcessState();
+        vTaskDelay(5);
+    }
+}
 
 void SystemInit() {
     DaqifiSettings tmpTopLevelSettings;
@@ -270,8 +265,18 @@ static void TasksCreate() {
         if (errStatus != pdTRUE) {
             while (1);
         }
-        errStatus = xTaskCreate((TaskFunction_t) WifiTask,
-                "WifiTask",
+//        errStatus = xTaskCreate((TaskFunction_t) WifiTask,
+//                "WifiTask",
+//                2048,
+//                NULL,
+//                2,
+//                NULL);
+        /*Don't proceed if Task was not created...*/
+        if (errStatus != pdTRUE) {
+            while (1);
+        }
+        errStatus = xTaskCreate((TaskFunction_t) SdCardTask,
+                "SdCardTask",
                 2048,
                 NULL,
                 2,
@@ -280,97 +285,13 @@ static void TasksCreate() {
         if (errStatus != pdTRUE) {
             while (1);
         }
-//        errStatus = xTaskCreate((TaskFunction_t) SdCardTask,
-//                "SdCardTask",
-//                2048,
-//                NULL,
-//                2,
-//                NULL);
-//        /*Don't proceed if Task was not created...*/
-//        if (errStatus != pdTRUE) {
-//            while (1);
-//        }
 
         /* The APP_Tasks() function need to exceute only once. Block it now */
         blockAppTask = true;
     }
 }
 
-void AdcTest() {
-    static int state = 0;
 
-    switch (state) {
-        case 0:
-            ADCHS_ModulesEnable(ADCHS_MODULE0_MASK);
-            ADCHS_ModulesEnable(ADCHS_MODULE1_MASK);
-            ADCHS_ModulesEnable(ADCHS_MODULE2_MASK);
-            ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
-            ADCHS_ModulesEnable(ADCHS_MODULE4_MASK);
-            ADCHS_ModulesEnable(ADCHS_MODULE7_MASK);
-            state++;
-            break;
-        case 1:
-            //ADCHS_ChannelResultInterruptDisable(ADCHS_CH7);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH11);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH24);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH25);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH26);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH4);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH39);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH38);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH27);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH0);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH5);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH1);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH6);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH2);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH7);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH3);
-            //            ADCHS_ChannelConversionStart(ADCHS_CH8);
-            ADCHS_GlobalEdgeConversionStart();
-            state++;
-            break;
-        case 2:
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH11))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH24))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH25))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH26))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH4))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH39))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH38))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH27))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH0))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH5))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH1))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH6))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH2))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH7))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH3))
-                break;
-            if (!ADCHS_ChannelResultIsReady(ADCHS_CH8))
-                break;
-            state++;
-            break;
-        case 3:
-            ADCHS_ChannelResultGet((ADCHS_CH11));
-            state = 1;
-            break;
-    }
-}
 
 void APP_FREERTOS_Tasks(void) {
     TasksCreate();
@@ -389,7 +310,81 @@ void APP_FREERTOS_Tasks(void) {
  End of File
  */
 
-
+//void AdcTest() {
+//    static int state = 0;
+//
+//    switch (state) {
+//        case 0:
+//            ADCHS_ModulesEnable(ADCHS_MODULE0_MASK);
+//            ADCHS_ModulesEnable(ADCHS_MODULE1_MASK);
+//            ADCHS_ModulesEnable(ADCHS_MODULE2_MASK);
+//            ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
+//            ADCHS_ModulesEnable(ADCHS_MODULE4_MASK);
+//            ADCHS_ModulesEnable(ADCHS_MODULE7_MASK);
+//            state++;
+//            break;
+//        case 1:
+//            //ADCHS_ChannelResultInterruptDisable(ADCHS_CH7);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH11);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH24);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH25);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH26);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH4);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH39);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH38);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH27);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH0);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH5);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH1);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH6);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH2);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH7);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH3);
+//            //            ADCHS_ChannelConversionStart(ADCHS_CH8);
+//            ADCHS_GlobalEdgeConversionStart();
+//            state++;
+//            break;
+//        case 2:
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH11))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH24))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH25))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH26))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH4))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH39))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH38))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH27))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH0))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH5))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH1))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH6))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH2))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH7))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH3))
+//                break;
+//            if (!ADCHS_ChannelResultIsReady(ADCHS_CH8))
+//                break;
+//            state++;
+//            break;
+//        case 3:
+//            ADCHS_ChannelResultGet((ADCHS_CH11));
+//            state = 1;
+//            break;
+//    }
+//}
 
 //void wifi_task(void* p_arg) {
 //

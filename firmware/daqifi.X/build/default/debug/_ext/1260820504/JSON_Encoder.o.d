@@ -189,6 +189,7 @@ build/default/debug/_ext/1260820504/JSON_Encoder.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/state/runtime/../../services/SDcard/SDCard.h \
  ../src/services/../HAL/ADC.h ../src/state/board/BoardConfig.h \
  ../src/state/board/StreamingConfig.h \
  ../src/services/../HAL/ADC/MC12bADC.h
@@ -592,6 +593,8 @@ build/default/debug/_ext/1260820504/JSON_Encoder.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/state/runtime/../../services/SDcard/SDCard.h:
 
 ../src/services/../HAL/ADC.h:
 

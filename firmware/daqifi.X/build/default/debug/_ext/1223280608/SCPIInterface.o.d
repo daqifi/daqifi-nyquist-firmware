@@ -188,10 +188,11 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/Util/Logger.h ../src/state/board/BoardConfig.h \
- ../src/state/board/StreamingConfig.h ../src/HAL/DIO.h \
- ../src/services/SCPI/SCPIADC.h ../src/services/SCPI/SCPIDIO.h \
- ../src/services/SCPI/SCPILAN.h ../src/services/SCPI/../streaming.h \
+ ../src/state/runtime/../../services/SDcard/SDCard.h ../src/Util/Logger.h \
+ ../src/state/board/BoardConfig.h ../src/state/board/StreamingConfig.h \
+ ../src/HAL/DIO.h ../src/services/SCPI/SCPIADC.h \
+ ../src/services/SCPI/SCPIDIO.h ../src/services/SCPI/SCPILAN.h \
+ ../src/services/SCPI/SCPIStorageSD.h ../src/services/SCPI/../streaming.h \
  ../src/services/SCPI/../../state/board/BoardConfig.h \
  ../src/services/SCPI/../../state/data/BoardData.h \
  ../src/services/SCPI/../commTest.h \
@@ -595,6 +596,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
+../src/state/runtime/../../services/SDcard/SDCard.h:
+
 ../src/Util/Logger.h:
 
 ../src/state/board/BoardConfig.h:
@@ -608,6 +611,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 ../src/services/SCPI/SCPIDIO.h:
 
 ../src/services/SCPI/SCPILAN.h:
+
+../src/services/SCPI/SCPIStorageSD.h:
 
 ../src/services/SCPI/../streaming.h:
 

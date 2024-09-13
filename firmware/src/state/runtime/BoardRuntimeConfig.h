@@ -13,6 +13,7 @@
 //#include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
 #include "services/Wifi/WifiApi.h"
+#include "../../services/SDcard/SDCard.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,6 +43,8 @@ enum eBoardRunTimeParameter{
     BOARDRUNTIME_WIFI_SETTINGS, 
     //! Desired USB settings in runtime 
     BOARDRUNTIME_USB_SETTINGS, 
+    //! Desired SD Card Settings 
+    BOARDRUNTIME_SD_CARD_SETTINGS,
     //! Number of elements
     BOARDRUNTIMECONFIG_NUM_OF_ELEMENTS
 };
@@ -76,6 +79,8 @@ typedef struct sBoardRuntimeConfig
     WifiSettings wifiSettings;
     //!The desired USB settings
     UsbCdcData_t usbSettings;
+    
+    SDCard_RuntimeConfig_t sdCardConfig;
 } tBoardRuntimeConfig;
 
 /*!

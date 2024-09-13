@@ -188,7 +188,8 @@ build/default/debug/_ext/1223280608/SCPIDIO.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/HAL/DIO.h ../src/services/SCPI/../../HAL/TimerApi/TimerApi.h
+ ../src/state/runtime/../../services/SDcard/SDCard.h ../src/HAL/DIO.h \
+ ../src/services/SCPI/../../HAL/TimerApi/TimerApi.h
 
 ../src/services/SCPI/SCPIDIO.h:
 
@@ -591,6 +592,8 @@ build/default/debug/_ext/1223280608/SCPIDIO.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/state/runtime/../../services/SDcard/SDCard.h:
 
 ../src/HAL/DIO.h:
 

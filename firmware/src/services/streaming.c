@@ -17,19 +17,20 @@
 #include "UsbCdc/UsbCdc.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
+#include "SDcard/SDCard.h"
 
 //#define TEST_STREAMING
 
 #define UNUSED(x) (void)(x)
 #ifndef min
-#define min(x,y) x <= y ? x : y
+#define min(x,y) ((x) <= (y) ? (x) : (y))
 #endif // min
 
 #ifndef max
-#define max(x,y) x >= y ? x : y
-#endif // min
+#define max(x,y) ((x) >= (y) ? (x) : (y))
+#endif // max
 
-#define BUFFER_SIZE  (USBCDC_WBUFFER_SIZE <= WIFI_WBUFFER_SIZE ? USBCDC_WBUFFER_SIZE :WIFI_WBUFFER_SIZE)  //2048
+#define BUFFER_SIZE min(min(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE), SD_CARD_CONF_WBUFFER_SIZE)  //2048
 uint8_t buffer[BUFFER_SIZE];
 
 //! Pointer to the board configuration data structure to be set in 
@@ -45,9 +46,10 @@ static TaskHandle_t gStreamingInterruptHandle;
 #if  defined(TEST_STREAMING)
 static void Streaming_StuffDummyData(void);
 #endif
+
 void _Streaming_Deferred_Interrupt_Task(void) {
 
-    
+
     TickType_t xBlockTime = portMAX_DELAY;
 #if  !defined(TEST_STREAMING)
     uint8_t i = 0;
@@ -90,8 +92,8 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
         }
 #else
-       Streaming_StuffDummyData(); 
-       DIO_TIMING_TEST_TOGGLE_STATE();
+        Streaming_StuffDummyData();
+        DIO_TIMING_TEST_TOGGLE_STATE();
 #endif
     }
 }
@@ -135,7 +137,7 @@ static void Streaming_Start(void) {
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
-        TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);        
+        TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
         TimerApi_Start(gpStreamingConfig->TimerIndex);
         gpRuntimeConfigStream->Running = 1;
     }
@@ -173,9 +175,9 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     //Nanopb flag, decide what to write
     NanopbFlagsArray nanopbFlag;
     //! Structures size
-    volatile size_t usbSize, wifiSize, maxSize;
+    volatile size_t usbSize, wifiSize, sdSize, maxSize;
     //! Boolean to indicate if the system has USB and Wifi actives. 
-    volatile bool hasUsb, hasWifi;
+    volatile bool hasUsb, hasWifi, hasSD;
     //Analog input availability. Digital input/output availability
     bool AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
     bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
@@ -194,7 +196,8 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
         usbSize = 0;
         hasWifi = false;
         hasUsb = true;
-        usbSize = wifiSize = 0;
+        hasSD = false;
+        usbSize = wifiSize = sdSize = 0;
         maxSize = 0;
 
         if (AINDataAvailable || DIODataAvailable) {
@@ -212,20 +215,36 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
             hasUsb = false;
         }
 
-        wifiSize = WifiApi_WriteBuffFreeSize();
-        if (wifiSize > BUFFER_SIZE) {
-            hasWifi = true;
+//        wifiSize = WifiApi_WriteBuffFreeSize();
+//        if (wifiSize > BUFFER_SIZE) {
+//            hasWifi = true;
+//        } else {
+//            hasWifi = false;
+//        }
+
+        sdSize = SDCard_WriteBuffFreeSize();
+        if (sdSize > BUFFER_SIZE) {
+            hasSD = true;
         } else {
-            hasWifi = false;
+            hasSD = false;
         }
 
-        if (hasUsb && hasWifi) {
+        if (hasUsb && hasWifi && hasSD) {
+            maxSize = min(usbSize, min(wifiSize, sdSize));
+        } else if (hasUsb && hasWifi) {
             maxSize = min(usbSize, wifiSize);
+        } else if (hasWifi && hasSD) {
+            maxSize = min(wifiSize, sdSize);
+        } else if (hasUsb && hasSD) {
+            maxSize = min(usbSize, sdSize);
         } else if (hasUsb) {
             maxSize = usbSize;
-        } else {
+        } else if (hasWifi) {
             maxSize = wifiSize;
+        } else if (hasSD) {
+            maxSize = sdSize;
         }
+
         maxSize = min(maxSize, BUFFER_SIZE);
 
         if (maxSize < 128) {
@@ -264,13 +283,13 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
             // Write the packet out
             if (size > 0) {
                 if (hasUsb) {
-                    UsbCdc_WriteToBuffer(
-                            NULL,
-                            (const char *) buffer,
-                            size);
+                    UsbCdc_WriteToBuffer(NULL, (const char *) buffer, size);
                 }
                 if (hasWifi) {
                     WifiApi_WriteToBuffer((const char *) buffer, size);
+                }
+                if (hasSD) {
+                    SDCard_WriteToBuffer((const char *) buffer, size);
                 }
             }
         }
@@ -297,6 +316,7 @@ void TimestampTimer_Init(void) {
 
 }
 #if  defined(TEST_STREAMING)
+
 static void Streaming_StuffDummyData(void) {
     // Stuff stream with some data
     // Copy dummy samples to the data list
@@ -314,7 +334,7 @@ static void Streaming_StuffDummyData(void) {
             BOARDRUNTIMECONFIG_AIN_MODULES);
 
     AInRuntimeArray* pAiRunTimeChannelConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    
+
     AInArray * pBoardConfig = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
             0);
@@ -326,9 +346,9 @@ static void Streaming_StuffDummyData(void) {
     for (i = 0; i < pRunTimeAInModules->Size; ++i) {
         for (k = 0; k < pAiRunTimeChannelConfig->Size; k++) {
             if (pAiRunTimeChannelConfig->Data[k].IsEnabled == 1
-                    && pBoardConfig->Data[k].Config.MC12b.IsPublic==1) {                
+                    && pBoardConfig->Data[k].Config.MC12b.IsPublic == 1) {
                 data.Value = k;
-                data.Channel=k;
+                data.Channel = k;
                 AInSampleList_PushBack(pAInSamples, (const AInSample *) &data);
             }
         }

@@ -186,6 +186,7 @@ build/default/debug/_ext/1260820504/streaming.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/services/../state/runtime/../../services/SDcard/SDCard.h \
  ../src/services/../state/data/BoardData.h \
  ../src/services/../state/data/AInSample.h ../src/Util/HeapList.h \
  ../src/Util/LockProvider.h ../src/services/../state/data/DIOSample.h \
@@ -195,7 +196,8 @@ build/default/debug/_ext/1260820504/streaming.o: \
  ../src/services/DaqifiPB/DaqifiOutMessage.pb.h \
  ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
  ../src/Util/Logger.h ../src/services/UsbCdc/UsbCdc.h \
- ../src/services/../HAL/TimerApi/TimerApi.h
+ ../src/services/../HAL/TimerApi/TimerApi.h \
+ ../src/services/SDcard/SDCard.h
 
 ../src/services/streaming.h:
 
@@ -583,6 +585,8 @@ build/default/debug/_ext/1260820504/streaming.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
+../src/services/../state/runtime/../../services/SDcard/SDCard.h:
+
 ../src/services/../state/data/BoardData.h:
 
 ../src/services/../state/data/AInSample.h:
@@ -616,3 +620,5 @@ build/default/debug/_ext/1260820504/streaming.o: \
 ../src/services/UsbCdc/UsbCdc.h:
 
 ../src/services/../HAL/TimerApi/TimerApi.h:
+
+../src/services/SDcard/SDCard.h:
