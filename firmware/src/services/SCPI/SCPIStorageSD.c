@@ -61,7 +61,7 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
@@ -71,7 +71,7 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         }
         memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
         pSdCardRuntimeConfig->file[fileLen] = '\0';
-    } 
+    }
     if (param1 != 0) {
         pSdCardRuntimeConfig->enable = true;
         pSdCardRuntimeConfig->mode = SD_CARD_MODE_WRITE;
@@ -80,11 +80,43 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         pSdCardRuntimeConfig->mode = SD_CARD_MODE_NONE;
     }
     SDCard_UpdateSettings(pSdCardRuntimeConfig);
-    result=SCPI_RES_OK;
+    result = SCPI_RES_OK;
 __exit_point:
     return result;
 }
 
+scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
+    const char* pBuff;
+    size_t fileLen = 0;
+    scpi_result_t result = SCPI_RES_ERR;
+    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = (SDCard_RuntimeConfig_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+
+    if (fileLen > 0) {
+        if (fileLen > SD_CARD_CONF_FILE_NAME_LEN_MAX) {
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
+        pSdCardRuntimeConfig->file[fileLen] = '\0';
+    }
+
+    if (fileLen > 0) {
+        if (fileLen > SD_CARD_CONF_FILE_NAME_LEN_MAX) {
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
+        pSdCardRuntimeConfig->file[fileLen] = '\0';
+    }
+    pSdCardRuntimeConfig->enable = true;
+    pSdCardRuntimeConfig->mode = SD_CARD_MODE_READ;
+    SDCard_UpdateSettings(pSdCardRuntimeConfig);
+    result = SCPI_RES_OK;
+__exit_point:
+    return result;
+}
 
 
 /* *****************************************************************************

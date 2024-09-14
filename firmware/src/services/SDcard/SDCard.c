@@ -86,7 +86,7 @@ void SDCard_ProcessState() {
             } else {
                 /* Mount was successful. Unmount the disk, for testing. */
                 gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_CURRENT_DRIVE;
-                gSdCardData.discMounted=true;
+                gSdCardData.discMounted = true;
             }
             break;
 
@@ -95,10 +95,10 @@ void SDCard_ProcessState() {
                 SYS_FS_FileClose(gSdCardData.fileHandle);
                 gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
             }
-            if(SYS_FS_Unmount(SDCARD_MOUNT_NAME) == 0){
-                gSdCardData.discMounted=false;
+            if (SYS_FS_Unmount(SDCARD_MOUNT_NAME) == 0) {
+                gSdCardData.discMounted = false;
             }
-            if (gSdCardData.discMounted==true) {
+            if (gSdCardData.discMounted == true) {
                 /* The disk could not be un mounted. Try
                  * un mounting again untill success. */
                 gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_UNMOUNT_DISK;
@@ -226,7 +226,7 @@ void SDCard_ProcessState() {
 size_t SDCard_WriteToBuffer(const char* pData, size_t len) {
     size_t bytesAdded = 0;
     if (len == 0)return 0;
-    if(gpSdCardSettings->enable!=1 || gpSdCardSettings->mode!=SD_CARD_MODE_WRITE){
+    if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MODE_WRITE) {
         return 0;
     }
     while (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
@@ -256,6 +256,27 @@ bool SDCard_UpdateSettings(SDCard_RuntimeConfig_t *pSettings) {
     gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_DEINIT;
     return true;
 }
-size_t SDCard_WriteBuffFreeSize(){
+
+size_t SDCard_WriteBuffFreeSize() {
     return CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
+}
+
+SDCard_readStatus_t SDCard_Read(char* pData, size_t* pLen) {
+    SDCard_readStatus_t readStatus = SD_CARD_READ_STATUS_NOT_READY;
+    size_t bytesRead = 0;
+    if (gSdCardData.currentProcessState == SD_CARD_PROCESS_STATE_READ_FROM_FILE) {
+        if (*pLen > SD_CARD_CONF_RBUFFER_SIZE)
+            *pLen = SD_CARD_CONF_RBUFFER_SIZE;
+        bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, pData, *pLen);
+        *pLen = bytesRead;
+        if (bytesRead == (size_t) - 1) {
+            *pLen = 0;
+            readStatus = SD_CARD_READ_STATUS_ERROR;
+        } else if (bytesRead == 0) {
+            readStatus = SD_CARD_READ_STATUS_END_OF_FILE;
+        } else {
+            readStatus = SD_CARD_READ_STATUS_SUCCESS;
+        }
+    }
+    return readStatus;
 }

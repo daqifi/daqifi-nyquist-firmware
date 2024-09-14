@@ -831,6 +831,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
     //
     {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
+    {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     //    // FreeRTOS
     //    {.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

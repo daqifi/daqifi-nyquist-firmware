@@ -31,6 +31,7 @@ extern "C" {
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context);
 scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context);
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context);
+scpi_result_t SCPI_StorageSDGetData(scpi_t * context);
 
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
