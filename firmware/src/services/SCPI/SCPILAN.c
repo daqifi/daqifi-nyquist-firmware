@@ -18,6 +18,7 @@
 #include "services/daqifi_settings.h"
 #include "services/Wifi/WifiApi.h"
 
+#define SD_CARD_ACTIVE_ERROR_MSG "\r\nError !! Please Disable SD Card\r\n"
 
 /**
  * Encodes the given ip multi-address as a scpi string
@@ -155,14 +156,23 @@ scpi_result_t SCPI_LANEnabledGet(scpi_t * context) {
 scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
     WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-
+    scpi_result_t result;
+    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     int param1;
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
-        return SCPI_RES_ERR;
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    if (param1 != 0 && pSdCardRuntimeConfig->enable == 1) {
+        context->interface->write(context, SD_CARD_ACTIVE_ERROR_MSG, strlen(SD_CARD_ACTIVE_ERROR_MSG));
+        result = SCPI_RES_ERR;
+        goto __exit_point;
     }
 
     pRunTimeWifiSettings->isEnabled = (bool) param1;
-    return SCPI_RES_OK;
+    result = SCPI_RES_OK;
+__exit_point:
+    return result;
 }
 
 scpi_result_t SCPI_LANNetModeGet(scpi_t * context) {
@@ -417,8 +427,17 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     int param1;
     WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
+    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    
+        
     if (SCPI_ParamInt32(context, &param1, FALSE)) {
         saveSettings = (bool) param1;
+    }
+    //Wifi and SD card cannot be active simultaneously because they share same SPI
+    if (pSdCardRuntimeConfig->enable == 1 &&
+            pRunTimeWifiSettings->isEnabled == 1) {
+        context->interface->write(context, SD_CARD_ACTIVE_ERROR_MSG, strlen(SD_CARD_ACTIVE_ERROR_MSG));
+        return SCPI_RES_ERR;
     }
 
     if (saveSettings) {

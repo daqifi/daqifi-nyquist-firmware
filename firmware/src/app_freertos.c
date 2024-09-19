@@ -92,12 +92,12 @@ static tBoardData * gpBoardData;
 static tBoardRuntimeConfig * gpBoardRuntimeConfig;
 static tBoardConfig * gpBoardConfig;
 extern const NanopbFlagsArray fields_discovery;
-static bool gSystemInitComplt = false;
 
-static void SystemInit();
-static void USBDeviceTask(void* p_arg);
-//static void WifiTask(void* p_arg);
-static void SdCardTask(void* p_arg);
+
+static void app_SystemInit();
+static void app_USBDeviceTask(void* p_arg);
+static void app_WifiTask(void* p_arg);
+static void app_SdCardTask(void* p_arg);
 
 void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
@@ -112,38 +112,31 @@ void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBu
     *len = count;
 }
 
-static void USBDeviceTask(void* p_arg) {
+static void app_USBDeviceTask(void* p_arg) {
     UsbCdc_Initialize();
     while (1) {
         UsbCdc_ProcessState();
-        vTaskDelay(5);
+        vTaskDelay(5/portTICK_PERIOD_MS);
     }
 }
 
-//static void WifiTask(void* p_arg) {
-//    int count = 0;
-//    WifiApi_Init(&gpBoardData->wifiSettings);
-//    char buff[100];
-//    while (1) {
-//        WifiApi_ProcessState();
-//        memset(buff, 0, 100);
-//        sprintf(buff, "\r\nCount%d", count++);
-//        SDCard_WriteToBuffer(buff, strlen(buff));
-//        vTaskDelay(5);
-//    }
-//}
+static void app_WifiTask(void* p_arg) {
+    WifiApi_Init(&gpBoardData->wifiSettings);    
+    while (1) {
+        WifiApi_ProcessState();
+        vTaskDelay(5/portTICK_PERIOD_MS);
+    }
+}
 
-static void SdCardTask(void* p_arg) {
-    static SDCard_RuntimeConfig_t* pSdRuntimSettings;
-    pSdRuntimSettings=(SDCard_RuntimeConfig_t*)BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    SDCard_Init(pSdRuntimSettings);
+static void app_SdCardTask(void* p_arg) {
+    SDCard_Init(&gpBoardRuntimeConfig->sdCardConfig);
     while (1) {
         SDCard_ProcessState();
-        vTaskDelay(5);
+        vTaskDelay(5/portTICK_PERIOD_MS);
     }
 }
 
-void SystemInit() {
+void app_SystemInit() {
     DaqifiSettings tmpTopLevelSettings;
     DaqifiSettings tmpSettings;
 
@@ -241,68 +234,60 @@ void SystemInit() {
             gpBoardConfig,
             gpBoardRuntimeConfig,
             gpBoardData);
+}
 
-    gSystemInitComplt = true;
+static void app_TasksCreate() {
+    BaseType_t errStatus;
+    
+    errStatus = xTaskCreate((TaskFunction_t) app_USBDeviceTask,
+            "USBDeviceTask",
+            USBDEVICETASK_SIZE,
+            NULL,
+            2,
+            NULL);
+    /*Don't proceed if Task was not created...*/
+    if (errStatus != pdTRUE) {
+        while (1);
+    }
+    errStatus = xTaskCreate((TaskFunction_t) app_WifiTask,
+            "WifiTask",
+            2048,
+            NULL,
+            2,
+            NULL);
+    /*Don't proceed if Task was not created...*/
+    if (errStatus != pdTRUE) {
+        while (1);
+    }
+    errStatus = xTaskCreate((TaskFunction_t) app_SdCardTask,
+            "SdCardTask",
+            2048,
+            NULL,
+            2,
+            NULL);
+    /*Don't proceed if Task was not created...*/
+    if (errStatus != pdTRUE) {
+        while (1);
+    }
 }
 
 void APP_FREERTOS_Initialize(void) {
-
+    /*
+     * This cannot be used for initialization 
+     * because the NVIC is initialized after this
+     * function call
+     */
 }
-
-static void TasksCreate() {
-    static bool blockAppTask = false;
-    BaseType_t errStatus;
-
-    if (blockAppTask == false) {
-        SystemInit();
-        errStatus = xTaskCreate((TaskFunction_t) USBDeviceTask,
-                "USBDeviceTask",
-                USBDEVICETASK_SIZE,
-                NULL,
-                2,
-                NULL);
-        /*Don't proceed if Task was not created...*/
-        if (errStatus != pdTRUE) {
-            while (1);
-        }
-//        errStatus = xTaskCreate((TaskFunction_t) WifiTask,
-//                "WifiTask",
-//                2048,
-//                NULL,
-//                2,
-//                NULL);
-        /*Don't proceed if Task was not created...*/
-        if (errStatus != pdTRUE) {
-            while (1);
-        }
-        errStatus = xTaskCreate((TaskFunction_t) SdCardTask,
-                "SdCardTask",
-                2048,
-                NULL,
-                2,
-                NULL);
-        /*Don't proceed if Task was not created...*/
-        if (errStatus != pdTRUE) {
-            while (1);
-        }
-
-        /* The APP_Tasks() function need to exceute only once. Block it now */
-        blockAppTask = true;
-    }
-}
-
-
 
 void APP_FREERTOS_Tasks(void) {
-    TasksCreate();
-    if (!gSystemInitComplt) {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-        return;
+    app_SystemInit();
+    app_TasksCreate();
+    while (true) {
+        ADC_Tasks();
+        Streaming_Tasks(gpBoardRuntimeConfig, gpBoardData);
+        //AdcTest();
+        vTaskDelay(1 / portTICK_PERIOD_MS);
     }
-    ADC_Tasks();
-    Streaming_Tasks(gpBoardRuntimeConfig, gpBoardData);
-    //AdcTest();
-    vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
 

@@ -1,20 +1,1000 @@
-
-6710 1726286972442 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadTargetMemory
-6710 1726286972442 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-6710 1726286972442 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 FileRegs
-6710 1726286972442 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 8000000c
-6710 1726286972442 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 8000000f
-6710 1726286972442 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-6710 1726286972442 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-6710 1726286972442 XXXX 1726286972442, Thread 6710: XXXX 1726286972442, Entering Thread 6710: Commands::runScriptWithUpload, script name = ReadRAM  
-6710 1726286972442 XXXX 1726286972442, Thread 6710: XXXX 1726286972442, Entering Thread 6710: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
-6710 1726286972443 XXXX 1726286972443, Thread 6710: com.Send returned false 
-6710 1726286972443 XXXX 1726286972443, Thread 6710: readTransfer: exception after writeHeaderAndGetAck null 
-6710 1726286972443 XXXX 1726286972443, Thread 6710: XXXX 1726286972443, Entering Thread 6710: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
-6710 1726286972443 XXXX 1726286972443, Thread 6710: Send Abort Script Engine Command 
-6710 1726286972443 XXXX 1726286972443, Thread 6710: XXXX 1726286972443, Entering Thread 6710: ToolCommUsb::killScriptEngine  
-6710 1726286972443 XXXX 1726286972443, Thread 6710: com.Send returned false 
-6710 1726286972443 XXXX 1726286972443, Thread 6710: Failed sending Abort Script Engine Command. Set nuclear option = true 
-6710 1726286972443 XXXX 1726286972443, Thread 6710: About to nuke 
-6710 1726286972443 XXXX 1726286972443, Thread 6710: XXXX 1726286972443, Entering Thread 6710: ToolCommUsb::nuclearOption  
-6710 1726286972443 XXXX 1726286972443, Thread 6710: com.Send returned false 
+945 1726766247885 XXXX 1726766247885, Thread 945: XXXX 1726766247885, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766247983 XXXX 1726766247983, Thread 945: XXXX 1726766247983, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766247987 XXXX 1726766247987, Thread 945: XXXX 1726766247987, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248084 XXXX 1726766248084, Thread 945: XXXX 1726766248084, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248086 XXXX 1726766248086, Thread 945: XXXX 1726766248086, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248185 XXXX 1726766248185, Thread 945: XXXX 1726766248185, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248187 XXXX 1726766248187, Thread 945: XXXX 1726766248187, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248286 XXXX 1726766248286, Thread 945: XXXX 1726766248286, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248288 XXXX 1726766248288, Thread 945: XXXX 1726766248288, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248387 XXXX 1726766248387, Thread 945: XXXX 1726766248387, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248388 XXXX 1726766248388, Thread 945: XXXX 1726766248388, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248487 XXXX 1726766248487, Thread 945: XXXX 1726766248487, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248488 XXXX 1726766248488, Thread 945: XXXX 1726766248488, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248589 XXXX 1726766248589, Thread 945: XXXX 1726766248589, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248590 XXXX 1726766248590, Thread 945: XXXX 1726766248590, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248691 XXXX 1726766248691, Thread 945: XXXX 1726766248691, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248692 XXXX 1726766248692, Thread 945: XXXX 1726766248692, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248791 XXXX 1726766248791, Thread 945: XXXX 1726766248791, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248793 XXXX 1726766248793, Thread 945: XXXX 1726766248793, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248893 XXXX 1726766248893, Thread 945: XXXX 1726766248893, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248894 XXXX 1726766248894, Thread 945: XXXX 1726766248894, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766248993 XXXX 1726766248993, Thread 945: XXXX 1726766248993, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766248995 XXXX 1726766248995, Thread 945: XXXX 1726766248995, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249093 XXXX 1726766249093, Thread 945: XXXX 1726766249093, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249094 XXXX 1726766249094, Thread 945: XXXX 1726766249094, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249196 XXXX 1726766249196, Thread 945: XXXX 1726766249196, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249196 XXXX 1726766249196, Thread 945: XXXX 1726766249196, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249297 XXXX 1726766249297, Thread 945: XXXX 1726766249297, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249298 XXXX 1726766249298, Thread 945: XXXX 1726766249298, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249397 XXXX 1726766249397, Thread 945: XXXX 1726766249397, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249399 XXXX 1726766249399, Thread 945: XXXX 1726766249399, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249499 XXXX 1726766249499, Thread 945: XXXX 1726766249499, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249500 XXXX 1726766249500, Thread 945: XXXX 1726766249500, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249601 XXXX 1726766249601, Thread 945: XXXX 1726766249601, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249602 XXXX 1726766249602, Thread 945: XXXX 1726766249602, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249701 XXXX 1726766249701, Thread 945: XXXX 1726766249701, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249702 XXXX 1726766249702, Thread 945: XXXX 1726766249702, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249802 XXXX 1726766249802, Thread 945: XXXX 1726766249802, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249803 XXXX 1726766249803, Thread 945: XXXX 1726766249803, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766249902 XXXX 1726766249902, Thread 945: XXXX 1726766249902, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766249903 XXXX 1726766249903, Thread 945: XXXX 1726766249903, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250003 XXXX 1726766250003, Thread 945: XXXX 1726766250003, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250005 XXXX 1726766250005, Thread 945: XXXX 1726766250005, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250104 XXXX 1726766250104, Thread 945: XXXX 1726766250104, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250106 XXXX 1726766250106, Thread 945: XXXX 1726766250106, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250205 XXXX 1726766250205, Thread 945: XXXX 1726766250205, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250207 XXXX 1726766250207, Thread 945: XXXX 1726766250207, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250306 XXXX 1726766250306, Thread 945: XXXX 1726766250306, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250308 XXXX 1726766250308, Thread 945: XXXX 1726766250308, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250407 XXXX 1726766250407, Thread 945: XXXX 1726766250407, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250409 XXXX 1726766250409, Thread 945: XXXX 1726766250409, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250507 XXXX 1726766250507, Thread 945: XXXX 1726766250507, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250508 XXXX 1726766250508, Thread 945: XXXX 1726766250508, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250607 XXXX 1726766250607, Thread 945: XXXX 1726766250607, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250609 XXXX 1726766250609, Thread 945: XXXX 1726766250609, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250707 XXXX 1726766250707, Thread 945: XXXX 1726766250707, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250709 XXXX 1726766250709, Thread 945: XXXX 1726766250709, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250808 XXXX 1726766250808, Thread 945: XXXX 1726766250808, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250809 XXXX 1726766250809, Thread 945: XXXX 1726766250809, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766250909 XXXX 1726766250909, Thread 945: XXXX 1726766250909, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766250911 XXXX 1726766250911, Thread 945: XXXX 1726766250911, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251014 XXXX 1726766251014, Thread 945: XXXX 1726766251014, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251016 XXXX 1726766251016, Thread 945: XXXX 1726766251016, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251114 XXXX 1726766251114, Thread 945: XXXX 1726766251114, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251115 XXXX 1726766251115, Thread 945: XXXX 1726766251115, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251215 XXXX 1726766251215, Thread 945: XXXX 1726766251215, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251217 XXXX 1726766251217, Thread 945: XXXX 1726766251217, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251315 XXXX 1726766251315, Thread 945: XXXX 1726766251315, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251316 XXXX 1726766251316, Thread 945: XXXX 1726766251316, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251416 XXXX 1726766251416, Thread 945: XXXX 1726766251416, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251418 XXXX 1726766251418, Thread 945: XXXX 1726766251418, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251517 XXXX 1726766251517, Thread 945: XXXX 1726766251517, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251518 XXXX 1726766251518, Thread 945: XXXX 1726766251518, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251619 XXXX 1726766251619, Thread 945: XXXX 1726766251619, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251621 XXXX 1726766251621, Thread 945: XXXX 1726766251621, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251722 XXXX 1726766251722, Thread 945: XXXX 1726766251722, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251723 XXXX 1726766251723, Thread 945: XXXX 1726766251723, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251823 XXXX 1726766251823, Thread 945: XXXX 1726766251823, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251825 XXXX 1726766251825, Thread 945: XXXX 1726766251825, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766251925 XXXX 1726766251925, Thread 945: XXXX 1726766251925, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766251926 XXXX 1726766251926, Thread 945: XXXX 1726766251926, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252025 XXXX 1726766252025, Thread 945: XXXX 1726766252025, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252027 XXXX 1726766252027, Thread 945: XXXX 1726766252027, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252125 XXXX 1726766252125, Thread 945: XXXX 1726766252125, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252127 XXXX 1726766252127, Thread 945: XXXX 1726766252127, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252226 XXXX 1726766252226, Thread 945: XXXX 1726766252226, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252228 XXXX 1726766252228, Thread 945: XXXX 1726766252228, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252327 XXXX 1726766252327, Thread 945: XXXX 1726766252327, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252329 XXXX 1726766252329, Thread 945: XXXX 1726766252329, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252431 XXXX 1726766252431, Thread 945: XXXX 1726766252431, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252433 XXXX 1726766252433, Thread 945: XXXX 1726766252433, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252528 XXXX 1726766252528, Thread 945: XXXX 1726766252528, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252529 XXXX 1726766252529, Thread 945: XXXX 1726766252529, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252628 XXXX 1726766252628, Thread 945: XXXX 1726766252628, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252631 XXXX 1726766252631, Thread 945: XXXX 1726766252631, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252729 XXXX 1726766252729, Thread 945: XXXX 1726766252729, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252730 XXXX 1726766252730, Thread 945: XXXX 1726766252730, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252829 XXXX 1726766252829, Thread 945: XXXX 1726766252829, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252831 XXXX 1726766252831, Thread 945: XXXX 1726766252831, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766252929 XXXX 1726766252929, Thread 945: XXXX 1726766252929, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766252932 XXXX 1726766252932, Thread 945: XXXX 1726766252932, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253029 XXXX 1726766253029, Thread 945: XXXX 1726766253029, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253031 XXXX 1726766253031, Thread 945: XXXX 1726766253031, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253131 XXXX 1726766253131, Thread 945: XXXX 1726766253131, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253132 XXXX 1726766253132, Thread 945: XXXX 1726766253132, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253231 XXXX 1726766253231, Thread 945: XXXX 1726766253231, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253233 XXXX 1726766253233, Thread 945: XXXX 1726766253233, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253333 XXXX 1726766253333, Thread 945: XXXX 1726766253333, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253334 XXXX 1726766253334, Thread 945: XXXX 1726766253334, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253434 XXXX 1726766253434, Thread 945: XXXX 1726766253432, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253434 XXXX 1726766253434, Thread 945: XXXX 1726766253434, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253534 XXXX 1726766253534, Thread 945: XXXX 1726766253534, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253536 XXXX 1726766253536, Thread 945: XXXX 1726766253536, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253635 XXXX 1726766253635, Thread 945: XXXX 1726766253635, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253637 XXXX 1726766253637, Thread 945: XXXX 1726766253637, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253741 XXXX 1726766253741, Thread 945: XXXX 1726766253741, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253742 XXXX 1726766253742, Thread 945: XXXX 1726766253742, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253843 XXXX 1726766253843, Thread 945: XXXX 1726766253843, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253847 XXXX 1726766253847, Thread 945: XXXX 1726766253847, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766253943 XXXX 1726766253943, Thread 945: XXXX 1726766253943, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766253945 XXXX 1726766253945, Thread 945: XXXX 1726766253945, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254044 XXXX 1726766254044, Thread 945: XXXX 1726766254044, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254046 XXXX 1726766254046, Thread 945: XXXX 1726766254046, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254144 XXXX 1726766254144, Thread 945: XXXX 1726766254144, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254146 XXXX 1726766254146, Thread 945: XXXX 1726766254146, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254244 XXXX 1726766254244, Thread 945: XXXX 1726766254244, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254246 XXXX 1726766254246, Thread 945: XXXX 1726766254246, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254346 XXXX 1726766254346, Thread 945: XXXX 1726766254346, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254347 XXXX 1726766254347, Thread 945: XXXX 1726766254347, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254446 XXXX 1726766254446, Thread 945: XXXX 1726766254446, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254448 XXXX 1726766254448, Thread 945: XXXX 1726766254448, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254546 XXXX 1726766254546, Thread 945: XXXX 1726766254546, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254548 XXXX 1726766254548, Thread 945: XXXX 1726766254548, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254647 XXXX 1726766254647, Thread 945: XXXX 1726766254647, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254648 XXXX 1726766254648, Thread 945: XXXX 1726766254648, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254748 XXXX 1726766254748, Thread 945: XXXX 1726766254748, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254750 XXXX 1726766254750, Thread 945: XXXX 1726766254750, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254849 XXXX 1726766254849, Thread 945: XXXX 1726766254849, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254851 XXXX 1726766254851, Thread 945: XXXX 1726766254851, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766254950 XXXX 1726766254950, Thread 945: XXXX 1726766254950, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766254952 XXXX 1726766254952, Thread 945: XXXX 1726766254952, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255052 XXXX 1726766255052, Thread 945: XXXX 1726766255052, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255054 XXXX 1726766255054, Thread 945: XXXX 1726766255054, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255154 XXXX 1726766255154, Thread 945: XXXX 1726766255154, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255155 XXXX 1726766255155, Thread 945: XXXX 1726766255155, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255255 XXXX 1726766255255, Thread 945: XXXX 1726766255254, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255256 XXXX 1726766255256, Thread 945: XXXX 1726766255256, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255356 XXXX 1726766255356, Thread 945: XXXX 1726766255356, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255357 XXXX 1726766255357, Thread 945: XXXX 1726766255357, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255457 XXXX 1726766255457, Thread 945: XXXX 1726766255457, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255458 XXXX 1726766255458, Thread 945: XXXX 1726766255458, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255558 XXXX 1726766255558, Thread 945: XXXX 1726766255558, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255559 XXXX 1726766255559, Thread 945: XXXX 1726766255559, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255657 XXXX 1726766255657, Thread 945: XXXX 1726766255657, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255659 XXXX 1726766255659, Thread 945: XXXX 1726766255659, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255757 XXXX 1726766255757, Thread 945: XXXX 1726766255757, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255759 XXXX 1726766255759, Thread 945: XXXX 1726766255759, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255858 XXXX 1726766255858, Thread 945: XXXX 1726766255858, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255860 XXXX 1726766255860, Thread 945: XXXX 1726766255860, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766255958 XXXX 1726766255958, Thread 945: XXXX 1726766255958, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766255960 XXXX 1726766255960, Thread 945: XXXX 1726766255960, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256060 XXXX 1726766256060, Thread 945: XXXX 1726766256060, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256061 XXXX 1726766256061, Thread 945: XXXX 1726766256061, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256161 XXXX 1726766256161, Thread 945: XXXX 1726766256161, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256164 XXXX 1726766256164, Thread 945: XXXX 1726766256164, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256262 XXXX 1726766256262, Thread 945: XXXX 1726766256262, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256264 XXXX 1726766256264, Thread 945: XXXX 1726766256264, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256364 XXXX 1726766256364, Thread 945: XXXX 1726766256364, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256366 XXXX 1726766256366, Thread 945: XXXX 1726766256366, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256466 XXXX 1726766256466, Thread 945: XXXX 1726766256466, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256467 XXXX 1726766256467, Thread 945: XXXX 1726766256467, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256566 XXXX 1726766256566, Thread 945: XXXX 1726766256566, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256568 XXXX 1726766256568, Thread 945: XXXX 1726766256568, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256668 XXXX 1726766256668, Thread 945: XXXX 1726766256668, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256668 XXXX 1726766256668, Thread 945: XXXX 1726766256668, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256769 XXXX 1726766256769, Thread 945: XXXX 1726766256769, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256771 XXXX 1726766256771, Thread 945: XXXX 1726766256771, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256869 XXXX 1726766256869, Thread 945: XXXX 1726766256869, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256871 XXXX 1726766256871, Thread 945: XXXX 1726766256871, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766256970 XXXX 1726766256970, Thread 945: XXXX 1726766256970, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766256973 XXXX 1726766256973, Thread 945: XXXX 1726766256973, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257071 XXXX 1726766257071, Thread 945: XXXX 1726766257071, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257073 XXXX 1726766257073, Thread 945: XXXX 1726766257073, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257172 XXXX 1726766257172, Thread 945: XXXX 1726766257172, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257174 XXXX 1726766257174, Thread 945: XXXX 1726766257174, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257272 XXXX 1726766257272, Thread 945: XXXX 1726766257272, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257273 XXXX 1726766257273, Thread 945: XXXX 1726766257273, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257374 XXXX 1726766257374, Thread 945: XXXX 1726766257374, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257376 XXXX 1726766257376, Thread 945: XXXX 1726766257376, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257477 XXXX 1726766257477, Thread 945: XXXX 1726766257477, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257478 XXXX 1726766257478, Thread 945: XXXX 1726766257478, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257578 XXXX 1726766257578, Thread 945: XXXX 1726766257578, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257580 XXXX 1726766257580, Thread 945: XXXX 1726766257580, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257678 XXXX 1726766257678, Thread 945: XXXX 1726766257678, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257680 XXXX 1726766257680, Thread 945: XXXX 1726766257680, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257779 XXXX 1726766257779, Thread 945: XXXX 1726766257779, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257780 XXXX 1726766257780, Thread 945: XXXX 1726766257780, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257880 XXXX 1726766257880, Thread 945: XXXX 1726766257880, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257882 XXXX 1726766257882, Thread 945: XXXX 1726766257882, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766257981 XXXX 1726766257981, Thread 945: XXXX 1726766257981, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766257982 XXXX 1726766257982, Thread 945: XXXX 1726766257982, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258081 XXXX 1726766258081, Thread 945: XXXX 1726766258081, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258083 XXXX 1726766258083, Thread 945: XXXX 1726766258083, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258183 XXXX 1726766258183, Thread 945: XXXX 1726766258183, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258184 XXXX 1726766258184, Thread 945: XXXX 1726766258184, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258284 XXXX 1726766258284, Thread 945: XXXX 1726766258284, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258286 XXXX 1726766258286, Thread 945: XXXX 1726766258286, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258385 XXXX 1726766258385, Thread 945: XXXX 1726766258385, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258386 XXXX 1726766258386, Thread 945: XXXX 1726766258386, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258485 XXXX 1726766258485, Thread 945: XXXX 1726766258485, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258486 XXXX 1726766258486, Thread 945: XXXX 1726766258486, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258586 XXXX 1726766258586, Thread 945: XXXX 1726766258586, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258587 XXXX 1726766258587, Thread 945: XXXX 1726766258587, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258688 XXXX 1726766258688, Thread 945: XXXX 1726766258688, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258690 XXXX 1726766258690, Thread 945: XXXX 1726766258690, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258791 XXXX 1726766258791, Thread 945: XXXX 1726766258791, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258792 XXXX 1726766258792, Thread 945: XXXX 1726766258792, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258890 XXXX 1726766258890, Thread 945: XXXX 1726766258890, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258892 XXXX 1726766258892, Thread 945: XXXX 1726766258892, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766258991 XXXX 1726766258991, Thread 945: XXXX 1726766258990, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766258992 XXXX 1726766258992, Thread 945: XXXX 1726766258992, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259091 XXXX 1726766259091, Thread 945: XXXX 1726766259091, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259093 XXXX 1726766259093, Thread 945: XXXX 1726766259093, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259192 XXXX 1726766259192, Thread 945: XXXX 1726766259192, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259194 XXXX 1726766259194, Thread 945: XXXX 1726766259194, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259292 XXXX 1726766259292, Thread 945: XXXX 1726766259292, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259294 XXXX 1726766259294, Thread 945: XXXX 1726766259294, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259393 XXXX 1726766259393, Thread 945: XXXX 1726766259393, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259395 XXXX 1726766259395, Thread 945: XXXX 1726766259395, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259494 XXXX 1726766259494, Thread 945: XXXX 1726766259494, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259495 XXXX 1726766259495, Thread 945: XXXX 1726766259495, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259595 XXXX 1726766259595, Thread 945: XXXX 1726766259595, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259597 XXXX 1726766259597, Thread 945: XXXX 1726766259597, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259695 XXXX 1726766259695, Thread 945: XXXX 1726766259695, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259697 XXXX 1726766259697, Thread 945: XXXX 1726766259697, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259796 XXXX 1726766259796, Thread 945: XXXX 1726766259796, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259798 XXXX 1726766259798, Thread 945: XXXX 1726766259798, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259897 XXXX 1726766259897, Thread 945: XXXX 1726766259897, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766259898 XXXX 1726766259898, Thread 945: XXXX 1726766259898, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766259998 XXXX 1726766259998, Thread 945: XXXX 1726766259998, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260000 XXXX 1726766260000, Thread 945: XXXX 1726766260000, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260098 XXXX 1726766260098, Thread 945: XXXX 1726766260098, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260100 XXXX 1726766260100, Thread 945: XXXX 1726766260100, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260198 XXXX 1726766260198, Thread 945: XXXX 1726766260198, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260201 XXXX 1726766260201, Thread 945: XXXX 1726766260201, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260299 XXXX 1726766260299, Thread 945: XXXX 1726766260299, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260300 XXXX 1726766260300, Thread 945: XXXX 1726766260300, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260402 XXXX 1726766260402, Thread 945: XXXX 1726766260402, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260403 XXXX 1726766260403, Thread 945: XXXX 1726766260403, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260503 XXXX 1726766260503, Thread 945: XXXX 1726766260503, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260505 XXXX 1726766260505, Thread 945: XXXX 1726766260505, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260604 XXXX 1726766260604, Thread 945: XXXX 1726766260604, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260607 XXXX 1726766260607, Thread 945: XXXX 1726766260607, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260706 XXXX 1726766260706, Thread 945: XXXX 1726766260706, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260708 XXXX 1726766260708, Thread 945: XXXX 1726766260708, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260806 XXXX 1726766260806, Thread 945: XXXX 1726766260806, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260808 XXXX 1726766260808, Thread 945: XXXX 1726766260808, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766260907 XXXX 1726766260907, Thread 945: XXXX 1726766260907, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766260909 XXXX 1726766260909, Thread 945: XXXX 1726766260909, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261007 XXXX 1726766261007, Thread 945: XXXX 1726766261007, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261008 XXXX 1726766261008, Thread 945: XXXX 1726766261008, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261109 XXXX 1726766261109, Thread 945: XXXX 1726766261109, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261110 XXXX 1726766261110, Thread 945: XXXX 1726766261110, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261209 XXXX 1726766261209, Thread 945: XXXX 1726766261209, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261211 XXXX 1726766261211, Thread 945: XXXX 1726766261211, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261311 XXXX 1726766261311, Thread 945: XXXX 1726766261311, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261312 XXXX 1726766261312, Thread 945: XXXX 1726766261312, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261412 XXXX 1726766261412, Thread 945: XXXX 1726766261412, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261414 XXXX 1726766261414, Thread 945: XXXX 1726766261414, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261513 XXXX 1726766261513, Thread 945: XXXX 1726766261513, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261514 XXXX 1726766261514, Thread 945: XXXX 1726766261514, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261614 XXXX 1726766261614, Thread 945: XXXX 1726766261614, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261615 XXXX 1726766261615, Thread 945: XXXX 1726766261615, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261714 XXXX 1726766261714, Thread 945: XXXX 1726766261714, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261715 XXXX 1726766261715, Thread 945: XXXX 1726766261715, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261816 XXXX 1726766261816, Thread 945: XXXX 1726766261816, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261816 XXXX 1726766261816, Thread 945: XXXX 1726766261816, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766261917 XXXX 1726766261917, Thread 945: XXXX 1726766261917, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766261918 XXXX 1726766261918, Thread 945: XXXX 1726766261918, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262017 XXXX 1726766262017, Thread 945: XXXX 1726766262017, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262019 XXXX 1726766262019, Thread 945: XXXX 1726766262019, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262118 XXXX 1726766262118, Thread 945: XXXX 1726766262118, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262119 XXXX 1726766262119, Thread 945: XXXX 1726766262119, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262219 XXXX 1726766262219, Thread 945: XXXX 1726766262219, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262221 XXXX 1726766262221, Thread 945: XXXX 1726766262221, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262321 XXXX 1726766262321, Thread 945: XXXX 1726766262321, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262323 XXXX 1726766262323, Thread 945: XXXX 1726766262323, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262423 XXXX 1726766262423, Thread 945: XXXX 1726766262423, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262424 XXXX 1726766262424, Thread 945: XXXX 1726766262424, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262524 XXXX 1726766262524, Thread 945: XXXX 1726766262524, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262525 XXXX 1726766262525, Thread 945: XXXX 1726766262525, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262624 XXXX 1726766262624, Thread 945: XXXX 1726766262624, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262625 XXXX 1726766262625, Thread 945: XXXX 1726766262625, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262724 XXXX 1726766262724, Thread 945: XXXX 1726766262724, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262726 XXXX 1726766262726, Thread 945: XXXX 1726766262726, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262826 XXXX 1726766262826, Thread 945: XXXX 1726766262826, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262828 XXXX 1726766262828, Thread 945: XXXX 1726766262828, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766262928 XXXX 1726766262928, Thread 945: XXXX 1726766262928, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766262930 XXXX 1726766262930, Thread 945: XXXX 1726766262930, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263030 XXXX 1726766263030, Thread 945: XXXX 1726766263030, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263031 XXXX 1726766263031, Thread 945: XXXX 1726766263031, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263131 XXXX 1726766263131, Thread 945: XXXX 1726766263131, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263133 XXXX 1726766263133, Thread 945: XXXX 1726766263133, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263232 XXXX 1726766263232, Thread 945: XXXX 1726766263232, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263233 XXXX 1726766263233, Thread 945: XXXX 1726766263233, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263334 XXXX 1726766263334, Thread 945: XXXX 1726766263333, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263335 XXXX 1726766263335, Thread 945: XXXX 1726766263335, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263434 XXXX 1726766263434, Thread 945: XXXX 1726766263434, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263435 XXXX 1726766263435, Thread 945: XXXX 1726766263435, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263536 XXXX 1726766263536, Thread 945: XXXX 1726766263536, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263537 XXXX 1726766263537, Thread 945: XXXX 1726766263537, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263636 XXXX 1726766263636, Thread 945: XXXX 1726766263636, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263637 XXXX 1726766263637, Thread 945: XXXX 1726766263637, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263736 XXXX 1726766263736, Thread 945: XXXX 1726766263736, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263738 XXXX 1726766263738, Thread 945: XXXX 1726766263738, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263837 XXXX 1726766263837, Thread 945: XXXX 1726766263837, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263839 XXXX 1726766263839, Thread 945: XXXX 1726766263839, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766263938 XXXX 1726766263938, Thread 945: XXXX 1726766263938, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766263939 XXXX 1726766263939, Thread 945: XXXX 1726766263939, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264038 XXXX 1726766264038, Thread 945: XXXX 1726766264038, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264040 XXXX 1726766264040, Thread 945: XXXX 1726766264040, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264139 XXXX 1726766264139, Thread 945: XXXX 1726766264139, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264141 XXXX 1726766264141, Thread 945: XXXX 1726766264141, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264241 XXXX 1726766264241, Thread 945: XXXX 1726766264241, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264243 XXXX 1726766264243, Thread 945: XXXX 1726766264243, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264342 XXXX 1726766264342, Thread 945: XXXX 1726766264342, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264343 XXXX 1726766264343, Thread 945: XXXX 1726766264343, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264443 XXXX 1726766264443, Thread 945: XXXX 1726766264443, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264444 XXXX 1726766264444, Thread 945: XXXX 1726766264444, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264546 XXXX 1726766264546, Thread 945: XXXX 1726766264546, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264547 XXXX 1726766264547, Thread 945: XXXX 1726766264547, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264647 XXXX 1726766264647, Thread 945: XXXX 1726766264647, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264648 XXXX 1726766264648, Thread 945: XXXX 1726766264648, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264748 XXXX 1726766264748, Thread 945: XXXX 1726766264748, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264750 XXXX 1726766264750, Thread 945: XXXX 1726766264750, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264849 XXXX 1726766264849, Thread 945: XXXX 1726766264849, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264851 XXXX 1726766264851, Thread 945: XXXX 1726766264851, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766264951 XXXX 1726766264951, Thread 945: XXXX 1726766264951, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766264952 XXXX 1726766264952, Thread 945: XXXX 1726766264952, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265052 XXXX 1726766265052, Thread 945: XXXX 1726766265052, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265054 XXXX 1726766265054, Thread 945: XXXX 1726766265054, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265153 XXXX 1726766265153, Thread 945: XXXX 1726766265153, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265156 XXXX 1726766265156, Thread 945: XXXX 1726766265155, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265255 XXXX 1726766265255, Thread 945: XXXX 1726766265255, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265257 XXXX 1726766265257, Thread 945: XXXX 1726766265257, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265355 XXXX 1726766265355, Thread 945: XXXX 1726766265355, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265357 XXXX 1726766265357, Thread 945: XXXX 1726766265357, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265457 XXXX 1726766265457, Thread 945: XXXX 1726766265457, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265458 XXXX 1726766265458, Thread 945: XXXX 1726766265458, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265557 XXXX 1726766265557, Thread 945: XXXX 1726766265557, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265559 XXXX 1726766265559, Thread 945: XXXX 1726766265559, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265658 XXXX 1726766265658, Thread 945: XXXX 1726766265658, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265658 XXXX 1726766265658, Thread 945: XXXX 1726766265658, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265759 XXXX 1726766265759, Thread 945: XXXX 1726766265759, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265761 XXXX 1726766265761, Thread 945: XXXX 1726766265761, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265860 XXXX 1726766265860, Thread 945: XXXX 1726766265860, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265861 XXXX 1726766265861, Thread 945: XXXX 1726766265861, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766265962 XXXX 1726766265962, Thread 945: XXXX 1726766265962, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766265965 XXXX 1726766265965, Thread 945: XXXX 1726766265965, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266062 XXXX 1726766266062, Thread 945: XXXX 1726766266062, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266064 XXXX 1726766266064, Thread 945: XXXX 1726766266064, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266164 XXXX 1726766266164, Thread 945: XXXX 1726766266164, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266167 XXXX 1726766266167, Thread 945: XXXX 1726766266167, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266264 XXXX 1726766266264, Thread 945: XXXX 1726766266264, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266266 XXXX 1726766266266, Thread 945: XXXX 1726766266266, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266365 XXXX 1726766266365, Thread 945: XXXX 1726766266365, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266366 XXXX 1726766266366, Thread 945: XXXX 1726766266366, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266464 XXXX 1726766266464, Thread 945: XXXX 1726766266464, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266466 XXXX 1726766266466, Thread 945: XXXX 1726766266466, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266566 XXXX 1726766266566, Thread 945: XXXX 1726766266566, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266567 XXXX 1726766266567, Thread 945: XXXX 1726766266567, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266666 XXXX 1726766266666, Thread 945: XXXX 1726766266666, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266667 XXXX 1726766266667, Thread 945: XXXX 1726766266667, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266767 XXXX 1726766266767, Thread 945: XXXX 1726766266767, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266769 XXXX 1726766266769, Thread 945: XXXX 1726766266769, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266867 XXXX 1726766266867, Thread 945: XXXX 1726766266867, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266869 XXXX 1726766266869, Thread 945: XXXX 1726766266869, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766266967 XXXX 1726766266967, Thread 945: XXXX 1726766266967, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766266969 XXXX 1726766266969, Thread 945: XXXX 1726766266969, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267068 XXXX 1726766267068, Thread 945: XXXX 1726766267068, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267070 XXXX 1726766267070, Thread 945: XXXX 1726766267070, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267168 XXXX 1726766267168, Thread 945: XXXX 1726766267168, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267170 XXXX 1726766267170, Thread 945: XXXX 1726766267170, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267273 XXXX 1726766267273, Thread 945: XXXX 1726766267273, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267274 XXXX 1726766267274, Thread 945: XXXX 1726766267274, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267375 XXXX 1726766267375, Thread 945: XXXX 1726766267375, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267376 XXXX 1726766267376, Thread 945: XXXX 1726766267376, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267476 XXXX 1726766267476, Thread 945: XXXX 1726766267476, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267478 XXXX 1726766267478, Thread 945: XXXX 1726766267478, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267578 XXXX 1726766267577, Thread 945: XXXX 1726766267577, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267579 XXXX 1726766267579, Thread 945: XXXX 1726766267579, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267679 XXXX 1726766267679, Thread 945: XXXX 1726766267679, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267680 XXXX 1726766267680, Thread 945: XXXX 1726766267680, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267780 XXXX 1726766267780, Thread 945: XXXX 1726766267780, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267781 XXXX 1726766267781, Thread 945: XXXX 1726766267781, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267879 XXXX 1726766267879, Thread 945: XXXX 1726766267879, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267881 XXXX 1726766267881, Thread 945: XXXX 1726766267881, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766267979 XXXX 1726766267979, Thread 945: XXXX 1726766267979, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766267982 XXXX 1726766267982, Thread 945: XXXX 1726766267982, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268081 XXXX 1726766268081, Thread 945: XXXX 1726766268081, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268082 XXXX 1726766268082, Thread 945: XXXX 1726766268082, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268180 XXXX 1726766268180, Thread 945: XXXX 1726766268180, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268181 XXXX 1726766268181, Thread 945: XXXX 1726766268181, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268282 XXXX 1726766268282, Thread 945: XXXX 1726766268282, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268283 XXXX 1726766268283, Thread 945: XXXX 1726766268283, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268383 XXXX 1726766268383, Thread 945: XXXX 1726766268383, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268384 XXXX 1726766268384, Thread 945: XXXX 1726766268384, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268485 XXXX 1726766268485, Thread 945: XXXX 1726766268485, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268486 XXXX 1726766268486, Thread 945: XXXX 1726766268486, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268585 XXXX 1726766268585, Thread 945: XXXX 1726766268585, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268587 XXXX 1726766268587, Thread 945: XXXX 1726766268587, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268686 XXXX 1726766268686, Thread 945: XXXX 1726766268686, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268687 XXXX 1726766268687, Thread 945: XXXX 1726766268687, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268787 XXXX 1726766268787, Thread 945: XXXX 1726766268787, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268789 XXXX 1726766268789, Thread 945: XXXX 1726766268789, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268897 XXXX 1726766268897, Thread 945: XXXX 1726766268897, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268897 XXXX 1726766268897, Thread 945: XXXX 1726766268897, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766268992 XXXX 1726766268992, Thread 945: XXXX 1726766268991, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766268993 XXXX 1726766268993, Thread 945: XXXX 1726766268993, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269093 XXXX 1726766269093, Thread 945: XXXX 1726766269093, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269094 XXXX 1726766269094, Thread 945: XXXX 1726766269094, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269194 XXXX 1726766269194, Thread 945: XXXX 1726766269194, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269196 XXXX 1726766269196, Thread 945: XXXX 1726766269196, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269295 XXXX 1726766269295, Thread 945: XXXX 1726766269295, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269297 XXXX 1726766269297, Thread 945: XXXX 1726766269297, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269396 XXXX 1726766269396, Thread 945: XXXX 1726766269396, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269397 XXXX 1726766269397, Thread 945: XXXX 1726766269397, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269498 XXXX 1726766269498, Thread 945: XXXX 1726766269498, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269499 XXXX 1726766269499, Thread 945: XXXX 1726766269499, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269599 XXXX 1726766269599, Thread 945: XXXX 1726766269599, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269600 XXXX 1726766269600, Thread 945: XXXX 1726766269600, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269704 XXXX 1726766269704, Thread 945: XXXX 1726766269704, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269706 XXXX 1726766269706, Thread 945: XXXX 1726766269706, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269804 XXXX 1726766269804, Thread 945: XXXX 1726766269804, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269806 XXXX 1726766269806, Thread 945: XXXX 1726766269806, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766269905 XXXX 1726766269905, Thread 945: XXXX 1726766269905, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766269908 XXXX 1726766269908, Thread 945: XXXX 1726766269908, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270005 XXXX 1726766270005, Thread 945: XXXX 1726766270005, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270006 XXXX 1726766270006, Thread 945: XXXX 1726766270006, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270105 XXXX 1726766270105, Thread 945: XXXX 1726766270105, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270106 XXXX 1726766270106, Thread 945: XXXX 1726766270106, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270206 XXXX 1726766270206, Thread 945: XXXX 1726766270206, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270208 XXXX 1726766270208, Thread 945: XXXX 1726766270208, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270306 XXXX 1726766270306, Thread 945: XXXX 1726766270306, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270308 XXXX 1726766270308, Thread 945: XXXX 1726766270308, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270407 XXXX 1726766270407, Thread 945: XXXX 1726766270407, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270409 XXXX 1726766270409, Thread 945: XXXX 1726766270409, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270507 XXXX 1726766270507, Thread 945: XXXX 1726766270507, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270509 XXXX 1726766270509, Thread 945: XXXX 1726766270509, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270609 XXXX 1726766270609, Thread 945: XXXX 1726766270609, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270610 XXXX 1726766270610, Thread 945: XXXX 1726766270610, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270710 XXXX 1726766270710, Thread 945: XXXX 1726766270710, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270711 XXXX 1726766270711, Thread 945: XXXX 1726766270711, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270812 XXXX 1726766270812, Thread 945: XXXX 1726766270812, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270813 XXXX 1726766270813, Thread 945: XXXX 1726766270813, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766270911 XXXX 1726766270911, Thread 945: XXXX 1726766270911, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766270913 XXXX 1726766270913, Thread 945: XXXX 1726766270913, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271012 XXXX 1726766271012, Thread 945: XXXX 1726766271012, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271013 XXXX 1726766271013, Thread 945: XXXX 1726766271013, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271112 XXXX 1726766271112, Thread 945: XXXX 1726766271112, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271115 XXXX 1726766271115, Thread 945: XXXX 1726766271115, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271212 XXXX 1726766271212, Thread 945: XXXX 1726766271212, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271213 XXXX 1726766271213, Thread 945: XXXX 1726766271213, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271313 XXXX 1726766271313, Thread 945: XXXX 1726766271313, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271314 XXXX 1726766271314, Thread 945: XXXX 1726766271314, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271412 XXXX 1726766271412, Thread 945: XXXX 1726766271412, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271414 XXXX 1726766271414, Thread 945: XXXX 1726766271414, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271513 XXXX 1726766271513, Thread 945: XXXX 1726766271513, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271515 XXXX 1726766271515, Thread 945: XXXX 1726766271515, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271615 XXXX 1726766271615, Thread 945: XXXX 1726766271615, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271616 XXXX 1726766271616, Thread 945: XXXX 1726766271616, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271716 XXXX 1726766271716, Thread 945: XXXX 1726766271716, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271716 XXXX 1726766271716, Thread 945: XXXX 1726766271716, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271817 XXXX 1726766271817, Thread 945: XXXX 1726766271817, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271818 XXXX 1726766271818, Thread 945: XXXX 1726766271818, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766271918 XXXX 1726766271918, Thread 945: XXXX 1726766271918, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766271920 XXXX 1726766271920, Thread 945: XXXX 1726766271920, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272020 XXXX 1726766272020, Thread 945: XXXX 1726766272020, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272021 XXXX 1726766272021, Thread 945: XXXX 1726766272021, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272121 XXXX 1726766272121, Thread 945: XXXX 1726766272121, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272122 XXXX 1726766272122, Thread 945: XXXX 1726766272122, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272222 XXXX 1726766272222, Thread 945: XXXX 1726766272222, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272225 XXXX 1726766272225, Thread 945: XXXX 1726766272225, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272323 XXXX 1726766272323, Thread 945: XXXX 1726766272323, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272324 XXXX 1726766272324, Thread 945: XXXX 1726766272324, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272423 XXXX 1726766272423, Thread 945: XXXX 1726766272423, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272426 XXXX 1726766272426, Thread 945: XXXX 1726766272426, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272524 XXXX 1726766272524, Thread 945: XXXX 1726766272524, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272525 XXXX 1726766272525, Thread 945: XXXX 1726766272525, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272625 XXXX 1726766272625, Thread 945: XXXX 1726766272625, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272626 XXXX 1726766272626, Thread 945: XXXX 1726766272626, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272726 XXXX 1726766272726, Thread 945: XXXX 1726766272726, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272728 XXXX 1726766272728, Thread 945: XXXX 1726766272728, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272827 XXXX 1726766272827, Thread 945: XXXX 1726766272827, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272829 XXXX 1726766272829, Thread 945: XXXX 1726766272829, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766272929 XXXX 1726766272929, Thread 945: XXXX 1726766272929, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766272930 XXXX 1726766272930, Thread 945: XXXX 1726766272930, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273031 XXXX 1726766273031, Thread 945: XXXX 1726766273031, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273032 XXXX 1726766273032, Thread 945: XXXX 1726766273032, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273130 XXXX 1726766273130, Thread 945: XXXX 1726766273130, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273132 XXXX 1726766273132, Thread 945: XXXX 1726766273132, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273231 XXXX 1726766273231, Thread 945: XXXX 1726766273231, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273233 XXXX 1726766273233, Thread 945: XXXX 1726766273233, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273332 XXXX 1726766273332, Thread 945: XXXX 1726766273332, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273333 XXXX 1726766273333, Thread 945: XXXX 1726766273333, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273432 XXXX 1726766273432, Thread 945: XXXX 1726766273432, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273434 XXXX 1726766273434, Thread 945: XXXX 1726766273434, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273532 XXXX 1726766273532, Thread 945: XXXX 1726766273532, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273534 XXXX 1726766273534, Thread 945: XXXX 1726766273534, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273633 XXXX 1726766273633, Thread 945: XXXX 1726766273633, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273634 XXXX 1726766273634, Thread 945: XXXX 1726766273634, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273736 XXXX 1726766273736, Thread 945: XXXX 1726766273736, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273737 XXXX 1726766273737, Thread 945: XXXX 1726766273737, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273839 XXXX 1726766273839, Thread 945: XXXX 1726766273839, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273841 XXXX 1726766273841, Thread 945: XXXX 1726766273841, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766273939 XXXX 1726766273939, Thread 945: XXXX 1726766273939, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766273941 XXXX 1726766273941, Thread 945: XXXX 1726766273941, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274039 XXXX 1726766274039, Thread 945: XXXX 1726766274039, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274041 XXXX 1726766274041, Thread 945: XXXX 1726766274041, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274140 XXXX 1726766274140, Thread 945: XXXX 1726766274140, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274141 XXXX 1726766274141, Thread 945: XXXX 1726766274141, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274241 XXXX 1726766274241, Thread 945: XXXX 1726766274241, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274242 XXXX 1726766274242, Thread 945: XXXX 1726766274242, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274341 XXXX 1726766274341, Thread 945: XXXX 1726766274341, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274343 XXXX 1726766274343, Thread 945: XXXX 1726766274343, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274443 XXXX 1726766274443, Thread 945: XXXX 1726766274443, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274444 XXXX 1726766274444, Thread 945: XXXX 1726766274444, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274543 XXXX 1726766274543, Thread 945: XXXX 1726766274543, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274545 XXXX 1726766274545, Thread 945: XXXX 1726766274545, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274644 XXXX 1726766274644, Thread 945: XXXX 1726766274644, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274645 XXXX 1726766274645, Thread 945: XXXX 1726766274645, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274745 XXXX 1726766274745, Thread 945: XXXX 1726766274745, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274748 XXXX 1726766274748, Thread 945: XXXX 1726766274748, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274845 XXXX 1726766274845, Thread 945: XXXX 1726766274845, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274846 XXXX 1726766274846, Thread 945: XXXX 1726766274846, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766274945 XXXX 1726766274945, Thread 945: XXXX 1726766274945, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766274947 XXXX 1726766274947, Thread 945: XXXX 1726766274947, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275047 XXXX 1726766275047, Thread 945: XXXX 1726766275047, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275048 XXXX 1726766275048, Thread 945: XXXX 1726766275048, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275147 XXXX 1726766275147, Thread 945: XXXX 1726766275147, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275148 XXXX 1726766275148, Thread 945: XXXX 1726766275148, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275248 XXXX 1726766275248, Thread 945: XXXX 1726766275248, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275249 XXXX 1726766275249, Thread 945: XXXX 1726766275249, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275350 XXXX 1726766275350, Thread 945: XXXX 1726766275350, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275352 XXXX 1726766275352, Thread 945: XXXX 1726766275352, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275449 XXXX 1726766275449, Thread 945: XXXX 1726766275449, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275451 XXXX 1726766275451, Thread 945: XXXX 1726766275451, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275552 XXXX 1726766275552, Thread 945: XXXX 1726766275552, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275553 XXXX 1726766275553, Thread 945: XXXX 1726766275553, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275652 XXXX 1726766275652, Thread 945: XXXX 1726766275652, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275654 XXXX 1726766275654, Thread 945: XXXX 1726766275654, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275752 XXXX 1726766275752, Thread 945: XXXX 1726766275752, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275754 XXXX 1726766275754, Thread 945: XXXX 1726766275754, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275853 XXXX 1726766275853, Thread 945: XXXX 1726766275853, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275854 XXXX 1726766275854, Thread 945: XXXX 1726766275854, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766275953 XXXX 1726766275953, Thread 945: XXXX 1726766275953, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766275954 XXXX 1726766275954, Thread 945: XXXX 1726766275954, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276053 XXXX 1726766276053, Thread 945: XXXX 1726766276053, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276055 XXXX 1726766276055, Thread 945: XXXX 1726766276055, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276155 XXXX 1726766276155, Thread 945: XXXX 1726766276155, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276157 XXXX 1726766276156, Thread 945: XXXX 1726766276156, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276255 XXXX 1726766276255, Thread 945: XXXX 1726766276255, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276257 XXXX 1726766276257, Thread 945: XXXX 1726766276257, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276357 XXXX 1726766276357, Thread 945: XXXX 1726766276357, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276358 XXXX 1726766276358, Thread 945: XXXX 1726766276358, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276459 XXXX 1726766276459, Thread 945: XXXX 1726766276459, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276460 XXXX 1726766276460, Thread 945: XXXX 1726766276460, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276561 XXXX 1726766276561, Thread 945: XXXX 1726766276561, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276562 XXXX 1726766276562, Thread 945: XXXX 1726766276562, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276661 XXXX 1726766276661, Thread 945: XXXX 1726766276661, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276662 XXXX 1726766276662, Thread 945: XXXX 1726766276662, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276762 XXXX 1726766276762, Thread 945: XXXX 1726766276762, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276764 XXXX 1726766276764, Thread 945: XXXX 1726766276764, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276864 XXXX 1726766276864, Thread 945: XXXX 1726766276864, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276866 XXXX 1726766276866, Thread 945: XXXX 1726766276866, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766276964 XXXX 1726766276964, Thread 945: XXXX 1726766276964, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766276966 XXXX 1726766276966, Thread 945: XXXX 1726766276966, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277066 XXXX 1726766277066, Thread 945: XXXX 1726766277066, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277068 XXXX 1726766277068, Thread 945: XXXX 1726766277068, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277166 XXXX 1726766277166, Thread 945: XXXX 1726766277166, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277167 XXXX 1726766277167, Thread 945: XXXX 1726766277167, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277268 XXXX 1726766277268, Thread 945: XXXX 1726766277268, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277269 XXXX 1726766277269, Thread 945: XXXX 1726766277269, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277370 XXXX 1726766277370, Thread 945: XXXX 1726766277370, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277371 XXXX 1726766277371, Thread 945: XXXX 1726766277371, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277472 XXXX 1726766277472, Thread 945: XXXX 1726766277472, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277474 XXXX 1726766277474, Thread 945: XXXX 1726766277474, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277572 XXXX 1726766277572, Thread 945: XXXX 1726766277572, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277573 XXXX 1726766277573, Thread 945: XXXX 1726766277573, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277677 XXXX 1726766277677, Thread 945: XXXX 1726766277677, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277679 XXXX 1726766277679, Thread 945: XXXX 1726766277679, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277774 XXXX 1726766277774, Thread 945: XXXX 1726766277774, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277776 XXXX 1726766277776, Thread 945: XXXX 1726766277776, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277875 XXXX 1726766277875, Thread 945: XXXX 1726766277875, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277876 XXXX 1726766277876, Thread 945: XXXX 1726766277876, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766277975 XXXX 1726766277975, Thread 945: XXXX 1726766277975, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766277976 XXXX 1726766277976, Thread 945: XXXX 1726766277976, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278077 XXXX 1726766278077, Thread 945: XXXX 1726766278077, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278079 XXXX 1726766278079, Thread 945: XXXX 1726766278079, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278178 XXXX 1726766278178, Thread 945: XXXX 1726766278178, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278179 XXXX 1726766278179, Thread 945: XXXX 1726766278179, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278279 XXXX 1726766278279, Thread 945: XXXX 1726766278279, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278280 XXXX 1726766278280, Thread 945: XXXX 1726766278280, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278379 XXXX 1726766278379, Thread 945: XXXX 1726766278379, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278380 XXXX 1726766278380, Thread 945: XXXX 1726766278380, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278480 XXXX 1726766278480, Thread 945: XXXX 1726766278480, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278481 XXXX 1726766278481, Thread 945: XXXX 1726766278481, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278581 XXXX 1726766278581, Thread 945: XXXX 1726766278581, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278582 XXXX 1726766278582, Thread 945: XXXX 1726766278582, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278682 XXXX 1726766278682, Thread 945: XXXX 1726766278682, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278683 XXXX 1726766278683, Thread 945: XXXX 1726766278683, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278783 XXXX 1726766278783, Thread 945: XXXX 1726766278783, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278785 XXXX 1726766278785, Thread 945: XXXX 1726766278785, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278883 XXXX 1726766278883, Thread 945: XXXX 1726766278883, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278885 XXXX 1726766278885, Thread 945: XXXX 1726766278885, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766278985 XXXX 1726766278985, Thread 945: XXXX 1726766278985, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766278986 XXXX 1726766278986, Thread 945: XXXX 1726766278986, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279085 XXXX 1726766279085, Thread 945: XXXX 1726766279085, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279086 XXXX 1726766279086, Thread 945: XXXX 1726766279086, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279187 XXXX 1726766279187, Thread 945: XXXX 1726766279187, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279188 XXXX 1726766279188, Thread 945: XXXX 1726766279188, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279287 XXXX 1726766279287, Thread 945: XXXX 1726766279287, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279289 XXXX 1726766279289, Thread 945: XXXX 1726766279289, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279389 XXXX 1726766279389, Thread 945: XXXX 1726766279389, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279390 XXXX 1726766279390, Thread 945: XXXX 1726766279390, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279489 XXXX 1726766279489, Thread 945: XXXX 1726766279489, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279491 XXXX 1726766279491, Thread 945: XXXX 1726766279491, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279589 XXXX 1726766279589, Thread 945: XXXX 1726766279589, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279592 XXXX 1726766279592, Thread 945: XXXX 1726766279592, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279690 XXXX 1726766279690, Thread 945: XXXX 1726766279690, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279692 XXXX 1726766279692, Thread 945: XXXX 1726766279692, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279790 XXXX 1726766279790, Thread 945: XXXX 1726766279790, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279791 XXXX 1726766279791, Thread 945: XXXX 1726766279791, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279892 XXXX 1726766279892, Thread 945: XXXX 1726766279892, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279894 XXXX 1726766279894, Thread 945: XXXX 1726766279894, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766279992 XXXX 1726766279992, Thread 945: XXXX 1726766279992, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766279993 XXXX 1726766279993, Thread 945: XXXX 1726766279993, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280092 XXXX 1726766280092, Thread 945: XXXX 1726766280092, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280095 XXXX 1726766280095, Thread 945: XXXX 1726766280095, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280192 XXXX 1726766280192, Thread 945: XXXX 1726766280192, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280194 XXXX 1726766280194, Thread 945: XXXX 1726766280194, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280293 XXXX 1726766280293, Thread 945: XXXX 1726766280293, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280295 XXXX 1726766280295, Thread 945: XXXX 1726766280295, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280393 XXXX 1726766280393, Thread 945: XXXX 1726766280393, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280396 XXXX 1726766280396, Thread 945: XXXX 1726766280396, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280493 XXXX 1726766280493, Thread 945: XXXX 1726766280493, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280495 XXXX 1726766280495, Thread 945: XXXX 1726766280495, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280593 XXXX 1726766280593, Thread 945: XXXX 1726766280593, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280594 XXXX 1726766280594, Thread 945: XXXX 1726766280594, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280693 XXXX 1726766280693, Thread 945: XXXX 1726766280693, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280696 XXXX 1726766280696, Thread 945: XXXX 1726766280696, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280794 XXXX 1726766280794, Thread 945: XXXX 1726766280794, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280795 XXXX 1726766280795, Thread 945: XXXX 1726766280795, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280893 XXXX 1726766280893, Thread 945: XXXX 1726766280893, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280894 XXXX 1726766280894, Thread 945: XXXX 1726766280894, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766280993 XXXX 1726766280993, Thread 945: XXXX 1726766280993, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766280995 XXXX 1726766280995, Thread 945: XXXX 1726766280995, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281093 XXXX 1726766281093, Thread 945: XXXX 1726766281093, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281095 XXXX 1726766281095, Thread 945: XXXX 1726766281095, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281193 XXXX 1726766281193, Thread 945: XXXX 1726766281193, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281194 XXXX 1726766281194, Thread 945: XXXX 1726766281194, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281293 XXXX 1726766281293, Thread 945: XXXX 1726766281293, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281295 XXXX 1726766281295, Thread 945: XXXX 1726766281295, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281395 XXXX 1726766281395, Thread 945: XXXX 1726766281395, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281398 XXXX 1726766281398, Thread 945: XXXX 1726766281398, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281495 XXXX 1726766281495, Thread 945: XXXX 1726766281495, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281497 XXXX 1726766281497, Thread 945: XXXX 1726766281497, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281595 XXXX 1726766281595, Thread 945: XXXX 1726766281595, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281598 XXXX 1726766281598, Thread 945: XXXX 1726766281598, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281695 XXXX 1726766281695, Thread 945: XXXX 1726766281695, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281696 XXXX 1726766281696, Thread 945: XXXX 1726766281696, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281797 XXXX 1726766281797, Thread 945: XXXX 1726766281797, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281799 XXXX 1726766281799, Thread 945: XXXX 1726766281799, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281897 XXXX 1726766281897, Thread 945: XXXX 1726766281897, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281900 XXXX 1726766281900, Thread 945: XXXX 1726766281900, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766281998 XXXX 1726766281998, Thread 945: XXXX 1726766281998, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766281999 XXXX 1726766281999, Thread 945: XXXX 1726766281999, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282100 XXXX 1726766282100, Thread 945: XXXX 1726766282100, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282101 XXXX 1726766282101, Thread 945: XXXX 1726766282101, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282202 XXXX 1726766282202, Thread 945: XXXX 1726766282202, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282204 XXXX 1726766282204, Thread 945: XXXX 1726766282204, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282303 XXXX 1726766282303, Thread 945: XXXX 1726766282303, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282305 XXXX 1726766282305, Thread 945: XXXX 1726766282305, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282404 XXXX 1726766282404, Thread 945: XXXX 1726766282404, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282405 XXXX 1726766282405, Thread 945: XXXX 1726766282405, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282505 XXXX 1726766282505, Thread 945: XXXX 1726766282505, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282507 XXXX 1726766282507, Thread 945: XXXX 1726766282507, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282605 XXXX 1726766282605, Thread 945: XXXX 1726766282605, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282607 XXXX 1726766282607, Thread 945: XXXX 1726766282607, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282708 XXXX 1726766282708, Thread 945: XXXX 1726766282708, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282708 XXXX 1726766282708, Thread 945: XXXX 1726766282708, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282807 XXXX 1726766282807, Thread 945: XXXX 1726766282807, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282808 XXXX 1726766282808, Thread 945: XXXX 1726766282808, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766282908 XXXX 1726766282908, Thread 945: XXXX 1726766282908, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766282910 XXXX 1726766282910, Thread 945: XXXX 1726766282910, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283009 XXXX 1726766283009, Thread 945: XXXX 1726766283009, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283012 XXXX 1726766283012, Thread 945: XXXX 1726766283012, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283111 XXXX 1726766283111, Thread 945: XXXX 1726766283111, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283112 XXXX 1726766283112, Thread 945: XXXX 1726766283112, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283211 XXXX 1726766283211, Thread 945: XXXX 1726766283211, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283212 XXXX 1726766283212, Thread 945: XXXX 1726766283212, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283312 XXXX 1726766283312, Thread 945: XXXX 1726766283312, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283314 XXXX 1726766283314, Thread 945: XXXX 1726766283314, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283413 XXXX 1726766283413, Thread 945: XXXX 1726766283413, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283415 XXXX 1726766283415, Thread 945: XXXX 1726766283415, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283515 XXXX 1726766283515, Thread 945: XXXX 1726766283515, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283516 XXXX 1726766283516, Thread 945: XXXX 1726766283516, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283615 XXXX 1726766283615, Thread 945: XXXX 1726766283615, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283618 XXXX 1726766283618, Thread 945: XXXX 1726766283618, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283715 XXXX 1726766283715, Thread 945: XXXX 1726766283715, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283717 XXXX 1726766283717, Thread 945: XXXX 1726766283717, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283817 XXXX 1726766283817, Thread 945: XXXX 1726766283817, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283819 XXXX 1726766283819, Thread 945: XXXX 1726766283819, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766283917 XXXX 1726766283917, Thread 945: XXXX 1726766283917, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766283922 XXXX 1726766283922, Thread 945: XXXX 1726766283922, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284017 XXXX 1726766284017, Thread 945: XXXX 1726766284017, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284019 XXXX 1726766284019, Thread 945: XXXX 1726766284019, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284117 XXXX 1726766284117, Thread 945: XXXX 1726766284117, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284120 XXXX 1726766284120, Thread 945: XXXX 1726766284120, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284217 XXXX 1726766284217, Thread 945: XXXX 1726766284217, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284219 XXXX 1726766284219, Thread 945: XXXX 1726766284219, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284317 XXXX 1726766284317, Thread 945: XXXX 1726766284317, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284318 XXXX 1726766284318, Thread 945: XXXX 1726766284318, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284419 XXXX 1726766284419, Thread 945: XXXX 1726766284419, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284420 XXXX 1726766284420, Thread 945: XXXX 1726766284420, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284522 XXXX 1726766284522, Thread 945: XXXX 1726766284522, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284523 XXXX 1726766284523, Thread 945: XXXX 1726766284523, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284623 XXXX 1726766284623, Thread 945: XXXX 1726766284623, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284624 XXXX 1726766284624, Thread 945: XXXX 1726766284624, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284723 XXXX 1726766284723, Thread 945: XXXX 1726766284723, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284724 XXXX 1726766284724, Thread 945: XXXX 1726766284724, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284823 XXXX 1726766284823, Thread 945: XXXX 1726766284823, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284826 XXXX 1726766284826, Thread 945: XXXX 1726766284826, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766284923 XXXX 1726766284923, Thread 945: XXXX 1726766284923, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766284925 XXXX 1726766284925, Thread 945: XXXX 1726766284925, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285025 XXXX 1726766285025, Thread 945: XXXX 1726766285025, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285028 XXXX 1726766285028, Thread 945: XXXX 1726766285028, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285126 XXXX 1726766285126, Thread 945: XXXX 1726766285126, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285129 XXXX 1726766285129, Thread 945: XXXX 1726766285129, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285230 XXXX 1726766285230, Thread 945: XXXX 1726766285230, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285231 XXXX 1726766285231, Thread 945: XXXX 1726766285231, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285332 XXXX 1726766285332, Thread 945: XXXX 1726766285332, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285334 XXXX 1726766285334, Thread 945: XXXX 1726766285334, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285434 XXXX 1726766285434, Thread 945: XXXX 1726766285434, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285435 XXXX 1726766285435, Thread 945: XXXX 1726766285435, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285535 XXXX 1726766285535, Thread 945: XXXX 1726766285535, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285535 XXXX 1726766285535, Thread 945: XXXX 1726766285535, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285635 XXXX 1726766285635, Thread 945: XXXX 1726766285635, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285638 XXXX 1726766285638, Thread 945: XXXX 1726766285638, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285737 XXXX 1726766285737, Thread 945: XXXX 1726766285737, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285738 XXXX 1726766285738, Thread 945: XXXX 1726766285738, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285838 XXXX 1726766285838, Thread 945: XXXX 1726766285838, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285839 XXXX 1726766285839, Thread 945: XXXX 1726766285839, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766285938 XXXX 1726766285938, Thread 945: XXXX 1726766285938, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766285939 XXXX 1726766285939, Thread 945: XXXX 1726766285939, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286038 XXXX 1726766286038, Thread 945: XXXX 1726766286038, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286040 XXXX 1726766286040, Thread 945: XXXX 1726766286040, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286140 XXXX 1726766286140, Thread 945: XXXX 1726766286140, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286141 XXXX 1726766286141, Thread 945: XXXX 1726766286141, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286240 XXXX 1726766286240, Thread 945: XXXX 1726766286240, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286241 XXXX 1726766286241, Thread 945: XXXX 1726766286241, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286341 XXXX 1726766286341, Thread 945: XXXX 1726766286341, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286344 XXXX 1726766286344, Thread 945: XXXX 1726766286344, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286441 XXXX 1726766286441, Thread 945: XXXX 1726766286441, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286443 XXXX 1726766286443, Thread 945: XXXX 1726766286443, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286544 XXXX 1726766286544, Thread 945: XXXX 1726766286544, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286545 XXXX 1726766286545, Thread 945: XXXX 1726766286545, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286644 XXXX 1726766286644, Thread 945: XXXX 1726766286644, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286646 XXXX 1726766286646, Thread 945: XXXX 1726766286646, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286745 XXXX 1726766286745, Thread 945: XXXX 1726766286745, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286745 XXXX 1726766286745, Thread 945: XXXX 1726766286745, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286845 XXXX 1726766286845, Thread 945: XXXX 1726766286845, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286848 XXXX 1726766286848, Thread 945: XXXX 1726766286848, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766286947 XXXX 1726766286947, Thread 945: XXXX 1726766286947, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766286948 XXXX 1726766286948, Thread 945: XXXX 1726766286948, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287047 XXXX 1726766287047, Thread 945: XXXX 1726766287047, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287049 XXXX 1726766287049, Thread 945: XXXX 1726766287049, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287146 XXXX 1726766287146, Thread 945: XXXX 1726766287146, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287147 XXXX 1726766287147, Thread 945: XXXX 1726766287147, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287247 XXXX 1726766287247, Thread 945: XXXX 1726766287247, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287248 XXXX 1726766287248, Thread 945: XXXX 1726766287248, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287347 XXXX 1726766287347, Thread 945: XXXX 1726766287347, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287350 XXXX 1726766287350, Thread 945: XXXX 1726766287350, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287448 XXXX 1726766287448, Thread 945: XXXX 1726766287448, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287449 XXXX 1726766287449, Thread 945: XXXX 1726766287449, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287550 XXXX 1726766287550, Thread 945: XXXX 1726766287550, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287552 XXXX 1726766287552, Thread 945: XXXX 1726766287552, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287650 XXXX 1726766287650, Thread 945: XXXX 1726766287650, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287651 XXXX 1726766287651, Thread 945: XXXX 1726766287651, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287750 XXXX 1726766287750, Thread 945: XXXX 1726766287750, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287751 XXXX 1726766287751, Thread 945: XXXX 1726766287751, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287854 XXXX 1726766287854, Thread 945: XXXX 1726766287854, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287855 XXXX 1726766287855, Thread 945: XXXX 1726766287855, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766287954 XXXX 1726766287954, Thread 945: XXXX 1726766287954, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766287956 XXXX 1726766287956, Thread 945: XXXX 1726766287956, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288055 XXXX 1726766288055, Thread 945: XXXX 1726766288055, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288057 XXXX 1726766288057, Thread 945: XXXX 1726766288057, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288157 XXXX 1726766288157, Thread 945: XXXX 1726766288157, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288159 XXXX 1726766288159, Thread 945: XXXX 1726766288159, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288258 XXXX 1726766288258, Thread 945: XXXX 1726766288258, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288260 XXXX 1726766288260, Thread 945: XXXX 1726766288260, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288359 XXXX 1726766288359, Thread 945: XXXX 1726766288359, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288361 XXXX 1726766288361, Thread 945: XXXX 1726766288361, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288460 XXXX 1726766288460, Thread 945: XXXX 1726766288460, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288462 XXXX 1726766288462, Thread 945: XXXX 1726766288462, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288560 XXXX 1726766288560, Thread 945: XXXX 1726766288560, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288561 XXXX 1726766288561, Thread 945: XXXX 1726766288561, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288661 XXXX 1726766288661, Thread 945: XXXX 1726766288661, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288662 XXXX 1726766288662, Thread 945: XXXX 1726766288662, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288763 XXXX 1726766288763, Thread 945: XXXX 1726766288763, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288764 XXXX 1726766288764, Thread 945: XXXX 1726766288764, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288864 XXXX 1726766288864, Thread 945: XXXX 1726766288864, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288865 XXXX 1726766288865, Thread 945: XXXX 1726766288865, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766288965 XXXX 1726766288965, Thread 945: XXXX 1726766288965, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766288965 XXXX 1726766288965, Thread 945: XXXX 1726766288965, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289066 XXXX 1726766289066, Thread 945: XXXX 1726766289066, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289067 XXXX 1726766289067, Thread 945: XXXX 1726766289067, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289166 XXXX 1726766289166, Thread 945: XXXX 1726766289166, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289169 XXXX 1726766289169, Thread 945: XXXX 1726766289169, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289268 XXXX 1726766289268, Thread 945: XXXX 1726766289268, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289272 XXXX 1726766289272, Thread 945: XXXX 1726766289272, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289369 XXXX 1726766289369, Thread 945: XXXX 1726766289369, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289370 XXXX 1726766289370, Thread 945: XXXX 1726766289370, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289470 XXXX 1726766289470, Thread 945: XXXX 1726766289470, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289472 XXXX 1726766289472, Thread 945: XXXX 1726766289472, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289571 XXXX 1726766289571, Thread 945: XXXX 1726766289571, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289573 XXXX 1726766289573, Thread 945: XXXX 1726766289573, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289672 XXXX 1726766289672, Thread 945: XXXX 1726766289672, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289674 XXXX 1726766289674, Thread 945: XXXX 1726766289674, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289773 XXXX 1726766289773, Thread 945: XXXX 1726766289773, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289775 XXXX 1726766289775, Thread 945: XXXX 1726766289775, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289873 XXXX 1726766289873, Thread 945: XXXX 1726766289873, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289875 XXXX 1726766289875, Thread 945: XXXX 1726766289875, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766289975 XXXX 1726766289975, Thread 945: XXXX 1726766289975, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766289975 XXXX 1726766289975, Thread 945: XXXX 1726766289975, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290075 XXXX 1726766290075, Thread 945: XXXX 1726766290075, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290076 XXXX 1726766290076, Thread 945: XXXX 1726766290076, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290174 XXXX 1726766290174, Thread 945: XXXX 1726766290174, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290176 XXXX 1726766290176, Thread 945: XXXX 1726766290176, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290277 XXXX 1726766290277, Thread 945: XXXX 1726766290277, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290278 XXXX 1726766290278, Thread 945: XXXX 1726766290278, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290378 XXXX 1726766290378, Thread 945: XXXX 1726766290378, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290379 XXXX 1726766290379, Thread 945: XXXX 1726766290379, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290478 XXXX 1726766290478, Thread 945: XXXX 1726766290478, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290479 XXXX 1726766290479, Thread 945: XXXX 1726766290479, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290580 XXXX 1726766290580, Thread 945: XXXX 1726766290580, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290583 XXXX 1726766290583, Thread 945: XXXX 1726766290583, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290681 XXXX 1726766290681, Thread 945: XXXX 1726766290681, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290683 XXXX 1726766290683, Thread 945: XXXX 1726766290683, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290783 XXXX 1726766290783, Thread 945: XXXX 1726766290783, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290784 XXXX 1726766290784, Thread 945: XXXX 1726766290784, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290883 XXXX 1726766290883, Thread 945: XXXX 1726766290883, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290885 XXXX 1726766290885, Thread 945: XXXX 1726766290885, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766290984 XXXX 1726766290984, Thread 945: XXXX 1726766290984, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766290986 XXXX 1726766290986, Thread 945: XXXX 1726766290986, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291085 XXXX 1726766291085, Thread 945: XXXX 1726766291085, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291086 XXXX 1726766291086, Thread 945: XXXX 1726766291086, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291187 XXXX 1726766291187, Thread 945: XXXX 1726766291187, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291188 XXXX 1726766291188, Thread 945: XXXX 1726766291188, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291287 XXXX 1726766291287, Thread 945: XXXX 1726766291287, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291288 XXXX 1726766291288, Thread 945: XXXX 1726766291288, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291390 XXXX 1726766291390, Thread 945: XXXX 1726766291390, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291391 XXXX 1726766291391, Thread 945: XXXX 1726766291391, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291489 XXXX 1726766291489, Thread 945: XXXX 1726766291489, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291490 XXXX 1726766291490, Thread 945: XXXX 1726766291490, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291590 XXXX 1726766291590, Thread 945: XXXX 1726766291590, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291591 XXXX 1726766291591, Thread 945: XXXX 1726766291591, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291692 XXXX 1726766291692, Thread 945: XXXX 1726766291692, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291693 XXXX 1726766291693, Thread 945: XXXX 1726766291693, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291793 XXXX 1726766291793, Thread 945: XXXX 1726766291793, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291796 XXXX 1726766291796, Thread 945: XXXX 1726766291796, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291893 XXXX 1726766291893, Thread 945: XXXX 1726766291893, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291894 XXXX 1726766291894, Thread 945: XXXX 1726766291894, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766291993 XXXX 1726766291993, Thread 945: XXXX 1726766291993, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766291996 XXXX 1726766291995, Thread 945: XXXX 1726766291995, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292094 XXXX 1726766292094, Thread 945: XXXX 1726766292094, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292095 XXXX 1726766292095, Thread 945: XXXX 1726766292095, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292195 XXXX 1726766292195, Thread 945: XXXX 1726766292195, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292197 XXXX 1726766292197, Thread 945: XXXX 1726766292197, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292295 XXXX 1726766292295, Thread 945: XXXX 1726766292295, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292297 XXXX 1726766292297, Thread 945: XXXX 1726766292297, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292396 XXXX 1726766292396, Thread 945: XXXX 1726766292396, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292398 XXXX 1726766292398, Thread 945: XXXX 1726766292398, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292497 XXXX 1726766292497, Thread 945: XXXX 1726766292497, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292498 XXXX 1726766292498, Thread 945: XXXX 1726766292498, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292598 XXXX 1726766292598, Thread 945: XXXX 1726766292598, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292599 XXXX 1726766292599, Thread 945: XXXX 1726766292599, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292701 XXXX 1726766292701, Thread 945: XXXX 1726766292701, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292702 XXXX 1726766292702, Thread 945: XXXX 1726766292702, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292802 XXXX 1726766292802, Thread 945: XXXX 1726766292802, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292804 XXXX 1726766292804, Thread 945: XXXX 1726766292804, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766292903 XXXX 1726766292903, Thread 945: XXXX 1726766292903, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766292905 XXXX 1726766292905, Thread 945: XXXX 1726766292905, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293003 XXXX 1726766293003, Thread 945: XXXX 1726766293003, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293005 XXXX 1726766293005, Thread 945: XXXX 1726766293005, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293106 XXXX 1726766293106, Thread 945: XXXX 1726766293106, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293108 XXXX 1726766293108, Thread 945: XXXX 1726766293108, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293208 XXXX 1726766293208, Thread 945: XXXX 1726766293208, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293209 XXXX 1726766293209, Thread 945: XXXX 1726766293209, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293308 XXXX 1726766293308, Thread 945: XXXX 1726766293308, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293309 XXXX 1726766293309, Thread 945: XXXX 1726766293309, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293410 XXXX 1726766293410, Thread 945: XXXX 1726766293410, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293412 XXXX 1726766293412, Thread 945: XXXX 1726766293412, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293512 XXXX 1726766293512, Thread 945: XXXX 1726766293512, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293513 XXXX 1726766293513, Thread 945: XXXX 1726766293513, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293612 XXXX 1726766293612, Thread 945: XXXX 1726766293612, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293614 XXXX 1726766293614, Thread 945: XXXX 1726766293614, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293712 XXXX 1726766293712, Thread 945: XXXX 1726766293712, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293713 XXXX 1726766293713, Thread 945: XXXX 1726766293713, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293812 XXXX 1726766293812, Thread 945: XXXX 1726766293812, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293813 XXXX 1726766293813, Thread 945: XXXX 1726766293813, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766293914 XXXX 1726766293914, Thread 945: XXXX 1726766293914, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766293915 XXXX 1726766293915, Thread 945: XXXX 1726766293915, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294014 XXXX 1726766294014, Thread 945: XXXX 1726766294014, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294016 XXXX 1726766294016, Thread 945: XXXX 1726766294016, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294114 XXXX 1726766294114, Thread 945: XXXX 1726766294114, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294116 XXXX 1726766294116, Thread 945: XXXX 1726766294116, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294215 XXXX 1726766294215, Thread 945: XXXX 1726766294215, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294217 XXXX 1726766294217, Thread 945: XXXX 1726766294217, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294316 XXXX 1726766294316, Thread 945: XXXX 1726766294316, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294317 XXXX 1726766294317, Thread 945: XXXX 1726766294317, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294417 XXXX 1726766294417, Thread 945: XXXX 1726766294417, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294418 XXXX 1726766294418, Thread 945: XXXX 1726766294418, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294519 XXXX 1726766294519, Thread 945: XXXX 1726766294519, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294521 XXXX 1726766294521, Thread 945: XXXX 1726766294521, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294622 XXXX 1726766294622, Thread 945: XXXX 1726766294622, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294624 XXXX 1726766294624, Thread 945: XXXX 1726766294624, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294724 XXXX 1726766294724, Thread 945: XXXX 1726766294724, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294725 XXXX 1726766294725, Thread 945: XXXX 1726766294725, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294824 XXXX 1726766294824, Thread 945: XXXX 1726766294824, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294825 XXXX 1726766294825, Thread 945: XXXX 1726766294825, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766294925 XXXX 1726766294925, Thread 945: XXXX 1726766294925, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766294927 XXXX 1726766294927, Thread 945: XXXX 1726766294927, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295027 XXXX 1726766295027, Thread 945: XXXX 1726766295027, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295028 XXXX 1726766295028, Thread 945: XXXX 1726766295028, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295128 XXXX 1726766295128, Thread 945: XXXX 1726766295128, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295131 XXXX 1726766295131, Thread 945: XXXX 1726766295131, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295228 XXXX 1726766295228, Thread 945: XXXX 1726766295228, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295229 XXXX 1726766295229, Thread 945: XXXX 1726766295229, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295329 XXXX 1726766295329, Thread 945: XXXX 1726766295329, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295331 XXXX 1726766295331, Thread 945: XXXX 1726766295331, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295431 XXXX 1726766295431, Thread 945: XXXX 1726766295431, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295433 XXXX 1726766295433, Thread 945: XXXX 1726766295433, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295531 XXXX 1726766295531, Thread 945: XXXX 1726766295531, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295534 XXXX 1726766295534, Thread 945: XXXX 1726766295534, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295632 XXXX 1726766295632, Thread 945: XXXX 1726766295632, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295633 XXXX 1726766295633, Thread 945: XXXX 1726766295633, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295732 XXXX 1726766295732, Thread 945: XXXX 1726766295732, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295734 XXXX 1726766295734, Thread 945: XXXX 1726766295734, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295833 XXXX 1726766295833, Thread 945: XXXX 1726766295833, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295834 XXXX 1726766295834, Thread 945: XXXX 1726766295834, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766295933 XXXX 1726766295933, Thread 945: XXXX 1726766295933, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766295935 XXXX 1726766295935, Thread 945: XXXX 1726766295935, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296034 XXXX 1726766296034, Thread 945: XXXX 1726766296034, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296035 XXXX 1726766296035, Thread 945: XXXX 1726766296035, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296135 XXXX 1726766296135, Thread 945: XXXX 1726766296135, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296137 XXXX 1726766296137, Thread 945: XXXX 1726766296137, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296236 XXXX 1726766296236, Thread 945: XXXX 1726766296236, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296238 XXXX 1726766296238, Thread 945: XXXX 1726766296238, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296336 XXXX 1726766296336, Thread 945: XXXX 1726766296336, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296337 XXXX 1726766296337, Thread 945: XXXX 1726766296337, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296436 XXXX 1726766296436, Thread 945: XXXX 1726766296436, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296438 XXXX 1726766296438, Thread 945: XXXX 1726766296438, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296537 XXXX 1726766296537, Thread 945: XXXX 1726766296537, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296538 XXXX 1726766296538, Thread 945: XXXX 1726766296538, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296638 XXXX 1726766296638, Thread 945: XXXX 1726766296638, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296639 XXXX 1726766296639, Thread 945: XXXX 1726766296639, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296739 XXXX 1726766296739, Thread 945: XXXX 1726766296739, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296741 XXXX 1726766296741, Thread 945: XXXX 1726766296741, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296838 XXXX 1726766296838, Thread 945: XXXX 1726766296838, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296839 XXXX 1726766296839, Thread 945: XXXX 1726766296839, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766296939 XXXX 1726766296939, Thread 945: XXXX 1726766296939, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766296941 XXXX 1726766296941, Thread 945: XXXX 1726766296941, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297039 XXXX 1726766297039, Thread 945: XXXX 1726766297039, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297043 XXXX 1726766297043, Thread 945: XXXX 1726766297043, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297141 XXXX 1726766297141, Thread 945: XXXX 1726766297141, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297143 XXXX 1726766297143, Thread 945: XXXX 1726766297143, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297243 XXXX 1726766297243, Thread 945: XXXX 1726766297242, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297244 XXXX 1726766297244, Thread 945: XXXX 1726766297244, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297343 XXXX 1726766297343, Thread 945: XXXX 1726766297343, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297345 XXXX 1726766297345, Thread 945: XXXX 1726766297345, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297444 XXXX 1726766297444, Thread 945: XXXX 1726766297444, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297447 XXXX 1726766297447, Thread 945: XXXX 1726766297447, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297545 XXXX 1726766297545, Thread 945: XXXX 1726766297545, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297547 XXXX 1726766297547, Thread 945: XXXX 1726766297547, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297645 XXXX 1726766297645, Thread 945: XXXX 1726766297645, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297648 XXXX 1726766297648, Thread 945: XXXX 1726766297648, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297746 XXXX 1726766297746, Thread 945: XXXX 1726766297746, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297747 XXXX 1726766297747, Thread 945: XXXX 1726766297747, Exiting Thread 945: Commands::runScriptBasic  
+945 1726766297847 XXXX 1726766297847, Thread 945: XXXX 1726766297847, Entering Thread 945: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+945 1726766297896 XXXX 1726766297896, Thread 945: com.Send returned false 
+945 1726766297899 XXXX 1726766297899, Thread 945: transfer: exception after writeHeaderAndGetResult null 
+945 1726766297899 XXXX 1726766297899, Thread 945: XXXX 1726766297899, Entering Thread 945: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
+945 1726766297899 XXXX 1726766297899, Thread 945: Send Abort Script Engine Command 
+945 1726766297899 XXXX 1726766297899, Thread 945: XXXX 1726766297899, Entering Thread 945: ToolCommUsb::killScriptEngine  
+945 1726766300316 XXXX 1726766300316, Thread 945: com.Send returned false 
+945 1726766300316 XXXX 1726766300316, Thread 945: Failed sending Abort Script Engine Command. Set nuclear option = true 
+945 1726766300316 XXXX 1726766300316, Thread 945: About to nuke 
+945 1726766300316 XXXX 1726766300316, Thread 945: XXXX 1726766300316, Entering Thread 945: ToolCommUsb::nuclearOption  
+945 1726766300345 XXXX 1726766300345, Thread 945: com.Send returned false 

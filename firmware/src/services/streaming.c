@@ -181,30 +181,27 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     //Analog input availability. Digital input/output availability
     bool AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
     bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
-    SDCard_RuntimeConfig_t* pSdRuntimeConf=(SDCard_RuntimeConfig_t*)BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS)
-;
-    //    UsbCdcData_t * pRunTimeUsbSettings = BoardRunTimeConfig_Get(
-    //            BOARDRUNTIME_USB_SETTINGS);
-    if(pSdRuntimeConf->enable==true && pSdRuntimeConf->mode==SD_CARD_MODE_READ){
+    SDCard_RuntimeConfig_t* pSdRuntimeConf = (SDCard_RuntimeConfig_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if (pSdRuntimeConf->enable == true && pSdRuntimeConf->mode == SD_CARD_MODE_READ) {
         SDCard_readStatus_t readStatus;
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
-        if (usbSize > BUFFER_SIZE){
-            readStatus=SDCard_Read((char*)buffer,(size_t*)&usbSize);
-            if(usbSize>0 && readStatus==SD_CARD_READ_STATUS_SUCCESS)
+        if (usbSize > BUFFER_SIZE) {
+            readStatus = SDCard_Read((char*) buffer, (size_t*) & usbSize);
+            if (usbSize > 0 && readStatus == SD_CARD_READ_STATUS_SUCCESS)
                 UsbCdc_WriteToBuffer(NULL, (const char *) buffer, usbSize);
-            else if(readStatus==SD_CARD_READ_STATUS_END_OF_FILE){
-                sprintf((char*)buffer,"\r\n__END OF FILE__\r\n");
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, strlen((char*)buffer));
-                pSdRuntimeConf->mode=SD_CARD_MODE_NONE;
+            else if (readStatus == SD_CARD_READ_STATUS_END_OF_FILE) {
+                sprintf((char*) buffer, "\r\n__END OF FILE__\r\n");
+                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, strlen((char*) buffer));
+                pSdRuntimeConf->mode = SD_CARD_MODE_NONE;
             }
         }
         return;
-        
+
     }
     if (!runtimeConfig->StreamingConfig.IsEnabled) {
         return;
     }
-    
+
     do {
         AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
         DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
@@ -231,12 +228,12 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
             hasUsb = false;
         }
 
-//        wifiSize = WifiApi_WriteBuffFreeSize();
-//        if (wifiSize > BUFFER_SIZE) {
-//            hasWifi = true;
-//        } else {
-//            hasWifi = false;
-//        }
+        wifiSize = WifiApi_WriteBuffFreeSize();
+        if (wifiSize > BUFFER_SIZE) {
+            hasWifi = true;
+        } else {
+            hasWifi = false;
+        }
 
         sdSize = SDCard_WriteBuffFreeSize();
         if (sdSize > BUFFER_SIZE) {

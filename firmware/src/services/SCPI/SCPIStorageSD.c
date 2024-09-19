@@ -49,15 +49,23 @@
 /* ************************************************************************** */
 
 /* ************************************************************************** */
+#define LAN_ACTIVE_ERROR_MSG "\r\nError !! Please Disable LAN\r\n"
 
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
-    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = (SDCard_RuntimeConfig_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);    
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    //sd card cannot be enabled if wifi is enabled
+    if (pRunTimeWifiSettings->isEnabled && param1!=0) {
+        context->interface->write(context, LAN_ACTIVE_ERROR_MSG, strlen(LAN_ACTIVE_ERROR_MSG));
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -90,7 +98,14 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
     SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = (SDCard_RuntimeConfig_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
 
+    if (pRunTimeWifiSettings->isEnabled) {
+        context->interface->write(context, LAN_ACTIVE_ERROR_MSG, strlen(LAN_ACTIVE_ERROR_MSG));
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
