@@ -25046,7 +25046,7 @@
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;sys_fs&gt;
   &lt;sys_fs dnOrder=&quot;0&quot; id=&quot;SYS_FS_MAX_FILES&quot;&gt;
     &lt;Values dnOrder=&quot;0&quot;&gt;
-      &lt;User dnOrder=&quot;0&quot; value=&quot;2&quot;/&gt;
+      &lt;User dnOrder=&quot;0&quot; value=&quot;10&quot;/&gt;
     &lt;/Values&gt;
   &lt;/sys_fs&gt;
 &lt;/sys_fs&gt;
@@ -27958,7 +27958,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\configuration.h</file>
-         <hash>5cdfbfef7e22ee4f49a5da485a3ae2b347bf4039a8150fb5f63a84d5f133cb5e</hash>
+         <hash>8810be9404741deddcb928ac5b0f07044d5b1c302f26b24caf6ff2052694f4ff</hash>
       </entry>
       <entry>
          <file>..\src\config\default\crypto\crypto.h</file>
@@ -27970,7 +27970,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\definitions.h</file>
-         <hash>5353ed4760ffbb53823194a907bf1a874d9e917502d9116af9ea68c3a7bacb52</hash>
+         <hash>a1626bcdbc8b8714dd8562ed8c05659bf688fb5273fc3802517b4658f2b1817c</hash>
       </entry>
       <entry>
          <file>..\src\config\default\device.h</file>
@@ -28502,7 +28502,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\initialization.c</file>
-         <hash>05b40c2dc888190d8085c654f5283ecec3708e62dde0146a9129eb8e320c6d56</hash>
+         <hash>ed7b2f79d4cb05279950273c2c3109d13e10c1d0445047da30160d6966e21e7b</hash>
       </entry>
       <entry>
          <file>..\src\config\default\interrupts.c</file>
@@ -28770,7 +28770,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\system\fs\fat_fs\file_system\ffconf.h</file>
-         <hash>1b135737d506540850b1f2089dabd24f877d956a766af52a5e16ae3f322870c8</hash>
+         <hash>bd91669962c0a8eb3d66a80126e2debe41a01f7c44e3b57ab15b20ed5212bf54</hash>
       </entry>
       <entry>
          <file>..\src\config\default\system\fs\fat_fs\file_system\ffunicode.c</file>

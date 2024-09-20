@@ -95,9 +95,8 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint16_t len) {
 static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize) {
     SYS_FS_FSTAT stat;
     size_t strBuffIndex = 0;    
-    SYS_FS_HANDLE dirHandle;
-    //declared static to reduced ram usage
-    static char newPath[SD_CARD_FILE_PATH_LEN_MAX+1];
+    SYS_FS_HANDLE dirHandle;    
+    char newPath[SD_CARD_FILE_PATH_LEN_MAX+1];
     
     memset(newPath,0,sizeof(newPath));
     memset(&stat,0,sizeof(stat));
@@ -105,7 +104,7 @@ static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_
     if (dirHandle == SYS_FS_HANDLE_INVALID) {
         SYS_FS_ERROR err = SYS_FS_Error();
         strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                "\r\n[Error:%d]Failed to open directory\r\n", err);
+                "\r\n[Error:%d]Failed to open directory [%s]\r\n", err,dirPath);
         return strBuffIndex;
     }
     while (true) {
@@ -124,22 +123,15 @@ static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_
         }
         snprintf(newPath,SD_CARD_FILE_PATH_LEN_MAX, "%s/%s", dirPath, stat.fname);
         if (stat.fattrib & SYS_FS_ATTR_DIR) {
-            int n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                    "DIR : %s\r\n", newPath);
-            if (n < 0 || (size_t) n >= strBuffSize - strBuffIndex) {
-                // Truncation or error occurred
-                break;
-            }
-            strBuffIndex += n;
+            
             size_t bytesWritten = ListFilesInDirectory(newPath, pStrBuff + strBuffIndex, strBuffSize - strBuffIndex);
             strBuffIndex += bytesWritten;
-
             if (strBuffIndex >= strBuffSize) {
                 break;
             }
         } else {
             int n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                    "FILE: %s\r\n", newPath);
+                    "%s\r\n", newPath);
             if (n < 0 || (size_t) n >= strBuffSize - strBuffIndex) {
                 break;
             }
