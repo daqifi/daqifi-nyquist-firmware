@@ -30,11 +30,11 @@
 #define SD_CARD_CONF_RBUFFER_SIZE 512
 #define SD_CARD_CONF_WBUFFER_SIZE 1200
 #define SD_CARD_CONF_CIRCULAR_BUFFER_SIZE (SD_CARD_CONF_WBUFFER_SIZE*4)
-#define SD_CARD_CONF_DIR_NAME_LEN_MAX 10
-#define SD_CARD_CONF_FILE_NAME_LEN_MAX 10
+#define SD_CARD_CONF_DIR_NAME_LEN_MAX 250
+#define SD_CARD_CONF_FILE_NAME_LEN_MAX 250
 
 //non configurable definitions
-#define SD_CARD_FILE_PATH_LEN_MAX (SD_CARD_CONF_DIR_NAME_LEN_MAX+SD_CARD_CONF_FILE_NAME_LEN_MAX+2)
+#define SD_CARD_FILE_PATH_LEN_MAX (((SD_CARD_CONF_DIR_NAME_LEN_MAX+SD_CARD_CONF_FILE_NAME_LEN_MAX)*4)+2)
 
 
 /* Provide C++ Compatibility */
@@ -51,6 +51,7 @@ extern "C" {
         SD_CARD_PROCESS_STATE_OPEN_FILE,
         SD_CARD_PROCESS_STATE_WRITE_TO_FILE,
         SD_CARD_PROCESS_STATE_READ_FROM_FILE,
+        SD_CARD_PROCESS_STATE_LIST_DIR,
         SD_CARD_PROCESS_STATE_DEINIT,
         SD_CARD_PROCESS_STATE_IDLE,
         SD_CARD_PROCESS_STATE_ERROR,
@@ -58,7 +59,8 @@ extern "C" {
     typedef enum{
         SD_CARD_MODE_NONE,
         SD_CARD_MODE_READ,
-        SD_CARD_MODE_WRITE,                
+        SD_CARD_MODE_WRITE,           
+        SD_CARD_MODE_LIST_DIRECTORY,
     }SDCard_mode_t;
     typedef enum{
         SD_CARD_READ_STATUS_NOT_READY,
@@ -115,6 +117,7 @@ extern "C" {
     size_t SDCard_WriteToBuffer(const char* pData, size_t len);
     SDCard_readStatus_t SDCard_Read(char* pData, size_t* pLen);
     size_t SDCard_WriteBuffFreeSize();
+    void SDCard_DataReadyCB(SDCard_mode_t mode, uint8_t *pDataBuff, size_t dataLen);
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

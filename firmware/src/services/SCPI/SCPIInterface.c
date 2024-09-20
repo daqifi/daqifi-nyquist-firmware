@@ -832,6 +832,8 @@ static const scpi_command_t scpi_commands[] = {
     //
     {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
+    {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
+    {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
     //    // FreeRTOS
     //    {.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

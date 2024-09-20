@@ -196,7 +196,6 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
             }
         }
         return;
-
     }
     if (!runtimeConfig->StreamingConfig.IsEnabled) {
         return;

@@ -111,7 +111,9 @@ void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBu
             pBuff, *len);
     *len = count;
 }
-
+void SDCard_DataReadyCB(SDCard_mode_t mode, uint8_t *pDataBuff, size_t dataLen){
+    UsbCdc_WriteToBuffer(NULL, (const char *) pDataBuff, dataLen);
+}
 static void app_USBDeviceTask(void* p_arg) {
     UsbCdc_Initialize();
     while (1) {
@@ -261,7 +263,7 @@ static void app_TasksCreate() {
     }
     errStatus = xTaskCreate((TaskFunction_t) app_SdCardTask,
             "SdCardTask",
-            2048,
+            4000,
             NULL,
             2,
             NULL);

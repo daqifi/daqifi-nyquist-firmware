@@ -23,6 +23,10 @@
 SDCard_data_t gSdCardData;
 SDCard_RuntimeConfig_t *gpSdCardSettings;
 
+void __attribute__((weak)) SDCard_DataReadyCB(SDCard_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
+
+}
+
 static int SDCardWrite() {
     int writeLen = -1;
     if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
@@ -43,6 +47,117 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint16_t len) {
     gSdCardData.sdCardWriteBufferOffset = 0;
     return SDCardWrite();
 }
+
+/**
+ * @brief Recursively lists files and directories, storing the output in a buffer.
+ *
+ * This function traverses the directory specified by `dirPath`, listing all files and directories
+ * within it, including those in subdirectories. The output is formatted and stored in the buffer
+ * pointed to by `pStrBuff`. It adjusts the buffer pointer and size during recursive calls to
+ * ensure that data is appended correctly without overwriting existing content.
+ *
+ * @param[in]  dirPath     The path of the directory to list.
+ * @param[out] pStrBuff    Pointer to the buffer where the output will be stored.
+ *                         The buffer should be large enough to hold the expected output.
+ * @param[in]  strBuffSize The total size of the buffer pointed to by `pStrBuff`.
+ *
+ * @return The total number of bytes written to `pStrBuff`.
+ *
+ * @note
+ * - The function uses recursion to traverse subdirectories.
+ * - It maintains a local `strBuffIndex` to keep track of the current position in the buffer.
+ * - During recursive calls, the buffer pointer `pStrBuff` and buffer size `strBuffSize` are
+ *   adjusted to prevent buffer overflows.
+ * - If the buffer becomes full during execution, the function stops writing further data to prevent overflow.
+ *
+ * @warning
+ * - Ensure that `strBuffSize` is sufficient to hold the entire output; otherwise, buffer overflows
+ *   or incomplete output may occur.
+ * - Be cautious with deeply nested directories, as excessive recursion can lead to stack overflow.
+ *
+ * @example
+ * @code
+ * uint8_t outputBuffer[1024];
+ * size_t totalBytes = ListFilesInDirectory("/mnt/myDrive", outputBuffer, sizeof(outputBuffer));
+ *
+ * // Ensure null termination if needed
+ * if (totalBytes < sizeof(outputBuffer)) {
+ *     outputBuffer[totalBytes] = '\0';
+ * } else {
+ *     outputBuffer[sizeof(outputBuffer) - 1] = '\0'; // Ensure null termination
+ * }
+ *
+ * printf("%s", outputBuffer);
+ * @endcode
+ */
+
+
+static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize) {
+    SYS_FS_FSTAT stat;
+    size_t strBuffIndex = 0;    
+    SYS_FS_HANDLE dirHandle;
+    //declared static to reduced ram usage
+    static char newPath[SD_CARD_FILE_PATH_LEN_MAX+1];
+    
+    memset(newPath,0,sizeof(newPath));
+    memset(&stat,0,sizeof(stat));
+    dirHandle = SYS_FS_DirOpen(dirPath);
+    if (dirHandle == SYS_FS_HANDLE_INVALID) {
+        SYS_FS_ERROR err = SYS_FS_Error();
+        strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                "\r\n[Error:%d]Failed to open directory\r\n", err);
+        return strBuffIndex;
+    }
+    while (true) {
+        if (SYS_FS_DirRead(dirHandle, &stat) == SYS_FS_RES_FAILURE) {
+            SYS_FS_ERROR err = SYS_FS_Error();
+            strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                    "\r\n[Error:%d]Failed to read directory\r\n", err);
+            break;
+        }
+
+        if (stat.fname[0] == '\0') {
+            break;
+        }
+        if (strcmp(stat.fname, ".") == 0 || strcmp(stat.fname, "..") == 0) {
+            continue;
+        }
+        snprintf(newPath,SD_CARD_FILE_PATH_LEN_MAX, "%s/%s", dirPath, stat.fname);
+        if (stat.fattrib & SYS_FS_ATTR_DIR) {
+            int n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                    "DIR : %s\r\n", newPath);
+            if (n < 0 || (size_t) n >= strBuffSize - strBuffIndex) {
+                // Truncation or error occurred
+                break;
+            }
+            strBuffIndex += n;
+            size_t bytesWritten = ListFilesInDirectory(newPath, pStrBuff + strBuffIndex, strBuffSize - strBuffIndex);
+            strBuffIndex += bytesWritten;
+
+            if (strBuffIndex >= strBuffSize) {
+                break;
+            }
+        } else {
+            int n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                    "FILE: %s\r\n", newPath);
+            if (n < 0 || (size_t) n >= strBuffSize - strBuffIndex) {
+                break;
+            }
+            strBuffIndex += n;
+        }
+    }
+
+    if (SYS_FS_DirClose(dirHandle) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR err = SYS_FS_Error();
+        strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                "\r\n[Error:%d]Failed to close directory\r\n", err);
+    }
+
+    return strBuffIndex;
+}
+
+
+
 
 bool SDCard_Init(SDCard_RuntimeConfig_t *pSettings) {
     static bool isInitDone = false;
@@ -151,6 +266,9 @@ void SDCard_ProcessState() {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
                 gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_READ_FROM_FILE;
+            } else if (gpSdCardSettings->mode == SD_CARD_MODE_LIST_DIRECTORY) {
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_LIST_DIR;
+                break;
             } else if (gpSdCardSettings->mode == SD_CARD_MODE_NONE) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
@@ -205,10 +323,31 @@ void SDCard_ProcessState() {
             break;
         case SD_CARD_PROCESS_STATE_READ_FROM_FILE:
             break;
+        case SD_CARD_PROCESS_STATE_LIST_DIR:
+        {
+            size_t readLen = 0;
+            gSdCardData.readBuffer[0]='\r';
+            gSdCardData.readBuffer[1]='\n';
+            readLen = ListFilesInDirectory( 
+                    gpSdCardSettings->directory, 
+                    gSdCardData.readBuffer+2, 
+                    SD_CARD_CONF_RBUFFER_SIZE - 1-2);
+            readLen+=2;
+            if (readLen > 0 && readLen < SD_CARD_CONF_RBUFFER_SIZE) {
+                gSdCardData.readBufferLength = readLen;
+                gSdCardData.readBuffer[readLen] = '\0';
+            } else if (readLen >= SD_CARD_CONF_RBUFFER_SIZE) {
+                gSdCardData.readBufferLength = SD_CARD_CONF_RBUFFER_SIZE - 1;
+                gSdCardData.readBuffer[readLen] = '\0';
+            }
+            SDCard_DataReadyCB(SD_CARD_MODE_LIST_DIRECTORY,
+                    gSdCardData.readBuffer,
+                    gSdCardData.readBufferLength);            
+            gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_IDLE;
+        }
+            break;
         case SD_CARD_PROCESS_STATE_IDLE:
-            /* The application comes here when the demo has completed
-             * successfully. Glow LED1. */
-            //LED_ON();
+
             break;
         case SD_CARD_PROCESS_STATE_DEINIT:
             gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_UNMOUNT_DISK;
