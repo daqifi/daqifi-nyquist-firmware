@@ -62,12 +62,7 @@ extern "C" {
         SD_CARD_MODE_WRITE,           
         SD_CARD_MODE_LIST_DIRECTORY,
     }SDCard_mode_t;
-    typedef enum{
-        SD_CARD_READ_STATUS_NOT_READY,
-        SD_CARD_READ_STATUS_SUCCESS,
-        SD_CARD_READ_STATUS_END_OF_FILE,
-        SD_CARD_READ_STATUS_ERROR,
-    }SDCard_readStatus_t;
+
     
 
     /**
@@ -115,7 +110,6 @@ extern "C" {
     bool SDCard_UpdateSettings(SDCard_RuntimeConfig_t *pSettings);
     void SDCard_ProcessState();
     size_t SDCard_WriteToBuffer(const char* pData, size_t len);
-    SDCard_readStatus_t SDCard_Read(char* pData, size_t* pLen);
     size_t SDCard_WriteBuffFreeSize();
     void SDCard_DataReadyCB(SDCard_mode_t mode, uint8_t *pDataBuff, size_t dataLen);
     /* Provide C++ Compatibility */

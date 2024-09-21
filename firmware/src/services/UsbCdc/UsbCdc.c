@@ -419,7 +419,7 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len)
     if(len==0)return 0;
 
     while(CircularBuf_NumBytesFree(&client->wCirbuf)<len){
-        vTaskDelay(10);
+        vTaskDelay(2);
     }
 
     // if the data to write can't fit into the buffer entirely, discard it. 

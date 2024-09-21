@@ -180,23 +180,8 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig,
     volatile bool hasUsb, hasWifi, hasSD;
     //Analog input availability. Digital input/output availability
     bool AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
-    bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
-    SDCard_RuntimeConfig_t* pSdRuntimeConf = (SDCard_RuntimeConfig_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    if (pSdRuntimeConf->enable == true && pSdRuntimeConf->mode == SD_CARD_MODE_READ) {
-        SDCard_readStatus_t readStatus;
-        usbSize = UsbCdc_WriteBuffFreeSize(NULL);
-        if (usbSize > BUFFER_SIZE) {
-            readStatus = SDCard_Read((char*) buffer, (size_t*) & usbSize);
-            if (usbSize > 0 && readStatus == SD_CARD_READ_STATUS_SUCCESS)
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, usbSize);
-            else if (readStatus == SD_CARD_READ_STATUS_END_OF_FILE) {
-                sprintf((char*) buffer, "\r\n__END OF FILE__\r\n");
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, strlen((char*) buffer));
-                pSdRuntimeConf->mode = SD_CARD_MODE_NONE;
-            }
-        }
-        return;
-    }
+    bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);    
+    
     if (!runtimeConfig->StreamingConfig.IsEnabled) {
         return;
     }

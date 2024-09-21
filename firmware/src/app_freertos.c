@@ -111,9 +111,31 @@ void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBu
             pBuff, *len);
     *len = count;
 }
-void SDCard_DataReadyCB(SDCard_mode_t mode, uint8_t *pDataBuff, size_t dataLen){
-    UsbCdc_WriteToBuffer(NULL, (const char *) pDataBuff, dataLen);
+void SDCard_DataReadyCB(SDCard_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
+    size_t transferredLength = 0;
+    int retryCount = 0;
+    const int maxRetries = 100;
+    
+    while (transferredLength < dataLen) {
+        size_t bytesWritten = UsbCdc_WriteToBuffer(
+            NULL,
+            (const char *)pDataBuff + transferredLength,
+            dataLen - transferredLength
+        );
+
+        if (bytesWritten > 0) {
+            transferredLength += bytesWritten;
+            retryCount = 0; 
+        } else {
+            retryCount++;
+            if (retryCount >= maxRetries) {                
+                break;
+            }            
+            vTaskDelay(5 / portTICK_PERIOD_MS);
+        }
+    }
 }
+
 static void app_USBDeviceTask(void* p_arg) {
     UsbCdc_Initialize();
     while (1) {

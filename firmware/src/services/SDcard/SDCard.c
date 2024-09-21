@@ -94,17 +94,17 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint16_t len) {
 
 static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize) {
     SYS_FS_FSTAT stat;
-    size_t strBuffIndex = 0;    
-    SYS_FS_HANDLE dirHandle;    
-    char newPath[SD_CARD_FILE_PATH_LEN_MAX+1];
-    
-    memset(newPath,0,sizeof(newPath));
-    memset(&stat,0,sizeof(stat));
+    size_t strBuffIndex = 0;
+    SYS_FS_HANDLE dirHandle;
+    char newPath[SD_CARD_FILE_PATH_LEN_MAX + 1];
+
+    memset(newPath, 0, sizeof (newPath));
+    memset(&stat, 0, sizeof (stat));
     dirHandle = SYS_FS_DirOpen(dirPath);
     if (dirHandle == SYS_FS_HANDLE_INVALID) {
         SYS_FS_ERROR err = SYS_FS_Error();
         strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                "\r\n[Error:%d]Failed to open directory [%s]\r\n", err,dirPath);
+                "\r\n[Error:%d]Failed to open directory [%s]\r\n", err, dirPath);
         return strBuffIndex;
     }
     while (true) {
@@ -121,9 +121,9 @@ static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_
         if (strcmp(stat.fname, ".") == 0 || strcmp(stat.fname, "..") == 0) {
             continue;
         }
-        snprintf(newPath,SD_CARD_FILE_PATH_LEN_MAX, "%s/%s", dirPath, stat.fname);
+        snprintf(newPath, SD_CARD_FILE_PATH_LEN_MAX, "%s/%s", dirPath, stat.fname);
         if (stat.fattrib & SYS_FS_ATTR_DIR) {
-            
+
             size_t bytesWritten = ListFilesInDirectory(newPath, pStrBuff + strBuffIndex, strBuffSize - strBuffIndex);
             strBuffIndex += bytesWritten;
             if (strBuffIndex >= strBuffSize) {
@@ -147,9 +147,6 @@ static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_
 
     return strBuffIndex;
 }
-
-
-
 
 bool SDCard_Init(SDCard_RuntimeConfig_t *pSettings) {
     static bool isInitDone = false;
@@ -314,27 +311,59 @@ void SDCard_ProcessState() {
         }
             break;
         case SD_CARD_PROCESS_STATE_READ_FROM_FILE:
+        {
+            size_t bytesRead = 0;
+            gSdCardData.readBufferLength = 0;
+            bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdCardData.readBuffer, SD_CARD_CONF_RBUFFER_SIZE - 1);
+
+            if (bytesRead == (size_t) - 1) {
+                gSdCardData.readBufferLength = sprintf((char*)gSdCardData.readBuffer,
+                        "%s", "\r\nError!! Reading SD Card\r\n");
+                SDCard_DataReadyCB(SD_CARD_MODE_READ,
+                        gSdCardData.readBuffer,
+                        gSdCardData.readBufferLength);
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_IDLE;
+            } else if (bytesRead == 0) {
+                //End of File
+                gSdCardData.readBufferLength = sprintf((char*)gSdCardData.readBuffer,
+                        "%s", "\r\n\n__END_OF_FILE__\r\n\n");
+                SDCard_DataReadyCB(SD_CARD_MODE_READ,
+                        gSdCardData.readBuffer,
+                        gSdCardData.readBufferLength);
+                gSdCardData.readBufferLength = 0;
+                gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_IDLE;
+
+            } else {
+                gSdCardData.readBufferLength = bytesRead;
+                SDCard_DataReadyCB(SD_CARD_MODE_READ,
+                        gSdCardData.readBuffer,
+                        gSdCardData.readBufferLength);
+
+            }
+        }
             break;
         case SD_CARD_PROCESS_STATE_LIST_DIR:
         {
             size_t readLen = 0;
-            gSdCardData.readBuffer[0]='\r';
-            gSdCardData.readBuffer[1]='\n';
-            readLen = ListFilesInDirectory( 
-                    gpSdCardSettings->directory, 
-                    gSdCardData.readBuffer+2, 
-                    SD_CARD_CONF_RBUFFER_SIZE - 1-2);
-            readLen+=2;
+            gSdCardData.readBuffer[0] = '\r';
+            gSdCardData.readBuffer[1] = '\n';
+            readLen = ListFilesInDirectory(
+                    gpSdCardSettings->directory,
+                    gSdCardData.readBuffer + 2,
+                    SD_CARD_CONF_RBUFFER_SIZE - 1 - 2);
+            readLen += 2;
             if (readLen > 0 && readLen < SD_CARD_CONF_RBUFFER_SIZE) {
                 gSdCardData.readBufferLength = readLen;
                 gSdCardData.readBuffer[readLen] = '\0';
             } else if (readLen >= SD_CARD_CONF_RBUFFER_SIZE) {
                 gSdCardData.readBufferLength = SD_CARD_CONF_RBUFFER_SIZE - 1;
                 gSdCardData.readBuffer[readLen] = '\0';
+            } else {
+                gSdCardData.readBufferLength = 0;
             }
             SDCard_DataReadyCB(SD_CARD_MODE_LIST_DIRECTORY,
                     gSdCardData.readBuffer,
-                    gSdCardData.readBufferLength);            
+                    gSdCardData.readBufferLength);
             gSdCardData.currentProcessState = SD_CARD_PROCESS_STATE_IDLE;
         }
             break;
@@ -392,22 +421,4 @@ size_t SDCard_WriteBuffFreeSize() {
     return CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
 }
 
-SDCard_readStatus_t SDCard_Read(char* pData, size_t* pLen) {
-    SDCard_readStatus_t readStatus = SD_CARD_READ_STATUS_NOT_READY;
-    size_t bytesRead = 0;
-    if (gSdCardData.currentProcessState == SD_CARD_PROCESS_STATE_READ_FROM_FILE) {
-        if (*pLen > SD_CARD_CONF_RBUFFER_SIZE)
-            *pLen = SD_CARD_CONF_RBUFFER_SIZE;
-        bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, pData, *pLen);
-        *pLen = bytesRead;
-        if (bytesRead == (size_t) - 1) {
-            *pLen = 0;
-            readStatus = SD_CARD_READ_STATUS_ERROR;
-        } else if (bytesRead == 0) {
-            readStatus = SD_CARD_READ_STATUS_END_OF_FILE;
-        } else {
-            readStatus = SD_CARD_READ_STATUS_SUCCESS;
-        }
-    }
-    return readStatus;
-}
+
