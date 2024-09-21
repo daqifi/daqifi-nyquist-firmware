@@ -418,6 +418,9 @@ bool SDCard_UpdateSettings(SDCard_RuntimeConfig_t *pSettings) {
 }
 
 size_t SDCard_WriteBuffFreeSize() {
+    if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MODE_WRITE) {
+        return 0;
+    }
     return CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
 }
 

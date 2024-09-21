@@ -347,34 +347,56 @@ static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
     return len;
 }
 
+/**
+ * @brief Encodes a DaqifiOutMessage into the provided buffer.
+ * 
+ * This helper function handles the encoding of the DaqifiOutMessage structure into
+ * the provided buffer. It updates the buffer offset to track the position for
+ * the next encoding operation.
+ * 
+ * @param message        Pointer to the DaqifiOutMessage to encode.
+ * @param pBuffer        Pointer to the output buffer.
+ * @param buffSize       Total size of the output buffer.
+ * @param pBuffOffset    Pointer to the current buffer offset (will be updated).
+ * @return true          If encoding was successful.
+ * @return false         If encoding failed due to insufficient buffer space or other errors.
+ */
+static bool encode_message_to_buffer(DaqifiOutMessage* message, uint8_t* pBuffer, size_t buffSize, uint32_t* pBuffOffset) {
+    pb_ostream_t stream = pb_ostream_from_buffer(pBuffer + *pBuffOffset, buffSize - *pBuffOffset);
+
+    if (!pb_encode_delimited(&stream, DaqifiOutMessage_fields, message)) {
+        return false; 
+    }
+    *pBuffOffset += stream.bytes_written;
+    return true;
+}
+
 size_t Nanopb_Encode(tBoardData* state,
         const NanopbFlagsArray* fields,
         uint8_t* pBuffer, size_t buffSize) {
+  
+    if (pBuffer == NULL || buffSize == 0) {
+        return 0; 
+    }
     DaqifiSettings tmpTopLevelSettings;
-    daqifi_settings_LoadFromNvm(
-            DaqifiSettings_TopLevelSettings,
-            &tmpTopLevelSettings);
-    const tBoardConfig * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_ALL_CONFIG,
-            0);
-    //    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(         
-    //                        BOARDRUNTIMECONFIG_AIN_CHANNELS);    
-    //    AInModRuntimeArray * pRuntimeAInModules = BoardRunTimeConfig_Get(       
-    //                        BOARDRUNTIMECONFIG_AIN_MODULES);      
-    DIORuntimeArray * pRuntimeDIOChannels = BoardRunTimeConfig_Get(
-            BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    volatile uint32_t pBuffOffset = 0; //used to pack multiple PB packets
-    // If we cannot encode a whole message, bail out
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) {
+        return 0; 
+    }
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    AInRuntimeArray* pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    AInModRuntimeArray *pRuntimeAInModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
+    DIORuntimeArray* pRuntimeDIOChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    DaqifiOutMessage message = DaqifiOutMessage_init_default;
+    uint32_t bufferOffset = 0;
+    size_t i = 0;
     if (buffSize < Nanopb_EncodeLength(fields)) {
         return 0;
     }
     if (pBuffer == NULL) {
         return 0;
     }
-    //*ppBuffer = Encoder_Get_Buffer();
-
-    DaqifiOutMessage message = DaqifiOutMessage_init_default;
-    size_t i = 0;
+    
+    
     for (i = 0; i < fields->Size; i++) {
         switch (fields->Data[i]) {
             case DaqifiOutMessage_msg_time_stamp_tag:
@@ -382,13 +404,95 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.msg_time_stamp = state->StreamTrigStamp;
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
+            {
+                // Initialize the analog input data processing
+                uint32_t queueSize = AInSampleList_Size(NULL);
+                uint32_t previousTimeStamp = 0;
+                uint32_t sampleIndex = 0;
+                AInSample data;
 
+                /**
+                 * MULTIPLE PACKET HANDLING:
+                 * ------------------------
+                 * As we iterate through the list of analog input samples, the goal is to 
+                 * group these samples into manageable packets that fit within the provided buffer.
+                 * 
+                 * Each sample is timestamped, and when the timestamp changes, we know that a 
+                 * new "block" of data should begin. This is when we encode the current packet 
+                 * into the buffer and reset for the next one.
+                 * 
+                 * Buffer space is finite, so if encoding the message exceeds the buffer's 
+                 * capacity, we stop further encoding to prevent overflow.
+                 */
+
+                // Process each analog input sample in the list
+                while (queueSize > 0) {
+                    // Retrieve the next sample from the queue
+                    if (!AInSampleList_PopFront(&state->AInSamples, &data)) {
+                        // If there is an error retrieving the sample, reset and break
+                        AInSampleList_Destroy(&state->AInSamples);
+                        AInSampleList_Initialize(&state->AInSamples, MAX_AIN_SAMPLE_COUNT, false, NULL);
+                        break;
+                    }
+                    queueSize--;
+
+                    // Add the sample to the message if the timestamp matches the previous one
+                    if (data.Timestamp == previousTimeStamp) {
+                        message.analog_in_data[sampleIndex++] = data.Value;
+                        message.analog_in_data_count++;
+                    } else {
+                        /**
+                         * When the timestamp changes, we know that the current block of data 
+                         * should be closed, and a new block with the new timestamp should start.
+                         * 
+                         * We encode the message into the buffer and check whether the buffer 
+                         * still has space for more packets.
+                         */
+
+                        // If we have samples in the message, encode them
+                        if (message.analog_in_data_count > 0) {
+                            if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
+                                return 0; // Return 0 if encoding fails
+                            }
+
+                            // Check if buffer has enough space for another message
+                            if (bufferOffset + Nanopb_EncodeLength(fields) > buffSize) {
+                                return bufferOffset; // Stop if the buffer is full
+                            }
+                        }
+
+                        /**
+                         * After encoding, we reset the message for the next block of data 
+                         * (starting with the new timestamp).
+                         * 
+                         * The current sample is added to the new message, and processing continues.
+                         */
+                        sampleIndex = 0;
+                        message.analog_in_data_count = 0;
+                        message.has_msg_time_stamp = true;
+                        message.msg_time_stamp = data.Timestamp;
+                        previousTimeStamp = data.Timestamp;
+
+                        // Add the current sample to the new message
+                        message.analog_in_data[sampleIndex++] = data.Value;
+                        message.analog_in_data_count++;
+                    }
+                }
+
+                // Encode any remaining data in the message after processing the samples
+                if (message.analog_in_data_count > 0) {
+                    if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
+                        return 0; // Return 0 if encoding fails
+                    }
+                }
                 break;
+            }
+
             case DaqifiOutMessage_analog_in_data_float_tag:
-                //                message.analog_in_data_float_count = 0;
+                message.analog_in_data_float_count = 0;
                 break;
             case DaqifiOutMessage_analog_in_data_ts_tag:
-                //                message.analog_in_data_ts_count = 0;
+                message.analog_in_data_ts_count = 0;
                 break;
             case DaqifiOutMessage_digital_data_tag:
             {
@@ -437,11 +541,58 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_analog_in_port_num_tag:
             {
+                /**
+                 * @brief Counts public analog input channels for the MC12bADC module.
+                 *
+                 * This tag counts the number of public analog input channels and stores 
+                 * the result in `analog_in_port_num`. All channels from other module types 
+                 * are counted as public.
+                 */
+                message.has_analog_in_port_num = true;
+                message.analog_in_port_num = 0;
+
+                if (pBoardConfig == NULL || pBoardConfig->AInChannels.Size == 0 || pBoardConfig->AInModules.Size == 0) {
+                    break;
+                }
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
+                        if (pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+                            message.analog_in_port_num++;
+                        }
+                    } else {
+                        message.analog_in_port_num++;
+                    }
+                }
 
                 break;
             }
+
             case DaqifiOutMessage_analog_in_port_num_priv_tag:
             {
+                /**
+                 * @brief Counts private analog input channels for the MC12bADC module.
+                 *
+                 * This tag counts the number of private (non-public) analog input channels
+                 * in the `MC12bADC` module and stores the result in `analog_in_port_num_priv`.
+                 * Only channels marked as private (`IsPublic == false`) are counted. Channels 
+                 * from other module types are ignored.
+                 */
+                message.has_analog_in_port_num_priv = true;
+                message.analog_in_port_num_priv = 0;
+
+                if (pBoardConfig == NULL || pBoardConfig->AInChannels.Size == 0 || pBoardConfig->AInModules.Size == 0) {
+                    break;
+                }
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
+                        if (!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+                            message.analog_in_port_num_priv++;
+                        }
+                    }
+                }
+
                 break;
             }
             case DaqifiOutMessage_analog_in_port_type_tag:
@@ -452,17 +603,61 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_analog_in_port_rse_tag:
             {
-
+                /**
+                 * @brief Encodes the analog input channels as single-ended (RSE) or differential.
+                 *
+                 * Each bit in `analog_in_port_rse` represents whether the corresponding analog input
+                 * channel is configured as differential or single-ended:
+                 * - Bit 1 (set) = Differential
+                 * - Bit 0 (clear) = Single-ended (RSE)
+                 */
+                uint32_t x = 0;
+                uint32_t data = 0;
+                message.has_analog_in_port_rse = true;
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    data |=
+                            (pRuntimeAInChannels->Data[x].IsDifferential << x);
+                }
+                int2PBByteArray(
+                        data,
+                        (pb_bytes_array_t*) & message.analog_in_port_rse,
+                        sizeof (message.analog_in_port_rse.bytes));
                 break;
             }
             case DaqifiOutMessage_analog_in_port_enabled_tag:
             {
-                //             
+                /**
+                 * @brief Encodes the enabled state of analog input channels.
+                 *
+                 * This tag sets a bit for each channel in `analog_in_port_enabled`, where
+                 * each bit indicates whether the corresponding channel is enabled (1) or 
+                 * disabled (0).
+                 */
+                uint32_t x = 0;
+                uint32_t data = 0;
+                message.has_analog_in_port_enabled = true;
+                for (x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    data |=
+                            (pRuntimeAInChannels->Data[x].IsEnabled << x);
+                }
+                int2PBByteArray(
+                        data,
+                        (pb_bytes_array_t*) & message.analog_in_port_enabled,
+                        sizeof (message.analog_in_port_enabled.bytes));
                 break;
             }
             case DaqifiOutMessage_analog_in_port_av_range_tag:
             {
-                //               
+                /**
+                 * @brief Encodes the available range settings for analog input modules.
+                 *
+                 * This tag stores the supported voltage ranges for each analog input module,
+                 * indicating the possible ranges a module can operate within (e.g., 0-5V, ±10V).
+                 */
+                message.analog_in_port_av_range[0] =
+                        pRuntimeAInModules->Data[0].Range;
+                message.analog_in_port_av_range_count = 1;
+                message.analog_in_port_range_count = 0;
                 break;
             }
 
@@ -471,75 +666,298 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_analog_in_port_range_tag:
             {
-                //               
+                /**
+                 * @brief Encodes the range values for public analog input channels.
+                 *
+                 * This tag stores the input voltage ranges for each public analog input channel in
+                 * `analog_in_port_range`. Channels from the `AIn_MC12bADC` module are checked for 
+                 * public status, while channels from other module types are automatically considered public.
+                 */
+                uint32_t chan = 0;
+                const uint32_t max_range_count = sizeof (message.analog_in_port_range) / sizeof (message.analog_in_port_range[0]);
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC &&
+                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+
+                        if (chan < max_range_count) {
+                            message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[x].Range;
+                        }
+                    } else if (chan < max_range_count) {
+                        message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[x].Range;
+                    }
+                }
+
+                message.analog_in_port_range_count = chan;
                 break;
+
             }
             case DaqifiOutMessage_analog_in_port_range_priv_tag:
             {
-                //              
+                /**
+                 * @brief Encodes the current range settings for private analog input channels.
+                 *
+                 * This tag stores the actual, active range configuration for each private analog input channel,
+                 * indicating the voltage range currently being used by private channels.
+                 */
+                uint32_t chan = 0;
+                const uint32_t max_range_count = sizeof (message.analog_in_port_range_priv) / sizeof (message.analog_in_port_range_priv[0]);
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC &&
+                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+                        if (chan < max_range_count) {
+                            message.analog_in_port_range_priv[chan++] = pRuntimeAInModules->Data[x].Range;
+                        }
+                    }
+                }
+
+                message.analog_in_port_range_priv_count = chan;
                 break;
             }
             case DaqifiOutMessage_analog_in_res_tag:
-                //               
+            {
+                /**
+                 * @brief Encodes the resolution of the analog input channels.
+                 *
+                 * This tag stores the resolution (in bits) of the analog input channels,
+                 * based on the ADC configuration for the active board variant.
+                 */
+                message.has_analog_in_res = true;
+
+                switch (pBoardConfig->BoardVariant) {
+                    case 1:
+                        message.analog_in_res = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
+                        break;
+                    case 2:
+                        //message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7173.Resolution;
+                        break;
+                    case 3:
+                        //message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
+                        break;
+                    default:
+                        message.has_analog_in_res = false;
+                        break;
+                }
+
                 break;
+            }
             case DaqifiOutMessage_analog_in_res_priv_tag:
-                //                message.has_analog_in_res_priv = true;
-                //                message.analog_in_res_priv = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
+            {
+                /**
+                 * @brief Encodes the resolution of private analog input channels.
+                 *
+                 * This tag stores the resolution (in bits) of private analog input channels,
+                 * based on the ADC configuration for the MC12b module.
+                 */
+                message.has_analog_in_res_priv = true;
+
+                message.analog_in_res_priv = pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
+
                 break;
+            }
             case DaqifiOutMessage_analog_in_int_scale_m_tag:
             {
-                //              
+                /**
+                 * @brief Encodes the internal scale factor (m) for public analog input channels.
+                 *
+                 * This tag stores the internal scaling factor (m) for each public analog input channel
+                 * in the MC12b module.
+                 */
+                message.analog_in_int_scale_m_count = 0;
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
+                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+
+                        if (message.analog_in_int_scale_m_count < sizeof (message.analog_in_int_scale_m) / sizeof (message.analog_in_int_scale_m[0])) {
+                            message.analog_in_int_scale_m[message.analog_in_int_scale_m_count++] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale;
+                        }
+                    }
+                }
+
                 break;
             }
             case DaqifiOutMessage_analog_in_int_scale_m_priv_tag:
+
             {
-                //               
+                /**
+                 * @brief Encodes the internal scale factor (m) for private analog input channels.
+                 *
+                 * This tag stores the internal scaling factor (m) for each private analog input channel
+                 * in the MC12b module.
+                 */
+                message.analog_in_int_scale_m_priv_count = 0;
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
+                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+
+                        if (message.analog_in_int_scale_m_priv_count < sizeof (message.analog_in_int_scale_m_priv) / sizeof (message.analog_in_int_scale_m_priv[0])) {
+                            message.analog_in_int_scale_m_priv[message.analog_in_int_scale_m_priv_count++] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale;
+                        }
+                    }
+                }
+
                 break;
             }
             case DaqifiOutMessage_analog_in_cal_m_tag:
+
             {
-                //              
+                /**
+                 * @brief Encodes the calibration factor (m) for public analog input channels.
+                 *
+                 * This tag stores the calibration factor (m) for each public analog input channel
+                 * across all modules.
+                 */
+                message.analog_in_cal_m_count = 0;
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
+                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+
+                        if (message.analog_in_cal_m_count < sizeof (message.analog_in_cal_m) / sizeof (message.analog_in_cal_m[0])) {
+                            message.analog_in_cal_m[message.analog_in_cal_m_count++] = pRuntimeAInChannels->Data[x].CalM;
+                        }
+                    } else {
+                        if (message.analog_in_cal_m_count < sizeof (message.analog_in_cal_m) / sizeof (message.analog_in_cal_m[0])) {
+                            message.analog_in_cal_m[message.analog_in_cal_m_count++] = pRuntimeAInChannels->Data[x].CalM;
+                        }
+                    }
+                }
+
                 break;
             }
             case DaqifiOutMessage_analog_in_cal_b_tag:
             {
-                //             
+                /**
+                 * @brief Encodes the calibration factor (b) for public analog input channels.
+                 *
+                 * This tag stores the calibration factor (b) for each public analog input channel
+                 * across all modules.
+                 */
+                message.analog_in_cal_b_count = 0;
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
+                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+
+                        if (message.analog_in_cal_b_count < sizeof (message.analog_in_cal_b) / sizeof (message.analog_in_cal_b[0])) {
+                            message.analog_in_cal_b[message.analog_in_cal_b_count++] = pRuntimeAInChannels->Data[x].CalB;
+                        }
+                    } else {
+                        if (message.analog_in_cal_b_count < sizeof (message.analog_in_cal_b) / sizeof (message.analog_in_cal_b[0])) {
+                            message.analog_in_cal_b[message.analog_in_cal_b_count++] = pRuntimeAInChannels->Data[x].CalB;
+                        }
+                    }
+                }
+
                 break;
             }
             case DaqifiOutMessage_analog_in_cal_m_priv_tag:
             {
-                //               
+                /**
+                 * @brief Encodes the calibration factor (m) for private analog input channels.
+                 *
+                 * This tag stores the calibration factor (m) for each private analog input channel
+                 * in the MC12b module.
+                 */
+                message.analog_in_cal_m_priv_count = 0;
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
+                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+
+                        if (message.analog_in_cal_m_priv_count < sizeof (message.analog_in_cal_m_priv) / sizeof (message.analog_in_cal_m_priv[0])) {
+                            message.analog_in_cal_m_priv[message.analog_in_cal_m_priv_count++] = pRuntimeAInChannels->Data[x].CalM;
+                        }
+                    }
+                }
+
                 break;
             }
             case DaqifiOutMessage_analog_in_cal_b_priv_tag:
             {
-                //              
+                /**
+                 * @brief Encodes the calibration factor (b) for private analog input channels.
+                 *
+                 * This tag stores the calibration factor (b) for each private analog input channel
+                 * in the MC12b module.
+                 */
+                message.analog_in_cal_b_priv_count = 0;
+
+                for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
+                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
+                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+
+                        if (message.analog_in_cal_b_priv_count < sizeof (message.analog_in_cal_b_priv) / sizeof (message.analog_in_cal_b_priv[0])) {
+                            message.analog_in_cal_b_priv[message.analog_in_cal_b_priv_count++] = pRuntimeAInChannels->Data[x].CalB;
+                        }
+                    }
+                }
+
                 break;
             }
             case DaqifiOutMessage_digital_port_num_tag:
+            {
+                /**
+                 * @brief Encodes the number of digital ports.
+                 *
+                 * This tag stores the total number of digital input/output ports available on the device.
+                 */
                 message.has_digital_port_num = true;
                 message.digital_port_num = pBoardConfig->DIOChannels.Size;
+
                 break;
+            }
             case DaqifiOutMessage_digital_port_dir_tag:
             {
-                uint32_t x = 0;
-                uint32_t data = 0;  
-                
+                /**
+                 * @brief Encodes the direction of digital ports.
+                 *
+                 * This tag stores the direction (input or output) for each digital port, where each bit
+                 * represents the direction of a specific digital port.
+                 */
                 message.has_digital_port_dir = true;
-              
-                for (x = 0; x < pBoardConfig->DIOChannels.Size; x++)
-                {
+                uint32_t data = 0;
+
+                for (uint32_t x = 0; x < pBoardConfig->DIOChannels.Size; x++) {
                     data |= (pRuntimeDIOChannels->Data[x].IsInput << x);
-                }     
-                int2PBByteArray(                                            
-                        data,                                               
-                        (pb_bytes_array_t*)&message.digital_port_dir,       
-                        sizeof(message.digital_port_dir.bytes));
-				break;
+                }
+
+                int2PBByteArray(data, (pb_bytes_array_t*) & message.digital_port_dir, sizeof (message.digital_port_dir.bytes));
+
+                break;
             }
             case DaqifiOutMessage_analog_out_res_tag:
-                //                
+            {
+                /**
+                 * @brief Encodes the resolution of analog output channels.
+                 *
+                 * This tag stores the resolution (in bits) for the analog output channels based
+                 * on the DAC configuration for the active board variant.
+                 */
+                message.has_analog_out_res = true;
+
+                switch (pBoardConfig->BoardVariant) {
+                    case 1:
+                        // No analog output on board variant 1
+                        message.has_analog_out_res = false;
+                        break;
+                    case 2:
+                        //message.analog_out_res = pBoardConfig->AInModules.Data[1].Config.AD7173.Resolution;
+                        break;
+                    case 3:
+                        //message.analog_out_res = pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
+                        break;
+                    default:
+                        message.has_analog_out_res = false;
+                        break;
+                }
+
                 break;
+            }
+
             case DaqifiOutMessage_ip_addr_tag:
             {
                 message.has_ip_addr = true;
@@ -726,21 +1144,15 @@ size_t Nanopb_Encode(tBoardData* state,
         }
     }
 
-    pb_ostream_t stream = pb_ostream_from_buffer(((pb_byte_t*) pBuffer) + pBuffOffset, buffSize - pBuffOffset);
+    // Final encoding step
+    pb_ostream_t stream = pb_ostream_from_buffer(((pb_byte_t*) pBuffer) + bufferOffset, buffSize - bufferOffset);
 
-    bool status = pb_encode_delimited(
-            &stream,
-            DaqifiOutMessage_fields,
-            &message);
+    // Encode the final message
+    bool status = pb_encode_delimited(&stream, DaqifiOutMessage_fields, &message);
     if (status) {
-        pBuffOffset += stream.bytes_written;
-        return (pBuffOffset);
+        bufferOffset += stream.bytes_written; 
+        return bufferOffset; 
     } else {
-#ifndef PB_NO_ERRMSG
-        //LogMessage(stream.errmsg);
-#else
-        LogMessage("NonoPb encode error\n\r");
-#endif
         return 0;
     }
 }
