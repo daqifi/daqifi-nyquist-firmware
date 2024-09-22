@@ -224,22 +224,21 @@ const NanopbFlagsArray fields_discovery = {
     }
 };
 
-///**
-// * Helper function to allow us to know which user interface the command originated from
-// */
-//static microrl_t* SCPI_GetMicroRLClient(scpi_t* context)
-//{
-//    UsbCdcData * pRunTimeUsbSettings = BoardRunTimeConfig_Get(         
-//                        BOARDRUNTIME_USB_SETTINGS);
-//    
+/**
+ * Helper function to allow us to know which user interface the command originated from
+ */
+static microrl_t* SCPI_GetMicroRLClient(scpi_t* context)
+{
+    UsbCdcData_t * pRunTimeUsbSettings = UsbCdc_GetSettings();
+    
 //    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(          
 //                        BOARDRUNTIME_SERVER_DATA);
-//    
-//    if (&pRunTimeUsbSettings->scpiContext == context)
-//        {
-//             return &pRunTimeUsbSettings->console;
-//        }
-//    
+    
+    if (&pRunTimeUsbSettings->scpiContext == context)
+        {
+             return &pRunTimeUsbSettings->console;
+        }
+    
 //    uint8_t i = 0;
 //    for (i=0; i<WIFI_MAX_CLIENT; ++i)
 //    {
@@ -248,9 +247,9 @@ const NanopbFlagsArray fields_discovery = {
 //             return &pRunTimeServerData->clients[i].console;
 //        }
 //    }
-//    return NULL;
-//}
-//
+    return NULL;
+}
+
 /**
  * Triggers a board reset 
  */
@@ -289,30 +288,25 @@ static scpi_result_t SCPI_NotImplemented(scpi_t * context) {
 // * SCPI Callback: Clears the settings saved in memory, but does not overwrite the current in-memory values
 // * @return SCPI_RES_OK on success SCPI_RES_ERR on error
 // */
-//static scpi_result_t SCPI_SysInfoGet(scpi_t * context)
-//{
-//    int param1;
-//    tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA,  0 ); 
-//    
-//    if (!SCPI_ParamInt32(context, &param1, FALSE))
-//    {
-//        param1=0;
-//    }
-//    
-//    uint8_t buffer[DaqifiOutMessage_size];
-//    size_t count = Nanopb_Encode(                                           
-//                        pBoardData,                                         
-//                        (const NanopbFlagsArray *)&fields_info,             
-//                        (uint8_t **)&buffer);
-//    if (count < 1)
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    
-//    context->interface->write(context, (char*)buffer, count);
-//    return SCPI_RES_OK;
-//}
-//
+static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
+    int param1;
+    tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
+
+    if (!SCPI_ParamInt32(context, &param1, FALSE)) {
+        param1 = 0;
+    }
+
+    uint8_t buffer[DaqifiOutMessage_size];
+    size_t count = Nanopb_Encode(
+            pBoardData,
+            (const NanopbFlagsArray *) &fields_info,
+            buffer, DaqifiOutMessage_size);
+    if (count < 1) {
+        return SCPI_RES_ERR;
+    }
+    context->interface->write(context, (char*) buffer,count);
+    return SCPI_RES_OK;
+}
 
 /**
  * Gets the system log
@@ -381,40 +375,40 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
 // * @param context
 // * @return 
 // */
-//static scpi_result_t SCPI_SetPowerState(scpi_t * context)
-//{
-//    int param1;
-//    
-//    
-//    tPowerData * pPowerData = BoardData_Get(                                
-//                            BOARDATA_POWER_DATA,                            
-//                            0 );
-//    
-//    if (!SCPI_ParamInt32(context, &param1, TRUE))
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    
-//    if (param1 != 0)
-//    {
-//        pPowerData->requestedPowerState = DO_POWER_UP;
-//        BoardData_Set(                                                      
-//                            BOARDATA_POWER_DATA,                            
-//                            0,                                              
-//                            pPowerData );
-//    }
-//    else
-//    {     
-//        pPowerData->requestedPowerState = DO_POWER_DOWN;
-//        BoardData_Set(                                                      
-//                            BOARDATA_POWER_DATA,                            
-//                            0,                                              
-//                            pPowerData );
-//    }
-//    
-//    return SCPI_RES_OK;
-//}
-//
+static scpi_result_t SCPI_SetPowerState(scpi_t * context)
+{
+    int param1;
+    
+    
+    tPowerData * pPowerData = BoardData_Get(                                
+                            BOARDATA_POWER_DATA,                            
+                            0 );
+    
+    if (!SCPI_ParamInt32(context, &param1, TRUE))
+    {
+        return SCPI_RES_ERR;
+    }
+    
+    if (param1 != 0)
+    {
+        pPowerData->requestedPowerState = DO_POWER_UP;
+        BoardData_Set(                                                      
+                            BOARDATA_POWER_DATA,                            
+                            0,                                              
+                            pPowerData );
+    }
+    else
+    {     
+        pPowerData->requestedPowerState = DO_POWER_DOWN;
+        BoardData_Set(                                                      
+                            BOARDATA_POWER_DATA,                            
+                            0,                                              
+                            pPowerData );
+    }
+    
+    return SCPI_RES_OK;
+}
+
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     //memset(commTest.stats,0, sizeof(commTest.stats));
@@ -552,22 +546,20 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
 //    return SCPI_RES_OK;
 //}
 //
-//static scpi_result_t SCPI_SetEcho(scpi_t * context)
-//{
-//    int param1;
-//    microrl_t* console;
-//    if (!SCPI_ParamInt32(context, &param1, TRUE))
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    if (param1<-1 || param1>1)
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    console = SCPI_GetMicroRLClient(context);
-//    microrl_set_echo(console, param1);
-//    return SCPI_RES_OK;
-//}
+
+static scpi_result_t SCPI_SetEcho(scpi_t * context) {
+    int param1;
+    microrl_t* console;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1<-1 || param1 > 1) {
+        return SCPI_RES_ERR;
+    }
+    console = SCPI_GetMicroRLClient(context);
+    microrl_set_echo(console, param1);
+    return SCPI_RES_OK;
+}
 //
 //static scpi_result_t SCPI_NVMRead(scpi_t * context)
 //{
@@ -715,9 +707,9 @@ static const scpi_command_t scpi_commands[] = {
     //    // System
     //    {.pattern = "SYSTem:REboot", .callback = SCPI_Reset, },
     //    {.pattern = "HELP", .callback = SCPI_Help, },
-    //    {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet, },
+    {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet,},
     {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
-    //    {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho, },
+    {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
     //    {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho, },    
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
@@ -738,7 +730,7 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:BAT:STAT?", .callback = SCPI_BatteryStatusGet, },
     //    {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet, },
     //    {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState, },
-    //    {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState, },
+    {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
     //    {.pattern = "SYSTem:FORce5V5POWer:STATe",.callback=SCPI_Force5v5PowerStateSet},
     //    
     //    // DIO

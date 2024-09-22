@@ -87,7 +87,7 @@ void *BoardData_Get(
         case BOARDDATA_AIN_SAMPLES:
             return &g_BoardData.AInSamples;
         case BOARDATA_POWER_DATA:
-            //return &g_BoardData.PowerData;
+            return &g_BoardData.PowerData;
         case BOARDDATA_UI_VARIABLES:
             //return &g_BoardData.UIReadVars;
             return NULL;

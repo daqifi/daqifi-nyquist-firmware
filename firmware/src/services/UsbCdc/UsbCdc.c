@@ -568,7 +568,9 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "NULL or zero length command.");
     return -1;
 }
-
+UsbCdcData_t* UsbCdc_GetSettings(){
+    return &gRunTimeUsbSttings;
+}
 void UsbCdc_Initialize()
 {
     

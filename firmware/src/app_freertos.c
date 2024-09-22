@@ -258,6 +258,7 @@ void app_SystemInit() {
             gpBoardConfig,
             gpBoardRuntimeConfig,
             gpBoardData);
+    gpBoardData->PowerData.powerState=POWERED_UP;
 }
 
 static void app_TasksCreate() {
