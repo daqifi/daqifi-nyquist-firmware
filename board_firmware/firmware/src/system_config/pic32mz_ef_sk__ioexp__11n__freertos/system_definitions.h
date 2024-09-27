@@ -55,7 +55,8 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
      
  
  
- #include "system/devcon/sys_devcon.h"
+ #include "driver/oc/drv_oc.h" 
+#include "system/devcon/sys_devcon.h"
       #include "system/reset/sys_reset.h"
       #include "system/rtcc/sys_rtcc.h"
 #include "system/clk/sys_clk.h"
@@ -128,6 +129,7 @@ typedef struct
     SYS_MODULE_OBJ  drvTmr0;
     SYS_MODULE_OBJ  drvTmr1;
     SYS_MODULE_OBJ  drvTmr2;
+    SYS_MODULE_OBJ  drvTmr3;
 
     SYS_MODULE_OBJ  drvI2C0;
     SYS_MODULE_OBJ  drvNvm;

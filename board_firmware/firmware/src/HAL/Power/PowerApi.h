@@ -143,6 +143,10 @@ void Power_Tasks( void );
  * @param[in] sleep Boolean to indicate if sleep mode is enable
  */
 void Power_USB_Sleep_Update( bool sleep ); 
+/*!
+ * Writes the state 
+ */
+void Power_Write( void );
  
     
 #ifdef	__cplusplus

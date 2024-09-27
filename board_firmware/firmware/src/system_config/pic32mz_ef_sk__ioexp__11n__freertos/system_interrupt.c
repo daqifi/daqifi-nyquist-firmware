@@ -207,6 +207,10 @@ void IntHandlerDrvTmrInstance2(void)
     DRV_TMR_Tasks(sysObj.drvTmr2);
     --(*boardDataInISR);
 }
+void IntHandlerDrvTmrInstance3(void)
+{
+    DRV_TMR_Tasks(sysObj.drvTmr3);
+}
  
 void IntHandlerSPIRxInstance0(void)
 {
