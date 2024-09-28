@@ -68,6 +68,17 @@ void EVIC_Initialize( void )
     IPC15SET = 0xc00U | 0x0U;  /* ADC_DATA2:  Priority 3 / Subpriority 0 */
     IPC15SET = 0xc0000U | 0x0U;  /* ADC_DATA3:  Priority 3 / Subpriority 0 */
     IPC15SET = 0xc000000U | 0x0U;  /* ADC_DATA4:  Priority 3 / Subpriority 0 */
+    IPC16SET = 0x4U | 0x0U;  /* ADC_DATA5:  Priority 1 / Subpriority 0 */
+    IPC16SET = 0x400U | 0x0U;  /* ADC_DATA6:  Priority 1 / Subpriority 0 */
+    IPC16SET = 0x40000U | 0x0U;  /* ADC_DATA7:  Priority 1 / Subpriority 0 */
+    IPC16SET = 0x4000000U | 0x0U;  /* ADC_DATA8:  Priority 1 / Subpriority 0 */
+    IPC17SET = 0x40000U | 0x0U;  /* ADC_DATA11:  Priority 1 / Subpriority 0 */
+    IPC20SET = 0x4000000U | 0x0U;  /* ADC_DATA24:  Priority 1 / Subpriority 0 */
+    IPC21SET = 0x4U | 0x0U;  /* ADC_DATA25:  Priority 1 / Subpriority 0 */
+    IPC21SET = 0x400U | 0x0U;  /* ADC_DATA26:  Priority 1 / Subpriority 0 */
+    IPC21SET = 0x40000U | 0x0U;  /* ADC_DATA27:  Priority 1 / Subpriority 0 */
+    IPC24SET = 0x400U | 0x0U;  /* ADC_DATA38:  Priority 1 / Subpriority 0 */
+    IPC24SET = 0x40000U | 0x0U;  /* ADC_DATA39:  Priority 1 / Subpriority 0 */
     IPC29SET = 0x40000U | 0x0U;  /* CHANGE_NOTICE_A:  Priority 1 / Subpriority 0 */
     IPC30SET = 0xc00U | 0x0U;  /* CHANGE_NOTICE_D:  Priority 3 / Subpriority 0 */
     IPC33SET = 0x4U | 0x1U;  /* USB:  Priority 1 / Subpriority 1 */

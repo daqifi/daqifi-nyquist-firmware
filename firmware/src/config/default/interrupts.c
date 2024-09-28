@@ -80,6 +80,17 @@ void ADC_DATA1_Handler (void);
 void ADC_DATA2_Handler (void);
 void ADC_DATA3_Handler (void);
 void ADC_DATA4_Handler (void);
+void ADC_DATA5_Handler (void);
+void ADC_DATA6_Handler (void);
+void ADC_DATA7_Handler (void);
+void ADC_DATA8_Handler (void);
+void ADC_DATA11_Handler (void);
+void ADC_DATA24_Handler (void);
+void ADC_DATA25_Handler (void);
+void ADC_DATA26_Handler (void);
+void ADC_DATA27_Handler (void);
+void ADC_DATA38_Handler (void);
+void ADC_DATA39_Handler (void);
 void CHANGE_NOTICE_A_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
@@ -162,9 +173,94 @@ void ADC_DATA4_Handler(void) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4), 4);        
     }
     ADC_DATA4_InterruptHandler();
-
 }
 
+void ADC_DATA5_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(5)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(5), 5);        
+    }
+    ADC_DATA5_InterruptHandler();
+}
+void ADC_DATA6_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(6)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(6), 6);        
+    }
+    ADC_DATA6_InterruptHandler();
+}
+
+void ADC_DATA7_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(7)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(7), 7);        
+    }
+    ADC_DATA7_InterruptHandler();
+}
+
+void ADC_DATA8_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(8)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(8), 8);        
+    }
+    ADC_DATA8_InterruptHandler();
+}
+
+void ADC_DATA11_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(11)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(11), 11);        
+    }
+    ADC_DATA11_InterruptHandler();
+}
+
+void ADC_DATA24_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(24)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(24), 24);        
+    }
+    ADC_DATA24_InterruptHandler();
+}
+
+void ADC_DATA25_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(25)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(25), 25);        
+    }
+    ADC_DATA25_InterruptHandler();
+}
+
+void ADC_DATA26_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(26)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(26), 26);        
+    }
+    ADC_DATA26_InterruptHandler();
+}
+
+void ADC_DATA27_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(27)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(27), 27);        
+    }
+    ADC_DATA27_InterruptHandler();
+}
+
+void ADC_DATA38_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(38)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(38), 38);        
+    }
+    ADC_DATA38_InterruptHandler();
+}
+
+void ADC_DATA39_Handler (void)
+{
+    if (ADCHS_ChannelResultIsReady(39)) {
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(39), 39);        
+    }
+    ADC_DATA39_InterruptHandler();
+}
 void CHANGE_NOTICE_A_Handler(void) {
     CHANGE_NOTICE_A_InterruptHandler();
 }

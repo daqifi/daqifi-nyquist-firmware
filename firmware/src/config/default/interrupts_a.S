@@ -268,6 +268,204 @@ IntVectorADC_DATA4_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorADC_DATA4_Handler
+    .extern  ADC_DATA5_Handler
+
+    .section   .vector_64,code, keep
+    .equ     __vector_dispatch_64, IntVectorADC_DATA5_Handler
+    .global  __vector_dispatch_64
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA5_Handler
+
+IntVectorADC_DATA5_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA5_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA5_Handler
+    .extern  ADC_DATA6_Handler
+
+    .section   .vector_65,code, keep
+    .equ     __vector_dispatch_65, IntVectorADC_DATA6_Handler
+    .global  __vector_dispatch_65
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA6_Handler
+
+IntVectorADC_DATA6_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA6_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA6_Handler
+    .extern  ADC_DATA7_Handler
+
+    .section   .vector_66,code, keep
+    .equ     __vector_dispatch_66, IntVectorADC_DATA7_Handler
+    .global  __vector_dispatch_66
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA7_Handler
+
+IntVectorADC_DATA7_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA7_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA7_Handler
+    .extern  ADC_DATA8_Handler
+
+    .section   .vector_67,code, keep
+    .equ     __vector_dispatch_67, IntVectorADC_DATA8_Handler
+    .global  __vector_dispatch_67
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA8_Handler
+
+IntVectorADC_DATA8_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA8_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA8_Handler
+    .extern  ADC_DATA11_Handler
+
+    .section   .vector_70,code, keep
+    .equ     __vector_dispatch_70, IntVectorADC_DATA11_Handler
+    .global  __vector_dispatch_70
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA11_Handler
+
+IntVectorADC_DATA11_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA11_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA11_Handler
+    .extern  ADC_DATA24_Handler
+
+    .section   .vector_83,code, keep
+    .equ     __vector_dispatch_83, IntVectorADC_DATA24_Handler
+    .global  __vector_dispatch_83
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA24_Handler
+
+IntVectorADC_DATA24_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA24_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA24_Handler
+    .extern  ADC_DATA25_Handler
+
+    .section   .vector_84,code, keep
+    .equ     __vector_dispatch_84, IntVectorADC_DATA25_Handler
+    .global  __vector_dispatch_84
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA25_Handler
+
+IntVectorADC_DATA25_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA25_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA25_Handler
+    .extern  ADC_DATA26_Handler
+
+    .section   .vector_85,code, keep
+    .equ     __vector_dispatch_85, IntVectorADC_DATA26_Handler
+    .global  __vector_dispatch_85
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA26_Handler
+
+IntVectorADC_DATA26_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA26_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA26_Handler
+    .extern  ADC_DATA27_Handler
+
+    .section   .vector_86,code, keep
+    .equ     __vector_dispatch_86, IntVectorADC_DATA27_Handler
+    .global  __vector_dispatch_86
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA27_Handler
+
+IntVectorADC_DATA27_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA27_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA27_Handler
+    .extern  ADC_DATA38_Handler
+
+    .section   .vector_97,code, keep
+    .equ     __vector_dispatch_97, IntVectorADC_DATA38_Handler
+    .global  __vector_dispatch_97
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA38_Handler
+
+IntVectorADC_DATA38_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA38_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA38_Handler
+    .extern  ADC_DATA39_Handler
+
+    .section   .vector_98,code, keep
+    .equ     __vector_dispatch_98, IntVectorADC_DATA39_Handler
+    .global  __vector_dispatch_98
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DATA39_Handler
+
+IntVectorADC_DATA39_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DATA39_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DATA39_Handler
     .extern  CHANGE_NOTICE_A_Handler
 
     .section   .vector_118,code, keep

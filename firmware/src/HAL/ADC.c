@@ -67,9 +67,10 @@ void ADC_EosInterruptTask(void) {
         uint32_t adcval;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
         DIO_TIMING_TEST_WRITE_STATE(1);
+        //Read only the private ADC's as the public ADC's has their own interrupts
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
             if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelType != 1
-                    && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
+                    && !gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic) {
                 if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {                 
                     continue;
                 }
@@ -79,12 +80,7 @@ void ADC_EosInterruptTask(void) {
                 BoardData_Set(
                         BOARDDATA_AIN_LATEST,
                         i,
-                        &sample);
-                if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic
-                        && gpBoardRuntimeConfig->StreamingConfig.IsEnabled == 1) {
-                    AInSampleList_PushBack(NULL, &sample);
-                }
-
+                        &sample);  
             }
         }
         

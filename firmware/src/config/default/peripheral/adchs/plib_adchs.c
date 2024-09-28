@@ -103,12 +103,12 @@ void ADCHS_Initialize(void)
 
 
 /* Result interrupt enable */
-ADCGIRQEN1 = 0x1fU;
-ADCGIRQEN2 = 0x0U;
+ADCGIRQEN1 = 0xf0009ffU;
+ADCGIRQEN2 = 0xc0U;
 /* Interrupt Enable */
 IEC1SET = 0xf8000000U;
-IEC2SET = 0x0U;
-IEC3SET = 0x0U;    IEC6SET = _IEC6_ADCEOSIE_MASK;
+IEC2SET = 0x78004fU;
+IEC3SET = 0x6U;    IEC6SET = _IEC6_ADCEOSIE_MASK;
 
 
 
@@ -365,4 +365,123 @@ void __attribute__((used)) ADC_DATA4_InterruptHandler(void)
     IFS1CLR = _IFS1_ADCD4IF_MASK;
 
 }
+void __attribute__((used)) ADC_DATA5_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[5].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[5].context;
+        ADCHS_CallbackObj[5].callback_fn(ADCHS_CH5, context);
+    }
 
+    IFS2CLR = _IFS2_ADCD5IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA6_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[6].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[6].context;
+        ADCHS_CallbackObj[6].callback_fn(ADCHS_CH6, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD6IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA7_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[7].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[7].context;
+        ADCHS_CallbackObj[7].callback_fn(ADCHS_CH7, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD7IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA8_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[8].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[8].context;
+        ADCHS_CallbackObj[8].callback_fn(ADCHS_CH8, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD8IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA11_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[11].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[11].context;
+        ADCHS_CallbackObj[11].callback_fn(ADCHS_CH11, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD11IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA24_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[24].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[24].context;
+        ADCHS_CallbackObj[24].callback_fn(ADCHS_CH24, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD24IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA25_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[25].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[25].context;
+        ADCHS_CallbackObj[25].callback_fn(ADCHS_CH25, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD25IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA26_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[26].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[26].context;
+        ADCHS_CallbackObj[26].callback_fn(ADCHS_CH26, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD26IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA27_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[27].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[27].context;
+        ADCHS_CallbackObj[27].callback_fn(ADCHS_CH27, context);
+    }
+
+    IFS2CLR = _IFS2_ADCD27IF_MASK;
+
+}
+
+void __attribute__((used)) ADC_DATA38_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[38].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[38].context;
+        ADCHS_CallbackObj[38].callback_fn(ADCHS_CH38, context);
+    }
+    IFS3CLR = _IFS3_ADCD38IF_MASK;
+
+}
+void __attribute__((used)) ADC_DATA39_InterruptHandler(void)
+{
+    if (ADCHS_CallbackObj[39].callback_fn != NULL)
+    {
+        uintptr_t context = ADCHS_CallbackObj[39].context;
+        ADCHS_CallbackObj[39].callback_fn(ADCHS_CH39, context);
+    }
+    IFS3CLR = _IFS3_ADCD39IF_MASK;
+
+}
