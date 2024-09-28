@@ -25,7 +25,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-     
+  
 //! Size in chars of the board hardware revision field
 #define BOARDCONFIG_HARDWARE_REVISION_SIZE              16
 //! Size in chars of the board firmware revision field

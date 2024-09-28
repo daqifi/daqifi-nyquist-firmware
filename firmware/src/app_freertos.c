@@ -309,8 +309,7 @@ void APP_FREERTOS_Tasks(void) {
     app_TasksCreate();
     while (true) {
         ADC_Tasks();
-        Streaming_Tasks(gpBoardRuntimeConfig, gpBoardData);
-        //AdcTest();
+        Streaming_Tasks(gpBoardRuntimeConfig->StreamingConfig, gpBoardData);        
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 }

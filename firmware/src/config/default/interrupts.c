@@ -159,10 +159,7 @@ void ADC_DATA3_Handler(void) {
 
 void ADC_DATA4_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(4)) {
-        //ADCHS_ChannelResultGet(4);
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4), 4);
-        
-        //DIO_TIMING_TEST_WRITE_STATE(0);
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4), 4);        
     }
     ADC_DATA4_InterruptHandler();
 

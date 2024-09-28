@@ -407,8 +407,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 // Initialize the analog input data processing
                 uint32_t queueSize = AInSampleList_Size(NULL);
-                uint32_t previousTimeStamp = 0;
-                uint32_t sampleIndex = 0;
+                uint32_t previousTimeStamp = 0;                
                 AInSample data;
 
                 /**
@@ -438,8 +437,9 @@ size_t Nanopb_Encode(tBoardData* state,
 
                     // Add the sample to the message if the timestamp matches the previous one
                     if (data.Timestamp == previousTimeStamp) {
-                        message.analog_in_data[sampleIndex++] = data.Value;
+                        message.analog_in_data[data.Channel] = data.Value;
                         message.analog_in_data_count++;
+                      
                     } else {
                         /**
                          * When the timestamp changes, we know that the current block of data 
@@ -466,16 +466,16 @@ size_t Nanopb_Encode(tBoardData* state,
                          * (starting with the new timestamp).
                          * 
                          * The current sample is added to the new message, and processing continues.
-                         */
-                        sampleIndex = 0;
+                         */                     
                         message.analog_in_data_count = 0;
                         message.has_msg_time_stamp = true;
                         message.msg_time_stamp = data.Timestamp;
                         previousTimeStamp = data.Timestamp;
 
                         // Add the current sample to the new message
-                        message.analog_in_data[sampleIndex++] = data.Value;
+                        message.analog_in_data[data.Channel] = data.Value;
                         message.analog_in_data_count++;
+                        
                     }
                 }
 

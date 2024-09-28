@@ -28,8 +28,7 @@ void Streaming_UpdateState( void );
  * @param runtimeConfig The runtime configuration
  * @param boardData     The board data
  */
-void Streaming_Tasks(   tBoardRuntimeConfig* runtimeConfig,                 
-                        tBoardData* boardData);
+void Streaming_Tasks(   StreamingRuntimeConfig* pStreamConfig, tBoardData* boardData);
 
 /**
  * Initializes and starts the timestamp timer

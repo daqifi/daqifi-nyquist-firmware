@@ -68,7 +68,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     uint64_t ChannelScanFreqDivCount = 0;
 #endif
     while (1) {
-        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        ulTaskNotifyTake(pdFALSE, xBlockTime);        
 #if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
@@ -77,8 +77,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
                 for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                    ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
-                    DIO_TIMING_TEST_TOGGLE_STATE();
+                    ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);                   
                 }
 
                 if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
@@ -92,9 +91,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
         }
 #else
-        Streaming_StuffDummyData();
-        DIO_TIMING_TEST_TOGGLE_STATE();
+        Streaming_StuffDummyData();        
 #endif
+        
     }
 }
 
@@ -110,7 +109,7 @@ void Streaming_Defer_Interrupt(void) {
 //static void Streaming_StuffDummyData(void);
 
 static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
-    //DIO_TIMING_TEST_TOGGLE_STATE();
+   
 }
 
 /*!
@@ -182,8 +181,8 @@ void Streaming_UpdateState(void) {
  * 
  * @note This function will return early if streaming is disabled or there is no data to process.
  */
-void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig, tBoardData* boardData) {
-    if (!runtimeConfig->StreamingConfig.IsEnabled) {
+void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardData) {
+    if (!pStreamConfig->IsEnabled) {
         return;
     }
 
@@ -235,7 +234,7 @@ void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig, tBoardData* boardData) 
 
         size_t packetSize = 0;
         if (nanopbFlag.Size > 0) {
-            if (runtimeConfig->StreamingConfig.Encoding == Streaming_Json) {
+            if (pStreamConfig->Encoding == Streaming_Json) {
                 packetSize = Json_Encode(boardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
             } else {
                 packetSize = Nanopb_Encode(boardData, &nanopbFlag, (uint8_t *) buffer, maxSize);

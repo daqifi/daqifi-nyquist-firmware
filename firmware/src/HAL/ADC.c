@@ -66,12 +66,13 @@ void ADC_EosInterruptTask(void) {
         int i = 0;
         uint32_t adcval;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+        DIO_TIMING_TEST_WRITE_STATE(1);
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-            if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
-                continue;
-            }
             if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelType != 1
                     && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
+                if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {                 
+                    continue;
+                }
                 sample.Timestamp = *valueTMR;
                 sample.Channel = i;
                 sample.Value = adcval;
@@ -80,12 +81,13 @@ void ADC_EosInterruptTask(void) {
                         i,
                         &sample);
                 if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic
-                        && gpBoardRuntimeConfig->StreamingConfig.IsEnabled==1) {
+                        && gpBoardRuntimeConfig->StreamingConfig.IsEnabled == 1) {
                     AInSampleList_PushBack(NULL, &sample);
                 }
 
             }
         }
+        
 
     }
 }
@@ -320,7 +322,7 @@ bool ADC_ReadADCSampleFromISR(uint32_t value, uint8_t bufferIndex) {
                     i,
                     &sample);
             if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic
-                    && gpBoardRuntimeConfig->StreamingConfig.IsEnabled==1) {
+                    && gpBoardRuntimeConfig->StreamingConfig.IsEnabled == 1) {
                 AInSampleList_PushBackFromIsr(NULL, &sample);
             }
             status = true;
