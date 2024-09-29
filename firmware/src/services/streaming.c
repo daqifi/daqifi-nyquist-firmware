@@ -65,19 +65,36 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
     AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_MODULES);
+    AInRuntimeArray* pAiRunTimeChannelConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+
+    AInSampleList * pAInSamples = BoardData_Get(
+            BOARDDATA_AIN_SAMPLES,
+            0);
+
+    AInSample *pAiSample;
     uint64_t ChannelScanFreqDivCount = 0;
 #endif
     while (1) {
-        ulTaskNotifyTake(pdFALSE, xBlockTime);        
+        ulTaskNotifyTake(pdFALSE, xBlockTime);
 #if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
+
+            for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
+                if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
+                        && pBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic == 1) {
+                    pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
+                    AInSampleList_PushBack(pAInSamples, (const AInSample *) pAiSample);
+                }
+            }
+
+
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                 for (i = 0; i < pRunTimeAInModules->Size; ++i) {
                     ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
                 }
             } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
                 for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                    ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);                   
+                    ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
                 }
 
                 if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
@@ -91,9 +108,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
         }
 #else
-        Streaming_StuffDummyData();        
+        Streaming_StuffDummyData();
 #endif
-        
+
     }
 }
 
@@ -109,7 +126,7 @@ void Streaming_Defer_Interrupt(void) {
 //static void Streaming_StuffDummyData(void);
 
 static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
-   
+
 }
 
 /*!
@@ -196,8 +213,6 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
         return;
     }
 
-    nanopbFlag.Size = 0;
-    nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
 
     do {
         AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
@@ -223,6 +238,9 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
         if (maxSize < 128) {
             return;
         }
+
+        nanopbFlag.Size = 0;
+        nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
 
         if (AINDataAvailable) {
             nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_data_tag;
@@ -255,6 +273,7 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
 
     } while (1);
 }
+
 /*
  * void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig, tBoardData* boardData) {
     // Check if streaming is enabled

@@ -317,10 +317,10 @@ bool ADC_ReadADCSampleFromISR(uint32_t value, uint8_t bufferIndex) {
                     BOARDDATA_AIN_LATEST,
                     i,
                     &sample);
-            if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic
-                    && gpBoardRuntimeConfig->StreamingConfig.IsEnabled == 1) {
-                AInSampleList_PushBackFromIsr(NULL, &sample);
-            }
+//            if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic
+//                    && gpBoardRuntimeConfig->StreamingConfig.IsEnabled == 1) {
+//                AInSampleList_PushBackFromIsr(NULL, &sample);
+//            }
             status = true;
             break;
 

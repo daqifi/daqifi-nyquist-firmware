@@ -140,13 +140,13 @@ void BoardData_Set(
             break;
         case BOARDDATA_AIN_LATEST:
             if (index < g_BoardData.AInLatest.Size) {
-                uint32_t timeStamp = g_BoardData.AInLatest.Data[ index ].Timestamp;
+                //uint32_t timeStamp = g_BoardData.AInLatest.Data[ index ].Timestamp;
                 memcpy(
                         &g_BoardData.AInLatest.Data[ index ],
                         pSetValue,
                         sizeof (AInSample));
                 //timestamp is not changed while updating data because timestamp is being updated during the start of trigger
-                g_BoardData.AInLatest.Data[ index ].Timestamp = timeStamp;
+                //g_BoardData.AInLatest.Data[ index ].Timestamp = timeStamp;
 
             }
             break;
