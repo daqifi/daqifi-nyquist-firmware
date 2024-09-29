@@ -286,7 +286,7 @@ static void app_TasksCreate() {
     }
     errStatus = xTaskCreate((TaskFunction_t) app_SdCardTask,
             "SdCardTask",
-            4000,
+            5000,
             NULL,
             2,
             NULL);
@@ -309,7 +309,7 @@ void APP_FREERTOS_Tasks(void) {
     app_TasksCreate();
     while (true) {
         ADC_Tasks();
-        Streaming_Tasks(&gpBoardRuntimeConfig->StreamingConfig, gpBoardData);        
+        //Streaming_Tasks(&gpBoardRuntimeConfig->StreamingConfig, gpBoardData);        
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 }

@@ -71,6 +71,7 @@ extern "C" {
          * The type of encoding to use
          */
         StreamingEncoding Encoding;
+        
     } StreamingRuntimeConfig;
 
 

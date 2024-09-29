@@ -23,6 +23,7 @@ extern "C" {
          * Currently configured module range 
          */
         double Range;
+        
     } AInModuleRuntimeConfig;
     
     /**

@@ -43,13 +43,12 @@ static tStreamingConfig* gpStreamingConfig;
 //! Indicate if handler is used 
 static bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
+static TaskHandle_t gStreamingTaskHandle;
 #if  defined(TEST_STREAMING)
 static void Streaming_StuffDummyData(void);
 #endif
 
 void _Streaming_Deferred_Interrupt_Task(void) {
-
-
     TickType_t xBlockTime = portMAX_DELAY;
 #if  !defined(TEST_STREAMING)
     uint8_t i = 0;
@@ -71,11 +70,16 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             BOARDDATA_AIN_SAMPLES,
             0);
 
+
     AInSample *pAiSample;
+
+
+
     uint64_t ChannelScanFreqDivCount = 0;
 #endif
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
+
 #if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
 
@@ -107,6 +111,8 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
             DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
         }
+       
+        xTaskNotifyGive(gStreamingTaskHandle);
 #else
         Streaming_StuffDummyData();
 #endif
@@ -135,7 +141,7 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
-
+  
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
     if (gInTimerHandler) return;
@@ -198,28 +204,28 @@ void Streaming_UpdateState(void) {
  * 
  * @note This function will return early if streaming is disabled or there is no data to process.
  */
-void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardData) {
-    if (!pStreamConfig->IsEnabled) {
-        return;
-    }
 
+void streaming_Task(void) {
+     TickType_t xBlockTime = portMAX_DELAY;
     NanopbFlagsArray nanopbFlag;
     size_t usbSize, wifiSize, sdSize, maxSize;
     bool hasUsb, hasWifi, hasSD;
-    bool AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
-    bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
-
-    if (!AINDataAvailable && !DIODataAvailable) {
-        return;
-    }
-
-
-    do {
-        AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
-        DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
+    bool AINDataAvailable;
+    bool DIODataAvailable;
+    size_t packetSize=0;
+    tBoardData * pBoardData = BoardData_Get(
+            BOARDDATA_ALL_DATA,
+            0);
+     StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    while(1) {
+        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        
+        AINDataAvailable = !AInSampleList_IsEmpty(&pBoardData->AInSamples);
+        DIODataAvailable = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
 
         if (!AINDataAvailable && !DIODataAvailable) {
-            return;
+            continue;
         }
 
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
@@ -236,9 +242,9 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
         if (hasSD) maxSize = min(maxSize, sdSize);
 
         if (maxSize < 128) {
-            return;
+            continue;
         }
-
+        
         nanopbFlag.Size = 0;
         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
 
@@ -249,19 +255,20 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
             nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_data_tag;
             nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
         }
-
-        size_t packetSize = 0;
+        
+        packetSize = 0;
         if (nanopbFlag.Size > 0) {
-            if (pStreamConfig->Encoding == Streaming_Json) {
-                packetSize = Json_Encode(boardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+            if (pRunTimeStreamConf->Encoding == Streaming_Json) {
+                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
             } else {
-                packetSize = Nanopb_Encode(boardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+                packetSize = Nanopb_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
             }
         }
-
+        
         if (packetSize > 0) {
-            if (hasUsb) {
+            if (hasUsb) {                
                 UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
+                
             }
             if (hasWifi) {
                 WifiApi_WriteToBuffer((const char *) buffer, packetSize);
@@ -270,14 +277,15 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
                 SDCard_WriteToBuffer((const char *) buffer, packetSize);
             }
         }
+        
 
-    } while (1);
+    }
 }
 
 /*
  * void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig, tBoardData* boardData) {
     // Check if streaming is enabled
-    if (!runtimeConfig->StreamingConfig.IsEnabled) {
+    if (!pStreamConfig->IsEnabled) {
         return;
     }
 
@@ -316,7 +324,7 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
     }
 
     // Prepare data for streaming
-    NanopbFlagsArray nanopbFlag = { .Size = 0 };
+    NanopbFlagsArray nanopbFlag = {.Size = 0};
     nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
 
     if (AINDataAvailable) {
@@ -330,22 +338,22 @@ void Streaming_Tasks(StreamingRuntimeConfig* pStreamConfig, tBoardData* boardDat
 
     // Encode the data based on the specified format
     size_t packetSize = 0;
-    if (runtimeConfig->StreamingConfig.Encoding == Streaming_Json) {
-        packetSize = Json_Encode(boardData, &nanopbFlag, (uint8_t*)buffer, maxSize);
+    if (pStreamConfig->Encoding == Streaming_Json) {
+        packetSize = Json_Encode(boardData, &nanopbFlag, (uint8_t*) buffer, maxSize);
     } else {
-        packetSize = Nanopb_Encode(boardData, &nanopbFlag, (uint8_t*)buffer, maxSize);
+        packetSize = Nanopb_Encode(boardData, &nanopbFlag, (uint8_t*) buffer, maxSize);
     }
 
     // Send the encoded data to active channels
     if (packetSize > 0) {
         if (hasUsb) {
-            UsbCdc_WriteToBuffer(NULL, (const char*)buffer, packetSize);
+            UsbCdc_WriteToBuffer(NULL, (const char*) buffer, packetSize);
         }
         if (hasWifi) {
-            WifiApi_WriteToBuffer((const char*)buffer, packetSize);
+            WifiApi_WriteToBuffer((const char*) buffer, packetSize);
         }
         if (hasSD) {
-            SDCard_WriteToBuffer((const char*)buffer, packetSize);
+            SDCard_WriteToBuffer((const char*) buffer, packetSize);
         }
     }
 }
@@ -354,11 +362,18 @@ void TimestampTimer_Init(void) {
     //     Initialize and start timestamp timer
     //     This is a free running timer used for reference - 
     //     this doesn't interrupt or callback
+    
+    if (gStreamingTaskHandle == NULL) {
+        xTaskCreate((TaskFunction_t) streaming_Task,
+                "Stream task",
+                2048, NULL, 2, &gStreamingTaskHandle);
+    }
     if (gStreamingInterruptHandle == NULL) {
         xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
                 "Stream Interrupt",
                 2048, NULL, 8, &gStreamingInterruptHandle);
     }
+    
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
     TimerApi_Initialize(gpStreamingConfig->TSTimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TSTimerIndex);

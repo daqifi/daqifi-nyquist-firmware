@@ -17,6 +17,7 @@
 #include "services/daqifi_settings.h"
 #include "HAL/TimerApi/TimerApi.h"
 #include "state/board/BoardConfig.h"
+#include "HAL/DIO.h"
 #ifndef min
 #define min(x,y) x <= y ? x : y
 #endif // min
@@ -386,6 +387,7 @@ size_t Nanopb_Encode(tBoardData* state,
     AInRuntimeArray* pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     AInModRuntimeArray *pRuntimeAInModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
     DIORuntimeArray* pRuntimeDIOChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
+  
     DaqifiOutMessage message = DaqifiOutMessage_init_default;
     uint32_t bufferOffset = 0;
     size_t i = 0;
@@ -406,10 +408,14 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_analog_in_data_tag:
             {
                 // Initialize the analog input data processing
+               
                 uint32_t queueSize = AInSampleList_Size(NULL);
-                uint32_t previousTimeStamp = 0;                
+                uint32_t previousTimeStamp = 0;
+                size_t maxDataIndex = (sizeof (message.analog_in_data) / sizeof (message.analog_in_data[0])) - 1;
+                bool isChannelEmpty[maxDataIndex + 1];
+                memset(isChannelEmpty, true, maxDataIndex);
                 AInSample data;
-
+                
                 /**
                  * MULTIPLE PACKET HANDLING:
                  * ------------------------
@@ -427,19 +433,24 @@ size_t Nanopb_Encode(tBoardData* state,
                 // Process each analog input sample in the list
                 while (queueSize > 0) {
                     // Retrieve the next sample from the queue
+                    DIO_TIMING_TEST_WRITE_STATE(1);
                     if (!AInSampleList_PopFront(&state->AInSamples, &data)) {
                         // If there is an error retrieving the sample, reset and break
                         AInSampleList_Destroy(&state->AInSamples);
                         AInSampleList_Initialize(&state->AInSamples, MAX_AIN_SAMPLE_COUNT, false, NULL);
                         break;
                     }
+                    DIO_TIMING_TEST_WRITE_STATE(0);
                     queueSize--;
+                    if (data.Channel > maxDataIndex)
+                        continue;
 
                     // Add the sample to the message if the timestamp matches the previous one
-                    if (data.Timestamp == previousTimeStamp) {
+                    if (data.Timestamp == previousTimeStamp && isChannelEmpty[data.Channel] == true) {
                         message.analog_in_data[data.Channel] = data.Value;
                         message.analog_in_data_count++;
-                      
+                        isChannelEmpty[data.Channel] = false;
+
                     } else {
                         /**
                          * When the timestamp changes, we know that the current block of data 
@@ -466,7 +477,7 @@ size_t Nanopb_Encode(tBoardData* state,
                          * (starting with the new timestamp).
                          * 
                          * The current sample is added to the new message, and processing continues.
-                         */                     
+                         */
                         message.analog_in_data_count = 0;
                         message.has_msg_time_stamp = true;
                         message.msg_time_stamp = data.Timestamp;
@@ -475,8 +486,10 @@ size_t Nanopb_Encode(tBoardData* state,
                         // Add the current sample to the new message
                         message.analog_in_data[data.Channel] = data.Value;
                         message.analog_in_data_count++;
-                        
+                        isChannelEmpty[data.Channel] = false;
+
                     }
+
                 }
 
                 // Encode any remaining data in the message after processing the samples
@@ -1142,8 +1155,8 @@ size_t Nanopb_Encode(tBoardData* state,
                 // Skip unknown fields
                 break;
         }
-    }    
-    if(encode_message_to_buffer(&message,pBuffer,buffSize,&bufferOffset)){
+    }
+    if (encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
         return bufferOffset;
     } else {
         return 0;
