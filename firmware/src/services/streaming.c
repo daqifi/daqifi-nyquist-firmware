@@ -65,15 +65,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_MODULES);
     AInRuntimeArray* pAiRunTimeChannelConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
-
-    AInSampleList * pAInSamples = BoardData_Get(
-            BOARDDATA_AIN_SAMPLES,
-            0);
-
-
+    
+    AInPublicSampleList_t *pPublicSampleList=NULL;
     AInSample *pAiSample;
-
-
 
     uint64_t ChannelScanFreqDivCount = 0;
 #endif
@@ -82,15 +76,21 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
 #if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
-
+            pPublicSampleList=calloc(1,sizeof(AInPublicSampleList_t));
+            if(pPublicSampleList==NULL)
+                continue;
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
                 if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
                         && pBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic == 1) {
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
-                    AInSampleList_PushBack(pAInSamples, (const AInSample *) pAiSample);
+                    pPublicSampleList->sampleElement[i].Channel=pAiSample->Channel;
+                    pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
+                    pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
+                    pPublicSampleList->isSampleValid[i]=1;
+                   
                 }
             }
-
+            AInSampleList_PushBack(pPublicSampleList);
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                 for (i = 0; i < pRunTimeAInModules->Size; ++i) {
@@ -221,13 +221,13 @@ void streaming_Task(void) {
     while(1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
         
-        AINDataAvailable = !AInSampleList_IsEmpty(&pBoardData->AInSamples);
+        AINDataAvailable = !AInSampleList_IsEmpty();
         DIODataAvailable = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
 
         if (!AINDataAvailable && !DIODataAvailable) {
             continue;
         }
-
+        DIO_TIMING_TEST_WRITE_STATE(0);
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = WifiApi_WriteBuffFreeSize();
         sdSize = SDCard_WriteBuffFreeSize();
@@ -277,87 +277,12 @@ void streaming_Task(void) {
                 SDCard_WriteToBuffer((const char *) buffer, packetSize);
             }
         }
+        DIO_TIMING_TEST_WRITE_STATE(1);
         
 
     }
 }
 
-/*
- * void Streaming_Tasks(tBoardRuntimeConfig* runtimeConfig, tBoardData* boardData) {
-    // Check if streaming is enabled
-    if (!pStreamConfig->IsEnabled) {
-        return;
-    }
-
-    // Check for available data
-    bool AINDataAvailable = !AInSampleList_IsEmpty(&boardData->AInSamples);
-    bool DIODataAvailable = !DIOSampleList_IsEmpty(&boardData->DIOSamples);
-
-    if (!AINDataAvailable && !DIODataAvailable) {
-        return; // No data to stream
-    }
-
-    // Determine available buffer space
-    size_t usbSize = UsbCdc_WriteBuffFreeSize(NULL);
-    size_t wifiSize = WifiApi_WriteBuffFreeSize();
-    size_t sdSize = SDCard_WriteBuffFreeSize();
-
-    // Active channels based on buffer space
-    bool hasUsb = usbSize > BUFFER_SIZE;
-    bool hasWifi = wifiSize > BUFFER_SIZE;
-    bool hasSD = sdSize > BUFFER_SIZE;
-
-    // If no channels are available with sufficient space, exit
-    if (!hasUsb && !hasWifi && !hasSD) {
-        return;
-    }
-
-    // Calculate the smallest available buffer size for sending
-    size_t maxSize = BUFFER_SIZE;
-    if (hasUsb) maxSize = min(maxSize, usbSize);
-    if (hasWifi) maxSize = min(maxSize, wifiSize);
-    if (hasSD) maxSize = min(maxSize, sdSize);
-
-    // Ensure there?s enough space to send data
-    if (maxSize < 128) {
-        return;
-    }
-
-    // Prepare data for streaming
-    NanopbFlagsArray nanopbFlag = {.Size = 0};
-    nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
-
-    if (AINDataAvailable) {
-        nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_data_tag;
-    }
-
-    if (DIODataAvailable) {
-        nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_data_tag;
-        nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
-    }
-
-    // Encode the data based on the specified format
-    size_t packetSize = 0;
-    if (pStreamConfig->Encoding == Streaming_Json) {
-        packetSize = Json_Encode(boardData, &nanopbFlag, (uint8_t*) buffer, maxSize);
-    } else {
-        packetSize = Nanopb_Encode(boardData, &nanopbFlag, (uint8_t*) buffer, maxSize);
-    }
-
-    // Send the encoded data to active channels
-    if (packetSize > 0) {
-        if (hasUsb) {
-            UsbCdc_WriteToBuffer(NULL, (const char*) buffer, packetSize);
-        }
-        if (hasWifi) {
-            WifiApi_WriteToBuffer((const char*) buffer, packetSize);
-        }
-        if (hasSD) {
-            SDCard_WriteToBuffer((const char*) buffer, packetSize);
-        }
-    }
-}
- */
 void TimestampTimer_Init(void) {
     //     Initialize and start timestamp timer
     //     This is a free running timer used for reference - 
@@ -417,7 +342,7 @@ static void Streaming_StuffDummyData(void) {
                     && pBoardConfig->Data[k].Config.MC12b.IsPublic == 1) {
                 data.Value = k;
                 data.Channel = k;
-                AInSampleList_PushBack(pAInSamples, (const AInSample *) &data);
+                //AInSampleList_PushBack(pAInSamples, (const AInSample *) &data);
             }
         }
         //ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);

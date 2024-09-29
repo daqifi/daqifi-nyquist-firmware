@@ -193,7 +193,7 @@ build/default/production/_ext/68089601/NanoPB_Encoder.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h \
  ../src/HAL/TimerApi/TimerApi.h ../src/state/board/BoardConfig.h \
- ../src/state/board/StreamingConfig.h
+ ../src/state/board/StreamingConfig.h ../src/HAL/DIO.h
 
 ../src/libraries/nanopb/pb_encode.h:
 
@@ -608,3 +608,5 @@ build/default/production/_ext/68089601/NanoPB_Encoder.o: \
 ../src/state/board/BoardConfig.h:
 
 ../src/state/board/StreamingConfig.h:
+
+../src/HAL/DIO.h:

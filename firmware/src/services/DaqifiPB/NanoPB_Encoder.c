@@ -387,7 +387,7 @@ size_t Nanopb_Encode(tBoardData* state,
     AInRuntimeArray* pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     AInModRuntimeArray *pRuntimeAInModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
     DIORuntimeArray* pRuntimeDIOChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
-  
+
     DaqifiOutMessage message = DaqifiOutMessage_init_default;
     uint32_t bufferOffset = 0;
     size_t i = 0;
@@ -408,95 +408,48 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_analog_in_data_tag:
             {
                 // Initialize the analog input data processing
-               
-                uint32_t queueSize = AInSampleList_Size(NULL);
-                uint32_t previousTimeStamp = 0;
-                size_t maxDataIndex = (sizeof (message.analog_in_data) / sizeof (message.analog_in_data[0])) - 1;
-                bool isChannelEmpty[maxDataIndex + 1];
-                memset(isChannelEmpty, true, maxDataIndex);
-                AInSample data;
-                
-                /**
-                 * MULTIPLE PACKET HANDLING:
-                 * ------------------------
-                 * As we iterate through the list of analog input samples, the goal is to 
-                 * group these samples into manageable packets that fit within the provided buffer.
-                 * 
-                 * Each sample is timestamped, and when the timestamp changes, we know that a 
-                 * new "block" of data should begin. This is when we encode the current packet 
-                 * into the buffer and reset for the next one.
-                 * 
-                 * Buffer space is finite, so if encoding the message exceeds the buffer's 
-                 * capacity, we stop further encoding to prevent overflow.
-                 */
 
-                // Process each analog input sample in the list
+                uint32_t queueSize = AInSampleList_Size();              
+                size_t maxDataIndex = (sizeof (message.analog_in_data) / sizeof (message.analog_in_data[0])) - 1;
+                AInSample data;
+                AInPublicSampleList_t *pPublicSampleList;
+               
                 while (queueSize > 0) {
                     // Retrieve the next sample from the queue
-                    DIO_TIMING_TEST_WRITE_STATE(1);
-                    if (!AInSampleList_PopFront(&state->AInSamples, &data)) {
-                        // If there is an error retrieving the sample, reset and break
-                        AInSampleList_Destroy(&state->AInSamples);
-                        AInSampleList_Initialize(&state->AInSamples, MAX_AIN_SAMPLE_COUNT, false, NULL);
+                    
+                    if (!AInSampleList_PopFront(&pPublicSampleList)) {
                         break;
                     }
-                    DIO_TIMING_TEST_WRITE_STATE(0);
+                    if(pPublicSampleList==NULL)
+                        break;
+                   
                     queueSize--;
-                    if (data.Channel > maxDataIndex)
-                        continue;
 
-                    // Add the sample to the message if the timestamp matches the previous one
-                    if (data.Timestamp == previousTimeStamp && isChannelEmpty[data.Channel] == true) {
+                    for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
+                        if (!pPublicSampleList->isSampleValid[i])
+                            continue;
+                        data = pPublicSampleList->sampleElement[i];
+                        if (data.Channel > maxDataIndex)
+                            continue;
                         message.analog_in_data[data.Channel] = data.Value;
                         message.analog_in_data_count++;
-                        isChannelEmpty[data.Channel] = false;
+                    }
+                    //time stamp of all the samples in a list should be same, so using anyone should be fine
+                    message.msg_time_stamp = data.Timestamp;
+                    free(pPublicSampleList);
 
-                    } else {
-                        /**
-                         * When the timestamp changes, we know that the current block of data 
-                         * should be closed, and a new block with the new timestamp should start.
-                         * 
-                         * We encode the message into the buffer and check whether the buffer 
-                         * still has space for more packets.
-                         */
-
-                        // If we have samples in the message, encode them
-                        if (message.analog_in_data_count > 0) {
-                            if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
-                                return 0; // Return 0 if encoding fails
-                            }
-
-                            // Check if buffer has enough space for another message
-                            if (bufferOffset + Nanopb_EncodeLength(fields) > buffSize) {
-                                return bufferOffset; // Stop if the buffer is full
-                            }
+                    if (message.analog_in_data_count > 0) {
+                        if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
+                            return 0; // Return 0 if encoding fails
                         }
 
-                        /**
-                         * After encoding, we reset the message for the next block of data 
-                         * (starting with the new timestamp).
-                         * 
-                         * The current sample is added to the new message, and processing continues.
-                         */
-                        message.analog_in_data_count = 0;
-                        message.has_msg_time_stamp = true;
-                        message.msg_time_stamp = data.Timestamp;
-                        previousTimeStamp = data.Timestamp;
-
-                        // Add the current sample to the new message
-                        message.analog_in_data[data.Channel] = data.Value;
-                        message.analog_in_data_count++;
-                        isChannelEmpty[data.Channel] = false;
-
+                        // Check if buffer has enough space for another message
+                        if (bufferOffset + Nanopb_EncodeLength(fields) > buffSize) {
+                            return bufferOffset; // Stop if the buffer is full
+                        }
                     }
-
-                }
-
-                // Encode any remaining data in the message after processing the samples
-                if (message.analog_in_data_count > 0) {
-                    if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
-                        return 0; // Return 0 if encoding fails
-                    }
+                    message.analog_in_data_count = 0;
+                    message.has_msg_time_stamp = true;
                 }
                 break;
             }

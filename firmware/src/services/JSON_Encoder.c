@@ -23,46 +23,41 @@
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
 
-size_t Json_Encode(     tBoardData* state,                                  
-                        NanopbFlagsArray* fields,                           
-                        uint8_t* pBuffer, size_t buffSize)
-{
+size_t Json_Encode(tBoardData* state,
+        NanopbFlagsArray* fields,
+        uint8_t* pBuffer, size_t buffSize) {
     int tmpLen = 0;
-    //char *buffer = (char *)Encoder_Get_Buffer();
-    char* charBuffer = (char*)pBuffer;
-    size_t startIndex = snprintf(                                           
-                        charBuffer,                                         
-                        buffSize,                           
-                        "\n\r{\n\r");
-    size_t initialOffsetIndex=startIndex;
-    size_t i=0;
+    char* charBuffer = (char*) pBuffer;
+    size_t startIndex = snprintf(charBuffer, buffSize, "{\n");
+    size_t initialOffsetIndex = startIndex;
+    size_t i = 0;
     bool encodeDIO = false;
-    bool encodeADC = false;    
-    
-    if( pBuffer == NULL ){
+    bool encodeADC = false;
+
+    if (pBuffer == NULL) {
+        return 0; // Return 0 if buffer is NULL
+    }
+
+    if (pBuffer == NULL) {
         return 0;
     }
-   
-    
-    for (i=0; i<fields->Size; ++i)
-    {
-        if (buffSize - startIndex < 3)
-        {
+
+
+    for (i = 0; i < fields->Size; ++i) {
+        if (buffSize - startIndex < 3) {
             break;
         }
-        
-        switch(fields->Data[i])
-        {
+
+        switch (fields->Data[i]) {
             case DaqifiOutMessage_msg_time_stamp_tag:
-                startIndex += snprintf(                                     
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " \"timestamp\"=%u,\n\r",                           
+                startIndex += snprintf(charBuffer + startIndex,
+                        buffSize - startIndex,
+                        "\"timestamp\":%u,\n",
                         state->StreamTrigStamp);
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
                 encodeADC = true;
-                break;        
+                break;
             case DaqifiOutMessage_digital_data_tag:
                 encodeDIO = true;
                 break;
@@ -86,71 +81,55 @@ size_t Json_Encode(     tBoardData* state,
                 WifiSettings* wifiSettings = &state->wifiSettings;
                 inet_ntop(AF_INET, &wifiSettings->ipAddr.Val, tmp, TMP_MAX_LEN);
                 tmpLen = strlen(tmp);
-                if (tmpLen > 0)
-                {
-                    startIndex += snprintf(                                 
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " \"ip\"=\"%s\",\n\r",                              
-                        tmp);
+                if (tmpLen > 0) {
+                    startIndex += snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "\"ip\":\"%s\",\n",
+                            tmp);
                 }
-
                 break;
             }
             case DaqifiOutMessage_host_name_tag:
             {
-//                WifiSettings* wifiSettings =                                
-//                        &state->wifiSettings;
-//                tmpLen = min(                                               
-//                        strlen(wifiSettings->hostName),                     
-//                        TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
-//                
-//                if (tmpLen > 0)
-//                {
-//                    startIndex += snprintf(                                 
-//                        charBuffer + startIndex,                            
-//                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
-//                        " \"host\"=\"%s\",\n\r",                            
-//                        wifiSettings->hostName);
-//                }
+                //                WifiSettings* wifiSettings =                                
+                //                        &state->wifiSettings;
+                //                tmpLen = min(                                               
+                //                        strlen(wifiSettings->hostName),                     
+                //                        TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
+                //                
+                //                if (tmpLen > 0)
+                //                {
+                //                    startIndex += snprintf(                                 
+                //                        charBuffer + startIndex,                            
+                //                        JSON_ENCODER_BUFFER_SIZE - startIndex,              
+                //                        " \"host\"=\"%s\",\n\r",                            
+                //                        wifiSettings->hostName);
+                //                }
 
                 break;
             }
             case DaqifiOutMessage_mac_addr_tag:
             {
                 WifiSettings* wifiSettings = &state->wifiSettings;
-                tmpLen = MacAddr_ToString(                                  
-                        wifiSettings->macAddr.addr,                             
-                        tmp,                                                
-                        TMP_MAX_LEN);
-                
-                if (tmpLen > 0)
-                {
-                    startIndex += snprintf(                                 
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " \"mac\"=\"%s\",\n\r",                             
-                        tmp);
+                tmpLen = MacAddr_ToString(wifiSettings->macAddr.addr, tmp, TMP_MAX_LEN);
+                if (tmpLen > 0) {
+                    startIndex += snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "\"mac\":\"%s\",\n",
+                            tmp);
                 }
-                
                 break;
             }
             case DaqifiOutMessage_ssid_tag:
             {
                 WifiSettings* wifiSettings = &state->wifiSettings;
-                tmpLen = min(                                               
-                        strlen(wifiSettings->ssid),                         
-                        WDRV_WINC_MAX_SSID_LEN);
-                
-                if (tmpLen > 0)
-                {
-                    startIndex += snprintf(                                 
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " \"ssid\"=\"%s\",\n\r",                            
-                        wifiSettings->ssid);
+                tmpLen = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
+                if (tmpLen > 0) {
+                    startIndex += snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "\"ssid\":\"%s\",\n",
+                            wifiSettings->ssid);
                 }
-
                 break;
             }
             case DaqifiOutMessage_digital_port_dir_tag:
@@ -179,23 +158,19 @@ size_t Json_Encode(     tBoardData* state,
             case DaqifiOutMessage_device_port_tag:
             {
                 WifiSettings* wifiSettings = &state->wifiSettings;
-                startIndex += snprintf(                                     
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " \"port\"=\"%u\",\n\r",                            
+                startIndex += snprintf(charBuffer + startIndex,
+                        buffSize - startIndex,
+                        "\"port\":%u,\n",
                         wifiSettings->tcpPort);
-                
                 break;
             }
             case DaqifiOutMessage_wifi_security_mode_tag:
             {
-                WifiSettings* wifiSettings =  &state->wifiSettings;
-                startIndex += snprintf(                                     
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " \"sec\"=\"%u\",\n\r",                             
+                WifiSettings* wifiSettings = &state->wifiSettings;
+                startIndex += snprintf(charBuffer + startIndex,
+                        buffSize - startIndex,
+                        "\"sec\":%u,\n",
                         wifiSettings->securityMode);
-                
                 break;
             }
             case DaqifiOutMessage_friendly_device_name_tag:
@@ -206,91 +181,93 @@ size_t Json_Encode(     tBoardData* state,
                 break;
         }
     }
-    
-    if (encodeDIO)
-    {
-        startIndex += snprintf(                                             
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " \"dio\"=[\n\r");
-        
-        while (((buffSize - startIndex) >= 65) &&           
-               (!DIOSampleList_IsEmpty(&state->DIOSamples)))
-        {
+
+    // Encode DIO if needed
+    if (encodeDIO) {
+        startIndex += snprintf(charBuffer + startIndex,
+                buffSize - startIndex,
+                "\"dio\":[\n");
+
+        while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
             DIOSample data;
             DIOSampleList_PopFront(&state->DIOSamples, &data);
-            startIndex += snprintf(                                         
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        "  {\"time\"=%u, \"mask\"=%u, \"data\"=%u},\n\r",   
-                        state->StreamTrigStamp-data.Timestamp,              
-                        data.Mask,                                          
-                        data.Values);
+            startIndex += snprintf(charBuffer + startIndex,
+                    buffSize - startIndex,
+                    "{\"time\":%u, \"mask\":%u, \"data\":%u},\n",
+                    state->StreamTrigStamp - data.Timestamp,
+                    data.Mask,
+                    data.Values);
         }
-        
-        startIndex += snprintf(                                             
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        " ],\n\r");
+
+        // Remove trailing comma and add closing bracket for dio array
+        if (charBuffer[startIndex - 2] == ',') {
+            startIndex -= 2; // Remove trailing comma
+        }
+        startIndex += snprintf(charBuffer + startIndex,
+                buffSize - startIndex,
+                "\n],\n");
     }
 
+    // Encode ADC if needed
     if (encodeADC) {
-        startIndex = initialOffsetIndex; //remove timestamp added Initially
-        uint32_t previousTimeStamp = 0;
-        uint32_t qSize = AInSampleList_Size(NULL);
-        while (((buffSize - startIndex) >= 65) &&
-                (qSize > 0)) {
+        startIndex = initialOffsetIndex; // Remove the initial timestamp added
+
+        uint32_t qSize = AInSampleList_Size();
+        AInPublicSampleList_t *pPublicSampleList;
+        while (((buffSize - startIndex) >= 65) && (qSize > 0)) {
             AInSample data;
-            if (!AInSampleList_PopFront(&state->AInSamples, &data)) {
-                AInSampleList_Destroy(&state->AInSamples);
-                AInSampleList_Initialize(&state->AInSamples,
-                        MAX_AIN_SAMPLE_COUNT,
-                        false,
-                        NULL);
+            if (!AInSampleList_PopFront(&pPublicSampleList)) {
                 break;
             }
+            if (pPublicSampleList == NULL)
+                break;
             qSize--;
-__add_data_no_pop:
-            if (data.Timestamp == previousTimeStamp) {
-                double voltage = (ADC_ConvertToVoltage(&data))*1000; //convert to millivolts
-                startIndex += snprintf(
-                        charBuffer + startIndex,
+            bool timestampAdded = false;
+            for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
+                if (!pPublicSampleList->isSampleValid[i])
+                    continue;
+
+                 data = pPublicSampleList->sampleElement[i];
+                if (!timestampAdded) {
+                    startIndex += snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "\"timestamp\":%u,\n",
+                            data.Timestamp);
+                    startIndex += snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "\"adc\":[\n");
+                    timestampAdded = true;
+                }
+
+               
+                double voltage = ADC_ConvertToVoltage(&data) * 1000; // Convert to millivolts
+                startIndex += snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
-                        "{\"ch\":%u, \"data\":%u},\n\r",
+                        "{\"ch\":%u, \"data\":%u},\n",
                         data.Channel,
                         (int) voltage);
-            } else {
-                if (((buffSize - startIndex) < 65))
-                    break;
-                if (previousTimeStamp != 0) { //to first the first json
-                    startIndex += snprintf(
-                            charBuffer + startIndex,
-                            buffSize - startIndex,
-                            " ],\n\r");
-                }
-                startIndex += snprintf(charBuffer + startIndex,
-                        buffSize - startIndex,
-                        "\r\n\"timestamp\":%u,\n\r",
-                        data.Timestamp);
-                startIndex += snprintf(charBuffer + startIndex,
-                        buffSize - startIndex,
-                        " \"adc\":[\n\r");
-                previousTimeStamp = data.Timestamp;
-                goto __add_data_no_pop;
-
             }
-        }
 
-        startIndex += snprintf(
-                charBuffer + startIndex,
-                buffSize - startIndex,
-                " ]\n\r");
+            free(pPublicSampleList);
+
+            // Remove trailing comma and close adc array
+            if (charBuffer[startIndex - 2] == ',') {
+                startIndex -= 2; // Remove trailing comma
+            }
+            startIndex += snprintf(charBuffer + startIndex,
+                    buffSize - startIndex,
+                    "\n],\n");
+        }
     }
-    
-    startIndex += snprintf(                                                 
-                        charBuffer + startIndex,                            
-                        buffSize - startIndex,              
-                        "}");
-    charBuffer[startIndex] = '\0';
-    return startIndex;
+
+    // Close the JSON object
+    if (charBuffer[startIndex - 2] == ',') {
+        startIndex -= 2; // Remove trailing comma
+    }
+    startIndex += snprintf(charBuffer + startIndex,
+            buffSize - startIndex,
+            "\n}");
+
+    charBuffer[startIndex] = '\0'; // Null-terminate the JSON string
+    return startIndex; // Return the number of bytes written
 }

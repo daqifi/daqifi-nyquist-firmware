@@ -12,120 +12,136 @@ extern "C" {
     /**
      * Contains DIO information for a given time
      */
-    typedef enum e_AInTaskState
-    {
+    typedef enum e_AInTaskState {
         AINTASK_INITIALIZING,
         AINTASK_IDLE,
         AINTASK_CONVSTART,
         AINTASK_BUSY,
         AINTASK_CONVCOMPLETE,
         AINTASK_DISABLED
-    }AInTaskState_t;
-    
-    typedef struct s_AInModData
-    {
+    } AInTaskState_t;
+
+    typedef struct s_AInModData {
         AInTaskState_t AInTaskState;
     } AInModData;
-    
+
     // Define a storage class for analog input data
     //#define MAX_AIN_DATA_MOD MAX_AIN_MOD
     ARRAYWRAPPERDEF(AInModDataArray, AInModData, MAX_AIN_MOD);
-    
+
     /**
      * Contains DIO information for a given time
      */
-    typedef struct s_AInSample
-    {
+    typedef struct s_AInSample {
         /**
          * The Processor tick count
          */
         uint32_t Timestamp;
-        
+
         /**
          * The channel that generated this sample
          */
         uint8_t Channel;
-        
+
         /**
          * The value of the channel
          */
         uint32_t Value;
     } AInSample;
-    
+
+    typedef struct {
+        AInSample sampleElement[MAX_AIN_PUBLIC_CHANNELS];
+        bool isSampleValid[MAX_AIN_PUBLIC_CHANNELS];
+    } AInPublicSampleList_t;
+
     // Define a storage class for analog input channels
     //#define MAX_AIN_CHANNEL    48
-    #define MAX_AIN_SAMPLE_COUNT 500
+#define MAX_AIN_SAMPLE_COUNT 20
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
-    
+
     /**
      * A wrapper around a HeapList to simplify use
      */
-    typedef struct s_AInSampleList
-    {
+    typedef struct s_AInSampleList {
         /**
          * The list to wrap
          */
         HeapList List;
     } AInSampleList;
-    
-    /**
-    * Initializes the list
-    * @param list The list to initialize
-    * @param maxSize The maximum number of items in the list
-    * @param dropOnOverFlow Set true to drop the first element when adding to a full list (false to error out)
-    * @param lockPrototype The lock provider to use
-    */
-    void AInSampleList_Initialize(AInSampleList* list, size_t maxSize, bool dropOnOverflow, const LockProvider* lockPrototype);
 
     /**
-     * Destroys the list
-     * @param list The list to destroy
+     * @brief Initializes the Analog Input Sample List queue.
+     * 
+     * This function initializes the queue with a maximum size.
+     * 
+     * @param maxSize Maximum number of items the queue can hold.
      */
-    void AInSampleList_Destroy(AInSampleList* list);
+    void AInSampleList_Initialize(size_t maxSize,
+            bool dropOnOverflow,
+            const LockProvider* lockPrototype);
 
     /**
-     * Adds data to the back of the list
-     * @param list The list to add to
-     * @param data The sample to add
-     * @return True on success, false on failure
+     * @brief Destroys the Analog Input Sample List queue.
+     * 
+     * This function frees all items in the queue and deletes the queue.
      */
-    bool AInSampleList_PushBack(AInSampleList* list, const AInSample* data);
-    /**
-     * Adds data to the back of the list from ISR
-     * @param list The list to add to
-     * @param  data The sample to add
-     * @return True on success, false on failure
-     */
-    bool AInSampleList_PushBackFromIsr(AInSampleList* list, const AInSample* data);
-    /**
-     * Removes and returns the first item in the list
-     * @param list The list to modify
-     * @param data [out] Storage for the returned data
-     * @return True on success, false on failure
-     */
-    bool AInSampleList_PopFront(AInSampleList* list, AInSample* data);
+    void AInSampleList_Destroy(void);
 
     /**
-     * Returns the first item in the list
-     * @param list The list to modify
-     * @param data [out] Storage for the returned data
-     * @return True on success, false on failure
+     * @brief Adds a new data sample to the queue.
+     * 
+     * This function adds a new data sample to the queue.
+     * 
+     * @param pData Pointer to the data sample to be added.
+     * @return True if the data was successfully added, false otherwise.
      */
-    bool AInSampleList_PeekFront(AInSampleList* list, AInSample* data);
-    
+    bool AInSampleList_PushBack(const AInPublicSampleList_t* pData);
+
     /**
-     * Gets the number of items currently in the list
-     * @param list The list to query
-     * @return The current size of the list
+     * @brief Adds a new data sample to the queue from an ISR.
+     * 
+     * Similar to AInSampleList_PushBack but used within an interrupt context.
+     * 
+     * @param pData Pointer to the data sample to be added.
+     * @return True if the data was successfully added, false otherwise.
      */
-    size_t AInSampleList_Size(AInSampleList* list);
-    
-    /* Indicates whether there is data in the list
-     * @param list The list to check
-     * @return True if the list is empty, false otherwise
+    bool AInSampleList_PushBackFromIsr(const AInPublicSampleList_t* pData);
+
+    /**
+     * @brief Removes and returns the first data sample from the queue.
+     * 
+     * This function removes the first data sample from the queue and assigns it
+     * to the provided pointer.
+     * 
+     * @param ppData Pointer to where the removed data sample will be stored.
+     * @return True if a data sample was successfully removed, false otherwise.
      */
-    bool AInSampleList_IsEmpty(AInSampleList* list);
-    
+    bool AInSampleList_PopFront(AInPublicSampleList_t** ppData);
+
+    /**
+     * @brief Peeks at the first data sample in the queue without removing it.
+     * 
+     * This function retrieves the first data sample in the queue without removing it.
+     * 
+     * @param ppData Pointer to where the peeked data sample will be stored.
+     * @return True if a data sample was successfully retrieved, false otherwise.
+     */
+    bool AInSampleList_PeekFront(AInPublicSampleList_t** ppData);
+
+    /**
+     * @brief Gets the current number of items in the queue.
+     * 
+     * @return The number of items in the queue.
+     */
+    size_t AInSampleList_Size(void);
+
+    /**
+     * @brief Checks if the queue is empty.
+     * 
+     * @return True if the queue is empty, false otherwise.
+     */
+    bool AInSampleList_IsEmpty(void);
+
 #ifdef __cplusplus
 }
 #endif

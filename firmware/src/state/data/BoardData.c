@@ -26,7 +26,7 @@ void InitializeBoardData(tBoardData* boardData) {
 
     memset(&boardData->AInLatest, 0, sizeof (AInSampleArray));
     boardData->AInLatest.Size = MAX_AIN_CHANNEL;
-    AInSampleList_Initialize(&boardData->AInSamples, MAX_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
+    AInSampleList_Initialize(MAX_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
     boardData->AInState.Size = MAX_AIN_MOD;
     // Set default battery values for debugging - allows power on without ADC active
 

@@ -17,127 +17,92 @@ static QueueHandle_t analogInputsQueue;
 //! Size of the queue, in number of items
 static uint32_t queueSize = 0;
 
-void AInSampleList_Initialize( 
-                            AInSampleList* list, 
+void AInSampleList_Initialize(                           
                             size_t maxSize, 
                             bool dropOnOverflow, 
                             const LockProvider* lockPrototype){
     
-    (void)list;
+  
     (void)maxSize;
     (void)dropOnOverflow;
     (void)lockPrototype;
     
     queueSize = maxSize;
-    analogInputsQueue = xQueueCreate( maxSize, sizeof(AInSample) );
+    analogInputsQueue = xQueueCreate( maxSize, sizeof(AInPublicSampleList_t *) );
 }
 
-void AInSampleList_Destroy(AInSampleList* list)
+void AInSampleList_Destroy()
 {
-    (void)list;
-    
-    vQueueDelete( analogInputsQueue );
+    if (analogInputsQueue != NULL) {
+        AInPublicSampleList_t* pData;
+        while (!AInSampleList_IsEmpty()) {
+            if (AInSampleList_PopFront(&pData)) {
+                if (pData != NULL) {
+                    free(pData);
+                    pData = NULL;
+                }
+            }
+        }
+        vQueueDelete(analogInputsQueue);
+        analogInputsQueue = NULL;
+    }
 }
 
-bool AInSampleList_PushBack(AInSampleList* list, const AInSample* data){
-    BaseType_t queueResult;
-    
-    if( data == NULL ){
+bool AInSampleList_PushBack(const AInPublicSampleList_t* pData){
+    if (pData == NULL || analogInputsQueue == NULL) {
         return false;
     }
-    
-    (void)list;
-    
-    queueResult = xQueueSend( 
-                    analogInputsQueue, 
-                    data, 
-                    (TickType_t)0);
-    if( queueResult == pdTRUE )
-        return true;
-    else {
-        uxQueueSpacesAvailable(analogInputsQueue);
-        return false;
-    }
+
+    BaseType_t queueResult = xQueueSend(analogInputsQueue, &pData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
+
+    return queueResult == pdTRUE;
 }
-bool AInSampleList_PushBackFromIsr(AInSampleList* list, const AInSample* data){
-    BaseType_t queueResult;
+bool AInSampleList_PushBackFromIsr(const AInPublicSampleList_t* pData){
+    if (pData == NULL || analogInputsQueue == NULL) {
+        return false;
+    }
+
     BaseType_t xTaskWokenByReceive = pdFALSE;
-    if( data == NULL ){
-        return false;
-    }
-    
-    (void)list;
-    
-    queueResult = xQueueSendFromISR( 
-                    analogInputsQueue, 
-                    data, 
-                    &xTaskWokenByReceive );
-   
+    BaseType_t queueResult = xQueueSendFromISR(analogInputsQueue, &pData, &xTaskWokenByReceive);
+
     portEND_SWITCHING_ISR(xTaskWokenByReceive);
-    if(queueResult == pdTRUE)
-        return true;
-    else 
-        return false;
-    //return ( queueResult == pdTRUE ) ? true : false; 
+    return queueResult == pdTRUE;
 }
-bool AInSampleList_PopFront(AInSampleList* list, AInSample* data)
+bool AInSampleList_PopFront( AInPublicSampleList_t** ppData)
 {
-    BaseType_t queueResult;
-    
-    (void) list;
-    
-    if( data == NULL ){
+    if (ppData == NULL || analogInputsQueue == NULL) {
         return false;
     }
-    
-    queueResult = xQueueReceive( 
-                    analogInputsQueue, 
-                    data, 
-                    AINSAMPLE_QUEUE_TICKS_TO_WAIT );
-    return ( queueResult == pdTRUE ) ? true : false; 
+
+    BaseType_t queueResult = xQueueReceive(analogInputsQueue, ppData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
+    return queueResult == pdTRUE;
 }
 
-bool AInSampleList_PeekFront(AInSampleList* list, AInSample* data)
+bool AInSampleList_PeekFront(AInPublicSampleList_t** ppData)
 {
-    BaseType_t queueResult;
-    
-    (void)list;
-    
-    if( data == NULL ){
+    if (ppData == NULL || analogInputsQueue == NULL) {
         return false;
     }
-    
-    queueResult = xQueuePeek( 
-                    analogInputsQueue, 
-                    data, 
-                    AINSAMPLE_QUEUE_TICKS_TO_WAIT );
-    return ( queueResult == pdTRUE ) ? true : false; 
+
+    BaseType_t queueResult = xQueuePeek(analogInputsQueue, ppData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
+    return queueResult == pdTRUE;
 }
 
-size_t AInSampleList_Size(AInSampleList* list)
+size_t AInSampleList_Size()
 {
-    (void)list;
-    
-    if( queueSize == 0 ){
+  if (queueSize == 0 || analogInputsQueue == NULL) {
         return 0;
     }
-    return (queueSize - uxQueueSpacesAvailable( analogInputsQueue ) );
+    return (queueSize - uxQueueSpacesAvailable(analogInputsQueue));
 }
 
-bool AInSampleList_IsEmpty(AInSampleList* list)
+bool AInSampleList_IsEmpty()
 {
-    AInSample data;
-    BaseType_t queueResult;
-    
-    (void)list;
-    
-    queueResult = xQueuePeek( 
-                    analogInputsQueue, 
-                    &data, 
-                    0 );
-    
-    if( queueResult == pdTRUE ){
-        return false;
+    if (analogInputsQueue == NULL) {
+        return true;
     }
-    return true;
+
+    AInPublicSampleList_t* pData;
+    BaseType_t queueResult = xQueuePeek(analogInputsQueue, &pData, 0);
+    return queueResult != pdTRUE;
 }
