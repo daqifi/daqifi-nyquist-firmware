@@ -227,7 +227,7 @@ void streaming_Task(void) {
         if (!AINDataAvailable && !DIODataAvailable) {
             continue;
         }
-        DIO_TIMING_TEST_WRITE_STATE(0);
+       
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = WifiApi_WriteBuffFreeSize();
         sdSize = SDCard_WriteBuffFreeSize();
@@ -259,15 +259,19 @@ void streaming_Task(void) {
         packetSize = 0;
         if (nanopbFlag.Size > 0) {
             if (pRunTimeStreamConf->Encoding == Streaming_Json) {
-                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
-            } else {
-                packetSize = Nanopb_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+                DIO_TIMING_TEST_WRITE_STATE(1);
+                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); //takes 230us
+                DIO_TIMING_TEST_WRITE_STATE(0);
+            } else {   
+                DIO_TIMING_TEST_WRITE_STATE(1);
+                packetSize = Nanopb_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); //takes 620us
+                DIO_TIMING_TEST_WRITE_STATE(0);
             }
         }
-        
+        DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
             if (hasUsb) {                
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
+                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);//takes 13us for json 
                 
             }
             if (hasWifi) {
@@ -277,7 +281,8 @@ void streaming_Task(void) {
                 SDCard_WriteToBuffer((const char *) buffer, packetSize);
             }
         }
-        DIO_TIMING_TEST_WRITE_STATE(1);
+        DIO_TIMING_TEST_WRITE_STATE(0);
+       
         
 
     }

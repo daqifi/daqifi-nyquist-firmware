@@ -363,11 +363,10 @@ static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
  * @return false         If encoding failed due to insufficient buffer space or other errors.
  */
 static bool encode_message_to_buffer(DaqifiOutMessage* message, uint8_t* pBuffer, size_t buffSize, uint32_t* pBuffOffset) {
-    pb_ostream_t stream = pb_ostream_from_buffer(pBuffer + *pBuffOffset, buffSize - *pBuffOffset);
-
+    pb_ostream_t stream = pb_ostream_from_buffer(pBuffer + *pBuffOffset, buffSize - *pBuffOffset);    
     if (!pb_encode_delimited(&stream, DaqifiOutMessage_fields, message)) {
         return false;
-    }
+    }    
     *pBuffOffset += stream.bytes_written;
     return true;
 }
@@ -379,10 +378,13 @@ size_t Nanopb_Encode(tBoardData* state,
     if (pBuffer == NULL || buffSize == 0) {
         return 0;
     }
+
     DaqifiSettings tmpTopLevelSettings;
+    //this takes approx 82us
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) {
         return 0;
     }
+
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     AInRuntimeArray* pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     AInModRuntimeArray *pRuntimeAInModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
@@ -407,22 +409,21 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
             {
-                // Initialize the analog input data processing
-
-                uint32_t queueSize = AInSampleList_Size();              
+                // Initialize the analog input data processing                
+                uint32_t queueSize = AInSampleList_Size(); //takes approx 3us                
                 size_t maxDataIndex = (sizeof (message.analog_in_data) / sizeof (message.analog_in_data[0])) - 1;
                 AInSample data;
                 AInPublicSampleList_t *pPublicSampleList;
-               
                 while (queueSize > 0) {
                     // Retrieve the next sample from the queue
                     
-                    if (!AInSampleList_PopFront(&pPublicSampleList)) {
+                    if (!AInSampleList_PopFront(&pPublicSampleList)) { //takes approx 4.2us
                         break;
                     }
-                    if(pPublicSampleList==NULL)
-                        break;
                    
+                    if (pPublicSampleList == NULL)
+                        break;
+
                     queueSize--;
 
                     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
@@ -439,18 +440,21 @@ size_t Nanopb_Encode(tBoardData* state,
                     free(pPublicSampleList);
 
                     if (message.analog_in_data_count > 0) {
-                        if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
+                       
+                        if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) { //takes 248 us
                             return 0; // Return 0 if encoding fails
                         }
-
+                       
                         // Check if buffer has enough space for another message
                         if (bufferOffset + Nanopb_EncodeLength(fields) > buffSize) {
                             return bufferOffset; // Stop if the buffer is full
                         }
+                       
                     }
                     message.analog_in_data_count = 0;
                     message.has_msg_time_stamp = true;
                 }
+               
                 break;
             }
 
@@ -1109,7 +1113,7 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
         }
     }
-    if (encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {
+    if (encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) {       
         return bufferOffset;
     } else {
         return 0;
