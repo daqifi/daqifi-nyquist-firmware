@@ -74,10 +74,15 @@ void GPIO_Initialize ( void )
     CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK;
     IEC3SET = _IEC3_CNAIE_MASK;
     /* PORTB Initialization */
+    LATB = 0x0U; /* Initial Latch Value */
+    TRISBCLR = 0x4000U; /* Direction Control */
+    ANSELBCLR = 0x4000U; /* Digital Mode Enable */
     /* PORTC Initialization */
-    ANSELCCLR = 0x6U; /* Digital Mode Enable */
+    LATC = 0x0U; /* Initial Latch Value */
+    TRISCCLR = 0x8U; /* Direction Control */
+    ANSELCCLR = 0xeU; /* Digital Mode Enable */
     /* PORTD Initialization */
-    LATD = 0x1U; /* Initial Latch Value */
+    LATD = 0x0U; /* Initial Latch Value */
     TRISDCLR = 0x2285U; /* Direction Control */
     CNPUDSET = 0x800U; /* Pull-Up Enable */
 
@@ -96,15 +101,16 @@ void GPIO_Initialize ( void )
     TRISGCLR = 0x8000U; /* Direction Control */
     ANSELGCLR = 0x8000U; /* Digital Mode Enable */
     /* PORTH Initialization */
-    LATH = 0x3110U; /* Initial Latch Value */
-    TRISHCLR = 0x3110U; /* Direction Control */
+    ODCHSET = 0x8000U; /* Open Drain Enable */
+    LATH = 0xa110U; /* Initial Latch Value */
+    TRISHCLR = 0xa110U; /* Direction Control */
     ANSELHCLR = 0x10U; /* Digital Mode Enable */
     /* PORTJ Initialization */
-    LATJ = 0x8000U; /* Initial Latch Value */
+    LATJ = 0x0U; /* Initial Latch Value */
     TRISJCLR = 0x94b5U; /* Direction Control */
     /* PORTK Initialization */
-    LATK = 0x10U; /* Initial Latch Value */
-    TRISKCLR = 0x90U; /* Direction Control */
+    LATK = 0x30U; /* Initial Latch Value */
+    TRISKCLR = 0xb0U; /* Direction Control */
 
     /* Unlock system for PPS configuration */
     SYSKEY = 0x00000000U;

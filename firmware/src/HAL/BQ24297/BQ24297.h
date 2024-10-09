@@ -160,7 +160,7 @@ typedef struct
     //! I2C index
     SYS_MODULE_INDEX I2C_Index;
     //! I2C address
-    unsigned char I2C_Address;
+    uint16_t I2C_Address;
  } tBQ24297Config;
 
  /*! @struct sBQ24297Data

@@ -16,7 +16,7 @@
 #include "DIOSample.h"
 #include "Util/HeapList.h"
 #include "HAL/Power/PowerApi.h"
-//#include "HAL/UI/UI.h"
+#include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
 
 
@@ -80,7 +80,7 @@ extern "C" {
         //! Global Power structure
         tPowerData PowerData;
         //! Global UI Structure
-        //tUIReadVars UIReadVars;
+        tUIReadVars UIReadVars;
         //! The active wifi settings
         WifiSettings wifiSettings;
         //! The streaming trigger timestamp

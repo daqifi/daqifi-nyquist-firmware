@@ -25,20 +25,31 @@
 
 //! Pointer to the data stucture where the UI configuration parameters
 // will be stored
-static tUIConfig *pConfig;
+static tUIConfig *gpConfig;
 //! Pointer to the data structure where the UI read variables will be stored
-static tUIReadVars *pReadVariables;
+static tUIReadVars *gpReadVariables;
 //! Pointer to the data structure where the UI Power Data will be stored
-static tPowerData *pPowerData;
+static tPowerData *gpPowerData;
 
-void UI_Init(                                                               \
-                tUIConfig *pConfigInit,                                     \
-                tUIReadVars *pReadVarsInit,                                 \
+bool ReadGpioPinState(GPIO_PORT port, uint32_t mask) {
+    return GPIO_PortRead(port)& (1 << mask);
+}
+static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
+    uint32_t pin = 1 << mask;
+    if (value == 1)
+        GPIO_PortSet(port, pin);
+    else
+        GPIO_PortClear(port, pin);
+
+}
+void UI_Init(                                                               
+                tUIConfig *pConfigInit,                                     
+                tUIReadVars *pReadVarsInit,                                 
                 tPowerData *pPowerDataInit )
 {
-    pConfig = pConfigInit;
-    pReadVariables = pReadVarsInit;
-    pPowerData = pPowerDataInit;
+    gpConfig = pConfigInit;
+    gpReadVariables = pReadVarsInit;
+    gpPowerData = pPowerDataInit;
 }
 
 void Button_Tasks( void )
@@ -49,21 +60,19 @@ void Button_Tasks( void )
     // holds the button for a long period of time
     static bool oneShot = false;    
     
-    pReadVariables->button = PLIB_PORTS_PinGet(                             \
-                        pConfig->button_Mod,                                \
-                        pConfig->button_Ch,                                 \
-                        pConfig->button_Bit);
+    gpReadVariables->button = ReadGpioPinState(gpConfig->button_Ch,                                 
+                        gpConfig->button_Bit);
     
-    if(pReadVariables->button)
+    if(gpReadVariables->button)
     {
         buttonPressCount++;
-        switch(pPowerData->powerState){
+        switch(gpPowerData->powerState){
 			case FRESH_BOOT:
             case MICRO_ON:
                 if((buttonPressCount > BUTTON_POWER_ON_TH) && !oneShot)
                 {
                     // Signal board to power up
-                    pPowerData->requestedPowerState = DO_POWER_UP;
+                    gpPowerData->requestedPowerState = DO_POWER_UP;
                     oneShot = true;
                 }
                 break;
@@ -74,9 +83,9 @@ void Button_Tasks( void )
                 {
                     // User requested power down.  Allow board to turn 
                     // off without LED indication.
-                    pPowerData->powerDnAllowed = true;   
+                    gpPowerData->powerDnAllowed = true;   
                     // Signal board to power off
-                    pPowerData->requestedPowerState = DO_POWER_DOWN;
+                    gpPowerData->requestedPowerState = DO_POWER_DOWN;
                     oneShot = true;
                 }
                 break;
@@ -113,17 +122,17 @@ void LED_Tasks(bool streamingFlag)
     
     
     // Assign nicer variable names to make the code below more readable
-    pluggedIn = pPowerData->BQ24297Data.status.pgStat;
+    pluggedIn = gpPowerData->BQ24297Data.status.pgStat;
        
-    poweredOn = (pPowerData->powerState == POWERED_UP ||                    \
-                 pPowerData->powerState == POWERED_UP_EXT_DOWN);
+    poweredOn = (gpPowerData->powerState == POWERED_UP ||                    
+                 gpPowerData->powerState == POWERED_UP_EXT_DOWN);
 
-    charging = ((pPowerData->BQ24297Data.status.chgStat == CHG_STAT_PRECHARGE)\
-            || (pPowerData->BQ24297Data.status.chgStat == CHG_STAT_FASTCHARGE));
+    charging = ((gpPowerData->BQ24297Data.status.chgStat == CHG_STAT_PRECHARGE)
+            || (gpPowerData->BQ24297Data.status.chgStat == CHG_STAT_FASTCHARGE));
 
     streaming = streamingFlag;
     
-    battLow = pPowerData->BQ24297Data.status.vsysStat;
+    battLow = gpPowerData->BQ24297Data.status.vsysStat;
 
     genError = false;
     
@@ -133,7 +142,7 @@ void LED_Tasks(bool streamingFlag)
     // number is executing.
     
     // If we are directed to power down, turn off LEDs
-    if(pPowerData->requestedPowerState == DO_POWER_DOWN){
+    if(gpPowerData->requestedPowerState == DO_POWER_DOWN){
         // Reset and take over any other sequence
         repeatSeq = 0;
         repeatSeqNum = 0;
@@ -141,10 +150,10 @@ void LED_Tasks(bool streamingFlag)
         currentPattern = 0; 
         // TODO: This should remain false until we've signaled to the user we are going down for any reason
         // other than button power off
-        pPowerData->powerDnAllowed = true;    
+        gpPowerData->powerDnAllowed = true;    
     }
     // If we are directed to power up, turn on LED
-    else if(pPowerData->requestedPowerState == DO_POWER_UP){
+    else if(gpPowerData->requestedPowerState == DO_POWER_UP){
         repeatSeq = 0;
         repeatSeqNum = 0;
         sequenceNum = 0;
@@ -203,54 +212,46 @@ void LED_Tasks(bool streamingFlag)
     }
     // If we are at the beginning of the sequence and the beginning of the 
     // repeat, display error
-    if(begunErrorDisplay || (repeatSeqNum == 0 && sequenceNum==0            \
+    if(begunErrorDisplay || (repeatSeqNum == 0 && sequenceNum==0            
                         && errorDisplayPending))  
     {
         begunErrorDisplay = true;
         
         // Display the error sequence as this is the first repetition of this state
-        if(pConfig->LED1_Ind.period[1])
+        if(gpConfig->LED1_Ind.period[1])
         {
             // If the error pattern specifies a rate, it is a pattern that
             // should overwrite the current pattern for LED 1
-            PLIB_PORTS_PinWrite(                                            \
-                        pConfig->LED1_Mod,                                  \
-                        pConfig->LED1_Ch,                                   \
-                        pConfig->LED1_Bit,                                  \
-                        pConfig->LED1_Ind.patterns[1][sequenceNum]);
+            WriteGpioPin(gpConfig->LED1_Ch,                                   
+                        gpConfig->LED1_Bit,                                  
+                        gpConfig->LED1_Ind.patterns[1][sequenceNum]);
         }
         else
         {
             // Otherwise keep displaying the current pattern for LED 1
-            if(pConfig->LED1_Ind.period[currentPattern])
+            if(gpConfig->LED1_Ind.period[currentPattern])
             {
-                PLIB_PORTS_PinWrite(                                        \
-                        pConfig->LED1_Mod,                                  \
-                        pConfig->LED1_Ch,                                   \
-                        pConfig->LED1_Bit,                                  \
-                        pConfig->LED1_Ind.patterns[currentPattern][sequenceNum]);
+                WriteGpioPin(gpConfig->LED1_Ch,                                   
+                        gpConfig->LED1_Bit,                                  
+                        gpConfig->LED1_Ind.patterns[currentPattern][sequenceNum]);
             }
         }
         
-        if(pConfig->LED2_Ind.period[1])
+        if(gpConfig->LED2_Ind.period[1])
         {
             // If the error pattern specifies a rate, it is a pattern that should overwrite the current pattern for LED 2
-            PLIB_PORTS_PinWrite(                                            \
-                        pConfig->LED2_Mod,                                  \
-                        pConfig->LED2_Ch,                                   \
-                        pConfig->LED2_Bit,                                  \
-                        pConfig->LED2_Ind.patterns[1][sequenceNum]);
+            WriteGpioPin(gpConfig->LED2_Ch,                                   
+                        gpConfig->LED2_Bit,                                  
+                        gpConfig->LED2_Ind.patterns[1][sequenceNum]);
         }
         else
         {
             // Otherwise keep displaying the current pattern for LED 2
-            if(pConfig->LED2_Ind.period[currentPattern])
+            if(gpConfig->LED2_Ind.period[currentPattern])
             {
-                PLIB_PORTS_PinWrite(                                        \
-                        pConfig->LED2_Mod,                                  \
-                        pConfig->LED2_Ch,                                   \
-                        pConfig->LED2_Bit,                                  \
-                        pConfig->LED2_Ind.patterns[currentPattern][sequenceNum]);
+                WriteGpioPin(gpConfig->LED2_Ch,                                   
+                        gpConfig->LED2_Bit,                                  
+                        gpConfig->LED2_Ind.patterns[currentPattern][sequenceNum]);
             }
         }
         
@@ -258,39 +259,31 @@ void LED_Tasks(bool streamingFlag)
     else
     {
         // Otherwise display the states as normal
-        if(pConfig->LED1_Ind.period[currentPattern])
+        if(gpConfig->LED1_Ind.period[currentPattern])
         {
-            PLIB_PORTS_PinWrite(                                            \
-                    pConfig->LED1_Mod,                                      \
-                    pConfig->LED1_Ch,                                       \
-                    pConfig->LED1_Bit,                                      \
-                    pConfig->LED1_Ind.patterns[currentPattern][sequenceNum]);
+            WriteGpioPin(gpConfig->LED1_Ch,                                       
+                    gpConfig->LED1_Bit,                                      
+                    gpConfig->LED1_Ind.patterns[currentPattern][sequenceNum]);
         }
-        if(pConfig->LED2_Ind.period[currentPattern])
+        if(gpConfig->LED2_Ind.period[currentPattern])
         {
-            PLIB_PORTS_PinWrite(                                            \
-                    pConfig->LED2_Mod,                                      \
-                    pConfig->LED2_Ch,                                       \
-                    pConfig->LED2_Bit,                                      \
-                    pConfig->LED2_Ind.patterns[currentPattern][sequenceNum]);
+            WriteGpioPin(gpConfig->LED2_Ch,                                       
+                    gpConfig->LED2_Bit,                                      
+                    gpConfig->LED2_Ind.patterns[currentPattern][sequenceNum]);
         }
     }
 
-    period = pConfig->LED1_Ind.period[currentPattern];
-    if(pConfig->LED2_Ind.period[currentPattern] > period)
+    period = gpConfig->LED1_Ind.period[currentPattern];
+    if(gpConfig->LED2_Ind.period[currentPattern] > period)
     {
-        period = pConfig->LED2_Ind.period[currentPattern];
+        period = gpConfig->LED2_Ind.period[currentPattern];
     }
 
     // Update global LED values
-    pReadVariables->LED1 = PLIB_PORTS_PinGet(                               \
-                    pConfig->LED1_Mod,                                      \
-                    pConfig->LED1_Ch,                                       \
-                    pConfig->LED1_Bit);
-    pReadVariables->LED2 = PLIB_PORTS_PinGet(                               \
-                    pConfig->LED2_Mod,                                      \
-                    pConfig->LED2_Ch,                                       \
-                    pConfig->LED2_Bit);
+    gpReadVariables->LED1 = ReadGpioPinState(gpConfig->LED1_Ch,                                       
+                    gpConfig->LED1_Bit);
+    gpReadVariables->LED2 = ReadGpioPinState(gpConfig->LED2_Ch,                                       
+                    gpConfig->LED2_Bit);
     
     // If we've waited the defined period time, execute sequence otherwise
     //exit and wait longer

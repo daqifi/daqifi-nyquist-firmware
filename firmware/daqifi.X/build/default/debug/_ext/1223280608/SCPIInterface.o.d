@@ -48,6 +48,7 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/usb/usb_host_hub_interface.h \
  ../src/config/default/usb/src/usb_device_mapping.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp1.h \
+ ../src/config/default/peripheral/rcon/plib_rcon.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp4.h \
  ../src/config/default/driver/sdspi/drv_sdspi.h \
  ../src/config/default/system/system_media.h \
@@ -82,11 +83,11 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
  ../src/config/default/system/time/sys_time.h \
  ../src/config/default/peripheral/nvm/plib_nvm.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/peripheral/tmr/plib_tmr6.h \
  ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/peripheral/adchs/plib_adchs.h \
@@ -131,6 +132,9 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
  ../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h \
+ ../src/config/default/peripheral/power/plib_power.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -141,11 +145,9 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ffconf.h \
  ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/app_freertos.h ../src/state/data/DIOSample.h \
  ../src/HAL/Power/PowerApi.h ../src/HAL/BQ24297/BQ24297.h \
- ../src/services/daqifi_settings.h \
+ ../src/HAL/UI/UI.h ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
@@ -304,6 +306,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 
 ../src/config/default/peripheral/ocmp/plib_ocmp1.h:
 
+../src/config/default/peripheral/rcon/plib_rcon.h:
+
 ../src/config/default/peripheral/ocmp/plib_ocmp4.h:
 
 ../src/config/default/driver/sdspi/drv_sdspi.h:
@@ -372,8 +376,6 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 
 ../src/config/default/peripheral/nvm/plib_nvm.h:
 
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
-
 ../src/config/default/usb/usb_device_cdc.h:
 
 ../src/config/default/usb/usb_device.h:
@@ -383,6 +385,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 ../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/usb/usb_cdc.h:
+
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/peripheral/tmr/plib_tmr6.h:
 
@@ -472,6 +476,12 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 
 ../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h:
 
+../src/config/default/peripheral/power/plib_power.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
+
 ../src/config/default/system/fs/sys_fs.h:
 
 ../src/config/default/system/fs/sys_fs_media_manager.h:
@@ -492,10 +502,6 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 
 ../src/config/default/system/fs/fat_fs/file_system/ff.h:
 
-../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
-
-../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
-
 ../src/app_freertos.h:
 
 ../src/state/data/DIOSample.h:
@@ -503,6 +509,8 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 ../src/HAL/Power/PowerApi.h:
 
 ../src/HAL/BQ24297/BQ24297.h:
+
+../src/HAL/UI/UI.h:
 
 ../src/services/daqifi_settings.h:
 

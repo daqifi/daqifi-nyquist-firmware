@@ -177,6 +177,12 @@
               <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp6.h</itemPath>
               <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp1.h</itemPath>
             </logicalFolder>
+            <logicalFolder name="power" displayName="power" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/power/plib_power.h</itemPath>
+            </logicalFolder>
+            <logicalFolder name="rcon" displayName="rcon" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/rcon/plib_rcon.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h</itemPath>
@@ -735,6 +741,12 @@
               <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp6.c</itemPath>
               <itemPath>../src/config/default/peripheral/ocmp/plib_ocmp1.c</itemPath>
             </logicalFolder>
+            <logicalFolder name="power" displayName="power" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/power/plib_power.c</itemPath>
+            </logicalFolder>
+            <logicalFolder name="rcon" displayName="rcon" projectFiles="true">
+              <itemPath>../src/config/default/peripheral/rcon/plib_rcon.c</itemPath>
+            </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi4_master.c</itemPath>
@@ -1241,7 +1253,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/Power/PowerApi.c" ex="true" overriding="false">
+      <item path="../src/HAL/Power/PowerApi.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1257,7 +1269,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/UI/UI.c" ex="true" overriding="false">
+      <item path="../src/HAL/UI/UI.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -3624,6 +3636,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>

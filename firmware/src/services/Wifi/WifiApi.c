@@ -2,6 +2,7 @@
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
 #include "tcpServer.h"
+#include "state/data/BoardData.h"
 
 #define UNUSED(x) (void)(x)
 #define UDP_LISTEN_PORT         (uint16_t)30303
@@ -288,15 +289,15 @@ static bool SendEvent(WifiApi_consumedEvent_t event) {
 static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event) {
     WifiApi_eventStatus_t returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
     switch (event) {
-        case WIFIAPI_CONSUMED_EVENT_ENTRY:            
+        case WIFIAPI_CONSUMED_EVENT_ENTRY:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
             pInstance->pTcpServerData = &gTcpServerData; //TODO(Daqifi): Remove from there here
             TcpServer_Initialize(pInstance->pTcpServerData);
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
-            if(pInstance->pWifiSettings->isEnabled)
-                SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);            
+            if (pInstance->pWifiSettings->isEnabled)
+                SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
             break;
         case WIFIAPI_CONSUMED_EVENT_INIT:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
@@ -482,69 +483,67 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
 //SYSTem:LOG?
 
 bool WifiApi_Init(WifiSettings * pSettings) {
-    //TODO(Daqifi): Uncomment this part
-    //    const tPowerData *pPowerState = BoardData_Get(                          
-    //              BOARDATA_POWER_DATA,                                          
-    //              0 );
-    //    if( NULL != pPowerState &&                                              
-    //        pPowerState->powerState <  POWERED_UP )
-    //    {
-    //        LogMessage("Board must be powered-on for WiFi operations\n\r");
-    //        return false;
-    //    }
+
+    const tPowerData *pPowerState = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+    if (NULL != pPowerState &&
+            pPowerState->powerState < POWERED_UP) {
+        LogMessage("Board must be powered-on for WiFi operations\n\r");
+        return false;
+    }
     if (gEventQH == NULL)
         gEventQH = xQueueCreate(20, sizeof (WifiApi_consumedEvent_t));
     else return true;
     if (pSettings != NULL)
-        gStateMachineData.pWifiSettings=pSettings;
-    
-    gStateMachineData.pWifiSettings->isEnabled=1;
-    gStateMachineData.active = MainState;    
+        gStateMachineData.pWifiSettings = pSettings;
+
+    gStateMachineData.pWifiSettings->isEnabled = 1;
+    gStateMachineData.active = MainState;
     gStateMachineData.active(&gStateMachineData, WIFIAPI_CONSUMED_EVENT_ENTRY);
     gStateMachineData.nextState = NULL;
     return true;
 }
 
 bool WifiApi_Deinit() {
-    //TODO(Daqifi): Uncomment this part
-    //    const tPowerData *pPowerState = BoardData_Get(                          
-    //              BOARDATA_POWER_DATA,                                          
-    //              0 );
-    //    if( NULL != pPowerState &&                                              
-    //        pPowerState->powerState <  POWERED_UP )
-    //    {
-    //        LogMessage("Board must be powered-on for WiFi operations\n\r");
-    //        return false;
-    //    }
-    gStateMachineData.pWifiSettings->isEnabled=0;
+    const tPowerData *pPowerState = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+    if (NULL != pPowerState &&
+            pPowerState->powerState < POWERED_UP) {
+        LogMessage("Board must be powered-on for WiFi operations\n\r");
+        return false;
+    }
+    gStateMachineData.pWifiSettings->isEnabled = 0;
     SendEvent(WIFIAPI_CONSUMED_EVENT_DEINIT);
     return true;
 }
 
-
 bool WifiApi_UpdateNetworkSettings(WifiSettings * pSettings) {
-    //TODO(Daqifi): Uncomment this part
-    //    const tPowerData *pPowerState = (tPowerData *)BoardData_Get(                          
-    //              BOARDATA_POWER_DATA,                                          
-    //              0 );
-    //    if( NULL != pPowerState &&                                              
-    //        pPowerState->powerState < POWERED_UP )
-    //    {
-    //        LogMessage("Board must be powered-on for WiFi operations\n\r");
-    //        return false;
-    //    }
-    if (pSettings != NULL && gStateMachineData.pWifiSettings!=NULL){
-        memcpy(gStateMachineData.pWifiSettings,pSettings,sizeof(WifiSettings));
+
+    const tPowerData *pPowerState = (tPowerData *) BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+    if (NULL != pPowerState &&
+            pPowerState->powerState < POWERED_UP) {
+        LogMessage("Board must be powered-on for WiFi operations\n\r");
+        return false;
+    }
+    if (pSettings != NULL && gStateMachineData.pWifiSettings != NULL) {
+        memcpy(gStateMachineData.pWifiSettings, pSettings, sizeof (WifiSettings));
     }
     SendEvent(WIFIAPI_CONSUMED_EVENT_REINIT);
     return true;
 }
-size_t WifiApi_WriteBuffFreeSize(){
+
+size_t WifiApi_WriteBuffFreeSize() {
     return TcpServer_WriteBuffFreeSize();
 }
-size_t WifiApi_WriteToBuffer(const char* pData, size_t len){
-     return TcpServer_WriteBuffer(pData, len);
- }
+
+size_t WifiApi_WriteToBuffer(const char* pData, size_t len) {
+    return TcpServer_WriteBuffer(pData, len);
+}
+
 void WifiApi_ProcessState() {
     WifiApi_consumedEvent_t event;
     WifiApi_eventStatus_t ret;

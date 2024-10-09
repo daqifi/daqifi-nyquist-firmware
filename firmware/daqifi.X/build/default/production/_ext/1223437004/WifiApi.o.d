@@ -57,18 +57,18 @@ build/default/production/_ext/1223437004/WifiApi.o: \
  ../src/third_party/rtos/FreeRTOS/Source/include/semphr.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/queue.h \
  ../src/third_party/rtos/FreeRTOS/Source/include/task.h \
+ ../src/config/default/system/time/sys_time.h \
+ ../src/config/default/peripheral/nvm/plib_nvm.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp3.h \
  ../src/config/default/driver/i2c/drv_i2c.h \
  ../src/config/default/driver/i2c/drv_i2c_definitions.h \
  ../src/config/default/driver/driver.h \
  ../src/config/default/driver/i2c/src/drv_i2c_local.h \
- ../src/config/default/system/time/sys_time.h \
- ../src/config/default/peripheral/nvm/plib_nvm.h \
- ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/usb/usb_device_cdc.h \
  ../src/config/default/usb/usb_device.h \
  ../src/config/default/usb/src/usb_device_function_driver.h \
  ../src/config/default/usb/usb_cdc.h ../src/config/default/usb/usb_cdc.h \
+ ../src/config/default/peripheral/coretimer/plib_coretimer.h \
  ../src/config/default/peripheral/tmr/plib_tmr6.h \
  ../src/config/default/peripheral/tmr/plib_tmr_common.h \
  ../src/config/default/peripheral/adchs/plib_adchs.h \
@@ -96,6 +96,7 @@ build/default/production/_ext/1223437004/WifiApi.o: \
  ../src/config/default/peripheral/cache/plib_cache.h \
  ../src/config/default/peripheral/evic/plib_evic.h \
  ../src/config/default/peripheral/dmac/plib_dmac.h \
+ ../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h \
  ../src/config/default/driver/usb/usbhs/drv_usbhs.h \
  ../src/config/default/usb/usb_hub.h \
  ../src/config/default/driver/usb/usbhs/src/plib_usbhs.h \
@@ -112,7 +113,9 @@ build/default/production/_ext/1223437004/WifiApi.o: \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_TxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_RxEPStatus_Default.h \
  ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h \
- ../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h \
+ ../src/config/default/peripheral/power/plib_power.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
+ ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/config/default/system/fs/sys_fs.h \
  ../src/config/default/system/fs/sys_fs_media_manager.h \
  ../src/config/default/system/fs/sys_fs.h \
@@ -123,8 +126,6 @@ build/default/production/_ext/1223437004/WifiApi.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ffconf.h \
  ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
- ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
  ../src/app_freertos.h ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
@@ -177,7 +178,11 @@ build/default/production/_ext/1223437004/WifiApi.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/Util/Logger.h
+ ../src/Util/Logger.h ../src/state/data/BoardData.h \
+ ../src/state/data/AInSample.h ../src/Util/HeapList.h \
+ ../src/Util/LockProvider.h ../src/state/data/../board/AInConfig.h \
+ ../src/state/data/DIOSample.h ../src/HAL/Power/PowerApi.h \
+ ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h
 
 ../src/services/Wifi/WifiApi.h:
 
@@ -297,6 +302,10 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 
 ../src/third_party/rtos/FreeRTOS/Source/include/task.h:
 
+../src/config/default/system/time/sys_time.h:
+
+../src/config/default/peripheral/nvm/plib_nvm.h:
+
 ../src/config/default/peripheral/ocmp/plib_ocmp3.h:
 
 ../src/config/default/driver/i2c/drv_i2c.h:
@@ -307,12 +316,6 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 
 ../src/config/default/driver/i2c/src/drv_i2c_local.h:
 
-../src/config/default/system/time/sys_time.h:
-
-../src/config/default/peripheral/nvm/plib_nvm.h:
-
-../src/config/default/peripheral/coretimer/plib_coretimer.h:
-
 ../src/config/default/usb/usb_device_cdc.h:
 
 ../src/config/default/usb/usb_device.h:
@@ -322,6 +325,8 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 ../src/config/default/usb/usb_cdc.h:
 
 ../src/config/default/usb/usb_cdc.h:
+
+../src/config/default/peripheral/coretimer/plib_coretimer.h:
 
 ../src/config/default/peripheral/tmr/plib_tmr6.h:
 
@@ -377,6 +382,8 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 
 ../src/config/default/peripheral/dmac/plib_dmac.h:
 
+../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h:
+
 ../src/config/default/driver/usb/usbhs/drv_usbhs.h:
 
 ../src/config/default/usb/usb_hub.h:
@@ -409,7 +416,11 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 
 ../src/config/default/driver/usb/usbhs/src/../src/templates/usbhs_EndpointOperations_Default.h:
 
-../src/third_party/wolfssl/wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h:
+../src/config/default/peripheral/power/plib_power.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
+
+../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
 
 ../src/config/default/system/fs/sys_fs.h:
 
@@ -430,10 +441,6 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 ../src/config/default/system/fs/fat_fs/hardware_access/diskio.h:
 
 ../src/config/default/system/fs/fat_fs/file_system/ff.h:
-
-../src/config/default/peripheral/i2c/master/plib_i2c5_master.h:
-
-../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h:
 
 ../src/app_freertos.h:
 
@@ -544,3 +551,21 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
 ../src/Util/Logger.h:
+
+../src/state/data/BoardData.h:
+
+../src/state/data/AInSample.h:
+
+../src/Util/HeapList.h:
+
+../src/Util/LockProvider.h:
+
+../src/state/data/../board/AInConfig.h:
+
+../src/state/data/DIOSample.h:
+
+../src/HAL/Power/PowerApi.h:
+
+../src/HAL/BQ24297/BQ24297.h:
+
+../src/HAL/UI/UI.h:

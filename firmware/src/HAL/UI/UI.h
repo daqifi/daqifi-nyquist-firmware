@@ -27,9 +27,8 @@
 
 /* This section lists the other files that are included in this file.
  */
-#include "system_config.h"
-#include "system_definitions.h"
-#include <peripheral/peripheral.h>
+#include "configuration.h"
+#include "definitions.h"
 #include "HAL/Power/PowerApi.h"
 
 
@@ -57,15 +56,16 @@ typedef struct sLEDIndication {
  * @brief Data type associated to the structure sUIConfig
  */  
 typedef struct sUIConfig {
-    PORTS_MODULE_ID LED1_Mod;
-    PORTS_CHANNEL LED1_Ch;
-    PORTS_BIT_POS LED1_Bit;
-    PORTS_MODULE_ID LED2_Mod;
-    PORTS_CHANNEL LED2_Ch;
-    PORTS_BIT_POS LED2_Bit;
-    PORTS_MODULE_ID button_Mod;
-    PORTS_CHANNEL button_Ch;
-    PORTS_BIT_POS button_Bit;
+   
+    GPIO_PORT LED1_Ch;
+    GPIO_PIN LED1_Bit;
+   
+    GPIO_PORT LED2_Ch;
+    GPIO_PIN LED2_Bit;
+   
+    GPIO_PORT button_Ch;
+    GPIO_PIN button_Bit;
+    
     tLEDIndication LED1_Ind;
     tLEDIndication LED2_Ind;
 } tUIConfig;
@@ -97,9 +97,9 @@ typedef struct sUIWriteVars {
  * @param[in] pReadVarsInit Pointer to the Read Variables data structure
  * @param[in] pPowerDataInit Pointer to the Power Data data stucture
  */
-void UI_Init(                                                               \
-                tUIConfig *pConfigInit,                                     \
-                tUIReadVars *pReadVarsInit,                                 \
+void UI_Init(                                                               
+                tUIConfig *pConfigInit,                                     
+                tUIReadVars *pReadVarsInit,                                 
                 tPowerData *pPowerDataInit ); 
     
 /*!

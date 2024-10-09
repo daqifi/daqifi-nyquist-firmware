@@ -20,13 +20,11 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
             break;
         case DaqifiSettings_FactAInCalParams:
             address = FAINCAL_SETTINGS_ADDR;
-            //TODO(Daqifi): Add this back
-            //dataSize = sizeof(AInCalArray);
+            dataSize = sizeof(AInCalArray);
             break;
         case DaqifiSettings_UserAInCalParams:
             address = UAINCAL_SETTINGS_ADDR;
-            //TODO(Daqifi): Add this back
-            //dataSize = sizeof(AInCalArray);
+            dataSize = sizeof(AInCalArray);
             break;
         case DaqifiSettings_Wifi:
             address = WIFI_SETTINGS_ADDR;
@@ -136,13 +134,11 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
             break;
         case DaqifiSettings_FactAInCalParams:
             address = FAINCAL_SETTINGS_ADDR;
-            //TODO(Daqifi): Add this back
-            //dataSize = sizeof(AInCalArray);
+            dataSize = sizeof(AInCalArray);
             break;
         case DaqifiSettings_UserAInCalParams:
             address = UAINCAL_SETTINGS_ADDR;
-            //TODO(Daqifi): Add this back
-            //dataSize = sizeof(AInCalArray);
+            dataSize = sizeof(AInCalArray);
             break;
         case DaqifiSettings_Wifi:
             address = WIFI_SETTINGS_ADDR;

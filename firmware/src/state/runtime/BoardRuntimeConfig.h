@@ -10,7 +10,7 @@
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/ArrayWrapper.h"
 #include "HAL/Power/PowerApi.h"
-//#include "HAL/UI/UI.h"
+#include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
 #include "services/Wifi/WifiApi.h"
 #include "../../services/SDcard/SDCard.h"
@@ -70,9 +70,9 @@ typedef struct sBoardRuntimeConfig
     //!This is an array where index = channel and data = configuration
     AInRuntimeArray AInChannels;
     //! Power write variables
-    //tPowerWriteVars PowerWriteVars;
+    tPowerWriteVars PowerWriteVars;
     //! User interface write variables
-    //tUIWriteVars UIWriteVars;
+    tUIWriteVars UIWriteVars;
     //! Streaming configuration parameters
     StreamingRuntimeConfig StreamingConfig;
     //! The desired wifi settings

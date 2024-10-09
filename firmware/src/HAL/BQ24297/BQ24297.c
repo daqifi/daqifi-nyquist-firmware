@@ -22,9 +22,9 @@ static uint8_t BQ24297_Read_I2C(uint8_t reg);
  */
 static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData);
 
-void BQ24297_InitHardware(                                                  \
-                        tBQ24297Config *pConfigInit,                        \
-                        tBQ24297WriteVars *pWriteInit,                      \
+void BQ24297_InitHardware(                                                  
+                        tBQ24297Config *pConfigInit,                        
+                        tBQ24297WriteVars *pWriteInit,                      
                         tBQ24297Data *pDataInit) {
     pConfigBQ24 = pConfigInit;
     pWriteVariables = pWriteInit;
@@ -36,7 +36,7 @@ void BQ24297_InitHardware(                                                  \
     // Open the I2C Driver for Master
     pData->I2C_Handle = DRV_I2C_Open(                                       
                         pConfigBQ24->I2C_Index,                             
-                        DRV_IO_INTENT_READWRITE);
+                        DRV_IO_INTENT_READWRITE|DRV_IO_INTENT_BLOCKING);
 
     // Set I/O such that we can power up when needed
     GPIO_PortWrite(pConfigBQ24->OTG_Ch,                                
@@ -84,7 +84,7 @@ void BQ24297_Config_Settings(void) {
 
     // Infer battery's existence from status
     // If ntc has a cold fault and vsys is true, battery is likely not present
-    pData->status.batPresent = !((pData->status.ntcFault == NTC_FAULT_COLD) \
+    pData->status.batPresent = !((pData->status.ntcFault == NTC_FAULT_COLD) 
                         && (pData->status.vsysStat == true));
 
     // If battery is present, enable charging
@@ -205,10 +205,10 @@ static uint8_t BQ24297_Read_I2C(uint8_t reg) {
             // bootloader - otherwise I2C hangs
             //vTaskDelay(10 / portTICK_PERIOD_MS); 
             DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
-                    pConfigBQ24->I2C_Address,                           \
-                    I2CData,                                        \
-                    1,                                                  \
-                    &rxData,                                            \
+                    pConfigBQ24->I2C_Address,                           
+                    I2CData,                                        
+                    1,                                                  
+                    &rxData,                                            
                     1);
         }
 
@@ -225,10 +225,10 @@ static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
 
     if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
         // Write to selected register
-        DRV_I2C_WriteTransfer(                       \
-                        pData->I2C_Handle,                                  \
-                        pConfigBQ24->I2C_Address,                           \
-                        I2CData,                                        \
+        DRV_I2C_WriteTransfer(                       
+                        pData->I2C_Handle,                                  
+                        pConfigBQ24->I2C_Address,                           
+                        I2CData,                                        
                         2);
 
     }

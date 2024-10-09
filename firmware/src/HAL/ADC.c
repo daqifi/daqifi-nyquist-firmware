@@ -133,14 +133,11 @@ bool ADC_WriteChannelStateAll(void) {
 
 bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelType) {
     AInTaskState_t state;
-    //uint32_t valueTMR = 0;   
     uint8_t moduleId = ADC_FindModuleIndex(module);
-    //TODO(Daqifi): PowersState
-    //POWER_STATE powerState = gpBoardData->PowerData.powerState;
+    POWER_STATE powerState = gpBoardData->PowerData.powerState;
     const AInModuleRuntimeConfig* moduleRuntime =
             &gpBoardRuntimeConfig->AInModules.Data[moduleId];
-    //TODO(Daqifi): PowersState
-    bool isPowered = 1; //(powerState > MICRO_ON);
+    bool isPowered = powerState > MICRO_ON;
     bool isEnabled = isPowered && moduleRuntime->IsEnabled;
     bool result = false;
 
@@ -190,8 +187,7 @@ const AInModule* ADC_FindModule(AInType moduleType) {
 
 void ADC_Tasks(void) {
     size_t moduleIndex = 0;
-    //TODO(Daqifi): Replace with proper logic
-    POWER_STATE powerState = POWERED_UP; //gpBoardData->PowerData.powerState;
+    POWER_STATE powerState = gpBoardData->PowerData.powerState;
     bool isPowered = (powerState > MICRO_ON);
     AInArray moduleChannels;
     bool canInit, initialized;

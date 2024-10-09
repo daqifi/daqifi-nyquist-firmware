@@ -38,6 +38,18 @@
 #define DIO_EN_14_PORT GPIO_PORT_A
 #define DIO_EN_15_PORT GPIO_PORT_J
 
+#define PWR_3_3V_EN_PORT GPIO_PORT_H
+#define PWR_VREF_EN_PORT GPIO_PORT_J
+#define PWR_5V_EN_PORT GPIO_PORT_D
+#define PWR_12V_EN_PORT GPIO_PORT_H
+#define USB_DP_MON_PORT GPIO_PORT_H
+#define USB_DN_MON_PORT GPIO_PORT_H
+#define BATT_MAN_INT_PORT GPIO_PORT_A
+#define BATT_MAN_OTG_PORT GPIO_PORT_K
+#define BATT_MAN_STAT_PORT GPIO_PORT_H
+#define LED_WHITE_PORT GPIO_PORT_C
+#define LED_BLUE_PORT GPIO_PORT_B
+#define BUTTON_PORT GPIO_PORT_J
 typedef enum {
     OUTPUT_PIN_RPA14 = 0,
     OUTPUT_PIN_RPA15 = 1,
@@ -324,74 +336,82 @@ const tBoardConfig NQ1BoardConfig = {
         },
         .Size = 24
     },
-    //    .PowerConfig = {
-    //        .EN_Vref_Ch = PWR_VREF_EN_PORT,
-    //        .EN_Vref_Bit = PWR_VREF_EN_PIN,
-    //        .EN_3_3V_Ch = PWR_3_3V_EN_PORT,
-    //        .EN_3_3V_Bit = PWR_3_3V_EN_PIN,
-    //        .EN_5_10V_Ch = PWR_5V_EN_PORT,
-    //        .EN_5_10V_Bit = PWR_5V_EN_PIN,
-    //        .EN_12V_Ch = PWR_12V_EN_PORT,
-    //        .EN_12V_Bit = PWR_12V_EN_PIN,
-    //        .USB_Dp_Ch = USB_DP_MON_PORT, 
-    //        .USB_Dp_Bit = USB_DP_MON_PIN, 
-    //        .USB_Dn_Ch = USB_DN_MON_PORT, 
-    //        .USB_Dn_Bit = USB_DN_MON_PIN,
-    //        .BQ24297Config.INT_Ch = BATT_MAN_INT_PORT,
-    //        .BQ24297Config.INT_Bit = BATT_MAN_INT_PIN,
-    //        .BQ24297Config.OTG_Ch = BATT_MAN_OTG_PORT,
-    //        .BQ24297Config.OTG_Bit = BATT_MAN_OTG_PIN,
-    //        .BQ24297Config.STAT_Ch = BATT_MAN_STAT_PORT,
-    //        .BQ24297Config.STAT_Bit = BATT_MAN_STAT_PIN,
-    //        .BQ24297Config.I2C_Index = DRV_I2C_INDEX_0,
-    //        .BQ24297Config.I2C_Address = 0xD6,  // Microchip libraries use an 8 bit address with 0 appended to the end of the 7 bit I2C address
-    //    },
-    //    .UIConfig = {
-    //        .LED1_Mod = 0,
-    //        .LED1_Ch = LED_WHITE_PORT,      // White LED
-    //        .LED1_Bit = LED_WHITE_PIN,
-    //        .LED2_Mod = 0,
-    //        .LED2_Ch = LED_BLUE_PORT,       // Blue LED
-    //        .LED2_Bit = LED_BLUE_PIN,
-    //        .button_Mod = 0,
-    //        .button_Ch = BUTTON_PORT,    // The only button
-    //        .button_Bit = BUTTON_PIN,
-    //        .LED1_Ind = {
-    //            .patterns = {
-    //                {0,0,0,0,0,0,0,0},  // LEDs off
-    //                {0,0,0,0,0,0,0,0},  // Error state
-    //                {0,0,1,1,0,0,1,1},  // Bat exhausted
-    //                {0,0,0,0,0,0,0,0},  // Plugged in
-    //                {1,1,1,1,1,1,1,1},  // Plugged in, power on
-    //                {0,1,1,1,1,1,1,1},  // Plugged in, power on, charging
-    //                {1,1,1,1,1,1,1,1},  // Plugged in, power on, streaming
-    //                {0,1,1,1,1,1,1,1},  // Plugged in, power on, charging, streaming
-    //                {1,0,0,0,0,0,0,0},  // Power on
-    //                {1,0,0,0,0,0,0,0},  // Power on, streaming
-    //                {1,0,1,0,0,0,0,0},  // Power on, batt low
-    //                {1,0,1,0,0,0,0,0},  // Power on, streaming, batt low
-    //                },
-    //            .period = {2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
-    //        },
-    //        
-    //        .LED2_Ind = {
-    //            .patterns = {
-    //                {0,0,0,0,0,0,0,0},  // LEDs off
-    //                {1,0,1,0,1,0,1,0},  // Error state
-    //                {1,1,0,0,1,1,0,0},  // Bat exhausted
-    //                {0,0,0,0,0,0,0,0},  // Plugged in
-    //                {0,0,0,0,0,0,0,0},  // Plugged in, power on
-    //                {0,0,0,0,0,0,0,0},  // Plugged in, power on, charging
-    //                {1,0,0,0,0,0,0,0},  // Plugged in, power on, streaming
-    //                {1,0,0,0,0,0,0,0},  // Plugged in, power on, charging, streaming
-    //                {0,0,0,0,0,0,0,0},  // Power on
-    //                {1,0,0,0,0,0,0,0},  // Power on, streaming
-    //                {0,0,0,0,0,0,0,0},  // Power on, batt low
-    //                {1,0,0,0,0,0,0,0},  // Power on, streaming, batt low
-    //                },
-    //            .period = {2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
-    //        },
-    //    },
+    .PowerConfig =
+    {
+        .EN_Vref_Ch = PWR_VREF_EN_PORT,
+        .EN_Vref_Bit = PWR_VREF_EN_PIN,
+        .EN_3_3V_Ch = PWR_3_3V_EN_PORT,
+        .EN_3_3V_Bit = PWR_3_3V_EN_PIN,
+        .EN_5_10V_Ch = PWR_5V_EN_PORT, 
+        .EN_5_10V_Bit = PWR_5V_EN_PIN,
+        .EN_12V_Ch = PWR_12V_EN_PORT,
+        .EN_12V_Bit = PWR_12V_EN_PIN,
+        .USB_Dp_Ch = USB_DP_MON_PORT,
+        .USB_Dp_Bit = USB_DP_MON_PIN,
+        .USB_Dn_Ch = USB_DN_MON_PORT,
+        .USB_Dn_Bit = USB_DN_MON_PIN,
+        .BQ24297Config.INT_Ch = BATT_MAN_INT_PORT,
+        .BQ24297Config.INT_Bit = BATT_MAN_INT_PIN,
+        .BQ24297Config.OTG_Ch = BATT_MAN_OTG_PORT,
+        .BQ24297Config.OTG_Bit = BATT_MAN_OTG_PIN,
+        .BQ24297Config.STAT_Ch = BATT_MAN_STAT_PORT,
+        .BQ24297Config.STAT_Bit = BATT_MAN_STAT_PIN,
+        .BQ24297Config.I2C_Index = DRV_I2C_INDEX_0,
+        .BQ24297Config.I2C_Address = 0xD6>>1, // Microchip libraries use an 8 bit address with 0 appended to the end of the 7 bit I2C address
+    },
+    .UIConfig =
+    {
+       
+        .LED1_Ch = LED_WHITE_PORT, // White LED
+        .LED1_Bit = LED_WHITE_PIN,
+        
+        .LED2_Ch = LED_BLUE_PORT, // Blue LED
+        .LED2_Bit = LED_BLUE_PIN,
+       
+        .button_Ch = BUTTON_PORT, // The only button
+        .button_Bit = BUTTON_PIN,
+        .LED1_Ind =
+        {
+            .patterns =
+            {
+                {0, 0, 0, 0, 0, 0, 0, 0}, // LEDs off
+                {0, 0, 0, 0, 0, 0, 0, 0}, // Error state
+                {0, 0, 1, 1, 0, 0, 1, 1}, // Bat exhausted
+                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in
+                {1, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on
+                {0, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on, charging
+                {1, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on, streaming
+                {0, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on, charging, streaming
+                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on
+                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on, streaming
+                {1, 0, 1, 0, 0, 0, 0, 0}, // Power on, batt low
+                {1, 0, 1, 0, 0, 0, 0, 0}, // Power on, streaming, batt low
+            },
+            .period =
+            {2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
+        },
+
+        .LED2_Ind =
+        {
+            .patterns =
+            {
+                {0, 0, 0, 0, 0, 0, 0, 0}, // LEDs off
+                {1, 0, 1, 0, 1, 0, 1, 0}, // Error state
+                {1, 1, 0, 0, 1, 1, 0, 0}, // Bat exhausted
+                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in
+                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on
+                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on, charging
+                {1, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on, streaming
+                {1, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on, charging, streaming
+                {0, 0, 0, 0, 0, 0, 0, 0}, // Power on
+                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on, streaming
+                {0, 0, 0, 0, 0, 0, 0, 0}, // Power on, batt low
+                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on, streaming, batt low
+            },
+            .period =
+            {2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
+        },
+    },
     .StreamingConfig =
     {
         .TimerIndex = 4,
