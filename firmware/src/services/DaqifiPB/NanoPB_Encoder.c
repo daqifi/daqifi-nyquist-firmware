@@ -412,7 +412,7 @@ size_t Nanopb_Encode(tBoardData* state,
                 // Initialize the analog input data processing                
                 uint32_t queueSize = AInSampleList_Size(); //takes approx 3us                
                 size_t maxDataIndex = (sizeof (message.analog_in_data) / sizeof (message.analog_in_data[0])) - 1;
-                AInSample data;
+                AInSample data = {0};
                 AInPublicSampleList_t *pPublicSampleList;
                 while (queueSize > 0) {
                     // Retrieve the next sample from the queue
@@ -1089,7 +1089,7 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_device_pn_tag:
             {
                 message.has_device_pn = true;
-                snprintf(message.device_pn, 4, "Nq%d", tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
+                snprintf(message.device_pn, 6, "Nq%d", tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
                 break;
             }
             case DaqifiOutMessage_device_hw_rev_tag:
