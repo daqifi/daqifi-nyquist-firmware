@@ -57,14 +57,11 @@ typedef struct sLEDIndication {
  */  
 typedef struct sUIConfig {
    
-    GPIO_PORT LED1_Ch;
-    GPIO_PIN LED1_Bit;
+    GPIO_PIN LED1_Pin;
    
-    GPIO_PORT LED2_Ch;
-    GPIO_PIN LED2_Bit;
+    GPIO_PIN LED2_Pin;
    
-    GPIO_PORT button_Ch;
-    GPIO_PIN button_Bit;
+    GPIO_PIN button_Pin;
     
     tLEDIndication LED1_Ind;
     tLEDIndication LED2_Ind;

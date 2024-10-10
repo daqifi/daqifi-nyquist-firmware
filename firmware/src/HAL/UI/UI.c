@@ -23,7 +23,7 @@
 #define BUTTON_POWER_ON_TH (1000/UI_POWER_ON_TASK_CALLING_PRD)  
 #define BUTTON_POWER_OFF_TH (1000/UI_TASK_CALLING_PRD)  //  ~1 second
 
-//! Pointer to the data stucture where the UI configuration parameters
+//! Pointer to the data structure where the UI configuration parameters
 // will be stored
 static tUIConfig *gpConfig;
 //! Pointer to the data structure where the UI read variables will be stored
@@ -31,17 +31,6 @@ static tUIReadVars *gpReadVariables;
 //! Pointer to the data structure where the UI Power Data will be stored
 static tPowerData *gpPowerData;
 
-bool ReadGpioPinState(GPIO_PORT port, uint32_t mask) {
-    return GPIO_PortRead(port)& (1 << mask);
-}
-static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
-    uint32_t pin = 1 << mask;
-    if (value == 1)
-        GPIO_PortSet(port, pin);
-    else
-        GPIO_PortClear(port, pin);
-
-}
 void UI_Init(                                                               
                 tUIConfig *pConfigInit,                                     
                 tUIReadVars *pReadVarsInit,                                 
@@ -60,8 +49,7 @@ void Button_Tasks( void )
     // holds the button for a long period of time
     static bool oneShot = false;    
     
-    gpReadVariables->button = ReadGpioPinState(gpConfig->button_Ch,                                 
-                        gpConfig->button_Bit);
+    gpReadVariables->button = GPIO_PinRead(gpConfig->button_Pin);
     
     if(gpReadVariables->button)
     {
@@ -222,8 +210,7 @@ void LED_Tasks(bool streamingFlag)
         {
             // If the error pattern specifies a rate, it is a pattern that
             // should overwrite the current pattern for LED 1
-            WriteGpioPin(gpConfig->LED1_Ch,                                   
-                        gpConfig->LED1_Bit,                                  
+            GPIO_PinWrite(gpConfig->LED1_Pin,                                  
                         gpConfig->LED1_Ind.patterns[1][sequenceNum]);
         }
         else
@@ -231,8 +218,7 @@ void LED_Tasks(bool streamingFlag)
             // Otherwise keep displaying the current pattern for LED 1
             if(gpConfig->LED1_Ind.period[currentPattern])
             {
-                WriteGpioPin(gpConfig->LED1_Ch,                                   
-                        gpConfig->LED1_Bit,                                  
+                GPIO_PinWrite(gpConfig->LED1_Pin,                                  
                         gpConfig->LED1_Ind.patterns[currentPattern][sequenceNum]);
             }
         }
@@ -240,8 +226,7 @@ void LED_Tasks(bool streamingFlag)
         if(gpConfig->LED2_Ind.period[1])
         {
             // If the error pattern specifies a rate, it is a pattern that should overwrite the current pattern for LED 2
-            WriteGpioPin(gpConfig->LED2_Ch,                                   
-                        gpConfig->LED2_Bit,                                  
+            GPIO_PinWrite(gpConfig->LED2_Pin,                                  
                         gpConfig->LED2_Ind.patterns[1][sequenceNum]);
         }
         else
@@ -249,8 +234,7 @@ void LED_Tasks(bool streamingFlag)
             // Otherwise keep displaying the current pattern for LED 2
             if(gpConfig->LED2_Ind.period[currentPattern])
             {
-                WriteGpioPin(gpConfig->LED2_Ch,                                   
-                        gpConfig->LED2_Bit,                                  
+                GPIO_PinWrite(gpConfig->LED2_Pin,                                  
                         gpConfig->LED2_Ind.patterns[currentPattern][sequenceNum]);
             }
         }
@@ -261,14 +245,12 @@ void LED_Tasks(bool streamingFlag)
         // Otherwise display the states as normal
         if(gpConfig->LED1_Ind.period[currentPattern])
         {
-            WriteGpioPin(gpConfig->LED1_Ch,                                       
-                    gpConfig->LED1_Bit,                                      
+            GPIO_PinWrite(gpConfig->LED1_Pin,                                      
                     gpConfig->LED1_Ind.patterns[currentPattern][sequenceNum]);
         }
         if(gpConfig->LED2_Ind.period[currentPattern])
         {
-            WriteGpioPin(gpConfig->LED2_Ch,                                       
-                    gpConfig->LED2_Bit,                                      
+            GPIO_PinWrite(gpConfig->LED2_Pin,                                      
                     gpConfig->LED2_Ind.patterns[currentPattern][sequenceNum]);
         }
     }
@@ -280,10 +262,8 @@ void LED_Tasks(bool streamingFlag)
     }
 
     // Update global LED values
-    gpReadVariables->LED1 = ReadGpioPinState(gpConfig->LED1_Ch,                                       
-                    gpConfig->LED1_Bit);
-    gpReadVariables->LED2 = ReadGpioPinState(gpConfig->LED2_Ch,                                       
-                    gpConfig->LED2_Bit);
+    gpReadVariables->LED1 = GPIO_PinRead(gpConfig->LED1_Pin);
+    gpReadVariables->LED2 = GPIO_PinRead(gpConfig->LED2_Pin);
     
     // If we've waited the defined period time, execute sequence otherwise
     //exit and wait longer

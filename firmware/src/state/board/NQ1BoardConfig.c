@@ -362,14 +362,14 @@ const tBoardConfig NQ1BoardConfig = {
     .UIConfig =
     {
        
-        .LED1_Ch = LED_WHITE_PORT, // White LED
-        .LED1_Bit = LED_WHITE_PIN,
+        // White LED
+        .LED1_Pin = LED_WHITE_PIN,
         
-        .LED2_Ch = LED_BLUE_PORT, // Blue LED
-        .LED2_Bit = LED_BLUE_PIN,
+        // Blue LED
+        .LED2_Pin = LED_BLUE_PIN,
        
-        .button_Ch = BUTTON_PORT, // The only button
-        .button_Bit = BUTTON_PIN,
+        // The only button
+        .button_Pin = BUTTON_PIN,
         .LED1_Ind =
         {
             .patterns =
