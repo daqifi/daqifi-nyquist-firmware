@@ -30,21 +30,23 @@ void InitializeBoardData(tBoardData* boardData) {
     boardData->AInState.Size = MAX_AIN_MOD;
     // Set default battery values for debugging - allows power on without ADC active
 
-    //    
-    //    boardData->PowerData.powerState = FRESH_BOOT;
-    //    boardData->PowerData.requestedPowerState = NO_CHANGE;
-    //    boardData->PowerData.battLow = false;
-    //    boardData->PowerData.battVoltage = 0.0;
-    //    boardData->PowerData.chargePct = 0;
-    //    boardData->PowerData.USBSleep = false;
-    //    boardData->PowerData.powerDnAllowed = true;
-    //    boardData->PowerData.externalPowerSource = NO_EXT_POWER;
-    //    boardData->PowerData.BQ24297Data.chargeAllowed = true;
-    //   
-    //    
-    //    boardData->UIReadVars.LED1 = false;
-    //    boardData->UIReadVars.LED2 = false;
-    //    boardData->UIReadVars.button = false;
+
+    boardData->PowerData.powerState = FRESH_BOOT;
+    boardData->PowerData.requestedPowerState = NO_CHANGE;
+    boardData->PowerData.battLow = false;
+    boardData->PowerData.battVoltage = 0.0;
+    boardData->PowerData.chargePct = 0;
+    boardData->PowerData.USBSleep = false;
+    boardData->PowerData.powerDnAllowed = true;
+    boardData->PowerData.externalPowerSource = NO_EXT_POWER;
+    boardData->PowerData.BQ24297Data.chargeAllowed = true;
+
+
+    boardData->UIReadVars.LED1 = false;
+    boardData->UIReadVars.LED2 = false;
+    boardData->UIReadVars.button = false;
+    
+    //memcpy(&g_BoardData,boardData,sizeof(g_BoardData));
 
 
 }
@@ -58,47 +60,66 @@ void InitializeBoardData(tBoardData* boardData) {
 void *BoardData_Get(
         enum eBoardData parameter,
         uint8_t index) {
+    void *pRet=NULL;
     switch (parameter) {
         case BOARDDATA_ALL_DATA:
-            return &g_BoardData;
+            pRet= &g_BoardData;
+            break;
         case BOARDDATA_IN_ISR:
-            return &g_BoardData.InISR;
+            pRet= &g_BoardData.InISR;
+            break;
         case BOARDDATA_DIO_LATEST:
-            return &g_BoardData.DIOLatest;
+            pRet= &g_BoardData.DIOLatest;
+            break;
         case BOARDDATA_DIO_SAMPLES:
-            return &g_BoardData.DIOSamples.List;
+            pRet= &g_BoardData.DIOSamples.List;
+            break;
         case BOARDATA_AIN_MODULE:
             if (index < g_BoardData.AInState.Size) {
-                return &g_BoardData.AInState.Data[ index ];
+                pRet= &g_BoardData.AInState.Data[ index ];
+                break;
             }
-            return NULL;
+            pRet= NULL;
+            break;
         case BOARDDATA_AIN_LATEST:
             if (index < g_BoardData.AInLatest.Size) {
-                return &g_BoardData.AInLatest.Data[ index ];
+                pRet= &g_BoardData.AInLatest.Data[ index ];
+                break;
             }
-            return NULL;
+            pRet= NULL;
+            break;
         case BOARDDATA_AIN_LATEST_SIZE:
-            return &g_BoardData.AInLatest.Size ;
+            pRet= &g_BoardData.AInLatest.Size;
+            break;
         case BOARDDATA_AIN_LATEST_TIMESTAMP:
             if (index < g_BoardData.AInLatest.Size) {
-                return &g_BoardData.AInLatest.Data[ index ].Timestamp;
+                pRet= &g_BoardData.AInLatest.Data[ index ].Timestamp;
+                break;
             }
-            return NULL;    
+            pRet= NULL;
+            break;
         case BOARDDATA_AIN_SAMPLES:
-            return &g_BoardData.AInSamples;
+            pRet= &g_BoardData.AInSamples;
+            break;
         case BOARDATA_POWER_DATA:
-            return &g_BoardData.PowerData;
+            pRet= &g_BoardData.PowerData;
+            break;
         case BOARDDATA_UI_VARIABLES:
-            //return &g_BoardData.UIReadVars;
-            return NULL;
+            pRet= &g_BoardData.UIReadVars;  
+            break;
         case BOARDDATA_WIFI_SETTINGS:
-            return &g_BoardData.wifiSettings;
+            pRet= &g_BoardData.wifiSettings;
+            break;
         case BOARDDATA_STREAMING_TIMESTAMP:
-            return &g_BoardData.StreamTrigStamp;
+            pRet= &g_BoardData.StreamTrigStamp;
+            break;
         case BOARDDATA_NUM_OF_FIELDS:
+            break;
         default:
-            return NULL;
+            pRet= NULL;
     }
+    
+    return pRet;
 }
 
 /*! This function is used for setting a board data parameter
@@ -135,15 +156,15 @@ void BoardData_Set(
                 memcpy(
                         &g_BoardData.AInState.Data[ index ].AInTaskState,
                         pSetValue,
-                        sizeof (AInSample));
+                        sizeof (AInTaskState_t));
             }
             break;
         case BOARDDATA_AIN_LATEST:
-            if (index < g_BoardData.AInLatest.Size) {                
+            if (index < g_BoardData.AInLatest.Size) {
                 memcpy(
                         &g_BoardData.AInLatest.Data[ index ],
                         pSetValue,
-                        sizeof (AInSample));                
+                        sizeof (AInSample));
 
             }
             break;
@@ -159,16 +180,16 @@ void BoardData_Set(
                     sizeof (HeapList));
             break;
         case BOARDATA_POWER_DATA:
-            //            memcpy(                                                         
-            //                            &g_BoardData.PowerData,                         
-            //                            pSetValue,                                      
-            //                            sizeof(g_BoardData.PowerData) );
+            memcpy(
+                    &g_BoardData.PowerData,
+                    pSetValue,
+                    sizeof (g_BoardData.PowerData));
             break;
         case BOARDDATA_UI_VARIABLES:
-            //            memcpy(                                                         
-            //                            &g_BoardData.UIReadVars,                        
-            //                            pSetValue,                                      
-            //                            sizeof(g_BoardData.UIReadVars) );
+            memcpy(
+                    &g_BoardData.UIReadVars,
+                    pSetValue,
+                    sizeof (g_BoardData.UIReadVars));
             break;
         case BOARDDATA_WIFI_SETTINGS:
             memcpy(
@@ -186,4 +207,5 @@ void BoardData_Set(
         default:
             break;
     }
+    
 }

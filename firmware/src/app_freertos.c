@@ -147,6 +147,13 @@ static void app_USBDeviceTask(void* p_arg) {
 }
 
 static void app_WifiTask(void* p_arg) {
+    const tPowerData *pPowerState = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+    while(pPowerState->powerState < POWERED_UP) {
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+       
+    }
     WifiApi_Init(&gpBoardData->wifiSettings);
     while (1) {
         WifiApi_ProcessState();
@@ -273,7 +280,6 @@ void app_SystemInit() {
             gpBoardConfig,
             gpBoardRuntimeConfig,
             gpBoardData);
-    //gpBoardData->PowerData.powerState = POWERED_UP;
 }
 
 static void app_TasksCreate() {
@@ -334,7 +340,6 @@ void APP_FREERTOS_Tasks(void) {
     app_TasksCreate();
     while (true) {
         ADC_Tasks();
-        //Streaming_Tasks(&gpBoardRuntimeConfig->StreamingConfig, gpBoardData);        
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 }

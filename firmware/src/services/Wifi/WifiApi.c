@@ -290,7 +290,7 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
     WifiApi_eventStatus_t returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
     switch (event) {
         case WIFIAPI_CONSUMED_EVENT_ENTRY:
-            returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
+            returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;            
             pInstance->pTcpServerData = &gTcpServerData; //TODO(Daqifi): Remove from there here
             TcpServer_Initialize(pInstance->pTcpServerData);
             ResetAllEventFlags(&pInstance->eventFlags);
@@ -484,14 +484,6 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
 
 bool WifiApi_Init(WifiSettings * pSettings) {
 
-    const tPowerData *pPowerState = BoardData_Get(
-            BOARDATA_POWER_DATA,
-            0);
-    if (NULL != pPowerState &&
-            pPowerState->powerState < POWERED_UP) {
-        LogMessage("Board must be powered-on for WiFi operations\n\r");
-        return false;
-    }
     if (gEventQH == NULL)
         gEventQH = xQueueCreate(20, sizeof (WifiApi_consumedEvent_t));
     else return true;

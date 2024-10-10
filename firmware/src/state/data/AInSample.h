@@ -26,7 +26,6 @@ extern "C" {
     } AInModData;
 
     // Define a storage class for analog input data
-    //#define MAX_AIN_DATA_MOD MAX_AIN_MOD
     ARRAYWRAPPERDEF(AInModDataArray, AInModData, MAX_AIN_MOD);
 
     /**
