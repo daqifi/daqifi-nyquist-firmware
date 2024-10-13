@@ -307,7 +307,7 @@ static void app_TasksCreate() {
     }
     errStatus = xTaskCreate((TaskFunction_t) app_WifiTask,
             "WifiTask",
-            2048,
+            3000,
             NULL,
             2,
             NULL);

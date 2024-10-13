@@ -231,22 +231,17 @@ static microrl_t* SCPI_GetMicroRLClient(scpi_t* context)
 {
     UsbCdcData_t * pRunTimeUsbSettings = UsbCdc_GetSettings();
     
-//    TcpServerData * pRunTimeServerData = BoardRunTimeConfig_Get(          
-//                        BOARDRUNTIME_SERVER_DATA);
+    TcpServerData * pRunTimeServerData = WifiApi_GetTcpServerData();
     
     if (&pRunTimeUsbSettings->scpiContext == context)
         {
              return &pRunTimeUsbSettings->console;
         }
     
-//    uint8_t i = 0;
-//    for (i=0; i<WIFI_MAX_CLIENT; ++i)
-//    {
-//        if (&pRunTimeServerData->clients[i].scpiContext == context)
-//        {
-//             return &pRunTimeServerData->clients[i].console;
-//        }
-//    }
+    else if(&pRunTimeServerData->client.scpiContext==context){
+        return &pRunTimeServerData->client.console;
+    
+    }
     return NULL;
 }
 
@@ -557,6 +552,8 @@ static scpi_result_t SCPI_SetEcho(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     console = SCPI_GetMicroRLClient(context);
+    if(console==NULL)
+        return SCPI_RES_ERR;
     microrl_set_echo(console, param1);
     return SCPI_RES_OK;
 }

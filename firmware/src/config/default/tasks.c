@@ -203,7 +203,7 @@ void SYS_Tasks ( void )
         /* Create OS Thread for APP_FREERTOS_Tasks. */
     (void) xTaskCreate((TaskFunction_t) lAPP_FREERTOS_Tasks,
                 "APP_FREERTOS_Tasks",
-                2048,
+                1500,
                 NULL,
                 1,
                 &xAPP_FREERTOS_Tasks);

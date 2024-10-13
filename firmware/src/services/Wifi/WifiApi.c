@@ -557,3 +557,6 @@ void WifiApi_ProcessState() {
         }
     }
 }
+TcpServerData* WifiApi_GetTcpServerData(){
+    return gStateMachineData.pTcpServerData;
+}

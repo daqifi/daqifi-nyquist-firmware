@@ -177,7 +177,7 @@ extern "C" {
 #define WDRV_WINC_DEVICE_SCAN_SSID_LIST
 #define WDRV_WINC_DEBUG_LEVEL               WDRV_WINC_DEBUG_TYPE_NONE
 /*** WiFi WINC Driver RTOS Configuration ***/
-#define DRV_WIFI_WINC_RTOS_STACK_SIZE           1024
+#define DRV_WIFI_WINC_RTOS_STACK_SIZE           3000 //Daqifi: Modified Manually
 #define DRV_WIFI_WINC_RTOS_TASK_PRIORITY        2
 
 /* SPI Driver Instance 0 Configuration Options */

@@ -1,18 +1,1000 @@
-
-7050 1728464223116 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-7050 1728464223116 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-7050 1728464223116 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg0
-7050 1728464223116 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-7050 1728464223116 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-7050 1728464223116 XXXX 1728464223116, Thread 7050: XXXX 1728464223116, Entering Thread 7050: Commands::runScriptWithUpload, script name = ReadRAM  
-7050 1728464223116 XXXX 1728464223116, Thread 7050: XXXX 1728464223116, Entering Thread 7050: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x300 bytes long  
-7050 1728464223117 XXXX 1728464223117, Thread 7050: com.Send returned false 
-7050 1728464223117 XXXX 1728464223117, Thread 7050: readTransfer: exception after writeHeaderAndGetAck null 
-7050 1728464223117 XXXX 1728464223117, Thread 7050: XXXX 1728464223117, Entering Thread 7050: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
-7050 1728464223117 XXXX 1728464223117, Thread 7050: Send Abort Script Engine Command 
-7050 1728464223117 XXXX 1728464223117, Thread 7050: XXXX 1728464223117, Entering Thread 7050: ToolCommUsb::killScriptEngine  
-7050 1728464223118 XXXX 1728464223118, Thread 7050: com.Send returned false 
-7050 1728464223118 XXXX 1728464223118, Thread 7050: Failed sending Abort Script Engine Command. Set nuclear option = true 
-7050 1728464223118 XXXX 1728464223118, Thread 7050: About to nuke 
-7050 1728464223118 XXXX 1728464223118, Thread 7050: XXXX 1728464223118, Entering Thread 7050: ToolCommUsb::nuclearOption  
-7050 1728464223118 XXXX 1728464223118, Thread 7050: com.Send returned false 
+2043 1728628206559 XXXX 1728628206559, Thread 2043: XXXX 1728628206559, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628206659 XXXX 1728628206659, Thread 2043: XXXX 1728628206659, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628206659 XXXX 1728628206659, Thread 2043: XXXX 1728628206659, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628206759 XXXX 1728628206759, Thread 2043: XXXX 1728628206759, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628206759 XXXX 1728628206759, Thread 2043: XXXX 1728628206759, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628206860 XXXX 1728628206860, Thread 2043: XXXX 1728628206860, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628206861 XXXX 1728628206861, Thread 2043: XXXX 1728628206861, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628206960 XXXX 1728628206960, Thread 2043: XXXX 1728628206960, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628206961 XXXX 1728628206961, Thread 2043: XXXX 1728628206961, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207061 XXXX 1728628207061, Thread 2043: XXXX 1728628207061, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207062 XXXX 1728628207062, Thread 2043: XXXX 1728628207062, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207161 XXXX 1728628207161, Thread 2043: XXXX 1728628207161, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207162 XXXX 1728628207162, Thread 2043: XXXX 1728628207162, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207262 XXXX 1728628207262, Thread 2043: XXXX 1728628207262, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207263 XXXX 1728628207263, Thread 2043: XXXX 1728628207263, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207363 XXXX 1728628207363, Thread 2043: XXXX 1728628207363, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207363 XXXX 1728628207363, Thread 2043: XXXX 1728628207363, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207463 XXXX 1728628207463, Thread 2043: XXXX 1728628207463, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207464 XXXX 1728628207464, Thread 2043: XXXX 1728628207464, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207564 XXXX 1728628207564, Thread 2043: XXXX 1728628207564, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207565 XXXX 1728628207565, Thread 2043: XXXX 1728628207565, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207664 XXXX 1728628207664, Thread 2043: XXXX 1728628207664, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207664 XXXX 1728628207664, Thread 2043: XXXX 1728628207664, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207765 XXXX 1728628207765, Thread 2043: XXXX 1728628207765, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207766 XXXX 1728628207766, Thread 2043: XXXX 1728628207766, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207865 XXXX 1728628207865, Thread 2043: XXXX 1728628207865, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207866 XXXX 1728628207866, Thread 2043: XXXX 1728628207866, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628207966 XXXX 1728628207966, Thread 2043: XXXX 1728628207966, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628207967 XXXX 1728628207967, Thread 2043: XXXX 1728628207967, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208067 XXXX 1728628208067, Thread 2043: XXXX 1728628208067, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208068 XXXX 1728628208068, Thread 2043: XXXX 1728628208068, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208168 XXXX 1728628208168, Thread 2043: XXXX 1728628208168, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208168 XXXX 1728628208168, Thread 2043: XXXX 1728628208168, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208270 XXXX 1728628208270, Thread 2043: XXXX 1728628208270, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208270 XXXX 1728628208270, Thread 2043: XXXX 1728628208270, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208370 XXXX 1728628208370, Thread 2043: XXXX 1728628208370, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208371 XXXX 1728628208371, Thread 2043: XXXX 1728628208371, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208471 XXXX 1728628208471, Thread 2043: XXXX 1728628208471, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208471 XXXX 1728628208471, Thread 2043: XXXX 1728628208471, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208572 XXXX 1728628208572, Thread 2043: XXXX 1728628208572, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208573 XXXX 1728628208573, Thread 2043: XXXX 1728628208573, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208672 XXXX 1728628208672, Thread 2043: XXXX 1728628208672, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208673 XXXX 1728628208673, Thread 2043: XXXX 1728628208673, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208773 XXXX 1728628208773, Thread 2043: XXXX 1728628208773, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208774 XXXX 1728628208774, Thread 2043: XXXX 1728628208774, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208874 XXXX 1728628208874, Thread 2043: XXXX 1728628208874, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208875 XXXX 1728628208875, Thread 2043: XXXX 1728628208875, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628208975 XXXX 1728628208975, Thread 2043: XXXX 1728628208975, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628208976 XXXX 1728628208976, Thread 2043: XXXX 1728628208976, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209075 XXXX 1728628209075, Thread 2043: XXXX 1728628209075, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209076 XXXX 1728628209076, Thread 2043: XXXX 1728628209076, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209175 XXXX 1728628209175, Thread 2043: XXXX 1728628209175, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209176 XXXX 1728628209176, Thread 2043: XXXX 1728628209176, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209276 XXXX 1728628209276, Thread 2043: XXXX 1728628209276, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209277 XXXX 1728628209277, Thread 2043: XXXX 1728628209277, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209378 XXXX 1728628209378, Thread 2043: XXXX 1728628209378, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209378 XXXX 1728628209378, Thread 2043: XXXX 1728628209378, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209478 XXXX 1728628209478, Thread 2043: XXXX 1728628209478, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209479 XXXX 1728628209479, Thread 2043: XXXX 1728628209479, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209579 XXXX 1728628209579, Thread 2043: XXXX 1728628209579, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209580 XXXX 1728628209580, Thread 2043: XXXX 1728628209580, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209679 XXXX 1728628209679, Thread 2043: XXXX 1728628209679, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209680 XXXX 1728628209680, Thread 2043: XXXX 1728628209680, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209780 XXXX 1728628209780, Thread 2043: XXXX 1728628209780, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209780 XXXX 1728628209780, Thread 2043: XXXX 1728628209780, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209881 XXXX 1728628209881, Thread 2043: XXXX 1728628209881, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209882 XXXX 1728628209882, Thread 2043: XXXX 1728628209882, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628209982 XXXX 1728628209982, Thread 2043: XXXX 1728628209982, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628209983 XXXX 1728628209983, Thread 2043: XXXX 1728628209983, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210082 XXXX 1728628210082, Thread 2043: XXXX 1728628210082, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210083 XXXX 1728628210083, Thread 2043: XXXX 1728628210083, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210182 XXXX 1728628210182, Thread 2043: XXXX 1728628210182, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210183 XXXX 1728628210183, Thread 2043: XXXX 1728628210183, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210283 XXXX 1728628210283, Thread 2043: XXXX 1728628210283, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210284 XXXX 1728628210284, Thread 2043: XXXX 1728628210284, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210383 XXXX 1728628210383, Thread 2043: XXXX 1728628210383, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210384 XXXX 1728628210384, Thread 2043: XXXX 1728628210384, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210484 XXXX 1728628210484, Thread 2043: XXXX 1728628210484, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210485 XXXX 1728628210485, Thread 2043: XXXX 1728628210485, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210585 XXXX 1728628210585, Thread 2043: XXXX 1728628210585, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210585 XXXX 1728628210585, Thread 2043: XXXX 1728628210585, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210686 XXXX 1728628210686, Thread 2043: XXXX 1728628210686, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210687 XXXX 1728628210687, Thread 2043: XXXX 1728628210687, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210786 XXXX 1728628210786, Thread 2043: XXXX 1728628210786, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210787 XXXX 1728628210787, Thread 2043: XXXX 1728628210787, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210887 XXXX 1728628210887, Thread 2043: XXXX 1728628210887, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210888 XXXX 1728628210888, Thread 2043: XXXX 1728628210888, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628210987 XXXX 1728628210987, Thread 2043: XXXX 1728628210987, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628210988 XXXX 1728628210988, Thread 2043: XXXX 1728628210988, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211087 XXXX 1728628211087, Thread 2043: XXXX 1728628211087, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211088 XXXX 1728628211088, Thread 2043: XXXX 1728628211088, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211188 XXXX 1728628211188, Thread 2043: XXXX 1728628211188, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211188 XXXX 1728628211188, Thread 2043: XXXX 1728628211188, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211288 XXXX 1728628211288, Thread 2043: XXXX 1728628211288, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211289 XXXX 1728628211289, Thread 2043: XXXX 1728628211289, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211389 XXXX 1728628211389, Thread 2043: XXXX 1728628211389, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211389 XXXX 1728628211389, Thread 2043: XXXX 1728628211389, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211490 XXXX 1728628211490, Thread 2043: XXXX 1728628211490, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211492 XXXX 1728628211492, Thread 2043: XXXX 1728628211492, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211590 XXXX 1728628211590, Thread 2043: XXXX 1728628211590, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211591 XXXX 1728628211591, Thread 2043: XXXX 1728628211591, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211691 XXXX 1728628211691, Thread 2043: XXXX 1728628211691, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211692 XXXX 1728628211692, Thread 2043: XXXX 1728628211692, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211792 XXXX 1728628211792, Thread 2043: XXXX 1728628211792, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211793 XXXX 1728628211793, Thread 2043: XXXX 1728628211793, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211892 XXXX 1728628211892, Thread 2043: XXXX 1728628211892, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211893 XXXX 1728628211893, Thread 2043: XXXX 1728628211893, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628211993 XXXX 1728628211993, Thread 2043: XXXX 1728628211993, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628211993 XXXX 1728628211993, Thread 2043: XXXX 1728628211993, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212094 XXXX 1728628212094, Thread 2043: XXXX 1728628212094, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212094 XXXX 1728628212094, Thread 2043: XXXX 1728628212094, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212195 XXXX 1728628212195, Thread 2043: XXXX 1728628212195, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212196 XXXX 1728628212196, Thread 2043: XXXX 1728628212196, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212295 XXXX 1728628212295, Thread 2043: XXXX 1728628212295, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212296 XXXX 1728628212296, Thread 2043: XXXX 1728628212296, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212396 XXXX 1728628212396, Thread 2043: XXXX 1728628212396, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212396 XXXX 1728628212396, Thread 2043: XXXX 1728628212396, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212497 XXXX 1728628212497, Thread 2043: XXXX 1728628212497, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212498 XXXX 1728628212498, Thread 2043: XXXX 1728628212498, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212598 XXXX 1728628212598, Thread 2043: XXXX 1728628212598, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212599 XXXX 1728628212599, Thread 2043: XXXX 1728628212599, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212699 XXXX 1728628212699, Thread 2043: XXXX 1728628212699, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212700 XXXX 1728628212700, Thread 2043: XXXX 1728628212700, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212800 XXXX 1728628212800, Thread 2043: XXXX 1728628212800, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212801 XXXX 1728628212801, Thread 2043: XXXX 1728628212801, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628212901 XXXX 1728628212901, Thread 2043: XXXX 1728628212901, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628212902 XXXX 1728628212902, Thread 2043: XXXX 1728628212902, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213001 XXXX 1728628213001, Thread 2043: XXXX 1728628213001, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213002 XXXX 1728628213002, Thread 2043: XXXX 1728628213002, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213103 XXXX 1728628213103, Thread 2043: XXXX 1728628213103, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213104 XXXX 1728628213104, Thread 2043: XXXX 1728628213104, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213204 XXXX 1728628213204, Thread 2043: XXXX 1728628213204, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213205 XXXX 1728628213204, Thread 2043: XXXX 1728628213204, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213305 XXXX 1728628213305, Thread 2043: XXXX 1728628213305, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213306 XXXX 1728628213306, Thread 2043: XXXX 1728628213306, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213405 XXXX 1728628213405, Thread 2043: XXXX 1728628213405, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213406 XXXX 1728628213406, Thread 2043: XXXX 1728628213406, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213506 XXXX 1728628213506, Thread 2043: XXXX 1728628213506, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213507 XXXX 1728628213507, Thread 2043: XXXX 1728628213507, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213606 XXXX 1728628213606, Thread 2043: XXXX 1728628213606, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213606 XXXX 1728628213606, Thread 2043: XXXX 1728628213606, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213707 XXXX 1728628213707, Thread 2043: XXXX 1728628213707, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213707 XXXX 1728628213707, Thread 2043: XXXX 1728628213707, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213807 XXXX 1728628213807, Thread 2043: XXXX 1728628213807, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213807 XXXX 1728628213807, Thread 2043: XXXX 1728628213807, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628213908 XXXX 1728628213908, Thread 2043: XXXX 1728628213908, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628213910 XXXX 1728628213910, Thread 2043: XXXX 1728628213910, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214008 XXXX 1728628214008, Thread 2043: XXXX 1728628214008, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214009 XXXX 1728628214009, Thread 2043: XXXX 1728628214009, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214109 XXXX 1728628214109, Thread 2043: XXXX 1728628214109, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214110 XXXX 1728628214110, Thread 2043: XXXX 1728628214110, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214209 XXXX 1728628214209, Thread 2043: XXXX 1728628214209, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214210 XXXX 1728628214210, Thread 2043: XXXX 1728628214210, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214310 XXXX 1728628214310, Thread 2043: XXXX 1728628214310, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214311 XXXX 1728628214311, Thread 2043: XXXX 1728628214311, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214411 XXXX 1728628214411, Thread 2043: XXXX 1728628214411, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214413 XXXX 1728628214413, Thread 2043: XXXX 1728628214413, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214512 XXXX 1728628214512, Thread 2043: XXXX 1728628214512, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214512 XXXX 1728628214512, Thread 2043: XXXX 1728628214512, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214612 XXXX 1728628214612, Thread 2043: XXXX 1728628214612, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214613 XXXX 1728628214613, Thread 2043: XXXX 1728628214613, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214713 XXXX 1728628214713, Thread 2043: XXXX 1728628214713, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214714 XXXX 1728628214714, Thread 2043: XXXX 1728628214714, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214814 XXXX 1728628214814, Thread 2043: XXXX 1728628214814, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214815 XXXX 1728628214815, Thread 2043: XXXX 1728628214815, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628214914 XXXX 1728628214914, Thread 2043: XXXX 1728628214914, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628214915 XXXX 1728628214915, Thread 2043: XXXX 1728628214915, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215014 XXXX 1728628215014, Thread 2043: XXXX 1728628215014, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215015 XXXX 1728628215015, Thread 2043: XXXX 1728628215015, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215115 XXXX 1728628215115, Thread 2043: XXXX 1728628215115, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215116 XXXX 1728628215116, Thread 2043: XXXX 1728628215116, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215216 XXXX 1728628215216, Thread 2043: XXXX 1728628215216, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215217 XXXX 1728628215217, Thread 2043: XXXX 1728628215217, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215316 XXXX 1728628215316, Thread 2043: XXXX 1728628215316, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215317 XXXX 1728628215317, Thread 2043: XXXX 1728628215317, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215416 XXXX 1728628215416, Thread 2043: XXXX 1728628215416, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215417 XXXX 1728628215417, Thread 2043: XXXX 1728628215417, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215517 XXXX 1728628215517, Thread 2043: XXXX 1728628215517, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215518 XXXX 1728628215518, Thread 2043: XXXX 1728628215518, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215618 XXXX 1728628215618, Thread 2043: XXXX 1728628215618, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215619 XXXX 1728628215619, Thread 2043: XXXX 1728628215619, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215718 XXXX 1728628215718, Thread 2043: XXXX 1728628215718, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215719 XXXX 1728628215719, Thread 2043: XXXX 1728628215719, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215819 XXXX 1728628215819, Thread 2043: XXXX 1728628215819, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215820 XXXX 1728628215820, Thread 2043: XXXX 1728628215820, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628215919 XXXX 1728628215919, Thread 2043: XXXX 1728628215919, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628215920 XXXX 1728628215920, Thread 2043: XXXX 1728628215920, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216020 XXXX 1728628216020, Thread 2043: XXXX 1728628216020, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216021 XXXX 1728628216021, Thread 2043: XXXX 1728628216021, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216120 XXXX 1728628216120, Thread 2043: XXXX 1728628216120, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216121 XXXX 1728628216121, Thread 2043: XXXX 1728628216121, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216221 XXXX 1728628216221, Thread 2043: XXXX 1728628216221, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216222 XXXX 1728628216222, Thread 2043: XXXX 1728628216222, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216322 XXXX 1728628216322, Thread 2043: XXXX 1728628216322, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216323 XXXX 1728628216323, Thread 2043: XXXX 1728628216323, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216423 XXXX 1728628216423, Thread 2043: XXXX 1728628216423, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216424 XXXX 1728628216424, Thread 2043: XXXX 1728628216424, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216523 XXXX 1728628216523, Thread 2043: XXXX 1728628216523, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216524 XXXX 1728628216524, Thread 2043: XXXX 1728628216524, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216623 XXXX 1728628216623, Thread 2043: XXXX 1728628216623, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216624 XXXX 1728628216624, Thread 2043: XXXX 1728628216624, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216724 XXXX 1728628216724, Thread 2043: XXXX 1728628216724, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216725 XXXX 1728628216725, Thread 2043: XXXX 1728628216725, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216825 XXXX 1728628216825, Thread 2043: XXXX 1728628216825, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216826 XXXX 1728628216826, Thread 2043: XXXX 1728628216826, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628216925 XXXX 1728628216925, Thread 2043: XXXX 1728628216925, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628216925 XXXX 1728628216925, Thread 2043: XXXX 1728628216925, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217025 XXXX 1728628217025, Thread 2043: XXXX 1728628217025, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217026 XXXX 1728628217026, Thread 2043: XXXX 1728628217026, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217126 XXXX 1728628217126, Thread 2043: XXXX 1728628217126, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217127 XXXX 1728628217127, Thread 2043: XXXX 1728628217127, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217227 XXXX 1728628217227, Thread 2043: XXXX 1728628217227, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217228 XXXX 1728628217228, Thread 2043: XXXX 1728628217228, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217328 XXXX 1728628217328, Thread 2043: XXXX 1728628217328, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217329 XXXX 1728628217329, Thread 2043: XXXX 1728628217329, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217428 XXXX 1728628217428, Thread 2043: XXXX 1728628217428, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217429 XXXX 1728628217429, Thread 2043: XXXX 1728628217429, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217530 XXXX 1728628217530, Thread 2043: XXXX 1728628217530, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217530 XXXX 1728628217530, Thread 2043: XXXX 1728628217530, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217630 XXXX 1728628217630, Thread 2043: XXXX 1728628217630, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217631 XXXX 1728628217631, Thread 2043: XXXX 1728628217631, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217731 XXXX 1728628217731, Thread 2043: XXXX 1728628217731, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217732 XXXX 1728628217732, Thread 2043: XXXX 1728628217732, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217831 XXXX 1728628217831, Thread 2043: XXXX 1728628217831, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217832 XXXX 1728628217832, Thread 2043: XXXX 1728628217832, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628217932 XXXX 1728628217932, Thread 2043: XXXX 1728628217932, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628217933 XXXX 1728628217933, Thread 2043: XXXX 1728628217933, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218033 XXXX 1728628218033, Thread 2043: XXXX 1728628218033, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218034 XXXX 1728628218034, Thread 2043: XXXX 1728628218034, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218135 XXXX 1728628218135, Thread 2043: XXXX 1728628218135, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218135 XXXX 1728628218135, Thread 2043: XXXX 1728628218135, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218237 XXXX 1728628218237, Thread 2043: XXXX 1728628218237, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218238 XXXX 1728628218238, Thread 2043: XXXX 1728628218238, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218337 XXXX 1728628218337, Thread 2043: XXXX 1728628218337, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218338 XXXX 1728628218338, Thread 2043: XXXX 1728628218338, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218438 XXXX 1728628218438, Thread 2043: XXXX 1728628218438, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218439 XXXX 1728628218439, Thread 2043: XXXX 1728628218439, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218538 XXXX 1728628218538, Thread 2043: XXXX 1728628218538, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218539 XXXX 1728628218539, Thread 2043: XXXX 1728628218539, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218639 XXXX 1728628218639, Thread 2043: XXXX 1728628218639, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218640 XXXX 1728628218640, Thread 2043: XXXX 1728628218640, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218740 XXXX 1728628218740, Thread 2043: XXXX 1728628218740, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218741 XXXX 1728628218741, Thread 2043: XXXX 1728628218741, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218840 XXXX 1728628218840, Thread 2043: XXXX 1728628218840, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218841 XXXX 1728628218841, Thread 2043: XXXX 1728628218841, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628218941 XXXX 1728628218941, Thread 2043: XXXX 1728628218941, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628218942 XXXX 1728628218942, Thread 2043: XXXX 1728628218942, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219042 XXXX 1728628219042, Thread 2043: XXXX 1728628219042, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219043 XXXX 1728628219043, Thread 2043: XXXX 1728628219043, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219143 XXXX 1728628219143, Thread 2043: XXXX 1728628219143, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219143 XXXX 1728628219143, Thread 2043: XXXX 1728628219143, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219244 XXXX 1728628219244, Thread 2043: XXXX 1728628219244, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219244 XXXX 1728628219244, Thread 2043: XXXX 1728628219244, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219345 XXXX 1728628219345, Thread 2043: XXXX 1728628219345, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219346 XXXX 1728628219346, Thread 2043: XXXX 1728628219346, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219446 XXXX 1728628219446, Thread 2043: XXXX 1728628219446, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219447 XXXX 1728628219447, Thread 2043: XXXX 1728628219447, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219547 XXXX 1728628219547, Thread 2043: XXXX 1728628219547, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219548 XXXX 1728628219548, Thread 2043: XXXX 1728628219548, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219648 XXXX 1728628219648, Thread 2043: XXXX 1728628219648, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219649 XXXX 1728628219649, Thread 2043: XXXX 1728628219649, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219748 XXXX 1728628219748, Thread 2043: XXXX 1728628219748, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219749 XXXX 1728628219749, Thread 2043: XXXX 1728628219749, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219848 XXXX 1728628219848, Thread 2043: XXXX 1728628219848, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219849 XXXX 1728628219849, Thread 2043: XXXX 1728628219849, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628219949 XXXX 1728628219949, Thread 2043: XXXX 1728628219949, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628219950 XXXX 1728628219950, Thread 2043: XXXX 1728628219950, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220051 XXXX 1728628220051, Thread 2043: XXXX 1728628220051, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220052 XXXX 1728628220052, Thread 2043: XXXX 1728628220052, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220151 XXXX 1728628220151, Thread 2043: XXXX 1728628220151, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220152 XXXX 1728628220152, Thread 2043: XXXX 1728628220152, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220251 XXXX 1728628220251, Thread 2043: XXXX 1728628220251, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220252 XXXX 1728628220252, Thread 2043: XXXX 1728628220252, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220352 XXXX 1728628220352, Thread 2043: XXXX 1728628220352, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220353 XXXX 1728628220353, Thread 2043: XXXX 1728628220353, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220452 XXXX 1728628220452, Thread 2043: XXXX 1728628220452, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220453 XXXX 1728628220453, Thread 2043: XXXX 1728628220453, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220553 XXXX 1728628220553, Thread 2043: XXXX 1728628220553, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220555 XXXX 1728628220555, Thread 2043: XXXX 1728628220555, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220653 XXXX 1728628220653, Thread 2043: XXXX 1728628220653, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220654 XXXX 1728628220654, Thread 2043: XXXX 1728628220654, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220754 XXXX 1728628220754, Thread 2043: XXXX 1728628220754, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220754 XXXX 1728628220754, Thread 2043: XXXX 1728628220754, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220855 XXXX 1728628220855, Thread 2043: XXXX 1728628220855, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220856 XXXX 1728628220856, Thread 2043: XXXX 1728628220856, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628220956 XXXX 1728628220956, Thread 2043: XXXX 1728628220956, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628220957 XXXX 1728628220957, Thread 2043: XXXX 1728628220957, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221056 XXXX 1728628221056, Thread 2043: XXXX 1728628221056, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221056 XXXX 1728628221056, Thread 2043: XXXX 1728628221056, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221157 XXXX 1728628221157, Thread 2043: XXXX 1728628221157, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221158 XXXX 1728628221158, Thread 2043: XXXX 1728628221158, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221257 XXXX 1728628221257, Thread 2043: XXXX 1728628221257, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221258 XXXX 1728628221258, Thread 2043: XXXX 1728628221258, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221358 XXXX 1728628221358, Thread 2043: XXXX 1728628221358, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221359 XXXX 1728628221359, Thread 2043: XXXX 1728628221359, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221459 XXXX 1728628221459, Thread 2043: XXXX 1728628221459, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221460 XXXX 1728628221460, Thread 2043: XXXX 1728628221460, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221559 XXXX 1728628221559, Thread 2043: XXXX 1728628221559, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221560 XXXX 1728628221560, Thread 2043: XXXX 1728628221560, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221660 XXXX 1728628221660, Thread 2043: XXXX 1728628221660, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221661 XXXX 1728628221661, Thread 2043: XXXX 1728628221661, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221762 XXXX 1728628221762, Thread 2043: XXXX 1728628221762, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221762 XXXX 1728628221762, Thread 2043: XXXX 1728628221762, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221863 XXXX 1728628221863, Thread 2043: XXXX 1728628221863, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221864 XXXX 1728628221864, Thread 2043: XXXX 1728628221864, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628221963 XXXX 1728628221963, Thread 2043: XXXX 1728628221963, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628221964 XXXX 1728628221964, Thread 2043: XXXX 1728628221964, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222064 XXXX 1728628222064, Thread 2043: XXXX 1728628222064, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222065 XXXX 1728628222065, Thread 2043: XXXX 1728628222065, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222164 XXXX 1728628222164, Thread 2043: XXXX 1728628222164, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222165 XXXX 1728628222165, Thread 2043: XXXX 1728628222165, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222264 XXXX 1728628222264, Thread 2043: XXXX 1728628222264, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222265 XXXX 1728628222265, Thread 2043: XXXX 1728628222265, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222365 XXXX 1728628222365, Thread 2043: XXXX 1728628222365, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222366 XXXX 1728628222366, Thread 2043: XXXX 1728628222366, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222467 XXXX 1728628222467, Thread 2043: XXXX 1728628222467, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222468 XXXX 1728628222468, Thread 2043: XXXX 1728628222468, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222567 XXXX 1728628222567, Thread 2043: XXXX 1728628222567, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222568 XXXX 1728628222568, Thread 2043: XXXX 1728628222568, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222668 XXXX 1728628222668, Thread 2043: XXXX 1728628222668, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222668 XXXX 1728628222668, Thread 2043: XXXX 1728628222668, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222768 XXXX 1728628222768, Thread 2043: XXXX 1728628222768, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222770 XXXX 1728628222770, Thread 2043: XXXX 1728628222770, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222868 XXXX 1728628222868, Thread 2043: XXXX 1728628222868, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222870 XXXX 1728628222870, Thread 2043: XXXX 1728628222870, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628222969 XXXX 1728628222969, Thread 2043: XXXX 1728628222969, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628222969 XXXX 1728628222969, Thread 2043: XXXX 1728628222969, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223070 XXXX 1728628223070, Thread 2043: XXXX 1728628223070, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223071 XXXX 1728628223071, Thread 2043: XXXX 1728628223071, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223171 XXXX 1728628223171, Thread 2043: XXXX 1728628223171, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223172 XXXX 1728628223172, Thread 2043: XXXX 1728628223172, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223271 XXXX 1728628223271, Thread 2043: XXXX 1728628223271, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223272 XXXX 1728628223272, Thread 2043: XXXX 1728628223272, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223373 XXXX 1728628223373, Thread 2043: XXXX 1728628223373, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223374 XXXX 1728628223374, Thread 2043: XXXX 1728628223374, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223473 XXXX 1728628223473, Thread 2043: XXXX 1728628223473, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223474 XXXX 1728628223474, Thread 2043: XXXX 1728628223474, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223574 XXXX 1728628223574, Thread 2043: XXXX 1728628223574, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223575 XXXX 1728628223575, Thread 2043: XXXX 1728628223575, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223675 XXXX 1728628223675, Thread 2043: XXXX 1728628223675, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223676 XXXX 1728628223676, Thread 2043: XXXX 1728628223676, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223775 XXXX 1728628223775, Thread 2043: XXXX 1728628223775, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223776 XXXX 1728628223776, Thread 2043: XXXX 1728628223776, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223876 XXXX 1728628223876, Thread 2043: XXXX 1728628223876, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223877 XXXX 1728628223877, Thread 2043: XXXX 1728628223877, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628223977 XXXX 1728628223977, Thread 2043: XXXX 1728628223977, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628223978 XXXX 1728628223978, Thread 2043: XXXX 1728628223978, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224077 XXXX 1728628224077, Thread 2043: XXXX 1728628224077, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224078 XXXX 1728628224078, Thread 2043: XXXX 1728628224078, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224177 XXXX 1728628224177, Thread 2043: XXXX 1728628224177, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224178 XXXX 1728628224178, Thread 2043: XXXX 1728628224178, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224278 XXXX 1728628224278, Thread 2043: XXXX 1728628224278, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224280 XXXX 1728628224280, Thread 2043: XXXX 1728628224280, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224378 XXXX 1728628224378, Thread 2043: XXXX 1728628224378, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224379 XXXX 1728628224379, Thread 2043: XXXX 1728628224379, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224479 XXXX 1728628224479, Thread 2043: XXXX 1728628224479, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224480 XXXX 1728628224480, Thread 2043: XXXX 1728628224480, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224579 XXXX 1728628224579, Thread 2043: XXXX 1728628224579, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224581 XXXX 1728628224581, Thread 2043: XXXX 1728628224581, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224679 XXXX 1728628224679, Thread 2043: XXXX 1728628224679, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224680 XXXX 1728628224680, Thread 2043: XXXX 1728628224680, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224780 XXXX 1728628224780, Thread 2043: XXXX 1728628224780, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224780 XXXX 1728628224780, Thread 2043: XXXX 1728628224780, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224881 XXXX 1728628224881, Thread 2043: XXXX 1728628224881, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224882 XXXX 1728628224882, Thread 2043: XXXX 1728628224882, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628224981 XXXX 1728628224981, Thread 2043: XXXX 1728628224981, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628224982 XXXX 1728628224982, Thread 2043: XXXX 1728628224982, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225082 XXXX 1728628225082, Thread 2043: XXXX 1728628225082, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225083 XXXX 1728628225083, Thread 2043: XXXX 1728628225083, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225183 XXXX 1728628225183, Thread 2043: XXXX 1728628225183, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225184 XXXX 1728628225184, Thread 2043: XXXX 1728628225184, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225283 XXXX 1728628225283, Thread 2043: XXXX 1728628225283, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225284 XXXX 1728628225284, Thread 2043: XXXX 1728628225284, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225383 XXXX 1728628225383, Thread 2043: XXXX 1728628225383, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225384 XXXX 1728628225384, Thread 2043: XXXX 1728628225384, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225484 XXXX 1728628225484, Thread 2043: XXXX 1728628225484, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225486 XXXX 1728628225486, Thread 2043: XXXX 1728628225486, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225585 XXXX 1728628225585, Thread 2043: XXXX 1728628225585, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225585 XXXX 1728628225585, Thread 2043: XXXX 1728628225585, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225686 XXXX 1728628225686, Thread 2043: XXXX 1728628225686, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225687 XXXX 1728628225687, Thread 2043: XXXX 1728628225687, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225787 XXXX 1728628225787, Thread 2043: XXXX 1728628225787, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225788 XXXX 1728628225788, Thread 2043: XXXX 1728628225788, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225888 XXXX 1728628225888, Thread 2043: XXXX 1728628225888, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225889 XXXX 1728628225889, Thread 2043: XXXX 1728628225889, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628225988 XXXX 1728628225988, Thread 2043: XXXX 1728628225988, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628225989 XXXX 1728628225989, Thread 2043: XXXX 1728628225989, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226089 XXXX 1728628226089, Thread 2043: XXXX 1728628226089, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226089 XXXX 1728628226089, Thread 2043: XXXX 1728628226089, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226191 XXXX 1728628226191, Thread 2043: XXXX 1728628226191, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226191 XXXX 1728628226191, Thread 2043: XXXX 1728628226191, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226292 XXXX 1728628226292, Thread 2043: XXXX 1728628226292, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226293 XXXX 1728628226293, Thread 2043: XXXX 1728628226293, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226393 XXXX 1728628226393, Thread 2043: XXXX 1728628226393, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226394 XXXX 1728628226394, Thread 2043: XXXX 1728628226394, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226493 XXXX 1728628226493, Thread 2043: XXXX 1728628226493, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226494 XXXX 1728628226494, Thread 2043: XXXX 1728628226494, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226593 XXXX 1728628226593, Thread 2043: XXXX 1728628226593, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226593 XXXX 1728628226593, Thread 2043: XXXX 1728628226593, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226694 XXXX 1728628226694, Thread 2043: XXXX 1728628226694, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226695 XXXX 1728628226695, Thread 2043: XXXX 1728628226695, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226794 XXXX 1728628226794, Thread 2043: XXXX 1728628226794, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226795 XXXX 1728628226795, Thread 2043: XXXX 1728628226795, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226896 XXXX 1728628226896, Thread 2043: XXXX 1728628226896, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226896 XXXX 1728628226896, Thread 2043: XXXX 1728628226896, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628226997 XXXX 1728628226997, Thread 2043: XXXX 1728628226997, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628226998 XXXX 1728628226998, Thread 2043: XXXX 1728628226998, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227097 XXXX 1728628227097, Thread 2043: XXXX 1728628227097, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227098 XXXX 1728628227098, Thread 2043: XXXX 1728628227098, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227198 XXXX 1728628227198, Thread 2043: XXXX 1728628227198, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227199 XXXX 1728628227199, Thread 2043: XXXX 1728628227199, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227299 XXXX 1728628227299, Thread 2043: XXXX 1728628227299, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227299 XXXX 1728628227299, Thread 2043: XXXX 1728628227299, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227400 XXXX 1728628227400, Thread 2043: XXXX 1728628227400, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227400 XXXX 1728628227400, Thread 2043: XXXX 1728628227400, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227501 XXXX 1728628227501, Thread 2043: XXXX 1728628227501, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227501 XXXX 1728628227501, Thread 2043: XXXX 1728628227501, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227602 XXXX 1728628227602, Thread 2043: XXXX 1728628227602, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227603 XXXX 1728628227603, Thread 2043: XXXX 1728628227603, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227702 XXXX 1728628227702, Thread 2043: XXXX 1728628227702, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227703 XXXX 1728628227703, Thread 2043: XXXX 1728628227703, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227803 XXXX 1728628227803, Thread 2043: XXXX 1728628227803, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227804 XXXX 1728628227804, Thread 2043: XXXX 1728628227804, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628227903 XXXX 1728628227903, Thread 2043: XXXX 1728628227903, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628227904 XXXX 1728628227904, Thread 2043: XXXX 1728628227904, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228004 XXXX 1728628228004, Thread 2043: XXXX 1728628228004, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228005 XXXX 1728628228005, Thread 2043: XXXX 1728628228005, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228105 XXXX 1728628228105, Thread 2043: XXXX 1728628228105, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228106 XXXX 1728628228106, Thread 2043: XXXX 1728628228106, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228206 XXXX 1728628228206, Thread 2043: XXXX 1728628228206, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228207 XXXX 1728628228207, Thread 2043: XXXX 1728628228207, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228306 XXXX 1728628228306, Thread 2043: XXXX 1728628228306, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228307 XXXX 1728628228307, Thread 2043: XXXX 1728628228307, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228407 XXXX 1728628228407, Thread 2043: XXXX 1728628228407, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228408 XXXX 1728628228408, Thread 2043: XXXX 1728628228408, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228508 XXXX 1728628228508, Thread 2043: XXXX 1728628228508, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228509 XXXX 1728628228509, Thread 2043: XXXX 1728628228509, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228608 XXXX 1728628228608, Thread 2043: XXXX 1728628228608, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228609 XXXX 1728628228609, Thread 2043: XXXX 1728628228609, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228710 XXXX 1728628228710, Thread 2043: XXXX 1728628228710, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228711 XXXX 1728628228711, Thread 2043: XXXX 1728628228711, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228811 XXXX 1728628228811, Thread 2043: XXXX 1728628228811, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228812 XXXX 1728628228812, Thread 2043: XXXX 1728628228812, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628228911 XXXX 1728628228911, Thread 2043: XXXX 1728628228911, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628228911 XXXX 1728628228911, Thread 2043: XXXX 1728628228911, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229013 XXXX 1728628229013, Thread 2043: XXXX 1728628229013, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229014 XXXX 1728628229014, Thread 2043: XXXX 1728628229014, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229114 XXXX 1728628229114, Thread 2043: XXXX 1728628229114, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229114 XXXX 1728628229114, Thread 2043: XXXX 1728628229114, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229215 XXXX 1728628229215, Thread 2043: XXXX 1728628229215, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229216 XXXX 1728628229216, Thread 2043: XXXX 1728628229216, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229315 XXXX 1728628229315, Thread 2043: XXXX 1728628229315, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229316 XXXX 1728628229316, Thread 2043: XXXX 1728628229316, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229416 XXXX 1728628229416, Thread 2043: XXXX 1728628229416, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229417 XXXX 1728628229417, Thread 2043: XXXX 1728628229417, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229516 XXXX 1728628229516, Thread 2043: XXXX 1728628229516, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229517 XXXX 1728628229517, Thread 2043: XXXX 1728628229517, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229618 XXXX 1728628229618, Thread 2043: XXXX 1728628229618, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229619 XXXX 1728628229619, Thread 2043: XXXX 1728628229619, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229718 XXXX 1728628229718, Thread 2043: XXXX 1728628229718, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229718 XXXX 1728628229718, Thread 2043: XXXX 1728628229718, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229818 XXXX 1728628229818, Thread 2043: XXXX 1728628229818, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229819 XXXX 1728628229819, Thread 2043: XXXX 1728628229819, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628229919 XXXX 1728628229919, Thread 2043: XXXX 1728628229919, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628229920 XXXX 1728628229920, Thread 2043: XXXX 1728628229920, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230019 XXXX 1728628230019, Thread 2043: XXXX 1728628230019, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230020 XXXX 1728628230020, Thread 2043: XXXX 1728628230020, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230120 XXXX 1728628230120, Thread 2043: XXXX 1728628230120, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230121 XXXX 1728628230121, Thread 2043: XXXX 1728628230121, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230221 XXXX 1728628230221, Thread 2043: XXXX 1728628230221, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230222 XXXX 1728628230222, Thread 2043: XXXX 1728628230222, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230322 XXXX 1728628230322, Thread 2043: XXXX 1728628230322, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230323 XXXX 1728628230323, Thread 2043: XXXX 1728628230323, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230422 XXXX 1728628230422, Thread 2043: XXXX 1728628230422, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230423 XXXX 1728628230423, Thread 2043: XXXX 1728628230423, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230522 XXXX 1728628230522, Thread 2043: XXXX 1728628230522, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230523 XXXX 1728628230523, Thread 2043: XXXX 1728628230523, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230622 XXXX 1728628230622, Thread 2043: XXXX 1728628230622, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230622 XXXX 1728628230622, Thread 2043: XXXX 1728628230622, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230723 XXXX 1728628230723, Thread 2043: XXXX 1728628230723, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230724 XXXX 1728628230724, Thread 2043: XXXX 1728628230724, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230823 XXXX 1728628230823, Thread 2043: XXXX 1728628230823, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230824 XXXX 1728628230824, Thread 2043: XXXX 1728628230824, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628230923 XXXX 1728628230923, Thread 2043: XXXX 1728628230923, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628230923 XXXX 1728628230923, Thread 2043: XXXX 1728628230923, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231023 XXXX 1728628231023, Thread 2043: XXXX 1728628231023, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231023 XXXX 1728628231023, Thread 2043: XXXX 1728628231023, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231125 XXXX 1728628231125, Thread 2043: XXXX 1728628231125, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231126 XXXX 1728628231126, Thread 2043: XXXX 1728628231126, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231225 XXXX 1728628231225, Thread 2043: XXXX 1728628231225, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231225 XXXX 1728628231225, Thread 2043: XXXX 1728628231225, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231326 XXXX 1728628231326, Thread 2043: XXXX 1728628231326, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231327 XXXX 1728628231327, Thread 2043: XXXX 1728628231327, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231426 XXXX 1728628231426, Thread 2043: XXXX 1728628231426, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231426 XXXX 1728628231426, Thread 2043: XXXX 1728628231426, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231526 XXXX 1728628231526, Thread 2043: XXXX 1728628231526, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231527 XXXX 1728628231527, Thread 2043: XXXX 1728628231527, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231627 XXXX 1728628231627, Thread 2043: XXXX 1728628231627, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231628 XXXX 1728628231628, Thread 2043: XXXX 1728628231628, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231727 XXXX 1728628231727, Thread 2043: XXXX 1728628231727, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231727 XXXX 1728628231727, Thread 2043: XXXX 1728628231727, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231829 XXXX 1728628231829, Thread 2043: XXXX 1728628231829, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231830 XXXX 1728628231830, Thread 2043: XXXX 1728628231830, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628231929 XXXX 1728628231929, Thread 2043: XXXX 1728628231929, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628231930 XXXX 1728628231930, Thread 2043: XXXX 1728628231930, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232030 XXXX 1728628232030, Thread 2043: XXXX 1728628232030, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232030 XXXX 1728628232030, Thread 2043: XXXX 1728628232030, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232132 XXXX 1728628232132, Thread 2043: XXXX 1728628232132, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232133 XXXX 1728628232133, Thread 2043: XXXX 1728628232133, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232232 XXXX 1728628232232, Thread 2043: XXXX 1728628232232, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232233 XXXX 1728628232233, Thread 2043: XXXX 1728628232233, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232333 XXXX 1728628232333, Thread 2043: XXXX 1728628232333, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232333 XXXX 1728628232333, Thread 2043: XXXX 1728628232333, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232434 XXXX 1728628232434, Thread 2043: XXXX 1728628232434, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232435 XXXX 1728628232435, Thread 2043: XXXX 1728628232435, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232534 XXXX 1728628232534, Thread 2043: XXXX 1728628232534, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232535 XXXX 1728628232535, Thread 2043: XXXX 1728628232535, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232635 XXXX 1728628232635, Thread 2043: XXXX 1728628232635, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232636 XXXX 1728628232636, Thread 2043: XXXX 1728628232636, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232735 XXXX 1728628232735, Thread 2043: XXXX 1728628232735, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232736 XXXX 1728628232736, Thread 2043: XXXX 1728628232736, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232836 XXXX 1728628232836, Thread 2043: XXXX 1728628232836, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232837 XXXX 1728628232837, Thread 2043: XXXX 1728628232837, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628232936 XXXX 1728628232936, Thread 2043: XXXX 1728628232936, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628232937 XXXX 1728628232937, Thread 2043: XXXX 1728628232937, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233037 XXXX 1728628233037, Thread 2043: XXXX 1728628233037, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233038 XXXX 1728628233038, Thread 2043: XXXX 1728628233038, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233137 XXXX 1728628233137, Thread 2043: XXXX 1728628233137, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233138 XXXX 1728628233138, Thread 2043: XXXX 1728628233138, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233237 XXXX 1728628233237, Thread 2043: XXXX 1728628233237, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233237 XXXX 1728628233237, Thread 2043: XXXX 1728628233237, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233339 XXXX 1728628233339, Thread 2043: XXXX 1728628233339, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233340 XXXX 1728628233340, Thread 2043: XXXX 1728628233340, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233439 XXXX 1728628233439, Thread 2043: XXXX 1728628233439, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233440 XXXX 1728628233440, Thread 2043: XXXX 1728628233440, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233540 XXXX 1728628233540, Thread 2043: XXXX 1728628233540, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233541 XXXX 1728628233541, Thread 2043: XXXX 1728628233541, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233641 XXXX 1728628233641, Thread 2043: XXXX 1728628233641, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233642 XXXX 1728628233642, Thread 2043: XXXX 1728628233642, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233741 XXXX 1728628233741, Thread 2043: XXXX 1728628233741, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233742 XXXX 1728628233742, Thread 2043: XXXX 1728628233742, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233841 XXXX 1728628233841, Thread 2043: XXXX 1728628233841, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233842 XXXX 1728628233842, Thread 2043: XXXX 1728628233842, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628233942 XXXX 1728628233942, Thread 2043: XXXX 1728628233942, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628233943 XXXX 1728628233943, Thread 2043: XXXX 1728628233943, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234042 XXXX 1728628234042, Thread 2043: XXXX 1728628234042, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234043 XXXX 1728628234043, Thread 2043: XXXX 1728628234043, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234143 XXXX 1728628234143, Thread 2043: XXXX 1728628234143, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234144 XXXX 1728628234144, Thread 2043: XXXX 1728628234144, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234243 XXXX 1728628234243, Thread 2043: XXXX 1728628234243, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234244 XXXX 1728628234244, Thread 2043: XXXX 1728628234244, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234344 XXXX 1728628234344, Thread 2043: XXXX 1728628234344, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234344 XXXX 1728628234344, Thread 2043: XXXX 1728628234344, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234446 XXXX 1728628234446, Thread 2043: XXXX 1728628234446, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234447 XXXX 1728628234447, Thread 2043: XXXX 1728628234447, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234546 XXXX 1728628234546, Thread 2043: XXXX 1728628234546, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234547 XXXX 1728628234547, Thread 2043: XXXX 1728628234547, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234647 XXXX 1728628234647, Thread 2043: XXXX 1728628234647, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234648 XXXX 1728628234648, Thread 2043: XXXX 1728628234648, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234748 XXXX 1728628234748, Thread 2043: XXXX 1728628234748, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234749 XXXX 1728628234749, Thread 2043: XXXX 1728628234749, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234848 XXXX 1728628234848, Thread 2043: XXXX 1728628234848, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234850 XXXX 1728628234850, Thread 2043: XXXX 1728628234850, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628234949 XXXX 1728628234949, Thread 2043: XXXX 1728628234949, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628234949 XXXX 1728628234949, Thread 2043: XXXX 1728628234949, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235050 XXXX 1728628235050, Thread 2043: XXXX 1728628235050, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235051 XXXX 1728628235051, Thread 2043: XXXX 1728628235051, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235151 XXXX 1728628235151, Thread 2043: XXXX 1728628235151, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235151 XXXX 1728628235151, Thread 2043: XXXX 1728628235151, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235252 XXXX 1728628235252, Thread 2043: XXXX 1728628235252, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235252 XXXX 1728628235252, Thread 2043: XXXX 1728628235252, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235353 XXXX 1728628235353, Thread 2043: XXXX 1728628235353, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235354 XXXX 1728628235354, Thread 2043: XXXX 1728628235354, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235454 XXXX 1728628235454, Thread 2043: XXXX 1728628235454, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235455 XXXX 1728628235455, Thread 2043: XXXX 1728628235455, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235555 XXXX 1728628235555, Thread 2043: XXXX 1728628235555, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235556 XXXX 1728628235556, Thread 2043: XXXX 1728628235556, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235656 XXXX 1728628235656, Thread 2043: XXXX 1728628235656, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235657 XXXX 1728628235657, Thread 2043: XXXX 1728628235657, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235756 XXXX 1728628235756, Thread 2043: XXXX 1728628235756, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235757 XXXX 1728628235757, Thread 2043: XXXX 1728628235757, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235856 XXXX 1728628235856, Thread 2043: XXXX 1728628235856, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235857 XXXX 1728628235857, Thread 2043: XXXX 1728628235857, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628235957 XXXX 1728628235957, Thread 2043: XXXX 1728628235957, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628235958 XXXX 1728628235958, Thread 2043: XXXX 1728628235958, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236058 XXXX 1728628236058, Thread 2043: XXXX 1728628236058, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236059 XXXX 1728628236059, Thread 2043: XXXX 1728628236059, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236159 XXXX 1728628236159, Thread 2043: XXXX 1728628236159, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236160 XXXX 1728628236160, Thread 2043: XXXX 1728628236160, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236259 XXXX 1728628236259, Thread 2043: XXXX 1728628236259, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236260 XXXX 1728628236260, Thread 2043: XXXX 1728628236260, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236360 XXXX 1728628236360, Thread 2043: XXXX 1728628236360, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236361 XXXX 1728628236361, Thread 2043: XXXX 1728628236361, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236460 XXXX 1728628236460, Thread 2043: XXXX 1728628236460, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236461 XXXX 1728628236461, Thread 2043: XXXX 1728628236461, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236561 XXXX 1728628236561, Thread 2043: XXXX 1728628236561, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236562 XXXX 1728628236562, Thread 2043: XXXX 1728628236562, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236662 XXXX 1728628236662, Thread 2043: XXXX 1728628236662, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236663 XXXX 1728628236663, Thread 2043: XXXX 1728628236663, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236763 XXXX 1728628236763, Thread 2043: XXXX 1728628236763, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236763 XXXX 1728628236763, Thread 2043: XXXX 1728628236763, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236864 XXXX 1728628236864, Thread 2043: XXXX 1728628236864, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236865 XXXX 1728628236865, Thread 2043: XXXX 1728628236865, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628236965 XXXX 1728628236965, Thread 2043: XXXX 1728628236965, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628236966 XXXX 1728628236966, Thread 2043: XXXX 1728628236966, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237065 XXXX 1728628237065, Thread 2043: XXXX 1728628237065, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237066 XXXX 1728628237066, Thread 2043: XXXX 1728628237066, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237166 XXXX 1728628237166, Thread 2043: XXXX 1728628237166, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237167 XXXX 1728628237167, Thread 2043: XXXX 1728628237167, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237266 XXXX 1728628237266, Thread 2043: XXXX 1728628237266, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237267 XXXX 1728628237267, Thread 2043: XXXX 1728628237267, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237367 XXXX 1728628237367, Thread 2043: XXXX 1728628237367, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237368 XXXX 1728628237368, Thread 2043: XXXX 1728628237368, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237467 XXXX 1728628237467, Thread 2043: XXXX 1728628237467, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237468 XXXX 1728628237468, Thread 2043: XXXX 1728628237468, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237567 XXXX 1728628237567, Thread 2043: XXXX 1728628237567, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237567 XXXX 1728628237567, Thread 2043: XXXX 1728628237567, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237668 XXXX 1728628237668, Thread 2043: XXXX 1728628237668, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237669 XXXX 1728628237669, Thread 2043: XXXX 1728628237669, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237769 XXXX 1728628237769, Thread 2043: XXXX 1728628237769, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237770 XXXX 1728628237770, Thread 2043: XXXX 1728628237770, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237869 XXXX 1728628237869, Thread 2043: XXXX 1728628237869, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237870 XXXX 1728628237870, Thread 2043: XXXX 1728628237870, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628237970 XXXX 1728628237970, Thread 2043: XXXX 1728628237970, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628237971 XXXX 1728628237971, Thread 2043: XXXX 1728628237971, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238070 XXXX 1728628238070, Thread 2043: XXXX 1728628238070, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238070 XXXX 1728628238070, Thread 2043: XXXX 1728628238070, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238171 XXXX 1728628238171, Thread 2043: XXXX 1728628238171, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238172 XXXX 1728628238172, Thread 2043: XXXX 1728628238172, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238271 XXXX 1728628238271, Thread 2043: XXXX 1728628238271, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238272 XXXX 1728628238272, Thread 2043: XXXX 1728628238272, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238372 XXXX 1728628238372, Thread 2043: XXXX 1728628238372, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238373 XXXX 1728628238373, Thread 2043: XXXX 1728628238373, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238472 XXXX 1728628238472, Thread 2043: XXXX 1728628238472, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238473 XXXX 1728628238473, Thread 2043: XXXX 1728628238473, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238573 XXXX 1728628238573, Thread 2043: XXXX 1728628238573, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238574 XXXX 1728628238574, Thread 2043: XXXX 1728628238574, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238673 XXXX 1728628238673, Thread 2043: XXXX 1728628238673, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238674 XXXX 1728628238674, Thread 2043: XXXX 1728628238674, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238774 XXXX 1728628238774, Thread 2043: XXXX 1728628238774, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238775 XXXX 1728628238775, Thread 2043: XXXX 1728628238775, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238875 XXXX 1728628238875, Thread 2043: XXXX 1728628238875, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238876 XXXX 1728628238876, Thread 2043: XXXX 1728628238876, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628238975 XXXX 1728628238975, Thread 2043: XXXX 1728628238975, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628238976 XXXX 1728628238976, Thread 2043: XXXX 1728628238976, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239075 XXXX 1728628239075, Thread 2043: XXXX 1728628239075, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239076 XXXX 1728628239076, Thread 2043: XXXX 1728628239076, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239175 XXXX 1728628239175, Thread 2043: XXXX 1728628239175, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239176 XXXX 1728628239176, Thread 2043: XXXX 1728628239176, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239276 XXXX 1728628239276, Thread 2043: XXXX 1728628239276, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239277 XXXX 1728628239277, Thread 2043: XXXX 1728628239277, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239376 XXXX 1728628239376, Thread 2043: XXXX 1728628239376, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239377 XXXX 1728628239377, Thread 2043: XXXX 1728628239377, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239477 XXXX 1728628239477, Thread 2043: XXXX 1728628239477, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239478 XXXX 1728628239478, Thread 2043: XXXX 1728628239478, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239578 XXXX 1728628239578, Thread 2043: XXXX 1728628239578, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239579 XXXX 1728628239579, Thread 2043: XXXX 1728628239579, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239678 XXXX 1728628239678, Thread 2043: XXXX 1728628239678, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239679 XXXX 1728628239679, Thread 2043: XXXX 1728628239679, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239779 XXXX 1728628239779, Thread 2043: XXXX 1728628239779, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239780 XXXX 1728628239780, Thread 2043: XXXX 1728628239780, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239880 XXXX 1728628239880, Thread 2043: XXXX 1728628239880, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239881 XXXX 1728628239881, Thread 2043: XXXX 1728628239881, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628239981 XXXX 1728628239981, Thread 2043: XXXX 1728628239981, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628239982 XXXX 1728628239982, Thread 2043: XXXX 1728628239982, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240082 XXXX 1728628240082, Thread 2043: XXXX 1728628240082, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240083 XXXX 1728628240083, Thread 2043: XXXX 1728628240083, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240182 XXXX 1728628240182, Thread 2043: XXXX 1728628240182, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240182 XXXX 1728628240182, Thread 2043: XXXX 1728628240182, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240283 XXXX 1728628240283, Thread 2043: XXXX 1728628240283, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240284 XXXX 1728628240284, Thread 2043: XXXX 1728628240284, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240384 XXXX 1728628240384, Thread 2043: XXXX 1728628240384, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240385 XXXX 1728628240385, Thread 2043: XXXX 1728628240385, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240484 XXXX 1728628240484, Thread 2043: XXXX 1728628240484, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240485 XXXX 1728628240485, Thread 2043: XXXX 1728628240485, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240585 XXXX 1728628240585, Thread 2043: XXXX 1728628240585, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240586 XXXX 1728628240586, Thread 2043: XXXX 1728628240586, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240686 XXXX 1728628240686, Thread 2043: XXXX 1728628240686, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240687 XXXX 1728628240687, Thread 2043: XXXX 1728628240687, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240787 XXXX 1728628240787, Thread 2043: XXXX 1728628240787, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240788 XXXX 1728628240788, Thread 2043: XXXX 1728628240788, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240887 XXXX 1728628240887, Thread 2043: XXXX 1728628240887, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240888 XXXX 1728628240888, Thread 2043: XXXX 1728628240888, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628240988 XXXX 1728628240988, Thread 2043: XXXX 1728628240988, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628240989 XXXX 1728628240989, Thread 2043: XXXX 1728628240989, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241089 XXXX 1728628241089, Thread 2043: XXXX 1728628241089, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241090 XXXX 1728628241090, Thread 2043: XXXX 1728628241090, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241189 XXXX 1728628241189, Thread 2043: XXXX 1728628241189, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241190 XXXX 1728628241190, Thread 2043: XXXX 1728628241190, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241289 XXXX 1728628241289, Thread 2043: XXXX 1728628241289, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241290 XXXX 1728628241290, Thread 2043: XXXX 1728628241290, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241390 XXXX 1728628241390, Thread 2043: XXXX 1728628241390, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241391 XXXX 1728628241391, Thread 2043: XXXX 1728628241391, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241491 XXXX 1728628241491, Thread 2043: XXXX 1728628241491, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241492 XXXX 1728628241492, Thread 2043: XXXX 1728628241492, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241591 XXXX 1728628241591, Thread 2043: XXXX 1728628241591, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241592 XXXX 1728628241592, Thread 2043: XXXX 1728628241592, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241692 XXXX 1728628241692, Thread 2043: XXXX 1728628241692, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241693 XXXX 1728628241693, Thread 2043: XXXX 1728628241693, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241792 XXXX 1728628241792, Thread 2043: XXXX 1728628241792, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241793 XXXX 1728628241793, Thread 2043: XXXX 1728628241793, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241893 XXXX 1728628241893, Thread 2043: XXXX 1728628241893, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241894 XXXX 1728628241894, Thread 2043: XXXX 1728628241894, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628241994 XXXX 1728628241994, Thread 2043: XXXX 1728628241994, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628241994 XXXX 1728628241994, Thread 2043: XXXX 1728628241994, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242094 XXXX 1728628242094, Thread 2043: XXXX 1728628242094, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242095 XXXX 1728628242095, Thread 2043: XXXX 1728628242095, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242195 XXXX 1728628242195, Thread 2043: XXXX 1728628242195, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242196 XXXX 1728628242196, Thread 2043: XXXX 1728628242196, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242296 XXXX 1728628242296, Thread 2043: XXXX 1728628242296, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242297 XXXX 1728628242297, Thread 2043: XXXX 1728628242297, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242396 XXXX 1728628242396, Thread 2043: XXXX 1728628242396, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242397 XXXX 1728628242397, Thread 2043: XXXX 1728628242397, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242497 XXXX 1728628242497, Thread 2043: XXXX 1728628242497, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242498 XXXX 1728628242498, Thread 2043: XXXX 1728628242498, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242598 XXXX 1728628242598, Thread 2043: XXXX 1728628242598, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242599 XXXX 1728628242599, Thread 2043: XXXX 1728628242599, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242699 XXXX 1728628242699, Thread 2043: XXXX 1728628242699, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242700 XXXX 1728628242700, Thread 2043: XXXX 1728628242700, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242799 XXXX 1728628242799, Thread 2043: XXXX 1728628242799, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242800 XXXX 1728628242800, Thread 2043: XXXX 1728628242800, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628242900 XXXX 1728628242900, Thread 2043: XXXX 1728628242900, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628242900 XXXX 1728628242900, Thread 2043: XXXX 1728628242900, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243001 XXXX 1728628243001, Thread 2043: XXXX 1728628243001, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243002 XXXX 1728628243002, Thread 2043: XXXX 1728628243002, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243101 XXXX 1728628243101, Thread 2043: XXXX 1728628243101, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243102 XXXX 1728628243102, Thread 2043: XXXX 1728628243102, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243201 XXXX 1728628243201, Thread 2043: XXXX 1728628243201, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243202 XXXX 1728628243202, Thread 2043: XXXX 1728628243202, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243301 XXXX 1728628243301, Thread 2043: XXXX 1728628243301, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243302 XXXX 1728628243302, Thread 2043: XXXX 1728628243302, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243402 XXXX 1728628243402, Thread 2043: XXXX 1728628243402, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243403 XXXX 1728628243403, Thread 2043: XXXX 1728628243403, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243503 XXXX 1728628243503, Thread 2043: XXXX 1728628243503, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243503 XXXX 1728628243503, Thread 2043: XXXX 1728628243503, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243603 XXXX 1728628243603, Thread 2043: XXXX 1728628243603, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243604 XXXX 1728628243604, Thread 2043: XXXX 1728628243604, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243703 XXXX 1728628243703, Thread 2043: XXXX 1728628243703, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243704 XXXX 1728628243704, Thread 2043: XXXX 1728628243704, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243803 XXXX 1728628243803, Thread 2043: XXXX 1728628243803, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243804 XXXX 1728628243804, Thread 2043: XXXX 1728628243804, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628243904 XXXX 1728628243904, Thread 2043: XXXX 1728628243904, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628243905 XXXX 1728628243905, Thread 2043: XXXX 1728628243905, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244005 XXXX 1728628244005, Thread 2043: XXXX 1728628244005, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244006 XXXX 1728628244006, Thread 2043: XXXX 1728628244006, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244106 XXXX 1728628244106, Thread 2043: XXXX 1728628244106, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244107 XXXX 1728628244107, Thread 2043: XXXX 1728628244107, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244207 XXXX 1728628244207, Thread 2043: XXXX 1728628244207, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244208 XXXX 1728628244208, Thread 2043: XXXX 1728628244208, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244308 XXXX 1728628244308, Thread 2043: XXXX 1728628244308, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244309 XXXX 1728628244309, Thread 2043: XXXX 1728628244309, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244409 XXXX 1728628244409, Thread 2043: XXXX 1728628244409, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244410 XXXX 1728628244410, Thread 2043: XXXX 1728628244410, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244510 XXXX 1728628244510, Thread 2043: XXXX 1728628244510, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244510 XXXX 1728628244510, Thread 2043: XXXX 1728628244510, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244611 XXXX 1728628244611, Thread 2043: XXXX 1728628244611, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244611 XXXX 1728628244611, Thread 2043: XXXX 1728628244611, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244711 XXXX 1728628244711, Thread 2043: XXXX 1728628244711, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244712 XXXX 1728628244712, Thread 2043: XXXX 1728628244712, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244812 XXXX 1728628244812, Thread 2043: XXXX 1728628244812, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244812 XXXX 1728628244812, Thread 2043: XXXX 1728628244812, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628244913 XXXX 1728628244913, Thread 2043: XXXX 1728628244913, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628244914 XXXX 1728628244914, Thread 2043: XXXX 1728628244914, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245014 XXXX 1728628245014, Thread 2043: XXXX 1728628245014, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245015 XXXX 1728628245015, Thread 2043: XXXX 1728628245015, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245115 XXXX 1728628245115, Thread 2043: XXXX 1728628245115, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245116 XXXX 1728628245116, Thread 2043: XXXX 1728628245116, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245217 XXXX 1728628245217, Thread 2043: XXXX 1728628245217, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245218 XXXX 1728628245218, Thread 2043: XXXX 1728628245218, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245318 XXXX 1728628245318, Thread 2043: XXXX 1728628245318, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245319 XXXX 1728628245319, Thread 2043: XXXX 1728628245319, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245419 XXXX 1728628245419, Thread 2043: XXXX 1728628245419, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245420 XXXX 1728628245420, Thread 2043: XXXX 1728628245420, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245520 XXXX 1728628245520, Thread 2043: XXXX 1728628245520, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245521 XXXX 1728628245521, Thread 2043: XXXX 1728628245521, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245621 XXXX 1728628245621, Thread 2043: XXXX 1728628245621, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245622 XXXX 1728628245622, Thread 2043: XXXX 1728628245622, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245721 XXXX 1728628245721, Thread 2043: XXXX 1728628245721, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245722 XXXX 1728628245722, Thread 2043: XXXX 1728628245722, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245821 XXXX 1728628245821, Thread 2043: XXXX 1728628245821, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245822 XXXX 1728628245822, Thread 2043: XXXX 1728628245822, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628245922 XXXX 1728628245922, Thread 2043: XXXX 1728628245922, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628245922 XXXX 1728628245922, Thread 2043: XXXX 1728628245922, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246023 XXXX 1728628246023, Thread 2043: XXXX 1728628246023, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246024 XXXX 1728628246024, Thread 2043: XXXX 1728628246024, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246124 XXXX 1728628246124, Thread 2043: XXXX 1728628246124, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246125 XXXX 1728628246125, Thread 2043: XXXX 1728628246125, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246225 XXXX 1728628246225, Thread 2043: XXXX 1728628246225, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246226 XXXX 1728628246226, Thread 2043: XXXX 1728628246226, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246325 XXXX 1728628246325, Thread 2043: XXXX 1728628246325, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246326 XXXX 1728628246326, Thread 2043: XXXX 1728628246326, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246426 XXXX 1728628246426, Thread 2043: XXXX 1728628246426, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246427 XXXX 1728628246427, Thread 2043: XXXX 1728628246427, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246527 XXXX 1728628246527, Thread 2043: XXXX 1728628246527, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246528 XXXX 1728628246528, Thread 2043: XXXX 1728628246528, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246627 XXXX 1728628246627, Thread 2043: XXXX 1728628246627, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246628 XXXX 1728628246628, Thread 2043: XXXX 1728628246628, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246727 XXXX 1728628246727, Thread 2043: XXXX 1728628246727, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246727 XXXX 1728628246727, Thread 2043: XXXX 1728628246727, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246829 XXXX 1728628246829, Thread 2043: XXXX 1728628246829, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246830 XXXX 1728628246830, Thread 2043: XXXX 1728628246830, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628246930 XXXX 1728628246930, Thread 2043: XXXX 1728628246930, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628246931 XXXX 1728628246931, Thread 2043: XXXX 1728628246931, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247031 XXXX 1728628247031, Thread 2043: XXXX 1728628247031, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247032 XXXX 1728628247032, Thread 2043: XXXX 1728628247032, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247132 XXXX 1728628247132, Thread 2043: XXXX 1728628247132, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247133 XXXX 1728628247133, Thread 2043: XXXX 1728628247133, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247232 XXXX 1728628247232, Thread 2043: XXXX 1728628247232, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247233 XXXX 1728628247233, Thread 2043: XXXX 1728628247233, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247333 XXXX 1728628247333, Thread 2043: XXXX 1728628247333, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247334 XXXX 1728628247334, Thread 2043: XXXX 1728628247334, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247433 XXXX 1728628247433, Thread 2043: XXXX 1728628247433, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247434 XXXX 1728628247434, Thread 2043: XXXX 1728628247434, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247533 XXXX 1728628247533, Thread 2043: XXXX 1728628247533, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247534 XXXX 1728628247534, Thread 2043: XXXX 1728628247534, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247634 XXXX 1728628247634, Thread 2043: XXXX 1728628247634, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247635 XXXX 1728628247635, Thread 2043: XXXX 1728628247635, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247735 XXXX 1728628247735, Thread 2043: XXXX 1728628247735, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247736 XXXX 1728628247736, Thread 2043: XXXX 1728628247736, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247836 XXXX 1728628247836, Thread 2043: XXXX 1728628247836, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247837 XXXX 1728628247837, Thread 2043: XXXX 1728628247837, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628247937 XXXX 1728628247937, Thread 2043: XXXX 1728628247937, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628247938 XXXX 1728628247938, Thread 2043: XXXX 1728628247938, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248038 XXXX 1728628248038, Thread 2043: XXXX 1728628248038, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248039 XXXX 1728628248039, Thread 2043: XXXX 1728628248039, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248140 XXXX 1728628248140, Thread 2043: XXXX 1728628248140, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248140 XXXX 1728628248140, Thread 2043: XXXX 1728628248140, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248241 XXXX 1728628248241, Thread 2043: XXXX 1728628248241, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248242 XXXX 1728628248242, Thread 2043: XXXX 1728628248242, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248341 XXXX 1728628248341, Thread 2043: XXXX 1728628248341, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248342 XXXX 1728628248342, Thread 2043: XXXX 1728628248342, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248442 XXXX 1728628248442, Thread 2043: XXXX 1728628248442, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248443 XXXX 1728628248443, Thread 2043: XXXX 1728628248443, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248543 XXXX 1728628248543, Thread 2043: XXXX 1728628248543, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248544 XXXX 1728628248544, Thread 2043: XXXX 1728628248544, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248644 XXXX 1728628248644, Thread 2043: XXXX 1728628248644, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248645 XXXX 1728628248645, Thread 2043: XXXX 1728628248645, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248745 XXXX 1728628248745, Thread 2043: XXXX 1728628248745, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248746 XXXX 1728628248746, Thread 2043: XXXX 1728628248746, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248845 XXXX 1728628248845, Thread 2043: XXXX 1728628248845, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248846 XXXX 1728628248846, Thread 2043: XXXX 1728628248846, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628248946 XXXX 1728628248946, Thread 2043: XXXX 1728628248946, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628248947 XXXX 1728628248947, Thread 2043: XXXX 1728628248947, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249047 XXXX 1728628249047, Thread 2043: XXXX 1728628249047, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249048 XXXX 1728628249048, Thread 2043: XXXX 1728628249048, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249148 XXXX 1728628249148, Thread 2043: XXXX 1728628249148, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249149 XXXX 1728628249149, Thread 2043: XXXX 1728628249149, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249249 XXXX 1728628249249, Thread 2043: XXXX 1728628249249, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249250 XXXX 1728628249250, Thread 2043: XXXX 1728628249250, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249351 XXXX 1728628249351, Thread 2043: XXXX 1728628249351, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249352 XXXX 1728628249352, Thread 2043: XXXX 1728628249352, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249453 XXXX 1728628249453, Thread 2043: XXXX 1728628249453, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249453 XXXX 1728628249453, Thread 2043: XXXX 1728628249453, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249554 XXXX 1728628249554, Thread 2043: XXXX 1728628249554, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249554 XXXX 1728628249554, Thread 2043: XXXX 1728628249554, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249654 XXXX 1728628249654, Thread 2043: XXXX 1728628249654, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249655 XXXX 1728628249655, Thread 2043: XXXX 1728628249655, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249755 XXXX 1728628249755, Thread 2043: XXXX 1728628249755, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249756 XXXX 1728628249756, Thread 2043: XXXX 1728628249756, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249856 XXXX 1728628249856, Thread 2043: XXXX 1728628249856, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249857 XXXX 1728628249857, Thread 2043: XXXX 1728628249857, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628249957 XXXX 1728628249957, Thread 2043: XXXX 1728628249957, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628249958 XXXX 1728628249958, Thread 2043: XXXX 1728628249958, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250059 XXXX 1728628250059, Thread 2043: XXXX 1728628250059, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250059 XXXX 1728628250059, Thread 2043: XXXX 1728628250059, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250160 XXXX 1728628250160, Thread 2043: XXXX 1728628250160, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250162 XXXX 1728628250162, Thread 2043: XXXX 1728628250162, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250260 XXXX 1728628250260, Thread 2043: XXXX 1728628250260, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250261 XXXX 1728628250261, Thread 2043: XXXX 1728628250261, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250361 XXXX 1728628250361, Thread 2043: XXXX 1728628250361, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250362 XXXX 1728628250362, Thread 2043: XXXX 1728628250362, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250462 XXXX 1728628250462, Thread 2043: XXXX 1728628250462, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250463 XXXX 1728628250463, Thread 2043: XXXX 1728628250463, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250563 XXXX 1728628250563, Thread 2043: XXXX 1728628250563, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250564 XXXX 1728628250564, Thread 2043: XXXX 1728628250564, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250664 XXXX 1728628250664, Thread 2043: XXXX 1728628250664, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250665 XXXX 1728628250665, Thread 2043: XXXX 1728628250665, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250765 XXXX 1728628250765, Thread 2043: XXXX 1728628250765, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250766 XXXX 1728628250766, Thread 2043: XXXX 1728628250766, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250867 XXXX 1728628250867, Thread 2043: XXXX 1728628250867, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250867 XXXX 1728628250867, Thread 2043: XXXX 1728628250867, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628250968 XXXX 1728628250968, Thread 2043: XXXX 1728628250968, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628250970 XXXX 1728628250970, Thread 2043: XXXX 1728628250970, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251068 XXXX 1728628251068, Thread 2043: XXXX 1728628251068, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251069 XXXX 1728628251069, Thread 2043: XXXX 1728628251069, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251169 XXXX 1728628251169, Thread 2043: XXXX 1728628251169, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251170 XXXX 1728628251170, Thread 2043: XXXX 1728628251170, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251270 XXXX 1728628251270, Thread 2043: XXXX 1728628251270, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251271 XXXX 1728628251271, Thread 2043: XXXX 1728628251271, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251370 XXXX 1728628251370, Thread 2043: XXXX 1728628251370, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251371 XXXX 1728628251371, Thread 2043: XXXX 1728628251371, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251471 XXXX 1728628251471, Thread 2043: XXXX 1728628251471, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251473 XXXX 1728628251473, Thread 2043: XXXX 1728628251473, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251571 XXXX 1728628251571, Thread 2043: XXXX 1728628251571, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251572 XXXX 1728628251572, Thread 2043: XXXX 1728628251572, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251673 XXXX 1728628251673, Thread 2043: XXXX 1728628251673, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251673 XXXX 1728628251673, Thread 2043: XXXX 1728628251673, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251774 XXXX 1728628251774, Thread 2043: XXXX 1728628251774, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251775 XXXX 1728628251775, Thread 2043: XXXX 1728628251775, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251875 XXXX 1728628251875, Thread 2043: XXXX 1728628251875, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251876 XXXX 1728628251876, Thread 2043: XXXX 1728628251876, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628251976 XXXX 1728628251976, Thread 2043: XXXX 1728628251976, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628251977 XXXX 1728628251977, Thread 2043: XXXX 1728628251977, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252077 XXXX 1728628252077, Thread 2043: XXXX 1728628252077, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252078 XXXX 1728628252078, Thread 2043: XXXX 1728628252078, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252178 XXXX 1728628252178, Thread 2043: XXXX 1728628252178, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252180 XXXX 1728628252180, Thread 2043: XXXX 1728628252180, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252279 XXXX 1728628252279, Thread 2043: XXXX 1728628252279, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252279 XXXX 1728628252279, Thread 2043: XXXX 1728628252279, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252380 XXXX 1728628252380, Thread 2043: XXXX 1728628252380, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252381 XXXX 1728628252381, Thread 2043: XXXX 1728628252381, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252481 XXXX 1728628252481, Thread 2043: XXXX 1728628252481, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252482 XXXX 1728628252482, Thread 2043: XXXX 1728628252482, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252582 XXXX 1728628252582, Thread 2043: XXXX 1728628252582, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252583 XXXX 1728628252583, Thread 2043: XXXX 1728628252583, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252683 XXXX 1728628252683, Thread 2043: XXXX 1728628252683, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252685 XXXX 1728628252685, Thread 2043: XXXX 1728628252685, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252784 XXXX 1728628252784, Thread 2043: XXXX 1728628252784, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252785 XXXX 1728628252785, Thread 2043: XXXX 1728628252785, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252884 XXXX 1728628252884, Thread 2043: XXXX 1728628252884, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252885 XXXX 1728628252885, Thread 2043: XXXX 1728628252885, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628252985 XXXX 1728628252985, Thread 2043: XXXX 1728628252985, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628252986 XXXX 1728628252986, Thread 2043: XXXX 1728628252986, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253086 XXXX 1728628253086, Thread 2043: XXXX 1728628253086, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253087 XXXX 1728628253087, Thread 2043: XXXX 1728628253087, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253187 XXXX 1728628253187, Thread 2043: XXXX 1728628253187, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253188 XXXX 1728628253188, Thread 2043: XXXX 1728628253188, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253288 XXXX 1728628253288, Thread 2043: XXXX 1728628253288, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253289 XXXX 1728628253289, Thread 2043: XXXX 1728628253289, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253389 XXXX 1728628253389, Thread 2043: XXXX 1728628253389, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253389 XXXX 1728628253389, Thread 2043: XXXX 1728628253389, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253491 XXXX 1728628253491, Thread 2043: XXXX 1728628253491, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253491 XXXX 1728628253491, Thread 2043: XXXX 1728628253491, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253593 XXXX 1728628253593, Thread 2043: XXXX 1728628253593, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253594 XXXX 1728628253594, Thread 2043: XXXX 1728628253594, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253693 XXXX 1728628253693, Thread 2043: XXXX 1728628253693, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253694 XXXX 1728628253694, Thread 2043: XXXX 1728628253694, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253794 XXXX 1728628253794, Thread 2043: XXXX 1728628253794, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253795 XXXX 1728628253795, Thread 2043: XXXX 1728628253795, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253895 XXXX 1728628253895, Thread 2043: XXXX 1728628253895, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253896 XXXX 1728628253896, Thread 2043: XXXX 1728628253896, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628253996 XXXX 1728628253996, Thread 2043: XXXX 1728628253996, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628253997 XXXX 1728628253997, Thread 2043: XXXX 1728628253997, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254097 XXXX 1728628254097, Thread 2043: XXXX 1728628254097, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254098 XXXX 1728628254098, Thread 2043: XXXX 1728628254098, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254197 XXXX 1728628254197, Thread 2043: XXXX 1728628254197, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254198 XXXX 1728628254198, Thread 2043: XXXX 1728628254198, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254298 XXXX 1728628254298, Thread 2043: XXXX 1728628254298, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254299 XXXX 1728628254299, Thread 2043: XXXX 1728628254299, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254399 XXXX 1728628254399, Thread 2043: XXXX 1728628254399, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254400 XXXX 1728628254400, Thread 2043: XXXX 1728628254400, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254500 XXXX 1728628254500, Thread 2043: XXXX 1728628254500, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254500 XXXX 1728628254500, Thread 2043: XXXX 1728628254500, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254600 XXXX 1728628254600, Thread 2043: XXXX 1728628254600, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254601 XXXX 1728628254601, Thread 2043: XXXX 1728628254601, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254701 XXXX 1728628254701, Thread 2043: XXXX 1728628254701, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254702 XXXX 1728628254702, Thread 2043: XXXX 1728628254702, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254802 XXXX 1728628254802, Thread 2043: XXXX 1728628254802, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254803 XXXX 1728628254803, Thread 2043: XXXX 1728628254803, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628254903 XXXX 1728628254903, Thread 2043: XXXX 1728628254903, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628254904 XXXX 1728628254904, Thread 2043: XXXX 1728628254904, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255004 XXXX 1728628255004, Thread 2043: XXXX 1728628255004, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255006 XXXX 1728628255005, Thread 2043: XXXX 1728628255005, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255105 XXXX 1728628255105, Thread 2043: XXXX 1728628255105, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255106 XXXX 1728628255106, Thread 2043: XXXX 1728628255106, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255205 XXXX 1728628255205, Thread 2043: XXXX 1728628255205, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255206 XXXX 1728628255206, Thread 2043: XXXX 1728628255206, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255306 XXXX 1728628255306, Thread 2043: XXXX 1728628255306, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255307 XXXX 1728628255307, Thread 2043: XXXX 1728628255307, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255407 XXXX 1728628255407, Thread 2043: XXXX 1728628255407, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255408 XXXX 1728628255408, Thread 2043: XXXX 1728628255408, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255509 XXXX 1728628255509, Thread 2043: XXXX 1728628255509, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255510 XXXX 1728628255510, Thread 2043: XXXX 1728628255510, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255610 XXXX 1728628255610, Thread 2043: XXXX 1728628255610, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255610 XXXX 1728628255610, Thread 2043: XXXX 1728628255610, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255710 XXXX 1728628255710, Thread 2043: XXXX 1728628255710, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255711 XXXX 1728628255711, Thread 2043: XXXX 1728628255711, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255810 XXXX 1728628255810, Thread 2043: XXXX 1728628255810, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255811 XXXX 1728628255811, Thread 2043: XXXX 1728628255811, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628255911 XXXX 1728628255911, Thread 2043: XXXX 1728628255911, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628255911 XXXX 1728628255911, Thread 2043: XXXX 1728628255911, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628256012 XXXX 1728628256012, Thread 2043: XXXX 1728628256012, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628256012 XXXX 1728628256012, Thread 2043: XXXX 1728628256012, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628256113 XXXX 1728628256113, Thread 2043: XXXX 1728628256113, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628256114 XXXX 1728628256114, Thread 2043: XXXX 1728628256114, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628256214 XXXX 1728628256214, Thread 2043: XXXX 1728628256214, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628256215 XXXX 1728628256215, Thread 2043: XXXX 1728628256215, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628256314 XXXX 1728628256314, Thread 2043: XXXX 1728628256314, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628256314 XXXX 1728628256314, Thread 2043: XXXX 1728628256314, Exiting Thread 2043: Commands::runScriptBasic  
+2043 1728628256415 XXXX 1728628256415, Thread 2043: XXXX 1728628256415, Entering Thread 2043: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+2043 1728628267757 XXXX 1728628267757, Thread 2043: com.Send returned false 
+2043 1728628267758 XXXX 1728628267758, Thread 2043: transfer: exception after writeHeaderAndGetResult null 
+2043 1728628267758 XXXX 1728628267758, Thread 2043: XXXX 1728628267758, Entering Thread 2043: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
+2043 1728628267759 XXXX 1728628267759, Thread 2043: Send Abort Script Engine Command 
+2043 1728628267759 XXXX 1728628267759, Thread 2043: XXXX 1728628267759, Entering Thread 2043: ToolCommUsb::killScriptEngine  
+2043 1728628267827 XXXX 1728628267827, Thread 2043: com.Send returned false 
+2043 1728628267827 XXXX 1728628267827, Thread 2043: Failed sending Abort Script Engine Command. Set nuclear option = true 
+2043 1728628267827 XXXX 1728628267827, Thread 2043: About to nuke 
+2043 1728628267827 XXXX 1728628267827, Thread 2043: XXXX 1728628267827, Entering Thread 2043: ToolCommUsb::nuclearOption  
+2043 1728628267827 XXXX 1728628267827, Thread 2043: com.Send returned false 
