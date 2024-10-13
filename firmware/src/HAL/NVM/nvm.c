@@ -3,7 +3,7 @@
 
 #define UNUSED(x) (void)(x)
 
-static bool gNvmOperationDone=false;
+volatile static bool gNvmOperationDone=false;
 
 static void NvmEventHandler(uintptr_t context)
 {
