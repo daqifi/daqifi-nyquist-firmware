@@ -66,9 +66,11 @@ void GPIO_Initialize ( void )
 {
 
     /* PORTA Initialization */
+    ODCASET = 0xcU; /* Open Drain Enable */
     LATA = 0x0U; /* Initial Latch Value */
     TRISACLR = 0x20U; /* Direction Control */
     ANSELACLR = 0x20U; /* Digital Mode Enable */
+    CNPUASET = 0xcU; /* Pull-Up Enable */
 
     /* Change Notice Enable */
     CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK;
