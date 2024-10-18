@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 //TODO(Daqifi): Relocate for proper place
-
+    
 /**
  * SCPI Callback: Get the Enabled/Disabled status of LAN
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
@@ -78,6 +78,18 @@ scpi_result_t SCPI_LANGatewaySet(scpi_t * context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMacGet(scpi_t * context);
+
+/**
+ * SCPI Callback: Set the hostname address of the device
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHostnameGet(scpi_t * context);
+
+/**
+ * SCPI Callback: Set the hostname address of the device
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+//scpi_result_t SCPI_LANHostnameSet(scpi_t * context);
 
 /**
  * SCPI Callback: Set the ssid address of the device

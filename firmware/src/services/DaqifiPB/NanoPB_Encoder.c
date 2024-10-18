@@ -1000,7 +1000,12 @@ size_t Nanopb_Encode(tBoardData* state,
 
             case DaqifiOutMessage_host_name_tag:
             {
-                message.has_host_name = false;
+                message.has_host_name = true;
+                
+                WifiSettings* wifiSettings = &state->wifiSettings;
+                size_t len = min(strlen(wifiSettings->hostName), DNS_CLIENT_MAX_HOSTNAME_LEN);
+                memcpy(message.host_name, wifiSettings->hostName, len);
+                message.host_name[len] = '\0';
                 break;
             }
             case DaqifiOutMessage_device_port_tag:
@@ -1037,9 +1042,9 @@ size_t Nanopb_Encode(tBoardData* state,
             }
             case DaqifiOutMessage_wifi_inf_mode_tag:
             {
-                message.has_wifi_inf_mode = false;
-                //WifiSettings* wifiSettings = &state->wifiSettings.settings.wifi;
-                //message.wifi_inf_mode = wifiSettings->networkType;
+                message.has_wifi_inf_mode = true;
+                WifiSettings* wifiSettings = &state->wifiSettings;
+                message.wifi_inf_mode = wifiSettings->networkMode;
                 break;
             }
             case DaqifiOutMessage_av_ssid_tag:

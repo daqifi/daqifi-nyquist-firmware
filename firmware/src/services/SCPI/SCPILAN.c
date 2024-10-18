@@ -353,17 +353,40 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
     }
 
     switch (param1) {
-        case WDRV_WINC_AUTH_TYPE_OPEN: // 1
+        case WIFI_API_SEC_OPEN: // DAQiFi defines 0 = SECURITY_OPEN
+            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_OPEN;
             break;
-        case WDRV_WINC_AUTH_TYPE_WPA_PSK: // 2
+        case WIFI_API_SEC_WEP_40: // DAQiFi defines 1 = WEP_40 which is now deprecated
+            return SCPI_RES_ERR;
             break;
-            //    case WDRV_WINC_AUTH_TYPE_802_1X:   // 4 - keep for backwards compatibility with MRF series modules
-            //        break;
+        case WIFI_API_SEC_WEP_104: // DAQiFi defines 2 = WEP_104 which is now deprecated
+            return SCPI_RES_ERR;
+            break;
+        case WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE: // DAQiFi defines 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
+        case WIFI_API_SEC_WPA_DEPRECATED:  //DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
+            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE;
+            break;
+        case WIFI_API_SEC_802_1X: // DAQiFi defines 5 = WDRV_WINC_AUTH_TYPE_802_1X
+            return SCPI_RES_ERR;    // Not currently implemented
+            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_802_1X;
+            break;
+        case WIFI_API_SEC_802_1X_MSCHAPV2: // DAQiFi defines 6 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
+            return SCPI_RES_ERR;    // Not currently implemented
+            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_802_1X_MSCHAPV2;            
+            break;
+        case WIFI_API_SEC_WPS_PUSH_BUTTON: // DAQiFi defines 7 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
+            return SCPI_RES_ERR;
+        case WIFI_API_SEC_WPS_PIN: // DAQiFi defines 8 = SECURITY_WPS_PIN which is now deprecated
+            return SCPI_RES_ERR;            
+        case WIFI_API_SEC_802_1X_TLS: // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
+            return SCPI_RES_ERR;    // Not currently implemented
+            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_802_1X_TLS;            
+            break;
+
         default:
             return SCPI_RES_ERR;
     }
 
-    pRunTimeWifiSettings->securityMode = (uint8_t) param1;
     return SCPI_RES_OK;
 }
 
@@ -383,10 +406,9 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context) {
 
     // TODO: Additional validation (length?))
     switch (pRunTimeWifiSettings->securityMode) {
-        case WDRV_WINC_AUTH_TYPE_WPA_PSK:
-            //    case WDRV_WINC_AUTH_TYPE_802_1X:
+        case WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE:
             break;
-        case WDRV_WINC_AUTH_TYPE_OPEN: // No Key
+        case WIFI_API_SEC_OPEN: // No Key
         default:
             return SCPI_RES_ERR;
     }
@@ -497,13 +519,12 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
 //    return SCPI_RES_OK;
 //}
 
-//scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
-//{
-//    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
-//                        BOARDDATA_WIFI_SETTINGS,                            
-//                        0); 
-//    return SCPI_LANStringGetImpl(context, pWifiSettings->settings.wifi.hostName);
-//}
+scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
+{
+    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+        BOARDRUNTIME_WIFI_SETTINGS);
+    return SCPI_LANStringGetImpl(context, pRunTimeWifiSettings->hostName);
+}
 //
 //scpi_result_t SCPI_LANHostnameSet(scpi_t * context)
 //{
