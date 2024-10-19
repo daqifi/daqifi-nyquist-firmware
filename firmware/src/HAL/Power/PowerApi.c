@@ -256,7 +256,7 @@ static void Power_Up(void) {
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
     pData->powerState = POWERED_UP;
-
+    pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
 }
 
 void Power_Down(void) {
@@ -277,7 +277,7 @@ void Power_Down(void) {
 
 
     pData->powerState = MICRO_ON; // Set back to default state
-    pData->requestedPowerState = NO_CHANGE;
+    pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
 
     // Delay 1000ms for power to discharge
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -296,8 +296,6 @@ static void Power_UpdateState(void) {
             // Check to see if we've finished signaling the user of insufficient power if necessary
             if (pData->powerDnAllowed == true) {
                 Power_Down();
-                // Reset the requested power state after handling request
-                pData->requestedPowerState = NO_CHANGE;
             }
             break;
 
@@ -314,14 +312,12 @@ static void Power_UpdateState(void) {
                         pData->BQ24297Data.status.pgStat) // If batt voltage is greater than VSYSMIN or power is good, we can power up
                 {
                     Power_Up();
-                    // Reset the requested power state after handling request
-                    pData->requestedPowerState = NO_CHANGE;
                 } else {
                     // Otherwise insufficient power.  Notify user and power down
-                    pData->powerDnAllowed = false; // This will turn true after the LED sequence completes
+                    pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
                     pData->powerState = POWERED_DOWN;
                 }
-
+                pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state after handling request
             }
             break;
 
@@ -329,6 +325,7 @@ static void Power_UpdateState(void) {
             /* Board fully powered. Monitor for any changes/faults
              * ADC readings are now valid!
              */
+            if (pData->requestedPowerState == DO_POWER_UP) pData->requestedPowerState = NO_CHANGE; // We are already powered so just reset the flag
             Power_UpdateChgPct();
             if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN ||
                     (pData->chargePct < BATT_LOW_TH &&
