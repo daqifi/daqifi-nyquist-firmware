@@ -157,7 +157,7 @@ static void app_WifiTask(void* p_arg) {
     WifiApi_Init(&gpBoardData->wifiSettings);
     while (1) {
         WifiApi_ProcessState();
-        vTaskDelay(5 / portTICK_PERIOD_MS);
+       
     }
 }
 

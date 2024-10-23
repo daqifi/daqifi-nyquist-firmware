@@ -458,7 +458,13 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
             pRunTimeWifiSettings);
     return SCPI_RES_OK;
 }
-
+scpi_result_t SCPI_LANFwUpdate(scpi_t * context){
+    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    
+    pRunTimeWifiSettings->isOtaModeEnabled=true;
+    return SCPI_RES_OK;
+}
 //scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context)
 //{
 //    uint8_t index = 0;

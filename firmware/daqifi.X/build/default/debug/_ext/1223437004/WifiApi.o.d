@@ -183,7 +183,9 @@ build/default/debug/_ext/1223437004/WifiApi.o: \
  ../src/state/data/AInSample.h ../src/Util/HeapList.h \
  ../src/Util/LockProvider.h ../src/state/data/../board/AInConfig.h \
  ../src/state/data/DIOSample.h ../src/HAL/Power/PowerApi.h \
- ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h
+ ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
+ ../src/services/Wifi/wifiSerialBridge.h \
+ ../src/services/Wifi/wifiSerailBrideIntf.h
 
 ../src/services/Wifi/WifiApi.h:
 
@@ -572,3 +574,7 @@ build/default/debug/_ext/1223437004/WifiApi.o: \
 ../src/HAL/BQ24297/BQ24297.h:
 
 ../src/HAL/UI/UI.h:
+
+../src/services/Wifi/wifiSerialBridge.h:
+
+../src/services/Wifi/wifiSerailBrideIntf.h:

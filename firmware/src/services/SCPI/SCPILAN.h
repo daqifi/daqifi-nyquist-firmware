@@ -122,6 +122,8 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context);
  */
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
 
+scpi_result_t SCPI_LANFwUpdate(scpi_t * context);
+
 //scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context);
 //
 ///**

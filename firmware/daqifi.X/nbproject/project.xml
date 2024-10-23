@@ -10,6 +10,7 @@
             <make-dep-projects/>
             <sourceRootList>
                 <sourceRootElem>../src</sourceRootElem>
+                <sourceRootElem>../../../winc_fw_update/firmware/src/services/serial_bridge</sourceRootElem>
             </sourceRootList>
             <confList>
                 <confElem>

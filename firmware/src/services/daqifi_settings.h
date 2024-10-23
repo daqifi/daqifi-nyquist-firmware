@@ -108,7 +108,10 @@ extern "C" {
          * Toggles the power mode
          */
         bool isEnabled;
-
+        /**
+         * this is true is ota mode is enabled
+         */
+        bool isOtaModeEnabled;
         /**
          * One of:
          * WIFI_API_NETWORK_MODE_AP = 0,

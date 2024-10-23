@@ -3467,7 +3467,7 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
             if( listCURRENT_LIST_LENGTH( &( pxReadyTasksLists[ tskIDLE_PRIORITY ] ) ) > ( UBaseType_t ) 1 )
             {
                 taskYIELD();
-            }
+            } 
             else
             {
                 mtCOVERAGE_TEST_MARKER();

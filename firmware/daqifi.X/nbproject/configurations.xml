@@ -398,6 +398,8 @@
         <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
           <itemPath>../src/services/Wifi/tcpServer.h</itemPath>
           <itemPath>../src/services/Wifi/WifiApi.h</itemPath>
+          <itemPath>../src/services/Wifi/wifiSerailBrideIntf.h</itemPath>
+          <itemPath>../src/services/Wifi/wifiSerialBridge.h</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.h</itemPath>
         <itemPath>../src/services/streaming.h</itemPath>
@@ -908,6 +910,8 @@
         <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
           <itemPath>../src/services/Wifi/tcpServer.c</itemPath>
           <itemPath>../src/services/Wifi/WifiApi.c</itemPath>
+          <itemPath>../src/services/Wifi/wifiSerialBridgeIntf.c</itemPath>
+          <itemPath>../src/services/Wifi/wifiSerialBridge.c</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.c</itemPath>
         <itemPath>../src/services/streaming.c</itemPath>
@@ -1065,6 +1069,7 @@
   </logicalFolder>
   <sourceRootList>
     <Elem>../src</Elem>
+    <Elem>../../../winc_fw_update/firmware/src/services/serial_bridge</Elem>
   </sourceRootList>
   <projectmakefile>Makefile</projectmakefile>
   <confs>

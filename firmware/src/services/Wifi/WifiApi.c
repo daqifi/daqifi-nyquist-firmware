@@ -3,6 +3,8 @@
 #include "Util/Logger.h"
 #include "tcpServer.h"
 #include "state/data/BoardData.h"
+#include "wifiSerialBridge.h"
+#include "wifiSerailBrideIntf.h"
 
 #define UNUSED(x) (void)(x)
 #define UDP_LISTEN_PORT         (uint16_t)30303
@@ -11,12 +13,15 @@ typedef enum {
     WIFIAPI_CONSUMED_EVENT_ENTRY,
     WIFIAPI_CONSUMED_EVENT_EXIT,
     WIFIAPI_CONSUMED_EVENT_INIT,
+    WIFIAPI_CONSUMED_EVENT_OTA_MODE_INIT,
+    WIFIAPI_CONSUMED_EVENT_OTA_MODE_READY,
     WIFIAPI_CONSUMED_EVENT_REINIT,
     WIFIAPI_CONSUMED_EVENT_DEINIT,
     WIFIAPI_CONSUMED_EVENT_STA_CONNECTED,
     WIFIAPI_CONSUMED_EVENT_STA_DISCONNECTED,
     WIFIAPI_CONSUMED_EVENT_UDP_SOCKET_CONNECTED,
     WIFIAPI_CONSUMED_EVENT_ERROR,
+
 
     //    WIFIAPI_TASK_STATE_IDLE,
     //    WIFIAPI_TASK_STATE_INIT,
@@ -36,6 +41,7 @@ typedef struct {
         WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN = 1 << 4,
         WIFIAPI_EVENT_FLAG_UDP_SOCKET_CONNECTED = 1 << 5,
         WIFIAPI_EVENT_FLAG_TCP_SOCKET_CONNECTED = 1 << 6,
+        WIFIAPI_EVENT_FLAG_OTA_MODE_READY = 1 << 7,
     } flag;
     uint16_t value;
 } wifiApi_eventFlagState_t;
@@ -60,6 +66,7 @@ struct stateMachineInst {
     TcpServerData *pTcpServerData;
     WDRV_WINC_BSS_CONTEXT bssCtx;
     WDRV_WINC_AUTH_CONTEXT authCtx;
+    WIFI_SERIAL_BRIDGE_DECODER_STATE serialBridgeDecodeState;
 };
 //===============Private Function Declrations================
 static void __attribute__((unused)) SetEventFlag(wifiApi_eventFlagState_t *pEventFlagState, uint16_t flag);
@@ -290,20 +297,42 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
     WifiApi_eventStatus_t returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
     switch (event) {
         case WIFIAPI_CONSUMED_EVENT_ENTRY:
-            returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;            
+            returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
             pInstance->pTcpServerData = &gTcpServerData; //TODO(Daqifi): Remove from there here
             TcpServer_Initialize(pInstance->pTcpServerData);
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
-            if (pInstance->pWifiSettings->isEnabled)
-                SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
+            if (pInstance->pWifiSettings->isEnabled) {
+                if (pInstance->pWifiSettings->isOtaModeEnabled)
+                    SendEvent(WIFIAPI_CONSUMED_EVENT_OTA_MODE_INIT);
+                else
+                    SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
+            }
+            break;
+        case WIFIAPI_CONSUMED_EVENT_OTA_MODE_INIT:
+            returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                SendEvent(WIFIAPI_CONSUMED_EVENT_OTA_MODE_INIT);
+                break;
+            }
+            sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
+            SendEvent(WIFIAPI_CONSUMED_EVENT_OTA_MODE_READY);
+        case WIFIAPI_CONSUMED_EVENT_OTA_MODE_READY:
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                SendEvent(WIFIAPI_CONSUMED_EVENT_OTA_MODE_INIT);
+                break;
+            }
+            wifiSerialBridge_Init(&pInstance->serialBridgeDecodeState);
+            SetEventFlag(&pInstance->eventFlags, WIFIAPI_EVENT_FLAG_OTA_MODE_READY);            
             break;
         case WIFIAPI_CONSUMED_EVENT_INIT:
             returnStatus = WIFIAPI_EVENT_STATUS_HANDLED;
+
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
                 sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
             }
+
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_READY) {
                 //wait for initialization to complete 
                 SendEvent(WIFIAPI_CONSUMED_EVENT_INIT);
@@ -426,8 +455,14 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
             SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
             break;
         case WIFIAPI_CONSUMED_EVENT_REINIT:
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                SendEvent(WIFIAPI_CONSUMED_EVENT_REINIT);
+                break;
+            }
             returnStatus = WIFIAPI_EVENT_STATUS_TRAN;
             pInstance->nextState = MainState;
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_OTA_MODE_READY))
+                wifiSerialBridgeIntf_DeInit();
             if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
             if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN))
@@ -440,8 +475,14 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
 
             break;
         case WIFIAPI_CONSUMED_EVENT_DEINIT:
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                SendEvent(WIFIAPI_CONSUMED_EVENT_REINIT);
+                break;
+            }
             returnStatus = WIFIAPI_EVENT_STATUS_TRAN;
             pInstance->nextState = MainState;
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_OTA_MODE_READY))
+                wifiSerialBridgeIntf_DeInit();
             if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
             if (GetEventFlagStatus(pInstance->eventFlags, WIFIAPI_EVENT_FLAG_TCP_SOCKET_OPEN))
@@ -489,11 +530,12 @@ bool WifiApi_Init(WifiSettings * pSettings) {
     else return true;
     if (pSettings != NULL)
         gStateMachineData.pWifiSettings = pSettings;
-
+    gStateMachineData.pWifiSettings->isOtaModeEnabled = false;
     gStateMachineData.pWifiSettings->isEnabled = 1;
     gStateMachineData.active = MainState;
     gStateMachineData.active(&gStateMachineData, WIFIAPI_CONSUMED_EVENT_ENTRY);
     gStateMachineData.nextState = NULL;
+
     return true;
 }
 
@@ -542,7 +584,11 @@ void WifiApi_ProcessState() {
     while (gEventQH == NULL) {
         return;
     }
-    TcpServer_ProcessSendBuffer();
+    if (GetEventFlagStatus(gStateMachineData.eventFlags, WIFIAPI_EVENT_FLAG_OTA_MODE_READY)) {
+        wifiSerialBridge_Process(&gStateMachineData.serialBridgeDecodeState);
+    } else {
+        TcpServer_ProcessSendBuffer();
+    }
     if (xQueueReceive(gEventQH, &event, 1) != pdPASS) {
         return;
     }
@@ -557,6 +603,7 @@ void WifiApi_ProcessState() {
         }
     }
 }
-TcpServerData* WifiApi_GetTcpServerData(){
+
+TcpServerData* WifiApi_GetTcpServerData() {
     return gStateMachineData.pTcpServerData;
 }
