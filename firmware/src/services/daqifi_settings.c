@@ -85,12 +85,13 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             strncpy(wifi->ssid, DEFAULT_WIFI_AP_SSID, strlen(DEFAULT_WIFI_AP_SSID) + 1);
             wifi->ssid[WDRV_WINC_MAX_SSID_LEN] = '\0';
             wifi->securityMode = DEFAULT_WIFI_AP_SECURITY_MODE;
+            strncpy(wifi->hostName, DEFAULT_NETWORK_HOST_NAME, strlen(DEFAULT_NETWORK_HOST_NAME) + 1);
             switch (wifi->securityMode) {
-                case WDRV_WINC_AUTH_TYPE_WPA_PSK:
+                case WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE:
                     strncpy((char*) wifi->passKey, DEFAULT_WIFI_WPA_PSK_PASSKEY, strlen(DEFAULT_WIFI_WPA_PSK_PASSKEY) + 1);
                     wifi->ssid[WDRV_WINC_PSK_LEN] = '\0';
                     break;
-                case WDRV_WINC_AUTH_TYPE_OPEN:
+                case WIFI_API_SEC_OPEN:
                 default:
                     memset(wifi->passKey, 0, WDRV_WINC_PSK_LEN);
                     break;

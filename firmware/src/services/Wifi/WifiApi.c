@@ -361,13 +361,13 @@ static WifiApi_eventStatus_t MainState(stateMachineInst_t * const pInstance, uin
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                if (pInstance->pWifiSettings->securityMode == WDRV_WINC_AUTH_TYPE_OPEN) {
+                if (pInstance->pWifiSettings->securityMode == WIFI_API_SEC_OPEN) {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&pInstance->authCtx)) {
                         SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                         LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
-                } else if (pInstance->pWifiSettings->securityMode == WDRV_WINC_AUTH_TYPE_WPA_PSK) {
+                } else if (pInstance->pWifiSettings->securityMode == WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE) {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&pInstance->authCtx, (uint8_t*) pInstance->pWifiSettings->passKey, pInstance->pWifiSettings->passKeyLength)) {
                         SendEvent(WIFIAPI_CONSUMED_EVENT_ERROR);
                         LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
