@@ -2337,7 +2337,7 @@
         <property key="post-instruction-scheduling" value="default"/>
         <property key="pre-instruction-scheduling" value="default"/>
         <property key="preprocessor-macros"
-                  value="HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN"/>
+                  value="HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN;FORCE_BOOTLOADER_FLAG_ADDR=&quot;0x80000000+0x80000-0x10&quot;;FORCE_BOOTLOADER_FLAG_VALUE=&quot;0xF4CEB007&quot;"/>
         <property key="strict-ansi" value="false"/>
         <property key="support-ansi" value="false"/>
         <property key="tentative-definitions" value=""/>

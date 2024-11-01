@@ -27,6 +27,7 @@
 #include "../streaming.h"
 #include "../commTest.h"
 #include "../../HAL/TimerApi/TimerApi.h"
+
 //
 #define UNUSED(x) (void)(x)
 //
@@ -35,9 +36,6 @@
 #define SCPI_IDN3 NULL
 #define SCPI_IDN4 "01-02"
 
-// These are now defined in the gcc configuration
-#define FORCE_BOOTLOADER_FLAG_ADDR 0x8007FFE0 
-#define FORCE_BOOTLOADER_FLAG_VALUE 0x04CEB007
 
 // Declare force bootloader RAM flag location
 volatile uint32_t force_bootloader_flag __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
@@ -227,20 +225,16 @@ const NanopbFlagsArray fields_discovery = {
 /**
  * Helper function to allow us to know which user interface the command originated from
  */
-static microrl_t* SCPI_GetMicroRLClient(scpi_t* context)
-{
+static microrl_t* SCPI_GetMicroRLClient(scpi_t* context) {
     UsbCdcData_t * pRunTimeUsbSettings = UsbCdc_GetSettings();
-    
+
     TcpServerData * pRunTimeServerData = WifiApi_GetTcpServerData();
-    
-    if (&pRunTimeUsbSettings->scpiContext == context)
-        {
-             return &pRunTimeUsbSettings->console;
-        }
-    
-    else if(&pRunTimeServerData->client.scpiContext==context){
+
+    if (&pRunTimeUsbSettings->scpiContext == context) {
+        return &pRunTimeUsbSettings->console;
+    } else if (&pRunTimeServerData->client.scpiContext == context) {
         return &pRunTimeServerData->client.console;
-    
+
     }
     return NULL;
 }
@@ -283,6 +277,7 @@ static scpi_result_t SCPI_NotImplemented(scpi_t * context) {
 // * SCPI Callback: Clears the settings saved in memory, but does not overwrite the current in-memory values
 // * @return SCPI_RES_OK on success SCPI_RES_ERR on error
 // */
+
 static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     int param1;
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
@@ -299,7 +294,7 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     if (count < 1) {
         return SCPI_RES_ERR;
     }
-    context->interface->write(context, (char*) buffer,count);
+    context->interface->write(context, (char*) buffer, count);
     return SCPI_RES_OK;
 }
 
@@ -370,40 +365,35 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
 // * @param context
 // * @return 
 // */
-static scpi_result_t SCPI_SetPowerState(scpi_t * context)
-{
+
+static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     int param1;
-    
-    
-    tPowerData * pPowerData = BoardData_Get(                                
-                            BOARDATA_POWER_DATA,                            
-                            0 );
-    
-    if (!SCPI_ParamInt32(context, &param1, TRUE))
-    {
+
+
+    tPowerData * pPowerData = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
-    if (param1 != 0)
-    {
+
+    if (param1 != 0) {
         pPowerData->requestedPowerState = DO_POWER_UP;
-        BoardData_Set(                                                      
-                            BOARDATA_POWER_DATA,                            
-                            0,                                              
-                            pPowerData );
-    }
-    else
-    {     
+        BoardData_Set(
+                BOARDATA_POWER_DATA,
+                0,
+                pPowerData);
+    } else {
         pPowerData->requestedPowerState = DO_POWER_DOWN;
-        BoardData_Set(                                                      
-                            BOARDATA_POWER_DATA,                            
-                            0,                                              
-                            pPowerData );
+        BoardData_Set(
+                BOARDATA_POWER_DATA,
+                0,
+                pPowerData);
     }
-    
+
     return SCPI_RES_OK;
 }
-
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     //memset(commTest.stats,0, sizeof(commTest.stats));
@@ -552,7 +542,7 @@ static scpi_result_t SCPI_SetEcho(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     console = SCPI_GetMicroRLClient(context);
-    if(console==NULL)
+    if (console == NULL)
         return SCPI_RES_ERR;
     microrl_set_echo(console, param1);
     return SCPI_RES_OK;
@@ -611,15 +601,15 @@ static scpi_result_t SCPI_SetEcho(scpi_t * context) {
 //}
 //
 //
-//scpi_result_t SCPI_ForceBootloader(scpi_t * context)
-//{
-//    force_bootloader_flag = FORCE_BOOTLOADER_FLAG_VALUE;   // magic force boot value!
-//    
-//    vTaskDelay(10);        // Be sure all operations are finished
-//    
-//    SYS_RESET_SoftwareReset();
-//    return SCPI_RES_ERR; // If we get here, the reset didn't work
-//}
+
+scpi_result_t SCPI_ForceBootloader(scpi_t * context) {
+    force_bootloader_flag = FORCE_BOOTLOADER_FLAG_VALUE; // magic force boot value!
+
+    vTaskDelay(10); // Be sure all operations are finished
+
+    RCON_SoftwareReset();
+    return SCPI_RES_ERR; // If we get here, the reset didn't work
+}
 //
 //scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
 //{
@@ -711,7 +701,7 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
-    //    {.pattern = "SYSTem:FORceBoot", .callback = SCPI_ForceBootloader, },
+    {.pattern = "SYSTem:FORceBoot", .callback = SCPI_ForceBootloader,},
     //    {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber, },
     //    
     //    // Intentionally(?) not implemented (stubbed out in original firmware))
