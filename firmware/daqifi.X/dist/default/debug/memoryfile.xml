@@ -3,15 +3,15 @@
   <executable name="dist/default/debug/daqifi.X.debug.elf">                 
     <memory name="program">                 
       <units>bytes</units>                 
-      <length>2098304</length>                 
-      <used>490460</used>                     
-      <free>1607844</free>                     
+      <length>2097152</length>                 
+      <used>491496</used>                     
+      <free>1605656</free>                     
     </memory>                              
     <memory name="data">              
       <units>bytes</units>                 
       <length>525184</length>                 
-      <used>272985</used>                     
-      <free>252199</free>                     
+      <used>273305</used>                     
+      <free>251879</free>                     
     </memory>                              
   </executable>                            
 </project>                                 

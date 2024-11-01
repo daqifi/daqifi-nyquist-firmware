@@ -146,6 +146,8 @@ build/default/production/_ext/1920085922/BoardData.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/Util/NullLockProvider.h ../src/state/board/DIOConfig.h \
  ../src/state/data/../../HAL/ADC.h ../src/state/board/BoardConfig.h \
  ../src/state/board/StreamingConfig.h \
@@ -181,8 +183,6 @@ build/default/production/_ext/1920085922/BoardData.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
  ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
  ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
- ../src/config/default/driver/winc/include/drv/socket/socket.h \
- ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
@@ -501,6 +501,10 @@ build/default/production/_ext/1920085922/BoardData.o: \
 
 ../src/config/default/../../state/runtime/AInRuntimeConfig.h:
 
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
 ../src/Util/NullLockProvider.h:
 
 ../src/state/board/DIOConfig.h:
@@ -578,10 +582,6 @@ build/default/production/_ext/1920085922/BoardData.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_wps.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
 

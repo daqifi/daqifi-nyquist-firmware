@@ -161,6 +161,8 @@ build/default/production/_ext/1013116128/NQ3RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
@@ -175,8 +177,6 @@ build/default/production/_ext/1013116128/NQ3RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
  ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
  ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
- ../src/config/default/driver/winc/include/drv/socket/socket.h \
- ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
@@ -522,6 +522,10 @@ build/default/production/_ext/1013116128/NQ3RuntimeDefaults.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
 ../src/services/Wifi/WifiApi.h:
 
 ../src/services/Wifi/tcpServer.h:
@@ -551,10 +555,6 @@ build/default/production/_ext/1013116128/NQ3RuntimeDefaults.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_wps.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
 

@@ -141,7 +141,10 @@ build/default/debug/_ext/1246858568/SDCard.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
- ../src/Util/ArrayWrapper.h ../src/Util/CircularBuffer.h
+ ../src/Util/ArrayWrapper.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
+ ../src/Util/CircularBuffer.h
 
 ../src/Util/Logger.h:
 
@@ -436,5 +439,9 @@ build/default/debug/_ext/1246858568/SDCard.o: \
 ../src/config/default/../../state/runtime/AInRuntimeConfig.h:
 
 ../src/Util/ArrayWrapper.h:
+
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
 ../src/Util/CircularBuffer.h:

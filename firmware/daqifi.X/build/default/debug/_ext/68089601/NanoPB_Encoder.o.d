@@ -148,6 +148,8 @@ build/default/debug/_ext/68089601/NanoPB_Encoder.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/Util/Logger.h ../src/services/DaqifiPB/DaqifiOutMessage.pb.h \
  ../src/libraries/nanopb/pb.h ../src/encoder.h \
  ../src/services/DaqifiPB/NanoPB_Encoder.h \
@@ -184,8 +186,6 @@ build/default/debug/_ext/68089601/NanoPB_Encoder.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
  ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
  ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
- ../src/config/default/driver/winc/include/drv/socket/socket.h \
- ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
@@ -511,6 +511,10 @@ build/default/debug/_ext/68089601/NanoPB_Encoder.o: \
 
 ../src/config/default/../../state/runtime/AInRuntimeConfig.h:
 
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
 ../src/Util/Logger.h:
 
 ../src/services/DaqifiPB/DaqifiOutMessage.pb.h:
@@ -590,10 +594,6 @@ build/default/debug/_ext/68089601/NanoPB_Encoder.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_wps.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
 

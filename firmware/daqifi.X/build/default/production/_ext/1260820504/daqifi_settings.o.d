@@ -142,6 +142,8 @@ build/default/production/_ext/1260820504/daqifi_settings.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
  ../src/Util/ArrayWrapper.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -155,8 +157,6 @@ build/default/production/_ext/1260820504/daqifi_settings.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
  ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
  ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
- ../src/config/default/driver/winc/include/drv/socket/socket.h \
- ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
@@ -456,6 +456,10 @@ build/default/production/_ext/1260820504/daqifi_settings.o: \
 
 ../src/Util/ArrayWrapper.h:
 
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc.h:
@@ -481,10 +485,6 @@ build/default/production/_ext/1260820504/daqifi_settings.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_wps.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
 

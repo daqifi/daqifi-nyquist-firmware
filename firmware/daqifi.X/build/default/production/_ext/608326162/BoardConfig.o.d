@@ -144,6 +144,8 @@ build/default/production/_ext/608326162/BoardConfig.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/HAL/BQ24297/BQ24297.h ../src/HAL/Power/PowerApi.h \
  ../src/HAL/UI/UI.h
 
@@ -446,6 +448,10 @@ build/default/production/_ext/608326162/BoardConfig.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
 ../src/config/default/../../state/runtime/AInRuntimeConfig.h:
+
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
 ../src/HAL/BQ24297/BQ24297.h:
 

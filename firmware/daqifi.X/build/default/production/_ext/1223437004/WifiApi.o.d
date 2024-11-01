@@ -141,8 +141,10 @@ build/default/production/_ext/1223437004/WifiApi.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
- ../src/Util/ArrayWrapper.h ../src/services/Wifi/tcpServer.h \
- ../src/libraries/microrl/src/microrl.h \
+ ../src/Util/ArrayWrapper.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
+ ../src/services/Wifi/tcpServer.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h \
  ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
  ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
@@ -170,8 +172,6 @@ build/default/production/_ext/1223437004/WifiApi.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
  ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
  ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
- ../src/config/default/driver/winc/include/drv/socket/socket.h \
- ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
@@ -479,6 +479,10 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 
 ../src/Util/ArrayWrapper.h:
 
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
 ../src/services/Wifi/tcpServer.h:
 
 ../src/libraries/microrl/src/microrl.h:
@@ -536,10 +540,6 @@ build/default/production/_ext/1223437004/WifiApi.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_wps.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
 

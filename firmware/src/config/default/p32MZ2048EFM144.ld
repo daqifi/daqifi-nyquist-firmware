@@ -91,7 +91,7 @@ PROVIDE(_ebase_address = 0x9D000000);
  * _CACHE_ERR_EXCPT_ADDR          -- Cache-error Exception Vector
  * _GEN_EXCPT_ADDR                -- General Exception Vector
  *************************************************************************/
-_RESET_ADDR                    = 0xBFC00000;
+_RESET_ADDR                    = 0x9D000000;
 _BEV_EXCPT_ADDR                = 0xBFC00380;
 _DBG_EXCPT_ADDR                = 0xBFC00480;
 _SIMPLE_TLB_REFILL_EXCPT_ADDR  = _ebase_address + 0;
@@ -2036,4 +2036,3 @@ SECTIONS
     __pic32_tlb_init_values_count = 8 ;
   } > kseg1_boot_mem_4B0
 }
-
