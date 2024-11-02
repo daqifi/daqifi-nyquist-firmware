@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?> 
+<project>                                  
+  <executable name="dist/usbdevice_pic32mz_ef_sk/production/usb_bootloader.X.production.elf">                 
+    <memory name="program">                 
+      <units>bytes</units>                 
+      <length>62336</length>                 
+      <used>44300</used>                     
+      <free>18036</free>                     
+    </memory>                              
+    <memory name="data">              
+      <units>bytes</units>                 
+      <length>524288</length>                 
+      <used>1496</used>                     
+      <free>522792</free>                     
+    </memory>                              
+  </executable>                            
+</project>                                 
