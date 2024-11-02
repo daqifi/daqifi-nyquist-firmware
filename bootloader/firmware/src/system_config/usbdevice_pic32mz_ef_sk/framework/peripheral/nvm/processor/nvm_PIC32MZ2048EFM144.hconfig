@@ -1,0 +1,97 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ2048EFM144_NVM
+	bool
+	select HAVE_NVM
+	default y
+
+config NVM_NUMBER_OF_MODULES
+	int
+	default 1
+
+enum NVM_MODULE_ID exclusive
+	"NVM_ID_0"
+
+enum NVM_UNLOCK_KEYS
+	"NVM_UNLOCK_KEY1"
+	|| "NVM_UNLOCK_KEY2"
+
+enum NVM_ROW_PAGE_SIZE
+	"NVM_ROW_SIZE"
+	|| "NVM_PAGE_SIZE"
+
+enum NVM_OPERATION_MODE
+	"WORD_PROGRAM_OPERATION"
+	|| "ROW_PROGRAM_OPERATION"
+	|| "PAGE_ERASE_OPERATION"
+	|| "FLASH_ERASE_OPERATION"
+	|| "UPPER_FLASH_REGION_ERASE_OPERATION"
+	|| "LOWER_FLASH_REGION_ERASE_OPERATION"
+	|| "QUAD_WORD_PROGRAM_OPERATION"
+	|| "NO_OPERATION"
+
+enum NVM_BOOT_MEMORY_AREA
+	"LOWER_BOOT_ALIAS_AREA"
+	|| "UPPER_BOOT_ALIAS_AREA"
+
+enum NVM_BOOT_MEMORY_PAGE
+	"LOWER_BOOT_ALIAS_PAGE4"
+	|| "LOWER_BOOT_ALIAS_PAGE3"
+	|| "LOWER_BOOT_ALIAS_PAGE2"
+	|| "LOWER_BOOT_ALIAS_PAGE1"
+	|| "LOWER_BOOT_ALIAS_PAGE0"
+	|| "UPPER_BOOT_ALIAS_PAGE4"
+	|| "UPPER_BOOT_ALIAS_PAGE3"
+	|| "UPPER_BOOT_ALIAS_PAGE2"
+	|| "UPPER_BOOT_ALIAS_PAGE1"
+	|| "UPPER_BOOT_ALIAS_PAGE0"
+
+enum NVM_FLASH_SWAP_LOCK_TYPE
+	"NVM_FLASH_SWAP_UNLOCKED"
+	|| "NVM_FLASH_SWAP_LOCKED"
+	|| "NVM_FLASH_SWAP_LOCKED_UNTIL_RESET"
+
+enum EEPROM_OPERATION_MODE
+	"EEPROM_OPERATION_MODE_NONE"
+
+enum EEPROM_ERROR
+	"EEPROM_ERROR_NONE"
+
+enum EEPROM_CALIBRATION_REG
+	"EEPROM_CALIBRATION_REG_NONE"
+
+ifblock PROJECT_STANDALONE
+file PLIB_NVM_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/processor/nvm_p32mz2048efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/processor/nvm_p32mz2048efm144.h"
+
+file PLIB_NVM_WRITEERRORSTATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_WriteErrorStatus_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_WriteErrorStatus_Default.h"
+file PLIB_NVM_MEMORYMODIFICATIONCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_MemoryModificationControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_MemoryModificationControl_Default.h"
+file PLIB_NVM_OPERATIONMODE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_OperationMode_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_OperationMode_Default.h"
+file PLIB_NVM_ADDRESSMODIFYCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_AddressModifyControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_AddressModifyControl_Default.h"
+file PLIB_NVM_PROVIDEDATA_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_ProvideData_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_ProvideData_Default.h"
+file PLIB_NVM_WRITEOPERATION_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_WriteOperation_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_WriteOperation_Default.h"
+file PLIB_NVM_KEYSEQUENCE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_KeySequence_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_KeySequence_Default.h"
+file PLIB_NVM_SOURCEADDRESS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_SourceAddress_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_SourceAddress_Default.h"
+file PLIB_NVM_LOWVOLTAGESTATUS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_LowVoltageStatus_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_LowVoltageStatus_Unsupported.h"
+file PLIB_NVM_LOWVOLTAGEERROR_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_LowVoltageError_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_LowVoltageError_Default.h"
+file PLIB_NVM_FLASHBANKREGIONSELECT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_FlashBankRegionSelect_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_FlashBankRegionSelect_Default.h"
+file PLIB_NVM_BOOTFLASHBANKREGION_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_BootFlashBankRegion_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_BootFlashBankRegion_Default.h"
+file PLIB_NVM_PROVIDEQUADDATA_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_ProvideQuadData_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_ProvideQuadData_Default.h"
+file PLIB_NVM_LOCKPFMSELECT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_LockPFMSelect_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_LockPFMSelect_Default.h"
+file PLIB_NVM_FLASHWPMEMORYRANGEPROVIDE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_FlashWPMemoryRangeProvide_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_FlashWPMemoryRangeProvide_Default.h"
+file PLIB_NVM_LOCKBOOTSELECT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_LockBootSelect_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_LockBootSelect_Default.h"
+file PLIB_NVM_BOOTPAGEWRITEPROTECT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_BootPageWriteProtect_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_BootPageWriteProtect_Default.h"
+file PLIB_NVM_SWAPLOCKCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_SwapLockControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_SwapLockControl_Default.h"
+file PLIB_NVM_EEPROMENABLECONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMEnableControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMEnableControl_Unsupported.h"
+file PLIB_NVM_EEPROMSTOPINIDLECONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMStopInIdleControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMStopInIdleControl_Unsupported.h"
+file PLIB_NVM_EEPROMOPERATIONMODECONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMOperationModeControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMOperationModeControl_Unsupported.h"
+file PLIB_NVM_EEPROMADDRESSCONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMAddressControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMAddressControl_Unsupported.h"
+file PLIB_NVM_EEPROMDATACONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMDataControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMDataControl_Unsupported.h"
+file PLIB_NVM_EEPROMKEYSEQUENCE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMKeySequence_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMKeySequence_Unsupported.h"
+file PLIB_NVM_EEPROMENABLEOPERATIONCONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMEnableOperationControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMEnableOperationControl_Unsupported.h"
+file PLIB_NVM_EEPROMSTARTOPERATIONCONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMStartOperationControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMStartOperationControl_Unsupported.h"
+file PLIB_NVM_EEPROMLONGWRITESTATUS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMLongWriteStatus_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMLongWriteStatus_Unsupported.h"
+file PLIB_NVM_EEPROMOPERATIONABORTCONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMOperationAbortControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMOperationAbortControl_Unsupported.h"
+file PLIB_NVM_EEPROMERRORSTATUS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMErrorStatus_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMErrorStatus_Unsupported.h"
+file PLIB_NVM_EEPROMCALIBRATIONDATA_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMCalibrationData_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMCalibrationData_Unsupported.h"
+file PLIB_NVM_EEPROMWAITSTATES_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/nvm/templates/nvm_EEPROMWaitStates_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/nvm/templates/nvm_EEPROMWaitStates_Unsupported.h"
+endif

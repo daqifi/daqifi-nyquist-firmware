@@ -1,0 +1,36 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ2048EFM144_DEVCON
+	bool
+	select HAVE_DEVCON
+	default y
+
+config DEVCON_NUMBER_OF_MODULES
+	int
+	default 1
+
+enum DEVCON_MODULE_ID exclusive
+	"DEVCON_ID_0"
+
+enum DEVCON_CFGLOCK
+	"DEVCON_CFGLOCK_NONE"
+
+ifblock PROJECT_STANDALONE
+file PLIB_DEVCON_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/processor/devcon_p32mz2048efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/processor/devcon_p32mz2048efm144.h"
+
+file PLIB_DEVCON_ALTERNATECLOCK_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_AlternateClock_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_AlternateClock_Default.h"
+file PLIB_DEVCON_DEVICEREGSLOCKUNLOCK_PIC32MZ_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_DeviceRegsLockUnlock_PIC32MZ.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_DeviceRegsLockUnlock_PIC32MZ.h"
+file PLIB_DEVCON_OTPCONFIGLOCKUNLOCK_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_OTPConfigLockUnlock_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_OTPConfigLockUnlock_Unsupported.h"
+file PLIB_DEVCON_USB_PHY_SLEEPMODESET_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_USB_PHY_SleepModeSet_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_USB_PHY_SleepModeSet_Default.h"
+file PLIB_DEVCON_ECCMODES_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_ECCModes_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_ECCModes_Default.h"
+file PLIB_DEVCON_JTAGENABLE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_JTAGEnable_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_JTAGEnable_Default.h"
+file PLIB_DEVCON_ANALOGCHARGEPUMPCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_AnalogChargePumpControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_AnalogChargePumpControl_Default.h"
+file PLIB_DEVCON_TRACEOUTPUT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_TraceOutput_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_TraceOutput_Default.h"
+file PLIB_DEVCON_JTAGUSESTDO_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_JTAGUsesTDO_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_JTAGUsesTDO_Default.h"
+file PLIB_DEVCON_IGNOREDEBUGFREEZE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_IgnoreDebugFreeze_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_IgnoreDebugFreeze_Unsupported.h"
+file PLIB_DEVCON_DEVICEVERANDID_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_DeviceVerAndId_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_DeviceVerAndId_Default.h"
+file PLIB_DEVCON_SYSLOCKUNLOCK_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_SysLockUnlock_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_SysLockUnlock_Default.h"
+file PLIB_DEVCON_MPLL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_MPLL_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_MPLL_Unsupported.h"
+file PLIB_DEVCON_HSUARTCONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_HSUARTControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_HSUARTControl_Unsupported.h"
+file PLIB_DEVCON_BOOTSELECTION_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/devcon/templates/devcon_BootSelection_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/devcon/templates/devcon_BootSelection_Unsupported.h"
+endif

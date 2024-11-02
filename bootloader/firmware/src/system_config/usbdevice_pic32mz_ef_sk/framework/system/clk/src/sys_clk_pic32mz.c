@@ -1,32 +1,22 @@
-/*******************************************************************************
-  SYS CLK Static Functions for Clock System Service
+ /*******************************************************************************
+  Clock System Service implementation
 
   Company:
     Microchip Technology Inc.
 
   File Name:
-    sys_clk_static.c
+    sys_clk_pic32mz.c
 
   Summary:
-    SYS CLK static function implementations for the Clock System Service.
+    Clock system service implementation for PIC32 MZ devices.
 
   Description:
-    The Clock System Service provides a simple interface to manage the oscillators
-    on Microchip microcontrollers. This file defines the static implementation for the 
-    Clock System Service.
-    
-  Remarks:
-    Static functions incorporate all system clock configuration settings as
-    determined by the user via the Microchip Harmony Configurator GUI.  It provides 
-    static version of the routines, eliminating the need for an object ID or 
-    object handle.
-    
-    Static single-open interfaces also eliminate the need for the open handle.
+   	This file Implements the functions specific to PIC32 MZ devices.
 *******************************************************************************/
 
 //DOM-IGNORE-BEGIN
 /*******************************************************************************
-Copyright (c) 2014 released Microchip Technology Inc.  All rights reserved.
+Copyright (c) 2012 released Microchip Technology Inc.  All rights reserved.
 
 Microchip licenses to you the right to use, modify, copy and distribute
 Software only when embedded on a Microchip microcontroller or digital signal
@@ -51,14 +41,23 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 
 // *****************************************************************************
 // *****************************************************************************
-// Section: Include Files
+// Section: Macro Definitions
 // *****************************************************************************
 // *****************************************************************************
 
+
+// *****************************************************************************
+// *****************************************************************************
+// Section: Include Files
+// *****************************************************************************
+// *****************************************************************************
+#include <stddef.h>
 #include "system_config.h"
-#include "system_definitions.h"
-#include "peripheral/osc/plib_osc.h"
 #include "system/devcon/sys_devcon.h"
+#include "system/clk/src/sys_clk_pic32mz.h"
+#include "system/clk/src/sys_clk_local.h"
+#include <stdlib.h>
+
 
 // *****************************************************************************
 // *****************************************************************************
@@ -66,311 +65,929 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 // *****************************************************************************
 // *****************************************************************************
 
-// *****************************************************************************
-/* Function:
-    void SYS_CLK_Static_Initialize ( const SYS_CLK_INIT const * clkInit )
+/******************************************************************************
+  Function:
+    OSC_PERIPHERAL_BUS _SYS_CLK_GetOscPeripheralBus ( CLK_BUSES_REFERENCE peripheralBus )
 
   Summary:
-    Initializes hardware and internal data structure of the System Clock.
+    Helper function to remap periheral bus enums to PLIB OSC enums
 
   Description:
-    This function initializes the hardware and internal data structure of System
-    Clock Service.
+    Helper function to remap periheral bus enums to PLIB OSC enums
 
   Remarks:
-    This is configuration values for the static version of the Clock System Service 
-    module is determined by the user via the Microchip Harmony Configurator GUI.
-    This template will build a sys_clk_static.h and sys_clk_static.c file with 
-    the configuration per the user's choice.
+    None.
+*/
+OSC_PERIPHERAL_BUS _SYS_CLK_GetOscPeripheralBus ( CLK_BUSES_PERIPHERAL peripheralBus )
+{
+    OSC_PERIPHERAL_BUS oscBus = (OSC_PERIPHERAL_BUS)peripheralBus;
 
-    The objective is to eliminate the user's need to be knowledgeable in the function of
-    the 'configuration bits' to configure the system oscillators. 
+    return oscBus;
+}
+
+/******************************************************************************
+  Function:
+    unsigned int SYS_CLK_SystemClockSet ( SYS_CLK_SOURCE clockSource,
+                                            unsigned long clockFrequency )
+  Summary:
+    Sets the clock source and frequency for the system clock.
+
+  Description:
+    This function sets the clock frequency and source for the system clock.
+
+  Remarks:
+    None.
 */
 
-void SYS_CLK_Initialize( const SYS_CLK_INIT const * clkInit )
+bool _SYS_CLK_SystemClockSet ( CLK_SOURCES_SYSTEM systemSource,
+	uint32_t systemClockHz, bool waitUntilComplete, uint32_t *clockClosest )
 {
-    SYS_DEVCON_SystemUnlock ( );
-    
-    PLIB_OSC_FRCDivisorSelect( OSC_ID_0, OSC_FRC_DIV_1);
-
-    /* Enable Peripheral Bus 1 */
-    PLIB_OSC_PBClockDivisorSet (OSC_ID_0, 0, 2 );
-    PLIB_OSC_PBOutputClockEnable (OSC_ID_0, 0 );
-
-    /* Enable Peripheral Bus 2 */
-    PLIB_OSC_PBClockDivisorSet (OSC_ID_0, 1, 2 );
-    PLIB_OSC_PBOutputClockEnable (OSC_ID_0, 1 );
-    /* Enable Peripheral Bus 3 */
-    PLIB_OSC_PBClockDivisorSet (OSC_ID_0, 2, 2 );
-    PLIB_OSC_PBOutputClockEnable (OSC_ID_0, 2 );
-    /* Enable Peripheral Bus 4 */
-    PLIB_OSC_PBClockDivisorSet (OSC_ID_0, 3, 2 );
-    PLIB_OSC_PBOutputClockEnable (OSC_ID_0, 3 );
-    /* Enable Peripheral Bus 5 */
-    PLIB_OSC_PBClockDivisorSet (OSC_ID_0, 4, 2 );
-    PLIB_OSC_PBOutputClockEnable (OSC_ID_0, 4 );
-    /* Enable Peripheral Bus 7 */
-    PLIB_OSC_PBClockDivisorSet (OSC_ID_0, 6, 1 );
-    PLIB_OSC_PBOutputClockEnable (OSC_ID_0, 6 );
-    /* Enable Peripheral Bus 8 */
-    PLIB_OSC_PBClockDivisorSet (OSC_ID_0, 7, 2 );
-    PLIB_OSC_PBOutputClockEnable (OSC_ID_0, 7 );
-  
- 
-
-    /* Disable REFCLKO1*/
-    PLIB_OSC_ReferenceOscDisable ( OSC_ID_0, OSC_REFERENCE_1 );
-    /* Disable REFCLK1_OE*/
-    PLIB_OSC_ReferenceOutputDisable ( OSC_ID_0, OSC_REFERENCE_1 );
-    /* Disable REFCLKO2*/
-    PLIB_OSC_ReferenceOscDisable ( OSC_ID_0, OSC_REFERENCE_2 );
-    /* Disable REFCLK2_OE*/
-    PLIB_OSC_ReferenceOutputDisable ( OSC_ID_0, OSC_REFERENCE_2 );
-    /* Disable REFCLKO3*/
-    PLIB_OSC_ReferenceOscDisable ( OSC_ID_0, OSC_REFERENCE_3 );
-    /* Disable REFCLK3_OE*/
-    PLIB_OSC_ReferenceOutputDisable ( OSC_ID_0, OSC_REFERENCE_3 );
-    /* Disable REFCLKO4*/
-    PLIB_OSC_ReferenceOscDisable ( OSC_ID_0, OSC_REFERENCE_4 );
-    /* Disable REFCLK4_OE*/
-    PLIB_OSC_ReferenceOutputDisable ( OSC_ID_0, OSC_REFERENCE_4 );
-
-    SYS_DEVCON_SystemLock ( );
-}
-
-//******************************************************************************
-/* Function:
-    inline uint32_t SYS_CLK_SystemFrequencyGet ( void )
-
-  Summary:
-    Gets the system clock frequency in Hertz.
-
-  Description:
-    This function gets the System clock frequency in Hertz.
-
-  Precondition:
-    None.
-
-  Parameters:
-    None.
-
-  Returns:
-    System clock frequency in Hertz.
-
-  Example:
-    <code>
-    uint32_t sysClockHz;
-
-    sysClockHz = SYS_CLK_SystemFrequencyGet ( );
-    </code>
-
-  Remarks:
- */
-
-inline uint32_t SYS_CLK_SystemFrequencyGet ( void )
-{
-    return SYS_CLK_FREQ;
-}
-
-//******************************************************************************
-/* Function:
-    inline uint32_t SYS_CLK_PeripheralFrequencyGet ( CLK_BUSES_PERIPHERAL peripheralBus )
-
-  Summary:
-    Gets the selected clock peripheral bus frequency in Hertz.
-
-  Description:
-    This function gets the selected peripheral bus clock frequency in Hertz.
-
-  Precondition:
-    None.
-
-  Parameters:
-	peripheralBus - Reference clock bus selection. One of the possible value from
-				CLK_BUSES_PERIPHERAL enum. For devices that do not have multiple
-				clock channels for Reference clock, CLK_BUS_PERIPHERAL_1 should be
-				the selection.
-
-  Returns:
-    Clock frequency in Hertz.
-
-  Example:
-    <code>
-    unsigned long peripheralClockHz;
-
-    peripheralClockHz = SYS_CLK_PeripheralFrequencyGet ( CLK_BUS_PERIPHERAL_5 );
-    </code>
-
-  Remarks:
-	Most of the devices doesn't have multiple Peripheral clock buses. In that case, 
-	pass CLK_USB_PERIPHERAL_1 as the bus number.
- */
-
-inline uint32_t SYS_CLK_PeripheralFrequencyGet ( CLK_BUSES_PERIPHERAL peripheralBus )
-{
-       uint32_t freq = 0;
-
-    switch (peripheralBus)
+    unsigned char calculatedRegValue = 0, valueToPLLMULT = 0, valueToPLLODIV = 0;
+    unsigned long achievedFreq = 0;
+    int8_t result;
+    switch ( systemSource )
     {
-        case CLK_BUS_PERIPHERAL_1:
-                freq = SYS_CLK_BUS_PERIPHERAL_1;
+        case SYS_CLK_SOURCE_FRC_BY_DIV:
+            /* As we know the output and input frequencies, get the multiplier
+            needed to get the output */
+            calculatedRegValue = ( SYS_CLK_FRC_CLOCK / systemClockHz );
+
+            /* Find the closest register value in the hardware */
+            achievedFreq = SYS_CLK_FRCClosestDivisorGet ( calculatedRegValue,
+                                                    &valueToPLLMULT, systemClockHz );
             break;
-        case CLK_BUS_PERIPHERAL_2:
-                freq = SYS_CLK_BUS_PERIPHERAL_2;
+
+        case SYS_CLK_SOURCE_LPRC:
+            /* Processor's internal LPRC clock */
+            achievedFreq = SYS_CLK_LPRC_CLOCK;
+            systemClockHz = achievedFreq;
             break;
-        case CLK_BUS_PERIPHERAL_3:
-                freq = SYS_CLK_BUS_PERIPHERAL_3;
+
+        case SYS_CLK_SOURCE_SECONDARY:
+            achievedFreq = SYS_CLK_CONFIG_SECONDARY_XTAL;
+            systemClockHz = achievedFreq;
             break;
-        case CLK_BUS_PERIPHERAL_4:
-                freq = SYS_CLK_BUS_PERIPHERAL_4;
+            
+        case SYS_CLK_SOURCE_PRIMARY_SYSPLL:
+            /* Find the closest register value in the hardware */
+            achievedFreq = SYS_CLK_ClosestFactorsGet ( SYS_CLK_CONFIG_PRIMARY_XTAL,
+                    systemClockHz, &valueToPLLMULT, &valueToPLLODIV );
             break;
-        case CLK_BUS_PERIPHERAL_5:
-                freq = SYS_CLK_BUS_PERIPHERAL_5;
+
+        case SYS_CLK_SOURCE_PRIMARY:
+            /* If the System clock is directly using the from the Primary oscillator
+            clock, return the configured primary oscillator frequency */
+            achievedFreq = SYS_CLK_CONFIG_PRIMARY_XTAL;
+            systemClockHz = achievedFreq;
             break;
-        case CLK_BUS_PERIPHERAL_6:
+
+        case SYS_CLK_SOURCE_FRC_SYSPLL:
+            /* Source of system clock is internal fast RC with PLL.
+             Find the closest register value in the hardware */
+            achievedFreq = SYS_CLK_ClosestFactorsGet ( SYS_CLK_FRC_CLOCK,
+                    systemClockHz, &valueToPLLMULT, &valueToPLLODIV );
             break;
-        case CLK_BUS_PERIPHERAL_7:
-                freq = SYS_CLK_BUS_PERIPHERAL_7;
+
+        case SYS_CLK_SOURCE_BKP_FRC:
+            /* Source of system clock is internal fast RC. If the System clock
+            is directly using the fast RC clock, return the Fast RC clock */
+            achievedFreq = SYS_CLK_FRC_CLOCK;
+            systemClockHz = achievedFreq;
             break;
-        case CLK_BUS_PERIPHERAL_8:
-                freq = SYS_CLK_BUS_PERIPHERAL_8;
+            
+        default:
+            return false;
             break;
+    }
+    /* Check whether the difference between the achievable frequency and the
+    frequency requested is within the allowed range */
+    if ( true == SYS_CLK_FrequencyErrorCheck ( systemClockHz, achievedFreq ) )
+    {
+        result = SYS_CLK_SystemClockSourceSwitch ( systemSource, valueToPLLMULT,
+                    valueToPLLODIV, waitUntilComplete );
+        
+        /* Update the new clock source and clock frequency for the system
+        clock */
+        if ( result == -1 )
+        {
+            clkObject.systemClockStatus = SYS_CLK_OPERATION_FAIL_SWITCHING_DISABLED;
+            return false;
+        }
+
+        /* Update the clock source and frequency */
+        clkObject.systemClockSource = result;
+        clkObject.systemClock = achievedFreq;
+        clkObject.systemClosestClock = achievedFreq;
+    }
+    else
+    {
+        /* Requested frequency is not achievable. Update the error code and closest
+        possible frequency */
+        clkObject.systemClosestClock = achievedFreq;
+        clkObject.systemClockStatus = SYS_CLK_OPERATION_FAIL_NOT_ACHIEVABLE;
+        return false;
+    }
+
+    /* Control is here, means switching operation is either complete or in
+    progress, not failure */
+    return true;
+}
+
+/******************************************************************************
+  Function:
+    uint32_t _SYS_CLK_SystemClockRead ( void )
+  Summary:
+    Gets the system clock from the hardware.
+
+  Description:
+    This function gets the System clock frequency from the hardware by using
+    register reads.
+
+  Remarks:
+    None.
+*/
+
+uint32_t _SYS_CLK_SystemClockRead ( void )
+{
+    CLK_SOURCES_SYSTEM systemSource;
+    uint32_t pllInputDiv = 0;
+    uint32_t systemClockHz = 0, multiplier = 0, divisor = 0, pllInput = 0;
+
+    /* Read the current system clock source from the register */
+    systemSource = _SYS_CLK_ClockTypeMap(PLIB_OSC_CurrentSysClockGet ( OSC_PLIB_ID ));
+
+    /* we need the source later for other clocks  */
+    clkObject.systemClockSource = systemSource;
+    switch ( systemSource )
+    {
+        case SYS_CLK_SOURCE_FRC_BY_DIV:
+            /* System clock is FRC clock divided by the configured diviso value */
+            divisor = PLIB_OSC_FRCDivisorGet ( OSC_PLIB_ID );
+
+            /* FRC clock is a constant. Do direct division */
+            systemClockHz = ( SYS_CLK_FRC_CLOCK / divisor );
+            break;
+            
+        case SYS_CLK_SOURCE_FRC_SYSPLL:
+
+			pllInputDiv = _SYS_CLK_PLLInputDividerRead();
+
+			/* Check if the source is a PLL based one, validate the input frequency */
+            pllInput = SYS_CLK_FRC_CLOCK / pllInputDiv;
+
+			if ( pllInput > OSC_SYSPLL_RANGE_MAX )
+            {
+                clkObject.systemClockStatus = SYS_CLK_PLL_INVALID_INP_FREQUENCY;
+                systemClockHz = 0;
+            }
+            else
+            {
+                /* Source of system clock is internal fast RC with PLL and divisors */
+                multiplier = _SYS_CLK_PLLMultiplierRead();
+                divisor = _SYS_CLK_PLLOutputDividerRead();
+
+                systemClockHz = ( SYS_CLK_FRC_CLOCK * multiplier ) /
+                                ( divisor * pllInputDiv );
+            }
+            
+            break;
+            
+        /* Source of system clock is primary oscillator */
+        case SYS_CLK_SOURCE_PRIMARY:
+            /* If the System clock is directly using the from the Primary oscillator
+            clock, return the configured primary oscillator frequency */
+            systemClockHz = SYS_CLK_CONFIG_PRIMARY_XTAL;
+            break;
+
+        case SYS_CLK_SOURCE_PRIMARY_SYSPLL:
+
+			pllInputDiv = _SYS_CLK_PLLInputDividerRead();
+
+			/* Check if the source is a PLL based one, validate the input frequency */
+            pllInput = SYS_CLK_CONFIG_PRIMARY_XTAL / pllInputDiv;
+
+			if ( pllInput > OSC_SYSPLL_RANGE_MAX )
+            {
+                clkObject.systemClockStatus = SYS_CLK_PLL_INVALID_INP_FREQUENCY;
+                systemClockHz = 0;
+            }
+            {
+                /* Source of system clock is primary oscillator multiplied by
+                the PLL value and divided by the divisor configured by software.
+                Software cannot access the input divisor, so that must be configured
+                by the user */
+                multiplier = _SYS_CLK_PLLMultiplierRead();
+                divisor = _SYS_CLK_PLLOutputDividerRead();
+
+                systemClockHz = ( SYS_CLK_CONFIG_PRIMARY_XTAL * multiplier ) /
+                                ( divisor * pllInputDiv );
+            }
+            break;
+            
+        case SYS_CLK_SOURCE_SECONDARY:
+            /* System clock is processor's Secondary oscillator. The secondary
+               oscillator frequency is user configured */
+            systemClockHz = SYS_CLK_CONFIG_SECONDARY_XTAL;
+            break;
+            
+        case SYS_CLK_SOURCE_LPRC:
+            /* System clock is processor's internal LPRC clock */
+            systemClockHz = SYS_CLK_LPRC_CLOCK;
+            break;
+            
+        case SYS_CLK_SOURCE_BKP_FRC:
+            
+            systemClockHz = SYS_CLK_FRC_CLOCK;
+            break;
+            
+        default:
+            /* Something wrong */
+            systemClockHz = 0;
+            break;
+    }
+
+    return systemClockHz;
+}
+
+CLK_SOURCES_SYSTEM _SYS_CLK_ClockTypeMap( OSC_SYS_TYPE systemSource )
+{
+    switch( systemSource )
+    {
+        case OSC_FRC_WITH_PLL:
+            return SYS_CLK_SOURCE_FRC_SYSPLL;        
+        case OSC_PRIMARY:
+            return SYS_CLK_SOURCE_PRIMARY;
+        case OSC_PRIMARY_WITH_PLL:
+            return SYS_CLK_SOURCE_PRIMARY_SYSPLL;
+        case OSC_SECONDARY:
+            return SYS_CLK_SOURCE_SECONDARY;        
+        case OSC_LPRC:
+            return SYS_CLK_SOURCE_LPRC;              
+        case OSC_FRC_BY_FRCDIV:
+            return SYS_CLK_SOURCE_FRC_BY_DIV;
+        case OSC_BFRC:
+            return SYS_CLK_SOURCE_BKP_FRC;
+        default:
+            return SYS_CLK_SOURCE_NONE;
+    }
+}
+
+OSC_SYS_TYPE _SYS_CLK_ClockSourceMap (CLK_SOURCES_SYSTEM clockSource)
+{
+	switch(clockSource)
+	{
+		case SYS_CLK_SOURCE_FRC_SYSPLL:
+			return OSC_FRC_WITH_PLL;
+		case SYS_CLK_SOURCE_PRIMARY:
+			return OSC_PRIMARY;
+		case SYS_CLK_SOURCE_PRIMARY_SYSPLL:
+			return OSC_PRIMARY_WITH_PLL;
+		case SYS_CLK_SOURCE_SECONDARY:
+			return OSC_SECONDARY;
+		case SYS_CLK_SOURCE_LPRC:
+			return OSC_LPRC;
+        case SYS_CLK_SOURCE_BKP_FRC:
+            return OSC_BFRC;
+		case SYS_CLK_SOURCE_FRC_BY_16:
+			return OSC_FRC_BY_FRCDIV;
+		case SYS_CLK_SOURCE_FRC_BY_DIV:
+			return OSC_FRC_BY_FRCDIV;
+		default:
+			return 0xff;
+	}
+	
+}
+
+/******************************************************************************
+  Function:
+    uint32_t _SYS_CLK_PLLInputDividerRead ( void )
+
+  Summary:
+    Reads the value of the PLL Input Divider.
+
+  Description:
+    This function will read from the configuration the current value for the 
+    PLL Input Divider.  The value is translated from the configuration bit into
+ *  the intended divider value.
+
+  Remarks:
+    None.
+*/
+
+uint32_t _SYS_CLK_PLLInputDividerRead ( void )
+{
+    return PLIB_OSC_SysPLLInputDivisorGet( OSC_PLIB_ID ) + 1;
+}
+
+
+/******************************************************************************
+  Function:
+    uint32_t _SYS_CLK_PLLMultiplierRead ( void )
+
+  Summary:
+    Reads the value of the PLL Multiplier.
+
+  Description:
+    This function will read from the configuration the current value for the
+    PLL Multiplier.  The value is translated from the configuration bit into
+ *  the intended multiplier value.
+
+  Remarks:
+    None.
+*/
+
+uint32_t _SYS_CLK_PLLMultiplierRead ( void )
+{
+    return PLIB_OSC_SysPLLMultiplierGet( OSC_PLIB_ID );
+}
+
+
+/******************************************************************************
+  Function:
+    uint32_t _SYS_CLK_PLLOutputDividerRead ( void )
+
+  Summary:
+    Reads the value of the PLL Output Divider.
+
+  Description:
+    This function will read from the configuration the current value for the
+    PLL Output Divider.  The value is translated from the configuration bit into
+ *  the intended divider value.
+
+  Remarks:
+    None.
+*/
+
+uint32_t _SYS_CLK_PLLOutputDividerRead ( void )
+{
+    return PLIB_OSC_SysPLLOutputDivisorGet( OSC_PLIB_ID );
+}
+
+
+/******************************************************************************
+  Function:
+    uint32_t _SYS_CLK_PeripheralClockRead ( CLK_BUSES_PERIPHERAL peripheralBus, uint32_t systemClockHz )
+
+  Summary:
+    Read the peripheral clock frequency from the hardware itself and initialize
+    the internal variables of the System service.
+
+  Description:
+    This function will read the peripheral clock frequency from the hardware itself
+    and initialize the internal variables of the System service.
+
+  Remarks:
+    None.
+*/
+
+uint32_t _SYS_CLK_PeripheralClockRead ( CLK_BUSES_PERIPHERAL peripheralBus, uint32_t systemClockHz)
+{
+    unsigned short divisor;
+    double hiResFreq = 0.f;
+
+    divisor = PLIB_OSC_PBClockDivisorGet ( OSC_PLIB_ID , _SYS_CLK_GetOscPeripheralBus(peripheralBus) );
+
+    if (divisor > 0)
+    {
+        hiResFreq = (double)systemClockHz / (double)divisor;
+    }
+
+    return (uint32_t)hiResFreq;
+}
+
+
+/******************************************************************************
+  Function:
+    bool _SYS_CLK_PeripheralFrequencySet ( CLK_BUSES_PERIPHERAL peripheralBus,
+        uint32_t peripheralClockHz,
+        uint32_t *clockClosest ) )
+
+  Summary:
+    Sets the peripheral clock frequency.
+
+  Description:
+    This function sets the peripheral clock frequency.
+
+  Remarks:
+    None.
+*/
+
+bool _SYS_CLK_PeripheralFrequencySet ( CLK_BUSES_PERIPHERAL peripheralBus,
+        uint32_t peripheralClockHz,
+        uint32_t *clockClosest )
+{
+    uint8_t index = 0;
+    uint16_t divisor = 0;
+    unsigned long tempFrequency, prevFrequency =0;
+
+    for ( index = 1; index <= 128; ++index )
+    {
+        tempFrequency = ( clkObject.systemClock / index );
+
+        if ( ( abs( peripheralClockHz - tempFrequency ) ) <
+            ( abs ( peripheralClockHz - prevFrequency ) ) )
+        {
+            prevFrequency = tempFrequency;
+            divisor = index;
+
+            if (peripheralClockHz == tempFrequency)
+                break;
+        }
+    }
+    
+    if ( true == SYS_CLK_FrequencyErrorCheck ( peripheralClockHz, prevFrequency ) )
+    {
+        if ( PLIB_OSC_PBClockDivisorIsReady(OSC_ID_0, peripheralBus) )
+        {
+            /* Unlock before you switch */
+            SYS_DEVCON_SystemUnlock ( );
+
+            PLIB_OSC_PBClockDivisorSet ( OSC_ID_0, peripheralBus, divisor );
+
+            SYS_DEVCON_SystemLock ( );
+
+            clkObject.peripheralClockStatus[peripheralBus]
+                    = SYS_CLK_OPERATION_COMPLETE;
+        }
+        else
+        {
+            clkObject.peripheralClockStatus[peripheralBus]
+                    = SYS_CLK_OPERATION_FAIL_REGISTER_NOT_READY;
+
+            *clockClosest = prevFrequency;
+            return false;
+        }
+    }
+    else
+    {
+        /* Requested frequency is not achievable. Update the error code and closest
+        possible frequency */
+        clkObject.peripheralClosestClock[peripheralBus] = prevFrequency;
+
+        clkObject.peripheralClockStatus[peripheralBus]
+                = SYS_CLK_OPERATION_FAIL_NOT_ACHIEVABLE;
+
+        return false;
+    }
+    *clockClosest = prevFrequency;
+    return true;
+}
+
+
+/******************************************************************************
+  Function:
+    unsigned long SYS_CLK_ClosestFactorsGet(    unsigned long sourceFrequency,
+                                                unsigned long requestedFrequency,
+                                                unsigned char *valueToReg1,
+                                                unsigned char *valueToReg2 )
+
+  Summary:
+    Gets the value of the multiplier and divisor which is closest to the
+    expected value for the system PLL.
+
+  Description:
+    This function gets the value of the multiplier and divisor which is closest
+    to the expected value for the system PLL.
+
+  Remarks:
+    None.
+*/
+
+unsigned long SYS_CLK_ClosestFactorsGet ( unsigned long sourceFrequency,
+                                          unsigned long requestedFrequency,
+                                          unsigned char *valueToPLLMULT,
+                                          unsigned char *valueToPLLODIV )
+{
+    uint8_t multCount = 0, divCount = 0;
+    uint16_t multiplier = 0, divisor = 0;
+    uint32_t inputDivisor = 0;
+    unsigned long  tempFrequency = 0;
+
+    inputDivisor = _SYS_CLK_PLLInputDividerRead();
+
+    for ( multCount = 1; multCount <= 128; ++multCount )
+    {
+        multiplier = multCount;
+
+        for ( divCount = 0; divCount <= 5; ++divCount )
+        {
+            /* Implementation unique to MZ chip family */
+            if ( divCount == 0 )
+            {
+              divCount++;
+            }
+
+            divisor = 0x01 << divCount;
+
+            tempFrequency = ( sourceFrequency / inputDivisor ) * multiplier /  divisor;
+
+            if ( ( abs( requestedFrequency - tempFrequency ) ) <= SYS_CLK_CONFIG_FREQ_ERROR_LIMIT )
+            {
+                *valueToPLLMULT = multiplier;
+                *valueToPLLODIV = divCount;
+                return tempFrequency;
+            }
+        }
+    }
+    
+    return -1;
+}
+
+
+/******************************************************************************
+  Function:
+   char SYS_CLK_FRCClosestDivisorGet( unsigned char regValue,
+                                                    unsigned char *valueToReg )
+
+  Summary:
+    Gets the value of the FRC clock divisor which is closest to the
+    expected value.
+.
+  Description:
+    This function gets the value of the FRC clock divisor which is
+    closest to the expected value.
+
+  Remarks:
+    None.
+*/
+
+uint32_t SYS_CLK_FRCClosestDivisorGet ( unsigned char regValue,
+                            unsigned char *valueToReg, uint32_t requestedFrequency )
+{
+    uint8_t index =0;
+    uint16_t divisor =0;
+    uint32_t tempFrequency =0, PrevFrequency =0;
+
+    for ( index=0; index<8; index++ )
+    {
+      divisor = index;
+      /* Here the code is too specific to PIC32MX. The code may not be so easily
+      usable for other controllers. But seems like this is the best way to avoid
+      RAM usage for lookup tables */
+     if ( divisor == 7 )
+     {
+         divisor++;
+     }
+      
+    tempFrequency = ( SYS_CLK_FRC_CLOCK / ( 0x01 << divisor ) );
+
+        if ( ( abs( requestedFrequency - tempFrequency ) ) <
+                ( abs ( requestedFrequency - PrevFrequency ) ) )
+        {
+                PrevFrequency = tempFrequency;
+                *valueToReg = index;
+        }
+    }
+    return PrevFrequency;
+}
+
+/******************************************************************************
+  Function:
+    bool SYS_CLK_FrequencyErrorCheck( unsigned long inpFreq,
+                                        unsigned long acheivedFreq )
+  Summary:
+    Checks whether the difference between the user requested clock rate and
+    the maximum achievable clock is within limit.
+
+  Description:
+    This function checks whether the difference between the user requested clock
+    rate and the maximum achievable clock is within limit.
+   		true - The differece betwee clocks is within limit.
+		false - The differece betwee clocks is not within limit.
+
+  Remarks:
+    None.
+*/
+
+bool SYS_CLK_FrequencyErrorCheck ( unsigned long inpFreq, unsigned long acheivedFreq )
+{
+    /* Get the difference between frequency requested and achieved  */
+    if (abs(inpFreq - acheivedFreq) > SYS_CLK_CONFIG_FREQ_ERROR_LIMIT )
+    {
+        return false;
+    }
+    return true;
+}
+
+
+/******************************************************************************
+  Function:
+    void SYS_CLK_SystemClockSourceSwitch ( SYS_CLK_SOURCE clockSource )
+
+  Summary:
+    Initiates the clock switch for the system clock.
+
+  Description:
+    This function initiates the clock switch for the system clock.
+
+  Remarks:
+    None.
+*/
+
+int8_t SYS_CLK_SystemClockSourceSwitch ( CLK_SOURCES_SYSTEM clockSource,
+                                        unsigned char valueToPLLMULT,
+                                        unsigned char valueToPLLODIV,
+                                        bool waitUntilComplete )
+{
+    uint32_t delay= 100;
+    OSC_SYS_TYPE oscSource = _SYS_CLK_ClockSourceMap(clockSource);
+    
+    /* Check whether PLL and clock selections are locked */
+    if( PLIB_OSC_PLLClockIsLocked ( OSC_PLIB_ID ) != true )
+    {
+        /* Unlock before you switch */
+        SYS_DEVCON_SystemUnlock ( );
+
+        /* Special treatment if the source is a PLL based source. Do not change
+        multipliers after switching. Switch to a FRC source first, then alter
+        the multiplier values. */
+        if ( ( ( clockSource == SYS_CLK_SOURCE_PRIMARY_SYSPLL ) ) ||
+            ( clockSource == SYS_CLK_SOURCE_FRC_SYSPLL ) )
+        {
+            PLIB_OSC_SysClockSelect( OSC_PLIB_ID, OSC_FRC_BY_FRCDIV );
+
+            /* Ensure that we are not on a PLL based source before switching */
+
+            /* Write the values before switching. Datasheet says so. */
+            PLIB_OSC_SysPLLMultiplierSelect ( OSC_PLIB_ID, valueToPLLMULT );
+            PLIB_OSC_SysPLLOutputDivisorSet ( OSC_PLIB_ID, valueToPLLODIV );
+
+            /* Switch to a PLL source */
+            PLIB_OSC_SysClockSelect( OSC_PLIB_ID, oscSource );
+
+            delay = SYS_CLK_SYSPLL_LOCK_DELAY_80MHZ;
+
+            /* Wait till the PLL settles down / locked  */
+            clkObject.systemClockStatus = SYS_CLK_OPERATION_IN_PROGRESS;
+
+            /* Device expects this delay. We are changing the System clock source here,
+            On debugging sometimes the code just stops without this delay. Have to
+            understand this further and fine tune this delay. */
+            Nop();
+            Nop();
+            Nop();
+
+            if ( waitUntilComplete == true )
+            {
+                #if defined (PLIB_OSC_ExistsPLLLockStatus)
+                while ( PLIB_OSC_PLLIsLocked ( OSC_PLIB_ID, OSC_PLL_SYSTEM ) != true )
+                #endif
+                {
+                    if ( delay-- <= 0 )
+                    {
+                    /* Rarest case. Either the PLL lock failed or the bit is showing
+                    the wrong status, A restart needed, an error status update will
+                    not help */
+                    clkObject.systemClockStatus = SYS_CLK_OPERATION_FAIL_PLL_LOCK_TIMEOUT;
+
+                    //SYS_ASSERT("PLL lock timeout");
+                    Nop();
+                    /* Reaching here means clock switching is not enabled
+                     through configuration bits */
+                    return -1;
+                    }
+                }
+                clkObject.systemClockStatus = SYS_CLK_OPERATION_COMPLETE;
+            }
+        }
+        else
+        {
+            /* If the new oscillator is not a PLL source, the one we are running on may
+            be. So switch first before setting the divisor */
+            PLIB_OSC_SysClockSelect( OSC_PLIB_ID, oscSource );
+
+            if ( clockSource == SYS_CLK_SOURCE_FRC_BY_DIV )
+            {
+                PLIB_OSC_FRCDivisorSelect ( OSC_PLIB_ID, valueToPLLMULT );
+            }
+        }   
+        /* Lock it before going back */
+        SYS_DEVCON_SystemLock ( );
+
+        /* Return something which is not equal to '-1'. Let us return the clock source
+        itself */
+        return clockSource;
+    }
+    return -1;
+}
+
+
+/******************************************************************************
+  Function:
+    bool _SYS_CLK_ReferenceFrequencySet ( CLK_BUSES_REFERENCE referenceBus, CLK_SOURCES_REFERENCE referenceSource,
+            uint32_t targetFreqHz, bool waitUntilComplete, uint32_t *clockClosest )
+
+  Summary:
+    Sets the reference clock frequency.
+
+  Description:
+    This function sets the reference clock frequency.
+
+  Remarks:
+    None.
+*/
+
+bool _SYS_CLK_ReferenceFrequencySet ( CLK_BUSES_REFERENCE referenceBus, CLK_SOURCES_REFERENCE referenceSource,
+            uint32_t targetFreqHz, bool waitUntilComplete, uint32_t *clockClosest )
+{
+    unsigned long inputFreq = 0, tempFreq = 0;
+    uint32_t pllMult = 0, pllODiv = 0, pllIDiv = 0;
+    double  number = 0;
+    unsigned long ipart_number =0;
+    double  fpart_number =0;
+    unsigned long  divisor =0;
+    float trimValue =0;
+    const long  scale = 100;
+    CLK_SOURCES_SYSTEM systemSource;
+
+    switch ( referenceSource )
+    {
+        case CLK_SOURCE_REF_SYSTEMCLK:
+            /* The clock source is System clock itself */
+            inputFreq = clkObject.systemClock;
+            break;
+        case CLK_SOURCE_REF_PBCLK_BUS1:
+            /* The clock source is Peripheral clock */
+            inputFreq = clkObject.peripheralClock[referenceBus];
+            break;
+
+        case CLK_SOURCE_REF_PRIMARY:
+            /* If the System clock is directly using the from the Primary oscillator
+            clock, return the configured primary oscillator frequency */
+            inputFreq = SYS_CLK_CONFIG_PRIMARY_XTAL;
+            break;
+
+        case CLK_SOURCE_REF_FRC:
+            /* Source of system clock is internal fast RC. If the System clock
+            is directly using the fast RC clock, return the Fast RC clock */
+            inputFreq = SYS_CLK_FRC_CLOCK;
+            break;
+
+        case CLK_SOURCE_REF_LPRC:
+            /* Processor's internal LPRC clock */
+            inputFreq = SYS_CLK_LPRC_CLOCK;
+            break;
+
+        case CLK_SOURCE_REF_SECONDARY:
+            inputFreq = SYS_CLK_CONFIG_SECONDARY_XTAL;
+            break;
+        case CLK_SOURCE_REF_USBPLL_OUT:
+            /* Input not supported for MZ */
+            inputFreq = 0;
+            break;
+
+        case CLK_SOURCE_REF_SYSPLL_OUT:
+            /* Source of system clock is SPLL with divisors */
+            pllMult = _SYS_CLK_PLLMultiplierRead();
+            pllODiv = _SYS_CLK_PLLOutputDividerRead();
+            pllIDiv = _SYS_CLK_PLLInputDividerRead();
+
+            /* Read the current system clock source from the register */
+            systemSource = PLIB_OSC_CurrentSysClockGet ( OSC_PLIB_ID );
+
+            if (systemSource == SYS_CLK_SOURCE_PRIMARY_SYSPLL)
+            {
+                inputFreq = ( SYS_CLK_CONFIG_PRIMARY_XTAL * pllMult ) / ( pllODiv * pllIDiv );
+            }
+            else if (systemSource == SYS_CLK_SOURCE_FRC_SYSPLL)
+            {
+                inputFreq = ( SYS_CLK_FRC_CLOCK * pllMult ) / ( pllODiv * pllIDiv );
+            }
+            else
+            {
+                inputFreq = 0;
+            }
+            break;
+
+        case CLK_SOURCE_REF_EXTERNAL:
+            /* Source of system clock is internal fast RC with PLL.
+             Find the closest register value in the hardware */
+            inputFreq = SYS_CLK_CONFIG_EXTERNAL_CLOCK;
+            break;
+
         default:
             break;
     }
-    
-    return freq;
-}
 
-
-//******************************************************************************
-/* Function:
-    inline uint32_t SYS_CLK_ReferenceFrequencyGet ( CLK_BUSES_REFERENCE referenceBus )
-
-  Summary:
-    Gets the selected Reference clock bus frequency in Hertz.
-
-  Description:
-    This function gets frequency of the selected Reference clock bus in Hertz.
-
-  Precondition:
-    None.
-
-  Parameters:
-	peripheralBus - Reference clock bus selection. One of the possible value from
-				CLK_BUSES_REFERENCE enum. For devices that do not have multiple
-				clock channels for Reference clock, CLK_BUS_REFERENCE_1 should be
-				the selection.
-
-  Returns:
-    Clock frequency in Hz.
-
-  Example:
-    <code>
-    unsigned long sysClockOutputHz;
-
-    sysClockOutputHz = SYS_CLK_ReferenceFrequencyGet ( CLK_BUS_REFERENCE_3 );
-    </code>
-
-  Remarks:
-    None.
- */
-
-inline uint32_t SYS_CLK_ReferenceFrequencyGet ( CLK_BUSES_REFERENCE referenceBus )
-{
-       uint32_t freq = 0;
-
-    switch (referenceBus)
+    /* Failure case if the input is not supported */
+    if (inputFreq == 0)
     {
-        case CLK_BUS_REFERENCE_1:
-            break;
-        case CLK_BUS_REFERENCE_2:
-            break;
-        case CLK_BUS_REFERENCE_3:
-            break;
-        case CLK_BUS_REFERENCE_4:
-            break;
-        case CLK_BUS_REFERENCE_5:
-            break;
-        default:
-            break;
+        *clockClosest = 0;
+        clkObject.systemClockStatus = SYS_CLK_OPERATION_FAIL_NOT_ACHIEVABLE;
+        return false;
     }
-    
-    return freq;
+
+    /* Find the divisor value, find the equation in the datasheet */
+    number = inputFreq  / ( targetFreqHz * 2.0 );
+    ipart_number = (unsigned long) number;
+    divisor = ipart_number;
+    fpart_number = number - ipart_number;
+
+    /* Check whether the divisor is within limit */
+    if ( ( divisor > 0 ) && ( divisor <= CLK_REFERENCE_DIVISOR_MAX ) )
+    {
+        //Blocking implementation
+        while(waitUntilComplete && PLIB_OSC_ReferenceOscSourceChangeIsActive ( OSC_PLIB_ID, referenceBus ))
+        {
+            PLIB_OSC_ReferenceOscDisable( OSC_PLIB_ID, referenceBus );
+            continue;
+        }
+
+        trimValue  = fpart_number*512;
+
+        if (trimValue > CLK_REFERENCE_TRIM_MAX)
+        {
+            trimValue = CLK_REFERENCE_TRIM_MAX;
+        }
+        else if (trimValue < 0)
+        {
+            //We really should not have -ive trim value
+            trimValue = 0;
+        }
+
+        if ( !PLIB_OSC_ReferenceOscSourceChangeIsActive ( OSC_PLIB_ID, referenceBus ) )
+        {
+            /* Unlock before you switch */
+            SYS_DEVCON_SystemUnlock ( );
+
+            /* Switch the Reference clock source */
+            PLIB_OSC_ReferenceOscBaseClockSelect ( OSC_PLIB_ID,
+                    CLK_BUS_REFERENCE_1, referenceSource );
+
+            PLIB_OSC_ReferenceOscDivisorValueSet ( OSC_PLIB_ID, referenceBus, divisor );
+            PLIB_OSC_ReferenceOscTrimSet ( OSC_PLIB_ID, referenceBus, trimValue );
+
+            PLIB_OSC_ReferenceOscEnable ( OSC_PLIB_ID, referenceBus );
+            PLIB_OSC_ReferenceOutputEnable ( OSC_PLIB_ID, referenceBus );
+            
+            /* Lock it back right after completing all the register related operations */
+            SYS_DEVCON_SystemLock ( );
+
+            tempFreq = inputFreq / ( 2 * ( divisor * scale + ( trimValue * scale / 512 ) ) ) ;
+            *clockClosest = tempFreq * scale;
+        }
+        else
+        {
+            *clockClosest = 0;
+
+            clkObject.systemClockStatus = SYS_CLK_OPERATION_FAIL_REGISTER_NOT_READY;
+
+            return false;
+        }
+    }
+    else
+    {
+        clkObject.systemClockStatus = SYS_CLK_OPERATION_FAIL_NOT_ACHIEVABLE;
+
+        *clockClosest = 0;
+
+        return false;
+    }
+
+    /* Control is here, means switching operation is either complete or in
+    progress, not failure */
+    return true;
 }
 
 /******************************************************************************
   Function:
-    void SYS_CLK_SecondaryOscillatorEnable ( void )
+    bool _SYS_CLK_ReferenceClockSetup ( CLK_BUSES_REFERENCE referenceBus,
+                                        SYS_CLK_REFERENCE_SETUP *refSetup )
 
   Summary:
-    Enables the secondary oscillator.
+    Initializes the Reference clock module.
 
   Description:
-    This function enables the secondary oscillator.
+    This function initializes the Reference clock module.
 
   Remarks:
-    For more details refer sys_clk.h.
+    None.
 */
 
-void SYS_CLK_SecondaryOscillatorEnable ( void )
+void _SYS_CLK_ReferenceClockSetup ( CLK_BUSES_REFERENCE referenceBus,
+                                        SYS_CLK_REFERENCE_SETUP *refSetup )
 {
-    /* Check for secondary oscillator status */
-    if (!PLIB_OSC_SecondaryIsEnabled(OSC_ID_0))
-    {    
-        /* Unlock and enable secondary oscillator */
-        SYS_DEVCON_SystemUnlock();
-        
-        PLIB_OSC_SecondaryEnable(OSC_ID_0);
-        
-        SYS_DEVCON_SystemLock();
+
+    #if defined(PLIB_OSC_ExistsReferenceOscEnable)
+    if ( PLIB_OSC_ExistsReferenceOscEnable ( OSC_PLIB_ID ) )
+    {
+        if ( true == refSetup->suspendInSleep )
+        {
+            PLIB_OSC_ReferenceOscStopInSleepEnable ( OSC_PLIB_ID, referenceBus );
+        }
+        else
+        {
+            PLIB_OSC_ReferenceOscStopInSleepDisable ( OSC_PLIB_ID, referenceBus );
+        }
+
+        if ( true == refSetup->stopInIdle )
+        {
+            PLIB_OSC_ReferenceOscStopInIdleEnable ( OSC_PLIB_ID, referenceBus );
+        }
+        else
+        {
+            PLIB_OSC_ReferenceOscStopInIdleDisable ( OSC_PLIB_ID, referenceBus );
+        }
     }
-}
-
-/******************************************************************************
-  Function:
-    void SYS_CLK_SecondaryOscillatorDisable ( void )
-
-  Summary:
-    Disables the secondary oscillator.
-
-  Description:
-    This function disables the secondary oscillator.
-
-  Remarks:
-    For more details refer sys_clk.h.
-*/
-
-void SYS_CLK_SecondaryOscillatorDisable ( void )
-{
-    /* Check for secondary oscillator status */
-    if (PLIB_OSC_SecondaryIsEnabled(OSC_ID_0))
-    {    
-        /* Unlock and disable secondary oscillator*/
-        SYS_DEVCON_SystemUnlock();
-        
-        PLIB_OSC_SecondaryDisable(OSC_ID_0);
-        
-        SYS_DEVCON_SystemLock();
-    }
-}
-
-/******************************************************************************
-  Function:
-    bool SYS_CLK_SecondaryOscillatorIsEnabled ( void )
-
-  Summary:
-    Identifies whether secondary oscillator is enabled or disabled.
-
-  Description:
-    This function identifies whether the secondary oscillator is enabled or 
-    disabled.
-    
-  Remarks:
-    For more details refer sys_clk.h.
-*/
-
-bool SYS_CLK_SecondaryOscillatorIsEnabled ( void )
-{
-    return (PLIB_OSC_SecondaryIsEnabled(OSC_ID_0));
+    #endif
 }

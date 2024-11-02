@@ -1,0 +1,191 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ2048EFM144_OSC
+	bool
+	select HAVE_OSC
+	default y
+
+config OSC_NUMBER_OF_MODULES
+	int
+	default 1
+
+enum OSC_MODULE_ID exclusive
+	"OSC_ID_0"
+
+enum OSC_OPERATION_ON_WAIT
+	"OSC_ON_WAIT_IDLE"
+	|| "OSC_ON_WAIT_SLEEP"
+
+enum OSC_FRC_DIV
+	"OSC_FRC_DIV_256"
+	|| "OSC_FRC_DIV_64"
+	|| "OSC_FRC_DIV_32"
+	|| "OSC_FRC_DIV_16"
+	|| "OSC_FRC_DIV_8"
+	|| "OSC_FRC_DIV_4"
+	|| "OSC_FRC_DIV_2"
+	|| "OSC_FRC_DIV_1"
+
+enum OSC_SYS_TYPE
+	"OSC_FRC_WITH_PLL"
+	|| "OSC_PRIMARY"
+	|| "OSC_PRIMARY_WITH_PLL"
+	|| "OSC_SECONDARY"
+	|| "OSC_LPRC"
+	|| "OSC_BFRC"
+	|| "OSC_FRC_BY_FRCDIV"
+
+enum OSC_REF_BASECLOCK
+	"OSC_REF_BASECLOCK_SYSCLK"
+	|| "OSC_REF_BASECLOCK_PBCLK"
+	|| "OSC_REF_BASECLOCK_PRIMARY"
+	|| "OSC_REF_BASECLOCK_FRC"
+	|| "OSC_REF_BASECLOCK_LPRC"
+	|| "OSC_REF_BASECLOCK_SOSC"
+	|| "OSC_REF_BASECLOCK_SYSPLLOUT"
+	|| "OSC_REF_BASECLOCK_EXT"
+	|| "OSC_REF_BASECLOCK_BFRC"
+
+enum OSC_USBCLOCK_SOURCE
+	"OSC_USBCLOCK_SOURCE_NONE"
+
+enum OSC_SYSPLL_OUT_DIV
+	"OSC_SYSPLL_OUT_DIV_32"
+	|| "OSC_SYSPLL_OUT_DIV_16"
+	|| "OSC_SYSPLL_OUT_DIV_8"
+	|| "OSC_SYSPLL_OUT_DIV_4"
+	|| "OSC_SYSPLL_OUT_DIV_2"
+
+enum OSC_UPLL_OUT_DIV
+	"OSC_UPLL_OUT_DIV_NONE"
+
+enum OSC_BTPLL_OUT_DIV
+	"OSC_BTPLL_OUT_DIV_NONE"
+
+enum OSC_PLL_SELECT
+	"OSC_PLL_SELECT_NONE"
+
+enum OSC_PERIPHERAL_BUS
+	"OSC_PERIPHERAL_BUS_1"
+	|| "OSC_PERIPHERAL_BUS_2"
+	|| "OSC_PERIPHERAL_BUS_3"
+	|| "OSC_PERIPHERAL_BUS_4"
+	|| "OSC_PERIPHERAL_BUS_5"
+	|| "OSC_PERIPHERAL_BUS_7"
+	|| "OSC_PERIPHERAL_BUS_8"
+
+enum OSC_REFERENCE
+	"OSC_REFERENCE_1"
+	|| "OSC_REFERENCE_2"
+	|| "OSC_REFERENCE_3"
+	|| "OSC_REFERENCE_4"
+
+enum OSC_SYSPLL_IN_DIV
+	"OSC_SYSPLL_IN_DIV_8"
+	|| "OSC_SYSPLL_IN_DIV_7"
+	|| "OSC_SYSPLL_IN_DIV_6"
+	|| "OSC_SYSPLL_IN_DIV_5"
+	|| "OSC_SYSPLL_IN_DIV_4"
+	|| "OSC_SYSPLL_IN_DIV_3"
+	|| "OSC_SYSPLL_IN_DIV_2"
+	|| "OSC_SYSPLL_IN_DIV_1"
+
+enum OSC_UPLL_IN_DIV
+	"OSC_UPLL_IN_DIV_NONE"
+
+enum OSC_BTPLL_IN_DIV
+	"OSC_BTPLL_IN_DIV_NONE"
+
+enum OSC_SYSPLL_FREQ_RANGE
+	"OSC_SYSPLL_FREQ_RANGE_34M_TO_68M"
+	|| "OSC_SYSPLL_FREQ_RANGE_21M_TO_42M"
+	|| "OSC_SYSPLL_FREQ_RANGE_13M_TO_26M"
+	|| "OSC_SYSPLL_FREQ_RANGE_8M_TO_16M"
+	|| "OSC_SYSPLL_FREQ_RANGE_5M_TO_10M"
+	|| "OSC_SYSPLL_FREQ_RANGE_BYPASS"
+
+enum OSC_SYSPLL_IN_CLK_SOURCE
+	"OSC_SYSPLL_IN_CLK_SOURCE_FRC"
+	|| "OSC_SYSPLL_IN_CLK_SOURCE_PRIMARY"
+
+enum OSC_UPLL_FREQ_RANGE
+	"OSC_UPLL_FREQ_RANGE_NONE"
+
+enum OSC_BTPLL_FREQ_RANGE
+	"OSC_BTPLL_FREQ_RANGE_NONE"
+
+enum OSC_BTPLL_IN_CLK_SOURCE
+	"OSC_BTPLL_IN_CLK_SOURCE_NONE"
+
+enum OSC_SLEEP_TO_STARTUP_CLK_TYPE
+	"OSC_SLEEP_TO_STARTUP_CLK_FRC"
+	|| "OSC_SLEEP_TO_STARTUP_NO_ADDITIONAL_CLK"
+
+enum OSC_CLOCK_ID
+	"OSC_CLOCK_FAST_RC"
+	|| "OSC_CLOCK_PRIMARY_OSC"
+	|| "OSC_CLOCK_SECONDARY_OSC"
+	|| "OSC_CLOCK_LOW_POWER_RC"
+	|| "OSC_CLOCK_SYSTEM_PLL"
+
+enum OSC_CLOCK_DIAG
+	"OSC_CLOCK_DIAG_NONE"
+
+enum OSC_CLOCK_SLEW_TYPE
+	"OSC_CLOCK_SLEW_DOWNWARD"
+	|| "OSC_CLOCK_SLEW_UPWARD"
+
+ifblock PROJECT_STANDALONE
+file PLIB_OSC_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/processor/osc_p32mz2048efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/processor/osc_p32mz2048efm144.h"
+
+file PLIB_OSC_ONWAITACTION_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_OnWaitAction_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_OnWaitAction_Default.h"
+file PLIB_OSC_SECONDARYENABLE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_SecondaryEnable_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_SecondaryEnable_Default.h"
+file PLIB_OSC_SECONDARYREADY_DEFAULT_1_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_SecondaryReady_Default_1.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_SecondaryReady_Default_1.h"
+file PLIB_OSC_FRCDIVISOR_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_FRCDivisor_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_FRCDivisor_Default.h"
+file PLIB_OSC_OSCSELECT_MZ_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_OscSelect_Mz.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_OscSelect_Mz.h"
+file PLIB_OSC_OSCSWITCHINIT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_OscSwitchInit_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_OscSwitchInit_Default.h"
+file PLIB_OSC_OSCCURRENTGET_PIC32_1_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_OscCurrentGet_PIC32_1.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_OscCurrentGet_PIC32_1.h"
+file PLIB_OSC_PBCLOCKDIVISOR_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PBClockDivisor_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PBClockDivisor_PIC32_2.h"
+file PLIB_OSC_PBCLOCKREADY_PIC32_1_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PBClockReady_PIC32_1.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PBClockReady_PIC32_1.h"
+file PLIB_OSC_USBCLOCKSOURCE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_UsbClockSource_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_UsbClockSource_Unsupported.h"
+file PLIB_OSC_PLLLOCKSTATUS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLLockStatus_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLLockStatus_Unsupported.h"
+file PLIB_OSC_PLLCLOCKLOCK_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLClockLock_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLClockLock_Default.h"
+file PLIB_OSC_PLLMULTIPLIER_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLMultiplier_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLMultiplier_PIC32_2.h"
+file PLIB_OSC_UPLLMULTIPLIER_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_UPLLMultiplier_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_UPLLMultiplier_Unsupported.h"
+file PLIB_OSC_BTPLLMULTIPLIER_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_BTPLLMultiplier_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_BTPLLMultiplier_Unsupported.h"
+file PLIB_OSC_PLLOUTPUTDIVISOR_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLOutputDivisor_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLOutputDivisor_PIC32_2.h"
+file PLIB_OSC_UPLLOUTPUTDIVISOR_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_UPLLOutputDivisor_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_UPLLOutputDivisor_Unsupported.h"
+file PLIB_OSC_BTPLLOUTPUTDIVISOR_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_BTPLLOutputDivisor_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_BTPLLOutputDivisor_Unsupported.h"
+file PLIB_OSC_CLOCKFAIL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ClockFail_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ClockFail_Default.h"
+file PLIB_OSC_FRCTUNING_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_FRCTuning_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_FRCTuning_Default.h"
+file PLIB_OSC_REFERENCEOSCBASECLOCK_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscBaseClock_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscBaseClock_PIC32_2.h"
+file PLIB_OSC_REFERENCEOSCCHANGE_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscChange_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscChange_PIC32_2.h"
+file PLIB_OSC_REFERENCEOSCCHANGEACTIVE_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscChangeActive_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscChangeActive_PIC32_2.h"
+file PLIB_OSC_REFERENCEOSCSTOPINSLEEP_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscStopInSleep_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscStopInSleep_PIC32_2.h"
+file PLIB_OSC_REFERENCEOUTPUTENABLE_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOutputEnable_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOutputEnable_PIC32_2.h"
+file PLIB_OSC_REFERENCEOSCSTOPINIDLEENABLE_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscStopInIdleEnable_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscStopInIdleEnable_PIC32_2.h"
+file PLIB_OSC_REFERENCEOSCENABLE_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscEnable_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscEnable_PIC32_2.h"
+file PLIB_OSC_REFERENCEOSCDIVISOR_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscDivisor_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscDivisor_PIC32_2.h"
+file PLIB_OSC_REFERENCEOSCTRIM_PIC32_2_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ReferenceOscTrim_PIC32_2.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ReferenceOscTrim_PIC32_2.h"
+file PLIB_OSC_PBCLOCKOUTPUTENABLE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PBClockOutputEnable_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PBClockOutputEnable_Default.h"
+file PLIB_OSC_PLLINPUTDIVISOR_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLInputDivisor_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLInputDivisor_Default.h"
+file PLIB_OSC_UPLLINPUTDIVISOR_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_UPLLInputDivisor_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_UPLLInputDivisor_Unsupported.h"
+file PLIB_OSC_BTPLLINPUTDIVISOR_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_BTPLLInputDivisor_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_BTPLLInputDivisor_Unsupported.h"
+file PLIB_OSC_PLLINPUTCLOCKSOURCE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLInputClockSource_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLInputClockSource_Default.h"
+file PLIB_OSC_BTPLLINPUTCLOCKSOURCE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_BTPLLInputClockSource_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_BTPLLInputClockSource_Unsupported.h"
+file PLIB_OSC_PLLFREQUENCYRANGE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLFrequencyRange_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLFrequencyRange_Default.h"
+file PLIB_OSC_BTPLLFREQUENCYRANGE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_BTPLLFrequencyRange_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_BTPLLFrequencyRange_Unsupported.h"
+file PLIB_OSC_UPLLFREQUENCYRANGE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_UPLLFrequencyRange_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_UPLLFrequencyRange_Unsupported.h"
+file PLIB_OSC_SLEEPTOSTARTUPCLOCK_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_SleepToStartupClock_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_SleepToStartupClock_Default.h"
+file PLIB_OSC_CLOCKREADYSTATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ClockReadyStatus_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ClockReadyStatus_Default.h"
+file PLIB_OSC_CLOCKDIAGSTATUS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ClockDiagStatus_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ClockDiagStatus_Unsupported.h"
+file PLIB_OSC_CLOCKSLEWINGSTATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ClockSlewingStatus_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ClockSlewingStatus_Default.h"
+file PLIB_OSC_SLEWENABLECONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_SlewEnableControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_SlewEnableControl_Default.h"
+file PLIB_OSC_SLEWDIVISORSTEPCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_SlewDivisorStepControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_SlewDivisorStepControl_Default.h"
+file PLIB_OSC_SYSTEMCLOCKDIVISORCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_SystemClockDivisorControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_SystemClockDivisorControl_Default.h"
+file PLIB_OSC_DREAMMODECONTROL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_DreamModeControl_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_DreamModeControl_Unsupported.h"
+file PLIB_OSC_FORCELOCK_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ForceLock_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ForceLock_Unsupported.h"
+file PLIB_OSC_RESETPLL_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_ResetPLL_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_ResetPLL_Unsupported.h"
+file PLIB_OSC_PLLBYPASS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_PLLBypass_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_PLLBypass_Unsupported.h"
+file PLIB_OSC_BTPLLCLOCKOUT_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/osc/templates/osc_BTPLLClockOut_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/osc/templates/osc_BTPLLClockOut_Unsupported.h"
+endif

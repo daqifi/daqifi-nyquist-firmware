@@ -1,0 +1,68 @@
+menu "Peripheral Library"
+
+config PERIPHERAL_LIB
+    bool "Use $DEVICE Peripheral Library"
+    default y
+    persistent
+    ---help---
+    IDH_HTML_Peripheral_Library_Help
+    ---endhelp---
+
+endmenu
+
+source "$HARMONY_VERSION_PATH/framework/peripheral/adc/config/adc.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/adchs/config/adchs.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/adcp/config/adcp.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/bmx/config/bmx.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/can/config/can.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/cdac/config/cdac.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/cmp/config/cmp.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/ctmu/config/ctmu.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/ctr/config/ctr.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/devcon/config/devcon.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/ddr/config/ddr.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/dma/config/dma.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/dmt/config/dmt.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/ebi/config/ebi.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/eth/config/eth.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/glcd/config/glcd.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/i2c/config/i2c.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/ic/config/ic.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/int/config/int.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/mcpwm/config/mcpwm.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/nvm/config/nvm.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/oc/config/oc.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/osc/config/osc.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/pcache/config/pcache.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/pmp/config/pmp.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/ports/config/ports.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/power/config/power.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/ptg/config/ptg.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/reset/config/reset.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/rtcc/config/rtcc.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/sb/config/sb.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/spi/config/spi.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/sqi/config/sqi.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/tmr/config/tmr.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/usart/config/usart.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/usb/config/usb.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/config/usbhs.hconfig"
+source "$HARMONY_VERSION_PATH/framework/peripheral/wdt/config/wdt.hconfig"
+
+ifblock ISA_MIPS32_MODE
+library DEVICE_PERIPHERALS_A "$HARMONY_VERSION_PATH/bin/framework/peripheral/$DEVICE_peripherals.a"
+endif
+
+ifblock ISA_MICROMIPS_MODE
+library DEVICE_PERIPHERALS_MICROMIPS_A "$HARMONY_VERSION_PATH/bin/framework/peripheral/16bit/$DEVICE_peripherals.a"
+endif
+
+ifblock ISA_MIPS16_MODE
+library DEVICE_PERIPHERALS_MIPS16_A "$HARMONY_VERSION_PATH/bin/framework/peripheral/16bit/$DEVICE_peripherals.a"
+endif
+
+ifblock PROJECT_STANDALONE
+file PERIPHERAL_H "$HARMONY_VERSION_PATH/framework/peripheral/peripheral.h" to "$PROJECT_HEADER_FILES/framework/peripheral/peripheral.h"
+file PERIPHERAL_COMMON_H "$HARMONY_VERSION_PATH/framework/peripheral/peripheral_common.h" to "$PROJECT_HEADER_FILES/framework/peripheral/peripheral_common.h"
+file PERIPHERAL_COMMON_32BIT_H "$HARMONY_VERSION_PATH/framework/peripheral/peripheral_common_32bit.h" to "$PROJECT_HEADER_FILES/framework/peripheral/peripheral_common_32bit.h"
+endif

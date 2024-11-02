@@ -4,8 +4,7 @@
     <SystemInitScript dnOrder="0"/>
     <SystemStartScript dnOrder="1"/>
   </DisplayManager>
-  <General>
-    <HarmonyPath dnOrder="0" path="../../../../../../microchip/harmony/v2_06"/>
+  <General>  
     <Processor dnOrder="1" name="PIC32MZ2048EFM144"/>
     <Board dnOrder="2" name=""/>
     <ForceOptimization dnOrder="3" flag="true"/>
@@ -396,7 +395,7 @@
       </C32>
     </CompilerItems>
     <Libraries dnOrder="3">
-      <Library dnOrder="0" value="../../../../../../../../microchip/harmony/v2_06/bin/framework/peripheral/PIC32MZ2048EFM144_peripherals.a"/>
+      <Library dnOrder="0" value="../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/PIC32MZ2048EFM144_peripherals.a"/>
     </Libraries>
   </Manifest>
 </Configuration>
