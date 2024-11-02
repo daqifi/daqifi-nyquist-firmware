@@ -26,7 +26,7 @@ static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
 }
 
 static void SetGpioDir(GPIO_PORT port, uint32_t mask, bool isInput) {
-    uint32_t pin = 1 << mask;
+    uint32_t pin = 1 << mask ;
     if (isInput)
         GPIO_PortInputEnable(port, pin);
     else

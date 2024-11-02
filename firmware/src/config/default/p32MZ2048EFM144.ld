@@ -80,7 +80,7 @@ OPTIONAL("vector_offset_init.o")
  *   xc32-gcc src.c -Wl,--defsym=_ebase_address=0x9D001000
  *************************************************************************/
 PROVIDE(_vector_spacing = 0x0001);
-PROVIDE(_ebase_address = 0x9D000000);
+PROVIDE(_ebase_address = 0x9D001000);
 
 /*************************************************************************
  * Memory Address Equates

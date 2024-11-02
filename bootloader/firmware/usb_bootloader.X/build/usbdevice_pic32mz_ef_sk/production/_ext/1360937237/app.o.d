@@ -193,6 +193,25 @@ build/usbdevice_pic32mz_ef_sk/production/_ext/1360937237/app.o: \
  ../src/app.h \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/bootloader/src/nvm.h \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/peripheral.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/plib_devcon.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/devcon_processor.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/devcon_p32xxxx.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/devcon_p32mz2048efm144.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_AlternateClock_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_DeviceRegsLockUnlock_PIC32MZ.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_OTPConfigLockUnlock_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_USB_PHY_SleepModeSet_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_ECCModes_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_JTAGEnable_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_AnalogChargePumpControl_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_TraceOutput_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_JTAGUsesTDO_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_IgnoreDebugFreeze_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_DeviceVerAndId_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_SysLockUnlock_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_MPLL_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_HSUARTControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_BootSelection_Unsupported.h \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/plib_dma.h \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/dma_processor.h \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/dma_p32xxxx.h \
@@ -241,7 +260,42 @@ build/usbdevice_pic32mz_ef_sk/production/_ext/1360937237/app.o: \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/../templates/dma_ChannelXDestinationPointer_Default.h \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/../templates/dma_ChannelXCellSize_Default.h \
  ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/../templates/dma_ChannelXCellProgressPointer_Default.h \
- ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/../templates/dma_ChannelXPatternData_Default.h
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/../templates/dma_ChannelXPatternData_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/plib_nvm.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/nvm_processor.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/nvm_p32xxxx.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/nvm_p32mz2048efm144.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_WriteErrorStatus_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_MemoryModificationControl_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_OperationMode_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_AddressModifyControl_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_ProvideData_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_WriteOperation_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_KeySequence_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_SourceAddress_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LowVoltageStatus_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LowVoltageError_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_FlashBankRegionSelect_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_BootFlashBankRegion_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_ProvideQuadData_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LockPFMSelect_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_FlashWPMemoryRangeProvide_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LockBootSelect_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_BootPageWriteProtect_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_SwapLockControl_Default.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMEnableControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMStopInIdleControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMOperationModeControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMAddressControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMDataControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMKeySequence_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMEnableOperationControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMStartOperationControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMLongWriteStatus_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMOperationAbortControl_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMErrorStatus_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMCalibrationData_Unsupported.h \
+ ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMWaitStates_Unsupported.h
 
 ../src/app.h:
 
@@ -631,6 +685,44 @@ build/usbdevice_pic32mz_ef_sk/production/_ext/1360937237/app.o: \
 
 ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/peripheral.h:
 
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/plib_devcon.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/devcon_processor.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/devcon_p32xxxx.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/devcon_p32mz2048efm144.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_AlternateClock_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_DeviceRegsLockUnlock_PIC32MZ.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_OTPConfigLockUnlock_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_USB_PHY_SleepModeSet_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_ECCModes_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_JTAGEnable_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_AnalogChargePumpControl_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_TraceOutput_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_JTAGUsesTDO_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_IgnoreDebugFreeze_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_DeviceVerAndId_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_SysLockUnlock_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_MPLL_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_HSUARTControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/devcon/processor/../templates/devcon_BootSelection_Unsupported.h:
+
 ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/plib_dma.h:
 
 ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/dma_processor.h:
@@ -728,3 +820,73 @@ build/usbdevice_pic32mz_ef_sk/production/_ext/1360937237/app.o: \
 ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/../templates/dma_ChannelXCellProgressPointer_Default.h:
 
 ../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/dma/processor/../templates/dma_ChannelXPatternData_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/plib_nvm.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/nvm_processor.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/nvm_p32xxxx.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/nvm_p32mz2048efm144.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_WriteErrorStatus_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_MemoryModificationControl_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_OperationMode_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_AddressModifyControl_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_ProvideData_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_WriteOperation_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_KeySequence_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_SourceAddress_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LowVoltageStatus_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LowVoltageError_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_FlashBankRegionSelect_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_BootFlashBankRegion_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_ProvideQuadData_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LockPFMSelect_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_FlashWPMemoryRangeProvide_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_LockBootSelect_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_BootPageWriteProtect_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_SwapLockControl_Default.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMEnableControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMStopInIdleControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMOperationModeControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMAddressControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMDataControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMKeySequence_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMEnableOperationControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMStartOperationControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMLongWriteStatus_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMOperationAbortControl_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMErrorStatus_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMCalibrationData_Unsupported.h:
+
+../src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/nvm/processor/../templates/nvm_EEPROMWaitStates_Unsupported.h:

@@ -186,26 +186,27 @@ size_t Json_Encode(tBoardData* state,
     if (encodeDIO) {
         startIndex += snprintf(charBuffer + startIndex,
                 buffSize - startIndex,
-                "\"dio\":[\n");
+                "\"dio\":[");
 
         while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
             DIOSample data;
             DIOSampleList_PopFront(&state->DIOSamples, &data);
             startIndex += snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
-                    "{\"time\":%u, \"mask\":%u, \"data\":%u},\n",
+                    "{\"time\":%u, \"mask\":%u, \"data\":%u},",
                     state->StreamTrigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
         }
 
         // Remove trailing comma and add closing bracket for dio array
-        if (charBuffer[startIndex - 2] == ',') {
-            startIndex -= 2; // Remove trailing comma
+        if (charBuffer[startIndex - 1] == ',') {
+            startIndex -= 1; // Remove trailing comma
         }
         startIndex += snprintf(charBuffer + startIndex,
                 buffSize - startIndex,
-                "\n],\n");
+                "],\n");
+        initialOffsetIndex=startIndex; // so that analog data can be appended
     }
 
     // Encode ADC if needed
@@ -249,7 +250,8 @@ size_t Json_Encode(tBoardData* state,
             }
 
             free(pPublicSampleList);
-
+            if(startIndex == initialOffsetIndex) //no adc data added
+                break;
             // Remove trailing comma and close adc array
             if (charBuffer[startIndex - 2] == ',') {
                 startIndex -= 2; // Remove trailing comma
@@ -266,7 +268,7 @@ size_t Json_Encode(tBoardData* state,
     }
     startIndex += snprintf(charBuffer + startIndex,
             buffSize - startIndex,
-            "\n}");
+            "\n}\n");
 
     charBuffer[startIndex] = '\0'; // Null-terminate the JSON string
     return startIndex; // Return the number of bytes written

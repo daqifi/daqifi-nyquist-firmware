@@ -90,7 +90,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                    
                 }
             }
-            AInSampleList_PushBack(pPublicSampleList);
+            if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+                free(pPublicSampleList);
+            }
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                 for (i = 0; i < pRunTimeAInModules->Size; ++i) {
