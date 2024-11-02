@@ -1,0 +1,1 @@
+$(MP_EXTRA_AS_PRE)  -c -mprocessor=$(MP_PROCESSOR_OPTION) -DXPRJ_usbdevice_pic32mz_ef_sk=$(CND_CONF)  -legacy-libc  -Wa,--defsym=__MPLAB_BUILD=1$(MP_EXTRA_AS_POST),--gdwarf-2 -mdfp="${DFP_DIR}"D:\Repositories\DAQIFI\repo\daqifi-nyquist-firmware\dev_v3\bootloader\firmware\src\system_config\usbdevice_pic32mz_ef_sk\framework\system\devcon\src\sys_devcon_cache_pic32mz.S
