@@ -610,6 +610,19 @@ scpi_result_t SCPI_ForceBootloader(scpi_t * context) {
     RCON_SoftwareReset();
     return SCPI_RES_ERR; // If we get here, the reset didn't work
 }
+
+scpi_result_t SCPI_UsbSetTransparentMode(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if(param1==0){
+        UsbCdc_SetTransparentMode(false);
+    }else{
+        UsbCdc_SetTransparentMode(true);
+    }
+     return SCPI_RES_OK;
+}
 //
 //scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
 //{
@@ -702,6 +715,7 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
     {.pattern = "SYSTem:FORceBoot", .callback = SCPI_ForceBootloader,},
+    {.pattern = "SYSTem:USB:SetTransparentMode", .callback = SCPI_UsbSetTransparentMode},
     //    {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber, },
     //    
     //    // Intentionally(?) not implemented (stubbed out in original firmware))

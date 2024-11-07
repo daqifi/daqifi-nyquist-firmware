@@ -18,9 +18,11 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 __WEAK void UsbCdc_SleepStateUpdateCB(bool state) {
     UNUSED(state);
 }
-__WEAK bool UsbCdc_TransparentReadCmpltCB(uint8_t* pBuff, size_t buffLen){
+
+__WEAK bool UsbCdc_TransparentReadCmpltCB(uint8_t* pBuff, size_t buffLen) {
     return true;
 }
+
 USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
 (
         USB_DEVICE_CDC_INDEX index,
@@ -368,9 +370,18 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
             }
             client->readBufferLength = 0;
             return true;
-        } else if (UsbCdc_TransparentReadCmpltCB(client->readBuffer, client->readBufferLength) == true) {
-            client->readBufferLength = 0;
-            return true;
+        } else {
+            if (client->readBufferLength == strlen("SYSTem:USB:SetTransparentMode 0\r\n")) {
+                for (size_t i = 0; i < client->readBufferLength; ++i) {
+                    microrl_insert_char(&client->console, client->readBuffer[i]);
+                }
+                client->readBufferLength = 0;
+                return true;
+            }
+            if (UsbCdc_TransparentReadCmpltCB(client->readBuffer, client->readBufferLength) == true) {
+                client->readBufferLength = 0;
+                return true;
+            }
         }
     }
     return false;

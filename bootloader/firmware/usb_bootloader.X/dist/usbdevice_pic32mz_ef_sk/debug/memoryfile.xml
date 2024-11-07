@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?> 
 <project>                                  
-  <executable name="dist/usbdevice_pic32mz_ef_sk/debug/basic.X.debug.elf">                 
+  <executable name="dist/usbdevice_pic32mz_ef_sk/debug/usb_bootloader.X.debug.elf">                 
     <memory name="program">                 
       <units>bytes</units>                 
       <length>62336</length>                 
