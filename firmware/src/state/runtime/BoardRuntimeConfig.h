@@ -12,7 +12,7 @@
 #include "HAL/Power/PowerApi.h"
 #include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
-#include "services/Wifi/WifiApi.h"
+#include "services/wifi_services/wifi_manager.h"
 #include "../../services/SDcard/SDCard.h"
 
 #ifdef __cplusplus

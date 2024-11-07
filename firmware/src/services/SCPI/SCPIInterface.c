@@ -228,7 +228,7 @@ const NanopbFlagsArray fields_discovery = {
 static microrl_t* SCPI_GetMicroRLClient(scpi_t* context) {
     UsbCdcData_t * pRunTimeUsbSettings = UsbCdc_GetSettings();
 
-    TcpServerData * pRunTimeServerData = WifiApi_GetTcpServerData();
+    wifi_tcp_server_context_t * pRunTimeServerData = wifi_manager_GetTcpServerContext();
 
     if (&pRunTimeUsbSettings->scpiContext == context) {
         return &pRunTimeUsbSettings->console;
@@ -616,12 +616,12 @@ scpi_result_t SCPI_UsbSetTransparentMode(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
-    if(param1==0){
+    if (param1 == 0) {
         UsbCdc_SetTransparentMode(false);
-    }else{
+    } else {
         UsbCdc_SetTransparentMode(true);
     }
-     return SCPI_RES_OK;
+    return SCPI_RES_OK;
 }
 //
 //scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
@@ -746,8 +746,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "PWM:CHannel:FREQuency", .callback = SCPI_PWMChannelFrequencySet,},
     {.pattern = "PWM:CHannel:FREQuency?", .callback = SCPI_PWMChannelFrequencyGet,},
     {.pattern = "PWM:CHannel:DUTY", .callback = SCPI_PWMChannelDUTYSet,},
-    {.pattern = "PWM:CHannel:DUTY?", .callback = SCPI_PWMChannelDUTYGet,},
-    //    
+    {.pattern = "PWM:CHannel:DUTY?", .callback = SCPI_PWMChannelDUTYGet,},    
     //    // Wifi
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled", .callback = SCPI_LANEnabledSet,},

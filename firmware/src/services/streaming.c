@@ -11,9 +11,7 @@
 #include "DaqifiPB/DaqifiOutMessage.pb.h"
 #include "DaqifiPB/NanoPB_Encoder.h"
 #include "Util/Logger.h"
-//#include "TcpServer/TcpServer.h"
 #include "Util/CircularBuffer.h"
-//#include "commTest.h"
 #include "UsbCdc/UsbCdc.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
@@ -231,7 +229,7 @@ void streaming_Task(void) {
         }
        
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
-        wifiSize = WifiApi_WriteBuffFreeSize();
+        wifiSize = wifi_manager_GetWriteBuffFreeSize();
         sdSize = SDCard_WriteBuffFreeSize();
 
         hasUsb = (usbSize > BUFFER_SIZE);
@@ -277,7 +275,7 @@ void streaming_Task(void) {
                 
             }
             if (hasWifi) {
-                WifiApi_WriteToBuffer((const char *) buffer, packetSize);
+                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
             if (hasSD) {
                 SDCard_WriteToBuffer((const char *) buffer, packetSize);

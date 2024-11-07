@@ -1,5 +1,6 @@
-build/default/production/_ext/1223437004/tcpServer.o: \
- ../src/services/Wifi/tcpServer.c ../src/services/Wifi/tcpServer.h \
+build/default/production/_ext/542880623/wifi_tcp_server.o: \
+ ../src/services/wifi_services/wifi_tcp_server.c \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -176,7 +177,7 @@ build/default/production/_ext/1223437004/tcpServer.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
  ../src/services/SCPI/SCPIInterface.h ../src/Util/Logger.h
 
-../src/services/Wifi/tcpServer.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/configuration.h:
 

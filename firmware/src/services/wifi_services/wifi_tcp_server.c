@@ -1,4 +1,4 @@
-#include "tcpServer.h"
+#include "wifi_tcp_server.h"
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
 #include "socket.h"
@@ -14,7 +14,7 @@
 #define UNUSED(x) (void)(x)
 //! Timeout for waiting when WiFi device is full and returning EWOULDBLOCK error
 #define TCPSERVER_EWOULDBLOCK_ERROR_TIMEOUT         1
-TcpServerData *gpServerData;
+wifi_tcp_server_context_t *gpServerData;
 //// Function Prototypes
 
 bool TcpServer_ProcessSendBuffer();
@@ -54,7 +54,7 @@ static bool TcpServer_Flush() {
  * @param context The context to lookup
  * @return A pointer to the data, or NULL if the context is not bound to a TCP client
  */
-static TcpClientData* SCPI_TCP_GetClient(scpi_t * context) {
+static wifi_tcp_server_clientContext_t* SCPI_TCP_GetClient(scpi_t * context) {
     return &gpServerData->client;
 }
 
@@ -76,9 +76,10 @@ static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
  * @return always SCPI_RES_OK
  */
 static scpi_result_t SCPI_TCP_Flush(scpi_t * context) {
-    TcpClientData* client = SCPI_TCP_GetClient(context);
+    wifi_tcp_server_clientContext_t* client = SCPI_TCP_GetClient(context);
     UNUSED(client);
     return SCPI_RES_OK;
+    //(TODO(Daqifi):Review this
     //    if (TcpServer_Flush(client)) {
     //        return SCPI_RES_OK;
     //    } else {
@@ -132,7 +133,7 @@ static scpi_interface_t scpi_interface = {
  * @param context The context to lookup
  * @return A pointer to the data, or NULL if the context is not bound to a TCP client
  */
-static TcpClientData* microrl_GetClient(microrl_t* context) {
+static wifi_tcp_server_clientContext_t* microrl_GetClient(microrl_t* context) {
     return &gpServerData->client;
 }
 
@@ -155,7 +156,7 @@ static void microrl_echo(microrl_t* context, size_t textLen, const char* text) {
  * @return The result of processing the command, or -1 if the command is invalid;
  */
 static int microrl_commandComplete(microrl_t* context, size_t commandLen, const char* command) {
-    TcpClientData* client = microrl_GetClient(context);
+    wifi_tcp_server_clientContext_t* client = microrl_GetClient(context);
 
     if (client == NULL) {
         SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Could not find client for provided console.");
@@ -180,7 +181,7 @@ static int CircularBufferToTcpWrite(uint8_t* buf, uint16_t len) {
 }
 //==========================External Apis==========================
 
-void TcpServer_Initialize(TcpServerData *pServerData) {
+void TcpServer_Initialize(wifi_tcp_server_context_t *pServerData) {
     static bool isInitDone = false;
     if (!isInitDone) {
         gpServerData = pServerData;

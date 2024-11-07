@@ -1,12 +1,6 @@
-build/default/production/_ext/1223437004/wifiSerialBridge.o: \
- ../src/services/Wifi/wifiSerialBridge.c \
- ../src/services/Wifi/wifiSerailBrideIntf.h \
- ../src/services/Wifi/wifiSerialBridge.h \
- ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
- ../src/config/default/driver/winc/include/drv/common/nm_common.h \
- ../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h \
- ../src/config/default/driver/winc/include/drv/common/nm_debug.h \
- ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
+build/default/production/_ext/542880623/wifi_state_machine.o: \
+ ../src/services/wifi_services/wifi_state_machine.c \
+ ../src/services/wifi_services/wifi_state_machine.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -134,25 +128,68 @@ build/default/production/_ext/1223437004/wifiSerialBridge.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
- ../src/app_freertos.h \
- ../src/config/default/driver/winc/include/drv/driver/nmbus.h \
+ ../src/app_freertos.h ../src/services/daqifi_settings.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_common.h \
+ ../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_debug.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
- ../src/config/default/driver/winc/include/drv/driver/nmdrv.h
+ ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_common.h \
+ ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
+ ../src/Util/ArrayWrapper.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
+ ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/types.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/error.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/units.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
+ ../src/Util/CircularBuffer.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
+ ../src/config/default/driver/winc/include/wdrv_winc.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_bssctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_assoc.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_systime.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_softap.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_custie.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
+ ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/Util/Logger.h ../src/state/data/BoardData.h \
+ ../src/state/data/AInSample.h ../src/Util/HeapList.h \
+ ../src/Util/LockProvider.h ../src/state/data/../board/AInConfig.h \
+ ../src/state/data/DIOSample.h ../src/HAL/Power/PowerApi.h \
+ ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
+ ../src/services/wifi_services/wifi_serial_bridge.h \
+ ../src/services/wifi_services/wifi_serial_bridge_interface.h
 
-../src/services/Wifi/wifiSerailBrideIntf.h:
-
-../src/services/Wifi/wifiSerialBridge.h:
-
-../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
-
-../src/config/default/driver/winc/include/drv/common/nm_common.h:
-
-../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h:
-
-../src/config/default/driver/winc/include/drv/common/nm_debug.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_debug.h:
+../src/services/wifi_services/wifi_state_machine.h:
 
 ../src/config/default/configuration.h:
 
@@ -414,10 +451,132 @@ build/default/production/_ext/1223437004/wifiSerialBridge.o: \
 
 ../src/app_freertos.h:
 
-../src/config/default/driver/winc/include/drv/driver/nmbus.h:
+../src/services/daqifi_settings.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_common.h:
+
+../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_debug.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
 
 ../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_common.h:
+
+../src/config/default/../../state/runtime/AInRuntimeConfig.h:
+
+../src/Util/ArrayWrapper.h:
+
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
+../src/services/wifi_services/wifi_tcp_server.h:
+
+../src/libraries/microrl/src/microrl.h:
+
+../src/libraries/microrl/src/config.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/parser.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/types.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/config.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/cc.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/error.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/constants.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/units.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/utils.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/expression.h:
+
+../src/Util/CircularBuffer.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
+
+../src/config/default/driver/winc/include/wdrv_winc.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_bssfind.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_bssctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_assoc.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_systime.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_softap.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_custie.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_httpprovctx.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_sta.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_wps.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_socket.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h:
+
+../src/config/default/driver/winc/include/drv/driver/ecc_types.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_host_file.h:
+
+../src/config/default/driver/winc/include/drv/driver/m2m_ota.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/Util/Logger.h:
+
+../src/state/data/BoardData.h:
+
+../src/state/data/AInSample.h:
+
+../src/Util/HeapList.h:
+
+../src/Util/LockProvider.h:
+
+../src/state/data/../board/AInConfig.h:
+
+../src/state/data/DIOSample.h:
+
+../src/HAL/Power/PowerApi.h:
+
+../src/HAL/BQ24297/BQ24297.h:
+
+../src/HAL/UI/UI.h:
+
+../src/services/wifi_services/wifi_serial_bridge.h:
+
+../src/services/wifi_services/wifi_serial_bridge_interface.h:

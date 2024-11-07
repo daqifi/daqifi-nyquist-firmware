@@ -166,8 +166,9 @@ build/default/production/_ext/1104413135/PowerApi.o: \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h ../src/services/Wifi/WifiApi.h \
- ../src/services/Wifi/tcpServer.h \
+ ../src/Util/CircularBuffer.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -189,7 +190,8 @@ build/default/production/_ext/1104413135/PowerApi.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h \
- ../src/HAL/ADC/MC12bADC.h ../src/HAL/Power/../../services/Wifi/WifiApi.h
+ ../src/HAL/ADC/MC12bADC.h \
+ ../src/HAL/Power/../../services/wifi_services/wifi_manager.h
 
 ../src/HAL/Power/PowerApi.h:
 
@@ -549,9 +551,9 @@ build/default/production/_ext/1104413135/PowerApi.o: \
 
 ../src/Util/CircularBuffer.h:
 
-../src/services/Wifi/WifiApi.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/services/Wifi/tcpServer.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
@@ -597,4 +599,4 @@ build/default/production/_ext/1104413135/PowerApi.o: \
 
 ../src/HAL/ADC/MC12bADC.h:
 
-../src/HAL/Power/../../services/Wifi/WifiApi.h:
+../src/HAL/Power/../../services/wifi_services/wifi_manager.h:

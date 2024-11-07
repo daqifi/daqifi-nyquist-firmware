@@ -1,11 +1,19 @@
-build/default/production/_ext/1223437004/wifiSerialBridgeIntf.o: \
- ../src/services/Wifi/wifiSerialBridgeIntf.c \
- ../src/services/Wifi/wifiSerailBrideIntf.h \
+build/default/production/_ext/542880623/wifi_serial_bridge.o: \
+ ../src/services/wifi_services/wifi_serial_bridge.c \
+ ../src/services/wifi_services/wifi_serial_bridge_interface.h \
+ ../src/services/wifi_services/wifi_serial_bridge.h \
+ ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_common.h \
+ ../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h \
+ ../src/config/default/driver/winc/include/drv/common/nm_debug.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
+ ../src/config/default/configuration.h ../src/config/default/user.h \
+ ../src/config/default/device.h \
+ ../src/config/default/toolchain_specifics.h \
  ../src/config/default/definitions.h \
  ../src/config/default/crypto/crypto.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp8.h \
  ../src/config/default/device.h \
- ../src/config/default/toolchain_specifics.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp_common.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp6.h \
  ../src/config/default/peripheral/ocmp/plib_ocmp7.h \
@@ -13,8 +21,7 @@ build/default/production/_ext/1223437004/wifiSerialBridgeIntf.o: \
  ../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h \
  ../src/config/default/usb/usb_chapter_9.h \
  ../src/config/default/usb/usb_device.h \
- ../src/config/default/configuration.h ../src/config/default/user.h \
- ../src/config/default/device.h ../src/config/default/system/system.h \
+ ../src/config/default/system/system.h \
  ../src/config/default/system/system_common.h \
  ../src/config/default/system/system_module.h \
  ../src/config/default/system/system_common.h \
@@ -127,24 +134,33 @@ build/default/production/_ext/1223437004/wifiSerialBridgeIntf.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
- ../src/app_freertos.h ../src/services/Wifi/../UsbCdc/UsbCdc.h \
- ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h \
- ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
- ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
- ../src/libraries/scpi/libscpi/inc/scpi/types.h \
- ../src/libraries/scpi/libscpi/inc/scpi/config.h \
- ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
- ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
- ../src/libraries/scpi/libscpi/inc/scpi/error.h \
- ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
- ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
- ../src/libraries/scpi/libscpi/inc/scpi/units.h \
- ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
- ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h
+ ../src/app_freertos.h \
+ ../src/config/default/driver/winc/include/drv/driver/nmbus.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
+ ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
+ ../src/config/default/driver/winc/include/drv/driver/nmdrv.h
 
-../src/services/Wifi/wifiSerailBrideIntf.h:
+../src/services/wifi_services/wifi_serial_bridge_interface.h:
+
+../src/services/wifi_services/wifi_serial_bridge.h:
+
+../src/config/default/driver/winc/include/drv/driver/nmdrv.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_common.h:
+
+../src/config/default/driver/winc/include/drv/bsp/nm_bsp.h:
+
+../src/config/default/driver/winc/include/drv/common/nm_debug.h:
+
+../src/config/default/driver/winc/include/wdrv_winc_debug.h:
+
+../src/config/default/configuration.h:
+
+../src/config/default/user.h:
+
+../src/config/default/device.h:
+
+../src/config/default/toolchain_specifics.h:
 
 ../src/config/default/definitions.h:
 
@@ -153,8 +169,6 @@ build/default/production/_ext/1223437004/wifiSerialBridgeIntf.o: \
 ../src/config/default/peripheral/ocmp/plib_ocmp8.h:
 
 ../src/config/default/device.h:
-
-../src/config/default/toolchain_specifics.h:
 
 ../src/config/default/peripheral/ocmp/plib_ocmp_common.h:
 
@@ -169,12 +183,6 @@ build/default/production/_ext/1223437004/wifiSerialBridgeIntf.o: \
 ../src/config/default/usb/usb_chapter_9.h:
 
 ../src/config/default/usb/usb_device.h:
-
-../src/config/default/configuration.h:
-
-../src/config/default/user.h:
-
-../src/config/default/device.h:
 
 ../src/config/default/system/system.h:
 
@@ -406,34 +414,10 @@ build/default/production/_ext/1223437004/wifiSerialBridgeIntf.o: \
 
 ../src/app_freertos.h:
 
-../src/services/Wifi/../UsbCdc/UsbCdc.h:
+../src/config/default/driver/winc/include/drv/driver/nmbus.h:
 
-../src/libraries/microrl/src/microrl.h:
+../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h:
 
-../src/libraries/microrl/src/config.h:
+../src/config/default/driver/winc/include/drv/driver/m2m_types.h:
 
-../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/parser.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/types.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/config.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/cc.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/error.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/constants.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/units.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/utils.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/expression.h:
-
-../src/Util/CircularBuffer.h:
+../src/config/default/driver/winc/include/drv/driver/nmdrv.h:

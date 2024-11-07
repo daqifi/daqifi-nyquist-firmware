@@ -60,7 +60,7 @@
 #include <services/UsbCdc/UsbCdc.h>
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
-#include "services/Wifi/WifiApi.h"
+#include "services/wifi_services/wifi_manager.h"
 #include "services/SDcard/SDCard.h"
 #include "HAL/DIO.h"
 #include "HAL/ADC.h"
@@ -100,17 +100,17 @@ static void app_USBDeviceTask(void* p_arg);
 static void app_WifiTask(void* p_arg);
 static void app_SdCardTask(void* p_arg);
 
-void WifiApi_FormUdpAnnouncePacketCallback(WifiSettings *pSettings, uint8_t* pBuff, uint16_t *len) {
+void wifi_manager_FormUdpAnnouncePacketCB(const WifiSettings *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
-    pBoardData->wifiSettings.ipAddr.Val = pSettings->ipAddr.Val;
-    memcpy(pBoardData->wifiSettings.macAddr.addr, pSettings->macAddr.addr, WDRV_WINC_MAC_ADDR_LEN);
+    pBoardData->wifiSettings.ipAddr.Val = pWifiSettings->ipAddr.Val;
+    memcpy(pBoardData->wifiSettings.macAddr.addr, pWifiSettings->macAddr.addr, WDRV_WINC_MAC_ADDR_LEN);
     size_t count = Nanopb_Encode(
             pBoardData,
             &fields_discovery,
-            pBuff, *len);
-    *len = count;
+            pBuffer, *pPacketLen);
+    *pPacketLen = count;
 }
 
 void SDCard_DataReadyCB(SDCard_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
@@ -154,9 +154,9 @@ static void app_WifiTask(void* p_arg) {
         vTaskDelay(5 / portTICK_PERIOD_MS);
        
     }
-    WifiApi_Init(&gpBoardData->wifiSettings);
+    wifi_manager_Init(&gpBoardData->wifiSettings);
     while (1) {
-        WifiApi_ProcessState();
+        wifi_manager_ProcessState();
        
     }
 }

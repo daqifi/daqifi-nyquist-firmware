@@ -163,7 +163,8 @@ build/default/production/_ext/1260820504/commTest.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -528,9 +529,9 @@ build/default/production/_ext/1260820504/commTest.o: \
 
 ../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
-../src/services/Wifi/WifiApi.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/services/Wifi/tcpServer.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 

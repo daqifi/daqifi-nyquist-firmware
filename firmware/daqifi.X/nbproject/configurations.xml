@@ -395,11 +395,13 @@
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.h</itemPath>
         </logicalFolder>
-        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
-          <itemPath>../src/services/Wifi/tcpServer.h</itemPath>
-          <itemPath>../src/services/Wifi/WifiApi.h</itemPath>
-          <itemPath>../src/services/Wifi/wifiSerailBrideIntf.h</itemPath>
-          <itemPath>../src/services/Wifi/wifiSerialBridge.h</itemPath>
+        <logicalFolder name="wifi_services"
+                       displayName="wifi_services"
+                       projectFiles="true">
+          <itemPath>../src/services/wifi_services/wifi_serial_bridge.h</itemPath>
+          <itemPath>../src/services/wifi_services/wifi_serial_bridge_interface.h</itemPath>
+          <itemPath>../src/services/wifi_services/wifi_tcp_server.h</itemPath>
+          <itemPath>../src/services/wifi_services/wifi_manager.h</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.h</itemPath>
         <itemPath>../src/services/streaming.h</itemPath>
@@ -908,11 +910,13 @@
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.c</itemPath>
         </logicalFolder>
-        <logicalFolder name="Wifi" displayName="Wifi" projectFiles="true">
-          <itemPath>../src/services/Wifi/tcpServer.c</itemPath>
-          <itemPath>../src/services/Wifi/WifiApi.c</itemPath>
-          <itemPath>../src/services/Wifi/wifiSerialBridgeIntf.c</itemPath>
-          <itemPath>../src/services/Wifi/wifiSerialBridge.c</itemPath>
+        <logicalFolder name="wifi_services"
+                       displayName="wifi_services"
+                       projectFiles="true">
+          <itemPath>../src/services/wifi_services/wifi_serial_bridge.c</itemPath>
+          <itemPath>../src/services/wifi_services/wifi_serial_bridge_interface.c</itemPath>
+          <itemPath>../src/services/wifi_services/wifi_tcp_server.c</itemPath>
+          <itemPath>../src/services/wifi_services/wifi_manager.c</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.c</itemPath>
         <itemPath>../src/services/streaming.c</itemPath>

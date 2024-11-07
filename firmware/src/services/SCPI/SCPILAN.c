@@ -16,7 +16,7 @@
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
-#include "services/Wifi/WifiApi.h"
+#include "services/wifi_services/wifi_manager.h"
 
 #define SD_CARD_ACTIVE_ERROR_MSG "\r\nError !! Please Disable SD Card\r\n"
 
@@ -471,7 +471,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
         }
     }
 
-    if (!WifiApi_UpdateNetworkSettings(pRunTimeWifiSettings)) {
+    if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
         return SCPI_RES_ERR;
     }
     BoardData_Set(

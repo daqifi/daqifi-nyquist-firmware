@@ -39,28 +39,11 @@ extern "C" {
 #define WIFI_RBUFFER_SIZE SOCKET_BUFFER_MAX_LENGTH
 #define WIFI_WBUFFER_SIZE SOCKET_BUFFER_MAX_LENGTH
 #define WIFI_CIRCULAR_BUFF_SIZE SOCKET_BUFFER_MAX_LENGTH*4
-/**
- * Tracks the client state
- */
-//typedef enum e_TcpClientState
-//{
-//    IP_CLIENT_CONNECT,
-//    IP_CLIENT_PROCESS,
-//    IP_CLIENT_DISCONNECT
-//} TcpClientState;
-//typedef enum e_TcpServerState
-//{
-//    IP_SERVER_INITIALIZE,
-//    IP_SERVER_CONNECT,
-//    IP_SERVER_BIND,
-//    IP_SERVER_LISTEN,
-//    IP_SERVER_PROCESS,
-//    IP_SERVER_DISCONNECT,
-//} TcpServerState;
+
 /**
  * Data for a particular TCP client
  */
-typedef struct s_TcpClientData
+typedef struct s_tcpClientContext
 {
     SOCKET clientSocket;
     /** Client read buffer */
@@ -85,19 +68,19 @@ typedef struct s_TcpClientData
     scpi_t scpiContext;
     
     bool tcpSendPending;
-} TcpClientData;
+} wifi_tcp_server_clientContext_t;
 
 /**
  * Tracks TCP Server Data
  */
-typedef struct s_TcpServerData
+typedef struct s_tcpServerContext
 {
     //TcpServerState state;
 
     SOCKET serverSocket;
 
-    TcpClientData client;
-} TcpServerData;
+    wifi_tcp_server_clientContext_t client;
+} wifi_tcp_server_context_t;
 
 
     /* Provide C++ Compatibility */

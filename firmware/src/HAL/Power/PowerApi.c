@@ -8,7 +8,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/data/BoardData.h"
 #include "HAL/ADC.h"
-#include "../../services/Wifi/WifiApi.h"
+#include "../../services/wifi_services/wifi_manager.h"
 //typedef enum
 //{
 //    /* Source of clock is internal fast RC */
@@ -261,7 +261,7 @@ static void Power_Up(void) {
 
 void Power_Down(void) {
     // Turn off WiFi interface to save power
-    WifiApi_Deinit();
+    wifi_manager_Deinit();
 
     // 3.3V Disable - if powered externally, board will stay on and go to low power state, else off completely
     pWriteVariables->EN_3_3V_Val = false;

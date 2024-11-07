@@ -1,20 +1,6 @@
-build/default/production/_ext/1223280608/SCPIStorageSD.o: \
- ../src/services/SCPI/SCPIStorageSD.c \
- ../src/services/SCPI/SCPIStorageSD.h \
- ../src/services/SCPI/SCPIInterface.h \
- ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
- ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
- ../src/libraries/scpi/libscpi/inc/scpi/types.h \
- ../src/libraries/scpi/libscpi/inc/scpi/config.h \
- ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
- ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
- ../src/libraries/scpi/libscpi/inc/scpi/error.h \
- ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
- ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
- ../src/libraries/scpi/libscpi/inc/scpi/units.h \
- ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
- ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/services/SCPI/../SDcard/SDCard.h \
+build/default/production/_ext/542880623/wifi_manager.o: \
+ ../src/services/wifi_services/wifi_manager.c \
+ ../src/services/wifi_services/wifi_manager.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -159,16 +145,22 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
  ../src/Util/ArrayWrapper.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/Util/CircularBuffer.h \
- ../src/services/SCPI/../../state/runtime/BoardRuntimeConfig.h \
- ../src/services/SCPI/../../state/runtime/DIORuntimeConfig.h \
- ../src/services/SCPI/../../state/runtime/../board/DIOConfig.h \
- ../src/services/SCPI/../../state/runtime/StreamingRuntimeConfig.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h ../src/HAL/Power/PowerApi.h \
- ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
- ../src/services/wifi_services/wifi_manager.h \
  ../src/services/wifi_services/wifi_tcp_server.h \
+ ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/types.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/error.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/units.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
+ ../src/Util/CircularBuffer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -189,37 +181,15 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/services/SCPI/../../state/runtime/../../services/SDcard/SDCard.h
+ ../src/Util/Logger.h ../src/state/data/BoardData.h \
+ ../src/state/data/AInSample.h ../src/Util/HeapList.h \
+ ../src/Util/LockProvider.h ../src/state/data/../board/AInConfig.h \
+ ../src/state/data/DIOSample.h ../src/HAL/Power/PowerApi.h \
+ ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
+ ../src/services/wifi_services/wifi_serial_bridge.h \
+ ../src/services/wifi_services/wifi_serial_bridge_interface.h
 
-../src/services/SCPI/SCPIStorageSD.h:
-
-../src/services/SCPI/SCPIInterface.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/parser.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/types.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/config.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/cc.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/error.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/constants.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/units.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/utils.h:
-
-../src/libraries/scpi/libscpi/inc/scpi/expression.h:
-
-../src/services/SCPI/../SDcard/SDCard.h:
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/config/default/configuration.h:
 
@@ -515,31 +485,37 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
 
 ../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
-../src/Util/CircularBuffer.h:
-
-../src/services/SCPI/../../state/runtime/BoardRuntimeConfig.h:
-
-../src/services/SCPI/../../state/runtime/DIORuntimeConfig.h:
-
-../src/services/SCPI/../../state/runtime/../board/DIOConfig.h:
-
-../src/services/SCPI/../../state/runtime/StreamingRuntimeConfig.h:
-
-../src/services/UsbCdc/UsbCdc.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/libraries/microrl/src/microrl.h:
 
 ../src/libraries/microrl/src/config.h:
 
-../src/HAL/Power/PowerApi.h:
+../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
 
-../src/HAL/BQ24297/BQ24297.h:
+../src/libraries/scpi/libscpi/inc/scpi/parser.h:
 
-../src/HAL/UI/UI.h:
+../src/libraries/scpi/libscpi/inc/scpi/types.h:
 
-../src/services/wifi_services/wifi_manager.h:
+../src/libraries/scpi/libscpi/inc/scpi/config.h:
 
-../src/services/wifi_services/wifi_tcp_server.h:
+../src/libraries/scpi/libscpi/inc/scpi/cc.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/error.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/constants.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/units.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/utils.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/expression.h:
+
+../src/Util/CircularBuffer.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
@@ -581,4 +557,26 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
-../src/services/SCPI/../../state/runtime/../../services/SDcard/SDCard.h:
+../src/Util/Logger.h:
+
+../src/state/data/BoardData.h:
+
+../src/state/data/AInSample.h:
+
+../src/Util/HeapList.h:
+
+../src/Util/LockProvider.h:
+
+../src/state/data/../board/AInConfig.h:
+
+../src/state/data/DIOSample.h:
+
+../src/HAL/Power/PowerApi.h:
+
+../src/HAL/BQ24297/BQ24297.h:
+
+../src/HAL/UI/UI.h:
+
+../src/services/wifi_services/wifi_serial_bridge.h:
+
+../src/services/wifi_services/wifi_serial_bridge_interface.h:
