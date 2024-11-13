@@ -20,32 +20,32 @@ extern "C" {
 
     typedef enum {
         // DAQiFi defines 0 = OPEN
-        WIFI_API_SEC_OPEN,
+        WIFI_MANAGER_SECURITY_MODE_OPEN,
         // DAQiFi defines 1 = WEP_40 which is now deprecated
-        WIFI_API_SEC_WEP_40,
+        WIFI_MANAGER_SECURITY_MODE_WEP_40,
         // DAQiFi defines 2 = WEP_104 which is now deprecated
-        WIFI_API_SEC_WEP_104,
+        WIFI_MANAGER_SECURITY_MODE_WEP_104,
         // DAQiFi defines 3 = WPA_AUTO_WITH_PASS_PHRASE
-        WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE,
+        WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE,
         // DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
-        WIFI_API_SEC_WPA_DEPRECATED,
+        WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED,
         // DAQiFi defines 5 = 802_1X
-        WIFI_API_SEC_802_1X,
+        WIFI_MANAGER_SECURITY_MODE_802_1X,
         // DAQiFi defines 6 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
-        WIFI_API_SEC_WPS_PUSH_BUTTON,
+        WIFI_MANAGER_SECURITY_MODE_WPS_PUSH_BUTTON,
         // DAQiFi defines 7 = SECURITY_WPS_PIN which is now deprecated
-        WIFI_API_SEC_WPS_PIN,
+        WIFI_MANAGER_SECURITY_MODE_SEC_WPS_PIN,
         // DAQiFi defines 8 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
-        WIFI_API_SEC_802_1X_MSCHAPV2,
+        WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2,
         // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
-        WIFI_API_SEC_802_1X_TLS
-    } WifiApi_securityMode_t;
+        WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS
+    } wifi_manager_securityMode_t;
 
     typedef union {
         uint32_t Val;
         uint16_t w[2];
         uint8_t v[4];
-    } IPV4_ADDR;
+    } wifi_manager_ipv4Addr_t;
 
     /**
      * Stores the wifi settings
@@ -84,11 +84,11 @@ extern "C" {
         /**
          * One of:
          * 
-         * WIFI_API_SEC_OPEN,
-         * WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE,
+         * WIFI_MANAGER_SECURITY_MODE_OPEN,
+         * WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE,
          *  
          */
-        WifiApi_securityMode_t securityMode;
+        wifi_manager_securityMode_t securityMode;
 
         /**
          * The length of the passkey
@@ -108,17 +108,17 @@ extern "C" {
         /**
          * The ip address
          */
-        IPV4_ADDR ipAddr;
+        wifi_manager_ipv4Addr_t ipAddr;
 
         /**
          * The ip mask
          */
-        IPV4_ADDR ipMask;
+        wifi_manager_ipv4Addr_t ipMask;
 
         /**
          * The ip gateway
          */
-        IPV4_ADDR gateway;
+        wifi_manager_ipv4Addr_t gateway;
 
         /**
          * The port to open for incoming TCP connections

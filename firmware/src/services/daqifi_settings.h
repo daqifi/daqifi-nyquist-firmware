@@ -26,7 +26,7 @@
 //#include "../../state/runtime/AInRuntimeConfig.h"
 #define DEFAULT_WIFI_NETWORK_MODE WIFI_MANAGER_NETWORK_MODE_AP
 #define DEFAULT_WIFI_AP_SSID "DAQiFi" //TODO(Daqifi): Relocate in proper place
-#define DEFAULT_WIFI_AP_SECURITY_MODE WIFI_API_SEC_OPEN //TODO(Daqifi): Relocate in proper place
+#define DEFAULT_WIFI_AP_SECURITY_MODE WIFI_MANAGER_SECURITY_MODE_OPEN //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_WIFI_WPA_PSK_PASSKEY "12345678" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_IP_ADDRESS		"0.0.0.0" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_IP_MASK	"255.255.255.0" //TODO(Daqifi): Relocate in proper place

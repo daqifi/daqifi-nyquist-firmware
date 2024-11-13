@@ -344,13 +344,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                if (pInstance->pWifiSettings->securityMode == WIFI_API_SEC_OPEN) {
+                if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN) {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&pInstance->authCtx)) {
                         SendEvent(WIFI_MANAGER_EVENT_ERROR);
                         LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                         break;
                     }
-                } else if (pInstance->pWifiSettings->securityMode == WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE) {
+                } else if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE) {
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&pInstance->authCtx, (uint8_t*) pInstance->pWifiSettings->passKey, pInstance->pWifiSettings->passKeyLength)) {
                         SendEvent(WIFI_MANAGER_EVENT_ERROR);
                         LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);

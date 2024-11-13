@@ -27,7 +27,7 @@
  * @param address The address to encode
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-static scpi_result_t SCPI_LANAddrGetImpl(scpi_t * context, IPV4_ADDR* pIpAddress);
+static scpi_result_t SCPI_LANAddrGetImpl(scpi_t * context, wifi_manager_ipv4Addr_t* pIpAddress);
 
 /**
  * Decodes the given string into am ip multi-address
@@ -36,7 +36,7 @@ static scpi_result_t SCPI_LANAddrGetImpl(scpi_t * context, IPV4_ADDR* pIpAddress
  * @param address The address to populate
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-static scpi_result_t SCPI_LANAddrSetImpl(scpi_t * context, IPV4_ADDR* pIpAddress);
+static scpi_result_t SCPI_LANAddrSetImpl(scpi_t * context, wifi_manager_ipv4Addr_t* pIpAddress);
 //
 /**
  * Adds a string to the SCPI result
@@ -69,7 +69,7 @@ static size_t SCPI_SafeParamString(scpi_t * context, char* value, const size_t m
 // Private implementations
 ////////
 
-static scpi_result_t SCPI_LANAddrGetImpl(scpi_t * context, IPV4_ADDR* pIpAddress) {
+static scpi_result_t SCPI_LANAddrGetImpl(scpi_t * context, wifi_manager_ipv4Addr_t* pIpAddress) {
     char buffer[MAX_TCPIPV4_STR_LEN + 1];
     memset(buffer, 0, sizeof (buffer));
     inet_ntop(AF_INET, &pIpAddress->Val, buffer, MAX_TCPIPV4_STR_LEN);
@@ -77,7 +77,7 @@ static scpi_result_t SCPI_LANAddrGetImpl(scpi_t * context, IPV4_ADDR* pIpAddress
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_LANAddrSetImpl(scpi_t * context, IPV4_ADDR* pIpAddress) {
+static scpi_result_t SCPI_LANAddrSetImpl(scpi_t * context, wifi_manager_ipv4Addr_t* pIpAddress) {
     char buffer[MAX_TCPIPV4_STR_LEN + 1];
     memset(buffer, 0, sizeof (buffer));
     size_t len = SCPI_SafeParamString(context, buffer, MAX_TCPIPV4_STR_LEN, TRUE);
@@ -353,34 +353,34 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
     }
 
     switch (param1) {
-        case WIFI_API_SEC_OPEN: // DAQiFi defines 0 = SECURITY_OPEN
-            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_OPEN;
+        case WIFI_MANAGER_SECURITY_MODE_OPEN: // DAQiFi defines 0 = SECURITY_OPEN
+            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_OPEN;
             break;
-        case WIFI_API_SEC_WEP_40: // DAQiFi defines 1 = WEP_40 which is now deprecated
+        case WIFI_MANAGER_SECURITY_MODE_WEP_40: // DAQiFi defines 1 = WEP_40 which is now deprecated
             return SCPI_RES_ERR;
             break;
-        case WIFI_API_SEC_WEP_104: // DAQiFi defines 2 = WEP_104 which is now deprecated
+        case WIFI_MANAGER_SECURITY_MODE_WEP_104: // DAQiFi defines 2 = WEP_104 which is now deprecated
             return SCPI_RES_ERR;
             break;
-        case WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE: // DAQiFi defines 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
-        case WIFI_API_SEC_WPA_DEPRECATED:  //DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
-            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE;
+        case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // DAQiFi defines 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
+        case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED:  //DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
+            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
             break;
-        case WIFI_API_SEC_802_1X: // DAQiFi defines 5 = WDRV_WINC_AUTH_TYPE_802_1X
+        case WIFI_MANAGER_SECURITY_MODE_802_1X: // DAQiFi defines 5 = WDRV_WINC_AUTH_TYPE_802_1X
             return SCPI_RES_ERR;    // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_802_1X;
+            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_802_1X;
             break;
-        case WIFI_API_SEC_802_1X_MSCHAPV2: // DAQiFi defines 6 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
+        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2: // DAQiFi defines 6 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
             return SCPI_RES_ERR;    // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_802_1X_MSCHAPV2;            
+            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2;            
             break;
-        case WIFI_API_SEC_WPS_PUSH_BUTTON: // DAQiFi defines 7 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
+        case WIFI_MANAGER_SECURITY_MODE_WPS_PUSH_BUTTON: // DAQiFi defines 7 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
             return SCPI_RES_ERR;
-        case WIFI_API_SEC_WPS_PIN: // DAQiFi defines 8 = SECURITY_WPS_PIN which is now deprecated
+        case WIFI_MANAGER_SECURITY_MODE_SEC_WPS_PIN: // DAQiFi defines 8 = SECURITY_WPS_PIN which is now deprecated
             return SCPI_RES_ERR;            
-        case WIFI_API_SEC_802_1X_TLS: // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
+        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS: // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
             return SCPI_RES_ERR;    // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_API_SEC_802_1X_TLS;            
+            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS;            
             break;
 
         default:
@@ -406,9 +406,9 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context) {
 
     // TODO: Additional validation (length?))
     switch (pRunTimeWifiSettings->securityMode) {
-        case WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE:
+        case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE:
             break;
-        case WIFI_API_SEC_OPEN: // No Key
+        case WIFI_MANAGER_SECURITY_MODE_OPEN: // No Key
         default:
             return SCPI_RES_ERR;
     }
