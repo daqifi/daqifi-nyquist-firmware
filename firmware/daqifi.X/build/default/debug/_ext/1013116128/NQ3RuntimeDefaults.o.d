@@ -163,7 +163,8 @@ build/default/debug/_ext/1013116128/NQ3RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -526,9 +527,9 @@ build/default/debug/_ext/1013116128/NQ3RuntimeDefaults.o: \
 
 ../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
-../src/services/Wifi/WifiApi.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/services/Wifi/tcpServer.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 

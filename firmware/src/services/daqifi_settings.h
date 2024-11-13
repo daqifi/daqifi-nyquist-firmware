@@ -18,39 +18,13 @@
 #include "wdrv_winc_authctx.h"
 #include "../../state/runtime/AInRuntimeConfig.h"
 #include "socket.h"
+#include "wifi_services/wifi_manager.h"
 
-typedef enum {
-    WIFI_API_NETWORK_MODE_STA = 1,
-    WIFI_API_NETWORK_MODE_AP = 4
-} WifiApi_networkMode_t;
 
-typedef enum
-{
-    // DAQiFi defines 0 = OPEN
-    WIFI_API_SEC_OPEN,
-    // DAQiFi defines 1 = WEP_40 which is now deprecated
-    WIFI_API_SEC_WEP_40,
-    // DAQiFi defines 2 = WEP_104 which is now deprecated
-    WIFI_API_SEC_WEP_104,
-    // DAQiFi defines 3 = WPA_AUTO_WITH_PASS_PHRASE
-    WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE,
-    // DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
-    WIFI_API_SEC_WPA_DEPRECATED,            
-    // DAQiFi defines 5 = 802_1X
-    WIFI_API_SEC_802_1X,
-    // DAQiFi defines 6 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
-    WIFI_API_SEC_WPS_PUSH_BUTTON,
-    // DAQiFi defines 7 = SECURITY_WPS_PIN which is now deprecated
-    WIFI_API_SEC_WPS_PIN,
-    // DAQiFi defines 8 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
-    WIFI_API_SEC_802_1X_MSCHAPV2,               
-    // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
-    WIFI_API_SEC_802_1X_TLS
-} WifiApi_securityMode_t;
 
 //TODO(Daqifi): Add this back
 //#include "../../state/runtime/AInRuntimeConfig.h"
-#define DEFAULT_WIFI_NETWORK_MODE WIFI_API_NETWORK_MODE_AP
+#define DEFAULT_WIFI_NETWORK_MODE WIFI_MANAGER_NETWORK_MODE_AP
 #define DEFAULT_WIFI_AP_SSID "DAQiFi" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_WIFI_AP_SECURITY_MODE WIFI_API_SEC_OPEN //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_WIFI_WPA_PSK_PASSKEY "12345678" //TODO(Daqifi): Relocate in proper place
@@ -59,7 +33,7 @@ typedef enum
 #define DEFAULT_NETWORK_GATEWAY_IP_ADDRESS	"192.168.1.1" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_TCP_PORT 9760 //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_HOST_NAME   "NYQUIST1"  //TODO(Daqifi): Relocate in proper place
-#define DNS_CLIENT_MAX_HOSTNAME_LEN HOSTNAME_MAX_SIZE
+
 
 
 #define BOARD_HARDWARE_REV  "2.0.0" //TODO(Daqifi) : Relocate to proper location
@@ -67,11 +41,6 @@ typedef enum
 #define BOARD_VARIANT       1       //TODO(Daqifi) : Relocate to proper location
 #define MAX_AV_NETWORK_SSID 8
 
-typedef union {
-    uint32_t Val;
-    uint16_t w[2];
-    uint8_t v[4];
-} IPV4_ADDR;
 
 #define NVM_PROGRAM_UNLOCK_KEY1 0xAA996655
 #define NVM_PROGRAM_UNLOCK_KEY2 0x556699AA
@@ -125,92 +94,14 @@ extern "C" {
 
     } TopLevelSettings;
 
-    /**
-     * Stores the wifi settings
-     */
-    typedef struct sWifiSettings {
-        /**
-         * Toggles the power mode
-         */
-        bool isEnabled;
-        /**
-         * this is true is ota mode is enabled
-         */
-        bool isOtaModeEnabled;
-        /**
-         * One of:
-         *  WIFI_API_NETWORK_MODE_STA = 1,
-         *  WIFI_API_NETWORK_MODE_AP = 4
-         */
-        WifiApi_networkMode_t networkMode;
-
-        /**
-         * The network ssid
-         */
-        char ssid[WDRV_WINC_MAX_SSID_LEN + 1];
-        
-        /**
-         * The board hostname
-         */
-        char hostName[DNS_CLIENT_MAX_HOSTNAME_LEN + 1];
-
-        /**
-         * The network ssid strength
-         */
-        uint8_t ssid_str;
-
-        /**
-         * One of:
-         * 
-         * WIFI_API_SEC_OPEN,
-         * WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE,
-         *  
-         */
-        WifiApi_securityMode_t securityMode;
-
-        /**
-         * The length of the passkey
-         */
-        uint8_t passKeyLength;
-
-        /**
-         * The passkey for the given security type
-         */
-        uint8_t passKey[WDRV_WINC_PSK_LEN + 1];
-
-        /**
-         * The MAX Address
-         */
-        WDRV_WINC_MAC_ADDR macAddr;
-
-        /**
-         * The ip address
-         */
-        IPV4_ADDR ipAddr;
-
-        /**
-         * The ip mask
-         */
-        IPV4_ADDR ipMask;
-
-        /**
-         * The ip gateway
-         */
-        IPV4_ADDR gateway;
-
-        /**
-         * The port to open for incoming TCP connections
-         */
-        uint16_t tcpPort;
-
-    } WifiSettings;
+    
 
     /**
      * A polymorphic wrapper for daqifi settings
      */
     typedef union uDaqifiSettingsImpl {
         TopLevelSettings topLevelSettings;
-        WifiSettings wifi;
+        wifi_manager_settings_t wifi;
         AInCalArray factAInCalParams;
         AInCalArray userAInCalParams;
 

@@ -76,7 +76,7 @@ typedef struct sBoardRuntimeConfig
     //! Streaming configuration parameters
     StreamingRuntimeConfig StreamingConfig;
     //! The desired wifi settings
-    WifiSettings wifiSettings;
+    wifi_manager_settings_t wifiSettings;
     //!The desired USB settings
     UsbCdcData_t usbSettings;
     

@@ -169,7 +169,8 @@ build/default/debug/_ext/1223280608/SCPIDIO.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h \
- ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -557,9 +558,9 @@ build/default/debug/_ext/1223280608/SCPIDIO.o: \
 
 ../src/Util/CircularBuffer.h:
 
-../src/services/Wifi/WifiApi.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/services/Wifi/tcpServer.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 

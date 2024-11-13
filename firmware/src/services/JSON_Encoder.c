@@ -78,7 +78,7 @@ size_t Json_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_ip_addr_tag:
             {
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 inet_ntop(AF_INET, &wifiSettings->ipAddr.Val, tmp, TMP_MAX_LEN);
                 tmpLen = strlen(tmp);
                 if (tmpLen > 0) {
@@ -95,7 +95,7 @@ size_t Json_Encode(tBoardData* state,
                 //                        &state->wifiSettings;
                 //                tmpLen = min(                                               
                 //                        strlen(wifiSettings->hostName),                     
-                //                        TCPIP_DNS_CLIENT_MAX_HOSTNAME_LEN);
+                //                        WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
                 //                
                 //                if (tmpLen > 0)
                 //                {
@@ -110,7 +110,7 @@ size_t Json_Encode(tBoardData* state,
             }
             case DaqifiOutMessage_mac_addr_tag:
             {
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 tmpLen = MacAddr_ToString(wifiSettings->macAddr.addr, tmp, TMP_MAX_LEN);
                 if (tmpLen > 0) {
                     startIndex += snprintf(charBuffer + startIndex,
@@ -122,7 +122,7 @@ size_t Json_Encode(tBoardData* state,
             }
             case DaqifiOutMessage_ssid_tag:
             {
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 tmpLen = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
                 if (tmpLen > 0) {
                     startIndex += snprintf(charBuffer + startIndex,
@@ -157,7 +157,7 @@ size_t Json_Encode(tBoardData* state,
             }
             case DaqifiOutMessage_device_port_tag:
             {
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 startIndex += snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"port\":%u,\n",
@@ -166,7 +166,7 @@ size_t Json_Encode(tBoardData* state,
             }
             case DaqifiOutMessage_wifi_security_mode_tag:
             {
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 startIndex += snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"sec\":%u,\n",

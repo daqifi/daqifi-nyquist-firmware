@@ -189,12 +189,13 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
  ../src/state/runtime/DIORuntimeConfig.h \
  ../src/state/runtime/../board/DIOConfig.h \
  ../src/state/runtime/StreamingRuntimeConfig.h \
- ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h \
- ../src/services/Wifi/WifiApi.h ../src/services/SDcard/SDCard.h \
- ../src/HAL/DIO.h ../src/state/board/BoardConfig.h \
- ../src/state/board/StreamingConfig.h ../src/HAL/ADC.h \
- ../src/HAL/ADC/MC12bADC.h ../src/services/streaming.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/SDcard/SDCard.h ../src/HAL/DIO.h \
+ ../src/state/board/BoardConfig.h ../src/state/board/StreamingConfig.h \
+ ../src/HAL/ADC.h ../src/HAL/ADC/MC12bADC.h ../src/services/streaming.h \
  ../src/services/../state/board/BoardConfig.h \
  ../src/services/../state/data/BoardData.h ../src/HAL/UI/UI.h
 
@@ -598,13 +599,13 @@ build/default/debug/_ext/1360937237/app_freertos.o: ../src/app_freertos.c \
 
 ../src/state/runtime/StreamingRuntimeConfig.h:
 
-../src/services/Wifi/WifiApi.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/services/Wifi/tcpServer.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/state/runtime/../../services/SDcard/SDCard.h:
 
-../src/services/Wifi/WifiApi.h:
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/services/SDcard/SDCard.h:
 

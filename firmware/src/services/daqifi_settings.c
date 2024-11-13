@@ -29,7 +29,7 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
         case DaqifiSettings_Wifi:
             address = WIFI_SETTINGS_ADDR;
 
-            dataSize = sizeof (WifiSettings);
+            dataSize = sizeof (wifi_manager_settings_t);
             break;
         default:
             return false;
@@ -80,7 +80,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             break;
         case DaqifiSettings_Wifi:
         {
-            WifiSettings* wifi = &(settings->settings.wifi);
+            wifi_manager_settings_t* wifi = &(settings->settings.wifi);
             wifi->isEnabled = true;
             strncpy(wifi->ssid, DEFAULT_WIFI_AP_SSID, strlen(DEFAULT_WIFI_AP_SSID) + 1);
             wifi->ssid[WDRV_WINC_MAX_SSID_LEN] = '\0';
@@ -106,7 +106,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             wifi->ipAddr.Val = inet_addr(DEFAULT_NETWORK_IP_ADDRESS);
             wifi->ipMask.Val = inet_addr(DEFAULT_NETWORK_IP_MASK);
             wifi->gateway.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
-            wifi->ssid[DNS_CLIENT_MAX_HOSTNAME_LEN] = '\0';
+            wifi->ssid[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN] = '\0';
 
             wifi->tcpPort = DEFAULT_TCP_PORT;
             break;
@@ -144,7 +144,7 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
         case DaqifiSettings_Wifi:
             address = WIFI_SETTINGS_ADDR;
             dataSize = WIFI_SETTINGS_SIZE;
-            dataSize = sizeof (WifiSettings);
+            dataSize = sizeof (wifi_manager_settings_t);
             break;
         default:
             return false;

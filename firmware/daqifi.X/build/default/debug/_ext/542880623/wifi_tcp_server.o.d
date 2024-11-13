@@ -1,6 +1,6 @@
-build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
- ../src/state/runtime/NQ1RuntimeDefaults.c \
- ../src/state/runtime/BoardRuntimeConfig.h \
+build/default/debug/_ext/542880623/wifi_tcp_server.o: \
+ ../src/services/wifi_services/wifi_tcp_server.c \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -128,11 +128,7 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
- ../src/app_freertos.h ../src/state/runtime/AInRuntimeConfig.h \
- ../src/Util/ArrayWrapper.h ../src/state/runtime/DIORuntimeConfig.h \
- ../src/state/runtime/../board/DIOConfig.h \
- ../src/state/runtime/StreamingRuntimeConfig.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
+ ../src/app_freertos.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h \
  ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
  ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
@@ -146,9 +142,10 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/Util/CircularBuffer.h ../src/HAL/Power/PowerApi.h \
- ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
- ../src/services/daqifi_settings.h \
+ ../src/Util/CircularBuffer.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
+ ../src/config/default/driver/winc/include/wdrv_winc.h \
+ ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
@@ -160,15 +157,6 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/drv/driver/nmdrv.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_types.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
- ../src/config/default/driver/winc/include/wdrv_winc_common.h \
- ../src/config/default/driver/winc/include/drv/socket/socket.h \
- ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/services/wifi_services/wifi_manager.h \
- ../src/services/wifi_services/wifi_tcp_server.h \
- ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
- ../src/config/default/driver/winc/include/wdrv_winc.h \
- ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
- ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_assoc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_systime.h \
@@ -178,6 +166,8 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_sta.h \
  ../src/config/default/driver/winc/include/wdrv_winc_wps.h \
  ../src/config/default/driver/winc/include/wdrv_winc_socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/socket.h \
+ ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/config/default/driver/winc/include/wdrv_winc_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h \
  ../src/config/default/driver/winc/include/drv/driver/ecc_types.h \
@@ -185,11 +175,9 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
- ../src/services/SDcard/SDCard.h
+ ../src/services/SCPI/SCPIInterface.h ../src/Util/Logger.h
 
-../src/state/runtime/BoardRuntimeConfig.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/configuration.h:
 
@@ -451,18 +439,6 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
 
 ../src/app_freertos.h:
 
-../src/state/runtime/AInRuntimeConfig.h:
-
-../src/Util/ArrayWrapper.h:
-
-../src/state/runtime/DIORuntimeConfig.h:
-
-../src/state/runtime/../board/DIOConfig.h:
-
-../src/state/runtime/StreamingRuntimeConfig.h:
-
-../src/services/UsbCdc/UsbCdc.h:
-
 ../src/libraries/microrl/src/microrl.h:
 
 ../src/libraries/microrl/src/config.h:
@@ -493,13 +469,11 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
 
 ../src/Util/CircularBuffer.h:
 
-../src/HAL/Power/PowerApi.h:
+../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
-../src/HAL/BQ24297/BQ24297.h:
+../src/config/default/driver/winc/include/wdrv_winc.h:
 
-../src/HAL/UI/UI.h:
-
-../src/services/daqifi_settings.h:
+../src/config/default/driver/winc/include/wdrv_winc_bssfind.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
@@ -523,24 +497,6 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
 
-../src/config/default/driver/winc/include/wdrv_winc_common.h:
-
-../src/config/default/driver/winc/include/drv/socket/socket.h:
-
-../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
-
-../src/services/wifi_services/wifi_manager.h:
-
-../src/services/wifi_services/wifi_tcp_server.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
-
-../src/config/default/driver/winc/include/wdrv_winc.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_bssfind.h:
-
-../src/config/default/driver/winc/include/wdrv_winc_authctx.h:
-
 ../src/config/default/driver/winc/include/wdrv_winc_bssctx.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_assoc.h:
@@ -559,6 +515,10 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_socket.h:
 
+../src/config/default/driver/winc/include/drv/socket/socket.h:
+
+../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
 ../src/config/default/driver/winc/include/wdrv_winc_ssl.h:
 
 ../src/config/default/driver/winc/include/drv/driver/m2m_ssl.h:
@@ -573,8 +533,6 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
 
-../src/services/wifi_services/wifi_manager.h:
+../src/services/SCPI/SCPIInterface.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
-
-../src/services/SDcard/SDCard.h:
+../src/Util/Logger.h:

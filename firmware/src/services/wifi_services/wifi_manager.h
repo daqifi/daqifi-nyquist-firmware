@@ -7,12 +7,125 @@
 // Harmony
 #include "configuration.h"
 #include "definitions.h"
-#include "services/daqifi_settings.h"
 #include "wifi_tcp_server.h"
 #ifdef	__cplusplus
 extern "C" {
 #endif
+#define WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN HOSTNAME_MAX_SIZE
 
+    typedef enum {
+        WIFI_MANAGER_NETWORK_MODE_STA = 1,
+        WIFI_MANAGER_NETWORK_MODE_AP = 4
+    } wifi_manager_networkMode_t;
+
+    typedef enum {
+        // DAQiFi defines 0 = OPEN
+        WIFI_API_SEC_OPEN,
+        // DAQiFi defines 1 = WEP_40 which is now deprecated
+        WIFI_API_SEC_WEP_40,
+        // DAQiFi defines 2 = WEP_104 which is now deprecated
+        WIFI_API_SEC_WEP_104,
+        // DAQiFi defines 3 = WPA_AUTO_WITH_PASS_PHRASE
+        WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE,
+        // DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
+        WIFI_API_SEC_WPA_DEPRECATED,
+        // DAQiFi defines 5 = 802_1X
+        WIFI_API_SEC_802_1X,
+        // DAQiFi defines 6 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
+        WIFI_API_SEC_WPS_PUSH_BUTTON,
+        // DAQiFi defines 7 = SECURITY_WPS_PIN which is now deprecated
+        WIFI_API_SEC_WPS_PIN,
+        // DAQiFi defines 8 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
+        WIFI_API_SEC_802_1X_MSCHAPV2,
+        // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
+        WIFI_API_SEC_802_1X_TLS
+    } WifiApi_securityMode_t;
+
+    typedef union {
+        uint32_t Val;
+        uint16_t w[2];
+        uint8_t v[4];
+    } IPV4_ADDR;
+
+    /**
+     * Stores the wifi settings
+     */
+    typedef struct sWifiSettings {
+        /**
+         * Toggles the power mode
+         */
+        bool isEnabled;
+        /**
+         * this is true is ota mode is enabled
+         */
+        bool isOtaModeEnabled;
+        /**
+         * One of:
+         *  WIFI_MANAGER_NETWORK_MODE_STA = 1,
+         *  WIFI_MANAGER_NETWORK_MODE_AP = 4
+         */
+        wifi_manager_networkMode_t networkMode;
+
+        /**
+         * The network ssid
+         */
+        char ssid[WDRV_WINC_MAX_SSID_LEN + 1];
+
+        /**
+         * The board hostname
+         */
+        char hostName[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN + 1];
+
+        /**
+         * The network ssid strength
+         */
+        uint8_t ssid_str;
+
+        /**
+         * One of:
+         * 
+         * WIFI_API_SEC_OPEN,
+         * WIFI_API_SEC_WPA_AUTO_WITH_PASS_PHRASE,
+         *  
+         */
+        WifiApi_securityMode_t securityMode;
+
+        /**
+         * The length of the passkey
+         */
+        uint8_t passKeyLength;
+
+        /**
+         * The passkey for the given security type
+         */
+        uint8_t passKey[WDRV_WINC_PSK_LEN + 1];
+
+        /**
+         * The MAX Address
+         */
+        WDRV_WINC_MAC_ADDR macAddr;
+
+        /**
+         * The ip address
+         */
+        IPV4_ADDR ipAddr;
+
+        /**
+         * The ip mask
+         */
+        IPV4_ADDR ipMask;
+
+        /**
+         * The ip gateway
+         */
+        IPV4_ADDR gateway;
+
+        /**
+         * The port to open for incoming TCP connections
+         */
+        uint16_t tcpPort;
+
+    } wifi_manager_settings_t;
     /**
      * @brief Initializes the WiFi manager and its state machine.
      * 
@@ -22,7 +135,7 @@ extern "C" {
      * 
      * @return True if initialization is successful, false otherwise.
      */
-    bool wifi_manager_Init(WifiSettings* settings);
+    bool wifi_manager_Init(wifi_manager_settings_t* settings);
 
     /**
      * @brief Deinitializes the WiFi manager.
@@ -42,7 +155,7 @@ extern "C" {
      * 
      * @return True if the settings update is successful, false otherwise.
      */
-    bool wifi_manager_UpdateNetworkSettings(WifiSettings* pSettings);
+    bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t* pSettings);
 
 
     /**
@@ -94,7 +207,7 @@ extern "C" {
      * @param[in,out] pPacketLen Pointer to a variable holding the length of the buffer. On return, this variable
      *                           will contain the length of the formatted announcement packet.
      */
-    void wifi_manager_FormUdpAnnouncePacketCB(const WifiSettings *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen);
+    void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen);
 
 
 #ifdef	__cplusplus

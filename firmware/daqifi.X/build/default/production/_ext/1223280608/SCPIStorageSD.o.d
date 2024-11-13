@@ -159,16 +159,10 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
  ../src/Util/ArrayWrapper.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/Util/CircularBuffer.h \
- ../src/services/SCPI/../../state/runtime/BoardRuntimeConfig.h \
- ../src/services/SCPI/../../state/runtime/DIORuntimeConfig.h \
- ../src/services/SCPI/../../state/runtime/../board/DIOConfig.h \
- ../src/services/SCPI/../../state/runtime/StreamingRuntimeConfig.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h ../src/HAL/Power/PowerApi.h \
- ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
  ../src/services/wifi_services/wifi_manager.h \
  ../src/services/wifi_services/wifi_tcp_server.h \
+ ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -189,6 +183,13 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/services/SCPI/../../state/runtime/BoardRuntimeConfig.h \
+ ../src/services/SCPI/../../state/runtime/DIORuntimeConfig.h \
+ ../src/services/SCPI/../../state/runtime/../board/DIOConfig.h \
+ ../src/services/SCPI/../../state/runtime/StreamingRuntimeConfig.h \
+ ../src/services/UsbCdc/UsbCdc.h ../src/HAL/Power/PowerApi.h \
+ ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
+ ../src/services/wifi_services/wifi_manager.h \
  ../src/services/SCPI/../../state/runtime/../../services/SDcard/SDCard.h
 
 ../src/services/SCPI/SCPIStorageSD.h:
@@ -515,31 +516,15 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
 
 ../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
-../src/Util/CircularBuffer.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/services/SCPI/../../state/runtime/BoardRuntimeConfig.h:
-
-../src/services/SCPI/../../state/runtime/DIORuntimeConfig.h:
-
-../src/services/SCPI/../../state/runtime/../board/DIOConfig.h:
-
-../src/services/SCPI/../../state/runtime/StreamingRuntimeConfig.h:
-
-../src/services/UsbCdc/UsbCdc.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/libraries/microrl/src/microrl.h:
 
 ../src/libraries/microrl/src/config.h:
 
-../src/HAL/Power/PowerApi.h:
-
-../src/HAL/BQ24297/BQ24297.h:
-
-../src/HAL/UI/UI.h:
-
-../src/services/wifi_services/wifi_manager.h:
-
-../src/services/wifi_services/wifi_tcp_server.h:
+../src/Util/CircularBuffer.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
@@ -580,5 +565,23 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/services/SCPI/../../state/runtime/BoardRuntimeConfig.h:
+
+../src/services/SCPI/../../state/runtime/DIORuntimeConfig.h:
+
+../src/services/SCPI/../../state/runtime/../board/DIOConfig.h:
+
+../src/services/SCPI/../../state/runtime/StreamingRuntimeConfig.h:
+
+../src/services/UsbCdc/UsbCdc.h:
+
+../src/HAL/Power/PowerApi.h:
+
+../src/HAL/BQ24297/BQ24297.h:
+
+../src/HAL/UI/UI.h:
+
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/services/SCPI/../../state/runtime/../../services/SDcard/SDCard.h:

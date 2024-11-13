@@ -145,11 +145,9 @@ build/default/production/_ext/659825273/ADC.o: ../src/HAL/ADC.c \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/HAL/BQ24297/BQ24297.h ../src/HAL/Power/PowerApi.h \
- ../src/HAL/UI/UI.h ../src/state/runtime/BoardRuntimeConfig.h \
- ../src/state/runtime/DIORuntimeConfig.h \
- ../src/state/runtime/StreamingRuntimeConfig.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
+ ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h \
  ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
  ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
@@ -164,8 +162,6 @@ build/default/production/_ext/659825273/ADC.o: ../src/HAL/ADC.c \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
  ../src/Util/CircularBuffer.h \
- ../src/services/wifi_services/wifi_manager.h \
- ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -186,6 +182,12 @@ build/default/production/_ext/659825273/ADC.o: ../src/HAL/ADC.c \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/HAL/BQ24297/BQ24297.h ../src/HAL/Power/PowerApi.h \
+ ../src/HAL/UI/UI.h ../src/state/runtime/BoardRuntimeConfig.h \
+ ../src/state/runtime/DIORuntimeConfig.h \
+ ../src/state/runtime/StreamingRuntimeConfig.h \
+ ../src/services/UsbCdc/UsbCdc.h \
+ ../src/services/wifi_services/wifi_manager.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h \
  ../src/state/data/BoardData.h ../src/state/data/AInSample.h \
  ../src/Util/HeapList.h ../src/Util/LockProvider.h \
@@ -495,19 +497,9 @@ build/default/production/_ext/659825273/ADC.o: ../src/HAL/ADC.c \
 
 ../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
-../src/HAL/BQ24297/BQ24297.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/HAL/Power/PowerApi.h:
-
-../src/HAL/UI/UI.h:
-
-../src/state/runtime/BoardRuntimeConfig.h:
-
-../src/state/runtime/DIORuntimeConfig.h:
-
-../src/state/runtime/StreamingRuntimeConfig.h:
-
-../src/services/UsbCdc/UsbCdc.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/libraries/microrl/src/microrl.h:
 
@@ -538,10 +530,6 @@ build/default/production/_ext/659825273/ADC.o: ../src/HAL/ADC.c \
 ../src/libraries/scpi/libscpi/inc/scpi/expression.h:
 
 ../src/Util/CircularBuffer.h:
-
-../src/services/wifi_services/wifi_manager.h:
-
-../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
@@ -582,6 +570,22 @@ build/default/production/_ext/659825273/ADC.o: ../src/HAL/ADC.c \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/HAL/BQ24297/BQ24297.h:
+
+../src/HAL/Power/PowerApi.h:
+
+../src/HAL/UI/UI.h:
+
+../src/state/runtime/BoardRuntimeConfig.h:
+
+../src/state/runtime/DIORuntimeConfig.h:
+
+../src/state/runtime/StreamingRuntimeConfig.h:
+
+../src/services/UsbCdc/UsbCdc.h:
+
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/state/runtime/../../services/SDcard/SDCard.h:
 

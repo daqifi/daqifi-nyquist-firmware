@@ -142,7 +142,7 @@ static size_t SCPI_SafeParamString(scpi_t * context, char* value, const size_t m
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANEnabledGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
     bool enabled = pWifiSettings->isEnabled;
     SCPI_ResultInt32(context, (int) enabled);
 
@@ -154,7 +154,7 @@ scpi_result_t SCPI_LANEnabledGet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     scpi_result_t result;
     SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -176,7 +176,7 @@ __exit_point:
 }
 
 scpi_result_t SCPI_LANNetModeGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
     uint8_t type = pWifiSettings->networkMode;
     SCPI_ResultInt32(context, (int) type);
 
@@ -190,7 +190,7 @@ scpi_result_t SCPI_LANNetModeGet(scpi_t * context) {
 scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
     int param1;
 
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
@@ -198,8 +198,8 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
     }
 
     switch (param1) {
-        case WIFI_API_NETWORK_MODE_AP:
-        case WIFI_API_NETWORK_MODE_STA:
+        case WIFI_MANAGER_NETWORK_MODE_AP:
+        case WIFI_MANAGER_NETWORK_MODE_STA:
             break;
         default:
             return SCPI_RES_ERR;
@@ -214,7 +214,7 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANAddrGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
 
@@ -228,7 +228,7 @@ scpi_result_t SCPI_LANAddrGet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANAddrSet(scpi_t * context) {
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
 
     return SCPI_LANAddrSetImpl(
@@ -241,7 +241,7 @@ scpi_result_t SCPI_LANAddrSet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMaskGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
 
@@ -255,7 +255,7 @@ scpi_result_t SCPI_LANMaskGet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMaskSet(scpi_t * context) {
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     return SCPI_LANAddrGetImpl(
             context,
@@ -267,7 +267,7 @@ scpi_result_t SCPI_LANMaskSet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANGatewayGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
     return SCPI_LANAddrGetImpl(
@@ -280,7 +280,7 @@ scpi_result_t SCPI_LANGatewayGet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANGatewaySet(scpi_t * context) {
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     return SCPI_LANAddrGetImpl(
             context,
@@ -294,7 +294,7 @@ scpi_result_t SCPI_LANGatewaySet(scpi_t * context) {
 scpi_result_t SCPI_LANMacGet(scpi_t * context) {
     char buffer[MAX_MAC_ADDR_STR_LEN];
 
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
     if (MacAddr_ToString(pWifiSettings->macAddr.addr,
@@ -308,7 +308,7 @@ scpi_result_t SCPI_LANMacGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
 
@@ -318,7 +318,7 @@ scpi_result_t SCPI_LANSsidGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidSet(scpi_t * context) {
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
 
     return SCPI_LANStringSetImpl(
@@ -328,7 +328,7 @@ scpi_result_t SCPI_LANSsidSet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
 
@@ -336,7 +336,7 @@ scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSecurityGet(scpi_t * context) {
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
     SCPI_ResultInt32(context, pWifiSettings->securityMode);
@@ -345,7 +345,7 @@ scpi_result_t SCPI_LANSecurityGet(scpi_t * context) {
 
 scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
     int param1;
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
@@ -397,7 +397,7 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context) {
             value,
             WDRV_WINC_PSK_LEN, TRUE);
 
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
 
     if (len < 1) {
@@ -426,7 +426,7 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context) {
             context,
             value,
             WDRV_WINC_PSK_LEN, TRUE);
-    WifiSettings * pWifiSettings = BoardData_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS, 0);
     if (len < 1) {
         return SCPI_RES_ERR;
@@ -447,7 +447,7 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context) {
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     bool saveSettings = false;
     int param1;
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     
@@ -464,7 +464,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
 
     if (saveSettings) {
         DaqifiSettings daqifiSettings;
-        memcpy(&daqifiSettings.settings.wifi, pRunTimeWifiSettings, sizeof (WifiSettings));
+        memcpy(&daqifiSettings.settings.wifi, pRunTimeWifiSettings, sizeof (wifi_manager_settings_t));
         daqifiSettings.type = DaqifiSettings_Wifi;
         if (!daqifi_settings_SaveToNvm(&daqifiSettings)) {
             return SCPI_RES_ERR;
@@ -481,7 +481,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     return SCPI_RES_OK;
 }
 scpi_result_t SCPI_LANFwUpdate(scpi_t * context){
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     
     pRunTimeWifiSettings->isOtaModeEnabled=true;
@@ -527,7 +527,7 @@ scpi_result_t SCPI_LANFwUpdate(scpi_t * context){
 
 scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
 {
-    WifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
         BOARDRUNTIME_WIFI_SETTINGS);
     return SCPI_LANStringGetImpl(context, pRunTimeWifiSettings->hostName);
 }
@@ -540,7 +540,7 @@ scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
 //    return SCPI_LANStringSetImpl(                                           
 //                        context,                                            
 //                        pRunTimeWifiSettings->settings.wifi.hostName,       
-//                        DNS_CLIENT_MAX_HOSTNAME_LEN);
+//                        WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
 //}
 /**
  * SCPI Callback: Set the mac address of the device

@@ -933,7 +933,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_ip_addr = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 memcpy(message.ip_addr.bytes, wifiSettings->ipAddr.v, 4);
                 message.ip_addr.size = 4;
                 break;
@@ -942,7 +942,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_net_mask = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 memcpy(message.net_mask.bytes, wifiSettings->ipMask.v, 4);
                 message.net_mask.size = 4;
                 break;
@@ -951,7 +951,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_gateway = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 memcpy(message.gateway.bytes, wifiSettings->gateway.v, 4);
                 message.gateway.size = 4;
                 break;
@@ -972,7 +972,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_mac_addr = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 memcpy(message.mac_addr.bytes, wifiSettings->macAddr.addr, 6);
                 message.mac_addr.size = 6;
 
@@ -1003,8 +1003,8 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_host_name = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
-                size_t len = min(strlen(wifiSettings->hostName), DNS_CLIENT_MAX_HOSTNAME_LEN);
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
+                size_t len = min(strlen(wifiSettings->hostName), WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
                 memcpy(message.host_name, wifiSettings->hostName, len);
                 message.host_name[len] = '\0';
                 break;
@@ -1013,7 +1013,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_device_port = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 message.device_port = wifiSettings->tcpPort;
 
                 break;
@@ -1025,7 +1025,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_ssid = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 size_t len = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
                 memcpy(message.ssid, wifiSettings->ssid, len);
                 message.ssid[len] = '\0';
@@ -1036,7 +1036,7 @@ size_t Nanopb_Encode(tBoardData* state,
             {
                 message.has_wifi_security_mode = true;
 
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 message.wifi_security_mode = wifiSettings->securityMode;
 
                 break;
@@ -1044,7 +1044,7 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_wifi_inf_mode_tag:
             {
                 message.has_wifi_inf_mode = true;
-                WifiSettings* wifiSettings = &state->wifiSettings;
+                wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 message.wifi_inf_mode = wifiSettings->networkMode;
                 break;
             }

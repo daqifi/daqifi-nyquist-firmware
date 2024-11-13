@@ -82,7 +82,7 @@ extern "C" {
         //! Global UI Structure
         tUIReadVars UIReadVars;
         //! The active wifi settings
-        WifiSettings wifiSettings;
+        wifi_manager_settings_t wifiSettings;
         //! The streaming trigger timestamp
         uint32_t StreamTrigStamp;
     } tBoardData;

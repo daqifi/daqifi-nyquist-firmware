@@ -17,16 +17,91 @@
 wifi_tcp_server_context_t *gpServerData;
 //// Function Prototypes
 
-bool TcpServer_ProcessSendBuffer();
-size_t TcpServer_WriteBuffFreeSize();
-size_t TcpServer_WriteBuffer(const char* data, size_t len);
-void TcpServer_CloseSocket();
-void TcpServer_OpenSocket(uint16_t port);
-bool TcpServer_ProcessReceivedBuff();
+/**
+ * @brief Initializes the Wi-Fi TCP server.
+ *
+ * This function sets up the server context, initializes the console,
+ * SCPI context, and circular buffer for data transmission.
+ * It should be called once before using other server functions.
+ *
+ * @param pServerData Pointer to the Wi-Fi TCP server context data structure.
+ */
+void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData);
+
+/**
+ * @brief Transmits any buffered data over the TCP connection.
+ *
+ * If there is data available in the write circular buffer,
+ * this function will process and send it over the TCP connection.
+ *
+ * @return True if the function executes successfully.
+ */
+bool wifi_tcp_server_TransmitBufferedData(void);
+
+/**
+ * @brief Retrieves the amount of free space in the write buffer.
+ *
+ * This function returns the number of bytes available in the write circular buffer,
+ * which can be used to determine how much data can be written without blocking.
+ *
+ * @return The number of bytes available in the write buffer.
+ *         Returns 0 if the client socket is not connected.
+ */
+size_t wifi_tcp_server_GetWriteBuffFreeSize(void);
+
+/**
+ * @brief Writes data to the server's write buffer.
+ *
+ * This function attempts to write the specified data to the server's write circular buffer.
+ * If the buffer does not have enough free space, the function will block until space becomes available.
+ *
+ * @param data Pointer to the data to write.
+ * @param len Length of the data to write.
+ *
+ * @return The number of bytes actually written to the buffer.
+ *         Returns 0 if the client socket is not connected or if an error occurs.
+ */
+size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len);
+
+/**
+ * @brief Closes the server and client sockets and resets the server state.
+ *
+ * This function shuts down the server and client sockets, resets the server context,
+ * and clears any pending data in the buffers.
+ */
+void wifi_tcp_server_CloseSocket(void);
+
+/**
+ * @brief Opens the server socket on the specified port.
+ *
+ * This function creates a TCP server socket and binds it to the specified port,
+ * allowing it to accept incoming client connections.
+ *
+ * @param port The port number on which to open the server socket.
+ */
+void wifi_tcp_server_OpenSocket(uint16_t port);
+
+/**
+ * @brief Processes received data from the client.
+ *
+ * This function processes the data received in the client's read buffer,
+ * passing each character to the console input handler.
+ *
+ * @return True if the data is processed successfully.
+ */
+bool wifi_tcp_server_ProcessReceivedBuff(void);
+
+/**
+ * @brief Closes the client socket and resets the client state.
+ *
+ * This function shuts down the client socket, resets client-related data,
+ * and clears any pending data in the client's buffers.
+ */
+void wifi_tcp_server_CloseClientSocket(void);
 
 
 
-static bool TcpServer_Flush() {
+static bool TcpServerFlush() {
     int16_t sockRet;
     bool funRet = false;
     if (gpServerData->client.clientSocket < 0) {
@@ -67,7 +142,7 @@ static wifi_tcp_server_clientContext_t* SCPI_TCP_GetClient(scpi_t * context) {
  */
 static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
     //TcpClientData* client = SCPI_TCP_GetClient(context);
-    return TcpServer_WriteBuffer(data, len);
+    return wifi_tcp_server_WriteBuffer(data, len);
 }
 
 /**
@@ -77,14 +152,14 @@ static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
  */
 static scpi_result_t SCPI_TCP_Flush(scpi_t * context) {
     wifi_tcp_server_clientContext_t* client = SCPI_TCP_GetClient(context);
-    UNUSED(client);
-    return SCPI_RES_OK;
-    //(TODO(Daqifi):Review this
-    //    if (TcpServer_Flush(client)) {
-    //        return SCPI_RES_OK;
-    //    } else {
-    //        return SCPI_RES_ERR;
-    //    }
+    if(client==NULL){
+        return SCPI_RES_ERR;
+    }
+    if (TcpServerFlush(client)) {
+        return SCPI_RES_OK;
+    } else {
+        return SCPI_RES_ERR;
+    }
 }
 
 /**
@@ -145,7 +220,7 @@ static wifi_tcp_server_clientContext_t* microrl_GetClient(microrl_t* context) {
  */
 static void microrl_echo(microrl_t* context, size_t textLen, const char* text) {
     //TcpClientData* client = microrl_GetClient(context);
-    TcpServer_WriteBuffer(text, textLen);
+    wifi_tcp_server_WriteBuffer(text, textLen);
 }
 
 /**
@@ -177,11 +252,11 @@ static int CircularBufferToTcpWrite(uint8_t* buf, uint16_t len) {
         return false;
     memcpy(gpServerData->client.writeBuffer, buf, len);
     gpServerData->client.writeBufferLength = len;
-    return TcpServer_Flush(&gpServerData->client);
+    return TcpServerFlush(&gpServerData->client);
 }
 //==========================External Apis==========================
 
-void TcpServer_Initialize(wifi_tcp_server_context_t *pServerData) {
+void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
     static bool isInitDone = false;
     if (!isInitDone) {
         gpServerData = pServerData;
@@ -203,7 +278,7 @@ void TcpServer_Initialize(wifi_tcp_server_context_t *pServerData) {
     }
 }
 
-void TcpServer_OpenSocket(uint16_t port) {
+void wifi_tcp_server_OpenSocket(uint16_t port) {
     // Init server params
     if (gpServerData->serverSocket == -1) {
         gpServerData->serverSocket = socket(AF_INET, SOCK_STREAM, SOCKET_CONFIG_SSL_OFF);
@@ -217,7 +292,7 @@ void TcpServer_OpenSocket(uint16_t port) {
     }
 }
 
-void TcpServer_CloseSocket() {
+void wifi_tcp_server_CloseSocket() {
 
     shutdown(gpServerData->client.clientSocket);
     shutdown(gpServerData->serverSocket);
@@ -229,7 +304,7 @@ void TcpServer_CloseSocket() {
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
 }
 
-void TcpServer_CloseClientSocket() {
+void wifi_tcp_server_CloseClientSocket() {
     shutdown(gpServerData->client.clientSocket);
     gpServerData->client.clientSocket = -1;
     gpServerData->client.readBufferLength = 0;
@@ -238,21 +313,15 @@ void TcpServer_CloseClientSocket() {
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
 }
 
-size_t TcpServer_WriteBuffFreeSize(){
+size_t wifi_tcp_server_GetWriteBuffFreeSize(){
     if (gpServerData->client.clientSocket < 0) {
         return 0;
     }
     
     return CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf);
 }
-/**
- * Writes data to the output buffere
- * @param client The client to write to
- * @param data The data to write
- * @param len The length of the data
- * @return The number of characters written
- */
-size_t TcpServer_WriteBuffer(const char* data, size_t len) {
+
+size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
     size_t bytesAdded = 0;
     
     if (gpServerData->client.clientSocket < 0) {
@@ -278,14 +347,7 @@ size_t TcpServer_WriteBuffer(const char* data, size_t len) {
     return bytesAdded;
 }
 
-/**
- * Flushes data from the provided client
- * @param client The client to flush
- * @return  True if data is flushed, false otherwise
- */
-
-
-bool TcpServer_ProcessReceivedBuff() {
+bool wifi_tcp_server_ProcessReceivedBuff() {
     size_t j = 0;
     for (j = 0; j < gpServerData->client.readBufferLength; ++j) {
         microrl_insert_char(&gpServerData->client.console, gpServerData->client.readBuffer[j]);
@@ -295,7 +357,7 @@ bool TcpServer_ProcessReceivedBuff() {
     return true;
 }
 
-bool TcpServer_ProcessSendBuffer() {
+bool wifi_tcp_server_TransmitBufferedData() {
     int ret;
     UNUSED(ret);
     if (gpServerData->client.tcpSendPending == 1) {

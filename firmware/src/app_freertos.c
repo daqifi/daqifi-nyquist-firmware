@@ -100,7 +100,7 @@ static void app_USBDeviceTask(void* p_arg);
 static void app_WifiTask(void* p_arg);
 static void app_SdCardTask(void* p_arg);
 
-void wifi_manager_FormUdpAnnouncePacketCB(const WifiSettings *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen) {
+void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
@@ -235,10 +235,10 @@ void app_SystemInit() {
     // Move temp variable to global variables
     memcpy(&gpBoardRuntimeConfig->wifiSettings,
             &tmpSettings.settings.wifi,
-            sizeof (WifiSettings));
+            sizeof (wifi_manager_settings_t));
     memcpy(&gpBoardData->wifiSettings,
             &tmpSettings.settings.wifi,
-            sizeof (WifiSettings));
+            sizeof (wifi_manager_settings_t));
 
     // Load factory calibration parameters - if they are not initialized, 
     // store them (first run after a program)

@@ -186,12 +186,13 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/state/runtime/BoardRuntimeConfig.h \
  ../src/state/runtime/DIORuntimeConfig.h \
  ../src/state/runtime/../board/DIOConfig.h \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h \
  ../src/services/wifi_services/wifi_manager.h \
  ../src/services/SDcard/SDCard.h ../src/HAL/DIO.h \
@@ -592,6 +593,10 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 
 ../src/config/default/../../state/runtime/AInRuntimeConfig.h:
 
+../src/services/wifi_services/wifi_manager.h:
+
+../src/services/wifi_services/wifi_tcp_server.h:
+
 ../src/state/runtime/BoardRuntimeConfig.h:
 
 ../src/state/runtime/DIORuntimeConfig.h:
@@ -601,8 +606,6 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 ../src/state/runtime/StreamingRuntimeConfig.h:
 
 ../src/services/wifi_services/wifi_manager.h:
-
-../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/state/runtime/../../services/SDcard/SDCard.h:
 

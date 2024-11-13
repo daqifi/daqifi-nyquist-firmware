@@ -163,14 +163,10 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
- ../src/state/runtime/BoardRuntimeConfig.h \
- ../src/state/runtime/DIORuntimeConfig.h \
- ../src/state/runtime/../board/DIOConfig.h \
- ../src/state/runtime/StreamingRuntimeConfig.h \
- ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
- ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h \
  ../src/services/wifi_services/wifi_manager.h \
  ../src/services/wifi_services/wifi_tcp_server.h \
+ ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h ../src/Util/CircularBuffer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -191,6 +187,12 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/state/runtime/BoardRuntimeConfig.h \
+ ../src/state/runtime/DIORuntimeConfig.h \
+ ../src/state/runtime/../board/DIOConfig.h \
+ ../src/state/runtime/StreamingRuntimeConfig.h \
+ ../src/services/UsbCdc/UsbCdc.h \
+ ../src/services/wifi_services/wifi_manager.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h ../src/Util/Logger.h \
  ../src/state/board/BoardConfig.h ../src/state/board/StreamingConfig.h \
  ../src/HAL/DIO.h ../src/services/SCPI/SCPIADC.h \
@@ -545,25 +547,15 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 
 ../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
 
-../src/state/runtime/BoardRuntimeConfig.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/DIORuntimeConfig.h:
-
-../src/state/runtime/../board/DIOConfig.h:
-
-../src/state/runtime/StreamingRuntimeConfig.h:
-
-../src/services/UsbCdc/UsbCdc.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/libraries/microrl/src/microrl.h:
 
 ../src/libraries/microrl/src/config.h:
 
 ../src/Util/CircularBuffer.h:
-
-../src/services/wifi_services/wifi_manager.h:
-
-../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
@@ -604,6 +596,18 @@ build/default/production/_ext/1223280608/SCPIInterface.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/state/runtime/BoardRuntimeConfig.h:
+
+../src/state/runtime/DIORuntimeConfig.h:
+
+../src/state/runtime/../board/DIOConfig.h:
+
+../src/state/runtime/StreamingRuntimeConfig.h:
+
+../src/services/UsbCdc/UsbCdc.h:
+
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/state/runtime/../../services/SDcard/SDCard.h:
 

@@ -167,7 +167,8 @@ build/default/debug/_ext/1223280608/SCPIStorageSD.o: \
  ../src/services/UsbCdc/UsbCdc.h ../src/libraries/microrl/src/microrl.h \
  ../src/libraries/microrl/src/config.h ../src/HAL/Power/PowerApi.h \
  ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
- ../src/services/Wifi/WifiApi.h ../src/services/Wifi/tcpServer.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -536,9 +537,9 @@ build/default/debug/_ext/1223280608/SCPIStorageSD.o: \
 
 ../src/HAL/UI/UI.h:
 
-../src/services/Wifi/WifiApi.h:
+../src/services/wifi_services/wifi_manager.h:
 
-../src/services/Wifi/tcpServer.h:
+../src/services/wifi_services/wifi_tcp_server.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 
