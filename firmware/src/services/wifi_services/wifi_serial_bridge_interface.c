@@ -47,7 +47,7 @@ void wifi_serial_bridge_interface_DeInit(void) {
 }
 
 size_t wifi_serial_bridge_interface_UARTReadGetCount(void) {
-    size_t count;
+    size_t count = 0;
     if (OSAL_RESULT_TRUE == OSAL_MUTEX_Lock(&gUsartReadMutex, OSAL_WAIT_FOREVER)) {
         count = gUsartReceiveLength;
         OSAL_MUTEX_Unlock(&gUsartReadMutex);
