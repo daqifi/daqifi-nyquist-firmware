@@ -13,7 +13,7 @@
 #include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
-#include "../../services/SDcard/SDCard.h"
+#include "../../services/sd_card_services/sd_card_manager.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,7 +80,7 @@ typedef struct sBoardRuntimeConfig
     //!The desired USB settings
     UsbCdcData_t usbSettings;
     
-    SDCard_RuntimeConfig_t sdCardConfig;
+    sd_card_manager_settings_t sdCardConfig;
 } tBoardRuntimeConfig;
 
 /*!

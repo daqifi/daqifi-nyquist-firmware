@@ -194,7 +194,7 @@ build/default/production/_ext/1260820504/JSON_Encoder.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
  ../src/services/../HAL/ADC.h ../src/state/board/BoardConfig.h \
  ../src/state/board/StreamingConfig.h \
  ../src/services/../HAL/ADC/MC12bADC.h
@@ -607,7 +607,7 @@ build/default/production/_ext/1260820504/JSON_Encoder.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/services/../HAL/ADC.h:
 

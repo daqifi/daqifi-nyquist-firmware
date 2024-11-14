@@ -196,7 +196,7 @@ build/default/production/_ext/68089601/NanoPB_Encoder.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
  ../src/HAL/TimerApi/TimerApi.h ../src/state/board/BoardConfig.h \
  ../src/state/board/StreamingConfig.h ../src/HAL/DIO.h
 
@@ -614,7 +614,7 @@ build/default/production/_ext/68089601/NanoPB_Encoder.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/HAL/TimerApi/TimerApi.h:
 

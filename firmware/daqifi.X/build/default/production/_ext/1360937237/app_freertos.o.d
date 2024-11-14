@@ -193,9 +193,9 @@ build/default/production/_ext/1360937237/app_freertos.o: \
  ../src/state/runtime/../board/DIOConfig.h \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/services/SDcard/SDCard.h ../src/HAL/DIO.h \
+ ../src/services/sd_card_services/sd_card_manager.h ../src/HAL/DIO.h \
  ../src/state/board/BoardConfig.h ../src/state/board/StreamingConfig.h \
  ../src/HAL/ADC.h ../src/HAL/ADC/MC12bADC.h ../src/services/streaming.h \
  ../src/services/../state/board/BoardConfig.h \
@@ -607,11 +607,11 @@ build/default/production/_ext/1360937237/app_freertos.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/services/SDcard/SDCard.h:
+../src/services/sd_card_services/sd_card_manager.h:
 
 ../src/HAL/DIO.h:
 

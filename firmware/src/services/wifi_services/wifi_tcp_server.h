@@ -1,5 +1,5 @@
-#ifndef _TCP_SERVER_H    /* Guard against multiple inclusion */
-#define _TCP_SERVER_H
+#ifndef _WIFI_TCP_SERVER_H    /* Guard against multiple inclusion */
+#define _WIFI_TCP_SERVER_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -71,7 +71,7 @@ typedef struct s_tcpServerContext
 }
 #endif
 
-#endif /* _TCP_SERVER_H */
+#endif /* _WIFI_TCP_SERVER_H */
 
 /* *****************************************************************************
  End of File

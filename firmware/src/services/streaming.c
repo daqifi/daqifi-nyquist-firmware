@@ -15,7 +15,7 @@
 #include "UsbCdc/UsbCdc.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
-#include "SDcard/SDCard.h"
+#include "sd_card_services/sd_card_manager.h"
 
 //#define TEST_STREAMING
 
@@ -28,7 +28,7 @@
 #define max(x,y) ((x) >= (y) ? (x) : (y))
 #endif // max
 
-#define BUFFER_SIZE min(min(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE), SD_CARD_CONF_WBUFFER_SIZE)  //2048
+#define BUFFER_SIZE min(min(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE), SD_CARD_MANAGER_CONF_WBUFFER_SIZE)  //2048
 uint8_t buffer[BUFFER_SIZE];
 
 //! Pointer to the board configuration data structure to be set in 
@@ -230,7 +230,7 @@ void streaming_Task(void) {
        
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
-        sdSize = SDCard_WriteBuffFreeSize();
+        sdSize = sd_card_manager_GetWriteBuffFreeSize();
 
         hasUsb = (usbSize > BUFFER_SIZE);
         hasWifi = (wifiSize > BUFFER_SIZE);
@@ -278,7 +278,7 @@ void streaming_Task(void) {
                 wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
             if (hasSD) {
-                SDCard_WriteToBuffer((const char *) buffer, packetSize);
+                sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
         }
         DIO_TIMING_TEST_WRITE_STATE(0);

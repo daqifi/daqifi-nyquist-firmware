@@ -1,5 +1,6 @@
-build/default/production/_ext/1104413135/PowerApi.o: \
- ../src/HAL/Power/PowerApi.c ../src/HAL/Power/PowerApi.h \
+build/default/production/_ext/111111082/sd_card_manager.o: \
+ ../src/services/sd_card_services/sd_card_manager.c ../src/Util/Logger.h \
+ ../src/services/sd_card_services/sd_card_manager.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -127,10 +128,7 @@ build/default/production/_ext/1104413135/PowerApi.o: \
  ../src/config/default/system/fs/fat_fs/file_system/ff.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c5_master.h \
  ../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h \
- ../src/app_freertos.h ../src/HAL/BQ24297/BQ24297.h \
- ../src/state/board/BoardConfig.h ../src/state/board/AInConfig.h \
- ../src/Util/ArrayWrapper.h ../src/state/board/DIOConfig.h \
- ../src/state/board/StreamingConfig.h ../src/services/daqifi_settings.h \
+ ../src/app_freertos.h ../src/services/daqifi_settings.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/driver/winc/include/wdrv_winc_debug.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_wifi.h \
@@ -144,6 +142,7 @@ build/default/production/_ext/1104413135/PowerApi.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_authctx.h \
  ../src/config/default/driver/winc/include/wdrv_winc_common.h \
  ../src/config/default/../../state/runtime/AInRuntimeConfig.h \
+ ../src/Util/ArrayWrapper.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
  ../src/services/wifi_services/wifi_manager.h \
@@ -182,20 +181,11 @@ build/default/production/_ext/1104413135/PowerApi.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_host_file.h \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
- ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
- ../src/HAL/UI/UI.h ../src/state/data/BoardData.h \
- ../src/state/data/AInSample.h ../src/Util/HeapList.h \
- ../src/Util/LockProvider.h ../src/state/data/DIOSample.h \
- ../src/HAL/ADC.h ../src/state/runtime/BoardRuntimeConfig.h \
- ../src/state/runtime/DIORuntimeConfig.h \
- ../src/state/runtime/StreamingRuntimeConfig.h \
- ../src/services/UsbCdc/UsbCdc.h \
- ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
- ../src/HAL/ADC/MC12bADC.h \
- ../src/HAL/Power/../../services/wifi_services/wifi_manager.h
+ ../src/config/default/driver/winc/include/wdrv_winc_nvm.h
 
-../src/HAL/Power/PowerApi.h:
+../src/Util/Logger.h:
+
+../src/services/sd_card_services/sd_card_manager.h:
 
 ../src/config/default/configuration.h:
 
@@ -457,18 +447,6 @@ build/default/production/_ext/1104413135/PowerApi.o: \
 
 ../src/app_freertos.h:
 
-../src/HAL/BQ24297/BQ24297.h:
-
-../src/state/board/BoardConfig.h:
-
-../src/state/board/AInConfig.h:
-
-../src/Util/ArrayWrapper.h:
-
-../src/state/board/DIOConfig.h:
-
-../src/state/board/StreamingConfig.h:
-
 ../src/services/daqifi_settings.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
@@ -496,6 +474,8 @@ build/default/production/_ext/1104413135/PowerApi.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_common.h:
 
 ../src/config/default/../../state/runtime/AInRuntimeConfig.h:
+
+../src/Util/ArrayWrapper.h:
 
 ../src/config/default/driver/winc/include/drv/socket/socket.h:
 
@@ -574,33 +554,3 @@ build/default/production/_ext/1104413135/PowerApi.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
-
-../src/HAL/UI/UI.h:
-
-../src/state/data/BoardData.h:
-
-../src/state/data/AInSample.h:
-
-../src/Util/HeapList.h:
-
-../src/Util/LockProvider.h:
-
-../src/state/data/DIOSample.h:
-
-../src/HAL/ADC.h:
-
-../src/state/runtime/BoardRuntimeConfig.h:
-
-../src/state/runtime/DIORuntimeConfig.h:
-
-../src/state/runtime/StreamingRuntimeConfig.h:
-
-../src/services/UsbCdc/UsbCdc.h:
-
-../src/services/wifi_services/wifi_manager.h:
-
-../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
-
-../src/HAL/ADC/MC12bADC.h:
-
-../src/HAL/Power/../../services/wifi_services/wifi_manager.h:

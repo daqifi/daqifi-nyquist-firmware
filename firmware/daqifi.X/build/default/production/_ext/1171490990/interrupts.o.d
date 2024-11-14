@@ -190,7 +190,7 @@ build/default/production/_ext/1171490990/interrupts.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
  ../src/state/data/BoardData.h ../src/state/data/AInSample.h \
  ../src/Util/HeapList.h ../src/Util/LockProvider.h \
  ../src/state/data/DIOSample.h ../src/HAL/ADC/MC12bADC.h ../src/HAL/DIO.h
@@ -595,7 +595,7 @@ build/default/production/_ext/1171490990/interrupts.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/state/data/BoardData.h:
 

@@ -186,8 +186,8 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
- ../src/services/SDcard/SDCard.h
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
+ ../src/services/sd_card_services/sd_card_manager.h
 
 ../src/state/runtime/BoardRuntimeConfig.h:
 
@@ -575,6 +575,6 @@ build/default/production/_ext/1013116128/NQ1RuntimeDefaults.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
-../src/services/SDcard/SDCard.h:
+../src/services/sd_card_services/sd_card_manager.h:

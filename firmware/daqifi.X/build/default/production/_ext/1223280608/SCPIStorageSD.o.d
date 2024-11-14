@@ -14,7 +14,7 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
  ../src/libraries/scpi/libscpi/inc/scpi/units.h \
  ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
  ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
- ../src/services/SCPI/../SDcard/SDCard.h \
+ ../src/services/SCPI/../sd_card_services/sd_card_manager.h \
  ../src/config/default/configuration.h ../src/config/default/user.h \
  ../src/config/default/device.h \
  ../src/config/default/toolchain_specifics.h \
@@ -190,7 +190,7 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
  ../src/services/UsbCdc/UsbCdc.h ../src/HAL/Power/PowerApi.h \
  ../src/HAL/BQ24297/BQ24297.h ../src/HAL/UI/UI.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/services/SCPI/../../state/runtime/../../services/SDcard/SDCard.h
+ ../src/services/SCPI/../../state/runtime/../../services/sd_card_services/sd_card_manager.h
 
 ../src/services/SCPI/SCPIStorageSD.h:
 
@@ -220,7 +220,7 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
 
 ../src/libraries/scpi/libscpi/inc/scpi/expression.h:
 
-../src/services/SCPI/../SDcard/SDCard.h:
+../src/services/SCPI/../sd_card_services/sd_card_manager.h:
 
 ../src/config/default/configuration.h:
 
@@ -584,4 +584,4 @@ build/default/production/_ext/1223280608/SCPIStorageSD.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/services/SCPI/../../state/runtime/../../services/SDcard/SDCard.h:
+../src/services/SCPI/../../state/runtime/../../services/sd_card_services/sd_card_manager.h:

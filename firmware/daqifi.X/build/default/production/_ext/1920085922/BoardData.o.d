@@ -193,7 +193,7 @@ build/default/production/_ext/1920085922/BoardData.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
  ../src/state/data/BoardData.h ../src/state/data/../../HAL/ADC/MC12bADC.h
 
 ../src/state/data/BoardData.h:
@@ -602,7 +602,7 @@ build/default/production/_ext/1920085922/BoardData.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/state/data/BoardData.h:
 

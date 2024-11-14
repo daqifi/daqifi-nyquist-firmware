@@ -237,5 +237,5 @@ extern "C" {
 }
 #endif
 
-#endif	/* _WIFI_STATE_MACHINE_H */
+#endif	/* _WIFI_MANAGER_H */
 

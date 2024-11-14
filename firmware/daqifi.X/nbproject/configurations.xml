@@ -386,11 +386,8 @@
           <itemPath>../src/services/SCPI/SCPILAN.h</itemPath>
           <itemPath>../src/services/SCPI/SCPIStorageSD.h</itemPath>
         </logicalFolder>
-        <logicalFolder name="SDcard" displayName="SDcard" projectFiles="true">
-          <itemPath>../src/services/SDcard/SDCard.h</itemPath>
-        </logicalFolder>
-        <logicalFolder name="TcpServer" displayName="TcpServer" projectFiles="true">
-          <itemPath>../src/tcpServer.h</itemPath>
+        <logicalFolder name="SDcard" displayName="sd_card_services" projectFiles="true">
+          <itemPath>../src/services/sd_card_services/sd_card_manager.h</itemPath>
         </logicalFolder>
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.h</itemPath>
@@ -904,8 +901,8 @@
           <itemPath>../src/services/SCPI/SCPILAN.c</itemPath>
           <itemPath>../src/services/SCPI/SCPIStorageSD.c</itemPath>
         </logicalFolder>
-        <logicalFolder name="SDcard" displayName="SDcard" projectFiles="true">
-          <itemPath>../src/services/SDcard/SDCard.c</itemPath>
+        <logicalFolder name="SDcard" displayName="sd_card_services" projectFiles="true">
+          <itemPath>../src/services/sd_card_services/sd_card_manager.c</itemPath>
         </logicalFolder>
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.c</itemPath>
@@ -1069,7 +1066,6 @@
       </logicalFolder>
       <itemPath>../src/app_freertos.c</itemPath>
       <itemPath>../src/main.c</itemPath>
-      <itemPath>C:/Users/asus3/.mcc/HarmonyContent/wireless_apps_winc1500/apps/wifi_socket_demos/firmware/src/app_wifi.c</itemPath>
     </logicalFolder>
   </logicalFolder>
   <sourceRootList>
@@ -2464,24 +2460,6 @@
         <property key="stack-smashing" value=""/>
         <property key="wpo-lto" value="false"/>
       </C32Global>
-      <item path="C:/Users/asus3/.mcc/HarmonyContent/wireless_apps_winc1500/apps/wifi_socket_demos/firmware/src/app_wifi.c"
-            ex="true"
-            overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <Simulator>
         <property key="codecoverage.enabled" value="Disable"/>
         <property key="codecoverage.enableoutputtofile" value="false"/>

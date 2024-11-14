@@ -21,7 +21,7 @@
 /* ************************************************************************** */
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
-#include "../SDcard/SDCard.h"
+#include "../sd_card_services/sd_card_manager.h"
 #include "../../state/runtime/BoardRuntimeConfig.h"
 
 /* ************************************************************************** */
@@ -54,7 +54,7 @@
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
-    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);    
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
@@ -72,8 +72,8 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     } else {
         pSdCardRuntimeConfig->enable = false;       
     }
-    pSdCardRuntimeConfig->mode = SD_CARD_MODE_NONE;
-    SDCard_UpdateSettings(pSdCardRuntimeConfig);
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     result = SCPI_RES_OK;  
 __exit_point:
     return result;
@@ -83,7 +83,7 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     size_t fileLen = 0;
  
     scpi_result_t result = SCPI_RES_ERR;
-    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     if (!pSdCardRuntimeConfig->enable) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
@@ -94,7 +94,7 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
-        if (fileLen > SD_CARD_CONF_FILE_NAME_LEN_MAX) {
+        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -102,9 +102,9 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         pSdCardRuntimeConfig->file[fileLen] = '\0';
     }
    
-    pSdCardRuntimeConfig->mode = SD_CARD_MODE_WRITE;
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
     
-    SDCard_UpdateSettings(pSdCardRuntimeConfig);
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -114,7 +114,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
-    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = (SDCard_RuntimeConfig_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
   
     if (!pSdCardRuntimeConfig->enable) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
@@ -125,7 +125,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
-        if (fileLen > SD_CARD_CONF_FILE_NAME_LEN_MAX) {
+        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -134,15 +134,15 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     }
 
     if (fileLen > 0) {
-        if (fileLen > SD_CARD_CONF_FILE_NAME_LEN_MAX) {
+        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
         memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
         pSdCardRuntimeConfig->file[fileLen] = '\0';
     }
-    pSdCardRuntimeConfig->mode = SD_CARD_MODE_READ;
-    SDCard_UpdateSettings(pSdCardRuntimeConfig);
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -151,7 +151,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     const char* pBuff;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
-    SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = (SDCard_RuntimeConfig_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
    
 
     if (!pSdCardRuntimeConfig->enable) {
@@ -163,7 +163,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
-        if (fileLen > SD_CARD_CONF_FILE_NAME_LEN_MAX) {
+        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -172,15 +172,15 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
 
     if (fileLen > 0) {
-        if (fileLen > SD_CARD_CONF_FILE_NAME_LEN_MAX) {
+        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
         memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
         pSdCardRuntimeConfig->file[fileLen] = '\0';
     }
-    pSdCardRuntimeConfig->mode = SD_CARD_MODE_LIST_DIRECTORY;
-    SDCard_UpdateSettings(pSdCardRuntimeConfig);
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     result = SCPI_RES_OK;
 __exit_point:
     return result;
