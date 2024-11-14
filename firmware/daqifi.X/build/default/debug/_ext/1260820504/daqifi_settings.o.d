@@ -144,6 +144,23 @@ build/default/debug/_ext/1260820504/daqifi_settings.o: \
  ../src/Util/ArrayWrapper.h \
  ../src/config/default/driver/winc/include/drv/socket/socket.h \
  ../src/config/default/driver/winc/include/drv/socket/netinet_in.h \
+ ../src/services/wifi_services/wifi_manager.h \
+ ../src/services/wifi_services/wifi_tcp_server.h \
+ ../src/libraries/microrl/src/microrl.h \
+ ../src/libraries/microrl/src/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/scpi.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/parser.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/types.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/config.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/cc.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/ieee488.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/error.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/constants.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/minimal.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/units.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/utils.h \
+ ../src/libraries/scpi/libscpi/inc/scpi/expression.h \
+ ../src/Util/CircularBuffer.h \
  ../src/config/default/driver/winc/include/wdrv_winc_client_api.h \
  ../src/config/default/driver/winc/include/wdrv_winc.h \
  ../src/config/default/driver/winc/include/wdrv_winc_bssfind.h \
@@ -459,6 +476,40 @@ build/default/debug/_ext/1260820504/daqifi_settings.o: \
 ../src/config/default/driver/winc/include/drv/socket/socket.h:
 
 ../src/config/default/driver/winc/include/drv/socket/netinet_in.h:
+
+../src/services/wifi_services/wifi_manager.h:
+
+../src/services/wifi_services/wifi_tcp_server.h:
+
+../src/libraries/microrl/src/microrl.h:
+
+../src/libraries/microrl/src/config.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/scpi.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/parser.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/types.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/config.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/cc.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/ieee488.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/error.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/constants.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/minimal.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/units.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/utils.h:
+
+../src/libraries/scpi/libscpi/inc/scpi/expression.h:
+
+../src/Util/CircularBuffer.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_client_api.h:
 

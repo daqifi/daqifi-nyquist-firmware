@@ -186,6 +186,7 @@ build/default/debug/_ext/659825273/DIO.o: ../src/HAL/DIO.c \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/services/wifi_services/wifi_manager.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h \
  ../src/state/board/BoardConfig.h ../src/state/board/AInConfig.h \
  ../src/state/board/StreamingConfig.h ../src/HAL/TimerApi/TimerApi.h \
@@ -582,6 +583,8 @@ build/default/debug/_ext/659825273/DIO.o: ../src/HAL/DIO.c \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/state/runtime/../../services/SDcard/SDCard.h:
 

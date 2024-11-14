@@ -133,9 +133,18 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
-
+/**
+ * @brief
+ * @param context
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
 scpi_result_t SCPI_LANFwUpdate(scpi_t * context);
-
+/**
+ * @brief get the WI-FI Module information like CHIP-ID, Firmware version etc in Json format
+ * @param context
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANGetChipInfo(scpi_t * context);
 //scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context);
 //
 ///**

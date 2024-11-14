@@ -788,7 +788,8 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave, },
     //    {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad, },
     //    {.pattern = "SYSTem:COMMunicate:LAN:CLEAR", .callback = SCPI_LANSettingsClear, },
-    //    
+    //
+    {.pattern = "SYSTem:COMMunicate:LAN:GETChipInfo", .callback = SCPI_LANGetChipInfo,},
     //    // ADC
     {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet,},
     {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet,},

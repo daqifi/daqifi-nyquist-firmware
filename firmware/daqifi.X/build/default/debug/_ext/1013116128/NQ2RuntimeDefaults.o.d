@@ -185,6 +185,7 @@ build/default/debug/_ext/1013116128/NQ2RuntimeDefaults.o: \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/services/wifi_services/wifi_manager.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h
 
 ../src/state/runtime/BoardRuntimeConfig.h:
@@ -570,5 +571,7 @@ build/default/debug/_ext/1013116128/NQ2RuntimeDefaults.o: \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/state/runtime/../../services/SDcard/SDCard.h:

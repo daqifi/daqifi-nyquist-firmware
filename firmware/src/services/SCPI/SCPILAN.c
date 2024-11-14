@@ -363,24 +363,24 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
             return SCPI_RES_ERR;
             break;
         case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // DAQiFi defines 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
-        case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED:  //DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
+        case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED: //DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
             break;
         case WIFI_MANAGER_SECURITY_MODE_802_1X: // DAQiFi defines 5 = WDRV_WINC_AUTH_TYPE_802_1X
-            return SCPI_RES_ERR;    // Not currently implemented
+            return SCPI_RES_ERR; // Not currently implemented
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_802_1X;
             break;
         case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2: // DAQiFi defines 6 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
-            return SCPI_RES_ERR;    // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2;            
+            return SCPI_RES_ERR; // Not currently implemented
+            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2;
             break;
         case WIFI_MANAGER_SECURITY_MODE_WPS_PUSH_BUTTON: // DAQiFi defines 7 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
             return SCPI_RES_ERR;
         case WIFI_MANAGER_SECURITY_MODE_SEC_WPS_PIN: // DAQiFi defines 8 = SECURITY_WPS_PIN which is now deprecated
-            return SCPI_RES_ERR;            
+            return SCPI_RES_ERR;
         case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS: // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
-            return SCPI_RES_ERR;    // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS;            
+            return SCPI_RES_ERR; // Not currently implemented
+            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS;
             break;
 
         default:
@@ -450,8 +450,8 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     SDCard_RuntimeConfig_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    
-        
+
+
     if (SCPI_ParamInt32(context, &param1, FALSE)) {
         saveSettings = (bool) param1;
     }
@@ -480,12 +480,25 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
             pRunTimeWifiSettings);
     return SCPI_RES_OK;
 }
-scpi_result_t SCPI_LANFwUpdate(scpi_t * context){
+
+scpi_result_t SCPI_LANFwUpdate(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    
-    pRunTimeWifiSettings->isOtaModeEnabled=true;
+
+    pRunTimeWifiSettings->isOtaModeEnabled = true;
     return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_LANGetChipInfo(scpi_t * context) {
+    char jsonChar[100];    
+    wifi_manager_chipInfo_t chipInfo;
+    if(wifi_manager_GetChipInfo(&chipInfo)==false)
+        return SCPI_RES_ERR;
+    sprintf(jsonChar,"{\"ChipId\":%d,\"FwVersion\":\"%s\",\"BuildDate\":\"%s\"}\n",
+            chipInfo.chipID, chipInfo.frimwareVersion, chipInfo.BuildDate);
+    return SCPI_LANStringGetImpl(
+            context,
+            jsonChar);
 }
 //scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context)
 //{
@@ -525,10 +538,9 @@ scpi_result_t SCPI_LANFwUpdate(scpi_t * context){
 //    return SCPI_RES_OK;
 //}
 
-scpi_result_t SCPI_LANHostnameGet(scpi_t * context)
-{
+scpi_result_t SCPI_LANHostnameGet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
-        BOARDRUNTIME_WIFI_SETTINGS);
+            BOARDRUNTIME_WIFI_SETTINGS);
     return SCPI_LANStringGetImpl(context, pRunTimeWifiSettings->hostName);
 }
 //

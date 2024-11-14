@@ -12,6 +12,8 @@
 extern "C" {
 #endif
 #define WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN HOSTNAME_MAX_SIZE
+#define WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE 20
+#define WIFI_MANAGER_CHIP_INFO_FW_BUILD_DATE
 
     typedef enum {
         WIFI_MANAGER_NETWORK_MODE_STA = 1,
@@ -126,6 +128,13 @@ extern "C" {
         uint16_t tcpPort;
 
     } wifi_manager_settings_t;
+
+    typedef struct {
+        uint32_t chipID;
+        char frimwareVersion[WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE + 1];
+        char BuildDate[sizeof (__DATE__)];
+        char BuildTime[sizeof (__TIME__)];
+    } wifi_manager_chipInfo_t;
     /**
      * @brief Initializes the WiFi manager and its state machine.
      * 
@@ -136,7 +145,21 @@ extern "C" {
      * @return True if initialization is successful, false otherwise.
      */
     bool wifi_manager_Init(wifi_manager_settings_t* settings);
-
+    /**
+     * @brief Reads the Wi-Fi chip information and populates the provided structure.
+     *
+     * This function retrieves the chip ID, firmware version, build date, and build time
+     * from the Wi-Fi firmware and stores them into the `wifi_manager_chipInfo_t` structure
+     * pointed to by `pChipInfo`.
+     *
+     * @param[out] pChipInfo Pointer to a `wifi_manager_chipInfo_t` structure where the chip information will be stored.
+     *
+     * @return `true` if the chip information was successfully read and stored; `false` otherwise.
+     *
+     * @note This function will return `false` if the Wi-Fi manager has not been initialized
+     *       or if `pChipInfo` is `NULL`.
+     */
+    bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo);
     /**
      * @brief Deinitializes the WiFi manager.
      * 

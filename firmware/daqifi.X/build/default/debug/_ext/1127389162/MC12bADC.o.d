@@ -187,6 +187,7 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
  ../src/config/default/driver/winc/include/drv/driver/m2m_ota.h \
  ../src/config/default/driver/winc/include/wdrv_winc_powersave.h \
  ../src/config/default/driver/winc/include/wdrv_winc_nvm.h \
+ ../src/services/wifi_services/wifi_manager.h \
  ../src/state/runtime/../../services/SDcard/SDCard.h \
  ../src/state/board/BoardConfig.h ../src/state/board/StreamingConfig.h \
  ../src/Util/Delay.h ../src/state/data/BoardData.h
@@ -588,6 +589,8 @@ build/default/debug/_ext/1127389162/MC12bADC.o: ../src/HAL/ADC/MC12bADC.c \
 ../src/config/default/driver/winc/include/wdrv_winc_powersave.h:
 
 ../src/config/default/driver/winc/include/wdrv_winc_nvm.h:
+
+../src/services/wifi_services/wifi_manager.h:
 
 ../src/state/runtime/../../services/SDcard/SDCard.h:
 

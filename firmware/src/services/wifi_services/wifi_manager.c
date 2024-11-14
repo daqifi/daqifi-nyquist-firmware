@@ -7,33 +7,33 @@
 #include "wifi_serial_bridge_interface.h"
 
 #define UNUSED(x) (void)(x)
-#define UDP_LISTEN_PORT         (uint16_t)30303
+#define WIFI_MANAGER_UDP_LISTEN_PORT         (uint16_t)30303
 
 typedef enum {
-   WIFI_MANAGER_EVENT_ENTRY,
-   WIFI_MANAGER_EVENT_EXIT,
-   WIFI_MANAGER_EVENT_INIT,
-   WIFI_MANAGER_EVENT_OTA_MODE_INIT,
-   WIFI_MANAGER_EVENT_OTA_MODE_READY,
-   WIFI_MANAGER_EVENT_REINIT,
-   WIFI_MANAGER_EVENT_DEINIT,
-   WIFI_MANAGER_EVENT_STA_CONNECTED,
-   WIFI_MANAGER_EVENT_STA_DISCONNECTED,
-   WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED,
-   WIFI_MANAGER_EVENT_ERROR,
+    WIFI_MANAGER_EVENT_ENTRY,
+    WIFI_MANAGER_EVENT_EXIT,
+    WIFI_MANAGER_EVENT_INIT,
+    WIFI_MANAGER_EVENT_OTA_MODE_INIT,
+    WIFI_MANAGER_EVENT_OTA_MODE_READY,
+    WIFI_MANAGER_EVENT_REINIT,
+    WIFI_MANAGER_EVENT_DEINIT,
+    WIFI_MANAGER_EVENT_STA_CONNECTED,
+    WIFI_MANAGER_EVENT_STA_DISCONNECTED,
+    WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED,
+    WIFI_MANAGER_EVENT_ERROR,
 } wifi_manager_event_t;
 
 typedef struct {
-
     enum app_eventFlag {
-        WIFI_MANAGER_STATE_FLAG_AP_STARTED = 1 << 0,
-        WIFI_MANAGER_STATE_FLAG_STA_STARTED = 1 << 1,
-        WIFI_MANAGER_STATE_FLAG_STA_CONNECTED = 1 << 2,
-        WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN = 1 << 3,
-        WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN = 1 << 4,
-        WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED = 1 << 5,
-        WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_CONNECTED = 1 << 6,
-        WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY = 1 << 7,
+        WIFI_MANAGER_STATE_FLAG_INITIALIZED = 1 << 0,
+        WIFI_MANAGER_STATE_FLAG_AP_STARTED = 1 << 1,
+        WIFI_MANAGER_STATE_FLAG_STA_STARTED = 1 << 2,
+        WIFI_MANAGER_STATE_FLAG_STA_CONNECTED = 1 << 3,
+        WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN = 1 << 4,
+        WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN = 1 << 5,
+        WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED = 1 << 6,
+        WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_CONNECTED = 1 << 7,
+        WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY = 1 << 8,
     } flag;
     uint16_t value;
 } wifi_manager_stateFlag_t;
@@ -50,15 +50,15 @@ typedef wifi_manager_stateMachineReturnStatus_t(*stateMachineHandle_t)(stateMach
 struct stateMachineInst {
     stateMachineHandle_t active;
     stateMachineHandle_t nextState;
-    stateMachineHandle_t childState;
     wifi_manager_stateFlag_t eventFlags;
     wifi_manager_settings_t *pWifiSettings;
     DRV_HANDLE wdrvHandle;
     SOCKET udpServerSocket;
-    wifi_tcp_server_context_t *pTcpServerData;
+    wifi_tcp_server_context_t *pTcpServerContext;
     WDRV_WINC_BSS_CONTEXT bssCtx;
     WDRV_WINC_AUTH_CONTEXT authCtx;
     wifi_serial_bridge_context_t serialBridgeContext;
+    tstrM2mRev wifiFirmwareVersion;
 };
 //===============Private Function Declrations================
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
@@ -80,7 +80,7 @@ extern void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData);
 static stateMachineInst_t gStateMachineContext;
 static QueueHandle_t gEventQH = NULL;
 //(TODO(Daqifi):Remove from here
-static wifi_tcp_server_context_t gTcpServerData;
+static wifi_tcp_server_context_t gTcpServerContext;
 //===========================================================
 //=====================Private Callbacks=====================
 
@@ -124,8 +124,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 if (socket == gStateMachineContext.udpServerSocket) {
                     recvfrom(gStateMachineContext.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
                     SendEvent(WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED);
-                } else if (socket == gStateMachineContext.pTcpServerData->serverSocket) {
-                    listen(gStateMachineContext.pTcpServerData->serverSocket, 0);
+                } else if (socket == gStateMachineContext.pTcpServerContext->serverSocket) {
+                    listen(gStateMachineContext.pTcpServerContext->serverSocket, 0);
                 }
             } else {
                 LOG_E("[%s:%d]Error Socket Bind", __FILE__, __LINE__);
@@ -137,8 +137,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         {
             tstrSocketListenMsg *pListenMessage = (tstrSocketListenMsg*) pMessage;
 
-            if ((NULL != pListenMessage) && (0 == pListenMessage->status) && (socket == gStateMachineContext.pTcpServerData->serverSocket)) {
-                accept(gStateMachineContext.pTcpServerData->serverSocket, NULL, NULL);
+            if ((NULL != pListenMessage) && (0 == pListenMessage->status) && (socket == gStateMachineContext.pTcpServerContext->serverSocket)) {
+                accept(gStateMachineContext.pTcpServerContext->serverSocket, NULL, NULL);
             } else {
                 LOG_E("[%s:%d]Error Socket Listen", __FILE__, __LINE__);
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -151,13 +151,13 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
 
             if (NULL != pAcceptMessage) {
                 char s[20];
-                if (gStateMachineContext.pTcpServerData->client.clientSocket >= 0) // close any open client (only one client supported at one time)
+                if (gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) // close any open client (only one client supported at one time)
                 {
                     wifi_tcp_server_CloseClientSocket();
                 }
-                gStateMachineContext.pTcpServerData->client.clientSocket = pAcceptMessage->sock;
+                gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
                 LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
-                recv(gStateMachineContext.pTcpServerData->client.clientSocket, gStateMachineContext.pTcpServerData->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
+                recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
 
             } else {
                 LOG_E("[%s:%d]Error Socket accept", __FILE__, __LINE__);
@@ -174,9 +174,9 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 LOG_D("Client sent %d bytes\r\n", pRecvMessage->s16BufferSize);
                 LOG_D("Client sent %s\r\n", pRecvMessage->pu8Buffer);
                 LOG_D("Sending a test message to client\r\n");
-                gStateMachineContext.pTcpServerData->client.readBufferLength = pRecvMessage->s16BufferSize;
+                gStateMachineContext.pTcpServerContext->client.readBufferLength = pRecvMessage->s16BufferSize;
                 wifi_tcp_server_ProcessReceivedBuff();
-                recv(gStateMachineContext.pTcpServerData->client.clientSocket, gStateMachineContext.pTcpServerData->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
+                recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
 
             } else {
                 LOG_E("[%s:%d]Error Socket MSG Recv", __FILE__, __LINE__);
@@ -199,7 +199,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 wifi_manager_FormUdpAnnouncePacketCB(gStateMachineContext.pWifiSettings, udpBuffer, &announcePacktLen);
                 struct sockaddr_in addr;
                 addr.sin_family = AF_INET;
-                addr.sin_port = _htons(UDP_LISTEN_PORT); //pstrRx->strRemoteAddr.sin_port;
+                addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT); //pstrRx->strRemoteAddr.sin_port;
                 addr.sin_addr.s_addr = inet_addr(s);
                 sendto(gStateMachineContext.udpServerSocket, udpBuffer, announcePacktLen, 0, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
                 recvfrom(gStateMachineContext.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
@@ -213,7 +213,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             break;
         }
         case SOCKET_MSG_SEND:
-            gStateMachineContext.pTcpServerData->client.tcpSendPending = 0;
+            gStateMachineContext.pTcpServerContext->client.tcpSendPending = 0;
             break;
         default:
         {
@@ -256,7 +256,7 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
     if (*pSocket >= 0) {
         struct sockaddr_in addr;
         addr.sin_family = AF_INET;
-        addr.sin_port = _htons(UDP_LISTEN_PORT);
+        addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT);
         addr.sin_addr.s_addr = 0;
         bind(*pSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
         returnStatus = true;
@@ -281,8 +281,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
     switch (event) {
         case WIFI_MANAGER_EVENT_ENTRY:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
-            pInstance->pTcpServerData = &gTcpServerData; //TODO(Daqifi): Remove from there here
-            wifi_tcp_server_Initialize(pInstance->pTcpServerData);
+            pInstance->pTcpServerContext = &gTcpServerContext; //TODO(Daqifi): Remove from there here
+            wifi_tcp_server_Initialize(pInstance->pTcpServerContext);
+            memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
@@ -306,8 +307,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
                 break;
             }
+            SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+            if (m2m_wifi_get_firmware_version(&pInstance->wifiFirmwareVersion) != M2M_SUCCESS) {
+                memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
+            }
             wifi_serial_bridge_Init(&pInstance->serialBridgeContext);
-            SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);            
+            SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
             break;
         case WIFI_MANAGER_EVENT_INIT:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
@@ -320,6 +325,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 //wait for initialization to complete 
                 SendEvent(WIFI_MANAGER_EVENT_INIT);
                 break;
+            }
+            SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+            if (m2m_wifi_get_firmware_version(&pInstance->wifiFirmwareVersion) != M2M_SUCCESS) {
+                memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
             }
             pInstance->wdrvHandle = WDRV_WINC_Open(0, 0);
             WDRV_WINC_EthernetAddressGet(pInstance->wdrvHandle, pInstance->pWifiSettings->macAddr.addr);
@@ -419,7 +428,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             }
             if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
                 wifi_tcp_server_OpenSocket(pInstance->pWifiSettings->tcpPort);
-                if (pInstance->pTcpServerData->serverSocket < 0) {
+                if (pInstance->pTcpServerContext->serverSocket < 0) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
@@ -453,6 +462,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
                 WDRV_WINC_Close(pInstance->wdrvHandle);
                 WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
                 LOG_D("WiFi de-initializing\r\n");
             }
 
@@ -473,6 +483,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
                 WDRV_WINC_Close(pInstance->wdrvHandle);
                 WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
                 LOG_D("WiFi de-initializing\r\n");
             }
             break;
@@ -493,7 +504,6 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
     return returnStatus;
 }
 
-
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
 
     if (gEventQH == NULL)
@@ -504,9 +514,26 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     gStateMachineContext.pWifiSettings->isOtaModeEnabled = false;
     gStateMachineContext.pWifiSettings->isEnabled = 1;
     gStateMachineContext.active = MainState;
-    gStateMachineContext.active(&gStateMachineContext,WIFI_MANAGER_EVENT_ENTRY);
+    gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
     gStateMachineContext.nextState = NULL;
 
+    return true;
+}
+
+bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
+    if(!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED)){
+        return false;
+    }
+    if(pChipInfo==NULL){
+        return false;
+    }
+    memset(pChipInfo,0,sizeof(wifi_manager_chipInfo_t));
+    pChipInfo->chipID=gStateMachineContext.wifiFirmwareVersion.u32Chipid;
+    snprintf(pChipInfo->frimwareVersion,WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE,"%d.%d.%d",gStateMachineContext.wifiFirmwareVersion.u8DriverMajor,
+    gStateMachineContext.wifiFirmwareVersion.u8DriverMinor,
+    gStateMachineContext.wifiFirmwareVersion.u8DriverPatch);
+    strncpy(pChipInfo->BuildDate,(char*)gStateMachineContext.wifiFirmwareVersion.BuildDate,sizeof (__DATE__));
+    strncpy(pChipInfo->BuildTime,(char*)gStateMachineContext.wifiFirmwareVersion.BuildTime,sizeof (__DATE__));
     return true;
 }
 
@@ -565,10 +592,10 @@ void wifi_manager_ProcessState() {
     }
     ret = gStateMachineContext.active(&gStateMachineContext, event);
     if (ret == WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN) {
-        gStateMachineContext.active(&gStateMachineContext,WIFI_MANAGER_EVENT_EXIT);
+        gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_EXIT);
         if (gStateMachineContext.nextState != NULL) {
             gStateMachineContext.active = gStateMachineContext.nextState;
-            gStateMachineContext.active(&gStateMachineContext,WIFI_MANAGER_EVENT_ENTRY);
+            gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
         } else {
             LOG_E("%s : %d : State Change Requested, but NextSate is NULL", __func__, __LINE__);
         }
@@ -576,5 +603,5 @@ void wifi_manager_ProcessState() {
 }
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
-    return gStateMachineContext.pTcpServerData;
+    return gStateMachineContext.pTcpServerContext;
 }
