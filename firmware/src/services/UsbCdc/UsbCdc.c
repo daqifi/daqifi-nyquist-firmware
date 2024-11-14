@@ -362,7 +362,9 @@ static bool UsbCdc_WaitForRead(UsbCdcData_t* client) {
  * Called to complete a read operation, feeding data to the rest of the system
  */
 static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
-
+    static const char UNSET_TRANSPARENT_MODE_COMMAND[] = "SYSTem:USB:SetTransparentMode 0"; // NOTE: PuTTY sends \r not \r\n by default so we are going to check for all terminating scenarios below
+    static uint8_t transparentModeCmdLength = 0;
+    
     if (client->readBufferLength > 0) {
         if (client->isTransparentModeActive == 0) {
             for (size_t i = 0; i < client->readBufferLength; ++i) {
@@ -370,10 +372,19 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
             }
             client->readBufferLength = 0;
             return true;
-        } else {
-            if (client->readBufferLength == strlen("SYSTem:USB:SetTransparentMode 0\r\n")) {
-                for (size_t i = 0; i < client->readBufferLength; ++i) {
-                    microrl_insert_char(&client->console, client->readBuffer[i]);
+        } else { // Check for UNSET_TRANSPARENT_MODE_COMMAND length plus up to two terminating characters (\n\r).
+            transparentModeCmdLength = strlen(UNSET_TRANSPARENT_MODE_COMMAND);
+            if ((client->readBufferLength == transparentModeCmdLength) ||       \
+                (client->readBufferLength == transparentModeCmdLength + 1) ||   \
+                (client->readBufferLength == transparentModeCmdLength + 2)) {
+                //  Now check to see if the string actually matches the command UNSET_TRANSPARENT_MODE_COMMAND
+                if ((strspn(UNSET_TRANSPARENT_MODE_COMMAND, (const char *)client->readBuffer)) == transparentModeCmdLength) {
+                    for (size_t i = 0; i < transparentModeCmdLength; ++i) {
+                        microrl_insert_char(&client->console, client->readBuffer[i]);
+                    }
+                    // Since we truncated the read buffer, be sure to pass the proper termination characters
+                    microrl_insert_char(&client->console, '\n');
+                    microrl_insert_char(&client->console, '\r');
                 }
                 client->readBufferLength = 0;
                 return true;
