@@ -529,9 +529,9 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     }
     memset(pChipInfo,0,sizeof(wifi_manager_chipInfo_t));
     pChipInfo->chipID=gStateMachineContext.wifiFirmwareVersion.u32Chipid;
-    snprintf(pChipInfo->frimwareVersion,WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE,"%d.%d.%d",gStateMachineContext.wifiFirmwareVersion.u8DriverMajor,
-    gStateMachineContext.wifiFirmwareVersion.u8DriverMinor,
-    gStateMachineContext.wifiFirmwareVersion.u8DriverPatch);
+    snprintf(pChipInfo->frimwareVersion,WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE,"%d.%d.%d",gStateMachineContext.wifiFirmwareVersion.u8FirmwareMajor,
+    gStateMachineContext.wifiFirmwareVersion.u8FirmwareMinor,
+    gStateMachineContext.wifiFirmwareVersion.u8FirmwarePatch);
     strncpy(pChipInfo->BuildDate,(char*)gStateMachineContext.wifiFirmwareVersion.BuildDate,sizeof (__DATE__));
     strncpy(pChipInfo->BuildTime,(char*)gStateMachineContext.wifiFirmwareVersion.BuildTime,sizeof (__DATE__));
     return true;
