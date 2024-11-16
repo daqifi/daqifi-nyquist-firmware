@@ -71,7 +71,7 @@ bool wifi_serial_bridge_interface_UARTWritePutByte(uint8_t b);
  */
 bool wifi_serial_bridge_interface_UARTWritePutBuffer(const void *pBuf, size_t numBytes);
 
-
+void wifi_serial_bridge_interface_DataReceivedCB();
 #ifdef __cplusplus
 }
 #endif

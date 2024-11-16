@@ -191,7 +191,7 @@ build/default/debug/_ext/1223280608/SCPILAN.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h
 
 ../src/services/SCPI/SCPILAN.h:
 
@@ -597,4 +597,4 @@ build/default/debug/_ext/1223280608/SCPILAN.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:

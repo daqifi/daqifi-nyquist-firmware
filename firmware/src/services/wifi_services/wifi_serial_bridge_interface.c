@@ -16,18 +16,19 @@ static size_t gUsartReceiveInOffset;
 static size_t gUsartReceiveOutOffset;
 static volatile size_t gUsartReceiveLength;
 
-
 bool UsbCdc_TransparentReadCmpltCB(uint8_t* pBuff, size_t buffLen) {
-    if(buffLen==0)
+    if (buffLen == 0)
         return true;
+    if(gUsartReadMutex==NULL)
+        return false;
     if (OSAL_RESULT_TRUE == OSAL_MUTEX_Lock(&gUsartReadMutex, OSAL_WAIT_FOREVER)) {
-        for (size_t i = 0; i < buffLen; i++) {            
+        for (size_t i = 0; i < buffLen; i++) {
             gUsartReceiveBuffer[gUsartReceiveInOffset] = pBuff[i];
             gUsartReceiveInOffset++;
             gUsartReceiveLength++;
             if (WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE == gUsartReceiveInOffset) {
                 gUsartReceiveInOffset = 0;
-            }           
+            }
         }
         OSAL_MUTEX_Unlock(&gUsartReadMutex);
     }
@@ -39,15 +40,20 @@ void wifi_serial_bridge_interface_Init(void) {
     gUsartReceiveOutOffset = 0;
     gUsartReceiveLength = 0;
     UsbCdc_SetTransparentMode(true);
-    OSAL_MUTEX_Create(&gUsartReadMutex);   
+    if (gUsartReadMutex == NULL)
+        OSAL_MUTEX_Create(&gUsartReadMutex);
 }
-void wifi_serial_bridge_interface_DeInit(void) {    
+
+void wifi_serial_bridge_interface_DeInit(void) {
     UsbCdc_SetTransparentMode(false);
-    OSAL_MUTEX_Delete(&gUsartReadMutex);   
+    OSAL_MUTEX_Delete(&gUsartReadMutex);
+    gUsartReadMutex = NULL;
 }
 
 size_t wifi_serial_bridge_interface_UARTReadGetCount(void) {
     size_t count = 0;
+    if(gUsartReadMutex==NULL)
+        return 0;
     if (OSAL_RESULT_TRUE == OSAL_MUTEX_Lock(&gUsartReadMutex, OSAL_WAIT_FOREVER)) {
         count = gUsartReceiveLength;
         OSAL_MUTEX_Unlock(&gUsartReadMutex);

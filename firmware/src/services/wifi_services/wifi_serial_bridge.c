@@ -130,8 +130,6 @@ static bool ProcessCommand(wifi_serial_bridge_context_t * const pContext) {
 
         case WIFI_SERIAL_BRIDGE_COMMAND_RECONFIGURE:
         {
-
-
             pContext->baudRate = pContext->cmdVal;
             return true;
         }

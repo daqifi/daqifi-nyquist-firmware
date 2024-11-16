@@ -191,7 +191,7 @@ build/default/debug/_ext/1104413135/PowerApi.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h \
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
  ../src/HAL/ADC/MC12bADC.h \
  ../src/HAL/Power/../../services/wifi_services/wifi_manager.h
 
@@ -599,7 +599,7 @@ build/default/debug/_ext/1104413135/PowerApi.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/HAL/ADC/MC12bADC.h:
 

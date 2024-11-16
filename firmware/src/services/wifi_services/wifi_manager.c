@@ -24,6 +24,7 @@ typedef enum {
 } wifi_manager_event_t;
 
 typedef struct {
+
     enum app_eventFlag {
         WIFI_MANAGER_STATE_FLAG_INITIALIZED = 1 << 0,
         WIFI_MANAGER_STATE_FLAG_AP_STARTED = 1 << 1,
@@ -59,6 +60,7 @@ struct stateMachineInst {
     WDRV_WINC_AUTH_CONTEXT authCtx;
     wifi_serial_bridge_context_t serialBridgeContext;
     tstrM2mRev wifiFirmwareVersion;
+    TaskHandle_t fwUpdateTaskHandle;
 };
 //===============Private Function Declrations================
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
@@ -302,17 +304,24 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             }
             sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
             SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_READY);
+            break;
         case WIFI_MANAGER_EVENT_OTA_MODE_READY:
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+        {
+            SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
+            if (wincStatus == SYS_STATUS_BUSY) {
                 SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
                 break;
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
-            if (m2m_wifi_get_firmware_version(&pInstance->wifiFirmwareVersion) != M2M_SUCCESS) {
-                memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
+            if (wincStatus == SYS_STATUS_READY) {
+                if (m2m_wifi_get_firmware_version(&pInstance->wifiFirmwareVersion) != M2M_SUCCESS) {
+                    memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
+                }
             }
             wifi_serial_bridge_Init(&pInstance->serialBridgeContext);
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
+            vTaskResume(pInstance->fwUpdateTaskHandle);
+        }
             break;
         case WIFI_MANAGER_EVENT_INIT:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
@@ -447,14 +456,19 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             SendEvent(WIFI_MANAGER_EVENT_ERROR);
             break;
         case WIFI_MANAGER_EVENT_REINIT:
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
+                //If ota is running and again initialized, then deinit OTA
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
+                pInstance->pWifiSettings->isOtaModeEnabled = 0;
+                wifi_serial_bridge_interface_DeInit();
+            }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
                 SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 break;
             }
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
-            pInstance->nextState = MainState;
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY))
-                wifi_serial_bridge_interface_DeInit();
+            pInstance->nextState = MainState;         
+               
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN))
@@ -468,14 +482,18 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
             break;
         case WIFI_MANAGER_EVENT_DEINIT:
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
+                //If ota is running and again initialized, then deinit OTA
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
+                pInstance->pWifiSettings->isOtaModeEnabled = 0;
+                wifi_serial_bridge_interface_DeInit();
+            }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
                 SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 break;
             }
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
-            pInstance->nextState = MainState;
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY))
-                wifi_serial_bridge_interface_DeInit();
+            pInstance->nextState = MainState;            
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN))
@@ -504,6 +522,16 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
     return returnStatus;
 }
 
+void fwUpdateTask(void *pvParameters) {
+    while (1) {
+        if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY))
+            wifi_serial_bridge_Process(&gStateMachineContext.serialBridgeContext);
+        else {
+            vTaskSuspend(NULL);
+        }
+    }
+}
+
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
 
     if (gEventQH == NULL)
@@ -511,6 +539,9 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     else return true;
     if (pSettings != NULL)
         gStateMachineContext.pWifiSettings = pSettings;
+    if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
+        xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
+    }
     gStateMachineContext.pWifiSettings->isOtaModeEnabled = false;
     gStateMachineContext.pWifiSettings->isEnabled = 1;
     gStateMachineContext.active = MainState;
@@ -521,19 +552,19 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
 }
 
 bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
-    if(!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED)){
+    if (!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED)) {
         return false;
     }
-    if(pChipInfo==NULL){
+    if (pChipInfo == NULL) {
         return false;
     }
-    memset(pChipInfo,0,sizeof(wifi_manager_chipInfo_t));
-    pChipInfo->chipID=gStateMachineContext.wifiFirmwareVersion.u32Chipid;
-    snprintf(pChipInfo->frimwareVersion,WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE,"%d.%d.%d",gStateMachineContext.wifiFirmwareVersion.u8FirmwareMajor,
-    gStateMachineContext.wifiFirmwareVersion.u8FirmwareMinor,
-    gStateMachineContext.wifiFirmwareVersion.u8FirmwarePatch);
-    strncpy(pChipInfo->BuildDate,(char*)gStateMachineContext.wifiFirmwareVersion.BuildDate,sizeof (__DATE__));
-    strncpy(pChipInfo->BuildTime,(char*)gStateMachineContext.wifiFirmwareVersion.BuildTime,sizeof (__DATE__));
+    memset(pChipInfo, 0, sizeof (wifi_manager_chipInfo_t));
+    pChipInfo->chipID = gStateMachineContext.wifiFirmwareVersion.u32Chipid;
+    snprintf(pChipInfo->frimwareVersion, WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE, "%d.%d.%d", gStateMachineContext.wifiFirmwareVersion.u8FirmwareMajor,
+            gStateMachineContext.wifiFirmwareVersion.u8FirmwareMinor,
+            gStateMachineContext.wifiFirmwareVersion.u8FirmwarePatch);
+    strncpy(pChipInfo->BuildDate, (char*) gStateMachineContext.wifiFirmwareVersion.BuildDate, sizeof (__DATE__));
+    strncpy(pChipInfo->BuildTime, (char*) gStateMachineContext.wifiFirmwareVersion.BuildTime, sizeof (__DATE__));
     return true;
 }
 
@@ -582,11 +613,7 @@ void wifi_manager_ProcessState() {
     while (gEventQH == NULL) {
         return;
     }
-    if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
-        wifi_serial_bridge_Process(&gStateMachineContext.serialBridgeContext);
-    } else {
-        wifi_tcp_server_TransmitBufferedData();
-    }
+    wifi_tcp_server_TransmitBufferedData();
     if (xQueueReceive(gEventQH, &event, 1) != pdPASS) {
         return;
     }

@@ -191,7 +191,7 @@ build/default/debug/_ext/1260820504/streaming.o: \
  ../src/services/../state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/services/../state/runtime/../../services/SDcard/SDCard.h \
+ ../src/services/../state/runtime/../../services/sd_card_services/sd_card_manager.h \
  ../src/services/../state/data/BoardData.h \
  ../src/services/../state/data/AInSample.h ../src/Util/HeapList.h \
  ../src/Util/LockProvider.h ../src/services/../state/data/DIOSample.h \
@@ -202,7 +202,7 @@ build/default/debug/_ext/1260820504/streaming.o: \
  ../src/libraries/nanopb/pb.h ../src/services/DaqifiPB/NanoPB_Encoder.h \
  ../src/Util/Logger.h ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/../HAL/TimerApi/TimerApi.h \
- ../src/services/SDcard/SDCard.h
+ ../src/services/sd_card_services/sd_card_manager.h
 
 ../src/services/streaming.h:
 
@@ -598,7 +598,7 @@ build/default/debug/_ext/1260820504/streaming.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/services/../state/runtime/../../services/SDcard/SDCard.h:
+../src/services/../state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/services/../state/data/BoardData.h:
 
@@ -634,4 +634,4 @@ build/default/debug/_ext/1260820504/streaming.o: \
 
 ../src/services/../HAL/TimerApi/TimerApi.h:
 
-../src/services/SDcard/SDCard.h:
+../src/services/sd_card_services/sd_card_manager.h:

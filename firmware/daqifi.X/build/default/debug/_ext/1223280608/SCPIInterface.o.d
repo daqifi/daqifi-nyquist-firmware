@@ -193,11 +193,12 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h ../src/Util/Logger.h \
- ../src/state/board/BoardConfig.h ../src/state/board/StreamingConfig.h \
- ../src/HAL/DIO.h ../src/services/SCPI/SCPIADC.h \
- ../src/services/SCPI/SCPIDIO.h ../src/services/SCPI/SCPILAN.h \
- ../src/services/SCPI/SCPIStorageSD.h ../src/services/SCPI/../streaming.h \
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
+ ../src/Util/Logger.h ../src/state/board/BoardConfig.h \
+ ../src/state/board/StreamingConfig.h ../src/HAL/DIO.h \
+ ../src/services/SCPI/SCPIADC.h ../src/services/SCPI/SCPIDIO.h \
+ ../src/services/SCPI/SCPILAN.h ../src/services/SCPI/SCPIStorageSD.h \
+ ../src/services/SCPI/../streaming.h \
  ../src/services/SCPI/../../state/board/BoardConfig.h \
  ../src/services/SCPI/../../state/data/BoardData.h \
  ../src/services/SCPI/../commTest.h \
@@ -609,7 +610,7 @@ build/default/debug/_ext/1223280608/SCPIInterface.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/Util/Logger.h:
 

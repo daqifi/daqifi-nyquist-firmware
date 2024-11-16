@@ -145,8 +145,7 @@ extern "C" {
      *              if False transparent mode is cleared 
      */
     void UsbCdc_SetTransparentMode(bool value);
-    
-    bool UsbCdc_TransparentReadCmpltCB(uint8_t* pBuff, size_t buffLen);
+   
 
 #ifdef	__cplusplus
 }

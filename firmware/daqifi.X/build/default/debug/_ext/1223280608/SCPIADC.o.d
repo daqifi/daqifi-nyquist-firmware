@@ -193,9 +193,9 @@ build/default/debug/_ext/1223280608/SCPIADC.o: \
  ../src/state/runtime/StreamingRuntimeConfig.h \
  ../src/services/UsbCdc/UsbCdc.h \
  ../src/services/wifi_services/wifi_manager.h \
- ../src/state/runtime/../../services/SDcard/SDCard.h ../src/HAL/ADC.h \
- ../src/HAL/ADC/MC12bADC.h ../src/services/SCPI/../daqifi_settings.h \
- ../src/HAL/TimerApi/TimerApi.h
+ ../src/state/runtime/../../services/sd_card_services/sd_card_manager.h \
+ ../src/HAL/ADC.h ../src/HAL/ADC/MC12bADC.h \
+ ../src/services/SCPI/../daqifi_settings.h ../src/HAL/TimerApi/TimerApi.h
 
 ../src/services/SCPI/SCPIADC.h:
 
@@ -607,7 +607,7 @@ build/default/debug/_ext/1223280608/SCPIADC.o: \
 
 ../src/services/wifi_services/wifi_manager.h:
 
-../src/state/runtime/../../services/SDcard/SDCard.h:
+../src/state/runtime/../../services/sd_card_services/sd_card_manager.h:
 
 ../src/HAL/ADC.h:
 

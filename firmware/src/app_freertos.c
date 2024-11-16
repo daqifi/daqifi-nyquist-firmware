@@ -85,9 +85,14 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
 
 static void app_USBDeviceTask(void* p_arg) {
     UsbCdc_Initialize();
+    UsbCdcData_t* pUsbCdcContext = UsbCdc_GetSettings();
     while (1) {
         UsbCdc_ProcessState();
-        vTaskDelay(5 / portTICK_PERIOD_MS);
+        if (pUsbCdcContext->isTransparentModeActive) {
+            taskYIELD();
+        } else {
+            vTaskDelay(5 / portTICK_PERIOD_MS);
+        }
     }
 }
 
@@ -95,14 +100,15 @@ static void app_WifiTask(void* p_arg) {
     const tPowerData *pPowerState = BoardData_Get(
             BOARDATA_POWER_DATA,
             0);
-    while(pPowerState->powerState < POWERED_UP) {
+    while (pPowerState->powerState < POWERED_UP) {
         vTaskDelay(5 / portTICK_PERIOD_MS);
-       
+
     }
     wifi_manager_Init(&gpBoardData->wifiSettings);
     while (1) {
         wifi_manager_ProcessState();
-       
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+
     }
 }
 
