@@ -295,6 +295,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 else
                     SendEvent(WIFI_MANAGER_EVENT_INIT);
             }
+            pInstance->pWifiSettings->isOtaModeEnabled=0;
             break;
         case WIFI_MANAGER_EVENT_OTA_MODE_INIT:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;

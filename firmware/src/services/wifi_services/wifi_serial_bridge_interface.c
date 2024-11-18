@@ -46,8 +46,8 @@ void wifi_serial_bridge_interface_Init(void) {
 
 void wifi_serial_bridge_interface_DeInit(void) {
     UsbCdc_SetTransparentMode(false);
-    OSAL_MUTEX_Delete(&gUsartReadMutex);
-    gUsartReadMutex = NULL;
+    //OSAL_MUTEX_Delete(&gUsartReadMutex);
+    //gUsartReadMutex = NULL;
 }
 
 size_t wifi_serial_bridge_interface_UARTReadGetCount(void) {

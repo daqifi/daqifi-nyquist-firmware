@@ -184,6 +184,7 @@ void app_SystemInit() {
         daqifi_settings_SaveToNvm(&tmpSettings);
     }
     // Move temp variable to global variables
+    tmpSettings.settings.wifi.isOtaModeEnabled=false;
     memcpy(&gpBoardRuntimeConfig->wifiSettings,
             &tmpSettings.settings.wifi,
             sizeof (wifi_manager_settings_t));
