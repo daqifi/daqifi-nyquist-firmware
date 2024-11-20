@@ -152,7 +152,8 @@ void app_SystemInit() {
 
     // Initialize the variable to 0s
     memset(&tmpTopLevelSettings, 0, sizeof (tmpTopLevelSettings));
-    tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
+    memset(&tmpSettings, 0, sizeof (tmpSettings));
+   
 
     // Try to load TopLevelSettings from NVM - if this fails, store default 
     // settings to NVM (first run after a program)
@@ -174,14 +175,14 @@ void app_SystemInit() {
     // Try to load WiFiSettings from NVM - if this fails, store default 
     // settings to NVM (first run after a program)
 
-    // Initialize the variable to 0s
-    memset(&tmpSettings, 0, sizeof (tmpSettings));
+   
     tmpSettings.type = DaqifiSettings_Wifi;
-
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &tmpSettings)) {
         // Get board wifi settings from Wifi NVM variable
         daqifi_settings_LoadFactoryDeafult(DaqifiSettings_Wifi, &tmpSettings);
         daqifi_settings_SaveToNvm(&tmpSettings);
+        memset(&tmpSettings,0,sizeof(tmpSettings));
+        daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &tmpSettings);
     }
     // Move temp variable to global variables
     tmpSettings.settings.wifi.isOtaModeEnabled=false;

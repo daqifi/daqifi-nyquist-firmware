@@ -15,10 +15,10 @@ extern "C" {
 #define WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE 20
 #define WIFI_MANAGER_CHIP_INFO_FW_BUILD_DATE
 
-    typedef enum {
-        WIFI_MANAGER_NETWORK_MODE_STA = 1,
-        WIFI_MANAGER_NETWORK_MODE_AP = 4
-    } wifi_manager_networkMode_t;
+    //typedef enum {
+    #define  WIFI_MANAGER_NETWORK_MODE_STA (uint8_t)1
+    #define  WIFI_MANAGER_NETWORK_MODE_AP (uint8_t)4
+    //} wifi_manager_networkMode_t;
 
     typedef enum {
         // DAQiFi defines 0 = OPEN
@@ -66,7 +66,7 @@ extern "C" {
          *  WIFI_MANAGER_NETWORK_MODE_STA = 1,
          *  WIFI_MANAGER_NETWORK_MODE_AP = 4
          */
-        wifi_manager_networkMode_t networkMode;
+        uint8_t networkMode;
 
         /**
          * The network ssid

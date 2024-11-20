@@ -11,7 +11,7 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
 
     uint32_t address = 0;
     uint16_t dataSize = 0;
-
+    memset(&tmpSettings,0,sizeof(DaqifiSettings));
 
     switch (type) {
         case DaqifiSettings_TopLevelSettings:
@@ -28,7 +28,6 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
             break;
         case DaqifiSettings_Wifi:
             address = WIFI_SETTINGS_ADDR;
-
             dataSize = sizeof (wifi_manager_settings_t);
             break;
         default:
@@ -53,9 +52,6 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
     }
 
     memcpy(settings, &tmpSettings, sizeof (DaqifiSettings));
-    strcpy(settings->settings.topLevelSettings.boardHardwareRev, BOARD_HARDWARE_REV);
-    strcpy(settings->settings.topLevelSettings.boardFirmwareRev, BOARD_FIRMWARE_REV);
-    settings->settings.topLevelSettings.boardVariant = BOARD_VARIANT;
     return true;
 }
 
@@ -100,9 +96,8 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
 
             //mac address will be populated after reading from ATWINC
             wifi->networkMode = DEFAULT_WIFI_NETWORK_MODE;
-
+            wifi->isOtaModeEnabled=false;
             memset(&wifi->macAddr, 0, sizeof (WDRV_WINC_MAC_ADDR));
-
             wifi->ipAddr.Val = inet_addr(DEFAULT_NETWORK_IP_ADDRESS);
             wifi->ipMask.Val = inet_addr(DEFAULT_NETWORK_IP_MASK);
             wifi->gateway.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
@@ -142,8 +137,7 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
             dataSize = sizeof(AInCalArray);
             break;
         case DaqifiSettings_Wifi:
-            address = WIFI_SETTINGS_ADDR;
-            dataSize = WIFI_SETTINGS_SIZE;
+            address = WIFI_SETTINGS_ADDR;            
             dataSize = sizeof (wifi_manager_settings_t);
             break;
         default:
@@ -170,7 +164,6 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
 
     // Copy the data to the non-buffered array
     memcpy(gTempFflashBuffer, settings, sizeof (DaqifiSettings));
-
     // Write the data
     return nvm_WriteRowtoAddr(address, gTempFflashBuffer);
 }
@@ -216,7 +209,7 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     AInCalArray* calArray;
     // Read the settings into a temporary object
     DaqifiSettings tmpSettings;
-    
+    memset(&tmpSettings,0,sizeof(DaqifiSettings));
     status = daqifi_settings_LoadFromNvm(type, &tmpSettings);
     if(!status) return status;
             
@@ -255,7 +248,7 @@ bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     AInCalArray* calArray;
     // Create the settings in a temporary object
     DaqifiSettings tmpSettings;
-    
+    memset(&tmpSettings,0,sizeof(DaqifiSettings));
     tmpSettings.type = type;
     
     switch(type)
