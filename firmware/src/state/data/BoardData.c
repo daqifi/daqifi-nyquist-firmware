@@ -31,7 +31,7 @@ void InitializeBoardData(tBoardData* boardData) {
     // Set default battery values for debugging - allows power on without ADC active
 
 
-    boardData->PowerData.powerState = FRESH_BOOT;
+    boardData->PowerData.powerState = POWERED_DOWN;
     boardData->PowerData.requestedPowerState = NO_CHANGE;
     boardData->PowerData.battLow = false;
     boardData->PowerData.battVoltage = 0.0;

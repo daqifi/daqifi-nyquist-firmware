@@ -23,8 +23,6 @@ typedef enum
  {  
     /* Powered down */
     POWERED_DOWN = 0,
-    /* Power was just applied */
-    FRESH_BOOT,
     /* 3.3V rail enabled. Ready to check initial status */
     MICRO_ON,
     /* Board fully powered. Monitor for any changes/faults */ 

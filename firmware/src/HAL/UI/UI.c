@@ -55,7 +55,6 @@ void Button_Tasks( void )
     {
         buttonPressCount++;
         switch(gpPowerData->powerState){
-			case FRESH_BOOT:
             case MICRO_ON:
                 if((buttonPressCount > BUTTON_POWER_ON_TH) && !oneShot)
                 {

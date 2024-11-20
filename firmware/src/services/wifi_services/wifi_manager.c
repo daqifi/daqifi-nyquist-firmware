@@ -574,7 +574,9 @@ bool wifi_manager_Deinit() {
             BOARDATA_POWER_DATA,
             0);
     if (NULL != pPowerState &&
-            pPowerState->powerState < POWERED_UP) {
+       pPowerState->powerState != POWERED_UP && 
+       pPowerState->powerState != POWERED_UP_EXT_DOWN){
+
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
@@ -589,7 +591,8 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
             BOARDATA_POWER_DATA,
             0);
     if (NULL != pPowerState &&
-            pPowerState->powerState < POWERED_UP) {
+       pPowerState->powerState != POWERED_UP && 
+       pPowerState->powerState != POWERED_UP_EXT_DOWN){
         LogMessage("Board must be powered-on for WiFi operations\n\r");
         return false;
     }
