@@ -470,14 +470,11 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
             return SCPI_RES_ERR;
         }
     }
-
     if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
         return SCPI_RES_ERR;
     }
-    BoardData_Set(
-            BOARDDATA_WIFI_SETTINGS,
-            0,
-            pRunTimeWifiSettings);
+    //once fw update mode is enabled it should be cleared to disable automatic fw update mode
+    pRunTimeWifiSettings->isOtaModeEnabled=false;
     return SCPI_RES_OK;
 }
 
