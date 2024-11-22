@@ -299,8 +299,6 @@ static void Power_UpdateState(void) {
             }
             break;
 
-        case FRESH_BOOT:
-
         case MICRO_ON:
             /* 3.3V rail enabled. Ready to check initial status 
              * NOTE: This is the default state if code is running!

@@ -137,7 +137,9 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
     POWER_STATE powerState = gpBoardData->PowerData.powerState;
     const AInModuleRuntimeConfig* moduleRuntime =
             &gpBoardRuntimeConfig->AInModules.Data[moduleId];
-    bool isPowered = powerState > MICRO_ON;
+
+    bool isPowered = (powerState == POWERED_UP ||                    
+                 powerState == POWERED_UP_EXT_DOWN);
     bool isEnabled = isPowered && moduleRuntime->IsEnabled;
     bool result = false;
 
@@ -188,7 +190,8 @@ const AInModule* ADC_FindModule(AInType moduleType) {
 void ADC_Tasks(void) {
     size_t moduleIndex = 0;
     POWER_STATE powerState = gpBoardData->PowerData.powerState;
-    bool isPowered = (powerState > MICRO_ON);
+    bool isPowered = (powerState == POWERED_UP ||                    
+             powerState == POWERED_UP_EXT_DOWN);
     AInArray moduleChannels;
     bool canInit, initialized;
     AInModule* module = &gpBoardConfig->AInModules.Data[moduleIndex];
@@ -329,7 +332,6 @@ bool ADC_WriteModuleState(size_t moduleId, POWER_STATE powerState) {
     const AInModule* currentModule =
             &gpBoardConfig->AInModules.Data[moduleId];
     bool result = true;
-    //    bool isPowered = (powerState> MICRO_ON);
 
     switch (currentModule->Type) {
         case AIn_MC12bADC:
