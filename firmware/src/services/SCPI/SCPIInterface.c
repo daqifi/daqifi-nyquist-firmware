@@ -242,15 +242,14 @@ static microrl_t* SCPI_GetMicroRLClient(scpi_t* context) {
 /**
  * Triggers a board reset 
  */
-static scpi_result_t SCPI_Reset(scpi_t * context)
-{
+static scpi_result_t SCPI_Reset(scpi_t * context) {
     UNUSED(context);
-    
+
     // TODO: Send a shutdown message. The purpose of this message is to shut down timers
     // and anything else we don't want to leave running when the board goes offline.
     // We'll need something similar for the bootloader- in that case we wont be re-initializing
     // the board right away so we don't want to leave some things (like streaming data) active.
-    vTaskDelay(100);    // be sure any pending flash or other operations complete before the reset
+    vTaskDelay(100); // be sure any pending flash or other operations complete before the reset
     RCON_SoftwareReset();
     return SCPI_RES_ERR; // If we get here, the reset didn't work
 }
@@ -323,12 +322,11 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
  * @param context
  * @return 
  */
-static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context)
-{
-    tPowerData *pPowerData = BoardData_Get(                                 
-                        BOARDATA_POWER_DATA,                                
-                        0 );
-    SCPI_ResultInt32(context, (int)(pPowerData->externalPowerSource));
+static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context) {
+    tPowerData *pPowerData = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+    SCPI_ResultInt32(context, (int) (pPowerData->externalPowerSource));
     return SCPI_RES_OK;
 }
 
@@ -337,12 +335,11 @@ static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context)
  * @param context
  * @return 
  */
-static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context)
-{
-    tPowerData *pPowerData = BoardData_Get(                                 
-                        BOARDATA_POWER_DATA,                                
-                        0 );
-    SCPI_ResultInt32(context, (int)(pPowerData->chargePct));
+static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context) {
+    tPowerData *pPowerData = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+    SCPI_ResultInt32(context, (int) (pPowerData->chargePct));
     return SCPI_RES_OK;
 }
 
@@ -351,12 +348,11 @@ static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context)
  * @param context
  * @return 
  */
-static scpi_result_t SCPI_GetPowerState(scpi_t * context)
-{
-    tPowerData *pPowerData = BoardData_Get(                                 
-                        BOARDATA_POWER_DATA,                                
-                        0 );
-    SCPI_ResultInt32(context, (int)(pPowerData->powerState));
+static scpi_result_t SCPI_GetPowerState(scpi_t * context) {
+    tPowerData *pPowerData = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+    SCPI_ResultInt32(context, (int) (pPowerData->powerState));
     return SCPI_RES_OK;
 }
 
@@ -523,14 +519,12 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_GetEcho(scpi_t * context)
-{
+static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
-    SCPI_ResultInt32(context, (int)console->echoOn);
+    SCPI_ResultInt32(context, (int) console->echoOn);
     return SCPI_RES_OK;
 }
-
 
 static scpi_result_t SCPI_SetEcho(scpi_t * context) {
     int param1;
@@ -624,39 +618,37 @@ scpi_result_t SCPI_UsbSetTransparentMode(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-scpi_result_t SCPI_GetSerialNumber(scpi_t * context)
-{
-    tBoardConfig * pBoardConfig = BoardConfig_Get(                          
-                            BOARDCONFIG_ALL_CONFIG,                         
-                            0 );
-    
+scpi_result_t SCPI_GetSerialNumber(scpi_t * context) {
+    tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG,
+            0);
+
     SCPI_ResultUInt64Base(context, pBoardConfig->boardSerialNumber, 16);
     return SCPI_RES_OK;
 }
 
-scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context){
-    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(                           
-                            BOARDRUNTIMECONFIG_ALL_CONFIG);
-        
-    tPowerData * pPowerData = BoardData_Get(                                
-                            BOARDATA_POWER_DATA,                            
-                            0 );
-    
+scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context) {
+    tBoardRuntimeConfig * pBoardRuntimeConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_ALL_CONFIG);
+
+    tPowerData * pPowerData = BoardData_Get(
+            BOARDATA_POWER_DATA,
+            0);
+
     uint32_t param1;
 
-    if (!SCPI_ParamUInt32(context, &param1, TRUE))
-    {
+    if (!SCPI_ParamUInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
-    if(pPowerData->powerState != POWERED_UP){
+    if (pPowerData->powerState != POWERED_UP) {
         return SCPI_RES_ERR;
     }
-    if(param1)
-        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val=1;
+    if (param1)
+        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val = 1;
     else
-        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val=0;
+        pBoardRuntimeConfig->PowerWriteVars.EN_5_10V_Val = 0;
     Power_Write();
-     return SCPI_RES_OK;   
+    return SCPI_RES_OK;
 }
 
 //scpi_result_t SCPI_GetFreeRtosStats(scpi_t * context)
@@ -706,19 +698,19 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "STATus:PRESet", .callback = SCPI_StatusPreset,},
 
     //    // System
-    {.pattern = "SYSTem:REboot", .callback = SCPI_Reset, },
-    {.pattern = "HELP", .callback = SCPI_Help, },
+    {.pattern = "SYSTem:REboot", .callback = SCPI_Reset,},
+    {.pattern = "HELP", .callback = SCPI_Help,},
     {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet,},
     {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
     {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
-    {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho, },    
+    {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho,},
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
     {.pattern = "SYSTem:FORceBoot", .callback = SCPI_ForceBootloader,},
     {.pattern = "SYSTem:USB:SetTransparentMode", .callback = SCPI_UsbSetTransparentMode},
-    {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber, },
-        
+    {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber,},
+
     //    // Intentionally(?) not implemented (stubbed out in original firmware))
     //    {.pattern = "STATus:OPERation?", .callback = SCPI_NotImplemented, },
     //    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_NotImplemented, },
@@ -727,14 +719,14 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_NotImplemented, },
     //    {.pattern = "STATus:QUEStionable:CONDition?", .callback = SCPI_NotImplemented, },
     //    {.pattern = "SYSTem:COMMunication:TCPIP:CONTROL?", .callback = SCPI_NotImplemented, },
-        
+
     // Power
-    {.pattern = "SYSTem:BAT:STAT?", .callback = SCPI_BatteryStatusGet, },
-    {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet, },
-    {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState, },
+    {.pattern = "SYSTem:BAT:STAT?", .callback = SCPI_BatteryStatusGet,},
+    {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet,},
+    {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState,},
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
-    {.pattern = "SYSTem:FORce5V5POWer:STATe",.callback=SCPI_Force5v5PowerStateSet},
-        
+    {.pattern = "SYSTem:FORce5V5POWer:STATe", .callback = SCPI_Force5v5PowerStateSet},
+
     // DIO
     {.pattern = "DIO:PORt:DIRection", .callback = SCPI_GPIODirectionSet,},
     {.pattern = "DIO:PORt:DIRection?", .callback = SCPI_GPIODirectionGet,},
@@ -747,7 +739,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "PWM:CHannel:FREQuency", .callback = SCPI_PWMChannelFrequencySet,},
     {.pattern = "PWM:CHannel:FREQuency?", .callback = SCPI_PWMChannelFrequencyGet,},
     {.pattern = "PWM:CHannel:DUTY", .callback = SCPI_PWMChannelDUTYSet,},
-    {.pattern = "PWM:CHannel:DUTY?", .callback = SCPI_PWMChannelDUTYGet,},    
+    {.pattern = "PWM:CHannel:DUTY?", .callback = SCPI_PWMChannelDUTYGet,},
     //    // Wifi
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled", .callback = SCPI_LANEnabledSet,},
@@ -785,10 +777,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:PASSCHECK", .callback = SCPI_LANPasskeyGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:DISPlay", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_LANSettingsApply,},
-    //    {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad, },
-    //    {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave, },
-    //    {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad, },
-    //    {.pattern = "SYSTem:COMMunicate:LAN:CLEAR", .callback = SCPI_LANSettingsClear, },
+    {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad,},
+    {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave,},
+    {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad,},
+    {.pattern = "SYSTem:COMMunicate:LAN:CLEAR", .callback = SCPI_LANSettingsClear,},
     //
     {.pattern = "SYSTem:COMMunicate:LAN:GETChipInfo", .callback = SCPI_LANGetChipInfo,},
     // ADC
@@ -841,58 +833,49 @@ static const scpi_command_t scpi_commands[] = {
 char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
 scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
 
-scpi_result_t SCPI_Help(scpi_t* context)
-{
+scpi_result_t SCPI_Help(scpi_t* context) {
     char buffer[512];
-    size_t numCommands = sizeof(scpi_commands) / sizeof(scpi_command_t);
+    size_t numCommands = sizeof (scpi_commands) / sizeof (scpi_command_t);
     size_t i = 0;
-    
+
     size_t count = snprintf(buffer, 512, "%s", "\r\nImplemented:\r\n");
-    for (i = 0; i< numCommands; ++i)
-    {
+    for (i = 0; i < numCommands; ++i) {
         if (scpi_commands[i].callback != SCPI_NotImplemented &&
-            scpi_commands[i].pattern != NULL)
-        {
+                scpi_commands[i].pattern != NULL) {
             size_t cmdSize = strlen(scpi_commands[i].pattern) + 5;
-            if (count + cmdSize >= 512)
-            {
+            if (count + cmdSize >= 512) {
                 buffer[count] = '\0';
                 context->interface->write(context, buffer, count);
                 count = 0;
             }
-            
+
             count += snprintf(buffer + count, 512 - count, "  %s\r\n", scpi_commands[i].pattern);
         }
     }
-    
-    if (count > 0)
-    {
+
+    if (count > 0) {
         context->interface->write(context, buffer, count);
     }
-    
+
     count = snprintf(buffer, 512, "%s", "\r\nNot Implemented:\r\n");
-    for (i = 0; i< numCommands; ++i)
-    {
+    for (i = 0; i < numCommands; ++i) {
         if (scpi_commands[i].callback == SCPI_NotImplemented &&
-            scpi_commands[i].pattern != NULL)
-        {
+                scpi_commands[i].pattern != NULL) {
             size_t cmdSize = strlen(scpi_commands[i].pattern) + 5;
-            if (count + cmdSize >= 512)
-            {
+            if (count + cmdSize >= 512) {
                 buffer[count] = '\0';
                 context->interface->write(context, buffer, count);
                 count = 0;
             }
-            
+
             count += snprintf(buffer + count, 512 - count, "  %s\r\n", scpi_commands[i].pattern);
         }
     }
-    
-    if (count > 0)
-    {
+
+    if (count > 0) {
         context->interface->write(context, buffer, count);
     }
-    
+
     return SCPI_RES_OK;
 }
 

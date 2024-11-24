@@ -159,30 +159,30 @@ scpi_result_t SCPI_LANGetChipInfo(scpi_t * context);
 // */
 //scpi_result_t SCPI_LANAVSecurityGet(scpi_t * context);
 
-//
-///**
-// * SCPI Callback: Saves the wifi settings of the device (but does not apply them)
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANSettingsSave(scpi_t * context);
-//
-///**
-// * SCPI Callback: Loads the wifi settings of the device (but does not apply them)
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANSettingsLoad(scpi_t * context);
-//
-///**
-// * SCPI Callback: Restores the wifi settings to the factory defaults (but does not apply them)
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context);
-//
-///**
-// * SCPI Callback: Clears the settings saved in memory, but does not overwrite the current in-memory values
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANSettingsClear(scpi_t * context);
+
+/**
+ * SCPI Callback: Saves the wifi settings of the device (but does not apply them)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANSettingsSave(scpi_t * context);
+
+/**
+ * SCPI Callback: Loads the wifi settings of the device (but does not apply them)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANSettingsLoad(scpi_t * context);
+
+/**
+ * SCPI Callback: Restores the wifi settings to the factory defaults (but does not apply them)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context);
+
+/**
+ * SCPI Callback: Clears the settings saved in memory, but does not overwrite the current in-memory values
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANSettingsClear(scpi_t * context);
 //
 ///**
 // * SCPI Callback: Returns SSIDs which were previously scanned with SCPI_LANAVSsidScan

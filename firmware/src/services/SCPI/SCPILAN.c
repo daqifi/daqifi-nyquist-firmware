@@ -474,7 +474,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     //once fw update mode is enabled it should be cleared to disable automatic fw update mode
-    pRunTimeWifiSettings->isOtaModeEnabled=false;
+    pRunTimeWifiSettings->isOtaModeEnabled = false;
     return SCPI_RES_OK;
 }
 
@@ -487,15 +487,96 @@ scpi_result_t SCPI_LANFwUpdate(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANGetChipInfo(scpi_t * context) {
-    char jsonChar[100];    
+    char jsonChar[100];
     wifi_manager_chipInfo_t chipInfo;
-    if(wifi_manager_GetChipInfo(&chipInfo)==false)
+    if (wifi_manager_GetChipInfo(&chipInfo) == false)
         return SCPI_RES_ERR;
-    sprintf(jsonChar,"{\"ChipId\":%d,\"FwVersion\":\"%s\",\"BuildDate\":\"%s\"}\n",
+    sprintf(jsonChar, "{\"ChipId\":%d,\"FwVersion\":\"%s\",\"BuildDate\":\"%s\"}\n",
             chipInfo.chipID, chipInfo.frimwareVersion, chipInfo.BuildDate);
     return SCPI_LANStringGetImpl(
             context,
             jsonChar);
+}
+
+scpi_result_t SCPI_LANSettingsSave(scpi_t * context) {
+    DaqifiSettings * pWifiSettings = BoardData_Get(
+            BOARDDATA_WIFI_SETTINGS,
+            0);
+    DaqifiSettings daqifiSettings;
+    memcpy(&daqifiSettings.settings.wifi, pWifiSettings, sizeof (wifi_manager_settings_t));
+    daqifiSettings.type = DaqifiSettings_Wifi;
+    if (!daqifi_settings_SaveToNvm(&daqifiSettings)) {
+        return SCPI_RES_ERR;
+    }
+
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
+    bool applySettings = false;
+    int param1;
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    if (SCPI_ParamInt32(context, &param1, FALSE)) {
+        applySettings = (bool) param1;
+    }
+
+    if (!daqifi_settings_LoadFromNvm(
+            pRunTimeWifiSettings->type,
+            pRunTimeWifiSettings)) {
+        return SCPI_RES_ERR;
+    }
+
+    if (applySettings) {
+        if (!wifi_manager_UpdateNetworkSettings(&pRunTimeWifiSettings->settings.wifi)) {
+            return SCPI_RES_ERR;
+        }
+        BoardData_Set(
+                BOARDDATA_WIFI_SETTINGS,
+                0,
+                pRunTimeWifiSettings);
+    }
+
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
+    bool applySettings = false;
+    int param1;
+    DaqifiSettings * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    if (SCPI_ParamInt32(context, &param1, FALSE)) {
+        applySettings = (bool) param1;
+    }
+
+    if (!daqifi_settings_LoadFactoryDeafult(
+            pRunTimeWifiSettings->type,
+            pRunTimeWifiSettings)) {
+        return SCPI_RES_ERR;
+    }
+
+    if (applySettings) {
+        if (!wifi_manager_UpdateNetworkSettings(&pRunTimeWifiSettings->settings.wifi)) {
+            return SCPI_RES_ERR;
+        }
+        BoardData_Set(
+                BOARDDATA_WIFI_SETTINGS,
+                0,
+                pRunTimeWifiSettings);
+    }
+
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_LANSettingsClear(scpi_t * context) {
+    DaqifiSettings * pWifiSettings = BoardData_Get(
+            BOARDDATA_WIFI_SETTINGS,
+            0);
+    if (daqifi_settings_ClearNvm(pWifiSettings->type)) {
+        return SCPI_RES_ERR;
+    }
+
+    return SCPI_RES_OK;
 }
 //scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context)
 //{
