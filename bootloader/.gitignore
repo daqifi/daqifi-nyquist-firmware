@@ -21,8 +21,8 @@ html/
 nbproject/private/
 nbproject/Package-*.bash
 build/
+debug/
 nbbuild/
-dist/
 nbdist/
 nbactions.xml
 nb-configuration.xml
