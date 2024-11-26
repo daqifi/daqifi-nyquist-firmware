@@ -99,8 +99,6 @@ bool wifi_tcp_server_ProcessReceivedBuff(void);
  */
 void wifi_tcp_server_CloseClientSocket(void);
 
-
-
 static bool TcpServerFlush() {
     int16_t sockRet;
     bool funRet = false;
@@ -124,6 +122,7 @@ static bool TcpServerFlush() {
     }
     return funRet;
 }
+
 /**
  * Gets the TcpClientData associated with the SCPI context
  * @param context The context to lookup
@@ -151,15 +150,18 @@ static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
  * @return always SCPI_RES_OK
  */
 static scpi_result_t SCPI_TCP_Flush(scpi_t * context) {
+
     wifi_tcp_server_clientContext_t* client = SCPI_TCP_GetClient(context);
-    if(client==NULL){
-        return SCPI_RES_ERR;
-    }
-    if (TcpServerFlush(client)) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    UNUSED(client);
+    return SCPI_RES_OK;
+    //    if(client==NULL){
+    //        return SCPI_RES_ERR;
+    //    }
+    //    if (TcpServerFlush(client)) {
+    //        return SCPI_RES_OK;
+    //    } else {
+    //        return SCPI_RES_ERR;
+    //    }
 }
 
 /**
@@ -313,23 +315,23 @@ void wifi_tcp_server_CloseClientSocket() {
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
 }
 
-size_t wifi_tcp_server_GetWriteBuffFreeSize(){
+size_t wifi_tcp_server_GetWriteBuffFreeSize() {
     if (gpServerData->client.clientSocket < 0) {
         return 0;
     }
-    
+
     return CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf);
 }
 
 size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
     size_t bytesAdded = 0;
-    
+
     if (gpServerData->client.clientSocket < 0) {
         return 0;
     }
-    
+
     if (len == 0)return 0;
-    
+
     while (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
         vTaskDelay(10);
     }

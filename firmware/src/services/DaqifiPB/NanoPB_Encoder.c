@@ -379,12 +379,6 @@ size_t Nanopb_Encode(tBoardData* state,
         return 0;
     }
 
-    DaqifiSettings tmpTopLevelSettings;
-    //this takes approx 82us
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) {
-        return 0;
-    }
-
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     AInRuntimeArray* pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     AInModRuntimeArray *pRuntimeAInModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
@@ -1095,20 +1089,20 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_device_pn_tag:
             {
                 message.has_device_pn = true;
-                snprintf(message.device_pn, 6, "Nq%d", tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
+                snprintf(message.device_pn, 6, "Nq%d", pBoardConfig->BoardVariant);
                 break;
             }
             case DaqifiOutMessage_device_hw_rev_tag:
                 message.has_device_hw_rev = true;
                 memcpy(&message.device_hw_rev,
-                        tmpTopLevelSettings.settings.topLevelSettings.boardHardwareRev,
-                        strlen(tmpTopLevelSettings.settings.topLevelSettings.boardHardwareRev));
+                        pBoardConfig->boardHardwareRev,
+                        strlen(pBoardConfig->boardHardwareRev));
                 break;
             case DaqifiOutMessage_device_fw_rev_tag:
                 message.has_device_fw_rev = true;
                 memcpy(&message.device_fw_rev,
-                        tmpTopLevelSettings.settings.topLevelSettings.boardFirmwareRev,
-                        strlen(tmpTopLevelSettings.settings.topLevelSettings.boardFirmwareRev));
+                        pBoardConfig->boardFirmwareRev,
+                        strlen(pBoardConfig->boardFirmwareRev));
                 break;
             case DaqifiOutMessage_device_sn_tag:
                 message.has_device_sn = true;
