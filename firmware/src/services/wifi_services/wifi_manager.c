@@ -215,7 +215,14 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             break;
         }
         case SOCKET_MSG_SEND:
-            gStateMachineContext.pTcpServerContext->client.tcpSendPending = 0;
+        {
+            gStateMachineContext.pTcpServerContext->client.tcpSendPending=0;
+//            uint16_t sendLen = *(uint16_t*)pMessage;
+//            if(sendLen>gStateMachineContext.pTcpServerContext->client.tcpSendPending)
+//                gStateMachineContext.pTcpServerContext->client.tcpSendPending = 0;
+//            else
+//                gStateMachineContext.pTcpServerContext->client.tcpSendPending -= sendLen;
+        }
             break;
         default:
         {

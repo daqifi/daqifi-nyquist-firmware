@@ -212,7 +212,7 @@ void streaming_Task(void) {
     bool hasUsb, hasWifi, hasSD;
     bool AINDataAvailable;
     bool DIODataAvailable;
-    size_t packetSize=0;
+    size_t packetSize=0;    
     tBoardData * pBoardData = BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
@@ -260,22 +260,21 @@ void streaming_Task(void) {
         if (nanopbFlag.Size > 0) {
             if (pRunTimeStreamConf->Encoding == Streaming_Json) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
-                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); //takes 230us
+                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
                 DIO_TIMING_TEST_WRITE_STATE(0);
             } else {   
                 DIO_TIMING_TEST_WRITE_STATE(1);
-                packetSize = Nanopb_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); //takes 620us
+                packetSize = Nanopb_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
                 DIO_TIMING_TEST_WRITE_STATE(0);
             }
         }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
             if (hasUsb) {                
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);//takes 13us for json 
-                
+                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);               
             }
-            if (hasWifi) {
-                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
+            if (hasWifi) {               
+                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);                
             }
             if (hasSD) {
                 sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
@@ -296,7 +295,7 @@ void TimestampTimer_Init(void) {
     if (gStreamingTaskHandle == NULL) {
         xTaskCreate((TaskFunction_t) streaming_Task,
                 "Stream task",
-                2048, NULL, 2, &gStreamingTaskHandle);
+                4000, NULL, 2, &gStreamingTaskHandle);
     }
     if (gStreamingInterruptHandle == NULL) {
         xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,

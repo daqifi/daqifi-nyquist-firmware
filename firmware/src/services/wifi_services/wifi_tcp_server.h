@@ -19,8 +19,8 @@ extern "C" {
 #endif
 
 #define WIFI_MAX_CLIENT 1 
-#define WIFI_RBUFFER_SIZE SOCKET_BUFFER_MAX_LENGTH
-#define WIFI_WBUFFER_SIZE SOCKET_BUFFER_MAX_LENGTH
+#define WIFI_RBUFFER_SIZE ((SOCKET_BUFFER_MAX_LENGTH/2)-1)
+#define WIFI_WBUFFER_SIZE ((SOCKET_BUFFER_MAX_LENGTH/2)-1)
 #define WIFI_CIRCULAR_BUFF_SIZE SOCKET_BUFFER_MAX_LENGTH*4
 
 /**
@@ -30,13 +30,13 @@ typedef struct s_tcpClientContext
 {
     SOCKET clientSocket;
     /** Client read buffer */
-    uint8_t readBuffer[WIFI_RBUFFER_SIZE];
+    uint8_t readBuffer[WIFI_RBUFFER_SIZE+1];
 
     /** The current length of the read buffer */
     size_t readBufferLength;
 
     /** Client write buffer */
-    uint8_t writeBuffer[WIFI_WBUFFER_SIZE];
+    uint8_t writeBuffer[WIFI_WBUFFER_SIZE+1];
 
     /** The current length of the write buffer */
     size_t writeBufferLength;

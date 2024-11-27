@@ -329,12 +329,13 @@
         <platformTool>pk4hybrid</platformTool>
         <languageToolchain>XC32</languageToolchain>
         <languageToolchainVersion>2.50</languageToolchainVersion>
-        <platform>3</platform>
+        <platform>4</platform>
       </toolsSet>
       <packs>
         <pack name="PIC32MZ-EF_DFP" vendor="Microchip" version="1.3.58"/>
       </packs>
       <ScriptingSettings>
+        <ScriptingSetting key="mtb.buffer" value=""/>
       </ScriptingSettings>
       <compileType>
         <linkerTool>
@@ -345,12 +346,12 @@
         <archiverTool>
         </archiverTool>
         <loading>
-          <makeArtifact PL="../../../../dev_v3/firmware/daqifi.X"
+          <makeArtifact PL="../../../firmware/daqifi.X"
                         CT="1"
                         CN="default"
                         AC="true"
                         BL="true"
-                        WD="../../../../dev_v3/firmware/daqifi.X"
+                        WD="../../../firmware/daqifi.X"
                         BC="${MAKE}  -f Makefile CONF=default"
                         DBC="${MAKE}  -f Makefile CONF=default TYPE_IMAGE=DEBUG_RUN"
                         CC="${MAKE}  -f Makefile CONF=default clean"
@@ -1177,6 +1178,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3 /bootloader/firmware/usb_bootloader.X/debug/usbdevice_pic32mz_ef_sk/basic_ptg"/>
         <property key="programmerToGoImageName" value="basic_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>

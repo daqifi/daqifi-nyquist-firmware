@@ -96,6 +96,7 @@ static void app_USBDeviceTask(void* p_arg) {
     }
 }
 
+
 static void app_WifiTask(void* p_arg) {
     const tPowerData *pPowerState = BoardData_Get(
             BOARDATA_POWER_DATA,
@@ -105,12 +106,13 @@ static void app_WifiTask(void* p_arg) {
 
     }
     wifi_manager_Init(&gpBoardData->wifiSettings);
-    while (1) {
-        wifi_manager_ProcessState();
+    while (1) {       
+        wifi_manager_ProcessState();      
         vTaskDelay(5 / portTICK_PERIOD_MS);
 
     }
 }
+
 
 static void app_SdCardTask(void* p_arg) {
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
@@ -153,7 +155,7 @@ void app_SystemInit() {
     // Initialize the variable to 0s
     memset(&tmpTopLevelSettings, 0, sizeof (tmpTopLevelSettings));
     memset(&tmpSettings, 0, sizeof (tmpSettings));
-   
+
 
     // Try to load TopLevelSettings from NVM - if this fails, store default 
     // settings to NVM (first run after a program)
@@ -175,17 +177,17 @@ void app_SystemInit() {
     // Try to load WiFiSettings from NVM - if this fails, store default 
     // settings to NVM (first run after a program)
 
-   
+
     tmpSettings.type = DaqifiSettings_Wifi;
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &tmpSettings)) {
         // Get board wifi settings from Wifi NVM variable
         daqifi_settings_LoadFactoryDeafult(DaqifiSettings_Wifi, &tmpSettings);
         daqifi_settings_SaveToNvm(&tmpSettings);
-        memset(&tmpSettings,0,sizeof(tmpSettings));
+        memset(&tmpSettings, 0, sizeof (tmpSettings));
         daqifi_settings_LoadFromNvm(DaqifiSettings_Wifi, &tmpSettings);
     }
     // Move temp variable to global variables
-    tmpSettings.settings.wifi.isOtaModeEnabled=false;
+    tmpSettings.settings.wifi.isOtaModeEnabled = false;
     memcpy(&gpBoardRuntimeConfig->wifiSettings,
             &tmpSettings.settings.wifi,
             sizeof (wifi_manager_settings_t));

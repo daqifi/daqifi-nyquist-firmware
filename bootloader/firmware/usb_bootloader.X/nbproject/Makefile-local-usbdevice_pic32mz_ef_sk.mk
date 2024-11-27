@@ -14,24 +14,23 @@
 # You can invoke make with the values of the macros:
 # $ makeMP_CC="/opt/microchip/mplabc30/v3.30c/bin/pic30-gcc" ...  
 #
-SHELL=cmd.exe
-PATH_TO_IDE_BIN=C:/Program Files/Microchip/MPLABX/v6.20/mplab_platform/platform/../mplab_ide/modules/../../bin/
+PATH_TO_IDE_BIN=/Applications/microchip/mplabx/v6.20/MPLAB X IDE v6.20.app/Contents/Resources/mplab_ide/platform/../mplab_ide/modules/../../bin/
 # Adding MPLAB X bin directory to path.
-PATH:=C:/Program Files/Microchip/MPLABX/v6.20/mplab_platform/platform/../mplab_ide/modules/../../bin/:$(PATH)
+PATH:=/Applications/microchip/mplabx/v6.20/MPLAB X IDE v6.20.app/Contents/Resources/mplab_ide/platform/../mplab_ide/modules/../../bin/:$(PATH)
 # Path to java used to run MPLAB X when this makefile was created
-MP_JAVA_PATH="C:\Program Files\Microchip\MPLABX\v6.20\sys\java\zulu8.64.0.19-ca-fx-jre8.0.345-win_x64/bin/"
+MP_JAVA_PATH="/Applications/microchip/mplabx/v6.20/sys/java/zulu8.64.0.19-ca-fx-jre8.0.345-macosx_aarch64/zulu-8.jre/Contents/Home/bin/"
 OS_CURRENT="$(shell uname -s)"
-MP_CC="C:\Program Files\Microchip\xc32\v2.50\bin\xc32-gcc.exe"
-MP_CPPC="C:\Program Files\Microchip\xc32\v2.50\bin\xc32-g++.exe"
+MP_CC="/Applications/microchip/xc32/v2.50/bin/xc32-gcc"
+MP_CPPC="/Applications/microchip/xc32/v2.50/bin/xc32-g++"
 # MP_BC is not defined
-MP_AS="C:\Program Files\Microchip\xc32\v2.50\bin\xc32-as.exe"
-MP_LD="C:\Program Files\Microchip\xc32\v2.50\bin\xc32-ld.exe"
-MP_AR="C:\Program Files\Microchip\xc32\v2.50\bin\xc32-ar.exe"
-DEP_GEN=${MP_JAVA_PATH}java -jar "C:/Program Files/Microchip/MPLABX/v6.20/mplab_platform/platform/../mplab_ide/modules/../../bin/extractobjectdependencies.jar"
-MP_CC_DIR="C:\Program Files\Microchip\xc32\v2.50\bin"
-MP_CPPC_DIR="C:\Program Files\Microchip\xc32\v2.50\bin"
+MP_AS="/Applications/microchip/xc32/v2.50/bin/xc32-as"
+MP_LD="/Applications/microchip/xc32/v2.50/bin/xc32-ld"
+MP_AR="/Applications/microchip/xc32/v2.50/bin/xc32-ar"
+DEP_GEN=${MP_JAVA_PATH}java -jar "/Applications/microchip/mplabx/v6.20/MPLAB X IDE v6.20.app/Contents/Resources/mplab_ide/platform/../mplab_ide/modules/../../bin/extractobjectdependencies.jar"
+MP_CC_DIR="/Applications/microchip/xc32/v2.50/bin"
+MP_CPPC_DIR="/Applications/microchip/xc32/v2.50/bin"
 # MP_BC_DIR is not defined
-MP_AS_DIR="C:\Program Files\Microchip\xc32\v2.50\bin"
-MP_LD_DIR="C:\Program Files\Microchip\xc32\v2.50\bin"
-MP_AR_DIR="C:\Program Files\Microchip\xc32\v2.50\bin"
-DFP_DIR=C:/Users/asus3/.mchp_packs/Microchip/PIC32MZ-EF_DFP/1.3.58
+MP_AS_DIR="/Applications/microchip/xc32/v2.50/bin"
+MP_LD_DIR="/Applications/microchip/xc32/v2.50/bin"
+MP_AR_DIR="/Applications/microchip/xc32/v2.50/bin"
+DFP_DIR=/Users/macmini1/.mchp_packs/Microchip/PIC32MZ-EF_DFP/1.3.58

@@ -98,15 +98,21 @@ bool wifi_tcp_server_ProcessReceivedBuff(void);
  * and clears any pending data in the client's buffers.
  */
 void wifi_tcp_server_CloseClientSocket(void);
-
 static bool TcpServerFlush() {
     int16_t sockRet;
     bool funRet = false;
     if (gpServerData->client.clientSocket < 0) {
         return false;
     }
+    if (gpServerData->client.writeBufferLength >WIFI_WBUFFER_SIZE) {
+        gpServerData->client.writeBufferLength = WIFI_WBUFFER_SIZE;
+    } else if (gpServerData->client.writeBufferLength == 0) {
+        return true;
+    }
+
     do {
-        sockRet = send(gpServerData->client.clientSocket, (char*) gpServerData->client.writeBuffer, gpServerData->client.writeBufferLength, 0);
+        //sockRet = send(gpServerData->client.clientSocket, (char*) gpServerData->client.writeBuffer, gpServerData->client.writeBufferLength, 0); 
+        sockRet = send(gpServerData->client.clientSocket, (char*) gpServerData->client.writeBuffer, gpServerData->client.writeBufferLength, 0); 
         if (sockRet == SOCK_ERR_BUFFER_FULL) {
             vTaskDelay(TCPSERVER_EWOULDBLOCK_ERROR_TIMEOUT);
         }
@@ -117,9 +123,11 @@ static bool TcpServerFlush() {
     if (sockRet == SOCK_ERR_CONN_ABORTED) {
         funRet = false;
     } else if (sockRet == SOCK_ERR_NO_ERROR) {
+        gpServerData->client.tcpSendPending = 1;
         gpServerData->client.writeBufferLength = 0;
         funRet = true;
     }
+
     return funRet;
 }
 
@@ -362,13 +370,13 @@ bool wifi_tcp_server_ProcessReceivedBuff() {
 bool wifi_tcp_server_TransmitBufferedData() {
     int ret;
     UNUSED(ret);
-    if (gpServerData->client.tcpSendPending == 1) {
-        return true;
+    if (gpServerData->client.tcpSendPending != 0) {
+        return false;
     }
+  
     if (CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf) > 0) {
         xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
         CircularBuf_ProcessBytes(&gpServerData->client.wCirbuf, NULL, WIFI_WBUFFER_SIZE, &ret);
-        gpServerData->client.tcpSendPending = 1;
         xSemaphoreGive(gpServerData->client.wMutex);
     }
     return true;

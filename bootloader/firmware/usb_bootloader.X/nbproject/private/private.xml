@@ -3,42 +3,30 @@
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
         <group>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/BoardRuntimeConfig.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/daqifi_settings.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/usb/src/usb_device.c</file>
-            <file>file:/C:/Program%20Files/Microchip/MPLABX/v6.20/packs/Microchip/PIC32MZ-EF_DFP/1.4.168/xc32/startup/crt0.S</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/wolfssl/wolfssl/wolfcrypt/src/cryptocb.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/wifi_services/wifi_serial_bridge.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/daqifi_settings.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/runtime/BoardRuntimeConfig.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/app_freertos.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/DaqifiPB/NanoPB_Encoder.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPIADC.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/freertos_hooks.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/usb/usbhs/src/templates/usbhs_Interrupts_Default.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/spi/src/drv_spi.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/usb/src/usb_device_cdc.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/winc/include/wdrv_winc_common.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/sdspi/src/drv_sdspi_driver_interface.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/wifi_services/wifi_serial_bridge_interface.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/wifi_services/wifi_manager.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/tasks.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPIStorageSD.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPIInterface.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/data/BoardData.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/exceptions.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/wifi_services/wifi_manager.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/board/BoardConfig.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/crypto/crypto.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/driver/usb/usbhs/src/templates/usbhs_EP0Status_Default.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/peripheral/nvm/plib_nvm.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/state/data/BoardData.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/main.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/services/SCPI/SCPILAN.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/HAL/NVM/nvm.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/third_party/rtos/FreeRTOS/Source/queue.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/src/config/default/osal/osal_freertos.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/third_party/rtos/FreeRTOS/Source/queue.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/wdrv_winc.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/services/wifi_services/wifi_manager.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/services/streaming.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/peripheral/evic/plib_evic.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/include/drv/socket/socket.h</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/libraries/nanopb/pb_encode.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/drv/socket/socket.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/drv/driver/nmbus.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/include/drv/socket/m2m_socket_host_if.h</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/drv/driver/m2m_wifi.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/i2c/src/drv_i2c.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/bootloader/firmware/src/main.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/drv/driver/m2m_hif.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/peripheral/adchs/plib_adchs.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/driver/winc/drv/driver/nmspi.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/tasks.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/services/wifi_services/wifi_tcp_server.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/Util/CircularBuffer.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/exceptions.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/app_freertos.c</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/config/default/configuration.h</file>
+            <file>file:/Users/macmini1/Documents/adben/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3%20/firmware/src/services/wifi_services/wifi_tcp_server.h</file>
         </group>
     </open-files>
 </project-private>
