@@ -403,7 +403,6 @@
         <itemPath>../src/services/daqifi_settings.h</itemPath>
         <itemPath>../src/services/streaming.h</itemPath>
         <itemPath>../src/services/JSON_Encoder.h</itemPath>
-        <itemPath>../src/services/commTest.h</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
@@ -918,7 +917,6 @@
         <itemPath>../src/services/daqifi_settings.c</itemPath>
         <itemPath>../src/services/streaming.c</itemPath>
         <itemPath>../src/services/JSON_Encoder.c</itemPath>
-        <itemPath>../src/services/commTest.c</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
@@ -1083,7 +1081,7 @@
         <platformTool>pk4hybrid</platformTool>
         <languageToolchain>XC32</languageToolchain>
         <languageToolchainVersion>4.40</languageToolchainVersion>
-        <platform>4</platform>
+        <platform>3</platform>
       </toolsSet>
       <packs>
         <pack name="PIC32MZ-EF_DFP" vendor="Microchip" version="1.4.168"/>

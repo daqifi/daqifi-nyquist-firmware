@@ -25,7 +25,6 @@
 #include "SCPILAN.h"
 #include "SCPIStorageSD.h"
 #include "../streaming.h"
-#include "../commTest.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 
 //
@@ -484,7 +483,7 @@ static scpi_result_t SCPI_IsStreaming(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
-    int param1, param2;
+    int param1;
 
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -497,15 +496,6 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
     } else if (param1 == Streaming_Json) {
         pRunTimeStreamConfig->Encoding = Streaming_Json;
-    } else if (param1 == Streaming_TestData) {
-        pRunTimeStreamConfig->Encoding = Streaming_TestData;
-
-        if (SCPI_ParamInt32(context, &param2, FALSE) && (param2 <= 1000)) {
-            commTest.TestData_len = param2;
-        } else {
-            // TestData_len is not set. This indicates use dynamic length
-            commTest.TestData_len = 0;
-        }
     }
 
     return SCPI_RES_OK;

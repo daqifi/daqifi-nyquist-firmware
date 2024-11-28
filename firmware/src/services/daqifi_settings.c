@@ -6,9 +6,8 @@ uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16
 
 bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settings) {
 
-    // Read the settings into a temporary object
+    
     DaqifiSettings tmpSettings;
-
     uint32_t address = 0;
     uint16_t dataSize = 0;
     memset(&tmpSettings,0,sizeof(DaqifiSettings));
@@ -33,20 +32,14 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
         default:
             return false;
     }
-
-
-
-    // Copy settings from flash to temporary buffer
     memcpy(&tmpSettings, (uint32_t *) PA_TO_KVA1(address), sizeof (DaqifiSettings));
 
-    // Calculate the MD5 sum
     uint8_t hash[CRYPT_MD5_DIGEST_SIZE];
     CRYPT_MD5_CTX md5Sum;
     CRYPT_MD5_Initialize(&md5Sum);
     CRYPT_MD5_DataAdd(&md5Sum, (const uint8_t*) &(tmpSettings.settings), dataSize);
     CRYPT_MD5_Finalize(&md5Sum, hash);
 
-    // Compare the md5 sums for validity
     if (memcmp(hash, &tmpSettings.md5Sum, CRYPT_MD5_DIGEST_SIZE) != 0) {
         return false;
     }
@@ -148,57 +141,40 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
         return false;
     }
 
-    // Calculate the MD5 sum
     CRYPT_MD5_CTX md5Sum;
     CRYPT_MD5_Initialize(&md5Sum);
     CRYPT_MD5_DataAdd(&md5Sum, (const uint8_t*) &(settings->settings), dataSize);
     CRYPT_MD5_Finalize(&md5Sum, settings->md5Sum);
 
-    // Check to see our settings can fit in one row
-    if (sizeof (DaqifiSettings)>sizeof (gTempFflashBuffer)) {
-        // TODO: Trap error/write to error log
-        //TODO(Daqifi): Add this back
-        //LogMessage("Settings save error. DaqifiSettings.c ln 275\n\r");
+    if (sizeof (DaqifiSettings)>sizeof (gTempFflashBuffer)) {       
         return false;
     }
-
-    // Copy the data to the non-buffered array
     memcpy(gTempFflashBuffer, settings, sizeof (DaqifiSettings));
-    // Write the data
+   
     return nvm_WriteRowtoAddr(address, gTempFflashBuffer);
 }
 
 bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
     uint32_t address = 0;
-    //uint32_t dataSize = 0;
-
+  
     switch (type) {
         case DaqifiSettings_TopLevelSettings:
-            address = TOP_LEVEL_SETTINGS_ADDR;
-            //dataSize = TOP_LEVEL_SETTINGS_SIZE;
+            address = TOP_LEVEL_SETTINGS_ADDR;        
             break;
         case DaqifiSettings_FactAInCalParams:
-            address = FAINCAL_SETTINGS_ADDR;
-            //dataSize = FAINCAL_SETTINGS_SIZE;
+            address = FAINCAL_SETTINGS_ADDR;            
             break;
         case DaqifiSettings_UserAInCalParams:
-            address = UAINCAL_SETTINGS_ADDR;
-            //dataSize = UAINCAL_SETTINGS_SIZE;
+            address = UAINCAL_SETTINGS_ADDR;           
             break;
         case DaqifiSettings_Wifi:
             address = WIFI_SETTINGS_ADDR;
-            //dataSize = WIFI_SETTINGS_SIZE;
             break;
         default:
             return false;
     }
-
-
-
-    // Check to see our settings can be erased in one page
     if (sizeof (DaqifiSettings) > NVM_FLASH_PAGESIZE) return false;
 
-    // Erase the flash
     return nvm_ErasePage(address);
 }
 
@@ -207,7 +183,6 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     bool status = true;
     uint8_t x = 0;
     AInCalArray* calArray;
-    // Read the settings into a temporary object
     DaqifiSettings tmpSettings;
     memset(&tmpSettings,0,sizeof(DaqifiSettings));
     status = daqifi_settings_LoadFromNvm(type, &tmpSettings);
@@ -245,8 +220,7 @@ bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
 {
     bool status = true;
     uint8_t x = 0;
-    AInCalArray* calArray;
-    // Create the settings in a temporary object
+    AInCalArray* calArray; 
     DaqifiSettings tmpSettings;
     memset(&tmpSettings,0,sizeof(DaqifiSettings));
     tmpSettings.type = type;

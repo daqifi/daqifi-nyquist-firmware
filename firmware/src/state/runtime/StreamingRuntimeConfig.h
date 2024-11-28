@@ -10,8 +10,7 @@ extern "C" {
     typedef enum eStreamingEncoding
     {
         Streaming_ProtoBuffer = 0,
-        Streaming_Json = 1,
-        Streaming_TestData = 2,
+        Streaming_Json = 1,        
     } StreamingEncoding;
     
     /**
