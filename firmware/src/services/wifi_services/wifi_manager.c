@@ -217,11 +217,6 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         case SOCKET_MSG_SEND:
         {
             gStateMachineContext.pTcpServerContext->client.tcpSendPending=0;
-//            uint16_t sendLen = *(uint16_t*)pMessage;
-//            if(sendLen>gStateMachineContext.pTcpServerContext->client.tcpSendPending)
-//                gStateMachineContext.pTcpServerContext->client.tcpSendPending = 0;
-//            else
-//                gStateMachineContext.pTcpServerContext->client.tcpSendPending -= sendLen;
         }
             break;
         default:
@@ -290,7 +285,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
     switch (event) {
         case WIFI_MANAGER_EVENT_ENTRY:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
-            pInstance->pTcpServerContext = &gTcpServerContext; //TODO(Daqifi): Remove from there here
+            pInstance->pTcpServerContext = &gTcpServerContext; 
             wifi_tcp_server_Initialize(pInstance->pTcpServerContext);
             memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
             ResetAllEventFlags(&pInstance->eventFlags);

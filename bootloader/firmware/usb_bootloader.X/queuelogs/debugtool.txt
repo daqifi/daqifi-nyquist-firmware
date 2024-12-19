@@ -1,48 +1,1000 @@
-
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Pre:SetProgramExec
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 FileRegs
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 a0000900
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Length = 4360
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload End
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Post:SetProgramExec
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return Value
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 true
-18772 1732686877791 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return End
-
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Pre:SetDebugExec
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Test
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 1fc74000
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Length = 4192
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload End
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Post:SetDebugExec
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return Value
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 true
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return End
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:ENTERING: com.microchip.mplab.mdbcore.RI4Tool.ConnectionHandler.CheckForFWUpdates()
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:Created FirmwareUpdateHandler com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler@47dee4c7
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:ENTERING: com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler.UpdateFirmware(FirmwareInfo, UpdateMessage)
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:areWeInBoot returned false
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:inBoot = false
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:uMode = checkingVersions
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:selectedTool = pk4
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:current toolType = pk4
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:current tool mode = pk4
-18772 1732686877792 GEN4_CONNECT_DIAGNOSTICS:current toolType = pk4
-
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Pre:EstablishCommunincations
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.mdbcore.PK4Tool.PK4Com@265f9d31
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload End
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Post:EstablishCommunincations
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Return Value
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 true
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Return End
-
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Pre:GetFirmwareInfo
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 null
-18772 1732686877792 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload End
-18772 1732686877793 XXXX 1732686877793, Thread 18772: com.Send returned false 
-18772 1732686877793 XXXX 1732686877793, Thread 18772: execCommand: exception after writeSideChanel null 
+7954 1734601906622 XXXX 1734601906622, Thread 7954: XXXX 1734601906622, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601906723 XXXX 1734601906723, Thread 7954: XXXX 1734601906723, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601906724 XXXX 1734601906724, Thread 7954: XXXX 1734601906724, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601906823 XXXX 1734601906823, Thread 7954: XXXX 1734601906823, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601906824 XXXX 1734601906824, Thread 7954: XXXX 1734601906824, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601906923 XXXX 1734601906923, Thread 7954: XXXX 1734601906923, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601906924 XXXX 1734601906924, Thread 7954: XXXX 1734601906924, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907024 XXXX 1734601907024, Thread 7954: XXXX 1734601907024, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907025 XXXX 1734601907025, Thread 7954: XXXX 1734601907025, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907124 XXXX 1734601907124, Thread 7954: XXXX 1734601907124, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907125 XXXX 1734601907125, Thread 7954: XXXX 1734601907125, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907225 XXXX 1734601907225, Thread 7954: XXXX 1734601907225, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907226 XXXX 1734601907226, Thread 7954: XXXX 1734601907226, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907325 XXXX 1734601907325, Thread 7954: XXXX 1734601907325, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907326 XXXX 1734601907326, Thread 7954: XXXX 1734601907326, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907426 XXXX 1734601907426, Thread 7954: XXXX 1734601907426, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907427 XXXX 1734601907427, Thread 7954: XXXX 1734601907427, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907528 XXXX 1734601907528, Thread 7954: XXXX 1734601907528, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907529 XXXX 1734601907529, Thread 7954: XXXX 1734601907529, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907628 XXXX 1734601907628, Thread 7954: XXXX 1734601907628, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907629 XXXX 1734601907629, Thread 7954: XXXX 1734601907629, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907728 XXXX 1734601907728, Thread 7954: XXXX 1734601907728, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907729 XXXX 1734601907729, Thread 7954: XXXX 1734601907729, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907828 XXXX 1734601907828, Thread 7954: XXXX 1734601907828, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907828 XXXX 1734601907828, Thread 7954: XXXX 1734601907828, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601907928 XXXX 1734601907928, Thread 7954: XXXX 1734601907928, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601907928 XXXX 1734601907928, Thread 7954: XXXX 1734601907928, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908029 XXXX 1734601908029, Thread 7954: XXXX 1734601908029, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908030 XXXX 1734601908030, Thread 7954: XXXX 1734601908030, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908130 XXXX 1734601908130, Thread 7954: XXXX 1734601908130, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908131 XXXX 1734601908131, Thread 7954: XXXX 1734601908131, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908231 XXXX 1734601908231, Thread 7954: XXXX 1734601908231, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908232 XXXX 1734601908232, Thread 7954: XXXX 1734601908232, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908332 XXXX 1734601908332, Thread 7954: XXXX 1734601908332, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908333 XXXX 1734601908333, Thread 7954: XXXX 1734601908333, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908432 XXXX 1734601908432, Thread 7954: XXXX 1734601908432, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908433 XXXX 1734601908433, Thread 7954: XXXX 1734601908433, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908532 XXXX 1734601908532, Thread 7954: XXXX 1734601908532, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908534 XXXX 1734601908534, Thread 7954: XXXX 1734601908534, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908632 XXXX 1734601908632, Thread 7954: XXXX 1734601908632, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908634 XXXX 1734601908634, Thread 7954: XXXX 1734601908634, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908733 XXXX 1734601908733, Thread 7954: XXXX 1734601908733, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908734 XXXX 1734601908734, Thread 7954: XXXX 1734601908734, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908833 XXXX 1734601908833, Thread 7954: XXXX 1734601908833, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908834 XXXX 1734601908834, Thread 7954: XXXX 1734601908834, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601908933 XXXX 1734601908933, Thread 7954: XXXX 1734601908933, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601908934 XXXX 1734601908934, Thread 7954: XXXX 1734601908934, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909034 XXXX 1734601909034, Thread 7954: XXXX 1734601909034, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909035 XXXX 1734601909035, Thread 7954: XXXX 1734601909035, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909134 XXXX 1734601909134, Thread 7954: XXXX 1734601909134, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909135 XXXX 1734601909135, Thread 7954: XXXX 1734601909135, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909235 XXXX 1734601909235, Thread 7954: XXXX 1734601909235, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909235 XXXX 1734601909235, Thread 7954: XXXX 1734601909235, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909337 XXXX 1734601909337, Thread 7954: XXXX 1734601909337, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909338 XXXX 1734601909338, Thread 7954: XXXX 1734601909338, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909437 XXXX 1734601909437, Thread 7954: XXXX 1734601909437, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909437 XXXX 1734601909437, Thread 7954: XXXX 1734601909437, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909537 XXXX 1734601909537, Thread 7954: XXXX 1734601909537, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909539 XXXX 1734601909539, Thread 7954: XXXX 1734601909539, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909638 XXXX 1734601909638, Thread 7954: XXXX 1734601909638, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909639 XXXX 1734601909639, Thread 7954: XXXX 1734601909639, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909738 XXXX 1734601909738, Thread 7954: XXXX 1734601909738, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909739 XXXX 1734601909739, Thread 7954: XXXX 1734601909739, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909838 XXXX 1734601909838, Thread 7954: XXXX 1734601909838, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909838 XXXX 1734601909838, Thread 7954: XXXX 1734601909838, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601909938 XXXX 1734601909938, Thread 7954: XXXX 1734601909938, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601909939 XXXX 1734601909939, Thread 7954: XXXX 1734601909939, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910039 XXXX 1734601910039, Thread 7954: XXXX 1734601910039, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910040 XXXX 1734601910040, Thread 7954: XXXX 1734601910040, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910139 XXXX 1734601910139, Thread 7954: XXXX 1734601910139, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910141 XXXX 1734601910141, Thread 7954: XXXX 1734601910141, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910239 XXXX 1734601910239, Thread 7954: XXXX 1734601910239, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910240 XXXX 1734601910240, Thread 7954: XXXX 1734601910240, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910339 XXXX 1734601910339, Thread 7954: XXXX 1734601910339, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910340 XXXX 1734601910340, Thread 7954: XXXX 1734601910340, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910440 XXXX 1734601910440, Thread 7954: XXXX 1734601910440, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910441 XXXX 1734601910441, Thread 7954: XXXX 1734601910441, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910541 XXXX 1734601910541, Thread 7954: XXXX 1734601910541, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910542 XXXX 1734601910542, Thread 7954: XXXX 1734601910542, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910641 XXXX 1734601910641, Thread 7954: XXXX 1734601910641, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910641 XXXX 1734601910641, Thread 7954: XXXX 1734601910641, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910743 XXXX 1734601910743, Thread 7954: XXXX 1734601910743, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910744 XXXX 1734601910744, Thread 7954: XXXX 1734601910744, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910843 XXXX 1734601910843, Thread 7954: XXXX 1734601910843, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910844 XXXX 1734601910844, Thread 7954: XXXX 1734601910844, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601910944 XXXX 1734601910944, Thread 7954: XXXX 1734601910944, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601910945 XXXX 1734601910945, Thread 7954: XXXX 1734601910945, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911045 XXXX 1734601911045, Thread 7954: XXXX 1734601911045, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911046 XXXX 1734601911046, Thread 7954: XXXX 1734601911046, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911145 XXXX 1734601911145, Thread 7954: XXXX 1734601911145, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911147 XXXX 1734601911147, Thread 7954: XXXX 1734601911147, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911245 XXXX 1734601911245, Thread 7954: XXXX 1734601911245, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911246 XXXX 1734601911246, Thread 7954: XXXX 1734601911246, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911346 XXXX 1734601911346, Thread 7954: XXXX 1734601911346, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911348 XXXX 1734601911348, Thread 7954: XXXX 1734601911348, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911446 XXXX 1734601911446, Thread 7954: XXXX 1734601911446, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911448 XXXX 1734601911448, Thread 7954: XXXX 1734601911448, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911547 XXXX 1734601911547, Thread 7954: XXXX 1734601911547, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911548 XXXX 1734601911548, Thread 7954: XXXX 1734601911548, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911647 XXXX 1734601911647, Thread 7954: XXXX 1734601911647, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911648 XXXX 1734601911648, Thread 7954: XXXX 1734601911648, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911748 XXXX 1734601911748, Thread 7954: XXXX 1734601911748, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911749 XXXX 1734601911749, Thread 7954: XXXX 1734601911749, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911848 XXXX 1734601911848, Thread 7954: XXXX 1734601911848, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911848 XXXX 1734601911848, Thread 7954: XXXX 1734601911848, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601911949 XXXX 1734601911949, Thread 7954: XXXX 1734601911949, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601911950 XXXX 1734601911950, Thread 7954: XXXX 1734601911950, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912050 XXXX 1734601912050, Thread 7954: XXXX 1734601912050, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912051 XXXX 1734601912051, Thread 7954: XXXX 1734601912051, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912151 XXXX 1734601912151, Thread 7954: XXXX 1734601912151, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912152 XXXX 1734601912152, Thread 7954: XXXX 1734601912152, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912251 XXXX 1734601912251, Thread 7954: XXXX 1734601912251, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912253 XXXX 1734601912253, Thread 7954: XXXX 1734601912253, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912352 XXXX 1734601912352, Thread 7954: XXXX 1734601912352, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912353 XXXX 1734601912353, Thread 7954: XXXX 1734601912353, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912452 XXXX 1734601912452, Thread 7954: XXXX 1734601912452, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912454 XXXX 1734601912454, Thread 7954: XXXX 1734601912454, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912553 XXXX 1734601912553, Thread 7954: XXXX 1734601912553, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912553 XXXX 1734601912553, Thread 7954: XXXX 1734601912553, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912653 XXXX 1734601912653, Thread 7954: XXXX 1734601912653, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912654 XXXX 1734601912654, Thread 7954: XXXX 1734601912654, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912754 XXXX 1734601912754, Thread 7954: XXXX 1734601912754, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912756 XXXX 1734601912756, Thread 7954: XXXX 1734601912756, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912855 XXXX 1734601912855, Thread 7954: XXXX 1734601912855, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912856 XXXX 1734601912856, Thread 7954: XXXX 1734601912856, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601912955 XXXX 1734601912955, Thread 7954: XXXX 1734601912955, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601912955 XXXX 1734601912955, Thread 7954: XXXX 1734601912955, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913056 XXXX 1734601913056, Thread 7954: XXXX 1734601913056, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913057 XXXX 1734601913057, Thread 7954: XXXX 1734601913057, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913157 XXXX 1734601913157, Thread 7954: XXXX 1734601913157, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913158 XXXX 1734601913158, Thread 7954: XXXX 1734601913158, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913258 XXXX 1734601913258, Thread 7954: XXXX 1734601913258, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913259 XXXX 1734601913259, Thread 7954: XXXX 1734601913259, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913359 XXXX 1734601913359, Thread 7954: XXXX 1734601913359, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913360 XXXX 1734601913360, Thread 7954: XXXX 1734601913360, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913459 XXXX 1734601913459, Thread 7954: XXXX 1734601913459, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913460 XXXX 1734601913460, Thread 7954: XXXX 1734601913460, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913560 XXXX 1734601913560, Thread 7954: XXXX 1734601913560, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913561 XXXX 1734601913561, Thread 7954: XXXX 1734601913561, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913661 XXXX 1734601913661, Thread 7954: XXXX 1734601913661, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913662 XXXX 1734601913662, Thread 7954: XXXX 1734601913662, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913762 XXXX 1734601913762, Thread 7954: XXXX 1734601913762, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913763 XXXX 1734601913763, Thread 7954: XXXX 1734601913763, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913862 XXXX 1734601913862, Thread 7954: XXXX 1734601913862, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913863 XXXX 1734601913863, Thread 7954: XXXX 1734601913863, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601913963 XXXX 1734601913963, Thread 7954: XXXX 1734601913963, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601913964 XXXX 1734601913964, Thread 7954: XXXX 1734601913964, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914063 XXXX 1734601914063, Thread 7954: XXXX 1734601914063, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914064 XXXX 1734601914064, Thread 7954: XXXX 1734601914064, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914164 XXXX 1734601914164, Thread 7954: XXXX 1734601914164, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914165 XXXX 1734601914165, Thread 7954: XXXX 1734601914165, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914265 XXXX 1734601914265, Thread 7954: XXXX 1734601914265, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914266 XXXX 1734601914266, Thread 7954: XXXX 1734601914266, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914365 XXXX 1734601914365, Thread 7954: XXXX 1734601914365, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914366 XXXX 1734601914366, Thread 7954: XXXX 1734601914366, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914466 XXXX 1734601914466, Thread 7954: XXXX 1734601914466, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914467 XXXX 1734601914467, Thread 7954: XXXX 1734601914467, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914566 XXXX 1734601914566, Thread 7954: XXXX 1734601914566, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914566 XXXX 1734601914566, Thread 7954: XXXX 1734601914566, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914667 XXXX 1734601914667, Thread 7954: XXXX 1734601914667, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914667 XXXX 1734601914667, Thread 7954: XXXX 1734601914667, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914768 XXXX 1734601914768, Thread 7954: XXXX 1734601914768, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914769 XXXX 1734601914769, Thread 7954: XXXX 1734601914769, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914869 XXXX 1734601914869, Thread 7954: XXXX 1734601914869, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914870 XXXX 1734601914870, Thread 7954: XXXX 1734601914870, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601914970 XXXX 1734601914970, Thread 7954: XXXX 1734601914970, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601914970 XXXX 1734601914970, Thread 7954: XXXX 1734601914970, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915071 XXXX 1734601915071, Thread 7954: XXXX 1734601915071, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915072 XXXX 1734601915072, Thread 7954: XXXX 1734601915072, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915171 XXXX 1734601915171, Thread 7954: XXXX 1734601915171, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915172 XXXX 1734601915172, Thread 7954: XXXX 1734601915172, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915271 XXXX 1734601915271, Thread 7954: XXXX 1734601915271, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915273 XXXX 1734601915273, Thread 7954: XXXX 1734601915273, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915372 XXXX 1734601915372, Thread 7954: XXXX 1734601915372, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915373 XXXX 1734601915373, Thread 7954: XXXX 1734601915373, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915473 XXXX 1734601915473, Thread 7954: XXXX 1734601915473, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915474 XXXX 1734601915474, Thread 7954: XXXX 1734601915474, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915574 XXXX 1734601915574, Thread 7954: XXXX 1734601915574, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915575 XXXX 1734601915575, Thread 7954: XXXX 1734601915575, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915675 XXXX 1734601915675, Thread 7954: XXXX 1734601915675, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915676 XXXX 1734601915676, Thread 7954: XXXX 1734601915676, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915776 XXXX 1734601915776, Thread 7954: XXXX 1734601915776, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915777 XXXX 1734601915777, Thread 7954: XXXX 1734601915777, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915876 XXXX 1734601915876, Thread 7954: XXXX 1734601915876, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915877 XXXX 1734601915877, Thread 7954: XXXX 1734601915877, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601915977 XXXX 1734601915977, Thread 7954: XXXX 1734601915977, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601915978 XXXX 1734601915978, Thread 7954: XXXX 1734601915978, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916077 XXXX 1734601916077, Thread 7954: XXXX 1734601916077, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916078 XXXX 1734601916078, Thread 7954: XXXX 1734601916078, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916178 XXXX 1734601916178, Thread 7954: XXXX 1734601916178, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916179 XXXX 1734601916179, Thread 7954: XXXX 1734601916179, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916279 XXXX 1734601916279, Thread 7954: XXXX 1734601916279, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916280 XXXX 1734601916280, Thread 7954: XXXX 1734601916280, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916380 XXXX 1734601916380, Thread 7954: XXXX 1734601916380, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916381 XXXX 1734601916381, Thread 7954: XXXX 1734601916381, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916480 XXXX 1734601916480, Thread 7954: XXXX 1734601916480, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916481 XXXX 1734601916481, Thread 7954: XXXX 1734601916481, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916580 XXXX 1734601916580, Thread 7954: XXXX 1734601916580, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916581 XXXX 1734601916581, Thread 7954: XXXX 1734601916581, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916682 XXXX 1734601916682, Thread 7954: XXXX 1734601916682, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916683 XXXX 1734601916683, Thread 7954: XXXX 1734601916683, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916782 XXXX 1734601916782, Thread 7954: XXXX 1734601916782, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916783 XXXX 1734601916783, Thread 7954: XXXX 1734601916783, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916882 XXXX 1734601916882, Thread 7954: XXXX 1734601916882, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916883 XXXX 1734601916883, Thread 7954: XXXX 1734601916883, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601916983 XXXX 1734601916983, Thread 7954: XXXX 1734601916983, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601916984 XXXX 1734601916984, Thread 7954: XXXX 1734601916984, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917084 XXXX 1734601917084, Thread 7954: XXXX 1734601917084, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917085 XXXX 1734601917085, Thread 7954: XXXX 1734601917085, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917184 XXXX 1734601917184, Thread 7954: XXXX 1734601917184, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917185 XXXX 1734601917185, Thread 7954: XXXX 1734601917185, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917284 XXXX 1734601917284, Thread 7954: XXXX 1734601917284, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917285 XXXX 1734601917285, Thread 7954: XXXX 1734601917285, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917384 XXXX 1734601917384, Thread 7954: XXXX 1734601917384, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917386 XXXX 1734601917386, Thread 7954: XXXX 1734601917386, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917484 XXXX 1734601917484, Thread 7954: XXXX 1734601917484, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917485 XXXX 1734601917485, Thread 7954: XXXX 1734601917485, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917585 XXXX 1734601917585, Thread 7954: XXXX 1734601917585, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917586 XXXX 1734601917586, Thread 7954: XXXX 1734601917586, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917686 XXXX 1734601917686, Thread 7954: XXXX 1734601917686, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917687 XXXX 1734601917687, Thread 7954: XXXX 1734601917687, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917787 XXXX 1734601917787, Thread 7954: XXXX 1734601917787, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917789 XXXX 1734601917789, Thread 7954: XXXX 1734601917789, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917889 XXXX 1734601917889, Thread 7954: XXXX 1734601917889, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917889 XXXX 1734601917889, Thread 7954: XXXX 1734601917889, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601917990 XXXX 1734601917990, Thread 7954: XXXX 1734601917990, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601917991 XXXX 1734601917991, Thread 7954: XXXX 1734601917991, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918092 XXXX 1734601918092, Thread 7954: XXXX 1734601918092, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918093 XXXX 1734601918093, Thread 7954: XXXX 1734601918093, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918193 XXXX 1734601918193, Thread 7954: XXXX 1734601918193, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918194 XXXX 1734601918194, Thread 7954: XXXX 1734601918194, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918294 XXXX 1734601918294, Thread 7954: XXXX 1734601918294, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918295 XXXX 1734601918295, Thread 7954: XXXX 1734601918295, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918395 XXXX 1734601918395, Thread 7954: XXXX 1734601918395, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918396 XXXX 1734601918396, Thread 7954: XXXX 1734601918396, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918496 XXXX 1734601918496, Thread 7954: XXXX 1734601918496, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918497 XXXX 1734601918497, Thread 7954: XXXX 1734601918497, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918596 XXXX 1734601918596, Thread 7954: XXXX 1734601918596, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918597 XXXX 1734601918597, Thread 7954: XXXX 1734601918597, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918697 XXXX 1734601918697, Thread 7954: XXXX 1734601918697, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918698 XXXX 1734601918698, Thread 7954: XXXX 1734601918698, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918798 XXXX 1734601918798, Thread 7954: XXXX 1734601918798, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918800 XXXX 1734601918800, Thread 7954: XXXX 1734601918800, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601918898 XXXX 1734601918898, Thread 7954: XXXX 1734601918898, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601918899 XXXX 1734601918899, Thread 7954: XXXX 1734601918899, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919000 XXXX 1734601919000, Thread 7954: XXXX 1734601919000, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919001 XXXX 1734601919001, Thread 7954: XXXX 1734601919001, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919100 XXXX 1734601919100, Thread 7954: XXXX 1734601919100, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919101 XXXX 1734601919101, Thread 7954: XXXX 1734601919101, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919201 XXXX 1734601919201, Thread 7954: XXXX 1734601919201, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919202 XXXX 1734601919202, Thread 7954: XXXX 1734601919202, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919302 XXXX 1734601919302, Thread 7954: XXXX 1734601919302, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919303 XXXX 1734601919303, Thread 7954: XXXX 1734601919303, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919403 XXXX 1734601919403, Thread 7954: XXXX 1734601919403, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919404 XXXX 1734601919404, Thread 7954: XXXX 1734601919404, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919504 XXXX 1734601919504, Thread 7954: XXXX 1734601919504, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919505 XXXX 1734601919505, Thread 7954: XXXX 1734601919505, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919605 XXXX 1734601919605, Thread 7954: XXXX 1734601919605, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919606 XXXX 1734601919606, Thread 7954: XXXX 1734601919606, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919707 XXXX 1734601919707, Thread 7954: XXXX 1734601919707, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919708 XXXX 1734601919708, Thread 7954: XXXX 1734601919708, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919808 XXXX 1734601919808, Thread 7954: XXXX 1734601919808, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919809 XXXX 1734601919809, Thread 7954: XXXX 1734601919809, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601919909 XXXX 1734601919909, Thread 7954: XXXX 1734601919909, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601919910 XXXX 1734601919910, Thread 7954: XXXX 1734601919910, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920009 XXXX 1734601920009, Thread 7954: XXXX 1734601920009, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920010 XXXX 1734601920010, Thread 7954: XXXX 1734601920010, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920110 XXXX 1734601920110, Thread 7954: XXXX 1734601920110, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920110 XXXX 1734601920110, Thread 7954: XXXX 1734601920110, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920211 XXXX 1734601920211, Thread 7954: XXXX 1734601920211, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920212 XXXX 1734601920212, Thread 7954: XXXX 1734601920212, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920313 XXXX 1734601920313, Thread 7954: XXXX 1734601920313, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920314 XXXX 1734601920314, Thread 7954: XXXX 1734601920314, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920413 XXXX 1734601920413, Thread 7954: XXXX 1734601920413, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920414 XXXX 1734601920414, Thread 7954: XXXX 1734601920414, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920513 XXXX 1734601920513, Thread 7954: XXXX 1734601920513, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920513 XXXX 1734601920513, Thread 7954: XXXX 1734601920513, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920614 XXXX 1734601920614, Thread 7954: XXXX 1734601920614, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920616 XXXX 1734601920616, Thread 7954: XXXX 1734601920616, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920716 XXXX 1734601920716, Thread 7954: XXXX 1734601920716, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920717 XXXX 1734601920717, Thread 7954: XXXX 1734601920717, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920818 XXXX 1734601920818, Thread 7954: XXXX 1734601920818, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920819 XXXX 1734601920819, Thread 7954: XXXX 1734601920819, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601920918 XXXX 1734601920918, Thread 7954: XXXX 1734601920918, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601920920 XXXX 1734601920920, Thread 7954: XXXX 1734601920920, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921019 XXXX 1734601921019, Thread 7954: XXXX 1734601921019, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921020 XXXX 1734601921020, Thread 7954: XXXX 1734601921020, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921121 XXXX 1734601921121, Thread 7954: XXXX 1734601921121, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921122 XXXX 1734601921122, Thread 7954: XXXX 1734601921122, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921221 XXXX 1734601921221, Thread 7954: XXXX 1734601921221, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921222 XXXX 1734601921222, Thread 7954: XXXX 1734601921222, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921321 XXXX 1734601921321, Thread 7954: XXXX 1734601921321, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921323 XXXX 1734601921323, Thread 7954: XXXX 1734601921323, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921422 XXXX 1734601921422, Thread 7954: XXXX 1734601921422, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921423 XXXX 1734601921423, Thread 7954: XXXX 1734601921423, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921522 XXXX 1734601921522, Thread 7954: XXXX 1734601921522, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921525 XXXX 1734601921525, Thread 7954: XXXX 1734601921525, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921623 XXXX 1734601921623, Thread 7954: XXXX 1734601921623, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921624 XXXX 1734601921624, Thread 7954: XXXX 1734601921624, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921724 XXXX 1734601921724, Thread 7954: XXXX 1734601921724, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921726 XXXX 1734601921726, Thread 7954: XXXX 1734601921726, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921825 XXXX 1734601921825, Thread 7954: XXXX 1734601921825, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921826 XXXX 1734601921826, Thread 7954: XXXX 1734601921826, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601921925 XXXX 1734601921925, Thread 7954: XXXX 1734601921925, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601921927 XXXX 1734601921927, Thread 7954: XXXX 1734601921927, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922026 XXXX 1734601922026, Thread 7954: XXXX 1734601922026, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922027 XXXX 1734601922027, Thread 7954: XXXX 1734601922027, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922127 XXXX 1734601922127, Thread 7954: XXXX 1734601922127, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922129 XXXX 1734601922129, Thread 7954: XXXX 1734601922129, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922229 XXXX 1734601922229, Thread 7954: XXXX 1734601922229, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922230 XXXX 1734601922230, Thread 7954: XXXX 1734601922230, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922330 XXXX 1734601922330, Thread 7954: XXXX 1734601922330, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922331 XXXX 1734601922331, Thread 7954: XXXX 1734601922331, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922431 XXXX 1734601922431, Thread 7954: XXXX 1734601922431, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922432 XXXX 1734601922432, Thread 7954: XXXX 1734601922432, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922532 XXXX 1734601922532, Thread 7954: XXXX 1734601922532, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922533 XXXX 1734601922533, Thread 7954: XXXX 1734601922533, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922632 XXXX 1734601922632, Thread 7954: XXXX 1734601922632, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922633 XXXX 1734601922633, Thread 7954: XXXX 1734601922633, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922734 XXXX 1734601922734, Thread 7954: XXXX 1734601922734, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922736 XXXX 1734601922736, Thread 7954: XXXX 1734601922736, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922837 XXXX 1734601922837, Thread 7954: XXXX 1734601922837, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922838 XXXX 1734601922838, Thread 7954: XXXX 1734601922838, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601922937 XXXX 1734601922937, Thread 7954: XXXX 1734601922937, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601922939 XXXX 1734601922939, Thread 7954: XXXX 1734601922939, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923037 XXXX 1734601923037, Thread 7954: XXXX 1734601923037, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923039 XXXX 1734601923039, Thread 7954: XXXX 1734601923039, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923138 XXXX 1734601923138, Thread 7954: XXXX 1734601923138, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923139 XXXX 1734601923139, Thread 7954: XXXX 1734601923139, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923238 XXXX 1734601923238, Thread 7954: XXXX 1734601923238, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923239 XXXX 1734601923239, Thread 7954: XXXX 1734601923239, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923339 XXXX 1734601923339, Thread 7954: XXXX 1734601923339, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923341 XXXX 1734601923341, Thread 7954: XXXX 1734601923341, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923439 XXXX 1734601923439, Thread 7954: XXXX 1734601923439, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923441 XXXX 1734601923441, Thread 7954: XXXX 1734601923441, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923541 XXXX 1734601923541, Thread 7954: XXXX 1734601923541, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923542 XXXX 1734601923542, Thread 7954: XXXX 1734601923542, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923641 XXXX 1734601923641, Thread 7954: XXXX 1734601923641, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923641 XXXX 1734601923641, Thread 7954: XXXX 1734601923641, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923741 XXXX 1734601923741, Thread 7954: XXXX 1734601923741, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923742 XXXX 1734601923742, Thread 7954: XXXX 1734601923742, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923842 XXXX 1734601923842, Thread 7954: XXXX 1734601923842, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923843 XXXX 1734601923843, Thread 7954: XXXX 1734601923843, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601923943 XXXX 1734601923943, Thread 7954: XXXX 1734601923943, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601923944 XXXX 1734601923944, Thread 7954: XXXX 1734601923944, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924044 XXXX 1734601924044, Thread 7954: XXXX 1734601924044, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924045 XXXX 1734601924045, Thread 7954: XXXX 1734601924045, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924144 XXXX 1734601924144, Thread 7954: XXXX 1734601924144, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924147 XXXX 1734601924147, Thread 7954: XXXX 1734601924147, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924244 XXXX 1734601924244, Thread 7954: XXXX 1734601924244, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924246 XXXX 1734601924246, Thread 7954: XXXX 1734601924246, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924345 XXXX 1734601924345, Thread 7954: XXXX 1734601924345, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924346 XXXX 1734601924346, Thread 7954: XXXX 1734601924346, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924446 XXXX 1734601924446, Thread 7954: XXXX 1734601924446, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924448 XXXX 1734601924448, Thread 7954: XXXX 1734601924448, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924547 XXXX 1734601924547, Thread 7954: XXXX 1734601924547, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924549 XXXX 1734601924549, Thread 7954: XXXX 1734601924549, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924647 XXXX 1734601924647, Thread 7954: XXXX 1734601924647, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924648 XXXX 1734601924648, Thread 7954: XXXX 1734601924648, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924748 XXXX 1734601924748, Thread 7954: XXXX 1734601924748, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924750 XXXX 1734601924750, Thread 7954: XXXX 1734601924750, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924848 XXXX 1734601924848, Thread 7954: XXXX 1734601924848, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924850 XXXX 1734601924850, Thread 7954: XXXX 1734601924850, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601924948 XXXX 1734601924948, Thread 7954: XXXX 1734601924948, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601924949 XXXX 1734601924949, Thread 7954: XXXX 1734601924949, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925049 XXXX 1734601925049, Thread 7954: XXXX 1734601925049, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925050 XXXX 1734601925050, Thread 7954: XXXX 1734601925050, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925150 XXXX 1734601925150, Thread 7954: XXXX 1734601925150, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925152 XXXX 1734601925152, Thread 7954: XXXX 1734601925152, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925252 XXXX 1734601925252, Thread 7954: XXXX 1734601925252, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925253 XXXX 1734601925253, Thread 7954: XXXX 1734601925253, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925352 XXXX 1734601925352, Thread 7954: XXXX 1734601925352, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925353 XXXX 1734601925353, Thread 7954: XXXX 1734601925353, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925453 XXXX 1734601925453, Thread 7954: XXXX 1734601925453, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925454 XXXX 1734601925454, Thread 7954: XXXX 1734601925454, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925555 XXXX 1734601925555, Thread 7954: XXXX 1734601925555, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925556 XXXX 1734601925556, Thread 7954: XXXX 1734601925556, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925656 XXXX 1734601925656, Thread 7954: XXXX 1734601925656, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925657 XXXX 1734601925657, Thread 7954: XXXX 1734601925657, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925756 XXXX 1734601925756, Thread 7954: XXXX 1734601925756, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925757 XXXX 1734601925757, Thread 7954: XXXX 1734601925757, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925856 XXXX 1734601925856, Thread 7954: XXXX 1734601925856, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925859 XXXX 1734601925859, Thread 7954: XXXX 1734601925859, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601925957 XXXX 1734601925957, Thread 7954: XXXX 1734601925957, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601925958 XXXX 1734601925958, Thread 7954: XXXX 1734601925958, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926058 XXXX 1734601926058, Thread 7954: XXXX 1734601926058, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926060 XXXX 1734601926060, Thread 7954: XXXX 1734601926060, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926160 XXXX 1734601926160, Thread 7954: XXXX 1734601926160, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926162 XXXX 1734601926162, Thread 7954: XXXX 1734601926162, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926260 XXXX 1734601926260, Thread 7954: XXXX 1734601926260, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926262 XXXX 1734601926262, Thread 7954: XXXX 1734601926262, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926360 XXXX 1734601926360, Thread 7954: XXXX 1734601926360, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926360 XXXX 1734601926360, Thread 7954: XXXX 1734601926360, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926460 XXXX 1734601926460, Thread 7954: XXXX 1734601926460, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926460 XXXX 1734601926460, Thread 7954: XXXX 1734601926460, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926561 XXXX 1734601926561, Thread 7954: XXXX 1734601926561, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926563 XXXX 1734601926563, Thread 7954: XXXX 1734601926562, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926661 XXXX 1734601926661, Thread 7954: XXXX 1734601926661, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926661 XXXX 1734601926661, Thread 7954: XXXX 1734601926661, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926761 XXXX 1734601926761, Thread 7954: XXXX 1734601926761, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926762 XXXX 1734601926762, Thread 7954: XXXX 1734601926762, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926861 XXXX 1734601926861, Thread 7954: XXXX 1734601926861, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926862 XXXX 1734601926862, Thread 7954: XXXX 1734601926862, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601926961 XXXX 1734601926961, Thread 7954: XXXX 1734601926961, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601926963 XXXX 1734601926963, Thread 7954: XXXX 1734601926963, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927061 XXXX 1734601927061, Thread 7954: XXXX 1734601927061, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927064 XXXX 1734601927064, Thread 7954: XXXX 1734601927064, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927161 XXXX 1734601927161, Thread 7954: XXXX 1734601927161, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927161 XXXX 1734601927161, Thread 7954: XXXX 1734601927161, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927262 XXXX 1734601927262, Thread 7954: XXXX 1734601927262, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927263 XXXX 1734601927263, Thread 7954: XXXX 1734601927263, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927363 XXXX 1734601927363, Thread 7954: XXXX 1734601927363, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927364 XXXX 1734601927364, Thread 7954: XXXX 1734601927364, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927464 XXXX 1734601927464, Thread 7954: XXXX 1734601927464, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927466 XXXX 1734601927466, Thread 7954: XXXX 1734601927466, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927565 XXXX 1734601927565, Thread 7954: XXXX 1734601927565, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927566 XXXX 1734601927566, Thread 7954: XXXX 1734601927566, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927665 XXXX 1734601927665, Thread 7954: XXXX 1734601927665, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927667 XXXX 1734601927667, Thread 7954: XXXX 1734601927667, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927765 XXXX 1734601927765, Thread 7954: XXXX 1734601927765, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927766 XXXX 1734601927766, Thread 7954: XXXX 1734601927766, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927866 XXXX 1734601927866, Thread 7954: XXXX 1734601927866, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927867 XXXX 1734601927867, Thread 7954: XXXX 1734601927867, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601927967 XXXX 1734601927967, Thread 7954: XXXX 1734601927967, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601927968 XXXX 1734601927968, Thread 7954: XXXX 1734601927968, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928066 XXXX 1734601928066, Thread 7954: XXXX 1734601928066, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928067 XXXX 1734601928067, Thread 7954: XXXX 1734601928067, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928167 XXXX 1734601928167, Thread 7954: XXXX 1734601928167, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928169 XXXX 1734601928169, Thread 7954: XXXX 1734601928169, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928268 XXXX 1734601928268, Thread 7954: XXXX 1734601928268, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928270 XXXX 1734601928270, Thread 7954: XXXX 1734601928270, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928368 XXXX 1734601928368, Thread 7954: XXXX 1734601928368, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928369 XXXX 1734601928369, Thread 7954: XXXX 1734601928369, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928469 XXXX 1734601928469, Thread 7954: XXXX 1734601928469, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928470 XXXX 1734601928470, Thread 7954: XXXX 1734601928470, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928570 XXXX 1734601928570, Thread 7954: XXXX 1734601928570, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928571 XXXX 1734601928571, Thread 7954: XXXX 1734601928571, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928670 XXXX 1734601928670, Thread 7954: XXXX 1734601928670, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928672 XXXX 1734601928672, Thread 7954: XXXX 1734601928672, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928770 XXXX 1734601928770, Thread 7954: XXXX 1734601928770, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928771 XXXX 1734601928771, Thread 7954: XXXX 1734601928771, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928870 XXXX 1734601928870, Thread 7954: XXXX 1734601928870, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928871 XXXX 1734601928871, Thread 7954: XXXX 1734601928871, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601928972 XXXX 1734601928972, Thread 7954: XXXX 1734601928972, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601928974 XXXX 1734601928974, Thread 7954: XXXX 1734601928974, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929072 XXXX 1734601929072, Thread 7954: XXXX 1734601929072, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929074 XXXX 1734601929074, Thread 7954: XXXX 1734601929074, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929172 XXXX 1734601929172, Thread 7954: XXXX 1734601929172, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929174 XXXX 1734601929174, Thread 7954: XXXX 1734601929174, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929272 XXXX 1734601929272, Thread 7954: XXXX 1734601929272, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929273 XXXX 1734601929273, Thread 7954: XXXX 1734601929273, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929372 XXXX 1734601929372, Thread 7954: XXXX 1734601929372, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929373 XXXX 1734601929373, Thread 7954: XXXX 1734601929373, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929473 XXXX 1734601929473, Thread 7954: XXXX 1734601929473, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929475 XXXX 1734601929475, Thread 7954: XXXX 1734601929475, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929573 XXXX 1734601929573, Thread 7954: XXXX 1734601929573, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929574 XXXX 1734601929574, Thread 7954: XXXX 1734601929574, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929673 XXXX 1734601929673, Thread 7954: XXXX 1734601929673, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929675 XXXX 1734601929675, Thread 7954: XXXX 1734601929675, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929774 XXXX 1734601929774, Thread 7954: XXXX 1734601929774, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929775 XXXX 1734601929775, Thread 7954: XXXX 1734601929775, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929874 XXXX 1734601929874, Thread 7954: XXXX 1734601929874, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929875 XXXX 1734601929875, Thread 7954: XXXX 1734601929875, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601929975 XXXX 1734601929975, Thread 7954: XXXX 1734601929975, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601929976 XXXX 1734601929976, Thread 7954: XXXX 1734601929976, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930075 XXXX 1734601930075, Thread 7954: XXXX 1734601930075, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930076 XXXX 1734601930076, Thread 7954: XXXX 1734601930076, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930176 XXXX 1734601930176, Thread 7954: XXXX 1734601930176, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930178 XXXX 1734601930178, Thread 7954: XXXX 1734601930178, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930276 XXXX 1734601930276, Thread 7954: XXXX 1734601930276, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930277 XXXX 1734601930277, Thread 7954: XXXX 1734601930277, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930378 XXXX 1734601930378, Thread 7954: XXXX 1734601930378, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930379 XXXX 1734601930379, Thread 7954: XXXX 1734601930379, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930478 XXXX 1734601930478, Thread 7954: XXXX 1734601930478, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930479 XXXX 1734601930479, Thread 7954: XXXX 1734601930479, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930579 XXXX 1734601930579, Thread 7954: XXXX 1734601930579, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930580 XXXX 1734601930580, Thread 7954: XXXX 1734601930580, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930680 XXXX 1734601930680, Thread 7954: XXXX 1734601930680, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930682 XXXX 1734601930682, Thread 7954: XXXX 1734601930682, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930780 XXXX 1734601930780, Thread 7954: XXXX 1734601930780, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930781 XXXX 1734601930781, Thread 7954: XXXX 1734601930781, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930880 XXXX 1734601930880, Thread 7954: XXXX 1734601930880, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930881 XXXX 1734601930881, Thread 7954: XXXX 1734601930881, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601930981 XXXX 1734601930981, Thread 7954: XXXX 1734601930981, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601930982 XXXX 1734601930982, Thread 7954: XXXX 1734601930982, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931082 XXXX 1734601931082, Thread 7954: XXXX 1734601931082, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931083 XXXX 1734601931083, Thread 7954: XXXX 1734601931083, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931182 XXXX 1734601931182, Thread 7954: XXXX 1734601931182, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931185 XXXX 1734601931185, Thread 7954: XXXX 1734601931185, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931282 XXXX 1734601931282, Thread 7954: XXXX 1734601931282, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931283 XXXX 1734601931283, Thread 7954: XXXX 1734601931283, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931382 XXXX 1734601931382, Thread 7954: XXXX 1734601931382, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931383 XXXX 1734601931383, Thread 7954: XXXX 1734601931383, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931484 XXXX 1734601931484, Thread 7954: XXXX 1734601931484, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931485 XXXX 1734601931485, Thread 7954: XXXX 1734601931485, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931587 XXXX 1734601931587, Thread 7954: XXXX 1734601931587, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931589 XXXX 1734601931589, Thread 7954: XXXX 1734601931589, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931686 XXXX 1734601931686, Thread 7954: XXXX 1734601931686, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931687 XXXX 1734601931687, Thread 7954: XXXX 1734601931687, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931786 XXXX 1734601931786, Thread 7954: XXXX 1734601931786, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931787 XXXX 1734601931787, Thread 7954: XXXX 1734601931787, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931886 XXXX 1734601931886, Thread 7954: XXXX 1734601931886, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931887 XXXX 1734601931887, Thread 7954: XXXX 1734601931887, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601931988 XXXX 1734601931988, Thread 7954: XXXX 1734601931988, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601931990 XXXX 1734601931990, Thread 7954: XXXX 1734601931990, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932090 XXXX 1734601932090, Thread 7954: XXXX 1734601932090, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932090 XXXX 1734601932090, Thread 7954: XXXX 1734601932090, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932191 XXXX 1734601932191, Thread 7954: XXXX 1734601932191, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932193 XXXX 1734601932193, Thread 7954: XXXX 1734601932193, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932293 XXXX 1734601932293, Thread 7954: XXXX 1734601932293, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932294 XXXX 1734601932294, Thread 7954: XXXX 1734601932294, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932395 XXXX 1734601932395, Thread 7954: XXXX 1734601932395, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932397 XXXX 1734601932397, Thread 7954: XXXX 1734601932397, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932497 XXXX 1734601932497, Thread 7954: XXXX 1734601932497, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932498 XXXX 1734601932498, Thread 7954: XXXX 1734601932498, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932597 XXXX 1734601932597, Thread 7954: XXXX 1734601932597, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932598 XXXX 1734601932598, Thread 7954: XXXX 1734601932598, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932697 XXXX 1734601932697, Thread 7954: XXXX 1734601932697, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932698 XXXX 1734601932698, Thread 7954: XXXX 1734601932698, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932797 XXXX 1734601932797, Thread 7954: XXXX 1734601932797, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932798 XXXX 1734601932798, Thread 7954: XXXX 1734601932798, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932897 XXXX 1734601932897, Thread 7954: XXXX 1734601932897, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932899 XXXX 1734601932899, Thread 7954: XXXX 1734601932899, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601932997 XXXX 1734601932997, Thread 7954: XXXX 1734601932997, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601932998 XXXX 1734601932998, Thread 7954: XXXX 1734601932998, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933097 XXXX 1734601933097, Thread 7954: XXXX 1734601933097, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933098 XXXX 1734601933098, Thread 7954: XXXX 1734601933098, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933197 XXXX 1734601933197, Thread 7954: XXXX 1734601933197, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933198 XXXX 1734601933198, Thread 7954: XXXX 1734601933198, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933299 XXXX 1734601933299, Thread 7954: XXXX 1734601933299, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933300 XXXX 1734601933300, Thread 7954: XXXX 1734601933300, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933400 XXXX 1734601933400, Thread 7954: XXXX 1734601933400, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933401 XXXX 1734601933401, Thread 7954: XXXX 1734601933401, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933500 XXXX 1734601933500, Thread 7954: XXXX 1734601933500, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933502 XXXX 1734601933502, Thread 7954: XXXX 1734601933502, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933601 XXXX 1734601933601, Thread 7954: XXXX 1734601933601, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933602 XXXX 1734601933602, Thread 7954: XXXX 1734601933602, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933703 XXXX 1734601933703, Thread 7954: XXXX 1734601933703, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933704 XXXX 1734601933704, Thread 7954: XXXX 1734601933704, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933803 XXXX 1734601933803, Thread 7954: XXXX 1734601933803, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933805 XXXX 1734601933805, Thread 7954: XXXX 1734601933805, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601933905 XXXX 1734601933905, Thread 7954: XXXX 1734601933905, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601933907 XXXX 1734601933907, Thread 7954: XXXX 1734601933907, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934005 XXXX 1734601934005, Thread 7954: XXXX 1734601934005, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934006 XXXX 1734601934006, Thread 7954: XXXX 1734601934006, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934106 XXXX 1734601934106, Thread 7954: XXXX 1734601934106, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934108 XXXX 1734601934108, Thread 7954: XXXX 1734601934108, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934206 XXXX 1734601934206, Thread 7954: XXXX 1734601934206, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934208 XXXX 1734601934208, Thread 7954: XXXX 1734601934208, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934306 XXXX 1734601934306, Thread 7954: XXXX 1734601934306, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934306 XXXX 1734601934306, Thread 7954: XXXX 1734601934306, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934407 XXXX 1734601934407, Thread 7954: XXXX 1734601934407, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934408 XXXX 1734601934408, Thread 7954: XXXX 1734601934408, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934507 XXXX 1734601934507, Thread 7954: XXXX 1734601934507, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934509 XXXX 1734601934509, Thread 7954: XXXX 1734601934509, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934607 XXXX 1734601934607, Thread 7954: XXXX 1734601934607, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934609 XXXX 1734601934609, Thread 7954: XXXX 1734601934609, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934707 XXXX 1734601934707, Thread 7954: XXXX 1734601934707, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934709 XXXX 1734601934709, Thread 7954: XXXX 1734601934709, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934807 XXXX 1734601934807, Thread 7954: XXXX 1734601934807, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934808 XXXX 1734601934808, Thread 7954: XXXX 1734601934808, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601934908 XXXX 1734601934908, Thread 7954: XXXX 1734601934908, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601934910 XXXX 1734601934910, Thread 7954: XXXX 1734601934910, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935009 XXXX 1734601935009, Thread 7954: XXXX 1734601935009, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935009 XXXX 1734601935009, Thread 7954: XXXX 1734601935009, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935109 XXXX 1734601935109, Thread 7954: XXXX 1734601935109, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935112 XXXX 1734601935112, Thread 7954: XXXX 1734601935112, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935209 XXXX 1734601935209, Thread 7954: XXXX 1734601935209, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935211 XXXX 1734601935211, Thread 7954: XXXX 1734601935211, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935310 XXXX 1734601935310, Thread 7954: XXXX 1734601935310, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935310 XXXX 1734601935310, Thread 7954: XXXX 1734601935310, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935410 XXXX 1734601935410, Thread 7954: XXXX 1734601935410, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935411 XXXX 1734601935411, Thread 7954: XXXX 1734601935411, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935510 XXXX 1734601935510, Thread 7954: XXXX 1734601935510, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935512 XXXX 1734601935512, Thread 7954: XXXX 1734601935512, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935610 XXXX 1734601935610, Thread 7954: XXXX 1734601935610, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935613 XXXX 1734601935613, Thread 7954: XXXX 1734601935613, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935711 XXXX 1734601935711, Thread 7954: XXXX 1734601935711, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935713 XXXX 1734601935713, Thread 7954: XXXX 1734601935713, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935811 XXXX 1734601935811, Thread 7954: XXXX 1734601935811, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935813 XXXX 1734601935813, Thread 7954: XXXX 1734601935813, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601935912 XXXX 1734601935912, Thread 7954: XXXX 1734601935912, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601935914 XXXX 1734601935914, Thread 7954: XXXX 1734601935914, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936012 XXXX 1734601936012, Thread 7954: XXXX 1734601936012, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936013 XXXX 1734601936013, Thread 7954: XXXX 1734601936013, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936114 XXXX 1734601936114, Thread 7954: XXXX 1734601936114, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936115 XXXX 1734601936115, Thread 7954: XXXX 1734601936115, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936214 XXXX 1734601936214, Thread 7954: XXXX 1734601936214, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936215 XXXX 1734601936215, Thread 7954: XXXX 1734601936215, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936316 XXXX 1734601936316, Thread 7954: XXXX 1734601936316, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936317 XXXX 1734601936317, Thread 7954: XXXX 1734601936317, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936416 XXXX 1734601936416, Thread 7954: XXXX 1734601936416, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936417 XXXX 1734601936417, Thread 7954: XXXX 1734601936417, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936517 XXXX 1734601936517, Thread 7954: XXXX 1734601936517, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936518 XXXX 1734601936518, Thread 7954: XXXX 1734601936518, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936617 XXXX 1734601936617, Thread 7954: XXXX 1734601936617, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936618 XXXX 1734601936618, Thread 7954: XXXX 1734601936618, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936718 XXXX 1734601936718, Thread 7954: XXXX 1734601936718, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936720 XXXX 1734601936720, Thread 7954: XXXX 1734601936720, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936819 XXXX 1734601936819, Thread 7954: XXXX 1734601936819, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936821 XXXX 1734601936821, Thread 7954: XXXX 1734601936821, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601936920 XXXX 1734601936920, Thread 7954: XXXX 1734601936920, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601936921 XXXX 1734601936921, Thread 7954: XXXX 1734601936921, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937021 XXXX 1734601937021, Thread 7954: XXXX 1734601937021, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937022 XXXX 1734601937022, Thread 7954: XXXX 1734601937022, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937121 XXXX 1734601937121, Thread 7954: XXXX 1734601937121, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937122 XXXX 1734601937122, Thread 7954: XXXX 1734601937122, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937222 XXXX 1734601937222, Thread 7954: XXXX 1734601937222, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937223 XXXX 1734601937223, Thread 7954: XXXX 1734601937223, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937324 XXXX 1734601937324, Thread 7954: XXXX 1734601937324, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937326 XXXX 1734601937326, Thread 7954: XXXX 1734601937326, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937425 XXXX 1734601937425, Thread 7954: XXXX 1734601937425, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937427 XXXX 1734601937427, Thread 7954: XXXX 1734601937427, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937525 XXXX 1734601937525, Thread 7954: XXXX 1734601937525, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937527 XXXX 1734601937527, Thread 7954: XXXX 1734601937527, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937627 XXXX 1734601937627, Thread 7954: XXXX 1734601937627, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937629 XXXX 1734601937629, Thread 7954: XXXX 1734601937629, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937727 XXXX 1734601937727, Thread 7954: XXXX 1734601937727, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937727 XXXX 1734601937727, Thread 7954: XXXX 1734601937727, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937829 XXXX 1734601937829, Thread 7954: XXXX 1734601937829, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937830 XXXX 1734601937830, Thread 7954: XXXX 1734601937830, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601937930 XXXX 1734601937930, Thread 7954: XXXX 1734601937930, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601937931 XXXX 1734601937931, Thread 7954: XXXX 1734601937931, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938030 XXXX 1734601938030, Thread 7954: XXXX 1734601938030, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938031 XXXX 1734601938031, Thread 7954: XXXX 1734601938031, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938131 XXXX 1734601938131, Thread 7954: XXXX 1734601938131, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938132 XXXX 1734601938132, Thread 7954: XXXX 1734601938132, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938232 XXXX 1734601938232, Thread 7954: XXXX 1734601938232, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938234 XXXX 1734601938234, Thread 7954: XXXX 1734601938234, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938332 XXXX 1734601938332, Thread 7954: XXXX 1734601938332, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938333 XXXX 1734601938333, Thread 7954: XXXX 1734601938333, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938433 XXXX 1734601938433, Thread 7954: XXXX 1734601938433, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938435 XXXX 1734601938435, Thread 7954: XXXX 1734601938435, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938534 XXXX 1734601938534, Thread 7954: XXXX 1734601938534, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938536 XXXX 1734601938536, Thread 7954: XXXX 1734601938536, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938634 XXXX 1734601938634, Thread 7954: XXXX 1734601938634, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938636 XXXX 1734601938636, Thread 7954: XXXX 1734601938636, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938735 XXXX 1734601938735, Thread 7954: XXXX 1734601938735, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938736 XXXX 1734601938736, Thread 7954: XXXX 1734601938736, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938836 XXXX 1734601938836, Thread 7954: XXXX 1734601938836, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938837 XXXX 1734601938837, Thread 7954: XXXX 1734601938837, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601938936 XXXX 1734601938936, Thread 7954: XXXX 1734601938936, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601938937 XXXX 1734601938937, Thread 7954: XXXX 1734601938937, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939038 XXXX 1734601939038, Thread 7954: XXXX 1734601939038, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939039 XXXX 1734601939039, Thread 7954: XXXX 1734601939039, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939139 XXXX 1734601939139, Thread 7954: XXXX 1734601939139, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939140 XXXX 1734601939140, Thread 7954: XXXX 1734601939140, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939239 XXXX 1734601939239, Thread 7954: XXXX 1734601939239, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939241 XXXX 1734601939241, Thread 7954: XXXX 1734601939241, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939339 XXXX 1734601939339, Thread 7954: XXXX 1734601939339, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939340 XXXX 1734601939340, Thread 7954: XXXX 1734601939340, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939440 XXXX 1734601939440, Thread 7954: XXXX 1734601939440, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939442 XXXX 1734601939442, Thread 7954: XXXX 1734601939442, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939541 XXXX 1734601939541, Thread 7954: XXXX 1734601939541, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939542 XXXX 1734601939542, Thread 7954: XXXX 1734601939542, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939641 XXXX 1734601939641, Thread 7954: XXXX 1734601939641, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939644 XXXX 1734601939644, Thread 7954: XXXX 1734601939644, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939742 XXXX 1734601939742, Thread 7954: XXXX 1734601939742, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939744 XXXX 1734601939744, Thread 7954: XXXX 1734601939744, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939843 XXXX 1734601939843, Thread 7954: XXXX 1734601939843, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939843 XXXX 1734601939843, Thread 7954: XXXX 1734601939843, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601939944 XXXX 1734601939944, Thread 7954: XXXX 1734601939944, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601939945 XXXX 1734601939945, Thread 7954: XXXX 1734601939945, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940045 XXXX 1734601940045, Thread 7954: XXXX 1734601940045, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940047 XXXX 1734601940047, Thread 7954: XXXX 1734601940047, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940146 XXXX 1734601940146, Thread 7954: XXXX 1734601940146, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940147 XXXX 1734601940147, Thread 7954: XXXX 1734601940147, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940247 XXXX 1734601940247, Thread 7954: XXXX 1734601940247, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940248 XXXX 1734601940248, Thread 7954: XXXX 1734601940248, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940347 XXXX 1734601940347, Thread 7954: XXXX 1734601940347, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940349 XXXX 1734601940349, Thread 7954: XXXX 1734601940349, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940448 XXXX 1734601940448, Thread 7954: XXXX 1734601940448, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940450 XXXX 1734601940450, Thread 7954: XXXX 1734601940450, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940550 XXXX 1734601940550, Thread 7954: XXXX 1734601940550, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940551 XXXX 1734601940551, Thread 7954: XXXX 1734601940551, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940650 XXXX 1734601940650, Thread 7954: XXXX 1734601940650, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940651 XXXX 1734601940651, Thread 7954: XXXX 1734601940651, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940751 XXXX 1734601940751, Thread 7954: XXXX 1734601940751, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940752 XXXX 1734601940752, Thread 7954: XXXX 1734601940752, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940851 XXXX 1734601940851, Thread 7954: XXXX 1734601940851, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940852 XXXX 1734601940852, Thread 7954: XXXX 1734601940852, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601940951 XXXX 1734601940951, Thread 7954: XXXX 1734601940951, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601940952 XXXX 1734601940952, Thread 7954: XXXX 1734601940952, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941051 XXXX 1734601941051, Thread 7954: XXXX 1734601941051, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941052 XXXX 1734601941052, Thread 7954: XXXX 1734601941052, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941152 XXXX 1734601941152, Thread 7954: XXXX 1734601941152, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941153 XXXX 1734601941153, Thread 7954: XXXX 1734601941153, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941253 XXXX 1734601941253, Thread 7954: XXXX 1734601941253, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941255 XXXX 1734601941255, Thread 7954: XXXX 1734601941255, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941353 XXXX 1734601941353, Thread 7954: XXXX 1734601941353, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941354 XXXX 1734601941354, Thread 7954: XXXX 1734601941354, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941454 XXXX 1734601941454, Thread 7954: XXXX 1734601941454, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941455 XXXX 1734601941455, Thread 7954: XXXX 1734601941455, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941555 XXXX 1734601941555, Thread 7954: XXXX 1734601941555, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941557 XXXX 1734601941557, Thread 7954: XXXX 1734601941557, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941655 XXXX 1734601941655, Thread 7954: XXXX 1734601941655, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941656 XXXX 1734601941656, Thread 7954: XXXX 1734601941656, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941755 XXXX 1734601941755, Thread 7954: XXXX 1734601941755, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941757 XXXX 1734601941757, Thread 7954: XXXX 1734601941757, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941856 XXXX 1734601941856, Thread 7954: XXXX 1734601941856, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941857 XXXX 1734601941857, Thread 7954: XXXX 1734601941857, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601941956 XXXX 1734601941956, Thread 7954: XXXX 1734601941956, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601941959 XXXX 1734601941959, Thread 7954: XXXX 1734601941959, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942057 XXXX 1734601942057, Thread 7954: XXXX 1734601942057, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942058 XXXX 1734601942058, Thread 7954: XXXX 1734601942058, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942157 XXXX 1734601942157, Thread 7954: XXXX 1734601942157, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942159 XXXX 1734601942159, Thread 7954: XXXX 1734601942159, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942257 XXXX 1734601942257, Thread 7954: XXXX 1734601942257, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942258 XXXX 1734601942258, Thread 7954: XXXX 1734601942258, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942357 XXXX 1734601942357, Thread 7954: XXXX 1734601942357, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942358 XXXX 1734601942358, Thread 7954: XXXX 1734601942358, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942457 XXXX 1734601942457, Thread 7954: XXXX 1734601942457, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942458 XXXX 1734601942458, Thread 7954: XXXX 1734601942458, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942559 XXXX 1734601942559, Thread 7954: XXXX 1734601942559, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942561 XXXX 1734601942561, Thread 7954: XXXX 1734601942561, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942660 XXXX 1734601942660, Thread 7954: XXXX 1734601942660, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942661 XXXX 1734601942661, Thread 7954: XXXX 1734601942661, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942760 XXXX 1734601942760, Thread 7954: XXXX 1734601942760, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942761 XXXX 1734601942761, Thread 7954: XXXX 1734601942761, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942861 XXXX 1734601942861, Thread 7954: XXXX 1734601942861, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942863 XXXX 1734601942863, Thread 7954: XXXX 1734601942863, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601942962 XXXX 1734601942962, Thread 7954: XXXX 1734601942962, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601942963 XXXX 1734601942963, Thread 7954: XXXX 1734601942963, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943062 XXXX 1734601943062, Thread 7954: XXXX 1734601943062, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943063 XXXX 1734601943063, Thread 7954: XXXX 1734601943063, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943163 XXXX 1734601943163, Thread 7954: XXXX 1734601943163, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943164 XXXX 1734601943164, Thread 7954: XXXX 1734601943164, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943265 XXXX 1734601943265, Thread 7954: XXXX 1734601943265, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943267 XXXX 1734601943267, Thread 7954: XXXX 1734601943267, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943367 XXXX 1734601943367, Thread 7954: XXXX 1734601943367, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943368 XXXX 1734601943368, Thread 7954: XXXX 1734601943368, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943469 XXXX 1734601943469, Thread 7954: XXXX 1734601943469, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943470 XXXX 1734601943470, Thread 7954: XXXX 1734601943470, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943569 XXXX 1734601943569, Thread 7954: XXXX 1734601943569, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943570 XXXX 1734601943570, Thread 7954: XXXX 1734601943570, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943670 XXXX 1734601943670, Thread 7954: XXXX 1734601943670, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943672 XXXX 1734601943672, Thread 7954: XXXX 1734601943672, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943770 XXXX 1734601943770, Thread 7954: XXXX 1734601943770, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943772 XXXX 1734601943772, Thread 7954: XXXX 1734601943772, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943870 XXXX 1734601943870, Thread 7954: XXXX 1734601943870, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943873 XXXX 1734601943873, Thread 7954: XXXX 1734601943873, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601943971 XXXX 1734601943971, Thread 7954: XXXX 1734601943971, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601943972 XXXX 1734601943972, Thread 7954: XXXX 1734601943972, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944071 XXXX 1734601944071, Thread 7954: XXXX 1734601944071, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944072 XXXX 1734601944072, Thread 7954: XXXX 1734601944072, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944171 XXXX 1734601944171, Thread 7954: XXXX 1734601944171, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944172 XXXX 1734601944172, Thread 7954: XXXX 1734601944172, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944271 XXXX 1734601944271, Thread 7954: XXXX 1734601944271, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944273 XXXX 1734601944273, Thread 7954: XXXX 1734601944273, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944372 XXXX 1734601944372, Thread 7954: XXXX 1734601944372, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944373 XXXX 1734601944373, Thread 7954: XXXX 1734601944373, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944472 XXXX 1734601944472, Thread 7954: XXXX 1734601944472, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944473 XXXX 1734601944473, Thread 7954: XXXX 1734601944473, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944572 XXXX 1734601944572, Thread 7954: XXXX 1734601944572, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944573 XXXX 1734601944573, Thread 7954: XXXX 1734601944573, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944672 XXXX 1734601944672, Thread 7954: XXXX 1734601944672, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944673 XXXX 1734601944673, Thread 7954: XXXX 1734601944673, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944773 XXXX 1734601944773, Thread 7954: XXXX 1734601944773, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944775 XXXX 1734601944775, Thread 7954: XXXX 1734601944775, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944873 XXXX 1734601944873, Thread 7954: XXXX 1734601944873, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944874 XXXX 1734601944874, Thread 7954: XXXX 1734601944874, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601944974 XXXX 1734601944974, Thread 7954: XXXX 1734601944974, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601944975 XXXX 1734601944975, Thread 7954: XXXX 1734601944975, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945076 XXXX 1734601945076, Thread 7954: XXXX 1734601945076, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945078 XXXX 1734601945078, Thread 7954: XXXX 1734601945078, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945176 XXXX 1734601945176, Thread 7954: XXXX 1734601945176, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945178 XXXX 1734601945178, Thread 7954: XXXX 1734601945178, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945277 XXXX 1734601945277, Thread 7954: XXXX 1734601945277, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945278 XXXX 1734601945278, Thread 7954: XXXX 1734601945278, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945378 XXXX 1734601945378, Thread 7954: XXXX 1734601945378, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945378 XXXX 1734601945378, Thread 7954: XXXX 1734601945378, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945479 XXXX 1734601945479, Thread 7954: XXXX 1734601945479, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945480 XXXX 1734601945480, Thread 7954: XXXX 1734601945480, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945580 XXXX 1734601945580, Thread 7954: XXXX 1734601945580, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945582 XXXX 1734601945582, Thread 7954: XXXX 1734601945582, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945681 XXXX 1734601945681, Thread 7954: XXXX 1734601945681, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945682 XXXX 1734601945682, Thread 7954: XXXX 1734601945682, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945782 XXXX 1734601945782, Thread 7954: XXXX 1734601945782, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945783 XXXX 1734601945783, Thread 7954: XXXX 1734601945783, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945884 XXXX 1734601945884, Thread 7954: XXXX 1734601945884, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945886 XXXX 1734601945886, Thread 7954: XXXX 1734601945886, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601945984 XXXX 1734601945984, Thread 7954: XXXX 1734601945984, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601945985 XXXX 1734601945985, Thread 7954: XXXX 1734601945985, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946085 XXXX 1734601946085, Thread 7954: XXXX 1734601946085, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946087 XXXX 1734601946087, Thread 7954: XXXX 1734601946087, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946186 XXXX 1734601946186, Thread 7954: XXXX 1734601946186, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946188 XXXX 1734601946188, Thread 7954: XXXX 1734601946188, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946287 XXXX 1734601946287, Thread 7954: XXXX 1734601946287, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946289 XXXX 1734601946289, Thread 7954: XXXX 1734601946289, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946387 XXXX 1734601946387, Thread 7954: XXXX 1734601946387, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946388 XXXX 1734601946388, Thread 7954: XXXX 1734601946388, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946488 XXXX 1734601946488, Thread 7954: XXXX 1734601946488, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946489 XXXX 1734601946489, Thread 7954: XXXX 1734601946489, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946588 XXXX 1734601946588, Thread 7954: XXXX 1734601946588, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946589 XXXX 1734601946589, Thread 7954: XXXX 1734601946589, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946688 XXXX 1734601946688, Thread 7954: XXXX 1734601946688, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946689 XXXX 1734601946689, Thread 7954: XXXX 1734601946689, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946788 XXXX 1734601946788, Thread 7954: XXXX 1734601946788, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946789 XXXX 1734601946789, Thread 7954: XXXX 1734601946789, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946890 XXXX 1734601946890, Thread 7954: XXXX 1734601946890, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946891 XXXX 1734601946891, Thread 7954: XXXX 1734601946891, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601946992 XXXX 1734601946992, Thread 7954: XXXX 1734601946992, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601946993 XXXX 1734601946993, Thread 7954: XXXX 1734601946993, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947092 XXXX 1734601947092, Thread 7954: XXXX 1734601947092, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947093 XXXX 1734601947093, Thread 7954: XXXX 1734601947093, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947192 XXXX 1734601947192, Thread 7954: XXXX 1734601947192, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947193 XXXX 1734601947193, Thread 7954: XXXX 1734601947193, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947292 XXXX 1734601947292, Thread 7954: XXXX 1734601947292, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947293 XXXX 1734601947293, Thread 7954: XXXX 1734601947293, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947393 XXXX 1734601947393, Thread 7954: XXXX 1734601947393, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947394 XXXX 1734601947394, Thread 7954: XXXX 1734601947394, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947493 XXXX 1734601947493, Thread 7954: XXXX 1734601947493, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947494 XXXX 1734601947494, Thread 7954: XXXX 1734601947494, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947593 XXXX 1734601947593, Thread 7954: XXXX 1734601947593, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947594 XXXX 1734601947594, Thread 7954: XXXX 1734601947594, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947693 XXXX 1734601947693, Thread 7954: XXXX 1734601947693, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947694 XXXX 1734601947694, Thread 7954: XXXX 1734601947694, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947793 XXXX 1734601947793, Thread 7954: XXXX 1734601947793, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947794 XXXX 1734601947794, Thread 7954: XXXX 1734601947794, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947893 XXXX 1734601947893, Thread 7954: XXXX 1734601947893, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947895 XXXX 1734601947895, Thread 7954: XXXX 1734601947895, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601947993 XXXX 1734601947993, Thread 7954: XXXX 1734601947993, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601947994 XXXX 1734601947994, Thread 7954: XXXX 1734601947994, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948093 XXXX 1734601948093, Thread 7954: XXXX 1734601948093, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948095 XXXX 1734601948095, Thread 7954: XXXX 1734601948095, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948195 XXXX 1734601948195, Thread 7954: XXXX 1734601948195, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948196 XXXX 1734601948196, Thread 7954: XXXX 1734601948196, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948295 XXXX 1734601948295, Thread 7954: XXXX 1734601948295, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948296 XXXX 1734601948296, Thread 7954: XXXX 1734601948296, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948397 XXXX 1734601948397, Thread 7954: XXXX 1734601948397, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948399 XXXX 1734601948399, Thread 7954: XXXX 1734601948399, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948497 XXXX 1734601948497, Thread 7954: XXXX 1734601948497, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948497 XXXX 1734601948497, Thread 7954: XXXX 1734601948497, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948598 XXXX 1734601948598, Thread 7954: XXXX 1734601948598, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948599 XXXX 1734601948599, Thread 7954: XXXX 1734601948599, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948699 XXXX 1734601948699, Thread 7954: XXXX 1734601948699, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948700 XXXX 1734601948700, Thread 7954: XXXX 1734601948700, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948799 XXXX 1734601948799, Thread 7954: XXXX 1734601948799, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948800 XXXX 1734601948800, Thread 7954: XXXX 1734601948800, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601948901 XXXX 1734601948901, Thread 7954: XXXX 1734601948901, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601948902 XXXX 1734601948902, Thread 7954: XXXX 1734601948902, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949001 XXXX 1734601949001, Thread 7954: XXXX 1734601949001, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949002 XXXX 1734601949002, Thread 7954: XXXX 1734601949002, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949102 XXXX 1734601949102, Thread 7954: XXXX 1734601949102, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949103 XXXX 1734601949103, Thread 7954: XXXX 1734601949103, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949203 XXXX 1734601949203, Thread 7954: XXXX 1734601949203, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949205 XXXX 1734601949205, Thread 7954: XXXX 1734601949205, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949303 XXXX 1734601949303, Thread 7954: XXXX 1734601949303, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949304 XXXX 1734601949304, Thread 7954: XXXX 1734601949304, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949404 XXXX 1734601949404, Thread 7954: XXXX 1734601949404, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949404 XXXX 1734601949404, Thread 7954: XXXX 1734601949404, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949505 XXXX 1734601949505, Thread 7954: XXXX 1734601949505, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949506 XXXX 1734601949506, Thread 7954: XXXX 1734601949506, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949606 XXXX 1734601949606, Thread 7954: XXXX 1734601949606, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949608 XXXX 1734601949608, Thread 7954: XXXX 1734601949608, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949708 XXXX 1734601949708, Thread 7954: XXXX 1734601949708, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949709 XXXX 1734601949709, Thread 7954: XXXX 1734601949709, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949808 XXXX 1734601949808, Thread 7954: XXXX 1734601949808, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949809 XXXX 1734601949809, Thread 7954: XXXX 1734601949809, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601949908 XXXX 1734601949908, Thread 7954: XXXX 1734601949908, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601949910 XXXX 1734601949910, Thread 7954: XXXX 1734601949910, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950008 XXXX 1734601950008, Thread 7954: XXXX 1734601950008, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950009 XXXX 1734601950009, Thread 7954: XXXX 1734601950009, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950110 XXXX 1734601950110, Thread 7954: XXXX 1734601950110, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950111 XXXX 1734601950111, Thread 7954: XXXX 1734601950111, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950211 XXXX 1734601950211, Thread 7954: XXXX 1734601950211, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950212 XXXX 1734601950212, Thread 7954: XXXX 1734601950212, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950312 XXXX 1734601950312, Thread 7954: XXXX 1734601950312, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950314 XXXX 1734601950314, Thread 7954: XXXX 1734601950314, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950412 XXXX 1734601950412, Thread 7954: XXXX 1734601950412, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950413 XXXX 1734601950413, Thread 7954: XXXX 1734601950413, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950512 XXXX 1734601950512, Thread 7954: XXXX 1734601950512, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950513 XXXX 1734601950513, Thread 7954: XXXX 1734601950513, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950613 XXXX 1734601950613, Thread 7954: XXXX 1734601950613, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950614 XXXX 1734601950614, Thread 7954: XXXX 1734601950614, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950714 XXXX 1734601950714, Thread 7954: XXXX 1734601950714, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950715 XXXX 1734601950715, Thread 7954: XXXX 1734601950715, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950815 XXXX 1734601950815, Thread 7954: XXXX 1734601950815, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950816 XXXX 1734601950816, Thread 7954: XXXX 1734601950816, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601950916 XXXX 1734601950916, Thread 7954: XXXX 1734601950916, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601950917 XXXX 1734601950917, Thread 7954: XXXX 1734601950917, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951016 XXXX 1734601951016, Thread 7954: XXXX 1734601951016, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951017 XXXX 1734601951017, Thread 7954: XXXX 1734601951017, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951117 XXXX 1734601951117, Thread 7954: XXXX 1734601951117, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951119 XXXX 1734601951119, Thread 7954: XXXX 1734601951119, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951217 XXXX 1734601951217, Thread 7954: XXXX 1734601951217, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951218 XXXX 1734601951218, Thread 7954: XXXX 1734601951218, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951318 XXXX 1734601951318, Thread 7954: XXXX 1734601951318, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951320 XXXX 1734601951320, Thread 7954: XXXX 1734601951320, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951419 XXXX 1734601951419, Thread 7954: XXXX 1734601951419, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951421 XXXX 1734601951421, Thread 7954: XXXX 1734601951421, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951521 XXXX 1734601951521, Thread 7954: XXXX 1734601951521, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951522 XXXX 1734601951522, Thread 7954: XXXX 1734601951522, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951621 XXXX 1734601951621, Thread 7954: XXXX 1734601951621, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951623 XXXX 1734601951623, Thread 7954: XXXX 1734601951623, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951721 XXXX 1734601951721, Thread 7954: XXXX 1734601951721, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951723 XXXX 1734601951723, Thread 7954: XXXX 1734601951723, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951822 XXXX 1734601951822, Thread 7954: XXXX 1734601951822, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951823 XXXX 1734601951823, Thread 7954: XXXX 1734601951823, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601951923 XXXX 1734601951923, Thread 7954: XXXX 1734601951923, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601951924 XXXX 1734601951924, Thread 7954: XXXX 1734601951924, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952024 XXXX 1734601952024, Thread 7954: XXXX 1734601952024, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952026 XXXX 1734601952026, Thread 7954: XXXX 1734601952026, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952124 XXXX 1734601952124, Thread 7954: XXXX 1734601952124, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952127 XXXX 1734601952127, Thread 7954: XXXX 1734601952127, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952224 XXXX 1734601952224, Thread 7954: XXXX 1734601952224, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952225 XXXX 1734601952225, Thread 7954: XXXX 1734601952225, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952324 XXXX 1734601952324, Thread 7954: XXXX 1734601952324, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952325 XXXX 1734601952325, Thread 7954: XXXX 1734601952325, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952425 XXXX 1734601952425, Thread 7954: XXXX 1734601952425, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952426 XXXX 1734601952426, Thread 7954: XXXX 1734601952426, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952526 XXXX 1734601952526, Thread 7954: XXXX 1734601952526, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952527 XXXX 1734601952527, Thread 7954: XXXX 1734601952527, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952626 XXXX 1734601952626, Thread 7954: XXXX 1734601952626, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952628 XXXX 1734601952628, Thread 7954: XXXX 1734601952628, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952727 XXXX 1734601952727, Thread 7954: XXXX 1734601952727, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952728 XXXX 1734601952728, Thread 7954: XXXX 1734601952728, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952828 XXXX 1734601952828, Thread 7954: XXXX 1734601952828, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952828 XXXX 1734601952828, Thread 7954: XXXX 1734601952828, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601952929 XXXX 1734601952929, Thread 7954: XXXX 1734601952929, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601952930 XXXX 1734601952930, Thread 7954: XXXX 1734601952930, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953029 XXXX 1734601953029, Thread 7954: XXXX 1734601953029, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953031 XXXX 1734601953031, Thread 7954: XXXX 1734601953031, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953130 XXXX 1734601953130, Thread 7954: XXXX 1734601953130, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953131 XXXX 1734601953131, Thread 7954: XXXX 1734601953131, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953231 XXXX 1734601953231, Thread 7954: XXXX 1734601953231, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953232 XXXX 1734601953232, Thread 7954: XXXX 1734601953232, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953333 XXXX 1734601953333, Thread 7954: XXXX 1734601953333, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953334 XXXX 1734601953334, Thread 7954: XXXX 1734601953334, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953434 XXXX 1734601953434, Thread 7954: XXXX 1734601953434, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953437 XXXX 1734601953437, Thread 7954: XXXX 1734601953437, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953536 XXXX 1734601953536, Thread 7954: XXXX 1734601953536, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953537 XXXX 1734601953537, Thread 7954: XXXX 1734601953537, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953636 XXXX 1734601953636, Thread 7954: XXXX 1734601953636, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953638 XXXX 1734601953638, Thread 7954: XXXX 1734601953638, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953737 XXXX 1734601953737, Thread 7954: XXXX 1734601953737, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953738 XXXX 1734601953738, Thread 7954: XXXX 1734601953738, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953837 XXXX 1734601953837, Thread 7954: XXXX 1734601953837, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953838 XXXX 1734601953838, Thread 7954: XXXX 1734601953838, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601953937 XXXX 1734601953937, Thread 7954: XXXX 1734601953937, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601953938 XXXX 1734601953938, Thread 7954: XXXX 1734601953938, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954038 XXXX 1734601954038, Thread 7954: XXXX 1734601954038, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954039 XXXX 1734601954039, Thread 7954: XXXX 1734601954039, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954139 XXXX 1734601954139, Thread 7954: XXXX 1734601954139, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954140 XXXX 1734601954140, Thread 7954: XXXX 1734601954140, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954240 XXXX 1734601954240, Thread 7954: XXXX 1734601954240, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954241 XXXX 1734601954241, Thread 7954: XXXX 1734601954241, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954341 XXXX 1734601954341, Thread 7954: XXXX 1734601954341, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954342 XXXX 1734601954342, Thread 7954: XXXX 1734601954342, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954441 XXXX 1734601954441, Thread 7954: XXXX 1734601954441, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954441 XXXX 1734601954441, Thread 7954: XXXX 1734601954441, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954542 XXXX 1734601954542, Thread 7954: XXXX 1734601954542, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954543 XXXX 1734601954543, Thread 7954: XXXX 1734601954543, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954643 XXXX 1734601954643, Thread 7954: XXXX 1734601954643, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954645 XXXX 1734601954645, Thread 7954: XXXX 1734601954645, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954743 XXXX 1734601954743, Thread 7954: XXXX 1734601954743, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954744 XXXX 1734601954744, Thread 7954: XXXX 1734601954744, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954844 XXXX 1734601954844, Thread 7954: XXXX 1734601954844, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954845 XXXX 1734601954845, Thread 7954: XXXX 1734601954845, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601954944 XXXX 1734601954944, Thread 7954: XXXX 1734601954944, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601954945 XXXX 1734601954945, Thread 7954: XXXX 1734601954945, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955045 XXXX 1734601955045, Thread 7954: XXXX 1734601955045, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955045 XXXX 1734601955045, Thread 7954: XXXX 1734601955045, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955146 XXXX 1734601955146, Thread 7954: XXXX 1734601955146, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955147 XXXX 1734601955147, Thread 7954: XXXX 1734601955147, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955247 XXXX 1734601955247, Thread 7954: XXXX 1734601955247, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955248 XXXX 1734601955248, Thread 7954: XXXX 1734601955248, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955348 XXXX 1734601955348, Thread 7954: XXXX 1734601955348, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955349 XXXX 1734601955349, Thread 7954: XXXX 1734601955349, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955449 XXXX 1734601955449, Thread 7954: XXXX 1734601955449, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955450 XXXX 1734601955450, Thread 7954: XXXX 1734601955450, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955550 XXXX 1734601955550, Thread 7954: XXXX 1734601955550, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955551 XXXX 1734601955551, Thread 7954: XXXX 1734601955551, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955651 XXXX 1734601955651, Thread 7954: XXXX 1734601955651, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955652 XXXX 1734601955652, Thread 7954: XXXX 1734601955652, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955752 XXXX 1734601955752, Thread 7954: XXXX 1734601955752, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955753 XXXX 1734601955753, Thread 7954: XXXX 1734601955753, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955852 XXXX 1734601955852, Thread 7954: XXXX 1734601955852, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955854 XXXX 1734601955854, Thread 7954: XXXX 1734601955854, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601955953 XXXX 1734601955953, Thread 7954: XXXX 1734601955953, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601955954 XXXX 1734601955954, Thread 7954: XXXX 1734601955954, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601956053 XXXX 1734601956053, Thread 7954: XXXX 1734601956053, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601956054 XXXX 1734601956054, Thread 7954: XXXX 1734601956054, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601956154 XXXX 1734601956154, Thread 7954: XXXX 1734601956154, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601956155 XXXX 1734601956155, Thread 7954: XXXX 1734601956155, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601956255 XXXX 1734601956255, Thread 7954: XXXX 1734601956255, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601956257 XXXX 1734601956257, Thread 7954: XXXX 1734601956257, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601956355 XXXX 1734601956355, Thread 7954: XXXX 1734601956355, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601956357 XXXX 1734601956357, Thread 7954: XXXX 1734601956357, Exiting Thread 7954: Commands::runScriptBasic  
+7954 1734601956456 XXXX 1734601956456, Thread 7954: XXXX 1734601956456, Entering Thread 7954: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
+7954 1734601956458 XXXX 1734601956458, Thread 7954: com.Send returned false 
+7954 1734601956458 XXXX 1734601956458, Thread 7954: transfer: exception after writeHeaderAndGetResult null 
+7954 1734601956459 XXXX 1734601956459, Thread 7954: XXXX 1734601956459, Entering Thread 7954: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
+7954 1734601956460 XXXX 1734601956460, Thread 7954: Send Abort Script Engine Command 
+7954 1734601956460 XXXX 1734601956460, Thread 7954: XXXX 1734601956460, Entering Thread 7954: ToolCommUsb::killScriptEngine  
+7954 1734601956461 XXXX 1734601956461, Thread 7954: com.Send returned false 
+7954 1734601956461 XXXX 1734601956461, Thread 7954: Failed sending Abort Script Engine Command. Set nuclear option = true 
+7954 1734601956461 XXXX 1734601956461, Thread 7954: About to nuke 
+7954 1734601956461 XXXX 1734601956461, Thread 7954: XXXX 1734601956461, Entering Thread 7954: ToolCommUsb::nuclearOption  
+7954 1734601956462 XXXX 1734601956462, Thread 7954: com.Send returned false 

@@ -404,7 +404,7 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_analog_in_data_tag:
             {
                 // Initialize the analog input data processing  
-            
+
                 uint32_t queueSize = AInSampleList_Size(); //takes approx 3us                
                 size_t maxDataIndex = (sizeof (message.analog_in_data) / sizeof (message.analog_in_data[0])) - 1;
                 AInSample data = {0};
@@ -483,8 +483,32 @@ size_t Nanopb_Encode(tBoardData* state,
                 //TODO:  message.analog_out_data[8];
                 break;
             case DaqifiOutMessage_device_status_tag:
-                //message.has_device_status = false;
-                // message.device_status;
+            {
+                //01 : USB connected
+                //02 : wifi connected
+                //04 : TCP Client Connected
+                volatile uint32_t flag = 0;
+                if (UsbCdc_GetSettings()->isCdcHostConnected == 0) {//usb com not connected 
+                    flag &= ~0x00000001;
+                } else { //usb com connected
+                    flag |= 0x00000001;
+                }
+                wifi_tcp_server_context_t *wifiTcpCntxt = wifi_manager_GetTcpServerContext();
+                if (wifiTcpCntxt != NULL) {
+                    if (wifiTcpCntxt->serverSocket == -1) {//server socket is -1 WiFi is not connected
+                        flag &= ~0x00000002;
+                    } else {//server socket is non negative if WiFi is not connected
+                        flag |= 0x00000002;
+                    }
+                    if (wifiTcpCntxt->client.clientSocket == -1) { //no tcp client is connected
+                        flag &= ~0x00000004;
+                    } else { //tcp client connected
+                        flag |= 0x00000004;
+                    }
+                }
+                message.has_device_status = true;
+                message.device_status = flag;
+            }
                 break;
             case DaqifiOutMessage_pwr_status_tag:
                 message.has_pwr_status = true;

@@ -73,8 +73,10 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
                 if (gRunTimeUsbSttings.state == USB_CDC_STATE_PROCESS) {
                     gRunTimeUsbSttings.state = USB_CDC_STATE_WAIT;
                 }
+                gRunTimeUsbSttings.isCdcHostConnected=0;
             } else {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
+                gRunTimeUsbSttings.isCdcHostConnected=1;
             }
 
             USB_DEVICE_ControlStatus(pUsbCdcDataObject->deviceHandle, USB_DEVICE_CONTROL_STATUS_OK);

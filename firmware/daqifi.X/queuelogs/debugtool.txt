@@ -1,1066 +1,322 @@
-115899 1729716191879 XXXX 1729716191879, Thread 115899: XXXX 1729716191879, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716191880 XXXX 1729716191880, Thread 115899: XXXX 1729716191880, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716191979 XXXX 1729716191979, Thread 115899: XXXX 1729716191979, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716191980 XXXX 1729716191980, Thread 115899: XXXX 1729716191980, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192080 XXXX 1729716192080, Thread 115899: XXXX 1729716192080, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192081 XXXX 1729716192081, Thread 115899: XXXX 1729716192081, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192180 XXXX 1729716192180, Thread 115899: XXXX 1729716192180, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192181 XXXX 1729716192181, Thread 115899: XXXX 1729716192181, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192281 XXXX 1729716192281, Thread 115899: XXXX 1729716192281, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192281 XXXX 1729716192281, Thread 115899: XXXX 1729716192281, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192382 XXXX 1729716192382, Thread 115899: XXXX 1729716192382, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192383 XXXX 1729716192383, Thread 115899: XXXX 1729716192383, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192482 XXXX 1729716192482, Thread 115899: XXXX 1729716192482, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192484 XXXX 1729716192484, Thread 115899: XXXX 1729716192484, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192582 XXXX 1729716192582, Thread 115899: XXXX 1729716192582, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192583 XXXX 1729716192583, Thread 115899: XXXX 1729716192583, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192683 XXXX 1729716192683, Thread 115899: XXXX 1729716192683, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192683 XXXX 1729716192683, Thread 115899: XXXX 1729716192683, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192784 XXXX 1729716192784, Thread 115899: XXXX 1729716192784, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192784 XXXX 1729716192784, Thread 115899: XXXX 1729716192784, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192885 XXXX 1729716192885, Thread 115899: XXXX 1729716192885, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192885 XXXX 1729716192885, Thread 115899: XXXX 1729716192885, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716192986 XXXX 1729716192986, Thread 115899: XXXX 1729716192986, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716192988 XXXX 1729716192988, Thread 115899: XXXX 1729716192988, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193086 XXXX 1729716193086, Thread 115899: XXXX 1729716193086, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193086 XXXX 1729716193086, Thread 115899: XXXX 1729716193086, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193188 XXXX 1729716193188, Thread 115899: XXXX 1729716193188, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193189 XXXX 1729716193189, Thread 115899: XXXX 1729716193189, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193288 XXXX 1729716193288, Thread 115899: XXXX 1729716193288, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193289 XXXX 1729716193289, Thread 115899: XXXX 1729716193289, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193389 XXXX 1729716193389, Thread 115899: XXXX 1729716193389, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193390 XXXX 1729716193390, Thread 115899: XXXX 1729716193390, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193489 XXXX 1729716193489, Thread 115899: XXXX 1729716193489, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193490 XXXX 1729716193490, Thread 115899: XXXX 1729716193490, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193589 XXXX 1729716193589, Thread 115899: XXXX 1729716193589, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193590 XXXX 1729716193590, Thread 115899: XXXX 1729716193590, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193690 XXXX 1729716193690, Thread 115899: XXXX 1729716193690, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193691 XXXX 1729716193691, Thread 115899: XXXX 1729716193691, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193791 XXXX 1729716193791, Thread 115899: XXXX 1729716193791, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193791 XXXX 1729716193791, Thread 115899: XXXX 1729716193791, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193891 XXXX 1729716193891, Thread 115899: XXXX 1729716193891, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193893 XXXX 1729716193893, Thread 115899: XXXX 1729716193893, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716193991 XXXX 1729716193991, Thread 115899: XXXX 1729716193991, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716193992 XXXX 1729716193992, Thread 115899: XXXX 1729716193992, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194091 XXXX 1729716194091, Thread 115899: XXXX 1729716194091, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194091 XXXX 1729716194091, Thread 115899: XXXX 1729716194091, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194192 XXXX 1729716194192, Thread 115899: XXXX 1729716194192, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194193 XXXX 1729716194193, Thread 115899: XXXX 1729716194193, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194293 XXXX 1729716194293, Thread 115899: XXXX 1729716194293, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194294 XXXX 1729716194294, Thread 115899: XXXX 1729716194294, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194393 XXXX 1729716194393, Thread 115899: XXXX 1729716194393, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194394 XXXX 1729716194394, Thread 115899: XXXX 1729716194394, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194493 XXXX 1729716194493, Thread 115899: XXXX 1729716194493, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194494 XXXX 1729716194494, Thread 115899: XXXX 1729716194494, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194593 XXXX 1729716194593, Thread 115899: XXXX 1729716194593, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194594 XXXX 1729716194594, Thread 115899: XXXX 1729716194594, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194694 XXXX 1729716194694, Thread 115899: XXXX 1729716194694, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194695 XXXX 1729716194695, Thread 115899: XXXX 1729716194695, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194796 XXXX 1729716194796, Thread 115899: XXXX 1729716194796, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194796 XXXX 1729716194796, Thread 115899: XXXX 1729716194796, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194898 XXXX 1729716194898, Thread 115899: XXXX 1729716194898, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194899 XXXX 1729716194899, Thread 115899: XXXX 1729716194899, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716194998 XXXX 1729716194998, Thread 115899: XXXX 1729716194998, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716194998 XXXX 1729716194998, Thread 115899: XXXX 1729716194998, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195099 XXXX 1729716195099, Thread 115899: XXXX 1729716195099, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195099 XXXX 1729716195099, Thread 115899: XXXX 1729716195099, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195199 XXXX 1729716195199, Thread 115899: XXXX 1729716195199, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195200 XXXX 1729716195200, Thread 115899: XXXX 1729716195200, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195301 XXXX 1729716195301, Thread 115899: XXXX 1729716195301, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195301 XXXX 1729716195301, Thread 115899: XXXX 1729716195301, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195401 XXXX 1729716195401, Thread 115899: XXXX 1729716195401, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195402 XXXX 1729716195402, Thread 115899: XXXX 1729716195402, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195502 XXXX 1729716195502, Thread 115899: XXXX 1729716195502, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195502 XXXX 1729716195502, Thread 115899: XXXX 1729716195502, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195603 XXXX 1729716195603, Thread 115899: XXXX 1729716195603, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195604 XXXX 1729716195604, Thread 115899: XXXX 1729716195604, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195703 XXXX 1729716195703, Thread 115899: XXXX 1729716195703, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195704 XXXX 1729716195704, Thread 115899: XXXX 1729716195704, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195805 XXXX 1729716195805, Thread 115899: XXXX 1729716195805, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195806 XXXX 1729716195806, Thread 115899: XXXX 1729716195806, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716195905 XXXX 1729716195905, Thread 115899: XXXX 1729716195905, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716195906 XXXX 1729716195906, Thread 115899: XXXX 1729716195906, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196006 XXXX 1729716196006, Thread 115899: XXXX 1729716196006, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196007 XXXX 1729716196007, Thread 115899: XXXX 1729716196007, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196106 XXXX 1729716196106, Thread 115899: XXXX 1729716196106, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196107 XXXX 1729716196107, Thread 115899: XXXX 1729716196107, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196207 XXXX 1729716196207, Thread 115899: XXXX 1729716196207, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196207 XXXX 1729716196207, Thread 115899: XXXX 1729716196207, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196307 XXXX 1729716196307, Thread 115899: XXXX 1729716196307, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196309 XXXX 1729716196309, Thread 115899: XXXX 1729716196309, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196407 XXXX 1729716196407, Thread 115899: XXXX 1729716196407, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196407 XXXX 1729716196407, Thread 115899: XXXX 1729716196407, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196507 XXXX 1729716196507, Thread 115899: XXXX 1729716196507, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196507 XXXX 1729716196507, Thread 115899: XXXX 1729716196507, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196607 XXXX 1729716196607, Thread 115899: XXXX 1729716196607, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196607 XXXX 1729716196607, Thread 115899: XXXX 1729716196607, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196707 XXXX 1729716196707, Thread 115899: XXXX 1729716196707, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196709 XXXX 1729716196709, Thread 115899: XXXX 1729716196709, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196807 XXXX 1729716196807, Thread 115899: XXXX 1729716196807, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196809 XXXX 1729716196809, Thread 115899: XXXX 1729716196809, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716196907 XXXX 1729716196907, Thread 115899: XXXX 1729716196907, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716196908 XXXX 1729716196908, Thread 115899: XXXX 1729716196908, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197007 XXXX 1729716197007, Thread 115899: XXXX 1729716197007, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197009 XXXX 1729716197009, Thread 115899: XXXX 1729716197009, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197107 XXXX 1729716197107, Thread 115899: XXXX 1729716197107, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197109 XXXX 1729716197109, Thread 115899: XXXX 1729716197109, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197207 XXXX 1729716197207, Thread 115899: XXXX 1729716197207, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197208 XXXX 1729716197208, Thread 115899: XXXX 1729716197208, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197307 XXXX 1729716197307, Thread 115899: XXXX 1729716197307, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197309 XXXX 1729716197309, Thread 115899: XXXX 1729716197309, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197408 XXXX 1729716197408, Thread 115899: XXXX 1729716197408, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197409 XXXX 1729716197409, Thread 115899: XXXX 1729716197409, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197509 XXXX 1729716197509, Thread 115899: XXXX 1729716197509, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197509 XXXX 1729716197509, Thread 115899: XXXX 1729716197509, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197609 XXXX 1729716197609, Thread 115899: XXXX 1729716197609, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197611 XXXX 1729716197611, Thread 115899: XXXX 1729716197611, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197709 XXXX 1729716197709, Thread 115899: XXXX 1729716197709, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197710 XXXX 1729716197710, Thread 115899: XXXX 1729716197710, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197810 XXXX 1729716197810, Thread 115899: XXXX 1729716197810, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197811 XXXX 1729716197811, Thread 115899: XXXX 1729716197811, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716197911 XXXX 1729716197911, Thread 115899: XXXX 1729716197911, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716197912 XXXX 1729716197912, Thread 115899: XXXX 1729716197912, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198011 XXXX 1729716198011, Thread 115899: XXXX 1729716198011, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198012 XXXX 1729716198012, Thread 115899: XXXX 1729716198012, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198112 XXXX 1729716198112, Thread 115899: XXXX 1729716198112, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198113 XXXX 1729716198113, Thread 115899: XXXX 1729716198113, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198212 XXXX 1729716198212, Thread 115899: XXXX 1729716198212, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198213 XXXX 1729716198213, Thread 115899: XXXX 1729716198213, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198312 XXXX 1729716198312, Thread 115899: XXXX 1729716198312, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198313 XXXX 1729716198313, Thread 115899: XXXX 1729716198313, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198413 XXXX 1729716198413, Thread 115899: XXXX 1729716198413, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198414 XXXX 1729716198414, Thread 115899: XXXX 1729716198414, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198514 XXXX 1729716198514, Thread 115899: XXXX 1729716198514, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198515 XXXX 1729716198515, Thread 115899: XXXX 1729716198515, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198614 XXXX 1729716198614, Thread 115899: XXXX 1729716198614, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198615 XXXX 1729716198615, Thread 115899: XXXX 1729716198615, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198715 XXXX 1729716198715, Thread 115899: XXXX 1729716198715, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198716 XXXX 1729716198716, Thread 115899: XXXX 1729716198716, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198815 XXXX 1729716198815, Thread 115899: XXXX 1729716198815, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198816 XXXX 1729716198816, Thread 115899: XXXX 1729716198816, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716198915 XXXX 1729716198915, Thread 115899: XXXX 1729716198915, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716198916 XXXX 1729716198916, Thread 115899: XXXX 1729716198916, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199016 XXXX 1729716199016, Thread 115899: XXXX 1729716199016, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199017 XXXX 1729716199017, Thread 115899: XXXX 1729716199017, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199116 XXXX 1729716199116, Thread 115899: XXXX 1729716199116, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199117 XXXX 1729716199117, Thread 115899: XXXX 1729716199117, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199216 XXXX 1729716199216, Thread 115899: XXXX 1729716199216, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199217 XXXX 1729716199217, Thread 115899: XXXX 1729716199217, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199317 XXXX 1729716199317, Thread 115899: XXXX 1729716199317, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199318 XXXX 1729716199318, Thread 115899: XXXX 1729716199318, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199418 XXXX 1729716199418, Thread 115899: XXXX 1729716199418, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199419 XXXX 1729716199419, Thread 115899: XXXX 1729716199419, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199519 XXXX 1729716199519, Thread 115899: XXXX 1729716199519, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199520 XXXX 1729716199520, Thread 115899: XXXX 1729716199520, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199619 XXXX 1729716199619, Thread 115899: XXXX 1729716199619, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199621 XXXX 1729716199621, Thread 115899: XXXX 1729716199621, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199719 XXXX 1729716199719, Thread 115899: XXXX 1729716199719, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199720 XXXX 1729716199720, Thread 115899: XXXX 1729716199720, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199820 XXXX 1729716199820, Thread 115899: XXXX 1729716199820, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199821 XXXX 1729716199821, Thread 115899: XXXX 1729716199821, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716199921 XXXX 1729716199921, Thread 115899: XXXX 1729716199921, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716199921 XXXX 1729716199921, Thread 115899: XXXX 1729716199921, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200022 XXXX 1729716200022, Thread 115899: XXXX 1729716200022, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200023 XXXX 1729716200023, Thread 115899: XXXX 1729716200023, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200122 XXXX 1729716200122, Thread 115899: XXXX 1729716200122, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200123 XXXX 1729716200123, Thread 115899: XXXX 1729716200123, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200222 XXXX 1729716200222, Thread 115899: XXXX 1729716200222, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200224 XXXX 1729716200224, Thread 115899: XXXX 1729716200223, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200322 XXXX 1729716200322, Thread 115899: XXXX 1729716200322, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200323 XXXX 1729716200323, Thread 115899: XXXX 1729716200323, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200423 XXXX 1729716200423, Thread 115899: XXXX 1729716200423, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200424 XXXX 1729716200424, Thread 115899: XXXX 1729716200424, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200524 XXXX 1729716200524, Thread 115899: XXXX 1729716200524, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200525 XXXX 1729716200525, Thread 115899: XXXX 1729716200525, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200624 XXXX 1729716200624, Thread 115899: XXXX 1729716200624, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200625 XXXX 1729716200625, Thread 115899: XXXX 1729716200625, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200725 XXXX 1729716200725, Thread 115899: XXXX 1729716200725, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200726 XXXX 1729716200726, Thread 115899: XXXX 1729716200726, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200826 XXXX 1729716200826, Thread 115899: XXXX 1729716200826, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200827 XXXX 1729716200827, Thread 115899: XXXX 1729716200827, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716200927 XXXX 1729716200927, Thread 115899: XXXX 1729716200927, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716200928 XXXX 1729716200928, Thread 115899: XXXX 1729716200928, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201027 XXXX 1729716201027, Thread 115899: XXXX 1729716201027, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201027 XXXX 1729716201027, Thread 115899: XXXX 1729716201027, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201128 XXXX 1729716201128, Thread 115899: XXXX 1729716201128, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201129 XXXX 1729716201129, Thread 115899: XXXX 1729716201129, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201228 XXXX 1729716201228, Thread 115899: XXXX 1729716201228, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201228 XXXX 1729716201228, Thread 115899: XXXX 1729716201228, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201329 XXXX 1729716201329, Thread 115899: XXXX 1729716201329, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201330 XXXX 1729716201330, Thread 115899: XXXX 1729716201330, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201429 XXXX 1729716201429, Thread 115899: XXXX 1729716201429, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201429 XXXX 1729716201429, Thread 115899: XXXX 1729716201429, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201531 XXXX 1729716201531, Thread 115899: XXXX 1729716201531, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201532 XXXX 1729716201532, Thread 115899: XXXX 1729716201532, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201631 XXXX 1729716201631, Thread 115899: XXXX 1729716201631, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201633 XXXX 1729716201633, Thread 115899: XXXX 1729716201633, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201731 XXXX 1729716201731, Thread 115899: XXXX 1729716201731, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201733 XXXX 1729716201733, Thread 115899: XXXX 1729716201733, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201831 XXXX 1729716201831, Thread 115899: XXXX 1729716201831, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201831 XXXX 1729716201831, Thread 115899: XXXX 1729716201831, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716201932 XXXX 1729716201932, Thread 115899: XXXX 1729716201932, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716201933 XXXX 1729716201933, Thread 115899: XXXX 1729716201933, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202032 XXXX 1729716202032, Thread 115899: XXXX 1729716202032, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202034 XXXX 1729716202034, Thread 115899: XXXX 1729716202034, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202134 XXXX 1729716202134, Thread 115899: XXXX 1729716202134, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202135 XXXX 1729716202135, Thread 115899: XXXX 1729716202135, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202234 XXXX 1729716202234, Thread 115899: XXXX 1729716202234, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202235 XXXX 1729716202235, Thread 115899: XXXX 1729716202235, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202335 XXXX 1729716202335, Thread 115899: XXXX 1729716202335, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202336 XXXX 1729716202336, Thread 115899: XXXX 1729716202336, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202435 XXXX 1729716202435, Thread 115899: XXXX 1729716202435, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202436 XXXX 1729716202436, Thread 115899: XXXX 1729716202436, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202535 XXXX 1729716202535, Thread 115899: XXXX 1729716202535, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202536 XXXX 1729716202536, Thread 115899: XXXX 1729716202536, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202636 XXXX 1729716202636, Thread 115899: XXXX 1729716202636, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202638 XXXX 1729716202638, Thread 115899: XXXX 1729716202638, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202736 XXXX 1729716202736, Thread 115899: XXXX 1729716202736, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202737 XXXX 1729716202737, Thread 115899: XXXX 1729716202737, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202838 XXXX 1729716202838, Thread 115899: XXXX 1729716202838, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202839 XXXX 1729716202839, Thread 115899: XXXX 1729716202839, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716202938 XXXX 1729716202938, Thread 115899: XXXX 1729716202938, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716202939 XXXX 1729716202939, Thread 115899: XXXX 1729716202939, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203039 XXXX 1729716203039, Thread 115899: XXXX 1729716203039, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203040 XXXX 1729716203040, Thread 115899: XXXX 1729716203040, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203139 XXXX 1729716203139, Thread 115899: XXXX 1729716203139, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203139 XXXX 1729716203139, Thread 115899: XXXX 1729716203139, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203240 XXXX 1729716203240, Thread 115899: XXXX 1729716203240, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203241 XXXX 1729716203241, Thread 115899: XXXX 1729716203241, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203341 XXXX 1729716203341, Thread 115899: XXXX 1729716203341, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203341 XXXX 1729716203341, Thread 115899: XXXX 1729716203341, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203442 XXXX 1729716203442, Thread 115899: XXXX 1729716203442, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203443 XXXX 1729716203443, Thread 115899: XXXX 1729716203443, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203542 XXXX 1729716203542, Thread 115899: XXXX 1729716203542, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203544 XXXX 1729716203544, Thread 115899: XXXX 1729716203544, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203642 XXXX 1729716203642, Thread 115899: XXXX 1729716203642, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203643 XXXX 1729716203643, Thread 115899: XXXX 1729716203643, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203742 XXXX 1729716203742, Thread 115899: XXXX 1729716203742, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203743 XXXX 1729716203743, Thread 115899: XXXX 1729716203743, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203842 XXXX 1729716203842, Thread 115899: XXXX 1729716203842, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203843 XXXX 1729716203843, Thread 115899: XXXX 1729716203843, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716203943 XXXX 1729716203943, Thread 115899: XXXX 1729716203943, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716203943 XXXX 1729716203943, Thread 115899: XXXX 1729716203943, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204044 XXXX 1729716204044, Thread 115899: XXXX 1729716204044, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204045 XXXX 1729716204045, Thread 115899: XXXX 1729716204045, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204145 XXXX 1729716204145, Thread 115899: XXXX 1729716204145, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204145 XXXX 1729716204145, Thread 115899: XXXX 1729716204145, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204246 XXXX 1729716204246, Thread 115899: XXXX 1729716204246, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204247 XXXX 1729716204247, Thread 115899: XXXX 1729716204247, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204346 XXXX 1729716204346, Thread 115899: XXXX 1729716204346, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204346 XXXX 1729716204346, Thread 115899: XXXX 1729716204346, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204448 XXXX 1729716204448, Thread 115899: XXXX 1729716204448, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204449 XXXX 1729716204449, Thread 115899: XXXX 1729716204449, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204548 XXXX 1729716204548, Thread 115899: XXXX 1729716204548, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204549 XXXX 1729716204549, Thread 115899: XXXX 1729716204549, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204649 XXXX 1729716204649, Thread 115899: XXXX 1729716204649, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204650 XXXX 1729716204650, Thread 115899: XXXX 1729716204650, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204750 XXXX 1729716204750, Thread 115899: XXXX 1729716204750, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204751 XXXX 1729716204751, Thread 115899: XXXX 1729716204751, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204850 XXXX 1729716204850, Thread 115899: XXXX 1729716204850, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204851 XXXX 1729716204851, Thread 115899: XXXX 1729716204851, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716204950 XXXX 1729716204950, Thread 115899: XXXX 1729716204950, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716204951 XXXX 1729716204951, Thread 115899: XXXX 1729716204951, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205051 XXXX 1729716205051, Thread 115899: XXXX 1729716205051, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205052 XXXX 1729716205052, Thread 115899: XXXX 1729716205052, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205151 XXXX 1729716205151, Thread 115899: XXXX 1729716205151, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205152 XXXX 1729716205152, Thread 115899: XXXX 1729716205152, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205252 XXXX 1729716205252, Thread 115899: XXXX 1729716205252, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205252 XXXX 1729716205252, Thread 115899: XXXX 1729716205252, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205352 XXXX 1729716205352, Thread 115899: XXXX 1729716205352, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205353 XXXX 1729716205353, Thread 115899: XXXX 1729716205353, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205454 XXXX 1729716205454, Thread 115899: XXXX 1729716205454, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205454 XXXX 1729716205454, Thread 115899: XXXX 1729716205454, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205555 XXXX 1729716205555, Thread 115899: XXXX 1729716205555, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205556 XXXX 1729716205556, Thread 115899: XXXX 1729716205556, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205655 XXXX 1729716205655, Thread 115899: XXXX 1729716205655, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205655 XXXX 1729716205655, Thread 115899: XXXX 1729716205655, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205756 XXXX 1729716205756, Thread 115899: XXXX 1729716205756, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205756 XXXX 1729716205756, Thread 115899: XXXX 1729716205756, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205857 XXXX 1729716205857, Thread 115899: XXXX 1729716205857, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205858 XXXX 1729716205858, Thread 115899: XXXX 1729716205858, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716205957 XXXX 1729716205957, Thread 115899: XXXX 1729716205957, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716205958 XXXX 1729716205958, Thread 115899: XXXX 1729716205958, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716206058 XXXX 1729716206058, Thread 115899: XXXX 1729716206058, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716206059 XXXX 1729716206059, Thread 115899: XXXX 1729716206059, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716206159 XXXX 1729716206159, Thread 115899: XXXX 1729716206159, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716206160 XXXX 1729716206160, Thread 115899: XXXX 1729716206160, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716206260 XXXX 1729716206260, Thread 115899: XXXX 1729716206260, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716206261 XXXX 1729716206261, Thread 115899: XXXX 1729716206261, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716206385 XXXX 1729716206385, Thread 115899: XXXX 1729716206385, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716206386 XXXX 1729716206386, Thread 115899: XXXX 1729716206386, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716212900 XXXX 1729716212900, Thread 115899: XXXX 1729716212900, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716212901 XXXX 1729716212901, Thread 115899: XXXX 1729716212901, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716213001 XXXX 1729716213001, Thread 115899: XXXX 1729716213001, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716213002 XXXX 1729716213002, Thread 115899: XXXX 1729716213002, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716213102 XXXX 1729716213102, Thread 115899: XXXX 1729716213102, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716213102 XXXX 1729716213102, Thread 115899: XXXX 1729716213102, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716215926 XXXX 1729716215926, Thread 115899: XXXX 1729716215926, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716215926 XXXX 1729716215926, Thread 115899: XXXX 1729716215926, Exiting Thread 115899: Commands::runScriptBasic  
-
-115899 1729716215962 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:HaltTarget
-115899 1729716215962 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716215962 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 null
-115899 1729716215962 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716215962 XXXX 1729716215962, Thread 115899: XXXX 1729716215962, Entering Thread 115899: Commands::runScriptBasic, script name = Halt, timeOut = -1 ms  
-115899 1729716215963 XXXX 1729716215963, Thread 115899: XXXX 1729716215963, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716215963 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:HaltTarget
-115899 1729716215963 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716215963 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716215963 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-115899 1729716215963 XXXX 1729716215963, Thread 115899: XXXX 1729716215963, Entering Thread 115899: Commands::runScriptBasic, script name = GetHaltStatus, timeOut = -1 ms  
-115899 1729716215964 XXXX 1729716215964, Thread 115899: XXXX 1729716215964, Exiting Thread 115899: Commands::runScriptBasic  
-
-115899 1729716215966 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadTargetMemory
-115899 1729716215966 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716215966 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716215966 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff308908
-115899 1729716215966 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff30890b
-115899 1729716215966 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-115899 1729716215966 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716215966 XXXX 1729716215966, Thread 115899: XXXX 1729716215966, Entering Thread 115899: Commands::runScriptWithUpload, script name = ReadRAM  
-115899 1729716215966 XXXX 1729716215966, Thread 115899: XXXX 1729716215966, Entering Thread 115899: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
-115899 1729716215970 XXXX 1729716215970, Thread 115899: XXXX 1729716215970, Exiting Thread 115899: ToolCommUsb::readTransfer,  cr.status = 0x0  
-115899 1729716215971 XXXX 1729716215971, Thread 115899: XXXX 1729716215971, Exiting Thread 115899: Commands::runScriptWithUpload  
-115899 1729716215971 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadTargetMemory
-115899 1729716215971 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716215971 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716215971 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716215975 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716215975 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716215975 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716215975 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301100
-115899 1729716215975 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301117
-115899 1729716215975 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716215975 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716215975 XXXX 1729716215975, Thread 115899: XXXX 1729716215975, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217238 XXXX 1729716217238, Thread 115899: XXXX 1729716217238, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301200
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301217
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716217238 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217238 XXXX 1729716217238, Thread 115899: XXXX 1729716217238, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217244 XXXX 1729716217244, Thread 115899: XXXX 1729716217244, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301300
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301317
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716217244 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217244 XXXX 1729716217244, Thread 115899: XXXX 1729716217244, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217249 XXXX 1729716217249, Thread 115899: XXXX 1729716217249, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301400
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301417
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716217249 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217250 XXXX 1729716217250, Thread 115899: XXXX 1729716217249, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217257 XXXX 1729716217257, Thread 115899: XXXX 1729716217257, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301500
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301517
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716217257 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217257 XXXX 1729716217257, Thread 115899: XXXX 1729716217257, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217260 XXXX 1729716217260, Thread 115899: XXXX 1729716217260, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301600
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301617
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716217260 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217260 XXXX 1729716217260, Thread 115899: XXXX 1729716217260, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217263 XXXX 1729716217263, Thread 115899: XXXX 1729716217263, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301700
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301717
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716217263 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217263 XXXX 1729716217263, Thread 115899: XXXX 1729716217263, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217266 XXXX 1729716217266, Thread 115899: XXXX 1729716217266, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301800
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301817
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 24
-115899 1729716217266 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217266 XXXX 1729716217266, Thread 115899: XXXX 1729716217266, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217269 XXXX 1729716217269, Thread 115899: XXXX 1729716217269, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302100
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff30211b
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 28
-115899 1729716217269 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217269 XXXX 1729716217269, Thread 115899: XXXX 1729716217269, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217272 XXXX 1729716217272, Thread 115899: XXXX 1729716217272, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302200
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff30221b
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 28
-115899 1729716217272 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217272 XXXX 1729716217272, Thread 115899: XXXX 1729716217272, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217276 XXXX 1729716217276, Thread 115899: XXXX 1729716217276, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302300
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff30231b
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 28
-115899 1729716217276 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217276 XXXX 1729716217276, Thread 115899: XXXX 1729716217276, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217282 XXXX 1729716217282, Thread 115899: XXXX 1729716217282, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302400
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff30241b
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 28
-115899 1729716217282 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217282 XXXX 1729716217282, Thread 115899: XXXX 1729716217282, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217285 XXXX 1729716217285, Thread 115899: XXXX 1729716217285, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff308908
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff308923
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 28
-115899 1729716217285 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217285 XXXX 1729716217285, Thread 115899: XXXX 1729716217285, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217289 XXXX 1729716217289, Thread 115899: XXXX 1729716217289, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Periph
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 bf801130
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 bf80114b
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 28
-115899 1729716217289 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217289 XXXX 1729716217289, Thread 115899: XXXX 1729716217289, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217294 XXXX 1729716217294, Thread 115899: XXXX 1729716217294, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301000
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301003
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-115899 1729716217295 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217295 XXXX 1729716217295, Thread 115899: XXXX 1729716217295, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217304 XXXX 1729716217304, Thread 115899: XXXX 1729716217304, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302000
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302003
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-115899 1729716217304 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217305 XXXX 1729716217305, Thread 115899: XXXX 1729716217305, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217311 XXXX 1729716217311, Thread 115899: XXXX 1729716217311, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff303fd0
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff303fd3
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-115899 1729716217313 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217313 XXXX 1729716217313, Thread 115899: XXXX 1729716217313, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217319 XXXX 1729716217319, Thread 115899: XXXX 1729716217319, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugWriteTargetMemory
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff303fd8
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff303fdb
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-115899 1729716217319 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217320 XXXX 1729716217320, Thread 115899: XXXX 1729716217320, Entering Thread 115899: Commands::runScriptWithDownload, script name = WriteRAM  
-115899 1729716217327 XXXX 1729716217327, Thread 115899: XXXX 1729716217327, Exiting Thread 115899: Commands::runScriptWithDownload(WriteRAM)  
-115899 1729716217327 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugWriteTargetMemory
-115899 1729716217327 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217328 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217328 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217329 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadTargetMemory
-115899 1729716217329 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217329 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217329 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301000
-115899 1729716217329 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff301003
-115899 1729716217329 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-115899 1729716217329 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217330 XXXX 1729716217329, Thread 115899: XXXX 1729716217329, Entering Thread 115899: Commands::runScriptWithUpload, script name = ReadRAM  
-115899 1729716217330 XXXX 1729716217330, Thread 115899: XXXX 1729716217330, Entering Thread 115899: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
-115899 1729716217335 XXXX 1729716217335, Thread 115899: XXXX 1729716217335, Exiting Thread 115899: ToolCommUsb::readTransfer,  cr.status = 0x0  
-115899 1729716217336 XXXX 1729716217335, Thread 115899: XXXX 1729716217335, Exiting Thread 115899: Commands::runScriptWithUpload  
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadTargetMemory
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadTargetMemory
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Emulation
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302000
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 ff302003
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-115899 1729716217336 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217336 XXXX 1729716217336, Thread 115899: XXXX 1729716217336, Entering Thread 115899: Commands::runScriptWithUpload, script name = ReadRAM  
-115899 1729716217336 XXXX 1729716217336, Thread 115899: XXXX 1729716217336, Entering Thread 115899: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
-115899 1729716217340 XXXX 1729716217340, Thread 115899: XXXX 1729716217340, Exiting Thread 115899: ToolCommUsb::readTransfer,  cr.status = 0x0  
-115899 1729716217341 XXXX 1729716217341, Thread 115899: XXXX 1729716217341, Exiting Thread 115899: Commands::runScriptWithUpload  
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadTargetMemory
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:GetPC
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 null
-115899 1729716217341 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-115899 1729716217341 XXXX 1729716217341, Thread 115899: XXXX 1729716217341, Entering Thread 115899: Commands::runScriptBasic, script name = GetPC, timeOut = -1 ms  
-115899 1729716217344 XXXX 1729716217344, Thread 115899: XXXX 1729716217344, Exiting Thread 115899: Commands::runScriptBasic  
-115899 1729716217344 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:GetPC
-115899 1729716217345 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-115899 1729716217345 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 9d070568
-115899 1729716217345 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716217355 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716217355 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716217355 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 DEPC
-114758 1729716217355 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716217355 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716217355 XXXX 1729716217355, Thread 114758: XXXX 1729716217355, Entering Thread 114758: Commands::runScriptWithUpload, script name = ReadRAM  
-114758 1729716217355 XXXX 1729716217355, Thread 114758: XXXX 1729716217355, Entering Thread 114758: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x300 bytes long  
-114758 1729716218460 XXXX 1729716218460, Thread 114758: XXXX 1729716218460, Exiting Thread 114758: ToolCommUsb::readTransfer,  cr.status = 0x0  
-114758 1729716218460 XXXX 1729716218460, Thread 114758: XXXX 1729716218460, Exiting Thread 114758: Commands::runScriptWithUpload  
-114758 1729716218460 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716218460 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716218460 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716218460 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219739 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219739 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219739 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg30
-114758 1729716219739 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219739 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg29
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Status
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 EPC
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg0
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg1
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg2
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg3
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg5
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg6
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg7
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg8
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg9
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg10
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg11
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg12
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg13
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg14
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg15
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg16
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg17
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg18
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg19
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg20
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg21
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg22
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg23
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg24
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg25
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg26
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg27
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg28
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg29
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg30
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg31
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716219740 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg30
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg29
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716222582 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg30
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg30
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadNamedRegister
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Reg29
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Post:DebugReadNamedRegister
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return Value
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 true
-114758 1729716222583 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Return End
-
-114758 1729716225226 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Pre:DebugReadTargetMemory
-114758 1729716225226 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload
-114758 1729716225226 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 FileRegs
-114758 1729716225226 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 8000000c
-114758 1729716225226 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 8000000f
-114758 1729716225226 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Length = 4
-114758 1729716225226 GEN4_TO_CONTROLLER_LOG:GEN4_DEBUG_INT_LOG_PIC32MZ2048EFM144 Payload End
-114758 1729716225226 XXXX 1729716225226, Thread 114758: XXXX 1729716225226, Entering Thread 114758: Commands::runScriptWithUpload, script name = ReadRAM  
-114758 1729716225226 XXXX 1729716225226, Thread 114758: XXXX 1729716225226, Entering Thread 114758: ToolCommUsb::readTransfer, sideData is 0x28 bytes long, transferDataLength is 0x4 bytes long  
-114758 1729716225300 XXXX 1729716225300, Thread 114758: com.Send returned false 
-114758 1729716225306 XXXX 1729716225306, Thread 114758: readTransfer: exception after writeHeaderAndGetAck null 
-114758 1729716225307 XXXX 1729716225307, Thread 114758: XXXX 1729716225307, Entering Thread 114758: ToolCommUsb::recoverFromProtocolError, type = NO_SCRIPT  
-114758 1729716225308 XXXX 1729716225308, Thread 114758: Send Abort Script Engine Command 
-114758 1729716225308 XXXX 1729716225308, Thread 114758: XXXX 1729716225308, Entering Thread 114758: ToolCommUsb::killScriptEngine  
-114758 1729716225309 XXXX 1729716225309, Thread 114758: com.Send returned false 
-114758 1729716225309 XXXX 1729716225309, Thread 114758: Failed sending Abort Script Engine Command. Set nuclear option = true 
-114758 1729716225309 XXXX 1729716225309, Thread 114758: About to nuke 
-114758 1729716225309 XXXX 1729716225309, Thread 114758: XXXX 1729716225309, Entering Thread 114758: ToolCommUsb::nuclearOption  
-114758 1729716225309 XXXX 1729716225309, Thread 114758: com.Send returned false 
+858 1734579586645 GEN4_CONNECT_DIAGNOSTICS:MPLABCommTool is null
+
+858 1734579586645 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Pre:GetFirmwareInfo
+858 1734579586645 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload
+858 1734579586645 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 null
+858 1734579586645 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload End
+858 1734579586647 XXXX 1734579586645, Thread 858: com.Send returned false 
+858 1734579586647 XXXX 1734579586647, Thread 858: execCommand: exception after writeSideChanel null 
+858 1734579586647 GEN4_CONNECT_DIAGNOSTICS:Removing plug and play observer com.microchip.mplab.mdbcore.RI4Tool.RI4ToolBase$RI4PlugNPlayObserver@549b8d36
+858 1734579586647 GEN4_CONNECT_DIAGNOSTICS:Begin PlugNPlayObservers list dump:
+858 1734579586647 GEN4_CONNECT_DIAGNOSTICS:End PlugNPlayObservers list dump:
+858 1734579586697 GEN4_CONNECT_DIAGNOSTICS:Calling RIDbgToolCom.Disconnect
+858 1734579586697 GEN4_CONNECT_DIAGNOSTICS:Calling MPLABCommTool.Detach to remove tool from plug and play list
+858 1734579586697 GEN4_CONNECT_DIAGNOSTICS:Calling RIDbgToolCom.DisconnectFromMPlabComm
+858 1734579586697 GEN4_CONNECT_DIAGNOSTICS:Calling MPLABCommTool.Disconnect
+874 1734579615185 GEN4_CONNECT_DIAGNOSTICS:MPLABCommTool is NOT null
+874 1734579615185 GEN4_CONNECT_DIAGNOSTICS:AttachedToolPID = 9012, AttachedToolVID = 4d8
+874 1734579615185 GEN4_CONNECT_DIAGNOSTICS:transport type = USB
+874 1734579615185 GEN4_CONNECT_DIAGNOSTICS:AttachedToolPID = 9012, AttachedToolVID = 4d8
+874 1734579615189 com.microchip.mplab.mdbcore.RealICETool.RIDbgToolCom
+874 1734579615189 GEN4_CONNECT_DIAGNOSTICS:Before MPLABCommTool.Connect()
+874 1734579615189 GEN4_CONNECT_DIAGNOSTICS:After MPLABCommTool.Connect()
+874 1734579615189 GEN4_CONNECT_DIAGNOSTICS:Adding new plug and play observer com.microchip.mplab.mdbcore.RI4Tool.RI4ToolBase$RI4PlugNPlayObserver@6a6171b7
+874 1734579615189 GEN4_CONNECT_DIAGNOSTICS:Begin PlugNPlayObservers list dump:
+874 1734579615189 GEN4_CONNECT_DIAGNOSTICS:com.microchip.mplab.mdbcore.RI4Tool.RI4ToolBase$RI4PlugNPlayObserver@6a6171b7
+874 1734579615189 GEN4_CONNECT_DIAGNOSTICS:End PlugNPlayObservers list dump:
+874 1734579615189 GEN4_CONNECT_DIAGNOSTICS:Registering for alternate PNP notifications. CommPnPCriteria.cPIDList = [2177, 2179, 217a, 2141, 9017, 901b, 9036, 9035], CommPnPCriteria.cSerialNumber = bur185076867
+
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Pre:init
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: Values:
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: pcAddress = 7fffffffffffffff, Vpp = 3.30, useRowEraseIfVoltageIsLow = false, voltageBelowWhichUseRowErase = 0.00, deviceName = PIC32MZ2048EFM144, programmerType = PIC32MZ
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: MemInfo values:
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = ffffffff, exists = true, startAddr = 1d000000, endAddr = 33ffffff, rowSize = 0800, rowEraseSize = 0800, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = true, startAddr = 00000000, endAddr = 00000000, rowSize = 0001, rowEraseSize = 0000, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = true, startAddr = 00000000, endAddr = 00000000, rowSize = 0800, rowEraseSize = 0000, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = ffffffff, exists = true, startAddr = 1fc74000, endAddr = 1fc77fff, rowSize = 0800, rowEraseSize = 0800, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = ffffffff, exists = true, startAddr = 1f800000, endAddr = 1f8fffff, rowSize = 0000, rowEraseSize = 0000, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0004, widthProgram = 0004
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 7fffffff, exists = true, startAddr = ffffffff, endAddr = fffffffe, rowSize = 0001, rowEraseSize = 0000, addrInc = 0001, widthProgram = 0001
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: mask = 0000, exists = false, startAddr = 00000000, endAddr = 00000000, rowSize = 0000, rowEraseSize = 0000, addrInc = 0000, widthProgram = 0000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 DeviceInfo: CfgRequiredBitsMask Values:
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff40, Mask = 7b000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff44, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff48, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff4c, Mask = 403ff77f
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff50, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff54, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff58, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff5c, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff60, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff64, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff68, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff6c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff70, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff74, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff78, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ff7c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffc0, Mask = 7b00ffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffc4, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffc8, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffcc, Mask = 403ff77c
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffd0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffd4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffd8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffdc, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffe0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffe4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffe8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0ffec, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0fff0, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0fff4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0fff8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc0fffc, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff40, Mask = 7b000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff44, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff48, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff4c, Mask = 403ff77f
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff50, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff54, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff58, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff5c, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff60, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff64, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff68, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff6c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff70, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff74, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff78, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ff7c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffc0, Mask = 7b000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffc4, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffc8, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffcc, Mask = 403ff77f
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffd0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffd4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffd8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffdc, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffe0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffe4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffe8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2ffec, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2fff0, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2fff4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2fff8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc2fffc, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff40, Mask = 7b000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff44, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff48, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff4c, Mask = 403ff77f
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff50, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff54, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff58, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff5c, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff60, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff64, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff68, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff6c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff70, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff74, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff78, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ff7c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffc0, Mask = 7b000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffc4, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffc8, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffcc, Mask = 403ff77f
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffd0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffd4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffd8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffdc, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffe0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffe4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffe8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4ffec, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4fff0, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4fff4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4fff8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc4fffc, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc54000, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc54004, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc54008, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc5400c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc54010, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc5401c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc54020, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc54024, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff40, Mask = 7b000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff44, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff48, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff4c, Mask = 403ff77f
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff50, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff54, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff58, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff5c, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff60, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff64, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff68, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff6c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff70, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff74, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff78, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ff7c, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffc0, Mask = 7b000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffc4, Mask = 40077ff7
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffc8, Mask = ffffc7ff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffcc, Mask = 403ff77f
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffd0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffd4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffd8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffdc, Mask = 10000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffe0, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffe4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffe8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6ffec, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6fff0, Mask = ffffffff
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6fff4, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6fff8, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Address = 1fc6fffc, Mask = 00000000
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 BasicInfo: Values:
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 BasicInfo: InputStream = com.microchip.mplab.libs.toolpacksupport.EquatableFileInputStream@99f050dd, ToolFlavor = PICKit4
+874 1734579615265 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Post:init
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 none
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Pre:GetInterfaceProvider
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 RI4DebugInterface
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Post:GetInterfaceProvider
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.libs.RI4ToolsController.implementations.RI4DebugInterfaceImpl@7165dad8
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Pre:GetInterfaceProvider
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 RI4ProgramInterface
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Post:GetInterfaceProvider
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.libs.RI4ToolsController.implementations.RI4ProgramInterfaceImpl@22041d6
+874 1734579615267 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Pre:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 RI4ConnectInterface
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Post:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.libs.PK4ToolsController.PK4ConnectInterfaceImpl@6d4a87eb
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return End
+874 1734579615268 GEN4_CONNECT_DIAGNOSTICS:acceptablePIDs = [9012, 9017, 901b, 9036, 9035]
+874 1734579615268 GEN4_CONNECT_DIAGNOSTICS:otherPIDs = [2177, 2179, 217a, 2141]
+874 1734579615268 GEN4_CONNECT_DIAGNOSTICS:Setting selected tool type to pk4
+874 1734579615268 GEN4_CONNECT_DIAGNOSTICS:otherPIDs = [2177, 2179, 217a, 2141]
+874 1734579615268 GEN4_CONNECT_DIAGNOSTICS:acceptablePIDs = [9012, 9017, 901b, 9036, 9035]
+
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Pre:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 RI4ControllerDiagnosticsInterface
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Post:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.libs.RI4ToolsController.implementations.RI4ControllerDiagnosticsInterfaceImpl@3a98aa4c
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Pre:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 ProgrammerToGo
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Post:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.libs.RI4ToolsController.implementations.ProgrammerToGoImpl@65f404dd
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Pre:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Status
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Post:GetInterfaceProvider
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 null
+874 1734579615268 GEN4_TO_CONTROLLER_LOG:GEN4_INIT_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Pre:SetProgramExec
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 FileRegs
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 a0000900
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Length = 4360
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Post:SetProgramExec
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 true
+874 1734579615281 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Pre:SetDebugExec
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Test
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 1fc74000
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Length = 4192
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Post:SetDebugExec
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 true
+874 1734579615286 GEN4_TO_CONTROLLER_LOG:GEN4_PROGRAM_INT_LOG_PIC32MZ2048EFM144 Return End
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:ENTERING: com.microchip.mplab.mdbcore.RI4Tool.ConnectionHandler.CheckForFWUpdates()
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Created FirmwareUpdateHandler com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler@65dac744
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:ENTERING: com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler.UpdateFirmware(FirmwareInfo, UpdateMessage)
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:areWeInBoot returned false
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:inBoot = false
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:uMode = checkingVersions
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:selectedTool = pk4
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:current toolType = pk4
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:current tool mode = pk4
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:ENTERING: com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler.GetUpdateInfo()
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Parsing file  for firmware updates
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:ENTERING: com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler.ParseSelectedVersionsFromJamFile()
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = boot.hex,010000
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = scripts.xml,000747
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app1 020180, 0040C000
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app2 1.15.20, 00500000
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app3 000000, FFFFFFFF
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app4 000000, FFFFFFFF
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app5 000000, FFFFFFFF
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app6 000000, FFFFFFFF
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app7 000000, FFFFFFFF
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:Jame file line = app8 000000, FFFFFFFF
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:EXITING: com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler.ri4ParseSelectedVersionsFromJamFile()
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:EXITING: com.microchip.mplab.mdbcore.pk4hybrid.pk4hybridFirmwareUpdateHandler.GetUpdateInfo()
+874 1734579615288 GEN4_CONNECT_DIAGNOSTICS:current toolType = pk4
+
+874 1734579615288 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Pre:EstablishCommunincations
+874 1734579615288 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615288 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 com.microchip.mplab.mdbcore.PK4Tool.PK4Com@576d0456
+874 1734579615288 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Post:EstablishCommunincations
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Return Value
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 true
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Return End
+
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Pre:GetFirmwareInfo
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 null
+874 1734579615289 GEN4_TO_CONTROLLER_LOG:GEN4_CONNECT_INT_LOG_PIC32MZ2048EFM144 Payload End
+874 1734579615289 XXXX 1734579615289, Thread 874: com.Send returned false 
+874 1734579615289 XXXX 1734579615289, Thread 874: execCommand: exception after writeSideChanel null 

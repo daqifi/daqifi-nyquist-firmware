@@ -103,6 +103,7 @@ extern "C" {
         /** The flag is if the CDC is in transparent mode
          ie the received data wont go to microrl interface
          so no scip commands would work*/
+        bool isCdcHostConnected;
         bool isTransparentModeActive;
     } UsbCdcData_t;
     UsbCdcData_t* UsbCdc_GetSettings();
