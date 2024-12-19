@@ -96,23 +96,42 @@ static void app_USBDeviceTask(void* p_arg) {
     }
 }
 
-
 static void app_WifiTask(void* p_arg) {
-    const tPowerData *pPowerState = BoardData_Get(
-            BOARDATA_POWER_DATA,
-            0);
-    while (pPowerState->powerState < POWERED_UP) {
-        vTaskDelay(5 / portTICK_PERIOD_MS);
-
-    }
-    wifi_manager_Init(&gpBoardData->wifiSettings);
-    while (1) {       
-        wifi_manager_ProcessState();      
-        vTaskDelay(5 / portTICK_PERIOD_MS);
-
+    enum{
+        APP_WIFI_STATE_WAIT_POWER_UP=0,
+        APP_WIFI_STATE_PROCESS=1,
+    };
+    const tPowerData *pPowerState=BoardData_Get(BOARDATA_POWER_DATA,0);
+    uint8_t state = APP_WIFI_STATE_WAIT_POWER_UP;
+    while (1) {     
+        switch (state) {
+            case APP_WIFI_STATE_WAIT_POWER_UP:
+            {
+                if (NULL != pPowerState &&
+                        pPowerState->powerState != POWERED_UP &&
+                        pPowerState->powerState != POWERED_UP_EXT_DOWN) {
+                    state = APP_WIFI_STATE_WAIT_POWER_UP;
+                } else {
+                    wifi_manager_Init(&gpBoardData->wifiSettings);
+                    state = APP_WIFI_STATE_PROCESS;
+                }
+            }
+                break;
+            case APP_WIFI_STATE_PROCESS:
+            {
+                wifi_manager_ProcessState();
+                if (NULL != pPowerState &&
+                        pPowerState->powerState != POWERED_UP &&
+                        pPowerState->powerState != POWERED_UP_EXT_DOWN) {
+                    wifi_manager_Deinit();
+                    state = APP_WIFI_STATE_WAIT_POWER_UP;
+                }
+            }
+                break;
+        }
+        vTaskDelay(5 / portTICK_PERIOD_MS);  
     }
 }
-
 
 static void app_SdCardTask(void* p_arg) {
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);

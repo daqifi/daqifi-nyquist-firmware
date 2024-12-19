@@ -572,16 +572,6 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
 }
 
 bool wifi_manager_Deinit() {
-    const tPowerData *pPowerState = BoardData_Get(
-            BOARDATA_POWER_DATA,
-            0);
-    if (NULL != pPowerState &&
-       pPowerState->powerState != POWERED_UP && 
-       pPowerState->powerState != POWERED_UP_EXT_DOWN){
-
-        LogMessage("Board must be powered-on for WiFi operations\n\r");
-        return false;
-    }
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     SendEvent(WIFI_MANAGER_EVENT_DEINIT);
     return true;
