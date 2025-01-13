@@ -15,6 +15,6 @@ This document provides the release notes and version history for the project, in
 - **Improvements:**
   - Offloaded the TCP/IP stack to the WINC module for improved performance.
 - **Bug Fixes:**
-  - N/A
+  - n/a
 
 ---
