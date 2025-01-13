@@ -6,7 +6,7 @@
 #     Harmony version: 2.06
 #
 #
-# from $HARMONY_VERSION_PATH\apps\nyquist-firmware\bootloader\firmware\basic.hconfig
+# from D:\Repositories\DAQIFI\repo\daqifi-nyquist-firmware\dev\bootloader\firmware\basic.hconfig
 #
 CONFIG_APP_INSTANCES=1
 #
@@ -15,7 +15,7 @@ CONFIG_APP_INSTANCES=1
 CONFIG_APP_MENU_IDX0=y
 CONFIG_APP_NAME_0="app"
 #
-# from $HARMONY_VERSION_PATH\apps\nyquist-firmware\bootloader\firmware\basic.hconfig
+# from D:\Repositories\DAQIFI\repo\daqifi-nyquist-firmware\dev\bootloader\firmware\basic.hconfig
 #
 CONFIG_USE_EXCEPTION_HANDLER=y
 CONFIG_EXCEPTION_USE_SYS_DEBUG=y

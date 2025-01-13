@@ -1,0 +1,107 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ1024EFM144_USBHS
+	bool
+	select HAVE_USBHS
+	default y
+
+config USBHS_NUMBER_OF_MODULES
+	int
+	default 1
+
+enum USBHS_MODULE_ID exclusive
+	"USBHS_ID_0"
+
+enum USBHS_EPTXRX_INTERRUPT
+	"USBHS_TXRXINT_EP0"
+	|| "USBHS_TXRXINT_EP1"
+	|| "USBHS_TXRXINT_EP2"
+	|| "USBHS_TXRXINT_EP3"
+	|| "USBHS_TXRXINT_EP4"
+	|| "USBHS_TXRXINT_EP5"
+	|| "USBHS_TXRXINT_EP6"
+	|| "USBHS_TXRXINT_EP7"
+	|| "USBHS_TXRXINT_ANY"
+	|| "USBHS_TXRXINT_ALL"
+
+enum USBHS_GEN_INTERRUPT
+	"USBHS_GENINT_SUSPEND"
+	|| "USBHS_GENINT_RESUME"
+	|| "USBHS_GENINT_RESET"
+	|| "USBHS_GENINT_BABBLE"
+	|| "USBHS_GENINT_SOF"
+	|| "USBHS_GENINT_DEVCONN"
+	|| "USBHS_GENINT_DEVDISCONN"
+	|| "USBHS_GENINT_DEVSESSEND"
+	|| "USBHS_GENINT_SESSIONREQ"
+	|| "USBHS_GENINT_VBUSERR"
+	|| "USBHS_GENINT_ANY"
+	|| "USBHS_GENINT_ALL"
+
+enum USBHS_EP0_ERROR
+	"USBHS_EP0_ERROR_NAK_TIMEOUT"
+	|| "USBHS_EP0_ERROR_BUS"
+	|| "USBHS_EP0_ERROR_RXSTALL"
+	|| "USBHS_EP0_ERROR_ANY"
+	|| "USBHS_EP0_ERROR_ALL"
+
+enum USBHS_TXEP_ERROR
+	"USBHS_TXEP_ERROR_NAK_TIMEOUT"
+	|| "USBHS_TXEP_ERROR_INCOMP_TX"
+	|| "USBHS_TXEP_ERROR_BUS"
+	|| "USBHS_TXEP_ERROR_RXSTALL"
+	|| "USBHS_TXEP_ERROR_ANY"
+	|| "USBHS_TXEP_ERROR_ALL"
+
+enum USBHS_RXEP_ERROR
+	"USBHS_RXEP_ERROR_NAK_TIMEOUT"
+	|| "USBHS_RXEP_ERROR_ISO_DATA"
+	|| "USBHS_RXEP_ERROR_BUS"
+	|| "USBHS_RXEP_ERROR_RXSTALL"
+	|| "USBHS_RXEP_ERROR_ANY"
+	|| "USBHS_RXEP_ERROR_ALL"
+
+enum USBHS_VBUS_LEVEL
+	"USBHS_VBUS_SESSION_END"
+	|| "USBHS_VBUS_BELOW_AVALID"
+	|| "USBHS_VBUS_BELOW_VBUSVALID"
+	|| "USBHS_VBUS_VALID"
+
+enum USBHS_DEVICE_EP0_STATUS
+	"USBHS_EP0_RXPKTRDY"
+	|| "USBHS_EP0_TXPKTRDY"
+	|| "USBHS_EP0_SENTSTALL"
+	|| "USBHS_EP0_SETUPEND"
+
+enum USBHS_DEVICE_TXEP_STATUS
+	"USBHS_TXEP_FIFONOTEMPTY"
+	|| "USBHS_TXEP_UNDERRUN"
+	|| "USBHS_TXEP_SENTSTALL"
+	|| "USBHS_TXEP_INCOMPTX"
+
+enum USBHS_DEVICE_RXEP_STATUS
+	"USBHS_RXEP_PKTRDY"
+	|| "USBHS_RXEP_FIFOFULL"
+	|| "USBHS_RXEP_OVERRUN"
+	|| "USBHS_RXEP_DATAERROR"
+	|| "USBHS_RXEP_SENTSTALL"
+
+enum USBHS_USBID_OVERRIDE_VALUE
+	"USBHS_USBID_ENABLE"
+	|| "USBHS_USBID_DISABLE"
+
+ifblock PROJECT_STANDALONE
+file PLIB_USBHS_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/processor/usbhs_p32mz1024efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/processor/usbhs_p32mz1024efm144.h"
+
+file PLIB_USBHS_ENDPOINTFIFO_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_EndpointFIFO_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_EndpointFIFO_Default.h"
+file PLIB_USBHS_SOFTRESET_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_SoftReset_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_SoftReset_Default.h"
+file PLIB_USBHS_INTERRUPTS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_Interrupts_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_Interrupts_Default.h"
+file PLIB_USBHS_HIGHSPEEDSUPPORT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_HighSpeedSupport_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_HighSpeedSupport_Default.h"
+file PLIB_USBHS_CLOCKRESETCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_ClockResetControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_ClockResetControl_Default.h"
+file PLIB_USBHS_USBIDCONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_USBIDControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_USBIDControl_Default.h"
+file PLIB_USBHS_MODULECONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_ModuleControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_ModuleControl_Default.h"
+file PLIB_USBHS_EP0STATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_EP0Status_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_EP0Status_Default.h"
+file PLIB_USBHS_TXEPSTATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_TxEPStatus_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_TxEPStatus_Default.h"
+file PLIB_USBHS_RXEPSTATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_RxEPStatus_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_RxEPStatus_Default.h"
+file PLIB_USBHS_ENDPOINTOPERATIONS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usbhs/templates/usbhs_EndpointOperations_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usbhs/templates/usbhs_EndpointOperations_Default.h"
+endif

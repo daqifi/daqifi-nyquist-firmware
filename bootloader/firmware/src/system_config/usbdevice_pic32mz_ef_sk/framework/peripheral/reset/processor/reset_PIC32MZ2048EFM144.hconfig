@@ -1,0 +1,48 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ2048EFM144_RESET
+	bool
+	select HAVE_RESET
+	default y
+
+config RESET_NUMBER_OF_MODULES
+	int
+	default 1
+
+enum RESET_MODULE_ID exclusive
+	"RESET_ID_0"
+
+enum RESET_REASON
+	"RESET_REASON_NONE"
+	|| "RESET_REASON_POWERON"
+	|| "RESET_REASON_BROWNOUT"
+	|| "RESET_REASON_WDT_TIMEOUT"
+	|| "RESET_REASON_DMT_TIMEOUT"
+	|| "RESET_REASON_SOFTWARE"
+	|| "RESET_REASON_MCLR"
+	|| "RESET_REASON_CONFIG_MISMATCH"
+	|| "RESET_REASON_ALL"
+
+enum RESET_CONFIG_REG_READ_ERROR
+	"PRIMARY_CONFIG_REG_READ_ERROR"
+	|| "PRIMARY_AND_ALTERNATIVE_CONFIG_REG_READ_ERROR"
+	|| "NO_CONFIG_REG_READ_ERROR"
+
+enum RESET_NMI_REASON
+	"WDTO_NMI"
+	|| "DMTO_NMI"
+	|| "SOFTWARE_NMI"
+	|| "GLOBAL_NMI"
+	|| "CF_NMI"
+	|| "WDTS_NMI"
+
+ifblock PROJECT_STANDALONE
+file PLIB_RESET_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/reset/processor/reset_p32mz2048efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/reset/processor/reset_p32mz2048efm144.h"
+
+file PLIB_RESET_RESETREASONSTATUS_MZ_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/reset/templates/reset_ResetReasonStatus_MZ.h" to "$PROJECT_HEADER_FILES/framework/peripheral/reset/templates/reset_ResetReasonStatus_MZ.h"
+file PLIB_RESET_SOFTWARERESETTRIGGER_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/reset/templates/reset_SoftwareResetTrigger_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/reset/templates/reset_SoftwareResetTrigger_Default.h"
+file PLIB_RESET_CONFIGREGREADERROR_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/reset/templates/reset_ConfigRegReadError_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/reset/templates/reset_ConfigRegReadError_Default.h"
+file PLIB_RESET_NMICONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/reset/templates/reset_NmiControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/reset/templates/reset_NmiControl_Default.h"
+file PLIB_RESET_WDTOINSLEEP_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/reset/templates/reset_WdtoInSleep_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/reset/templates/reset_WdtoInSleep_Default.h"
+file PLIB_RESET_NMICOUNTER_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/reset/templates/reset_NmiCounter_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/reset/templates/reset_NmiCounter_Default.h"
+endif

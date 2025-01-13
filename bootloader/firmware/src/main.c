@@ -66,7 +66,6 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 // Section: Main Entry Point
 // *****************************************************************************
 // *****************************************************************************
-
 int main ( void )
 {
     /* Initialize all MPLAB Harmony modules, including application(s). */

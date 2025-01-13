@@ -1,0 +1,54 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ2048EFM144_PCACHE
+	bool
+	select HAVE_PCACHE
+	default y
+
+config PCACHE_NUMBER_OF_MODULES
+	int
+	default 1
+
+enum PCACHE_MODULE_ID exclusive
+	"PCACHE_ID_0"
+
+enum PLIB_PCACHE_PREFETCH_ENABLE
+	"PLIB_PCACHE_PREFETCH_DISABLE"
+	|| "PLIB_PCACHE_PREFETCH_ENABLE_CPU_INST"
+	|| "PLIB_PCACHE_PREFETCH_ENABLE_CPU_INST_DATA"
+	|| "PLIB_PCACHE_PREFETCH_ENABLE_ALL"
+
+enum PLIB_PCACHE_DATA_ENABLE
+	"PLIB_PCACHE_DATA_ENABLE_NONE"
+
+enum PCACHE_CACHE_TYPE
+	"PCACHE_CACHE_TYPE_NONE"
+
+ifblock PROJECT_STANDALONE
+file PLIB_PCACHE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/processor/pcache_p32mz2048efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/processor/pcache_p32mz2048efm144.h"
+
+file PLIB_PCACHE_WAITSTATE_MZ_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_WaitState_MZ.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_WaitState_MZ.h"
+file PLIB_PCACHE_PFMADDRESSWAITSTATEENABLE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_PFMAddressWaitStateEnable_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_PFMAddressWaitStateEnable_Unsupported.h"
+file PLIB_PCACHE_CACHEPERFORMANCECOUNTERSENABLE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CachePerformanceCountersEnable_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CachePerformanceCountersEnable_Unsupported.h"
+file PLIB_PCACHE_PREFETCHENABLE_MZ_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_PrefetchEnable_MZ.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_PrefetchEnable_MZ.h"
+file PLIB_PCACHE_DATACACHEENABLE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_DataCacheEnable_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_DataCacheEnable_Unsupported.h"
+file PLIB_PCACHE_CACHEENABLE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheEnable_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheEnable_Unsupported.h"
+file PLIB_PCACHE_FLASHSECINT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_FlashSECInt_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_FlashSECInt_Default.h"
+file PLIB_PCACHE_FLASHDEDSTATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_FlashDEDStatus_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_FlashDEDStatus_Default.h"
+file PLIB_PCACHE_FLASHSECSTATUS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_FlashSECStatus_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_FlashSECStatus_Default.h"
+file PLIB_PCACHE_FLASHSECCOUNT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_FlashSECCount_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_FlashSECCount_Default.h"
+file PLIB_PCACHE_INVALIDATEONPFMPROGRAM_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_InvalidateOnPFMProgram_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_InvalidateOnPFMProgram_Unsupported.h"
+file PLIB_PCACHE_INVALIDATECACHE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_InvalidateCache_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_InvalidateCache_Unsupported.h"
+file PLIB_PCACHE_CACHELINESELECT_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheLineSelect_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheLineSelect_Unsupported.h"
+file PLIB_PCACHE_CACHELINETYPE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheLineType_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheLineType_Unsupported.h"
+file PLIB_PCACHE_CACHELINELOCK_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheLineLock_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheLineLock_Unsupported.h"
+file PLIB_PCACHE_CACHELINEVALID_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheLineValid_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheLineValid_Unsupported.h"
+file PLIB_PCACHE_CACHELINEADDR_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheLineAddr_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheLineAddr_Unsupported.h"
+file PLIB_PCACHE_CACHELINEFLASHTYPE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheLineFlashType_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheLineFlashType_Unsupported.h"
+file PLIB_PCACHE_CACHELINEMASK_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheLineMask_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheLineMask_Unsupported.h"
+file PLIB_PCACHE_WORD_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_Word_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_Word_Unsupported.h"
+file PLIB_PCACHE_LEASTRECENTLYUSEDSTATE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_LeastRecentlyUsedState_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_LeastRecentlyUsedState_Unsupported.h"
+file PLIB_PCACHE_CACHEHIT_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheHit_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheHit_Unsupported.h"
+file PLIB_PCACHE_CACHEMISS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_CacheMiss_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_CacheMiss_Unsupported.h"
+file PLIB_PCACHE_PREFETCHABORT_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/pcache/templates/pcache_PrefetchAbort_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/pcache/templates/pcache_PrefetchAbort_Unsupported.h"
+endif

@@ -1,0 +1,55 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ2048EFM144_TMR
+	bool
+	select HAVE_TMR
+	default y
+
+config TMR_NUMBER_OF_MODULES
+	int
+	default 9
+
+enum TMR_MODULE_ID exclusive
+	"TMR_ID_1"
+	|| "TMR_ID_2"
+	|| "TMR_ID_4"
+	|| "TMR_ID_6"
+	|| "TMR_ID_8"
+	|| "TMR_ID_3"
+	|| "TMR_ID_5"
+	|| "TMR_ID_7"
+	|| "TMR_ID_9"
+
+enum TMR_PRESCALE
+	"TMR_PRESCALE_VALUE_1"
+	|| "TMR_PRESCALE_VALUE_2"
+	|| "TMR_PRESCALE_VALUE_4"
+	|| "TMR_PRESCALE_VALUE_8"
+	|| "TMR_PRESCALE_VALUE_16"
+	|| "TMR_PRESCALE_VALUE_32"
+	|| "TMR_PRESCALE_VALUE_64"
+	|| "TMR_PRESCALE_VALUE_256"
+
+enum TMR_CLOCK_SOURCE
+	"TMR_CLOCK_SOURCE_PERIPHERAL_CLOCK"
+	|| "TMR_CLOCK_SOURCE_EXTERNAL_INPUT_PIN"
+
+ifblock PROJECT_STANDALONE
+file PLIB_TMR_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/processor/tmr_p32mz2048efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/processor/tmr_p32mz2048efm144.h"
+
+file PLIB_TMR_GATEDTIMEACCUMULATION_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_GatedTimeAccumulation_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_GatedTimeAccumulation_Default.h"
+file PLIB_TMR_CLOCKSOURCE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_ClockSource_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_ClockSource_Default.h"
+file PLIB_TMR_PRESCALE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_Prescale_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_Prescale_Default.h"
+file PLIB_TMR_CLOCKSOURCESYNC_INVERTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_ClockSourceSync_Inverted.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_ClockSourceSync_Inverted.h"
+file PLIB_TMR_MODE16BIT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_Mode16Bit_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_Mode16Bit_Default.h"
+file PLIB_TMR_MODE32BIT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_Mode32Bit_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_Mode32Bit_Default.h"
+file PLIB_TMR_ENABLECONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_EnableControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_EnableControl_Default.h"
+file PLIB_TMR_STOPINIDLE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_StopInIdle_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_StopInIdle_Default.h"
+file PLIB_TMR_COUNTER16BIT_IN16BITREGISTER_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_Counter16Bit_In16BitRegister.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_Counter16Bit_In16BitRegister.h"
+file PLIB_TMR_COUNTER32BIT_IN16BITREGISTER_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_Counter32Bit_In16BitRegister.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_Counter32Bit_In16BitRegister.h"
+file PLIB_TMR_PERIOD16BIT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_Period16Bit_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_Period16Bit_Default.h"
+file PLIB_TMR_PERIOD32BIT_IN16BITREGISTER_PIC32_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_Period32Bit_In16BitRegister_pic32.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_Period32Bit_In16BitRegister_pic32.h"
+file PLIB_TMR_COUNTERASYNCWRITECONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_CounterAsyncWriteControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_CounterAsyncWriteControl_Default.h"
+file PLIB_TMR_COUNTERASYNCWRITEINPROGRESS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_CounterAsyncWriteInProgress_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_CounterAsyncWriteInProgress_Default.h"
+file PLIB_TMR_TIMEROPERATIONMODE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/tmr/templates/tmr_TimerOperationMode_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/tmr/templates/tmr_TimerOperationMode_Default.h"
+endif

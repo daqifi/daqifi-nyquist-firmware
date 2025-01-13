@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?> 
+<project>                                  
+  <executable name="dist/default/production/daqifi.X.production.elf">                 
+    <memory name="program">                 
+      <units>bytes</units>                 
+      <length>2097152</length>                 
+      <used>328108</used>                     
+      <free>1769044</free>                     
+    </memory>                              
+    <memory name="data">              
+      <units>bytes</units>                 
+      <length>524288</length>                 
+      <used>268326</used>                     
+      <free>255962</free>                     
+    </memory>                              
+  </executable>                            
+</project>                                 

@@ -1,0 +1,99 @@
+#Created by plib_hconfig_gen $Revision: 1.00 
+
+config PIC32MZ2048EFM144_USART
+	bool
+	select HAVE_USART
+	default y
+
+config USART_NUMBER_OF_MODULES
+	int
+	default 6
+
+enum USART_MODULE_ID exclusive
+	"USART_ID_1"
+	|| "USART_ID_2"
+	|| "USART_ID_3"
+	|| "USART_ID_4"
+	|| "USART_ID_5"
+	|| "USART_ID_6"
+
+enum USART_HANDSHAKE_MODE
+	"USART_HANDSHAKE_MODE_FLOW_CONTROL"
+	|| "USART_HANDSHAKE_MODE_SIMPLEX"
+
+enum USART_OPERATION_MODE
+	"USART_ENABLE_TX_RX_BCLK_USED"
+	|| "USART_ENABLE_TX_RX_CTS_RTS_USED"
+	|| "USART_ENABLE_TX_RX_RTS_USED"
+	|| "USART_ENABLE_TX_RX_USED"
+
+enum USART_LINECONTROL_MODE
+	"USART_8N1"
+	|| "USART_8E1"
+	|| "USART_8O1"
+	|| "USART_9N1"
+	|| "USART_8N2"
+	|| "USART_8E2"
+	|| "USART_8O2"
+	|| "USART_9N2"
+
+enum USART_BRG_CLOCK_SOURCE
+	"USART_BRG_CLOCK_SOURCE_NONE"
+
+enum USART_ERROR
+	"USART_ERROR_NONE"
+	|| "USART_ERROR_RECEIVER_OVERRUN"
+	|| "USART_ERROR_FRAMING"
+	|| "USART_ERROR_PARITY"
+
+enum USART_TRANSMIT_INTR_MODE
+	"USART_TRANSMIT_FIFO_NOT_FULL"
+	|| "USART_TRANSMIT_FIFO_IDLE"
+	|| "USART_TRANSMIT_FIFO_EMPTY"
+
+enum USART_RECEIVE_INTR_MODE
+	"USART_RECEIVE_FIFO_3B4FULL"
+	|| "USART_RECEIVE_FIFO_HALF_FULL"
+	|| "USART_RECEIVE_FIFO_ONE_CHAR"
+
+ifblock PROJECT_STANDALONE
+file PLIB_USART_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/processor/usart_p32mz2048efm144.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/processor/usart_p32mz2048efm144.h"
+
+file PLIB_USART_ENABLECONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_EnableControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_EnableControl_Default.h"
+file PLIB_USART_HANDSHAKEMODE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_HandShakeMode_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_HandShakeMode_Default.h"
+file PLIB_USART_IRDACONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_IrDAControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_IrDAControl_Default.h"
+file PLIB_USART_LINECONTROLMODE_RXANDTXCOMBINED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_LineControlMode_RXandTXCombined.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_LineControlMode_RXandTXCombined.h"
+file PLIB_USART_LOOPBACK_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_Loopback_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_Loopback_Default.h"
+file PLIB_USART_OPERATIONMODE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_OperationMode_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_OperationMode_Default.h"
+file PLIB_USART_STOPINIDLE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_StopInIdle_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_StopInIdle_Default.h"
+file PLIB_USART_RUNINOVERFLOW_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_RunInOverflow_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_RunInOverflow_Unsupported.h"
+file PLIB_USART_BRGCLOCKSOURCESELECT_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_BRGClockSourceSelect_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_BRGClockSourceSelect_Unsupported.h"
+file PLIB_USART_USARTMODULESTATUS_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_UsartModuleStatus_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_UsartModuleStatus_Unsupported.h"
+file PLIB_USART_RUNINSLEEPMODE_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_RunInSleepMode_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_RunInSleepMode_Unsupported.h"
+file PLIB_USART_WAKEONSTART_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_WakeOnStart_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_WakeOnStart_Default.h"
+file PLIB_USART_BAUDRATE_IN16BITREGISTER_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_BaudRate_In16BitRegister.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_BaudRate_In16BitRegister.h"
+file PLIB_USART_BAUDRATEAUTODETECT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_BaudRateAutoDetect_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_BaudRateAutoDetect_Default.h"
+file PLIB_USART_BAUDRATEHIGH_IN16BITREGISTER_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_BaudRateHigh_In16BitRegister.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_BaudRateHigh_In16BitRegister.h"
+file PLIB_USART_RECEIVER_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_Receiver_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_Receiver_Default.h"
+file PLIB_USART_RECEIVER9BITS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_Receiver9Bits_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_Receiver9Bits_Default.h"
+file PLIB_USART_RECEIVERADDRESSAUTODETECT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverAddressAutoDetect_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverAddressAutoDetect_Default.h"
+file PLIB_USART_RECEIVERADDRESSDETECT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverAddressDetect_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverAddressDetect_Default.h"
+file PLIB_USART_RECEIVERADDRESS_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverAddress_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverAddress_Default.h"
+file PLIB_USART_RECEIVERADDRESSMASK_UNSUPPORTED_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverAddressMask_Unsupported.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverAddressMask_Unsupported.h"
+file PLIB_USART_RECEIVERDATAAVAILABLE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverDataAvailable_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverDataAvailable_Default.h"
+file PLIB_USART_RECEIVERENABLECONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverEnableControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverEnableControl_Default.h"
+file PLIB_USART_RECEIVERIDLE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverIdle_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverIdle_Default.h"
+file PLIB_USART_RECEIVERFRAMINGERROR_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverFramingError_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverFramingError_Default.h"
+file PLIB_USART_RECEIVERINTERRUPTMODE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverInterruptMode_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverInterruptMode_Default.h"
+file PLIB_USART_RECEIVERPOLARITYINVERT_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverPolarityInvert_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverPolarityInvert_Default.h"
+file PLIB_USART_RECEIVERPARITYERROR_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverParityError_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverParityError_Default.h"
+file PLIB_USART_RECEIVEROVERRUNERROR_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_ReceiverOverrunError_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_ReceiverOverrunError_Default.h"
+file PLIB_USART_TRANSMITTER_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_Transmitter_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_Transmitter_Default.h"
+file PLIB_USART_TRANSMITTER9BITS_INDATAONLY_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_Transmitter9Bits_InDataOnly.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_Transmitter9Bits_InDataOnly.h"
+file PLIB_USART_TRANSMITTERBREAK_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_TransmitterBreak_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_TransmitterBreak_Default.h"
+file PLIB_USART_TRANSMITTERBUFFERFULL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_TransmitterBufferFull_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_TransmitterBufferFull_Default.h"
+file PLIB_USART_TRANSMITTEREMPTY_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_TransmitterEmpty_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_TransmitterEmpty_Default.h"
+file PLIB_USART_TRANSMITTERENABLECONTROL_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_TransmitterEnableControl_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_TransmitterEnableControl_Default.h"
+file PLIB_USART_TRANSMITTERINTERRUPTMODE_DEFAULT_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_TransmitterInterruptMode_Default.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_TransmitterInterruptMode_Default.h"
+file PLIB_USART_TRANSMITTERIDLEISLOW_PIC32_TEMPLATE_INTERNAL_H "$HARMONY_VERSION_PATH/framework/peripheral/usart/templates/usart_TransmitterIdleIsLow_pic32.h" to "$PROJECT_HEADER_FILES/framework/peripheral/usart/templates/usart_TransmitterIdleIsLow_pic32.h"
+endif
