@@ -8,6 +8,7 @@
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
 #include "JSON_Encoder.h"
+#include "csv_encoder.h"
 #include "DaqifiPB/DaqifiOutMessage.pb.h"
 #include "DaqifiPB/NanoPB_Encoder.h"
 #include "Util/Logger.h"
@@ -258,7 +259,10 @@ void streaming_Task(void) {
         
         packetSize = 0;
         if (nanopbFlag.Size > 0) {
-            if (pRunTimeStreamConf->Encoding == Streaming_Json) {
+            if(hasSD){
+                packetSize = csv_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
+            }
+            else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
                 packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
                 DIO_TIMING_TEST_WRITE_STATE(0);
