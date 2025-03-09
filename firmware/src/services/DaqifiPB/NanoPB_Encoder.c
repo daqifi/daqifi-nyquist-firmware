@@ -1130,7 +1130,7 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_device_sn_tag:
                 message.has_device_sn = true;
-                message.device_sn = 0x7E28CC7C62010277; //TODO(Daqifi):Change this properly
+                message.device_sn = pBoardConfig->boardSerialNumber;
                 break;
             default:
                 // Skip unknown fields
