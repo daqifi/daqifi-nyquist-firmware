@@ -60,63 +60,48 @@ void __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mo
 
 static int SDCardWrite() {
     int writeLen = -1;
-
     if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
-        LOG_E("Invalid file handle in SDCardWrite()");
-        return -1;
+        goto __exit;
     }
-
-    // Ensure valid buffer offset before writing
-    if (gSdCardData.sdCardWriteBufferOffset >= gSdCardData.writeBufferLength) {
-        return -1;
-    }
-
     writeLen = SYS_FS_FileWrite(gSdCardData.fileHandle,
             (const void *) (gSdCardData.writeBuffer + gSdCardData.sdCardWriteBufferOffset),
             gSdCardData.writeBufferLength);
-
+__exit:
     return writeLen;
 }
 
 static int CircularBufferToSDWrite(uint8_t* buf, uint16_t len) {
-    if (buf == NULL || len == 0 || len > sizeof (gSdCardData.writeBuffer)) {
-        LOG_E("Invalid buffer passed to CircularBufferToSDWrite");
-        return -1;
-    }
-    if(len>=SD_CARD_MANAGER_CONF_WBUFFER_SIZE){
-        len=SD_CARD_MANAGER_CONF_WBUFFER_SIZE-1;
-    }
+    if (len>sizeof (gSdCardData.writeBuffer))
+        return false;
     memcpy(gSdCardData.writeBuffer, buf, len);
     gSdCardData.writeBufferLength = len;
     gSdCardData.sdCardWriteBufferOffset = 0;
-
-    return len;//SDCardWrite();
+    return SDCardWrite();
 }
-
 /**
  * @brief Recursively lists files and directories, storing the output in a buffer.
  *
- * This function traverses the directory specified by dirPath, listing all files and directories
+ * This function traverses the directory specified by `dirPath`, listing all files and directories
  * within it, including those in subdirectories. The output is formatted and stored in the buffer
- * pointed to by pStrBuff. It adjusts the buffer pointer and size during recursive calls to
+ * pointed to by `pStrBuff`. It adjusts the buffer pointer and size during recursive calls to
  * ensure that data is appended correctly without overwriting existing content.
  *
  * @param[in]  dirPath     The path of the directory to list.
  * @param[out] pStrBuff    Pointer to the buffer where the output will be stored.
  *                         The buffer should be large enough to hold the expected output.
- * @param[in]  strBuffSize The total size of the buffer pointed to by pStrBuff.
+ * @param[in]  strBuffSize The total size of the buffer pointed to by `pStrBuff`.
  *
- * @return The total number of bytes written to pStrBuff.
+ * @return The total number of bytes written to `pStrBuff`.
  *
  * @note
  * - The function uses recursion to traverse subdirectories.
- * - It maintains a local strBuffIndex to keep track of the current position in the buffer.
- * - During recursive calls, the buffer pointer pStrBuff and buffer size strBuffSize are
+ * - It maintains a local `strBuffIndex` to keep track of the current position in the buffer.
+ * - During recursive calls, the buffer pointer `pStrBuff` and buffer size `strBuffSize` are
  *   adjusted to prevent buffer overflows.
  * - If the buffer becomes full during execution, the function stops writing further data to prevent overflow.
  *
  * @warning
- * - Ensure that strBuffSize is sufficient to hold the entire output; otherwise, buffer overflows
+ * - Ensure that `strBuffSize` is sufficient to hold the entire output; otherwise, buffer overflows
  *   or incomplete output may occur.
  * - Be cautious with deeply nested directories, as excessive recursion can lead to stack overflow.
  *
@@ -314,51 +299,43 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE:
         {
+            /* If read was success, try writing to the new file */
             int writeLen = -2;
-
-            if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0 && gSdCardData.sdCardWritePending != 1) {
+            if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0
+                    && gSdCardData.sdCardWritePending != 1) {
                 xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
                 gSdCardData.sdCardWritePending = 1;
-                CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);                
+                CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                gSdCardData.totalBytesFlushPending += gSdCardData.writeBufferLength;
                 xSemaphoreGive(gSdCardData.wMutex);
-            } 
-            if (gSdCardData.sdCardWritePending == 1) {
+            } else if (gSdCardData.sdCardWritePending == 1) {
                 writeLen = SDCardWrite();
-                if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
-                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                    LOG_E("Error flushing to SD Card");
-                }
-                if(writeLen>0)
-                    gSdCardData.totalBytesFlushPending += writeLen;
             }
-
             if (writeLen >= gSdCardData.writeBufferLength) {
                 gSdCardData.sdCardWritePending = 0;
                 gSdCardData.writeBufferLength = 0;
                 gSdCardData.sdCardWriteBufferOffset = 0;
-            } else if (writeLen > 0) {
+            } else if (writeLen >= 0) {
                 gSdCardData.writeBufferLength -= writeLen;
-                gSdCardData.sdCardWriteBufferOffset += writeLen;
-                break;
+                gSdCardData.sdCardWriteBufferOffset = writeLen;
             } else if (writeLen == -1) {
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                LOG_E("Error Writing to SD Card");
+                LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
+                break;
             }
-            if(gSdCardData.writeBufferLength+gSdCardData.sdCardWriteBufferOffset >=SD_CARD_MANAGER_CONF_WBUFFER_SIZE){
-                asm("nop");
-            }
+            uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-//            uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
-//            if ((currentMillis - gSdCardData.lastFlushMillis > 5000 || gSdCardData.totalBytesFlushPending > 2000)) {
-//                if (gSdCardData.totalBytesFlushPending > 0) {
-//                    if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
-//                        gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-//                        LOG_E("Error flushing to SD Card");
-//                    }
-//                    gSdCardData.totalBytesFlushPending = 0;
-//                    gSdCardData.lastFlushMillis = currentMillis;
-//                }
-//            }
+            if ((currentMillis - gSdCardData.lastFlushMillis > 5000 ||
+                    gSdCardData.totalBytesFlushPending > 2000)) {
+                if (gSdCardData.totalBytesFlushPending > 0) {
+                    if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
+                        gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
+                    }
+                    gSdCardData.totalBytesFlushPending = 0;
+                    gSdCardData.lastFlushMillis = currentMillis;
+                }
+            }
         }
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE:
@@ -435,23 +412,22 @@ void sd_card_manager_ProcessState() {
 }
 
 size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
-    if (len == 0 || pData == NULL) {
-        return 0;
-    }
-
+    size_t bytesAdded = 0;
+    if (len == 0)return 0;
     if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
         return 0;
     }
-
-    xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+    while (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
+        vTaskDelay(10);
+    }
+    // if the data to write can't fit into the buffer entirely, discard it. 
     if (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
-        xSemaphoreGive(gSdCardData.wMutex);
         return 0;
     }
-
-    size_t bytesAdded = CircularBuf_AddBytes(&gSdCardData.wCirbuf, (uint8_t*) pData, len);
+    //Obtain ownership of the mutex object
+    xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+    bytesAdded = CircularBuf_AddBytes(&gSdCardData.wCirbuf, (uint8_t*) pData, len);
     xSemaphoreGive(gSdCardData.wMutex);
-
     return bytesAdded;
 }
 
@@ -475,3 +451,5 @@ size_t sd_card_manager_GetWriteBuffFreeSize() {
     }
     return CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
 }
+
+

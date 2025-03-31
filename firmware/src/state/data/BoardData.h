@@ -46,7 +46,7 @@ extern "C" {
         BOARDDATA_AIN_LATEST_TIMESTAMP,
         //! Collected analog input samples
         BOARDDATA_AIN_SAMPLES,
-        //! Global power satructure
+        //! Global power structure
         BOARDATA_POWER_DATA,
         //! UI Global structure
         BOARDDATA_UI_VARIABLES,
