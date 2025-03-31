@@ -496,6 +496,10 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
     } else if (param1 == Streaming_Json) {
         pRunTimeStreamConfig->Encoding = Streaming_Json;
+    }else if(param1 == Streaming_Csv){
+         pRunTimeStreamConfig->Encoding = Streaming_Csv;
+    }else{
+        pRunTimeStreamConfig->Encoding = Streaming_Json;
     }
 
     return SCPI_RES_OK;

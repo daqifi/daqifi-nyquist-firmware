@@ -5,85 +5,97 @@
 #include "csv_encoder.h"
 #include "../HAL/ADC.h"
 
-size_t csv_Encode(tBoardData* state,
-        NanopbFlagsArray* fields,
-        uint8_t* pBuffer, size_t buffSize) {
-    if (pBuffer == NULL || buffSize < 32) { // Ensure buffer is not NULL and has a reasonable size
+#define MIN_BUFFER_SPACE 50 // Ensure there's space for null termination and newlines
+#define TEMP_BUFFER_SIZE 270 // Temporary buffer size for each iteration
+
+size_t csv_Encode(tBoardData* state, 
+                  NanopbFlagsArray* fields, 
+                  uint8_t* pBuffer, size_t buffSize) {
+    if (pBuffer == NULL || buffSize < MIN_BUFFER_SPACE) { // Ensure buffer is not NULL and has a reasonable size
         return 0; // Return 0 if buffer is NULL or too small
     }
 
     char* charBuffer = (char*) pBuffer;
     size_t startIndex = 0;
     int i;
-    bool encodeADC = false;
-    bool encodeDIO = false;
+    size_t tempLen;
+    char tempBuffer[TEMP_BUFFER_SIZE]; // Temporary buffer for each iteration
+    size_t tempIndex;
 
-    // Determine which data should be encoded
-    for (i = 0; i < fields->Size; ++i) {
-        switch (fields->Data[i]) {
-            case DaqifiOutMessage_analog_in_data_tag:
-                encodeADC = true;
-                break;
-            case DaqifiOutMessage_digital_data_tag:
-                encodeDIO = true;
-                break;
-            case DaqifiOutMessage_msg_time_stamp_tag:
-                // Ensure timestamp is always included
-                break;
-            default:
-                return 0; // Unknown data type, return 0
+    // Process data in rows: one AI sample list + DIO data per row
+    while ((buffSize - startIndex) > MIN_BUFFER_SPACE) {
+        uint32_t qSize = AInSampleList_Size();
+        uint32_t dioSize = DIOSampleList_Size(&state->DIOSamples);
+        
+        if (qSize == 0 && dioSize == 0) {
+            break; // No more data available
         }
-    }
+        
+        // Reset temp buffer index
+        tempIndex = 0;
 
-    // Stream timestamp as the first element
-    int bytesNeeded = snprintf(NULL, 0, "%u", state->StreamTrigStamp);
-    if (startIndex + bytesNeeded >= buffSize) return 0;
-    startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, "%u", state->StreamTrigStamp);
-
-    // Encode ADC values if required, otherwise insert empty placeholders
-    if (encodeADC) {
+        // Stream timestamp as the first element
+        tempLen = snprintf(NULL, 0, "%u", state->StreamTrigStamp);
+        if (tempIndex + tempLen >= TEMP_BUFFER_SIZE) break;
+        tempIndex += snprintf(tempBuffer + tempIndex, TEMP_BUFFER_SIZE - tempIndex, "%u", state->StreamTrigStamp);
+        
+        // Process one AI sample list
         AInPublicSampleList_t *pPublicSampleList;
         if (AInSampleList_PopFront(&pPublicSampleList) && pPublicSampleList != NULL) {
             for (i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
                 if (pPublicSampleList->isSampleValid[i]) {
                     AInSample data = pPublicSampleList->sampleElement[i];
                     double voltage = ADC_ConvertToVoltage(&data) * 1000; // Convert to mV
-                    bytesNeeded = snprintf(NULL, 0, ",%u,%d", data.Timestamp, (int) voltage);
-                    if (startIndex + bytesNeeded >= buffSize) return 0;
-                    startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, ",%u,%d", data.Timestamp, (int) voltage);
+                    tempLen = snprintf(NULL, 0, ",%u,%d", data.Timestamp, (int)voltage);
+                    if (tempIndex + tempLen >= TEMP_BUFFER_SIZE) {
+                        free(pPublicSampleList);
+                        break;
+                    }
+                    tempIndex += snprintf(tempBuffer + tempIndex, TEMP_BUFFER_SIZE - tempIndex, ",%u,%d", data.Timestamp, (int)voltage);
                 } else {
-                    startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, ",,");
+                    if (tempIndex + 2 >= TEMP_BUFFER_SIZE) {
+                        free(pPublicSampleList);
+                        break;
+                    }
+                    tempIndex += snprintf(tempBuffer + tempIndex, TEMP_BUFFER_SIZE - tempIndex, ",,");
                 }
             }
             free(pPublicSampleList);
         } else {
             for (i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-                startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, ",,");
+                if (tempIndex + 2 >= TEMP_BUFFER_SIZE) break;
+                tempIndex += snprintf(tempBuffer + tempIndex, TEMP_BUFFER_SIZE - tempIndex, ",,");
             }
         }
-    } else {
-        for (i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-            startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, ",,");
-        }
-    }
 
-    // Encode packed DIO value if required, otherwise insert empty placeholders
-    if (encodeDIO) {
+        // Process one DIO sample
         DIOSample data;
         if (!DIOSampleList_IsEmpty(&state->DIOSamples)) {
             DIOSampleList_PopFront(&state->DIOSamples, &data);
-            bytesNeeded = snprintf(NULL, 0, ",%u,%u", data.Timestamp, data.Values);
-            if (startIndex + bytesNeeded >= buffSize) return 0;
-            startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, ",%u,%u", data.Timestamp, data.Values);
+            tempLen = snprintf(NULL, 0, ",%u,%u", data.Timestamp, data.Values);
+            if (tempIndex + tempLen >= TEMP_BUFFER_SIZE) break;
+            tempIndex += snprintf(tempBuffer + tempIndex, TEMP_BUFFER_SIZE - tempIndex, ",%u,%u", data.Timestamp, data.Values);
         } else {
-            startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, ",,");
+            if (tempIndex + 2 >= TEMP_BUFFER_SIZE) break;
+            tempIndex += snprintf(tempBuffer + tempIndex, TEMP_BUFFER_SIZE - tempIndex, ",,");
         }
-    } else {
-        startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, ",,");
+        
+        tempLen = snprintf(NULL, 0, "\n");
+        if (tempIndex + tempLen >= TEMP_BUFFER_SIZE) break;
+        tempIndex += snprintf(tempBuffer + tempIndex, TEMP_BUFFER_SIZE - tempIndex, "\n");
+        
+        // Check if tempBuffer fits into the main buffer
+        if (startIndex + tempIndex < buffSize) {
+            memcpy(charBuffer + startIndex, tempBuffer, tempIndex);
+            startIndex += tempIndex;
+        } else {
+            break; // Stop if main buffer is full
+        }
     }
-
-    if (startIndex + 1 >= buffSize) return 0;
-    startIndex += snprintf(charBuffer + startIndex, buffSize - startIndex, "\n");
+    
+    if (startIndex >= buffSize) {
+        startIndex = buffSize - 1;
+    }
     charBuffer[startIndex] = '\0'; // Null-terminate the CSV string
     return startIndex;
 }

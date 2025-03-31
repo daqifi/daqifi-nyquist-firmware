@@ -259,8 +259,10 @@ void streaming_Task(void) {
         
         packetSize = 0;
         if (nanopbFlag.Size > 0) {
-            if(hasSD){
-                packetSize = csv_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
+            if(pRunTimeStreamConf->Encoding == Streaming_Csv){
+                DIO_TIMING_TEST_WRITE_STATE(1);
+                packetSize = csv_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+                DIO_TIMING_TEST_WRITE_STATE(0);
             }
             else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
@@ -280,7 +282,7 @@ void streaming_Task(void) {
             if (hasWifi) {               
                 wifi_manager_WriteToBuffer((const char *) buffer, packetSize);                
             }
-            if (hasSD) {
+            if (hasSD && (pRunTimeStreamConf->Encoding == Streaming_Csv || pRunTimeStreamConf->Encoding == Streaming_Json)) {
                 sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
         }
