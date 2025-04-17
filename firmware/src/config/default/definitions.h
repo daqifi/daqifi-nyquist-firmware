@@ -14,7 +14,7 @@
 
 //DOM-IGNORE-BEGIN
 /*******************************************************************************
-* Copyright (C) 2018 Microchip Technology Inc. and its subsidiaries.
+* Copyright (C) 2025 Microchip Technology Inc. and its subsidiaries.
 *
 * Subject to your compliance with these terms, you may use Microchip software
 * and any derivatives exclusively with Microchip products. It is your
@@ -56,17 +56,17 @@
 #include "usb/usb_chapter_9.h"
 #include "usb/usb_device.h"
 #include "peripheral/ocmp/plib_ocmp1.h"
-#include "peripheral/ocmp/plib_ocmp4.h"
 #include "peripheral/rcon/plib_rcon.h"
+#include "peripheral/ocmp/plib_ocmp4.h"
 #include "driver/sdspi/drv_sdspi.h"
-#include "driver/i2c/drv_i2c.h"
-#include "peripheral/ocmp/plib_ocmp3.h"
 #include "peripheral/nvm/plib_nvm.h"
 #include "system/time/sys_time.h"
+#include "driver/i2c/drv_i2c.h"
+#include "peripheral/ocmp/plib_ocmp3.h"
+#include "peripheral/tmr/plib_tmr6.h"
 #include "usb/usb_device_cdc.h"
 #include "usb/usb_cdc.h"
 #include "peripheral/coretimer/plib_coretimer.h"
-#include "peripheral/tmr/plib_tmr6.h"
 #include "peripheral/adchs/plib_adchs.h"
 #include "peripheral/tmr/plib_tmr4.h"
 #include "peripheral/tmr/plib_tmr2.h"
@@ -84,16 +84,16 @@
 #include "peripheral/cache/plib_cache.h"
 #include "peripheral/evic/plib_evic.h"
 #include "peripheral/dmac/plib_dmac.h"
+#include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
 #include "driver/usb/usbhs/drv_usbhs.h"
 #include "peripheral/power/plib_power.h"
-#include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
+#include "peripheral/i2c/master/plib_i2c5_master.h"
 #include "system/fs/sys_fs.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs_fat_interface.h"
 #include "system/fs/fat_fs/file_system/ff.h"
 #include "system/fs/fat_fs/file_system/ffconf.h"
 #include "system/fs/fat_fs/hardware_access/diskio.h"
-#include "peripheral/i2c/master/plib_i2c5_master.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "app_freertos.h"
@@ -109,13 +109,13 @@ extern "C" {
 // DOM-IGNORE-END
 
 /* Device Information */
-#define DEVICE_NAME			 "PIC32MZ2048EFM144"
-#define DEVICE_ARCH			 "MIPS"
-#define DEVICE_FAMILY		 "PIC32MZEF"
-#define DEVICE_SERIES		 "PIC32MZ"
+#define DEVICE_NAME          "PIC32MZ2048EFM144"
+#define DEVICE_ARCH          "MIPS"
+#define DEVICE_FAMILY        "PIC32MZEF"
+#define DEVICE_SERIES        "PIC32MZ"
 
 /* CPU clock frequency */
-#define CPU_CLOCK_FREQUENCY 200000000
+#define CPU_CLOCK_FREQUENCY 200000000U
 
 // *****************************************************************************
 // *****************************************************************************

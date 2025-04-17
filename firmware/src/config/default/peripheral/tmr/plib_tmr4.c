@@ -54,7 +54,7 @@
 #include "interrupts.h"
 
 
-volatile static TMR_TIMER_OBJECT tmr4Obj;
+static volatile TMR_TIMER_OBJECT tmr4Obj;
 
 
 void TMR4_Initialize(void)
@@ -79,7 +79,6 @@ void TMR4_Initialize(void)
     /* Enable TMR Interrupt of odd numbered timer in 32-bit mode */
     IEC0SET = _IEC0_T5IE_MASK;
     
-
 }
 
 

@@ -52,6 +52,7 @@
 #include "plib_i2c5_master.h"
 #include "interrupts.h"
 
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: Global Data
@@ -60,7 +61,8 @@
 #define NOP asm(" NOP")
 
 
-volatile static I2C_OBJ i2c5Obj;
+static volatile I2C_OBJ i2c5MasterObj;
+
 
 void I2C5_Initialize(void)
 {
@@ -86,51 +88,52 @@ void I2C5_Initialize(void)
     I2C5CONSET = _I2C5CON_ON_MASK;
 
     /* Set the initial state of the I2C state machine */
-    i2c5Obj.state = I2C_STATE_IDLE;
+    i2c5MasterObj.state = I2C_STATE_IDLE;
 }
 
 /* I2C state machine */
 static void I2C5_TransferSM(void)
 {
     uint8_t tempVar = 0;
+    bool isScanInProgress = false;
     IFS5CLR = _IFS5_I2C5MIF_MASK;
 
-    switch (i2c5Obj.state)
+    switch (i2c5MasterObj.state)
     {
         case I2C_STATE_START_CONDITION:
             /* Generate Start Condition */
             I2C5CONSET = _I2C5CON_SEN_MASK;
             IEC5SET = _IEC5_I2C5MIE_MASK;
             IEC5SET = _IEC5_I2C5BIE_MASK;
-            i2c5Obj.state = I2C_STATE_ADDR_BYTE_1_SEND;
+            i2c5MasterObj.state = I2C_STATE_ADDR_BYTE_1_SEND;
             break;
 
         case I2C_STATE_ADDR_BYTE_1_SEND:
             /* Is transmit buffer full? */
             if ((I2C5STAT & _I2C5STAT_TBF_MASK) == 0U)
             {
-                if (i2c5Obj.address > 0x007FU)
+                if (i2c5MasterObj.address > 0x007FU)
                 {
-                    tempVar = (((volatile uint8_t*)&i2c5Obj.address)[1] << 1);
+                    tempVar = (((volatile uint8_t*)&i2c5MasterObj.address)[1] << 1);
                     /* Transmit the MSB 2 bits of the 10-bit slave address, with R/W = 0 */
                     I2C5TRN = (uint32_t)( 0xF0U | (uint32_t)tempVar);
 
-                    i2c5Obj.state = I2C_STATE_ADDR_BYTE_2_SEND;
+                    i2c5MasterObj.state = I2C_STATE_ADDR_BYTE_2_SEND;
                 }
                 else
                 {
                     /* 8-bit addressing mode */
-                    I2C_TRANSFER_TYPE transferType = i2c5Obj.transferType;
+                    I2C_TRANSFER_TYPE transferType = i2c5MasterObj.transferType;
 
-                    I2C5TRN = (((uint32_t)i2c5Obj.address << 1) | transferType);
+                    I2C5TRN = (((uint32_t)i2c5MasterObj.address << 1) | transferType);
 
-                    if (i2c5Obj.transferType == I2C_TRANSFER_TYPE_WRITE)
+                    if (i2c5MasterObj.transferType == I2C_TRANSFER_TYPE_WRITE)
                     {
-                        i2c5Obj.state = I2C_STATE_WRITE;
+                        i2c5MasterObj.state = I2C_STATE_WRITE;
                     }
                     else
                     {
-                        i2c5Obj.state = I2C_STATE_READ;
+                        i2c5MasterObj.state = I2C_STATE_READ;
                     }
                 }
             }
@@ -143,24 +146,24 @@ static void I2C5_TransferSM(void)
                 if ((I2C5STAT & _I2C5STAT_TBF_MASK) == 0U)
                 {
                     /* Transmit the remaining 8-bits of the 10-bit address */
-                    I2C5TRN = i2c5Obj.address;
+                    I2C5TRN = i2c5MasterObj.address;
 
-                    if (i2c5Obj.transferType == I2C_TRANSFER_TYPE_WRITE)
+                    if (i2c5MasterObj.transferType == I2C_TRANSFER_TYPE_WRITE)
                     {
-                        i2c5Obj.state = I2C_STATE_WRITE;
+                        i2c5MasterObj.state = I2C_STATE_WRITE;
                     }
                     else
                     {
-                        i2c5Obj.state = I2C_STATE_READ_10BIT_MODE;
+                        i2c5MasterObj.state = I2C_STATE_READ_10BIT_MODE;
                     }
                 }
             }
             else
             {
                 /* NAK received. Generate Stop Condition. */
-                i2c5Obj.error = I2C_ERROR_NACK;
+                i2c5MasterObj.error = I2C_ERROR_NACK;
                 I2C5CONSET = _I2C5CON_PEN_MASK;
-                i2c5Obj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
+                i2c5MasterObj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
             }
             break;
 
@@ -169,14 +172,14 @@ static void I2C5_TransferSM(void)
             {
                 /* Generate repeated start condition */
                 I2C5CONSET = _I2C5CON_RSEN_MASK;
-                i2c5Obj.state = I2C_STATE_ADDR_BYTE_1_SEND_10BIT_ONLY;
+                i2c5MasterObj.state = I2C_STATE_ADDR_BYTE_1_SEND_10BIT_ONLY;
             }
             else
             {
                 /* NAK received. Generate Stop Condition. */
-                i2c5Obj.error = I2C_ERROR_NACK;
+                i2c5MasterObj.error = I2C_ERROR_NACK;
                 I2C5CONSET = _I2C5CON_PEN_MASK;
-                i2c5Obj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
+                i2c5MasterObj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
             }
             break;
 
@@ -184,55 +187,55 @@ static void I2C5_TransferSM(void)
             /* Is transmit buffer full? */
             if ((I2C5STAT & _I2C5STAT_TBF_MASK) == 0U)
             {
-                tempVar = (((volatile uint8_t*)&i2c5Obj.address)[1] << 1);
+                tempVar = (((volatile uint8_t*)&i2c5MasterObj.address)[1] << 1);
                 /* Transmit the first byte of the 10-bit slave address, with R/W = 1 */
                 I2C5TRN = (uint32_t)( 0xF1U | (uint32_t)tempVar);
-                i2c5Obj.state = I2C_STATE_READ;
+                i2c5MasterObj.state = I2C_STATE_READ;
             }
             else
             {
                 /* NAK received. Generate Stop Condition. */
-                i2c5Obj.error = I2C_ERROR_NACK;
+                i2c5MasterObj.error = I2C_ERROR_NACK;
                 I2C5CONSET = _I2C5CON_PEN_MASK;
-                i2c5Obj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
+                i2c5MasterObj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
             }
             break;
 
         case I2C_STATE_WRITE:
             if ((I2C5STAT & _I2C5STAT_ACKSTAT_MASK) == 0U)
             {
-                size_t writeCount = i2c5Obj.writeCount;
+                size_t writeCount = i2c5MasterObj.writeCount;
 
                 /* ACK received */
-                if (writeCount < i2c5Obj.writeSize)
+                if (writeCount < i2c5MasterObj.writeSize)
                 {
                     if ((I2C5STAT & _I2C5STAT_TBF_MASK) == 0U)
                     {
                         /* Transmit the data from writeBuffer[] */
-                        I2C5TRN = i2c5Obj.writeBuffer[writeCount];
-                        i2c5Obj.writeCount++;
+                        I2C5TRN = i2c5MasterObj.writeBuffer[writeCount];
+                        i2c5MasterObj.writeCount++;
                     }
                 }
                 else
                 {
-                    size_t readSize = i2c5Obj.readSize;
+                    size_t readSize = i2c5MasterObj.readSize;
 
-                    if (i2c5Obj.readCount < readSize)
+                    if (i2c5MasterObj.readCount < readSize)
                     {
                         /* Generate repeated start condition */
                         I2C5CONSET = _I2C5CON_RSEN_MASK;
 
-                        i2c5Obj.transferType = I2C_TRANSFER_TYPE_READ;
+                        i2c5MasterObj.transferType = I2C_TRANSFER_TYPE_READ;
 
-                        if (i2c5Obj.address > 0x007FU)
+                        if (i2c5MasterObj.address > 0x007FU)
                         {
                             /* Send the I2C slave address with R/W = 1 */
-                            i2c5Obj.state = I2C_STATE_ADDR_BYTE_1_SEND_10BIT_ONLY;
+                            i2c5MasterObj.state = I2C_STATE_ADDR_BYTE_1_SEND_10BIT_ONLY;
                         }
                         else
                         {
                             /* Send the I2C slave address with R/W = 1 */
-                            i2c5Obj.state = I2C_STATE_ADDR_BYTE_1_SEND;
+                            i2c5MasterObj.state = I2C_STATE_ADDR_BYTE_1_SEND;
                         }
 
                     }
@@ -240,16 +243,16 @@ static void I2C5_TransferSM(void)
                     {
                         /* Transfer Complete. Generate Stop Condition */
                         I2C5CONSET = _I2C5CON_PEN_MASK;
-                        i2c5Obj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
+                        i2c5MasterObj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
                     }
                 }
             }
             else
             {
                 /* NAK received. Generate Stop Condition. */
-                i2c5Obj.error = I2C_ERROR_NACK;
+                i2c5MasterObj.error = I2C_ERROR_NACK;
                 I2C5CONSET = _I2C5CON_PEN_MASK;
-                i2c5Obj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
+                i2c5MasterObj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
             }
             break;
 
@@ -258,14 +261,14 @@ static void I2C5_TransferSM(void)
             {
                 /* Slave ACK'd the device address. Enable receiver. */
                 I2C5CONSET = _I2C5CON_RCEN_MASK;
-                i2c5Obj.state = I2C_STATE_READ_BYTE;
+                i2c5MasterObj.state = I2C_STATE_READ_BYTE;
             }
             else
             {
                 /* NAK received. Generate Stop Condition. */
-                i2c5Obj.error = I2C_ERROR_NACK;
+                i2c5MasterObj.error = I2C_ERROR_NACK;
                 I2C5CONSET = _I2C5CON_PEN_MASK;
-                i2c5Obj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
+                i2c5MasterObj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
             }
             break;
 
@@ -273,11 +276,14 @@ static void I2C5_TransferSM(void)
             /* Data received from the slave */
             if ((I2C5STAT & _I2C5STAT_RBF_MASK) != 0U)
             {
-                size_t readCount = i2c5Obj.readCount;
+                size_t readCount = i2c5MasterObj.readCount;
+                uint8_t readByte = (uint8_t)I2C5RCV;
 
-                i2c5Obj.readBuffer[readCount] = (uint8_t)I2C5RCV;
+                i2c5MasterObj.readBuffer[readCount] = readByte;
+
+
                 readCount++;
-                if (readCount == i2c5Obj.readSize)
+                if (readCount == i2c5MasterObj.readSize)
                 {
                     /* Send NAK */
                     I2C5CONSET = _I2C5CON_ACKDT_MASK;
@@ -285,43 +291,47 @@ static void I2C5_TransferSM(void)
                 }
                 else
                 {
+
                     /* Send ACK */
                     I2C5CONCLR = _I2C5CON_ACKDT_MASK;
                     I2C5CONSET = _I2C5CON_ACKEN_MASK;
                 }
-                i2c5Obj.readCount = readCount;
-                i2c5Obj.state = I2C_STATE_WAIT_ACK_COMPLETE;
+                i2c5MasterObj.readCount = readCount;
+                i2c5MasterObj.state = I2C_STATE_WAIT_ACK_COMPLETE;
             }
             break;
 
         case I2C_STATE_WAIT_ACK_COMPLETE:
             {
-                size_t readSize = i2c5Obj.readSize;
+                size_t readSize = i2c5MasterObj.readSize;
                 /* ACK or NAK sent to the I2C slave */
-                if (i2c5Obj.readCount < readSize)
+                if (i2c5MasterObj.readCount < readSize)
                 {
                     /* Enable receiver */
                     I2C5CONSET = _I2C5CON_RCEN_MASK;
-                    i2c5Obj.state = I2C_STATE_READ_BYTE;
+                    i2c5MasterObj.state = I2C_STATE_READ_BYTE;
                 }
                 else
                 {
                     /* Generate Stop Condition */
                     I2C5CONSET = _I2C5CON_PEN_MASK;
-                    i2c5Obj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
+                    i2c5MasterObj.state = I2C_STATE_WAIT_STOP_CONDITION_COMPLETE;
                 }
             }
             break;
 
         case I2C_STATE_WAIT_STOP_CONDITION_COMPLETE:
-            i2c5Obj.state = I2C_STATE_IDLE;
+            i2c5MasterObj.state = I2C_STATE_IDLE;
             IEC5CLR = _IEC5_I2C5MIE_MASK;
             IEC5CLR = _IEC5_I2C5BIE_MASK;
-            if (i2c5Obj.callback != NULL)
-            {
-                uintptr_t context = i2c5Obj.context;
 
-                i2c5Obj.callback(context);
+            isScanInProgress = i2c5MasterObj.busScanInProgress;
+
+            if ((i2c5MasterObj.callback != NULL) && (isScanInProgress == false))
+            {
+                uintptr_t context = i2c5MasterObj.context;
+
+                i2c5MasterObj.callback(context);
             }
             break;
 
@@ -331,13 +341,64 @@ static void I2C5_TransferSM(void)
     }
 }
 
+static void I2C5_XferStart(void)
+{
+    I2C5CONSET      = _I2C5CON_SEN_MASK;
+    IEC5SET        = _IEC5_I2C5MIE_MASK;
+    IEC5SET           = _IEC5_I2C5BIE_MASK;
+}
+
+static bool I2C5_XferSetup(
+    uint16_t address,
+    uint8_t* wdata,
+    size_t wlength,
+    uint8_t* rdata,
+    size_t rlength,
+    bool forcedWrite,
+    bool smbusReadBlk,
+    bool smbusReadPEC
+)
+{
+    bool status = false;
+    uint32_t tempVar = I2C5STAT;
+
+    /* State machine must be idle and I2C module should not have detected a start bit on the bus */
+
+    if((i2c5MasterObj.state == I2C_STATE_IDLE) &&
+       ((tempVar & _I2C5STAT_S_MASK) == 0U) &&
+       ((wdata != NULL && wlength != 0) || (rdata != NULL && rlength != 0)))
+    {
+        i2c5MasterObj.address             = address;
+        i2c5MasterObj.readBuffer          = rdata;
+        i2c5MasterObj.readSize            = rlength;
+        i2c5MasterObj.writeBuffer         = wdata;
+        i2c5MasterObj.writeSize           = wlength;
+        i2c5MasterObj.writeCount          = 0;
+        i2c5MasterObj.readCount           = 0;
+        if (wdata != NULL && wlength != 0)
+        {
+            i2c5MasterObj.transferType    = I2C_TRANSFER_TYPE_WRITE;
+        }
+        else
+        {
+            i2c5MasterObj.transferType    = I2C_TRANSFER_TYPE_READ;
+        }
+        i2c5MasterObj.error               = I2C_ERROR_NONE;
+        i2c5MasterObj.state               = I2C_STATE_ADDR_BYTE_1_SEND;
+        i2c5MasterObj.smbusReadBlk        = smbusReadBlk;
+        i2c5MasterObj.smbusReadPEC        = smbusReadPEC;
+
+        status = true;
+    }
+    return status;
+}
 
 void I2C5_CallbackRegister(I2C_CALLBACK callback, uintptr_t contextHandle)
 {
     if (callback != NULL)
     {
-       i2c5Obj.callback = callback;
-       i2c5Obj.context = contextHandle;
+       i2c5MasterObj.callback = callback;
+       i2c5MasterObj.context = contextHandle;
     }
     return;
 }
@@ -347,7 +408,7 @@ bool I2C5_IsBusy(void)
     bool busycheck = false;
     uint32_t tempVar = I2C5CON;
     uint32_t tempVar1 = I2C5STAT;
-    if( (i2c5Obj.state != I2C_STATE_IDLE ) || ((tempVar & 0x0000001FU) != 0U) ||
+    if( (i2c5MasterObj.state != I2C_STATE_IDLE ) || ((tempVar & 0x0000001FU) != 0U) ||
         ((tempVar1 & _I2C5STAT_TRSTAT_MASK) != 0U) || ((tempVar1 & _I2C5STAT_S_MASK) != 0U) )
     {
         busycheck = true;
@@ -358,90 +419,104 @@ bool I2C5_IsBusy(void)
 bool I2C5_Read(uint16_t address, uint8_t* rdata, size_t rlength)
 {
     bool statusRead = false;
-    uint32_t tempVar = I2C5STAT;
-    /* State machine must be idle and I2C module should not have detected a start bit on the bus */
-    if((i2c5Obj.state == I2C_STATE_IDLE) && (( tempVar & _I2C5STAT_S_MASK) == 0U))
-    {
-        i2c5Obj.address             = address;
-        i2c5Obj.readBuffer          = rdata;
-        i2c5Obj.readSize            = rlength;
-        i2c5Obj.writeBuffer         = NULL;
-        i2c5Obj.writeSize           = 0;
-        i2c5Obj.writeCount          = 0;
-        i2c5Obj.readCount           = 0;
-        i2c5Obj.transferType        = I2C_TRANSFER_TYPE_READ;
-        i2c5Obj.error               = I2C_ERROR_NONE;
-        i2c5Obj.state               = I2C_STATE_ADDR_BYTE_1_SEND;
+    statusRead = I2C5_XferSetup(address, NULL, 0, rdata, rlength, false, false, false);
 
-        I2C5CONSET                  = _I2C5CON_SEN_MASK;
-        IEC5SET                     = _IEC5_I2C5MIE_MASK;
-        IEC5SET                     = _IEC5_I2C5BIE_MASK;
-        statusRead = true;
+    if (statusRead == true)
+    {
+        I2C5_XferStart();
     }
+
     return statusRead;
 }
-
 
 bool I2C5_Write(uint16_t address, uint8_t* wdata, size_t wlength)
 {
     bool statusWrite = false;
-    uint32_t tempVar = I2C5STAT;
-    /* State machine must be idle and I2C module should not have detected a start bit on the bus */
-    if((i2c5Obj.state == I2C_STATE_IDLE) && (( tempVar & _I2C5STAT_S_MASK) == 0U))
-    {
-        i2c5Obj.address             = address;
-        i2c5Obj.readBuffer          = NULL;
-        i2c5Obj.readSize            = 0;
-        i2c5Obj.writeBuffer         = wdata;
-        i2c5Obj.writeSize           = wlength;
-        i2c5Obj.writeCount          = 0;
-        i2c5Obj.readCount           = 0;
-        i2c5Obj.transferType        = I2C_TRANSFER_TYPE_WRITE;
-        i2c5Obj.error               = I2C_ERROR_NONE;
-        i2c5Obj.state               = I2C_STATE_ADDR_BYTE_1_SEND;
+    statusWrite = I2C5_XferSetup(address, wdata, wlength, NULL, 0, false, false, false);
 
-        I2C5CONSET                  = _I2C5CON_SEN_MASK;
-        IEC5SET                     = _IEC5_I2C5MIE_MASK;
-        IEC5SET                     = _IEC5_I2C5BIE_MASK;
-        statusWrite = true;
+    if (statusWrite == true)
+    {
+        I2C5_XferStart();
     }
+
     return statusWrite;
 }
 
 
 bool I2C5_WriteRead(uint16_t address, uint8_t* wdata, size_t wlength, uint8_t* rdata, size_t rlength)
 {
-    bool statusWriteread = false;
-    uint32_t tempVar = I2C5STAT;
-    /* State machine must be idle and I2C module should not have detected a start bit on the bus */
-    if((i2c5Obj.state == I2C_STATE_IDLE) &&
-       ((tempVar & _I2C5STAT_S_MASK) == 0U))
-    {
-        i2c5Obj.address             = address;
-        i2c5Obj.readBuffer          = rdata;
-        i2c5Obj.readSize            = rlength;
-        i2c5Obj.writeBuffer         = wdata;
-        i2c5Obj.writeSize           = wlength;
-        i2c5Obj.writeCount          = 0;
-        i2c5Obj.readCount           = 0;
-        i2c5Obj.transferType        = I2C_TRANSFER_TYPE_WRITE;
-        i2c5Obj.error               = I2C_ERROR_NONE;
-        i2c5Obj.state               = I2C_STATE_ADDR_BYTE_1_SEND;
+    bool statusWriteRead = false;
+    statusWriteRead = I2C5_XferSetup(address, wdata, wlength, rdata, rlength, false, false, false);
 
-        I2C5CONSET                  = _I2C5CON_SEN_MASK;
-        IEC5SET                     = _IEC5_I2C5MIE_MASK;
-        IEC5SET                     = _IEC5_I2C5BIE_MASK;
-        statusWriteread = true;
+    if (statusWriteRead == true)
+    {
+        I2C5_XferStart();
     }
-    return statusWriteread;
+
+    return statusWriteRead;
 }
+
+bool I2C5_BusScan(uint16_t start_addr, uint16_t end_addr, void* pDevicesList, uint8_t* nDevicesFound)
+{
+    uint8_t* pDevList = (uint8_t*)pDevicesList;
+    uint8_t nDevFound = 0;
+
+    if (i2c5MasterObj.state != I2C_STATE_IDLE)
+    {
+        return false;
+    }
+
+    if ((pDevicesList == NULL) || (nDevicesFound == NULL))
+    {
+        return false;
+    }
+
+    i2c5MasterObj.busScanInProgress = true;
+
+    *nDevicesFound = 0;
+
+    for (uint16_t dev_addr = start_addr; dev_addr <= end_addr; dev_addr++)
+    {
+        while (I2C5_Write(dev_addr, NULL, 0) == false)
+        {
+
+        }
+
+        while (i2c5MasterObj.state != I2C_STATE_IDLE)
+        {
+            /* Wait for the transfer to complete */
+        }
+
+        if (i2c5MasterObj.error == I2C_ERROR_NONE)
+        {
+            /* No error and device responded with an ACK. Add the device to the list of found devices. */
+            if (dev_addr > 0x007FU)
+            {
+                ((uint16_t*)&pDevicesList)[nDevFound] = dev_addr;
+            }
+            else
+            {
+                pDevList[nDevFound] = (uint8_t)dev_addr;
+            }
+
+            nDevFound += 1;
+        }
+    }
+
+    *nDevicesFound = nDevFound;
+
+    i2c5MasterObj.busScanInProgress = false;
+
+    return true;
+}
+
 
 I2C_ERROR I2C5_ErrorGet(void)
 {
     I2C_ERROR error;
 
-    error = i2c5Obj.error;
-    i2c5Obj.error = I2C_ERROR_NONE;
+    error = i2c5MasterObj.error;
+    i2c5MasterObj.error = I2C_ERROR_NONE;
 
     return error;
 }
@@ -497,10 +572,10 @@ bool I2C5_TransferSetup(I2C_TRANSFER_SETUP* setup, uint32_t srcClkFreq )
 
 void I2C5_TransferAbort( void )
 {
-    i2c5Obj.error = I2C_ERROR_NONE;
+    i2c5MasterObj.error = I2C_ERROR_NONE;
 
     // Reset the PLib objects and Interrupts
-    i2c5Obj.state = I2C_STATE_IDLE;
+    i2c5MasterObj.state = I2C_STATE_IDLE;
     IEC5CLR = _IEC5_I2C5MIE_MASK;
     IEC5CLR = _IEC5_I2C5BIE_MASK;
 
@@ -512,21 +587,23 @@ void I2C5_TransferAbort( void )
 
 void __attribute__((used)) I2C5_BUS_InterruptHandler(void)
 {
+    bool isScanInProgress = i2c5MasterObj.busScanInProgress;
+
     /* Clear the bus collision error status bit */
     I2C5STATCLR = _I2C5STAT_BCL_MASK;
 
     /* ACK the bus interrupt */
     IFS5CLR = _IFS5_I2C5BIF_MASK;
 
-    i2c5Obj.state = I2C_STATE_IDLE;
+    i2c5MasterObj.state = I2C_STATE_IDLE;
 
-    i2c5Obj.error = I2C_ERROR_BUS_COLLISION;
+    i2c5MasterObj.error = I2C_ERROR_BUS_COLLISION;
 
-    if (i2c5Obj.callback != NULL)
+    if ((i2c5MasterObj.callback != NULL) && (isScanInProgress == false))
     {
-        uintptr_t context = i2c5Obj.context;
+        uintptr_t context = i2c5MasterObj.context;
 
-        i2c5Obj.callback(context);
+        i2c5MasterObj.callback(context);
     }
 }
 

@@ -50,7 +50,7 @@
 // *****************************************************************************
 
 
-volatile static OCMP_OBJECT ocmp1Obj;
+static volatile OCMP_OBJECT ocmp1Obj;
 
 void OCMP1_Initialize (void)
 {
@@ -105,7 +105,7 @@ void OCMP1_CallbackRegister(OCMP_CALLBACK callback, uintptr_t context)
 void __attribute__((used)) OUTPUT_COMPARE_1_InterruptHandler (void)
 {
     /* Additional local variable to prevent MISRA C violations (Rule 13.x) */
-    uintptr_t context = ocmp1Obj.context;      
+    uintptr_t context = ocmp1Obj.context;
     IFS0CLR = _IFS0_OC1IF_MASK;    //Clear IRQ flag
 
     if( (ocmp1Obj.callback != NULL))

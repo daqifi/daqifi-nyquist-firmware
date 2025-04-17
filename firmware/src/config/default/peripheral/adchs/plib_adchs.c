@@ -52,10 +52,10 @@
 // *****************************************************************************
 
 /* Object to hold callback function and context */
-volatile static ADCHS_CALLBACK_OBJECT ADCHS_CallbackObj[44];
+static volatile ADCHS_CALLBACK_OBJECT ADCHS_CallbackObj[44];
 
 /* Object to hold callback function and context for end of scan interrupt*/
-volatile static ADCHS_EOS_CALLBACK_OBJECT ADCHS_EOSCallbackObj;
+static volatile ADCHS_EOS_CALLBACK_OBJECT ADCHS_EOSCallbackObj;
 
 
 void ADCHS_Initialize(void)
