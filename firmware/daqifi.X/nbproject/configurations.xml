@@ -20,6 +20,7 @@
               <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_local.h</itemPath>
               <itemPath>../src/config/default/driver/sdspi/drv_sdspi.h</itemPath>
               <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_file_system.h</itemPath>
+              <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_driver_interface.h</itemPath>
             </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <itemPath>../src/config/default/driver/spi/src/drv_spi_local.h</itemPath>

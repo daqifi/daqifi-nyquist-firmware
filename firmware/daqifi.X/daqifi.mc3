@@ -163,7 +163,7 @@
       </entry>
    </usedClasses>
    <usedLibraries class="java.util.ArrayList">
-      <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.harmony.Harmony3Library" version="1.5.5"/>
+      <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.harmony.Harmony3Library" version="1.5.2"/>
    </usedLibraries>
    <tokenMap class="java.util.TreeMap">
       <entry>
@@ -21210,7 +21210,7 @@
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;drv_sdspi&gt;
   &lt;drv_sdspi dnOrder=&quot;0&quot; id=&quot;DRV_SDSPI_COMMON_SPI_DRV_INSTANCE_CNT&quot;&gt;
     &lt;Values dnOrder=&quot;0&quot;&gt;
-      &lt;Dynamic dnOrder=&quot;0&quot; id=&quot;drv_sdspi&quot; value=&quot;1&quot;/&gt;
+      &lt;Dynamic dnOrder=&quot;0&quot; id=&quot;drv_sdspi&quot; value=&quot;2&quot;/&gt;
     &lt;/Values&gt;
   &lt;/drv_sdspi&gt;
 &lt;/drv_sdspi&gt;
@@ -21245,7 +21245,20 @@
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="drv_sdspi_0" name="!@#harmonyAttachmentState"/>
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;drv_sdspi_0&gt;
-  &lt;drv_sdspi_0 dnOrder=&quot;0&quot;/&gt;
+  &lt;drv_sdspi_0 dnOrder=&quot;0&quot;&gt;
+    &lt;Attachments dnOrder=&quot;0&quot;&gt;
+      &lt;DirectDependency dnOrder=&quot;0&quot; id=&quot;drv_sdspi_DRV_SPI_dependency&quot;&gt;
+        &lt;Attributes dnOrder=&quot;0&quot;&gt;
+          &lt;String dnOrder=&quot;0&quot; id=&quot;targetComponentID&quot;&gt;
+            &lt;Value dnOrder=&quot;0&quot;&gt;drv_spi_0&lt;/Value&gt;
+          &lt;/String&gt;
+          &lt;String dnOrder=&quot;1&quot; id=&quot;targetAttachmentID&quot;&gt;
+            &lt;Value dnOrder=&quot;0&quot;&gt;drv_spi&lt;/Value&gt;
+          &lt;/String&gt;
+        &lt;/Attributes&gt;
+      &lt;/DirectDependency&gt;
+    &lt;/Attachments&gt;
+  &lt;/drv_sdspi_0&gt;
 &lt;/drv_sdspi_0&gt;
 </value>
       </entry>
@@ -21259,7 +21272,7 @@
   &lt;drv_sdspi_0 dnOrder=&quot;0&quot; id=&quot;DRV_SDSPI_ASYNC_DRIVER_INTERFACE_HEADER&quot;&gt;
     &lt;Attributes dnOrder=&quot;0&quot;&gt;
       &lt;Boolean dnOrder=&quot;0&quot; id=&quot;enabled&quot;&gt;
-        &lt;Value dnOrder=&quot;0&quot;&gt;false&lt;/Value&gt;
+        &lt;Value dnOrder=&quot;0&quot;&gt;true&lt;/Value&gt;
       &lt;/Boolean&gt;
     &lt;/Attributes&gt;
   &lt;/drv_sdspi_0&gt;
@@ -21272,7 +21285,7 @@
   &lt;drv_sdspi_0 dnOrder=&quot;0&quot; id=&quot;DRV_SDSPI_ASYNC_DRIVER_INTERFACE_SOURCE&quot;&gt;
     &lt;Attributes dnOrder=&quot;0&quot;&gt;
       &lt;Boolean dnOrder=&quot;0&quot; id=&quot;enabled&quot;&gt;
-        &lt;Value dnOrder=&quot;0&quot;&gt;false&lt;/Value&gt;
+        &lt;Value dnOrder=&quot;0&quot;&gt;true&lt;/Value&gt;
       &lt;/Boolean&gt;
     &lt;/Attributes&gt;
   &lt;/drv_sdspi_0&gt;
@@ -21350,7 +21363,7 @@
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;drv_sdspi_0&gt;
   &lt;drv_sdspi_0 dnOrder=&quot;0&quot; id=&quot;DRV_SDSPI_INTERFACE_TYPE&quot;&gt;
     &lt;Values dnOrder=&quot;0&quot;&gt;
-      &lt;Dynamic dnOrder=&quot;0&quot; id=&quot;drv_sdspi_0&quot; value=&quot;&quot;/&gt;
+      &lt;Dynamic dnOrder=&quot;0&quot; id=&quot;drv_sdspi_0&quot; value=&quot;SPI_DRV&quot;/&gt;
     &lt;/Values&gt;
   &lt;/drv_sdspi_0&gt;
 &lt;/drv_sdspi_0&gt;
@@ -21531,7 +21544,9 @@
         &lt;Value dnOrder=&quot;0&quot;&gt;true&lt;/Value&gt;
       &lt;/Boolean&gt;
     &lt;/Attributes&gt;
-    &lt;Values dnOrder=&quot;1&quot;/&gt;
+    &lt;Values dnOrder=&quot;1&quot;&gt;
+      &lt;Dynamic dnOrder=&quot;0&quot; id=&quot;drv_sdspi_0&quot; value=&quot;0&quot;/&gt;
+    &lt;/Values&gt;
   &lt;/drv_sdspi_0&gt;
 &lt;/drv_sdspi_0&gt;
 </value>
@@ -21732,17 +21747,7 @@
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;drv_spi_0&gt;
   &lt;drv_spi_0 dnOrder=&quot;0&quot;&gt;
     &lt;Attachments dnOrder=&quot;0&quot;&gt;
-      &lt;DirectCapability dnOrder=&quot;0&quot; id=&quot;drv_spi&quot;&gt;
-        &lt;Attributes dnOrder=&quot;0&quot;&gt;
-          &lt;String dnOrder=&quot;0&quot; id=&quot;targetComponentID&quot;&gt;
-            &lt;Value dnOrder=&quot;0&quot;&gt;drvWifiWinc&lt;/Value&gt;
-          &lt;/String&gt;
-          &lt;String dnOrder=&quot;1&quot; id=&quot;targetAttachmentID&quot;&gt;
-            &lt;Value dnOrder=&quot;0&quot;&gt;drv_spi_dependency&lt;/Value&gt;
-          &lt;/String&gt;
-        &lt;/Attributes&gt;
-      &lt;/DirectCapability&gt;
-      &lt;DirectDependency dnOrder=&quot;1&quot; id=&quot;drv_spi_SPI_dependency&quot;&gt;
+      &lt;DirectDependency dnOrder=&quot;0&quot; id=&quot;drv_spi_SPI_dependency&quot;&gt;
         &lt;Attributes dnOrder=&quot;0&quot;&gt;
           &lt;String dnOrder=&quot;0&quot; id=&quot;targetComponentID&quot;&gt;
             &lt;Value dnOrder=&quot;0&quot;&gt;spi4&lt;/Value&gt;
@@ -21777,7 +21782,7 @@
          <value>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&lt;drv_spi_0&gt;
   &lt;drv_spi_0 dnOrder=&quot;0&quot; id=&quot;DRV_SPI_NUM_CLIENTS&quot;&gt;
     &lt;Values dnOrder=&quot;0&quot;&gt;
-      &lt;User dnOrder=&quot;0&quot; value=&quot;2&quot;/&gt;
+      &lt;User dnOrder=&quot;0&quot; value=&quot;1&quot;/&gt;
     &lt;/Values&gt;
   &lt;/drv_spi_0&gt;
 &lt;/drv_spi_0&gt;
@@ -21804,7 +21809,7 @@
       &lt;/Boolean&gt;
     &lt;/Attributes&gt;
     &lt;Values dnOrder=&quot;1&quot;&gt;
-      &lt;User dnOrder=&quot;0&quot; value=&quot;8&quot;/&gt;
+      &lt;User dnOrder=&quot;0&quot; value=&quot;20&quot;/&gt;
     &lt;/Values&gt;
   &lt;/drv_spi_0&gt;
 &lt;/drv_spi_0&gt;
@@ -28359,7 +28364,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\configuration.h</file>
-         <hash>2eced936efe6ed477b68073041dbd05b567c00d646a6ca1668080e2a19922510</hash>
+         <hash>a1acff35bc0c07019b83623c195504cda502a895f25aaa3d47c47732a93f2e16</hash>
       </entry>
       <entry>
          <file>..\src\config\default\crypto\crypto.h</file>
@@ -28371,7 +28376,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\definitions.h</file>
-         <hash>6aafa37474eb75dfff8c5085572865877736ff971bebe43dd0b12f78b06610a1</hash>
+         <hash>077e0582715d5238b5eee98a84d9aed53e6ab1730e35d6b8fab72b7cefdc864b</hash>
       </entry>
       <entry>
          <file>..\src\config\default\device.h</file>
@@ -28415,7 +28420,15 @@
       </entry>
       <entry>
          <file>..\src\config\default\driver\sdspi\src\drv_sdspi.c</file>
-         <hash>5288ec62f7a8adefa259b051f5aade1ed8495cdf157debc9955a44a20e549d2a</hash>
+         <hash>94ee0880953a0a9afdea3c1af87714acc060d4a21ca607c278fa42fab9d83657</hash>
+      </entry>
+      <entry>
+         <file>..\src\config\default\driver\sdspi\src\drv_sdspi_driver_interface.c</file>
+         <hash>5df520b593b9fedec6525448e8df4becc97a52ac0c8644cbc317dd92e99cafb8</hash>
+      </entry>
+      <entry>
+         <file>..\src\config\default\driver\sdspi\src\drv_sdspi_driver_interface.h</file>
+         <hash>d8a2d61ce322741cacb0c9abaeef0a8df406c2b369ce03cf7a647b87b8ac4c5d</hash>
       </entry>
       <entry>
          <file>..\src\config\default\driver\sdspi\src\drv_sdspi_file_system.c</file>
@@ -28427,7 +28440,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\driver\sdspi\src\drv_sdspi_local.h</file>
-         <hash>25c49d550b9b0022020ae28fabf7b1392abfe423522d7a8bc680282571e2f41c</hash>
+         <hash>04e96426ac6f36952915973826788ef3d265ed7112015b4852cc7e9eb21c7e63</hash>
       </entry>
       <entry>
          <file>..\src\config\default\driver\spi\drv_spi.h</file>
@@ -28903,7 +28916,7 @@
       </entry>
       <entry>
          <file>..\src\config\default\initialization.c</file>
-         <hash>549a9249b515941b8d6e0c16903a9ef697314c1bbe020b3ed18fdfda3f49c6a8</hash>
+         <hash>b57f7d27c9ac02c8ea8463dc05f5a38feaea04fb751d96965332622209327726</hash>
       </entry>
       <entry>
          <file>..\src\config\default\interrupts.c</file>

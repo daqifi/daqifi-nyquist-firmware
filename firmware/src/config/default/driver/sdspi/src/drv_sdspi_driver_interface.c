@@ -263,8 +263,7 @@ bool DRV_SDSPI_SPISpeedSetup(
 
 bool DRV_SDSPI_SPIExclusiveAccess(DRV_SDSPI_OBJ* const dObj, bool isExclusive)
 {
-    //Daqifi Modified
-    return true; //DRV_SPI_Lock(dObj->spiDrvHandle, isExclusive);
+    return DRV_SPI_Lock(dObj->spiDrvHandle, isExclusive);
 }
 
 // *****************************************************************************

@@ -135,7 +135,7 @@ static DRV_SDSPI_BUFFER_OBJ drvSDSPI0TransferObjPool[DRV_SDSPI_QUEUE_SIZE_IDX0];
 /* SDSPI Driver Initialization Data */
 static const DRV_SDSPI_INIT drvSDSPI0InitData =
 {
-    .spiDrvIndex            = DRV_SPI_INDEX_0,//Do Not Let the code generator change this
+    .spiDrvIndex            = 0,
 
     /* SDSPI Number of clients */
     .numClients             = DRV_SDSPI_CLIENTS_NUMBER_IDX0,
@@ -478,7 +478,6 @@ void SYS_Initialize ( void* data )
 
 	GPIO_Initialize();
 
-
     OCMP8_Initialize();
 
     OCMP6_Initialize();
@@ -495,9 +494,9 @@ void SYS_Initialize ( void* data )
 
     OCMP3_Initialize();
 
+    CORETIMER_Initialize();
     TMR6_Initialize();
 
-    CORETIMER_Initialize();
 
     ADCHS_Initialize();
 
@@ -511,6 +510,7 @@ void SYS_Initialize ( void* data )
     DMAC_Initialize();
 
     I2C5_Initialize();
+
 
 
     /* MISRAC 2012 deviation block start */

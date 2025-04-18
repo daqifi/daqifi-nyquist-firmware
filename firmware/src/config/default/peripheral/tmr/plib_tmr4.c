@@ -78,7 +78,7 @@ void TMR4_Initialize(void)
 
     /* Enable TMR Interrupt of odd numbered timer in 32-bit mode */
     IEC0SET = _IEC0_T5IE_MASK;
-    
+
 }
 
 

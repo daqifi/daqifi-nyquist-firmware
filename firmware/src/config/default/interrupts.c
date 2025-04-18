@@ -20,7 +20,7 @@
 
 // DOM-IGNORE-BEGIN
 /*******************************************************************************
-* Copyright (C) 2025 Microchip Technology Inc. and its subsidiaries.
+ * Copyright (C) 2018 Microchip Technology Inc. and its subsidiaries.
  *
  * Subject to your compliance with these terms, you may use Microchip software
  * and any derivatives exclusively with Microchip products. It is your
@@ -54,7 +54,6 @@
 
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
-
 
 // *****************************************************************************
 // *****************************************************************************
@@ -111,79 +110,86 @@ void ADC_EOS_Handler (void);
 // Section: System Interrupt Vector definitions
 // *****************************************************************************
 // *****************************************************************************
-
-void CORE_TIMER_Handler(void) {
+void __attribute__((used)) CORE_TIMER_Handler (void)
+{
     CORE_TIMER_InterruptHandler();
 }
 
-void OUTPUT_COMPARE_1_Handler(void) {
+
+
+void __attribute__((used)) OUTPUT_COMPARE_1_Handler (void)
+{
     OUTPUT_COMPARE_1_InterruptHandler();
 }
 
-void TIMER_2_Handler(void) {
+void __attribute__((used)) TIMER_2_Handler (void)
+{
     TIMER_2_InterruptHandler();
 }
 
-void TIMER_3_Handler(void) {
+void __attribute__((used)) TIMER_3_Handler (void)
+{
     TIMER_3_InterruptHandler();
 }
 
-void TIMER_5_Handler (void)
+void __attribute__((used)) TIMER_5_Handler (void)
 {
-    
     TIMER_5_InterruptHandler();
 }
 
-void TIMER_6_Handler(void) {
+void __attribute__((used)) TIMER_6_Handler (void)
+{
+   
 }
 
-void TIMER_7_Handler(void) {
+void __attribute__((used)) TIMER_7_Handler (void)
+{
     TIMER_7_InterruptHandler();
 }
 
-void ADC_DATA0_Handler(void) {    
+void __attribute__((used)) ADC_DATA0_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(0)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(0), 0);
     }
     ADC_DATA0_InterruptHandler();
 }
 
-void ADC_DATA1_Handler(void) {    
+void __attribute__((used)) ADC_DATA1_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(1)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(1), 1);
     }
     ADC_DATA1_InterruptHandler();
 }
 
-void ADC_DATA2_Handler(void) {   
+void __attribute__((used)) ADC_DATA2_Handler(void) {   
     if (ADCHS_ChannelResultIsReady(2)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(2), 2);
     }
     ADC_DATA2_InterruptHandler();
 }
 
-void ADC_DATA3_Handler(void) {    
+void __attribute__((used)) ADC_DATA3_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(3)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(3), 3);
     }
     ADC_DATA3_InterruptHandler();
 }
 
-void ADC_DATA4_Handler(void) {    
+void __attribute__((used)) ADC_DATA4_Handler(void) {    
     if (ADCHS_ChannelResultIsReady(4)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4), 4);        
     }
     ADC_DATA4_InterruptHandler();
 }
 
-void ADC_DATA5_Handler (void)
+void __attribute__((used)) ADC_DATA5_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(5)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(5), 5);        
     }
     ADC_DATA5_InterruptHandler();
 }
-void ADC_DATA6_Handler (void)
+void __attribute__((used)) ADC_DATA6_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(6)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(6), 6);        
@@ -191,7 +197,7 @@ void ADC_DATA6_Handler (void)
     ADC_DATA6_InterruptHandler();
 }
 
-void ADC_DATA7_Handler (void)
+void __attribute__((used)) ADC_DATA7_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(7)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(7), 7);        
@@ -199,7 +205,7 @@ void ADC_DATA7_Handler (void)
     ADC_DATA7_InterruptHandler();
 }
 
-void ADC_DATA8_Handler (void)
+void __attribute__((used)) ADC_DATA8_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(8)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(8), 8);        
@@ -207,7 +213,7 @@ void ADC_DATA8_Handler (void)
     ADC_DATA8_InterruptHandler();
 }
 
-void ADC_DATA11_Handler (void)
+void __attribute__((used)) ADC_DATA11_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(11)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(11), 11);        
@@ -215,7 +221,7 @@ void ADC_DATA11_Handler (void)
     ADC_DATA11_InterruptHandler();
 }
 
-void ADC_DATA24_Handler (void)
+void __attribute__((used)) ADC_DATA24_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(24)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(24), 24);        
@@ -223,7 +229,7 @@ void ADC_DATA24_Handler (void)
     ADC_DATA24_InterruptHandler();
 }
 
-void ADC_DATA25_Handler (void)
+void __attribute__((used)) ADC_DATA25_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(25)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(25), 25);        
@@ -231,7 +237,7 @@ void ADC_DATA25_Handler (void)
     ADC_DATA25_InterruptHandler();
 }
 
-void ADC_DATA26_Handler (void)
+void __attribute__((used)) ADC_DATA26_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(26)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(26), 26);        
@@ -239,7 +245,7 @@ void ADC_DATA26_Handler (void)
     ADC_DATA26_InterruptHandler();
 }
 
-void ADC_DATA27_Handler (void)
+void __attribute__((used)) ADC_DATA27_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(27)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(27), 27);        
@@ -247,7 +253,7 @@ void ADC_DATA27_Handler (void)
     ADC_DATA27_InterruptHandler();
 }
 
-void ADC_DATA38_Handler (void)
+void __attribute__((used)) ADC_DATA38_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(38)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(38), 38);        
@@ -255,58 +261,58 @@ void ADC_DATA38_Handler (void)
     ADC_DATA38_InterruptHandler();
 }
 
-void ADC_DATA39_Handler (void)
+void __attribute__((used)) ADC_DATA39_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(39)) {
         ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(39), 39);        
     }
     ADC_DATA39_InterruptHandler();
 }
-void CHANGE_NOTICE_A_Handler(void) {
+void __attribute__((used)) CHANGE_NOTICE_A_Handler(void) {
     CHANGE_NOTICE_A_InterruptHandler();
 }
 
-void CHANGE_NOTICE_D_Handler(void) {
+void __attribute__((used)) CHANGE_NOTICE_D_Handler(void) {
     CHANGE_NOTICE_D_InterruptHandler();
 }
 
-void USB_Handler(void) {
+void __attribute__((used)) USB_Handler(void) {
     DRV_USBHS_InterruptHandler();
 }
 
-void USB_DMA_Handler(void) {
+void __attribute__((used)) USB_DMA_Handler(void) {
     DRV_USBHS_DMAInterruptHandler();
 }
 
-void DMA0_Handler(void) {
+void __attribute__((used)) DMA0_Handler(void) {
     DMA0_InterruptHandler();
 }
 
-void DMA1_Handler(void) {
+void __attribute__((used)) DMA1_Handler(void) {
     DMA1_InterruptHandler();
 }
 
-void SPI4_RX_Handler(void) {
+void __attribute__((used)) SPI4_RX_Handler(void) {
     SPI4_RX_InterruptHandler();
 }
 
-void SPI4_TX_Handler(void) {
+void __attribute__((used)) SPI4_TX_Handler(void) {
     SPI4_TX_InterruptHandler();
 }
 
-void FLASH_CONTROL_Handler(void) {
+void __attribute__((used)) FLASH_CONTROL_Handler(void) {
     NVM_InterruptHandler();
 }
 
-void I2C5_BUS_Handler(void) {
+void __attribute__((used)) I2C5_BUS_Handler(void) {
     I2C5_BUS_InterruptHandler();
 }
 
-void I2C5_MASTER_Handler(void) {
+void __attribute__((used)) I2C5_MASTER_Handler(void) {
     I2C5_MASTER_InterruptHandler();
 }
 
-void ADC_EOS_Handler(void) {    
+void __attribute__((used)) ADC_EOS_Handler(void) {    
     ADC_EOSInterruptCB();
     ADC_EOS_InterruptHandler();
 }
