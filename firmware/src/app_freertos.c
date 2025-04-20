@@ -135,8 +135,10 @@ static void app_WifiTask(void* p_arg) {
 
 static void app_SdCardTask(void* p_arg) {
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
-    while (1) {
+    while (1) {       
+        DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
         sd_card_manager_ProcessState();
+        SYS_FS_Tasks();
         vTaskDelay(5 / portTICK_PERIOD_MS);
     }
 }
@@ -291,7 +293,7 @@ static void app_TasksCreate() {
     }
     errStatus = xTaskCreate((TaskFunction_t) app_SdCardTask,
             "SdCardTask",
-            5000,
+            5240,
             NULL,
             2,
             NULL);

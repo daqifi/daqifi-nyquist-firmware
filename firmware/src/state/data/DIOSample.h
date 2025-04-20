@@ -70,6 +70,7 @@ extern "C" {
      * @return True on success, false on failure
      */
     bool DIOSampleList_PopFront(DIOSampleList* list, DIOSample* data);
+    bool DIOSampleList_PeekFront(DIOSampleList* list, DIOSample* data);
 
     /**
      * Gets the number of items currently in the list

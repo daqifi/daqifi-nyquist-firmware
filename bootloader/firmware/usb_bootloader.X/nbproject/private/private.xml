@@ -2,18 +2,6 @@
 <project-private xmlns="http://www.netbeans.org/ns/project-private/1">
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
-        <group>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/main.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/int/templates/int_EnableControl_PIC32.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/framework/system/common/sys_module.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/framework/bootloader/src/bootloader.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/app.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/system_exceptions.c</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/system_tasks.c</file>
-            <file>file:/C:/Program%20Files/Microchip/MPLABX/v6.25/packs/Microchip/PIC32MZ-EF_DFP/1.4.168/xc32/startup/crt0.S</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/framework/peripheral/usbhs/templates/usbhs_ModuleControl_Default.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/system_config.h</file>
-            <file>file:/D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/framework/usb/src/dynamic/usb_device.c</file>
-        </group>
+        <group/>
     </open-files>
 </project-private>

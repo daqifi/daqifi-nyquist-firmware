@@ -60,14 +60,14 @@
 // Section: RTOS "Tasks" Routine
 // *****************************************************************************
 // *****************************************************************************
-static void lDRV_SDSPI_0_Tasks(  void *pvParameters  )
-{
-    while(true)
-    {
-        DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
-        vTaskDelay(10U / portTICK_PERIOD_MS);
-    }
-}
+//static void lDRV_SDSPI_0_Tasks(  void *pvParameters  )
+//{
+//    while(true)
+//    {
+//        DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
+//        vTaskDelay(10U / portTICK_PERIOD_MS);
+//    }
+//}
 
 static void F_USB_DEVICE_Tasks(  void *pvParameters  )
 {
@@ -121,14 +121,14 @@ static void F_DRV_USBHS_Tasks(  void *pvParameters  )
 }
 
 
-static void lSYS_FS_Tasks(  void *pvParameters  )
-{
-    while(true)
-    {
-        SYS_FS_Tasks();
-        vTaskDelay(10U / portTICK_PERIOD_MS);
-    }
-}
+//static void lSYS_FS_Tasks(  void *pvParameters  )
+//{
+//    while(true)
+//    {
+//        SYS_FS_Tasks();
+//        vTaskDelay(10U / portTICK_PERIOD_MS);
+//    }
+//}
 
 
 
@@ -151,24 +151,24 @@ void SYS_Tasks ( void )
 {
     /* Maintain system services */
     
-    (void) xTaskCreate( lSYS_FS_Tasks,
-        "SYS_FS_TASKS",
-        SYS_FS_STACK_SIZE,
-        (void*)NULL,
-        SYS_FS_PRIORITY ,
-        (TaskHandle_t*)NULL
-    );
-
-
-
-    /* Maintain Device Drivers */
-        (void) xTaskCreate( lDRV_SDSPI_0_Tasks,
-        "DRV_SD_0_TASKS",
-        DRV_SDSPI_STACK_SIZE_IDX0,
-        (void*)NULL,
-        DRV_SDSPI_PRIORITY_IDX0 ,
-        (TaskHandle_t*)NULL
-    );
+//    (void) xTaskCreate( lSYS_FS_Tasks,
+//        "SYS_FS_TASKS",
+//        SYS_FS_STACK_SIZE,
+//        (void*)NULL,
+//        SYS_FS_PRIORITY ,
+//        (TaskHandle_t*)NULL
+//    );
+//
+//
+//
+//    /* Maintain Device Drivers */
+//        (void) xTaskCreate( lDRV_SDSPI_0_Tasks,
+//        "DRV_SD_0_TASKS",
+//        DRV_SDSPI_STACK_SIZE_IDX0,
+//        (void*)NULL,
+//        DRV_SDSPI_PRIORITY_IDX0 ,
+//        (TaskHandle_t*)NULL
+//    );
 
     xTaskCreate( _WDRV_WINC_Tasks,
         "WDRV_WINC_Tasks",

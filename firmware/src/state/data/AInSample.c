@@ -38,7 +38,7 @@ void AInSampleList_Destroy()
         while (!AInSampleList_IsEmpty()) {
             if (AInSampleList_PopFront(&pData)) {
                 if (pData != NULL) {
-                    free(pData);
+                    vPortFree(pData);
                     pData = NULL;
                 }
             }

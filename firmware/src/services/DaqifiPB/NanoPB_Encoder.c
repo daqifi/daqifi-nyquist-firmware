@@ -431,7 +431,7 @@ size_t Nanopb_Encode(tBoardData* state,
                         message.analog_in_data_count++;
                     }
 
-                    free(pPublicSampleList);
+                     vPortFree(pPublicSampleList);
 
                     if (message.analog_in_data_count > 0) {
                         //time stamp of all the samples in a list should be same, so using anyone should be fine

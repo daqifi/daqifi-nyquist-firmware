@@ -249,7 +249,7 @@ size_t Json_Encode(tBoardData* state,
                         (int) voltage);
             }
 
-            free(pPublicSampleList);
+            vPortFree(pPublicSampleList);
             if(startIndex == initialOffsetIndex) //no adc data added
                 break;
             // Remove trailing comma and close adc array

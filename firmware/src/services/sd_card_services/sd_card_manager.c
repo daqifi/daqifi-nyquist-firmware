@@ -25,13 +25,13 @@ typedef enum {
 typedef struct {
     sd_card_manager_processState_t currentProcessState;
     /** Client read buffer */
-    uint8_t readBuffer[SD_CARD_MANAGER_CONF_RBUFFER_SIZE];
+    uint8_t readBuffer[SD_CARD_MANAGER_CONF_RBUFFER_SIZE] __attribute__((coherent));
 
     /** The current length of the read buffer */
     size_t readBufferLength;
 
     /** Client write buffer */
-    uint8_t writeBuffer[SD_CARD_MANAGER_CONF_WBUFFER_SIZE];
+    uint8_t writeBuffer[SD_CARD_MANAGER_CONF_WBUFFER_SIZE]__attribute__((coherent));
 
     /** The current length of the write buffer */
     size_t writeBufferLength;
@@ -63,6 +63,7 @@ static int SDCardWrite() {
     if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
         goto __exit;
     }
+   
     writeLen = SYS_FS_FileWrite(gSdCardData.fileHandle,
             (const void *) (gSdCardData.writeBuffer + gSdCardData.sdCardWriteBufferOffset),
             gSdCardData.writeBufferLength);
@@ -78,6 +79,7 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint16_t len) {
     gSdCardData.sdCardWriteBufferOffset = 0;
     return SDCardWrite();
 }
+
 /**
  * @brief Recursively lists files and directories, storing the output in a buffer.
  *
@@ -336,6 +338,7 @@ void sd_card_manager_ProcessState() {
                     gSdCardData.lastFlushMillis = currentMillis;
                 }
             }
+
         }
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE:

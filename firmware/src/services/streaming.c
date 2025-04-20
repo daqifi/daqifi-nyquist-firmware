@@ -74,8 +74,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
 
 #if  !defined(TEST_STREAMING)
-        if (pRunTimeStreamConf->IsEnabled) {
-            pPublicSampleList=calloc(1,sizeof(AInPublicSampleList_t));
+        if (pRunTimeStreamConf->IsEnabled) {       
+            if((sizeof(AInPublicSampleList_t)+200)>xPortGetFreeHeapSize()){
+                continue;
+            }
+            pPublicSampleList=pvPortCalloc(1,sizeof(AInPublicSampleList_t));
             if(pPublicSampleList==NULL)
                 continue;
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
@@ -90,7 +93,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
-                free(pPublicSampleList);
+                vPortFree(pPublicSampleList);
             }
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
@@ -301,12 +304,12 @@ void TimestampTimer_Init(void) {
     if (gStreamingTaskHandle == NULL) {
         xTaskCreate((TaskFunction_t) streaming_Task,
                 "Stream task",
-                4000, NULL, 2, &gStreamingTaskHandle);
+                4096, NULL, 2, &gStreamingTaskHandle);
     }
     if (gStreamingInterruptHandle == NULL) {
         xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
                 "Stream Interrupt",
-                2048, NULL, 8, &gStreamingInterruptHandle);
+                4096, NULL, 8, &gStreamingInterruptHandle);
     }
     
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
