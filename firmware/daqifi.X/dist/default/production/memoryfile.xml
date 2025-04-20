@@ -3,9 +3,9 @@
   <executable name="dist/default/production/daqifi.X.production.elf">                 
     <memory name="program">                 
       <units>bytes</units>                 
-      <length>2098304</length>                 
-      <used>500604</used>                     
-      <free>1597700</free>                     
+      <length>2097152</length>                 
+      <used>501052</used>                     
+      <free>1596100</free>                     
     </memory>                              
     <memory name="data">              
       <units>bytes</units>                 

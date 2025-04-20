@@ -1664,7 +1664,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/old_hv2_bootld.ld"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -1682,7 +1682,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/p32MZ2048EFM144.ld"
-            ex="false"
+            ex="true"
             overriding="false">
         <C32>
         </C32>
@@ -3696,6 +3696,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
