@@ -1084,7 +1084,7 @@
         <targetDevice>PIC32MZ2048EFM144</targetDevice>
         <targetHeader></targetHeader>
         <targetPluginBoard></targetPluginBoard>
-        <platformTool>pk4hybrid</platformTool>
+        <platformTool>ri4hybrid</platformTool>
         <languageToolchain>XC32</languageToolchain>
         <languageToolchainVersion>4.60</languageToolchainVersion>
         <platform>3</platform>
@@ -1664,7 +1664,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/old_hv2_bootld.ld"
-            ex="false"
+            ex="true"
             overriding="false">
         <C32>
         </C32>
@@ -1682,7 +1682,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/p32MZ2048EFM144.ld"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>

@@ -75,7 +75,7 @@ void ADC_EosInterruptTask(void) {
                     continue;
                 }
                 sample.Timestamp = *valueTMR;
-                sample.Channel = i;
+                sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
                 sample.Value = adcval;
                 BoardData_Set(
                         BOARDDATA_AIN_LATEST,
@@ -313,7 +313,7 @@ bool ADC_ReadADCSampleFromISR(uint32_t value, uint8_t bufferIndex) {
                 && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
 
             sample.Timestamp = *valueTMR;
-            sample.Channel = i;
+            sample.Channel =gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId ;
             BoardData_Set(
                     BOARDDATA_AIN_LATEST,
                     i,

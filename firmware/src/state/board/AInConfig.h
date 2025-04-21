@@ -10,21 +10,6 @@
 extern "C" {
 #endif
 
-    //    typedef struct sSPIConfig
-    //    {
-    //        SPI_MODULE_ID spiID;
-    //        uint32_t baud;
-    //        SPI_BAUD_RATE_CLOCK clock;                                   //Selects the type of clock is used by the Baud Rate Generator.
-    //        CLK_BUSES_PERIPHERAL busClk_id;
-    //
-    //        SPI_CLOCK_POLARITY clockPolarity;                    //Enables clock polarity.
-    //        SPI_COMMUNICATION_WIDTH busWidth;                   //Selects the data width for the SPI communication.
-    //
-    //        SPI_INPUT_SAMPLING_PHASE inSamplePhase;        //Selects the SPI data input sample phase.
-    //
-    //        SPI_OUTPUT_DATA_PHASE outDataPhase; //Selects serial output data change.
-    //    } SPIConfig;
-
     /**
      * Defines the available analog input types
      * This is ues to direct analog input channels to the correct driver
@@ -54,92 +39,6 @@ extern "C" {
         double Resolution; // Per-module resolution
     } MC12bModuleConfig;
 
-    //    /**
-    //     * Configuration for a AD7173 module
-    //     */
-    //    typedef struct s_AD7173ModuleConfig
-    //    {
-    //        /**
-    //         * The module SPI config
-    //         */
-    //        SPIConfig SPI;
-    //        
-    //        /**
-    //         * The port module to use for the data line (probably always PORTS_ID_0)
-    //         */
-    //        PORTS_MODULE_ID DataModule;
-    //        
-    //        PORTS_CHANNEL CS_Ch;
-    //        PORTS_BIT_POS CS_Bit;
-    //        
-    //        PORTS_CHANNEL SPI_SDI_Ch;
-    //        PORTS_BIT_POS SPI_SDI_Bit;
-    //        uint32_t SPI_SDI_BitMask;
-    //        
-    //        PORTS_CHANNEL ERR_Ch;
-    //        PORTS_BIT_POS ERR_Bit;
-    //            
-    //        uint32_t Resolution;
-    //    } AD7173ModuleConfig;
-
-    //    /**
-    //     * Configuration for a AD7609 module
-    //     * NOTE: For the moment this is identical to AD7173Config 
-    //     */
-    //    typedef struct s_AD7609ModuleConfig
-    //    {
-    //        /**
-    //         * The module SPI config
-    //         */
-    //        SPIConfig SPI;
-    //        
-    //        /**
-    //         * The port module to use for the data line (probably always PORTS_ID_0)
-    //         */
-    //        PORTS_MODULE_ID DataModule;
-    //        
-    //        PORTS_CHANNEL CS_Ch;
-    //        PORTS_BIT_POS CS_Bit;
-    //        
-    //        PORTS_CHANNEL BSY_Ch;
-    //        PORTS_BIT_POS BSY_Bit;
-    //        uint32_t BSY_BitMask;
-    //        
-    //        PORTS_CHANNEL RST_Ch;
-    //        PORTS_BIT_POS RST_Bit;
-    //        
-    //        PORTS_CHANNEL Range_Ch;
-    //        PORTS_BIT_POS Range_Bit;
-    //        
-    //        PORTS_CHANNEL OS0_Ch;
-    //        PORTS_BIT_POS OS0_Bit;
-    //        
-    //        PORTS_CHANNEL OS1_Ch;
-    //        PORTS_BIT_POS OS1_Bit;
-    //        
-    //        PORTS_CHANNEL CONVST_Ch;
-    //        PORTS_BIT_POS CONVST_Bit;
-    //        
-    //        /**
-    //         * The value of the range pin. 0 = 5V, 1 = 10V
-    //         * TODO: Should this be a runtime variable
-    //         */
-    //        bool Range10V;
-    //        
-    //        /**
-    //         * The Oversampling mode.
-    //         * 00: No Oversample
-    //         * 01: OS Ratio 2
-    //         * 10: OS Ratio 4
-    //         * 11: OS Ratio 8
-    //         * TODO: According to http://www.analog.com/media/en/technical-documentation/data-sheets/AD7609.pdf 
-    //         *       there is another OS pin which provides access to OS Ratios 16, 32 and 64). Verify that this is not implemented.
-    //         */
-    //        uint8_t OSMode;
-    //        
-    //        uint32_t Resolution;
-    //        
-    //    } AD7609ModuleConfig;
 
     /**
      * Declares Chip/Module level configuration for an Analog In provider
@@ -205,25 +104,6 @@ extern "C" {
         double InternalScale;
     } MC12bChannelConfig;
 
-    //    /**
-    //     * Holds intrinsic channel information for an AD7173-backed channel
-    //     */
-    //    typedef struct s_AD7173ChannelConfig
-    //    {
-    //        // The Channel on the Chip (0-15)
-    //        uint8_t ChannelIndex;
-    //    } AD7173ChannelConfig;
-
-    //    /**
-    //     * Holds intrinsic channel information for an AD7609-backed channel
-    //     */
-    //    typedef struct s_AD7609ChannelConfig
-    //    {
-    //        // The Channel on the Chip (0-7)
-    //        uint8_t ChannelIndex;
-    //    } AD7609ChannelConfig;
-    //    
-
     /**
      * Defines the immutable parameters for a single Analog in channel
      */
@@ -258,14 +138,19 @@ extern "C" {
 
 #define MAX_AIN_PUBLIC_CHANNELS 16
 
-#define ADC_CHANNEL_VSYS 248
-#define ADC_CHANNEL_5VREF 249
-#define ADC_CHANNEL_3_3V 250
-#define ADC_CHANNEL_2_5VREF 251
-#define ADC_CHANNEL_VBATT 252
-#define ADC_CHANNEL_5V 253
-#define ADC_CHANNEL_10V 254
-#define ADC_CHANNEL_TEMP 255
+#define ADC_CHANNEL_3_3V 248
+#define ADC_CHANNEL_2_5VREF 249
+#define ADC_CHANNEL_VBATT 250
+#define ADC_CHANNEL_5V 251
+#define ADC_CHANNEL_10V 252
+#define ADC_CHANNEL_TEMP 253 
+#define ADC_CHANNEL_VSYS 254
+#define ADC_CHANNEL_5VREF 255   
+
+
+
+
+
 
 #ifdef __cplusplus
 }
