@@ -111,7 +111,7 @@ extern "C" {
 #define SYS_FS_FAT_READONLY               false
 #define SYS_FS_FAT_CODE_PAGE              437
 #define SYS_FS_FAT_MAX_SS                 SYS_FS_MEDIA_MAX_BLOCK_SIZE
-#define SYS_FS_FAT_ALIGNED_BUFFER_LEN     512
+#define SYS_FS_FAT_ALIGNED_BUFFER_LEN     2048
 
 
 
@@ -128,9 +128,9 @@ extern "C" {
 /* SDSPI Driver Instance 0 Configuration Options */
 #define DRV_SDSPI_INDEX_0                       0
 #define DRV_SDSPI_CLIENTS_NUMBER_IDX0           1
-#define DRV_SDSPI_QUEUE_SIZE_IDX0               4
+#define DRV_SDSPI_QUEUE_SIZE_IDX0               64
 #define DRV_SDSPI_CHIP_SELECT_PIN_IDX0          SYS_PORT_PIN_RD9
-#define DRV_SDSPI_SPEED_HZ_IDX0                 1000000
+#define DRV_SDSPI_SPEED_HZ_IDX0                 20000000
 #define DRV_SDSPI_POLLING_INTERVAL_MS_IDX0      1000
 
 
@@ -186,7 +186,7 @@ extern "C" {
 #define DRV_SPI_DMA_MODE
 #define DRV_SPI_XMIT_DMA_CH_IDX0              SYS_DMA_CHANNEL_0
 #define DRV_SPI_RCV_DMA_CH_IDX0               SYS_DMA_CHANNEL_1
-#define DRV_SPI_QUEUE_SIZE_IDX0               20
+#define DRV_SPI_QUEUE_SIZE_IDX0               64
 
 
 

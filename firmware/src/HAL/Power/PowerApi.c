@@ -323,6 +323,7 @@ static void Power_UpdateState(void) {
              */
             if (pData->requestedPowerState == DO_POWER_UP) pData->requestedPowerState = NO_CHANGE; // We are already powered so just reset the flag
             Power_UpdateChgPct();
+            BQ24297_UpdateStatus();
             if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN ||
                     (pData->chargePct < BATT_LOW_TH &&
                     !pData->BQ24297Data.status.pgStat)) {

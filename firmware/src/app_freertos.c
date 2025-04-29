@@ -139,7 +139,7 @@ static void app_SdCardTask(void* p_arg) {
         DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
         sd_card_manager_ProcessState();
         SYS_FS_Tasks();
-        vTaskDelay(5 / portTICK_PERIOD_MS);
+        vTaskDelay(2 / portTICK_PERIOD_MS);
     }
 }
 
@@ -256,6 +256,7 @@ void app_SystemInit() {
             gpBoardConfig,
             gpBoardRuntimeConfig,
             gpBoardData);
+    EVIC_SourceEnable(INT_SOURCE_CHANGE_NOTICE_A);
 }
 
 static void app_TasksCreate() {

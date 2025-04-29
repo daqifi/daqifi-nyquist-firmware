@@ -70,7 +70,7 @@ void GPIO_Initialize ( void )
     LATA = 0x0U; /* Initial Latch Value */
     TRISACLR = 0x20U; /* Direction Control */
     ANSELACLR = 0x20U; /* Digital Mode Enable */
-    CNPUASET = 0xcU; /* Pull-Up Enable */
+    CNPUASET = 0x1cU; /* Pull-Up Enable */
 
     /* Change Notice Enable */
     CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK;

@@ -3,15 +3,15 @@
   <executable name="dist/default/production/daqifi.X.production.elf">                 
     <memory name="program">                 
       <units>bytes</units>                 
-      <length>2097152</length>                 
-      <used>501052</used>                     
-      <free>1596100</free>                     
+      <length>2098304</length>                 
+      <used>500628</used>                     
+      <free>1597676</free>                     
     </memory>                              
     <memory name="data">              
       <units>bytes</units>                 
       <length>524288</length>                 
-      <used>347391</used>                     
-      <free>176897</free>                     
+      <used>353103</used>                     
+      <free>171185</free>                     
     </memory>                              
   </executable>                            
 </project>                                 
