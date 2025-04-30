@@ -2,7 +2,7 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (SD_CARD_MANAGER_CONF_WBUFFER_SIZE*10)
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (SD_CARD_MANAGER_CONF_WBUFFER_SIZE*12)
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/Daqifi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
@@ -328,7 +328,7 @@ void sd_card_manager_ProcessState() {
             uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
             if ((currentMillis - gSdCardData.lastFlushMillis > 5000 ||
-                    gSdCardData.totalBytesFlushPending > 2000)) {
+                    gSdCardData.totalBytesFlushPending > 4096)) {
                 if (gSdCardData.totalBytesFlushPending > 0) {
                     if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
                         gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
