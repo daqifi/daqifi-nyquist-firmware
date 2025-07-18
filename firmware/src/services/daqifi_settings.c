@@ -55,9 +55,17 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
         case DaqifiSettings_TopLevelSettings:
         {
             TopLevelSettings* pTopLevelSettings = &(settings->settings.topLevelSettings);
+            const size_t hardwareRevSize = sizeof(pTopLevelSettings->boardHardwareRev);
+            const size_t firmwareRevSize = sizeof(pTopLevelSettings->boardFirmwareRev);
+            
             pTopLevelSettings->calVals = 0;
-            strcpy(pTopLevelSettings->boardHardwareRev, BOARD_HARDWARE_REV);
-            strcpy(pTopLevelSettings->boardFirmwareRev, BOARD_FIRMWARE_REV);
+            
+            strncpy(pTopLevelSettings->boardHardwareRev, BOARD_HARDWARE_REV, hardwareRevSize);
+            pTopLevelSettings->boardHardwareRev[hardwareRevSize - 1] = '\0';
+            
+            strncpy(pTopLevelSettings->boardFirmwareRev, BOARD_FIRMWARE_REV, firmwareRevSize);
+            pTopLevelSettings->boardFirmwareRev[firmwareRevSize - 1] = '\0';
+
             pTopLevelSettings->boardVariant = BOARD_VARIANT;
             break;
         }
@@ -70,19 +78,32 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
         case DaqifiSettings_Wifi:
         {
             wifi_manager_settings_t* wifi = &(settings->settings.wifi);
+
+            // Set isEnabled flag correctly
             wifi->isEnabled = true;
-            strncpy(wifi->ssid, DEFAULT_WIFI_AP_SSID, strlen(DEFAULT_WIFI_AP_SSID) + 1);
-            wifi->ssid[WDRV_WINC_MAX_SSID_LEN] = '\0';
+
+            // Safely copy SSID
+            strncpy(wifi->ssid, DEFAULT_WIFI_AP_SSID, WDRV_WINC_MAX_SSID_LEN);
+            wifi->ssid[WDRV_WINC_MAX_SSID_LEN - 1] = '\0'; // Ensure null termination
+
+            // Set security mode
             wifi->securityMode = DEFAULT_WIFI_AP_SECURITY_MODE;
-            strncpy(wifi->hostName, DEFAULT_NETWORK_HOST_NAME, strlen(DEFAULT_NETWORK_HOST_NAME) + 1);
+
+            // Safely copy Hostname
+            strncpy(wifi->hostName, DEFAULT_NETWORK_HOST_NAME, WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
+            wifi->hostName[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN - 1] = '\0'; // Ensure null termination
+
             switch (wifi->securityMode) {
                 case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE:
-                    strncpy((char*) wifi->passKey, DEFAULT_WIFI_WPA_PSK_PASSKEY, strlen(DEFAULT_WIFI_WPA_PSK_PASSKEY) + 1);
-                    wifi->ssid[WDRV_WINC_PSK_LEN] = '\0';
+                    // Safely copy Passkey
+                    strncpy((char*) wifi->passKey, DEFAULT_WIFI_WPA_PSK_PASSKEY, WDRV_WINC_PSK_LEN);
+                    wifi->passKey[WDRV_WINC_PSK_LEN - 1] = '\0'; // Ensure null termination
+                    wifi->passKeyLength = strlen((const char*)wifi->passKey); // Set the correct length
                     break;
                 case WIFI_MANAGER_SECURITY_MODE_OPEN:
                 default:
                     memset(wifi->passKey, 0, WDRV_WINC_PSK_LEN);
+                    wifi->passKeyLength = 0;
                     break;
             }
 
@@ -94,7 +115,6 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             wifi->ipAddr.Val = inet_addr(DEFAULT_NETWORK_IP_ADDRESS);
             wifi->ipMask.Val = inet_addr(DEFAULT_NETWORK_IP_MASK);
             wifi->gateway.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
-            wifi->ssid[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN] = '\0';
 
             wifi->tcpPort = DEFAULT_TCP_PORT;
             break;
@@ -115,12 +135,23 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
 
     switch (settings->type) {
         case DaqifiSettings_TopLevelSettings:
-            strcpy(settings->settings.topLevelSettings.boardHardwareRev, BOARD_HARDWARE_REV);
-            strcpy(settings->settings.topLevelSettings.boardFirmwareRev, BOARD_FIRMWARE_REV);
+        {
+            // By adding { and }, we create a new scope, making the declarations valid.
+            const size_t hardwareRevSize = sizeof(settings->settings.topLevelSettings.boardHardwareRev);
+            const size_t firmwareRevSize = sizeof(settings->settings.topLevelSettings.boardFirmwareRev);
+
+            // Safely copy, truncating if the source macro is ever too long
+            strncpy(settings->settings.topLevelSettings.boardHardwareRev, BOARD_HARDWARE_REV, hardwareRevSize);
+            settings->settings.topLevelSettings.boardHardwareRev[hardwareRevSize - 1] = '\0';
+
+            strncpy(settings->settings.topLevelSettings.boardFirmwareRev, BOARD_FIRMWARE_REV, firmwareRevSize);
+            settings->settings.topLevelSettings.boardFirmwareRev[firmwareRevSize - 1] = '\0';
+
             settings->settings.topLevelSettings.boardVariant = BOARD_VARIANT;
             address = TOP_LEVEL_SETTINGS_ADDR;
             dataSize = sizeof (TopLevelSettings);
             break;
+        }
         case DaqifiSettings_FactAInCalParams:
             address = FAINCAL_SETTINGS_ADDR;
             dataSize = sizeof(AInCalArray);
@@ -146,23 +177,23 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
     CRYPT_MD5_DataAdd(&md5Sum, (const uint8_t*) &(settings->settings), dataSize);
     CRYPT_MD5_Finalize(&md5Sum, settings->md5Sum);
 
-    if (sizeof (DaqifiSettings)>sizeof (gTempFflashBuffer)) {       
+    if (sizeof (DaqifiSettings)>sizeof (gTempFflashBuffer)) {        
         return false;
     }
     memcpy(gTempFflashBuffer, settings, sizeof (DaqifiSettings));
-   
+    
     return nvm_WriteRowtoAddr(address, gTempFflashBuffer);
 }
 
 bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
     uint32_t address = 0;
-  
+    
     switch (type) {
         case DaqifiSettings_TopLevelSettings:
-            address = TOP_LEVEL_SETTINGS_ADDR;        
+            address = TOP_LEVEL_SETTINGS_ADDR;       
             break;
         case DaqifiSettings_FactAInCalParams:
-            address = FAINCAL_SETTINGS_ADDR;            
+            address = FAINCAL_SETTINGS_ADDR;           
             break;
         case DaqifiSettings_UserAInCalParams:
             address = UAINCAL_SETTINGS_ADDR;           
