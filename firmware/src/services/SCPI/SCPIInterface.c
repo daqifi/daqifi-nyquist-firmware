@@ -768,7 +768,7 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:COMMunicate:LAN:AvSECurity?", .callback = SCPI_LANAVSecurityGet, },
     {.pattern = "SYSTem:COMMunicate:LAN:SECurity", .callback = SCPI_LANSecuritySet,},
     {.pattern = "SYSTem:COMMunicate:LAN:PASs", .callback = SCPI_LANPasskeySet,}, // No get for security reasons use PASSCHECK instead
-    {.pattern = "SYSTem:COMMunicate:LAN:PASSCHECK", .callback = SCPI_LANPasskeyGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:PASSCHECK?", .callback = SCPI_LANPasskeyGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:DISPlay", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_LANSettingsApply,},
     {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad,},
@@ -815,6 +815,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
+    {.pattern = "SYSTem:STORage:SD:BENCHmark", .callback = SCPI_StorageSDBenchmark},
+    {.pattern = "SYSTem:STORage:SD:BENCHmark?", .callback = SCPI_StorageSDBenchmarkQuery},
     // FreeRTOS
     //{.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

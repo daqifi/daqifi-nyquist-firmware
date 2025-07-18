@@ -3,7 +3,8 @@
     "allow": [
       "Bash(git config:*)",
       "Bash(find:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

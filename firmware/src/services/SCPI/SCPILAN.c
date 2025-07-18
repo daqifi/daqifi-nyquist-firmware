@@ -18,7 +18,7 @@
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
 
-#define SD_CARD_ACTIVE_ERROR_MSG "\r\nError !! Please Disable SD Card\r\n"
+#define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
 
 /**
  * Encodes the given ip multi-address as a scpi string
@@ -569,10 +569,8 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSettingsClear(scpi_t * context) {
-    DaqifiSettings * pWifiSettings = BoardData_Get(
-            BOARDDATA_WIFI_SETTINGS,
-            0);
-    if (daqifi_settings_ClearNvm(pWifiSettings->type)) {
+    // Clear WiFi settings from NVM
+    if (!daqifi_settings_ClearNvm(DaqifiSettings_Wifi)) {
         return SCPI_RES_ERR;
     }
 

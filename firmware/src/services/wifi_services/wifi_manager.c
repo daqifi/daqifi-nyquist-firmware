@@ -5,6 +5,7 @@
 #include "state/data/BoardData.h"
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
+#include "driver/winc/include/dev/wdrv_winc_gpio.h"
 
 #define UNUSED(x) (void)(x)
 #define WIFI_MANAGER_UDP_LISTEN_PORT         (uint16_t)30303
@@ -243,6 +244,25 @@ static uint8_t __attribute__((unused)) GetEventFlagStatus(wifi_manager_stateFlag
         return 0;
 }
 
+/**
+ * Helper function to properly reset the WINC module after deinit.
+ * This works around a bug in the Microchip WINC driver where WDRV_WINC_Deinitialize
+ * leaves the module in reset state by asserting reset but never deasserting it.
+ */
+static void wifi_manager_FixWincResetState(void) {
+    // The WINC driver's deinit leaves the module with:
+    // - CHIP_EN deasserted (low)
+    // - RESET_N asserted (low) 
+    // This leaves the module in permanent reset. We need to take it out of reset
+    // so it can be re-initialized later.
+    
+    // Assert chip enable and deassert reset to take module out of reset state
+    WDRV_WINC_GPIOChipEnableAssert();
+    WDRV_WINC_GPIOResetDeassert();
+    
+    LOG_D("WINC module taken out of reset state\r\n");
+}
+
 static void __attribute__((unused)) ResetAllEventFlags(wifi_manager_stateFlag_t *pEventFlagState) {
     memset(pEventFlagState, 0, sizeof (wifi_manager_stateFlag_t));
 }
@@ -395,9 +415,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
 
-
             } else {
-                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&pInstance->bssCtx, (uint8_t*) DEFAULT_WIFI_AP_SSID, strlen(DEFAULT_WIFI_AP_SSID))) {
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&pInstance->bssCtx, (uint8_t*) pInstance->pWifiSettings->ssid, strlen(pInstance->pWifiSettings->ssid))) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
@@ -407,9 +426,22 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&pInstance->authCtx)) {
+                if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN) {
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&pInstance->authCtx)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error setting Open auth context\r\n");
+                        break;
+                    }
+                } else if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE) {
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&pInstance->authCtx, (uint8_t*) pInstance->pWifiSettings->passKey, pInstance->pWifiSettings->passKeyLength)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error setting WPA auth context\r\n");
+                        break;
+                    }
+                } else {
+                    // Add this block to handle errors
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
-                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                    LOG_E("AP Mode: Unsupported security mode: %d\r\n", pInstance->pWifiSettings->securityMode);
                     break;
                 }
                 gStateMachineContext.pWifiSettings->ipAddr.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
@@ -466,21 +498,224 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                vTaskDelay(pdMS_TO_TICKS(50)); // Add a small delay to prevent busy-looping
                 SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 break;
             }
-            returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
-            pInstance->nextState = MainState;         
-               
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
-                CloseUdpSocket(&pInstance->udpServerSocket);
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN))
-                wifi_tcp_server_CloseSocket();
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
-                WDRV_WINC_Close(pInstance->wdrvHandle);
-                WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
-                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
-                LOG_D("WiFi de-initializing\r\n");
+            
+            // IMPORTANT: Do NOT use WDRV_WINC_Deinitialize for runtime reconfiguration!
+            // The Microchip driver has a bug where it asserts reset but never deasserts it,
+            // leaving the WINC1500 in a permanent reset state. Instead, we perform a soft
+            // restart by stopping and restarting AP/STA mode with new settings.
+            
+            // Check if WiFi should be disabled
+            if (!pInstance->pWifiSettings->isEnabled) {
+                LOG_D("WiFi disabled - stopping all WiFi operations\r\n");
+                
+                // Stop AP if running
+                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+                    WDRV_WINC_APStop(pInstance->wdrvHandle);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+                }
+                
+                // Disconnect STA if connected
+                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                    WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                }
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                
+                // Close sockets
+                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
+                    CloseUdpSocket(&pInstance->udpServerSocket);
+                }
+                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
+                    wifi_tcp_server_CloseSocket();
+                }
+                
+                LOG_D("WiFi operations stopped\r\n");
+                break;
+            }
+            
+            // Simple mode-based logic - let MainState handle initialization
+            // Just clean up the current mode if we're switching
+            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP) {
+                // Switching to AP mode - disconnect STA if connected
+                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
+                    GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                    LOG_D("Switching from STA to AP mode\r\n");
+                    
+                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                        WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                    }
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    
+                    // Transition to MainState for AP initialization
+                    returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
+                    pInstance->nextState = MainState;
+                    break;
+                }
+            }
+            else if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+                // Switching to STA mode - stop AP if running
+                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+                    LOG_D("Switching from AP to STA mode\r\n");
+                    
+                    WDRV_WINC_APStop(pInstance->wdrvHandle);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    
+                    // Transition to MainState for STA initialization
+                    returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
+                    pInstance->nextState = MainState;
+                    break;
+                }
+            }
+            
+            // Now handle reconfiguration within the same mode
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED) &&
+                pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP)
+            {
+                LOG_D("Restarting Soft AP mode with new settings...\r\n");
+                
+                // Stop current AP
+                WDRV_WINC_APStop(pInstance->wdrvHandle);
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+                
+                // Wait for stop to complete
+                vTaskDelay(pdMS_TO_TICKS(500));
+                
+                // Reconfigure with new settings
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&pInstance->bssCtx)) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("Error resetting BSS context\r\n");
+                    break;
+                }
+                
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&pInstance->bssCtx, 
+                    (uint8_t*) pInstance->pWifiSettings->ssid, 
+                    strlen(pInstance->pWifiSettings->ssid))) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("Error setting new SSID\r\n");
+                    break;
+                }
+                
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&pInstance->bssCtx, WDRV_WINC_CID_2_4G_CH1)) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("Error setting channel\r\n");
+                    break;
+                }
+                
+                // Set auth mode
+                if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN) {
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&pInstance->authCtx)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error setting Open auth context\r\n");
+                        break;
+                    }
+                } else if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE) {
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&pInstance->authCtx, 
+                        (uint8_t*) pInstance->pWifiSettings->passKey, 
+                        pInstance->pWifiSettings->passKeyLength)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error setting WPA auth context\r\n");
+                        break;
+                    }
+                }
+                
+                // Restart AP with new settings
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, 
+                    &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("Error restarting AP\r\n");
+                    break;
+                }
+                
+                SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+                LOG_D("AP restarted with new settings\r\n");
+            }
+            else if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
+                     GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))
+            {
+                // Currently in STA mode and need to update STA settings
+                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+                    LOG_D("Restarting STA mode with new settings...\r\n");
+                    
+                    // Disconnect if connected
+                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                        WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                    }
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    
+                    // Wait for disconnect
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    
+                    // Reconfigure BSS context for STA mode
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&pInstance->bssCtx)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error resetting BSS context\r\n");
+                        break;
+                    }
+                    
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSID(&pInstance->bssCtx, 
+                        (uint8_t*) pInstance->pWifiSettings->ssid, 
+                        strlen(pInstance->pWifiSettings->ssid))) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error setting SSID for STA\r\n");
+                        break;
+                    }
+                    
+                    // Set channel to ANY for STA mode
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&pInstance->bssCtx, WDRV_WINC_CID_ANY)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error setting channel for STA\r\n");
+                        break;
+                    }
+                    
+                    // Set auth mode
+                    if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN) {
+                        if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetOpen(&pInstance->authCtx)) {
+                            SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                            LOG_E("Error setting Open auth context\r\n");
+                            break;
+                        }
+                    } else if (pInstance->pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE) {
+                        if (WDRV_WINC_STATUS_OK != WDRV_WINC_AuthCtxSetWPA(&pInstance->authCtx, 
+                            (uint8_t*) pInstance->pWifiSettings->passKey, 
+                            pInstance->pWifiSettings->passKeyLength)) {
+                            SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                            LOG_E("Error setting WPA auth context\r\n");
+                            break;
+                        }
+                    }
+                    
+                    // Set DHCP
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPUseDHCPSet(pInstance->wdrvHandle, &DhcpEventCallback)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error setting DHCP\r\n");
+                        break;
+                    }
+                    
+                    // Connect to network
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, 
+                        &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
+                        SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        LOG_E("Error connecting to network\r\n");
+                        break;
+                    }
+                    
+                    SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    LOG_D("STA mode connection initiated\r\n");
+                }
+            }
+            else
+            {
+                // If not currently connected, transition to MainState for fresh init
+                returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
+                pInstance->nextState = MainState;
             }
 
             break;
@@ -504,8 +739,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
                 WDRV_WINC_Close(pInstance->wdrvHandle);
                 WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                
+                // Fix the WINC reset state after deinit
+                wifi_manager_FixWincResetState();
+                
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
-                LOG_D("WiFi de-initializing\r\n");
+                LOG_D("WiFi de-initialized and taken out of reset\r\n");
             }
             break;
         case WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED:
@@ -546,7 +785,6 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
         xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
     }
     gStateMachineContext.pWifiSettings->isOtaModeEnabled = false;
-    gStateMachineContext.pWifiSettings->isEnabled = 1;
     gStateMachineContext.active = MainState;
     gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
     gStateMachineContext.nextState = NULL;
@@ -589,7 +827,18 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
         return false;
     }
     if (pSettings != NULL && gStateMachineContext.pWifiSettings != NULL) {
+        // Preserve the MAC address before copying new settings
+        WDRV_WINC_MAC_ADDR savedMacAddr;
+        memcpy(&savedMacAddr, &gStateMachineContext.pWifiSettings->macAddr, sizeof(WDRV_WINC_MAC_ADDR));
+        
+        // Copy new settings
         memcpy(gStateMachineContext.pWifiSettings, pSettings, sizeof (wifi_manager_settings_t));
+        
+        // Restore the MAC address
+        memcpy(&gStateMachineContext.pWifiSettings->macAddr, &savedMacAddr, sizeof(WDRV_WINC_MAC_ADDR));
+        
+        // Also update BoardData so the app task sees the changes
+        BoardData_Set(BOARDDATA_WIFI_SETTINGS, 0, gStateMachineContext.pWifiSettings);
     }
     SendEvent(WIFI_MANAGER_EVENT_REINIT);
     return true;

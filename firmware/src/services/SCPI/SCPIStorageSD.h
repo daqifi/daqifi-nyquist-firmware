@@ -34,6 +34,10 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context);
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context);
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context);
 
+// SD Card Benchmarking Commands
+scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context);
+scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }
