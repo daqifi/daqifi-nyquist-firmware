@@ -1,9 +1,25 @@
 #include "BoardRuntimeConfig.h"
 #include "HAL/BQ24297/BQ24297.h"
 #include "services/sd_card_services/sd_card_manager.h"
+#include <string.h>  // For strlen
+
+// Compile-time assertions to ensure WiFi string constants fit within their buffers
+_Static_assert(sizeof(DEFAULT_WIFI_AP_SSID) <= WDRV_WINC_MAX_SSID_LEN + 1, "WiFi SSID too long");
+_Static_assert(sizeof(DEFAULT_WIFI_WPA_PSK_PASSKEY) <= WDRV_WINC_PSK_LEN + 1, "WiFi passkey too long");
+_Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN + 1, "Hostname too long");
 
 // The default board configuration
 // TODO: It would be handly if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
+
+/**
+ * Default WiFi Configuration for NQ1 Board:
+ * - Mode: Access Point (AP) mode
+ * - SSID: "DAQiFi" (open network, no password)
+ * - Hostname: "NYQUIST1"
+ * - TCP Port: 9760
+ * - IP addresses: Set to 0 for DHCP/automatic configuration
+ * This configuration is used when no WiFi settings are stored in NVM.
+ */
 const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
     .DIOChannels = {
         .Data = {
@@ -90,9 +106,22 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .Encoding = Streaming_ProtoBuffer,
         .TSClockPeriod = 0xFFFFFFFF,   // maximum
     },
-//    .wifiSettings = {
-//        .type = DaqifiSettings_Wifi
-//    },
+    .wifiSettings = {
+        .isEnabled = true,
+        .isOtaModeEnabled = false,
+        .networkMode = DEFAULT_WIFI_NETWORK_MODE,
+        .securityMode = DEFAULT_WIFI_AP_SECURITY_MODE,
+        .ssid = DEFAULT_WIFI_AP_SSID,
+        .passKey = DEFAULT_WIFI_WPA_PSK_PASSKEY,
+        .passKeyLength = strlen(DEFAULT_WIFI_WPA_PSK_PASSKEY),  // Safer than sizeof
+        .hostName = DEFAULT_NETWORK_HOST_NAME,
+        .tcpPort = DEFAULT_TCP_PORT,
+        .ssid_str = 0,                    // Signal strength (not applicable for AP mode)
+        .macAddr = {{0}},                 // Will be populated from hardware
+        .ipAddr = {.Val = 0},            // DHCP/automatic configuration
+        .ipMask = {.Val = 0},            // DHCP/automatic configuration  
+        .gateway = {.Val = 0},           // DHCP/automatic configuration
+    },
     //.usbSettings = {0},
     //.serverData = {0},
     .sdCardConfig={
