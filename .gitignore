@@ -1,0 +1,4 @@
+firmware/daqifi.X/dist/default/production/daqifi.X.production.elf
+firmware/daqifi.X/dist/default/production/daqifi.X.production.hex
+firmware/daqifi.X/dist/default/production/daqifi.X.production.map
+firmware/daqifi.X/dist/default/production/memoryfile.xml
