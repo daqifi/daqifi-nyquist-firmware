@@ -28,6 +28,10 @@ extern "C" {
 #define USBCDC_RBUFFER_SIZE 512 
 #define USBCDC_CIRCULAR_BUFF_SIZE USBCDC_WBUFFER_SIZE*4
 
+// Command history for debugging
+#define SCPI_CMD_HISTORY_SIZE 10
+#define SCPI_CMD_MAX_LENGTH 128
+
 /**
      * State machine states
      */
@@ -105,6 +109,11 @@ extern "C" {
          so no scip commands would work*/
         bool isCdcHostConnected;
         bool isTransparentModeActive;
+        
+        /** Command history for debugging */
+        char cmdHistory[SCPI_CMD_HISTORY_SIZE][SCPI_CMD_MAX_LENGTH];
+        uint8_t cmdHistoryHead;  // Next write position
+        uint8_t cmdHistoryCount; // Number of commands stored
     } UsbCdcData_t;
     UsbCdcData_t* UsbCdc_GetSettings();
     /**

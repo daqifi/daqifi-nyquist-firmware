@@ -26,6 +26,7 @@
 #include "SCPIStorageSD.h"
 #include "../streaming.h"
 #include "../../HAL/TimerApi/TimerApi.h"
+#include "../UsbCdc/UsbCdc.h"
 
 //
 #define UNUSED(x) (void)(x)
@@ -304,7 +305,16 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
     char buffer[128];
 
+    // Add a test log message to verify logging works  
+    LOG_D("SCPI_SysLogGet called - log count: %d", LogMessageCount());
+    
     size_t logSize = LogMessageCount();
+    
+    // If no logs, add a message to indicate the log is empty
+    if (logSize == 0) {
+        context->interface->write(context, "Log is empty\n", 13);
+    }
+    
     size_t i = 0;
     for (i = 0; i < logSize; ++i) {
         size_t messageSize = LogMessagePop((uint8_t*) buffer, 128);
@@ -313,6 +323,45 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
         }
     }
 
+    return SCPI_RES_OK;
+}
+
+/**
+ * Tests the logging system by adding test messages
+ * @param context
+ * @return 
+ */
+static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
+    // Add test messages to the log
+    LOG_D("Test log message 1");
+    LOG_E("Test error message");
+    LOG_I("Test info message");
+    
+    // Add some more to test the buffer limits
+    for (int i = 0; i < 5; i++) {
+        LOG_D("Test message %d", i);
+    }
+    
+    context->interface->write(context, "Added test log messages\n", 24);
+    
+    return SCPI_RES_OK;
+}
+
+/**
+ * Clears the log buffer
+ * @param context
+ * @return 
+ */
+static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
+    char buffer[128];
+    
+    // Pop all messages to clear the buffer
+    while (LogMessageCount() > 0) {
+        LogMessagePop((uint8_t*) buffer, 128);
+    }
+    
+    context->interface->write(context, "Log cleared\n", 12);
+    
     return SCPI_RES_OK;
 }
 
@@ -666,6 +715,34 @@ scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context) {
 //    return SCPI_RES_OK;
 //}
 
+static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
+    UsbCdcData_t* usbSettings = UsbCdc_GetSettings();
+    char buffer[256];
+    
+    if (usbSettings->cmdHistoryCount == 0) {
+        SCPI_ResultCharacters(context, "No command history", 18);
+        return SCPI_RES_OK;
+    }
+    
+    // Calculate starting position in circular buffer
+    int startIdx = (usbSettings->cmdHistoryHead - usbSettings->cmdHistoryCount + SCPI_CMD_HISTORY_SIZE) % SCPI_CMD_HISTORY_SIZE;
+    
+    // Send header
+    int len = snprintf(buffer, sizeof(buffer), "Last %d commands:\r\n", usbSettings->cmdHistoryCount);
+    context->interface->write(context, buffer, len);
+    
+    // Send command history
+    for (int i = 0; i < usbSettings->cmdHistoryCount; i++) {
+        int idx = (startIdx + i) % SCPI_CMD_HISTORY_SIZE;
+        len = snprintf(buffer, sizeof(buffer), "%d: %s\r\n", 
+                      usbSettings->cmdHistoryCount - i, 
+                      usbSettings->cmdHistory[idx]);
+        context->interface->write(context, buffer, len);
+    }
+    
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -696,6 +773,9 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "HELP", .callback = SCPI_Help,},
     {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet,},
     {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
+    {.pattern = "SYSTem:LOG:TEST", .callback = SCPI_SysLogTest,},
+    {.pattern = "SYSTem:LOG:CLEar", .callback = SCPI_SysLogClear,},
+    {.pattern = "SYSTem:LOG:CMDHistory?", .callback = SCPI_GetCommandHistory,},
     {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
     {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho,},
     //    {.pattern = "SYSTem:NVMRead?", .callback = SCPI_NVMRead, },  
@@ -824,7 +904,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = NULL, .callback = SCPI_NotImplemented,},
 };
 
-#define SCPI_INPUT_BUFFER_LENGTH 64
+#define SCPI_INPUT_BUFFER_LENGTH 128  // Increased from 64 to handle rapid command sequences
 #define SCPI_ERROR_QUEUE_SIZE 17
 char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
 scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];

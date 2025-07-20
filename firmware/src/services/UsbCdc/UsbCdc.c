@@ -7,6 +7,9 @@
 
 // services
 #include "services/SCPI/SCPIInterface.h"
+#include "Util/Logger.h"
+
+#define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
 
 /**
@@ -545,10 +548,41 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     UNUSED(context);
 
     if (command != NULL && commandLen > 0) {
-        return SCPI_Input(
+        // Store command in history buffer
+        size_t copyLen = (commandLen < SCPI_CMD_MAX_LENGTH - 1) ? commandLen : SCPI_CMD_MAX_LENGTH - 1;
+        memcpy(gRunTimeUsbSttings.cmdHistory[gRunTimeUsbSttings.cmdHistoryHead], command, copyLen);
+        gRunTimeUsbSttings.cmdHistory[gRunTimeUsbSttings.cmdHistoryHead][copyLen] = '\0';
+        
+        // Update circular buffer indices
+        gRunTimeUsbSttings.cmdHistoryHead = (gRunTimeUsbSttings.cmdHistoryHead + 1) % SCPI_CMD_HISTORY_SIZE;
+        if (gRunTimeUsbSttings.cmdHistoryCount < SCPI_CMD_HISTORY_SIZE) {
+            gRunTimeUsbSttings.cmdHistoryCount++;
+        }
+        
+        // Log the SCPI command received
+        LOG_D("SCPI CMD: %.*s\r\n", commandLen, command);
+        
+        int result = SCPI_Input(
                 &gRunTimeUsbSttings.scpiContext,
                 command,
                 commandLen);
+        
+        // Check for SCPI errors including buffer overrun
+        if (SCPI_ErrorCount(&gRunTimeUsbSttings.scpiContext) > 0) {
+            scpi_error_t error;
+            while (SCPI_ErrorPop(&gRunTimeUsbSttings.scpiContext, &error)) {
+                const char* error_str = SCPI_ErrorTranslate(error.error_code);
+                LOG_E("SCPI Error %d: %s\r\n", error.error_code, error_str ? error_str : "Unknown");
+            }
+        }
+        
+        // Ensure any SCPI responses are flushed to the USB immediately
+        // This prevents the desktop app from hanging when waiting for responses
+        if (result > 0) {
+            UsbCdc_BeginWrite(&gRunTimeUsbSttings);
+        }
+        
+        return result;
     }
 
     SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "NULL or zero length command.");

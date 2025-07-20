@@ -24,6 +24,9 @@
 #include "../sd_card_services/sd_card_manager.h"
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
+#include "system/fs/sys_fs.h"
+#include "Util/Logger.h"
+#include <string.h>
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -70,14 +73,12 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         goto __exit_point;
     }
     if (param1 != 0) {
-        // Check if SD card is actually present before enabling
-        if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/mnt/Daqifi")) {
-            context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
-            result = SCPI_RES_ERR;
-            goto __exit_point;
-        }
+        // Don't check for SD card presence here - let the SD card manager task handle it
+        // This prevents blocking the SCPI handler if no card is present
+        LOG_D("SD:ENAble - Enabling SD card manager\r\n");
         pSdCardRuntimeConfig->enable = true;
     } else {
+        LOG_D("SD:ENAble - Disabling SD card manager\r\n");
         pSdCardRuntimeConfig->enable = false;       
     }
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
@@ -163,32 +164,70 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
    
 
     if (!pSdCardRuntimeConfig->enable) {
-        context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
-        result = SCPI_RES_ERR;
+        // Log the error but send nothing - SCPI handler adds termination
+        LOG_E("SD:LIST? - SD card not enabled\r\n");
+        result = SCPI_RES_OK;
         goto __exit_point;
     }
     
+    // Check if SD card is actually present and mounted
+    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/mnt/Daqifi")) {
+        // Log the error but send nothing - SCPI handler adds termination
+        LOG_E("SD:LIST? - No SD card detected\r\n");
+        result = SCPI_RES_OK;
+        goto __exit_point;
+    }
+    
+    // Get optional directory parameter
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
-
+    
+    // Use a reasonable path buffer size (directory + filename + some overhead)
+    char dirPath[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 20];
     if (fileLen > 0) {
-        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
-            result = SCPI_RES_ERR;
+        if (fileLen > sizeof(dirPath) - 1) {
+            LOG_E("SD:LIST? - Path too long: %d bytes\r\n", fileLen);
+            result = SCPI_RES_OK;
             goto __exit_point;
         }
-        memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
-        pSdCardRuntimeConfig->file[fileLen] = '\0';
+        memcpy(dirPath, pBuff, fileLen);
+        dirPath[fileLen] = '\0';
+    } else {
+        // Default to root directory
+        strcpy(dirPath, "/mnt/Daqifi");
     }
 
-    if (fileLen > 0) {
-        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
-            result = SCPI_RES_ERR;
-            goto __exit_point;
-        }
-        memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
-        pSdCardRuntimeConfig->file[fileLen] = '\0';
+    // Perform synchronous directory listing
+    SYS_FS_HANDLE dirHandle = SYS_FS_DirOpen(dirPath);
+    if (dirHandle == SYS_FS_HANDLE_INVALID) {
+        LOG_E("SD:LIST? - Cannot open directory: %s\r\n", dirPath);
+        result = SCPI_RES_OK;
+        goto __exit_point;
     }
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    
+    // List files
+    SYS_FS_FSTAT stat;
+    int fileCount = 0;
+    
+    LOG_D("SD:LIST? - Opening directory: %s\r\n", dirPath);
+    
+    while (SYS_FS_DirRead(dirHandle, &stat) == SYS_FS_RES_SUCCESS) {
+        if (stat.fname[0] != '\0' && strcmp(stat.fname, ".") != 0 && strcmp(stat.fname, "..") != 0) {
+            // Send filename
+            context->interface->write(context, stat.fname, strlen(stat.fname));
+            context->interface->write(context, "\r\n", 2);
+            fileCount++;
+        }
+    }
+    
+    SYS_FS_DirClose(dirHandle);
+    
+    // Log the result
+    if (fileCount == 0) {
+        LOG_D("SD:LIST? - No files found in %s\r\n", dirPath);
+    } else {
+        LOG_D("SD:LIST? - Listed %d files from %s\r\n", fileCount, dirPath);
+    }
+    
     result = SCPI_RES_OK;
 __exit_point:
     return result;
