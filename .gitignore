@@ -2,3 +2,7 @@ firmware/daqifi.X/dist/default/production/daqifi.X.production.elf
 firmware/daqifi.X/dist/default/production/daqifi.X.production.hex
 firmware/daqifi.X/dist/default/production/daqifi.X.production.map
 firmware/daqifi.X/dist/default/production/memoryfile.xml
+firmware/daqifi.X/dist/default/debug/daqifi.X.debug.map
+firmware/daqifi.X/dist/default/debug/memoryfile.xml
+firmware/daqifi.X/dist/default/debug/daqifi.X.debug.elf
+/firmware/daqifi.X/.generated_files

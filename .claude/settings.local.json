@@ -4,7 +4,9 @@
       "Bash(git config:*)",
       "Bash(find:*)",
       "Bash(ls:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(gh auth:*)",
+      "Bash(gh repo view:*)"
     ],
     "deny": []
   }

@@ -29,4 +29,4 @@ nb-configuration.xml
 funclist
 nbproject/Makefile-*
 disassembly/
-.generated_files/
+.generated_files/queuelogs/
