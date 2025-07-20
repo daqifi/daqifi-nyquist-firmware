@@ -23,7 +23,9 @@ static void InitList()
 {
     if (m_ListPtr == NULL)
     {
-        StackList_Initialize(&m_Data, false, &g_NullLockProvider);
+        // Initialize with DropOnOverflow = true to create a circular buffer
+        // This allows new messages to overwrite old ones when the buffer is full
+        StackList_Initialize(&m_Data, true, &g_NullLockProvider);
         m_ListPtr = &m_Data;
     }
 }
@@ -39,10 +41,38 @@ static int LogMessageImpl(const char* message)
     
     InitList();
 
-    int count = min(strlen(message), STACK_LIST_NODE_SIZE);
-    if (StackList_PushBack(m_ListPtr, (const uint8_t*)message, (size_t)count))
-    {
-        return count;
+    // Check if message needs newline appended
+    int len = strlen(message);
+    if (len > 0 && len < STACK_LIST_NODE_SIZE - 2) {
+        char buffer[STACK_LIST_NODE_SIZE];
+        strcpy(buffer, message);
+        
+        // Ensure message ends with \n (SCPI standard uses LF only)
+        if (len >= 2 && buffer[len-2] == '\r' && buffer[len-1] == '\n') {
+            // Has \r\n, convert to just \n
+            buffer[len-2] = '\n';
+            buffer[len-1] = '\0';
+            len--;
+        } else if (len >= 1 && buffer[len-1] == '\n') {
+            // Already has \n, use as-is
+        } else {
+            // No newline, add \n
+            buffer[len] = '\n';
+            buffer[len+1] = '\0';
+            len++;
+        }
+        
+        if (StackList_PushBack(m_ListPtr, (const uint8_t*)buffer, (size_t)len))
+        {
+            return len;
+        }
+    } else {
+        // Message too long or empty, use as-is
+        int count = min(len, STACK_LIST_NODE_SIZE);
+        if (StackList_PushBack(m_ListPtr, (const uint8_t*)message, (size_t)count))
+        {
+            return count;
+        }
     }
     
     return 0;
@@ -65,8 +95,26 @@ static int LogMessageFormatImpl(const char* format, va_list args)
     }
     
     char buffer[STACK_LIST_NODE_SIZE];
-    int size=sprintf(buffer,"\r\n");
-    size += vsnprintf(buffer+size, STACK_LIST_NODE_SIZE-size-1, format, args);
+    int size = vsnprintf(buffer, STACK_LIST_NODE_SIZE-3, format, args);
+    
+    // Ensure message ends with \n (SCPI standard uses LF only)
+    if (size > 0) {
+        // Check if message already ends with newline
+        if (size >= 2 && buffer[size-2] == '\r' && buffer[size-1] == '\n') {
+            // Has \r\n, convert to just \n
+            buffer[size-2] = '\n';
+            buffer[size-1] = '\0';
+            size--;
+        } else if (size >= 1 && buffer[size-1] == '\n') {
+            // Already has \n, do nothing
+        } else {
+            // No newline, add \n
+            buffer[size] = '\n';
+            buffer[size+1] = '\0';
+            size++;
+        }
+    }
+    
     buffer[size] = '\0';
     if (size > 0)
     {

@@ -62,6 +62,7 @@ struct stateMachineInst {
     wifi_serial_bridge_context_t serialBridgeContext;
     tstrM2mRev wifiFirmwareVersion;
     TaskHandle_t fwUpdateTaskHandle;
+    uint8_t staReconnectAttempts;  // Track STA reconnection attempts
 };
 //===============Private Function Declrations================
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
@@ -463,6 +464,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
         case WIFI_MANAGER_EVENT_STA_CONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+            
+            // Reset reconnect attempts on successful connection
+            pInstance->staReconnectAttempts = 0;
+            LOG_D("STA connection successful, reset reconnect counter\r\n");
+            
             if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                 if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -488,6 +494,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             wifi_tcp_server_CloseSocket();
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+            
+            // Only increment attempts if we're in STA mode
+            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+                pInstance->staReconnectAttempts++;
+                LOG_D("STA reconnect attempt #%d\r\n", pInstance->staReconnectAttempts);
+            }
+            
             SendEvent(WIFI_MANAGER_EVENT_ERROR);
             break;
         case WIFI_MANAGER_EVENT_REINIT:
@@ -508,9 +521,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // leaving the WINC1500 in a permanent reset state. Instead, we perform a soft
             // restart by stopping and restarting AP/STA mode with new settings.
             
-            // Check if WiFi should be disabled
+            // Settings have been updated - check if we need to stop WiFi operations
+            // If WiFi is disabled, we should stop operations but still accept the settings update
             if (!pInstance->pWifiSettings->isEnabled) {
-                LOG_D("WiFi disabled - stopping all WiFi operations\r\n");
+                LOG_D("WiFi disabled - stopping active operations but keeping settings\r\n");
+                
+                // Reset reconnect counter when WiFi is disabled
+                pInstance->staReconnectAttempts = 0;
                 
                 // Stop AP if running
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
@@ -533,7 +550,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     wifi_tcp_server_CloseSocket();
                 }
                 
-                LOG_D("WiFi operations stopped\r\n");
+                LOG_D("WiFi operations stopped, settings updated\r\n");
+                // Settings have been updated even though WiFi is disabled
+                // This allows the desktop app to configure WiFi while it's off
                 break;
             }
             
@@ -544,6 +563,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                     GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
                     LOG_D("Switching from STA to AP mode\r\n");
+                    
+                    // Reset reconnect counter when switching modes
+                    pInstance->staReconnectAttempts = 0;
                     
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
@@ -755,7 +777,29 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             break;
         case WIFI_MANAGER_EVENT_ERROR:
-            SendEvent(WIFI_MANAGER_EVENT_REINIT);
+            // Implement power-efficient reconnect logic for STA mode
+            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
+                GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                
+                uint32_t delayMs;
+                if (pInstance->staReconnectAttempts < 5) {
+                    // First 5 attempts: 1 second delay
+                    delayMs = 1000;
+                    LOG_D("STA reconnect attempt %d/5 with 1s delay\r\n", pInstance->staReconnectAttempts + 1);
+                } else {
+                    // After 5 attempts: 30 second delay to save power
+                    delayMs = 30000;
+                    LOG_D("STA reconnect attempt %d with 30s delay (power save mode)\r\n", pInstance->staReconnectAttempts + 1);
+                }
+                
+                // Wait before attempting reconnection
+                vTaskDelay(pdMS_TO_TICKS(delayMs));
+                
+                SendEvent(WIFI_MANAGER_EVENT_REINIT);
+            } else {
+                // For AP mode or other errors, reinit immediately
+                SendEvent(WIFI_MANAGER_EVENT_REINIT);
+            }
             LOG_E("[%s:%d]Error WiFi", __FILE__, __LINE__);
             break;
         default:
@@ -827,6 +871,10 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
         return false;
     }
     if (pSettings != NULL && gStateMachineContext.pWifiSettings != NULL) {
+        // Log the update request (commented out to avoid interfering with SCPI responses)
+        // LOG_D("WiFi settings update: enabled=%d, mode=%d, ssid=%s\r\n", 
+        //       pSettings->isEnabled, pSettings->networkMode, pSettings->ssid);
+        
         // Preserve the MAC address before copying new settings
         WDRV_WINC_MAC_ADDR savedMacAddr;
         memcpy(&savedMacAddr, &gStateMachineContext.pWifiSettings->macAddr, sizeof(WDRV_WINC_MAC_ADDR));
@@ -839,6 +887,7 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
         
         // Also update BoardData so the app task sees the changes
         BoardData_Set(BOARDDATA_WIFI_SETTINGS, 0, gStateMachineContext.pWifiSettings);
+        // LOG_D("BoardData updated with new WiFi settings\r\n");
     }
     SendEvent(WIFI_MANAGER_EVENT_REINIT);
     return true;

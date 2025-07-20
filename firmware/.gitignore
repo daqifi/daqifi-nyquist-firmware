@@ -30,3 +30,4 @@ funclist
 nbproject/Makefile-*
 disassembly/
 .generated_files/queuelogs/
+nbproject/Makefile-*.properties

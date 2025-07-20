@@ -18,6 +18,10 @@
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
 
+#include "Util/Logger.h"
+
+#define LOG_LEVEL_LOCAL 'D'
+
 #define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
 
 /**
@@ -144,6 +148,7 @@ static size_t SCPI_SafeParamString(scpi_t * context, char* value, const size_t m
 scpi_result_t SCPI_LANEnabledGet(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
     bool enabled = pWifiSettings->isEnabled;
+    // LOG_D("SCPI_LANEnabledGet: BoardData enabled=%d\r\n", enabled);
     SCPI_ResultInt32(context, (int) enabled);
 
     return SCPI_RES_OK;
@@ -170,6 +175,8 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
     }
 
     pRunTimeWifiSettings->isEnabled = (bool) param1;
+    // LOG_D("WiFi enabled set to %d in runtime config\r\n", param1);
+    
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -206,6 +213,7 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
     }
 
     pRunTimeWifiSettings->networkMode = (uint8_t) param1;
+    // LOG_D("WiFi mode set to %d\r\n", param1);
     return SCPI_RES_OK;
 }
 
@@ -321,10 +329,16 @@ scpi_result_t SCPI_LANSsidSet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
 
-    return SCPI_LANStringSetImpl(
+    scpi_result_t result = SCPI_LANStringSetImpl(
             context,
             pRunTimeWifiSettings->ssid,
             WDRV_WINC_MAX_SSID_LEN);
+    
+    if (result == SCPI_RES_OK) {
+        // LOG_D("WiFi SSID set to '%s'\r\n", pRunTimeWifiSettings->ssid);
+    }
+    
+    return result;
 }
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
@@ -451,10 +465,13 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
             BOARDRUNTIME_WIFI_SETTINGS);
     sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
+    // LOG_D("SCPI_LANSettingsApply called - WiFi enabled=%d, mode=%d\r\n", 
+    //       pRunTimeWifiSettings->isEnabled, pRunTimeWifiSettings->networkMode);
 
     if (SCPI_ParamInt32(context, &param1, FALSE)) {
         saveSettings = (bool) param1;
     }
+    
     //Wifi and SD card cannot be active simultaneously because they share same SPI
     if (pSdCardRuntimeConfig->enable == 1 &&
             pRunTimeWifiSettings->isEnabled == 1) {
