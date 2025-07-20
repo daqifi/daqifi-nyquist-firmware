@@ -7,3 +7,6 @@ firmware/daqifi.X/dist/default/debug/memoryfile.xml
 firmware/daqifi.X/dist/default/debug/daqifi.X.debug.elf
 /firmware/daqifi.X/.generated_files
 /firmware/daqifi.X/dist
+firmware/daqifi.X/dist/default/debug/daqifi.X.debug.elf
+firmware/daqifi.X/dist/default/debug/daqifi.X.debug.map
+firmware/daqifi.X/dist/default/debug/memoryfile.xml
