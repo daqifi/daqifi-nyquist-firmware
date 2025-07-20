@@ -1,12 +1,51 @@
-firmware/daqifi.X/dist/default/production/daqifi.X.production.elf
-firmware/daqifi.X/dist/default/production/daqifi.X.production.hex
-firmware/daqifi.X/dist/default/production/daqifi.X.production.map
-firmware/daqifi.X/dist/default/production/memoryfile.xml
-firmware/daqifi.X/dist/default/debug/daqifi.X.debug.map
-firmware/daqifi.X/dist/default/debug/memoryfile.xml
-firmware/daqifi.X/dist/default/debug/daqifi.X.debug.elf
-/firmware/daqifi.X/.generated_files
-/firmware/daqifi.X/dist
-firmware/daqifi.X/dist/default/debug/daqifi.X.debug.elf
-firmware/daqifi.X/dist/default/debug/daqifi.X.debug.map
-firmware/daqifi.X/dist/default/debug/memoryfile.xml
+# MPLAB X Project Files
+# Ignore all build output from any .X project directories
+**/*.X/dist/
+**/*.X/build/
+**/*.X/.generated_files/
+**/*.X/nbproject/private/
+**/*.X/nbproject/Makefile-*
+**/*.X/nbproject/Package-*.bash
+**/*.X/nbproject/*.properties
+**/*.X/debug/
+**/*.X/production/
+**/*.X/disassembly/
+**/*.X/queuelogs/
+
+# Build artifacts (anywhere in the tree)
+*.hex
+*.elf
+*.map
+*.d
+*.o
+*.obj
+*.lst
+*.pre
+*.p1
+*.production
+*.debug
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.bak
+
+# IDE-specific files
+nbactions.xml
+nb-configuration.xml
+funclist
+
+# Temporary files
+*.tmp
+*.temp
+
+# Local settings
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Claude/AI assistant files
+.claude/

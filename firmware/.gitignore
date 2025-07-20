@@ -1,8 +1,8 @@
-#Ignore List for Microchip's MPLAB X IDE
-#It's a form of NetBeans with vendor specific changes
-#Taken from zeha on GIST https://gist.github.com/zeha/5999375
-#Updated by Cristian Cristea (https://github.com/cristiancristea00)
+# MPLAB X IDE .gitignore
+# Based on NetBeans with Microchip-specific additions
+# Updated for MPLAB X v6.x
 
+# Build artifacts
 *.d
 *.pre
 *.p1
@@ -12,22 +12,54 @@
 *.o
 *.sdb
 *.obj.dmp
+*.hex
+*.elf
+*.cof
+*.hxl
+*.sml
+*.S
+
+# Linker and map files
 *.mk
 *.map
+*.ld
+
+# IDE configuration files
 *.properties
-*.production
-*.debug
-html/
 nbproject/private/
 nbproject/Package-*.bash
+nbproject/Makefile-*
+nbproject/Package-*.mk
+nbproject/project.properties.backup
+
+# Build directories
 build/
 debug/
+production/
 nbbuild/
+dist/
 nbdist/
+disassembly/
+.generated_files/
+
+# Debug files
+*.production
+*.debug
+queuelogs/
+
+# NetBeans specific
 nbactions.xml
 nb-configuration.xml
 funclist
-nbproject/Makefile-*
-disassembly/
-.generated_files/queuelogs/
-nbproject/Makefile-*.properties
+
+# HTML documentation
+html/
+
+# Backup files
+*.bak
+*~
+*.swp
+
+# OS-specific files
+.DS_Store
+Thumbs.db
