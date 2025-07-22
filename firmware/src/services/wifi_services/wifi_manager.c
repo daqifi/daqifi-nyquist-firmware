@@ -441,6 +441,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
+                // Make SSID visible in AP mode
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSIDVisibility(&pInstance->bssCtx, true)) {
+                    LOG_W("Warning: Failed to set SSID visibility\r\n");
+                    // Continue anyway as this is not critical
+                }
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&pInstance->bssCtx, WDRV_WINC_CID_2_4G_CH1)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -464,8 +469,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("AP Mode: Unsupported security mode: %d\r\n", pInstance->pWifiSettings->securityMode);
                     break;
                 }
-                gStateMachineContext.pWifiSettings->ipAddr.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
-                if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS), inet_addr(DEFAULT_NETWORK_IP_MASK), &DhcpEventCallback)) {
+                // Use the configured IP address, not the hardcoded default
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, 
+                    gStateMachineContext.pWifiSettings->ipAddr.Val, 
+                    gStateMachineContext.pWifiSettings->ipMask.Val, &DhcpEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
@@ -926,7 +933,7 @@ bool wifi_manager_Deinit() {
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
     const tPowerData *pPowerState = (tPowerData *) BoardData_Get(
-            BOARDATA_POWER_DATA,
+            BOARDDATA_POWER_DATA,
             0);
     if (NULL != pPowerState &&
        pPowerState->powerState != POWERED_UP && 

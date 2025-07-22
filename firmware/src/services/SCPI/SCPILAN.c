@@ -265,7 +265,7 @@ scpi_result_t SCPI_LANMaskGet(scpi_t * context) {
 scpi_result_t SCPI_LANMaskSet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    return SCPI_LANAddrGetImpl(
+    return SCPI_LANAddrSetImpl(
             context,
             &pRunTimeWifiSettings->ipMask);
 }
@@ -290,7 +290,7 @@ scpi_result_t SCPI_LANGatewayGet(scpi_t * context) {
 scpi_result_t SCPI_LANGatewaySet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    return SCPI_LANAddrGetImpl(
+    return SCPI_LANAddrSetImpl(
             context,
             &pRunTimeWifiSettings->gateway);
 }
@@ -316,6 +316,18 @@ scpi_result_t SCPI_LANMacGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidGet(scpi_t * context) {
+    // First try runtime config, then fall back to board data
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    
+    // If runtime SSID is set, use it
+    if (pRunTimeWifiSettings->ssid[0] != '\0') {
+        return SCPI_LANStringGetImpl(
+                context,
+                pRunTimeWifiSettings->ssid);
+    }
+    
+    // Otherwise fall back to board data
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS,
             0);
