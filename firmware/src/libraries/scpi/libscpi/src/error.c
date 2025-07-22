@@ -106,13 +106,14 @@ void SCPI_ErrorClear(scpi_t * context) {
  * @return
  */
 scpi_bool_t SCPI_ErrorPop(scpi_t * context, scpi_error_t * error) {
+    scpi_bool_t result;
     if (!error || !context) return FALSE;
     SCPI_ERROR_SETVAL(error, 0, NULL);
-    fifo_remove(&context->error_queue, error);
+    result = fifo_remove(&context->error_queue, error);
 
     SCPI_ErrorEmitEmpty(context);
 
-    return TRUE;
+    return result;
 }
 
 /**
