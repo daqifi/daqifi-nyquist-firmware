@@ -436,6 +436,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
+                // Make sure SSID is visible in AP mode
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSIDVisibility(&pInstance->bssCtx, true)) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("[%s:%d]Error setting SSID visibility", __FILE__, __LINE__);
+                    break;
+                }
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&pInstance->bssCtx, WDRV_WINC_CID_2_4G_CH1)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -677,6 +683,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     strlen(pInstance->pWifiSettings->ssid))) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("Error setting new SSID\r\n");
+                    break;
+                }
+                
+                // Make sure SSID is visible in AP mode
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSIDVisibility(&pInstance->bssCtx, true)) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("Error setting SSID visibility\r\n");
                     break;
                 }
                 
