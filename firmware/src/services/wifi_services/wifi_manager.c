@@ -204,13 +204,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 wifi_manager_FormUdpAnnouncePacketCB(gStateMachineContext.pWifiSettings, udpBuffer, &announcePacktLen);
                 struct sockaddr_in addr;
                 addr.sin_family = AF_INET;
-                // For backward compatibility: if source port is 30303, respond to 30303
-                // Otherwise respond to source port (standard UDP behavior)
-                if (u16port == WIFI_MANAGER_UDP_LISTEN_PORT) {
-                    addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT);
-                } else {
-                    addr.sin_port = pstrRx->strRemoteAddr.sin_port;
-                }
+                // Always respond to sender's port (standard UDP discovery behavior)
+                addr.sin_port = pstrRx->strRemoteAddr.sin_port;
                 addr.sin_addr.s_addr = inet_addr(s);
                 LOG_D("UDP Discovery: Sending response to %s:%d (packet size: %d, socket=%d)\r\n", s, _htons(addr.sin_port), announcePacktLen, socket);
                 // Use the socket parameter, not gStateMachineContext.udpServerSocket
