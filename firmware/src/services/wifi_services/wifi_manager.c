@@ -464,8 +464,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("AP Mode: Unsupported security mode: %d\r\n", pInstance->pWifiSettings->securityMode);
                     break;
                 }
-                gStateMachineContext.pWifiSettings->ipAddr.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
-                if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS), inet_addr(DEFAULT_NETWORK_IP_MASK), &DhcpEventCallback)) {
+                // Use the configured IP address, not the hardcoded default
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, gStateMachineContext.pWifiSettings->ipAddr.Val, gStateMachineContext.pWifiSettings->ipMask.Val, &DhcpEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
