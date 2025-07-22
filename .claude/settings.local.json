@@ -18,7 +18,11 @@
       "Bash(unix2dos:*)",
       "Bash(sed:*)",
       "Bash(git push:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(chmod:*)",
+      "Bash(dos2unix:*)",
+      "Bash(bash:*)",
+      "Bash(./scripts/build.sh:*)"
     ],
     "deny": []
   }

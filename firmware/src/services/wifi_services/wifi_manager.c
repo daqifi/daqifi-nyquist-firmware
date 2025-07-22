@@ -7,6 +7,7 @@
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
+#include <string.h>
 
 #define UNUSED(x) (void)(x)
 #define WIFI_MANAGER_UDP_LISTEN_PORT         (uint16_t)30303
@@ -833,6 +834,31 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     gStateMachineContext.active = MainState;
     gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
     gStateMachineContext.nextState = NULL;
+    
+    // Check if runtime config has different settings than what we're initializing with
+    // This happens when settings were changed while unpowered
+    wifi_manager_settings_t *pRuntimeSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+    if (pRuntimeSettings != NULL && pSettings != NULL) {
+        // Compare key settings to see if they differ
+        bool settingsChanged = false;
+        
+        if (strcmp(pRuntimeSettings->ssid, pSettings->ssid) != 0) {
+            settingsChanged = true;
+            LOG_D("WiFi Init: SSID changed from '%s' to '%s'\r\n", pSettings->ssid, pRuntimeSettings->ssid);
+        }
+        
+        if (pRuntimeSettings->networkMode != pSettings->networkMode ||
+            pRuntimeSettings->securityMode != pSettings->securityMode ||
+            pRuntimeSettings->isEnabled != pSettings->isEnabled) {
+            settingsChanged = true;
+        }
+        
+        if (settingsChanged) {
+            // Apply the runtime settings that were configured while unpowered
+            LOG_D("WiFi Init: Applying settings that were changed while unpowered\r\n");
+            wifi_manager_UpdateNetworkSettings(pRuntimeSettings);
+        }
+    }
 
     return true;
 }
