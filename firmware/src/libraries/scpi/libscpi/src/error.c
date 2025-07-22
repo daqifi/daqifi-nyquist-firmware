@@ -111,7 +111,9 @@ scpi_bool_t SCPI_ErrorPop(scpi_t * context, scpi_error_t * error) {
     SCPI_ERROR_SETVAL(error, 0, NULL);
     result = fifo_remove(&context->error_queue, error);
 
-    SCPI_ErrorEmitEmpty(context);
+    if (result) {
+        SCPI_ErrorEmitEmpty(context);
+    }
 
     return result;
 }
