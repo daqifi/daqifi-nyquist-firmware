@@ -925,15 +925,9 @@ bool wifi_manager_Deinit() {
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
-    const tPowerData *pPowerState = (tPowerData *) BoardData_Get(
-            BOARDATA_POWER_DATA,
-            0);
-    if (NULL != pPowerState &&
-       pPowerState->powerState != POWERED_UP && 
-       pPowerState->powerState != POWERED_UP_EXT_DOWN){
-        LogMessage("Board must be powered-on for WiFi operations\n\r");
-        return false;
-    }
+    // Always allow settings to be updated regardless of power state
+    // This allows configuration while the device is off or WiFi is disabled
+    
     if (pSettings != NULL && gStateMachineContext.pWifiSettings != NULL) {
         // Log the update request (commented out to avoid interfering with SCPI responses)
         // LOG_D("WiFi settings update: enabled=%d, mode=%d, ssid=%s\r\n", 
@@ -952,8 +946,22 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
         // Also update BoardData so the app task sees the changes
         BoardData_Set(BOARDDATA_WIFI_SETTINGS, 0, gStateMachineContext.pWifiSettings);
         // LOG_D("BoardData updated with new WiFi settings\r\n");
+        
+        // Only trigger a reinit if WiFi is enabled and powered
+        const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDDATA_POWER_DATA, 0);
+        bool isPowered = (pPowerState != NULL && 
+                         (pPowerState->powerState == POWERED_UP || 
+                          pPowerState->powerState == POWERED_UP_EXT_DOWN));
+        
+        if (pSettings->isEnabled && isPowered) {
+            // WiFi is enabled and board is powered, apply changes immediately
+            SendEvent(WIFI_MANAGER_EVENT_REINIT);
+        } else {
+            // Settings saved but not applied - they'll be applied when WiFi is enabled
+            // and the board is powered
+            // No SCPI error here - settings are successfully saved
+        }
     }
-    SendEvent(WIFI_MANAGER_EVENT_REINIT);
     return true;
 }
 
