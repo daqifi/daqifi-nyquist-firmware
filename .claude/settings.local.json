@@ -6,7 +6,17 @@
       "Bash(ls:*)",
       "Bash(grep:*)",
       "Bash(gh auth:*)",
-      "Bash(gh repo view:*)"
+      "Bash(gh repo view:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(cat:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(dotnet build)",
+      "Bash(msbuild:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(unix2dos:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }
