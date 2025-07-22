@@ -3,6 +3,7 @@
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
 #include "state/data/BoardData.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
@@ -879,7 +880,7 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
         BoardData_Set(BOARDDATA_WIFI_SETTINGS, 0, gStateMachineContext.pWifiSettings);
         
         // Only trigger a reinit if WiFi is enabled and powered
-        const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDATA_POWER_DATA, 0);
+        const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDDATA_POWER_DATA, 0);
         bool isPowered = (pPowerState != NULL && 
                          (pPowerState->powerState == POWERED_UP || 
                           pPowerState->powerState == POWERED_UP_EXT_DOWN));

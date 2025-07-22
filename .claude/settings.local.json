@@ -16,7 +16,9 @@
       "Bash(git checkout:*)",
       "Bash(git add:*)",
       "Bash(unix2dos:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(git push:*)",
+      "Bash(make:*)"
     ],
     "deny": []
   }

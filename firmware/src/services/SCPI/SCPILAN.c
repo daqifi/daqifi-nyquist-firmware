@@ -316,9 +316,16 @@ scpi_result_t SCPI_LANMacGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidGet(scpi_t * context) {
-    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
-            BOARDDATA_WIFI_SETTINGS,
-            0);
+    // First try to get from runtime config (where uncommitted changes are stored)
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    
+    // If runtime config is not available, fall back to BoardData
+    if (pWifiSettings == NULL) {
+        pWifiSettings = BoardData_Get(
+                BOARDDATA_WIFI_SETTINGS,
+                0);
+    }
 
     return SCPI_LANStringGetImpl(
             context,

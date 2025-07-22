@@ -155,4 +155,27 @@ A comprehensive technical analysis of the firmware has been completed and is ava
 - **Current SD**: ~2-5 MB/s → **Optimized**: 15-25 MB/s
 - **Current ADC**: ~1 kHz → **Optimized**: 10+ kHz sample rates
 
-The report includes detailed technical analysis, code examples, and a prioritized roadmap for optimization. Reference this document before making performance-critical modifications to understand current limitations and optimization opportunities.
+The report includes detailed technical analysis, code examples, and a prioritized roadmap for optimization. Reference this document before making performance-critical modifications to understand current limitations and optimization opportunities.
+
+## Command Line Build Tools
+
+Build scripts are available in the `scripts/` directory for automated compilation:
+
+### Quick Build Test
+```bash
+# Test if code changes compile correctly
+./scripts/build.sh test        # Linux/WSL
+scripts\build.bat test         # Windows
+```
+
+### Build Commands
+- `build` - Build the default configuration
+- `clean` - Clean build artifacts  
+- `test` - Build and report errors/warnings
+
+### Prerequisites
+- MPLAB X IDE (v6.00+)
+- XC32 Compiler
+- Make utility (Linux/WSL) or build scripts
+
+See `scripts/README_BUILD_TOOLS.md` for detailed documentation on command line building, MPLAB X CLI tools, and automated testing capabilities.
