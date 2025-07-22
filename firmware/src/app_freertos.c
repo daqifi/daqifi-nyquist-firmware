@@ -101,7 +101,7 @@ static void app_WifiTask(void* p_arg) {
         APP_WIFI_STATE_WAIT_POWER_UP=0,
         APP_WIFI_STATE_PROCESS=1,
     };
-    const tPowerData *pPowerState=BoardData_Get(BOARDATA_POWER_DATA,0);
+    const tPowerData *pPowerState=BoardData_Get(BOARDDATA_POWER_DATA,0);
     uint8_t state = APP_WIFI_STATE_WAIT_POWER_UP;
     while (1) {     
         switch (state) {

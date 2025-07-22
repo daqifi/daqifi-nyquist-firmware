@@ -74,7 +74,7 @@ void *BoardData_Get(
         case BOARDDATA_DIO_SAMPLES:
             pRet= &g_BoardData.DIOSamples.List;
             break;
-        case BOARDATA_AIN_MODULE:
+        case BOARDDATA_AIN_MODULE:
             if (index < g_BoardData.AInState.Size) {
                 pRet= &g_BoardData.AInState.Data[ index ];
                 break;
@@ -101,7 +101,7 @@ void *BoardData_Get(
         case BOARDDATA_AIN_SAMPLES:
             pRet= &g_BoardData.AInSamples;
             break;
-        case BOARDATA_POWER_DATA:
+        case BOARDDATA_POWER_DATA:
             pRet= &g_BoardData.PowerData;
             break;
         case BOARDDATA_UI_VARIABLES:
@@ -151,7 +151,7 @@ void BoardData_Set(
                     pSetValue,
                     sizeof (g_BoardData.DIOSamples));
             break;
-        case BOARDATA_AIN_MODULE:
+        case BOARDDATA_AIN_MODULE:
             if (index < g_BoardData.AInState.Size) {
                 memcpy(
                         &g_BoardData.AInState.Data[ index ].AInTaskState,
@@ -179,7 +179,7 @@ void BoardData_Set(
                     pSetValue,
                     sizeof (HeapList));
             break;
-        case BOARDATA_POWER_DATA:
+        case BOARDDATA_POWER_DATA:
             memcpy(
                     &g_BoardData.PowerData,
                     pSetValue,
