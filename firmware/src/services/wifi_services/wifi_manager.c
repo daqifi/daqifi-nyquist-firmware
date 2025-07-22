@@ -126,7 +126,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             tstrSocketBindMsg *pBindMessage = (tstrSocketBindMsg*) pMessage;
             if ((NULL != pBindMessage) && (0 == pBindMessage->status)) {
                 if (socket == gStateMachineContext.udpServerSocket) {
-                    recvfrom(gStateMachineContext.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
+                    LOG_D("UDP socket bind successful (socket=%d), starting recvfrom on port %d\r\n", socket, WIFI_MANAGER_UDP_LISTEN_PORT);
+                    recvfrom(socket, udpBuffer, UDP_BUFFER_SIZE, 0);
                     SendEvent(WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED);
                 } else if (socket == gStateMachineContext.pTcpServerContext->serverSocket) {
                     listen(gStateMachineContext.pTcpServerContext->serverSocket, 0);
@@ -191,22 +192,32 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         case SOCKET_MSG_RECVFROM:
         {
             tstrSocketRecvMsg *pstrRx = (tstrSocketRecvMsg*) pMessage;
-            if (pstrRx->s16BufferSize > 0) {
+            if (pstrRx->s16BufferSize > 0 && socket == gStateMachineContext.udpServerSocket) {
                 //get the remote host address and port number
                 uint16_t u16port = _htons(pstrRx->strRemoteAddr.sin_port);
                 uint32_t strRemoteHostAddr = pstrRx->strRemoteAddr.sin_addr.s_addr;
                 char s[20];
                 inet_ntop(AF_INET, &strRemoteHostAddr, s, sizeof (s));
-                LOG_D("\r\nReceived frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
-                LOG_D("Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
+                LOG_D("\r\nUDP Discovery: Received frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
+                LOG_D("UDP Discovery: Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
                 uint16_t announcePacktLen = UDP_BUFFER_SIZE;
                 wifi_manager_FormUdpAnnouncePacketCB(gStateMachineContext.pWifiSettings, udpBuffer, &announcePacktLen);
                 struct sockaddr_in addr;
                 addr.sin_family = AF_INET;
-                addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT); //pstrRx->strRemoteAddr.sin_port;
+                // For backward compatibility: if source port is 30303, respond to 30303
+                // Otherwise respond to source port (standard UDP behavior)
+                if (u16port == WIFI_MANAGER_UDP_LISTEN_PORT) {
+                    addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT);
+                } else {
+                    addr.sin_port = pstrRx->strRemoteAddr.sin_port;
+                }
                 addr.sin_addr.s_addr = inet_addr(s);
-                sendto(gStateMachineContext.udpServerSocket, udpBuffer, announcePacktLen, 0, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
-                recvfrom(gStateMachineContext.udpServerSocket, udpBuffer, UDP_BUFFER_SIZE, 0);
+                LOG_D("UDP Discovery: Sending response to %s:%d (packet size: %d, socket=%d)\r\n", s, _htons(addr.sin_port), announcePacktLen, socket);
+                // Use the socket parameter, not gStateMachineContext.udpServerSocket
+                sendto(socket, udpBuffer, announcePacktLen, 0, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+                recvfrom(socket, udpBuffer, UDP_BUFFER_SIZE, 0);
+            } else if (pstrRx->s16BufferSize > 0) {
+                LOG_D("UDP packet received on unexpected socket %d (expected %d)\r\n", socket, gStateMachineContext.udpServerSocket);
             }
         }
             break;
@@ -279,12 +290,16 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
     bool returnStatus = false;
     *pSocket = socket(AF_INET, SOCK_DGRAM, 0);
     if (*pSocket >= 0) {
+        LOG_D("UDP socket created successfully (socket=%d)\r\n", *pSocket);
         struct sockaddr_in addr;
         addr.sin_family = AF_INET;
         addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT);
-        addr.sin_addr.s_addr = 0;
-        bind(*pSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+        addr.sin_addr.s_addr = 0;  // Listen on all interfaces (same as INADDR_ANY)
+        int bindResult = bind(*pSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+        LOG_D("UDP socket bind result: %d\r\n", bindResult);
         returnStatus = true;
+    } else {
+        LOG_E("Failed to create UDP socket\r\n");
     }
     return returnStatus;
 }
@@ -409,6 +424,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
+                // IMPORTANT: Register socket callback BEFORE connecting
+                // This ensures we're ready for socket events when connection succeeds
+                WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
+                
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -458,8 +477,32 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
 
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+                
+                // IMPORTANT: Register socket callback BEFORE opening sockets
+                // This ensures we don't miss the SOCKET_MSG_BIND event
+                WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
+                
+                // Open UDP socket for discovery in AP mode
+                if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
+                    if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
+                        LOG_E("Failed to open UDP socket in AP mode\r\n");
+                    } else {
+                        SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                        LOG_D("UDP discovery socket opened in AP mode on port %d\r\n", WIFI_MANAGER_UDP_LISTEN_PORT);
+                    }
+                }
+                
+                // Open TCP server socket in AP mode
+                if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
+                    wifi_tcp_server_OpenSocket(pInstance->pWifiSettings->tcpPort);
+                    if (pInstance->pTcpServerContext->serverSocket < 0) {
+                        LOG_E("Failed to open TCP server socket in AP mode\r\n");
+                    } else {
+                        SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                        LOG_D("TCP server socket opened in AP mode on port %d\r\n", pInstance->pWifiSettings->tcpPort);
+                    }
+                }
             }
-            WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
             break;
         case WIFI_MANAGER_EVENT_STA_CONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
@@ -531,6 +574,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 
                 // Stop AP if running
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+                    // Close sockets before stopping AP
+                    CloseUdpSocket(&pInstance->udpServerSocket);
+                    wifi_tcp_server_CloseSocket();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                    
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                 }
@@ -585,6 +634,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
                     LOG_D("Switching from AP to STA mode\r\n");
                     
+                    // Close sockets before stopping AP
+                    CloseUdpSocket(&pInstance->udpServerSocket);
+                    wifi_tcp_server_CloseSocket();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                    
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                     vTaskDelay(pdMS_TO_TICKS(500));
@@ -601,6 +656,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP)
             {
                 LOG_D("Restarting Soft AP mode with new settings...\r\n");
+                
+                // Close sockets before stopping AP
+                CloseUdpSocket(&pInstance->udpServerSocket);
+                wifi_tcp_server_CloseSocket();
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                 
                 // Stop current AP
                 WDRV_WINC_APStop(pInstance->wdrvHandle);
@@ -720,6 +781,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         LOG_E("Error setting DHCP\r\n");
                         break;
                     }
+                    
+                    // Register socket callback before reconnecting
+                    WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
                     
                     // Connect to network
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, 
