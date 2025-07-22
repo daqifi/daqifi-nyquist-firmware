@@ -178,4 +178,57 @@ scripts\build.bat test         # Windows
 - XC32 Compiler
 - Make utility (Linux/WSL) or build scripts
 
-See `scripts/README_BUILD_TOOLS.md` for detailed documentation on command line building, MPLAB X CLI tools, and automated testing capabilities.
+See `scripts/README_BUILD_TOOLS.md` for detailed documentation on command line building, MPLAB X CLI tools, and automated testing capabilities.
+
+## Development Workflow
+
+### Proper Development Process
+1. **Make code changes** - Implement the feature or fix
+2. **Test build** - Run `./scripts/build.sh test` to verify compilation
+3. **Review warnings/errors** - Address any build issues before proceeding
+4. **Commit only after successful build** - Use conventional commit format
+5. **Test on hardware** - Verify functionality with actual device
+6. **Create PR after testing** - Include test results in PR description
+
+### Line Ending Considerations
+- Project uses Windows line endings (CRLF) enforced by `.gitattributes`
+- WSL users should install `dos2unix` for script compatibility: `sudo apt-get install dos2unix`
+- Shell scripts may need conversion: `dos2unix scripts/*.sh`
+- Git will handle line endings automatically based on `.gitattributes`
+
+### MPLAB X Command Line Interface
+The project can be built without opening MPLAB X IDE:
+
+```bash
+# From firmware directory
+cd firmware/daqifi.X
+make -f nbproject/Makefile-default.mk SUBPROJECTS= .build-conf
+
+# Check memory usage after build
+cat dist/default/debug/memoryfile.xml
+```
+
+### Build Verification
+Always verify builds before committing:
+```bash
+# Quick compile check - captures errors and warnings
+./scripts/build.sh test
+
+# Output includes:
+# - Compilation status (success/fail)
+# - Warning count
+# - Memory usage statistics
+# - Error summary if failed
+```
+
+### Common Build Issues
+1. **Make not found in WSL**: Install with `sudo apt-get install build-essential`
+2. **Permission denied**: Run `chmod +x scripts/*.sh`
+3. **Line ending errors**: Convert with `dos2unix scripts/*.sh`
+4. **Makefile not found**: Ensure you're in the correct directory or run from project root
+
+### Continuous Integration Ready
+The build scripts enable automated testing:
+- Can be integrated into Git hooks for pre-commit validation
+- Suitable for CI/CD pipelines (GitHub Actions, Jenkins, etc.)
+- Exit codes indicate success (0) or failure (non-zero)
