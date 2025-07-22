@@ -112,7 +112,7 @@ static void app_WifiTask(void* p_arg) {
                         pPowerState->powerState != POWERED_UP_EXT_DOWN) {
                     state = APP_WIFI_STATE_WAIT_POWER_UP;
                 } else {
-                    wifi_manager_Init(&gpBoardData->wifiSettings);
+                    wifi_manager_Init(&gpBoardRuntimeConfig->wifiSettings);
                     state = APP_WIFI_STATE_PROCESS;
                 }
             }
