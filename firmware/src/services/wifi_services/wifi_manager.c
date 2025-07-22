@@ -443,7 +443,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 // Make SSID visible in AP mode
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetSSIDVisibility(&pInstance->bssCtx, true)) {
-                    LOG_W("Warning: Failed to set SSID visibility\r\n");
+                    LOG_D("Warning: Failed to set SSID visibility\r\n");
                     // Continue anyway as this is not critical
                 }
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetChannel(&pInstance->bssCtx, WDRV_WINC_CID_2_4G_CH1)) {
@@ -933,7 +933,7 @@ bool wifi_manager_Deinit() {
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
     const tPowerData *pPowerState = (tPowerData *) BoardData_Get(
-            BOARDDATA_POWER_DATA,
+            BOARDATA_POWER_DATA,
             0);
     if (NULL != pPowerState &&
        pPowerState->powerState != POWERED_UP && 

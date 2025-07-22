@@ -6,7 +6,8 @@
       "Bash(ls:*)",
       "Bash(grep:*)",
       "Bash(gh auth:*)",
-      "Bash(gh repo view:*)"
+      "Bash(gh repo view:*)",
+      "Bash(xc32-gcc:*)"
     ],
     "deny": []
   }
