@@ -18,6 +18,41 @@
 static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
+/**
+ * Filters input characters to reject potentially dangerous control characters
+ * Used only in normal command mode, NOT in transparent mode
+ * 
+ * Security rationale:
+ * - Prevents terminal escape sequences (ESC[...]) that could manipulate displays
+ * - Blocks control characters that might interfere with command parsing
+ * - Protects against injection of non-printable characters
+ * 
+ * @param ch Character to check
+ * @return true if character is safe to process, false if it should be rejected
+ */
+static bool UsbCdc_IsCharacterSafe(uint8_t ch) {
+    // Allow printable ASCII characters (space through ~)
+    if (ch >= 0x20 && ch <= 0x7E) {
+        return true;
+    }
+    
+    // Allow specific control characters that are needed for command processing
+    switch (ch) {
+        case '\r':  // Carriage return (0x0D) - end of command
+        case '\n':  // Line feed (0x0A) - end of command
+        case '\t':  // Tab (0x09) - may be used in commands
+        case '\b':  // Backspace (0x08) - command editing
+            return true;
+        default:
+            // Reject all other control characters including:
+            // - ESC (0x1B) - terminal escape sequences
+            // - NULL (0x00) - string termination attacks
+            // - Other control chars (0x01-0x1F except allowed above)
+            // - DEL (0x7F) and extended ASCII (0x80-0xFF)
+            return false;
+    }
+}
+
 __WEAK void UsbCdc_SleepStateUpdateCB(bool state) {
     UNUSED(state);
 }
@@ -373,11 +408,22 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
     if (client->readBufferLength > 0) {
         if (client->isTransparentModeActive == 0) {
             for (size_t i = 0; i < client->readBufferLength; ++i) {
-                microrl_insert_char(&client->console, client->readBuffer[i]);
+                // Filter out potentially dangerous characters
+                if (UsbCdc_IsCharacterSafe(client->readBuffer[i])) {
+                    microrl_insert_char(&client->console, client->readBuffer[i]);
+                } else {
+                    // Log rejected character (in debug builds)
+                    LOGD("USB: Rejected unsafe character 0x%02X", client->readBuffer[i]);
+                }
             }
             client->readBufferLength = 0;
             return true;
-        } else { // Check for UNSET_TRANSPARENT_MODE_COMMAND length plus up to two terminating characters (\n\r).
+        } else { 
+            // IMPORTANT: Transparent mode should NOT filter characters
+            // This mode is used for raw binary data passthrough (e.g., firmware updates)
+            // Filtering would corrupt the data stream
+            
+            // Check for UNSET_TRANSPARENT_MODE_COMMAND length plus up to two terminating characters (\n\r).
             transparentModeCmdLength = strlen(UNSET_TRANSPARENT_MODE_COMMAND);
             if ((client->readBufferLength == transparentModeCmdLength) ||       \
                 (client->readBufferLength == transparentModeCmdLength + 1) ||   \
