@@ -19,37 +19,84 @@ static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
 /**
+ * Tracks state for parsing multi-byte escape sequences
+ */
+static enum {
+    ESC_STATE_NONE,
+    ESC_STATE_ESC,      // Received ESC
+    ESC_STATE_BRACKET,  // Received ESC[
+    ESC_STATE_DELETE    // Received ESC[3 (waiting for ~)
+} escapeState = ESC_STATE_NONE;
+
+/**
  * Filters input characters to reject potentially dangerous control characters
  * Used only in normal command mode, NOT in transparent mode
  * 
  * Security rationale:
- * - Prevents terminal escape sequences (ESC[...]) that could manipulate displays
- * - Blocks control characters that might interfere with command parsing
+ * - Allows specific safe ESC sequences (arrow keys, home/end)
+ * - Blocks dangerous terminal manipulation sequences
  * - Protects against injection of non-printable characters
  * 
  * @param ch Character to check
  * @return true if character is safe to process, false if it should be rejected
  */
 static bool UsbCdc_IsCharacterSafe(uint8_t ch) {
-    // Allow printable ASCII characters (space through ~)
-    if (ch >= 0x20 && ch <= 0x7E) {
-        return true;
-    }
-    
-    // Allow specific control characters that are needed for command processing
-    switch (ch) {
-        case '\r':  // Carriage return (0x0D) - end of command
-        case '\n':  // Line feed (0x0A) - end of command
-        case '\t':  // Tab (0x09) - may be used in commands
-        case '\b':  // Backspace (0x08) - command editing
-            return true;
-        default:
-            // Reject all other control characters including:
-            // - ESC (0x1B) - terminal escape sequences
-            // - NULL (0x00) - string termination attacks
-            // - Other control chars (0x01-0x1F except allowed above)
-            // - DEL (0x7F) and extended ASCII (0x80-0xFF)
-            return false;
+    // State machine for ESC sequence parsing
+    switch (escapeState) {
+        case ESC_STATE_ESC:
+            if (ch == '[') {
+                escapeState = ESC_STATE_BRACKET;
+                return true;  // Allow ESC[
+            } else {
+                escapeState = ESC_STATE_NONE;
+                return false; // Reject other ESC sequences
+            }
+            
+        case ESC_STATE_BRACKET:
+            // Allow specific sequences after ESC[
+            switch (ch) {
+                case 'A':  // Up arrow
+                case 'B':  // Down arrow
+                case 'C':  // Right arrow
+                case 'D':  // Left arrow
+                case 'H':  // Home
+                case 'F':  // End
+                    escapeState = ESC_STATE_NONE;
+                    return true;
+                case '3':  // Delete (ESC[3~)
+                    escapeState = ESC_STATE_DELETE;
+                    return true;
+                default:
+                    escapeState = ESC_STATE_NONE;
+                    return false; // Reject other ESC[ sequences
+            }
+            
+        case ESC_STATE_DELETE:
+            escapeState = ESC_STATE_NONE;
+            return (ch == '~'); // Only allow ~ after ESC[3
+            
+        default:  // ESC_STATE_NONE
+            // Allow printable ASCII characters (space through ~)
+            if (ch >= 0x20 && ch <= 0x7E) {
+                return true;
+            }
+            
+            // Allow specific control characters
+            switch (ch) {
+                case '\r':   // Carriage return (0x0D) - end of command
+                case '\n':   // Line feed (0x0A) - end of command
+                case '\t':   // Tab (0x09) - may be used in commands
+                case '\b':   // Backspace (0x08) - command editing
+                case 0x7F:   // DEL (127) - delete character
+                case 0x1B:   // ESC (27) - start of escape sequence
+                    if (ch == 0x1B) {
+                        escapeState = ESC_STATE_ESC;
+                    }
+                    return true;
+                default:
+                    // Reject other control characters
+                    return false;
+            }
     }
 }
 
