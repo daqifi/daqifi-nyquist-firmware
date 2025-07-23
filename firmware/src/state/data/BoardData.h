@@ -37,7 +37,7 @@ extern "C" {
         //! DIO Samples list
         BOARDDATA_DIO_SAMPLES,
         //! State of the AIN module
-        BOARDATA_AIN_MODULE,
+        BOARDDATA_AIN_MODULE,
         //! Latest AIN SAMPLES
         BOARDDATA_AIN_LATEST,
         //! Latest AIN samples size
@@ -47,7 +47,7 @@ extern "C" {
         //! Collected analog input samples
         BOARDDATA_AIN_SAMPLES,
         //! Global power structure
-        BOARDATA_POWER_DATA,
+        BOARDDATA_POWER_DATA,
         //! UI Global structure
         BOARDDATA_UI_VARIABLES,
         //! Wifi settings

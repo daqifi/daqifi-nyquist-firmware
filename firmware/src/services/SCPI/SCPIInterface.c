@@ -372,7 +372,7 @@ static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
  */
 static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
-            BOARDATA_POWER_DATA,
+            BOARDDATA_POWER_DATA,
             0);
     SCPI_ResultInt32(context, (int) (pPowerData->externalPowerSource));
     return SCPI_RES_OK;
@@ -385,7 +385,7 @@ static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context) {
  */
 static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
-            BOARDATA_POWER_DATA,
+            BOARDDATA_POWER_DATA,
             0);
     SCPI_ResultInt32(context, (int) (pPowerData->chargePct));
     return SCPI_RES_OK;
@@ -398,7 +398,7 @@ static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context) {
  */
 static scpi_result_t SCPI_GetPowerState(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
-            BOARDATA_POWER_DATA,
+            BOARDDATA_POWER_DATA,
             0);
     SCPI_ResultInt32(context, (int) (pPowerData->powerState));
     return SCPI_RES_OK;
@@ -415,7 +415,7 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
 
 
     tPowerData * pPowerData = BoardData_Get(
-            BOARDATA_POWER_DATA,
+            BOARDDATA_POWER_DATA,
             0);
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
@@ -425,13 +425,13 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     if (param1 != 0) {
         pPowerData->requestedPowerState = DO_POWER_UP;
         BoardData_Set(
-                BOARDATA_POWER_DATA,
+                BOARDDATA_POWER_DATA,
                 0,
                 pPowerData);
     } else {
         pPowerData->requestedPowerState = DO_POWER_DOWN;
         BoardData_Set(
-                BOARDATA_POWER_DATA,
+                BOARDDATA_POWER_DATA,
                 0,
                 pPowerData);
     }
@@ -675,7 +675,7 @@ scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context) {
             BOARDRUNTIMECONFIG_ALL_CONFIG);
 
     tPowerData * pPowerData = BoardData_Get(
-            BOARDATA_POWER_DATA,
+            BOARDDATA_POWER_DATA,
             0);
 
     uint32_t param1;

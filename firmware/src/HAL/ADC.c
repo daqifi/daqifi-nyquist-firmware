@@ -149,7 +149,7 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
 
     state = AINTASK_CONVSTART;
     BoardData_Set(
-            BOARDATA_AIN_MODULE,
+            BOARDDATA_AIN_MODULE,
             moduleId,
             &state);
 
@@ -164,7 +164,7 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
 
     state = AINTASK_BUSY;
     BoardData_Set(
-            BOARDATA_AIN_MODULE,
+            BOARDDATA_AIN_MODULE,
             moduleId,
             &state);
 
