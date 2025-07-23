@@ -62,7 +62,7 @@ static bool UsbCdc_IsCharacterSafe(UsbCdcData_t* client, uint8_t ch) {
             }
             
         case ESC_STATE_DELETE:
-            escapeState = ESC_STATE_NONE;
+            client->escapeState = ESC_STATE_NONE;
             return (ch == '~'); // Only allow ~ after ESC[3
             
         default:  // ESC_STATE_NONE
