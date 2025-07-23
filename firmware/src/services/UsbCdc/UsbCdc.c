@@ -413,7 +413,7 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
                     microrl_insert_char(&client->console, client->readBuffer[i]);
                 } else {
                     // Log rejected character (in debug builds)
-                    LOGD("USB: Rejected unsafe character 0x%02X", client->readBuffer[i]);
+                    LOG_D("USB: Rejected unsafe character 0x%02X", client->readBuffer[i]);
                 }
             }
             client->readBufferLength = 0;
