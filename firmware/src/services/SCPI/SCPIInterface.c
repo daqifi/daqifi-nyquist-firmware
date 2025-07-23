@@ -378,9 +378,13 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     
     // Channel status
     int adcEnabled = 0, dioInputs = 0;
+    uint32_t adcEnabledMask = 0;
     if (pAInConfig) {
-        for (int i = 0; i < pAInConfig->Size; i++) {
-            if (pAInConfig->Data[i].IsEnabled) adcEnabled++;
+        for (int i = 0; i < pAInConfig->Size && i < 32; i++) {
+            if (pAInConfig->Data[i].IsEnabled) {
+                adcEnabled++;
+                adcEnabledMask |= (1 << i);
+            }
         }
     }
     if (pDIOConfig) {
@@ -392,6 +396,58 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         adcEnabled, pAInConfig ? pAInConfig->Size : 0,
         dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
     context->interface->write(context, buffer, strlen(buffer));
+    
+    // Show which user ADC channels (U0-U7) are enabled
+    if (adcEnabled > 0) {
+        uint8_t userChannelsEnabled = 0;
+        int userChannelCount = 0;
+        
+        // Check channels 8-15 which correspond to U0-U7
+        for (int i = 8; i < 16; i++) {
+            if (pAInConfig->Data[i].IsEnabled) {
+                userChannelsEnabled |= (1 << (i - 8));
+                userChannelCount++;
+            }
+        }
+        
+        if (userChannelCount > 0) {
+            snprintf(buffer, sizeof(buffer), "  User ADC: %d channels (", userChannelCount);
+            context->interface->write(context, buffer, strlen(buffer));
+            bool first = true;
+            for (int i = 0; i < 8; i++) {
+                if (userChannelsEnabled & (1 << i)) {
+                    if (!first) context->interface->write(context, ",", 1);
+                    snprintf(buffer, sizeof(buffer), "U%d", i);
+                    context->interface->write(context, buffer, strlen(buffer));
+                    first = false;
+                }
+            }
+            context->interface->write(context, ")\r\n", 3);
+        }
+    }
+    
+    // DIO pin states
+    if (pDIOConfig && pDIOConfig->Size > 0) {
+        // Read current DIO states including both inputs and outputs
+        DIOSample sample;
+        uint32_t channelMask = 0xFFFF; // Read all 16 channels
+        
+        if (DIO_ReadSampleByMask(&sample, channelMask)) {
+            // Debug: show raw value
+            snprintf(buffer, sizeof(buffer), "  DIO Raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
+            context->interface->write(context, buffer, strlen(buffer));
+            
+            context->interface->write(context, "  DIO State: ", 13);
+            // Display the state of each pin
+            for (int i = 0; i < pDIOConfig->Size && i < 16; i++) {
+                if (i == 8) {
+                    context->interface->write(context, " ", 1); // Space between bytes
+                }
+                context->interface->write(context, (sample.Values & (1 << i)) ? "1" : "0", 1);
+            }
+            context->interface->write(context, "\r\n", 2);
+        }
+    }
     
     // Streaming and sampling
     snprintf(buffer, sizeof(buffer), "  Streaming: %s | Trigger: %s\r\n",
