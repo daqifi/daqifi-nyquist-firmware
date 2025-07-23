@@ -589,10 +589,6 @@ scpi_result_t SCPI_LANSettingsClear(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANHostnameGet(scpi_t * context) {
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
-    const tBoardConfig * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_ALL_CONFIG, 0);
-    SCPI_LANStringGetImpl(context, pBoardConfig->hostName);
+    SCPI_LANStringGetImpl(context, DEFAULT_NETWORK_HOST_NAME);
     return SCPI_RES_OK;
 }

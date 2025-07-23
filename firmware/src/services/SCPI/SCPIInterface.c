@@ -18,6 +18,7 @@
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
+#include "services/daqifi_settings.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
@@ -294,6 +295,176 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     context->interface->write(context, (char*) buffer, count);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Returns system information in human-readable text format
+ * @return SCPI_RES_OK on success
+ */
+static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
+    char buffer[256];
+    tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
+    AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    DIORuntimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    
+    // Check for NULL pointers to prevent crashes
+    if (!pBoardData) {
+        context->interface->write(context, "ERROR: BoardData not available\r\n", 32);
+        return SCPI_RES_ERR;
+    }
+    
+    // Header with device identification
+    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n", 
+        BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // NETWORK Section
+    context->interface->write(context, "[NETWORK]\r\n", 11);
+    
+    // WiFi status
+    if (pWifiSettings && pWifiSettings->isEnabled) {
+        char ipStr[16];
+        snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", 
+            (uint8_t)(pWifiSettings->ipAddr.Val & 0xFF),
+            (uint8_t)((pWifiSettings->ipAddr.Val >> 8) & 0xFF),
+            (uint8_t)((pWifiSettings->ipAddr.Val >> 16) & 0xFF),
+            (uint8_t)((pWifiSettings->ipAddr.Val >> 24) & 0xFF));
+        
+        snprintf(buffer, sizeof(buffer), "  WiFi: ON | Mode: %s | SSID: %s\r\n", 
+            pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
+            pWifiSettings->ssid);
+        context->interface->write(context, buffer, strlen(buffer));
+        
+        snprintf(buffer, sizeof(buffer), "  IP: %s | Port: %d | Security: %s\r\n", 
+            ipStr, pWifiSettings->tcpPort,
+            pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
+        context->interface->write(context, buffer, strlen(buffer));
+    } else {
+        context->interface->write(context, "  WiFi: OFF\r\n", 13);
+    }
+    
+    // CONNECTIVITY Section
+    context->interface->write(context, "[CONNECTIVITY]\r\n", 16);
+    bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER || 
+                        pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
+    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
+        hasUSBPower ? "Connected" : "Disconnected",
+        (pWifiSettings && pWifiSettings->isEnabled) ? "Enabled" : "Disabled",
+        pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // POWER Section
+    context->interface->write(context, "[POWER]\r\n", 9);
+    const char* powerState = "Unknown";
+    switch(pBoardData->PowerData.powerState) {
+        case POWERED_UP: powerState = "RUN"; break;
+        case POWERED_UP_EXT_DOWN: powerState = "PARTIAL"; break;
+        case POWERED_DOWN: powerState = "OFF"; break;
+        case MICRO_ON: powerState = "STANDBY"; break;
+        default: powerState = "Unknown"; break;
+    }
+    
+    snprintf(buffer, sizeof(buffer), "  State: %s | Mode: %s | PowerSave: %s\r\n", 
+        powerState,
+        pBoardData->PowerData.USBSleep ? "SLEEP" : "ACTIVE",
+        pBoardData->PowerData.powerDnAllowed ? "Allowed" : "Blocked");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charge: %s\r\n", 
+        pBoardData->PowerData.battVoltage, 
+        pBoardData->PowerData.chargePct,
+        pBoardData->PowerData.battLow ? "[LOW]" : "[OK]",
+        pBoardData->PowerData.BQ24297Data.chargeAllowed ? "ON" : "OFF");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // STATUS Section
+    context->interface->write(context, "[STATUS]\r\n", 10);
+    
+    // Channel status
+    int adcEnabled = 0, dioInputs = 0;
+    uint32_t adcEnabledMask = 0;
+    if (pAInConfig) {
+        for (int i = 0; i < pAInConfig->Size && i < 32; i++) {
+            if (pAInConfig->Data[i].IsEnabled) {
+                adcEnabled++;
+                adcEnabledMask |= (1 << i);
+            }
+        }
+    }
+    if (pDIOConfig) {
+        for (int i = 0; i < pDIOConfig->Size; i++) {
+            if (pDIOConfig->Data[i].IsInput) dioInputs++;
+        }
+    }
+    snprintf(buffer, sizeof(buffer), "  Channels: ADC %d/%d enabled | DIO %d/%d inputs\r\n", 
+        adcEnabled, pAInConfig ? pAInConfig->Size : 0,
+        dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // Show which user ADC channels (U0-U7) are enabled
+    if (adcEnabled > 0 && pAInConfig) {
+        uint8_t userChannelsEnabled = 0;
+        int userChannelCount = 0;
+        
+        // Check channels 8-15 which correspond to U0-U7
+        for (int i = 8; i < 16 && i < pAInConfig->Size; i++) {
+            if (pAInConfig->Data[i].IsEnabled) {
+                userChannelsEnabled |= (1 << (i - 8));
+                userChannelCount++;
+            }
+        }
+        
+        if (userChannelCount > 0) {
+            snprintf(buffer, sizeof(buffer), "  User ADC: %d channels (", userChannelCount);
+            context->interface->write(context, buffer, strlen(buffer));
+            bool first = true;
+            for (int i = 0; i < 8; i++) {
+                if (userChannelsEnabled & (1 << i)) {
+                    if (!first) context->interface->write(context, ",", 1);
+                    snprintf(buffer, sizeof(buffer), "U%d", i);
+                    context->interface->write(context, buffer, strlen(buffer));
+                    first = false;
+                }
+            }
+            context->interface->write(context, ")\r\n", 3);
+        }
+    }
+    
+    // DIO pin states
+    if (pDIOConfig && pDIOConfig->Size > 0) {
+        // Read current DIO states including both inputs and outputs
+        DIOSample sample;
+        uint32_t channelMask = 0xFFFF; // Read all 16 channels
+        
+        if (DIO_ReadSampleByMask(&sample, channelMask)) {
+            // Debug: show raw value
+            snprintf(buffer, sizeof(buffer), "  DIO Raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
+            context->interface->write(context, buffer, strlen(buffer));
+            
+            context->interface->write(context, "  DIO State: ", 13);
+            // Display the state of each pin
+            for (int i = 0; i < pDIOConfig->Size && i < 16; i++) {
+                if (i == 8) {
+                    context->interface->write(context, " ", 1); // Space between bytes
+                }
+                context->interface->write(context, (sample.Values & (1 << i)) ? "1" : "0", 1);
+            }
+            context->interface->write(context, "\r\n", 2);
+        }
+    }
+    
+    // Streaming and sampling
+    snprintf(buffer, sizeof(buffer), "  Streaming: %s | Trigger: %s\r\n",
+        pBoardData->StreamTrigStamp > 0 ? "Active" : "Idle",
+        pBoardData->StreamTrigStamp > 0 ? "Armed" : "Off");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // System uptime - use timestamp as approximation
+    snprintf(buffer, sizeof(buffer), "  Timestamp: %u\r\n", pBoardData->StreamTrigStamp);
+    context->interface->write(context, buffer, strlen(buffer));
+    
     return SCPI_RES_OK;
 }
 
@@ -772,6 +943,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:REboot", .callback = SCPI_Reset,},
     {.pattern = "HELP", .callback = SCPI_Help,},
     {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet,},
+    {.pattern = "SYSTem:INFo?", .callback = SCPI_SysInfoTextGet,},
     {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
     {.pattern = "SYSTem:LOG:TEST", .callback = SCPI_SysLogTest,},
     {.pattern = "SYSTem:LOG:CLEar", .callback = SCPI_SysLogClear,},
