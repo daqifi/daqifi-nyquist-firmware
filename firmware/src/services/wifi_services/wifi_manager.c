@@ -91,10 +91,15 @@ static wifi_tcp_server_context_t gTcpServerContext;
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
     UNUSED(s);
-    if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+    
+    if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+        // In AP mode, this callback is triggered when DHCP assigns an IP to a client
+        LOG_D("AP Mode: DHCP assigned IP %s to a client\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
+    } else if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+        // In STA mode, this is our IP address from the DHCP server
         gStateMachineContext.pWifiSettings->ipAddr.Val = ipAddress;
+        LOG_D("STA Mode: Station IP address is %s\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
     }
-    LOG_D("STA Mode: Station IP address is %s\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
 }
 
 static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
@@ -280,8 +285,10 @@ static void __attribute__((unused)) ResetAllEventFlags(wifi_manager_stateFlag_t 
 }
 
 static bool CloseUdpSocket(SOCKET *pSocket) {
-    if (*pSocket != -1)
+    if (*pSocket != -1) {
+        // The WINC driver's shutdown() automatically closes the socket
         shutdown(*pSocket);
+    }
     *pSocket = -1;
     return true;
 }
@@ -464,8 +471,27 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("AP Mode: Unsupported security mode: %d\r\n", pInstance->pWifiSettings->securityMode);
                     break;
                 }
-                gStateMachineContext.pWifiSettings->ipAddr.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
-                if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS), inet_addr(DEFAULT_NETWORK_IP_MASK), &DhcpEventCallback)) {
+                // Use runtime configured IP address for AP mode instead of hardcoded default
+                // Validate IP address - if it's 0.0.0.0, use the gateway address
+                uint32_t apIpAddr = pInstance->pWifiSettings->ipAddr.Val;
+                if (apIpAddr == 0 || apIpAddr == inet_addr("0.0.0.0")) {
+                    LOG_E("Invalid AP IP address 0.0.0.0, using gateway address instead\r\n");
+                    apIpAddr = pInstance->pWifiSettings->gateway.Val;
+                    if (apIpAddr == 0 || apIpAddr == inet_addr("0.0.0.0")) {
+                        LOG_E("Gateway also invalid, using default 192.168.1.1\r\n");
+                        apIpAddr = inet_addr("192.168.1.1");
+                    }
+                }
+                
+                LOG_D("Configuring AP DHCP server with IP: %d.%d.%d.%d, Mask: %d.%d.%d.%d\r\n",
+                    ((uint8_t*)&apIpAddr)[0], ((uint8_t*)&apIpAddr)[1],
+                    ((uint8_t*)&apIpAddr)[2], ((uint8_t*)&apIpAddr)[3],
+                    pInstance->pWifiSettings->ipMask.v[0], pInstance->pWifiSettings->ipMask.v[1],
+                    pInstance->pWifiSettings->ipMask.v[2], pInstance->pWifiSettings->ipMask.v[3]);
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, 
+                    apIpAddr, 
+                    pInstance->pWifiSettings->ipMask.Val, 
+                    &DhcpEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
@@ -708,6 +734,32 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     }
                 }
                 
+                // Reconfigure DHCP server with updated IP settings
+                // Validate IP address - if it's 0.0.0.0, use the gateway address
+                uint32_t apIpAddr = pInstance->pWifiSettings->ipAddr.Val;
+                if (apIpAddr == 0 || apIpAddr == inet_addr("0.0.0.0")) {
+                    LOG_E("Invalid AP IP address 0.0.0.0, using gateway address instead\r\n");
+                    apIpAddr = pInstance->pWifiSettings->gateway.Val;
+                    if (apIpAddr == 0 || apIpAddr == inet_addr("0.0.0.0")) {
+                        LOG_E("Gateway also invalid, using default 192.168.1.1\r\n");
+                        apIpAddr = inet_addr("192.168.1.1");
+                    }
+                }
+                
+                LOG_D("Reconfiguring AP DHCP server with IP: %d.%d.%d.%d, Mask: %d.%d.%d.%d\r\n",
+                    ((uint8_t*)&apIpAddr)[0], ((uint8_t*)&apIpAddr)[1],
+                    ((uint8_t*)&apIpAddr)[2], ((uint8_t*)&apIpAddr)[3],
+                    pInstance->pWifiSettings->ipMask.v[0], pInstance->pWifiSettings->ipMask.v[1],
+                    pInstance->pWifiSettings->ipMask.v[2], pInstance->pWifiSettings->ipMask.v[3]);
+                if (WDRV_WINC_STATUS_OK != WDRV_WINC_IPDHCPServerConfigure(pInstance->wdrvHandle, 
+                    apIpAddr, 
+                    pInstance->pWifiSettings->ipMask.Val, 
+                    &DhcpEventCallback)) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("Error reconfiguring DHCP server\r\n");
+                    break;
+                }
+                
                 // Restart AP with new settings
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, 
                     &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
@@ -926,7 +978,7 @@ bool wifi_manager_Deinit() {
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
     const tPowerData *pPowerState = (tPowerData *) BoardData_Get(
-            BOARDATA_POWER_DATA,
+            BOARDDATA_POWER_DATA,
             0);
     if (NULL != pPowerState &&
        pPowerState->powerState != POWERED_UP && 

@@ -303,11 +303,17 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
 }
 
 void wifi_tcp_server_CloseSocket() {
-
-    shutdown(gpServerData->client.clientSocket);
-    shutdown(gpServerData->serverSocket);
-    gpServerData->serverSocket = -1;
-    gpServerData->client.clientSocket = -1;
+    // The WINC driver's shutdown() automatically closes the socket
+    if (gpServerData->client.clientSocket != -1) {
+        shutdown(gpServerData->client.clientSocket);
+        gpServerData->client.clientSocket = -1;
+    }
+    
+    if (gpServerData->serverSocket != -1) {
+        shutdown(gpServerData->serverSocket);
+        gpServerData->serverSocket = -1;
+    }
+    
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.writeBufferLength = 0;
     gpServerData->client.tcpSendPending = 0;
@@ -315,8 +321,10 @@ void wifi_tcp_server_CloseSocket() {
 }
 
 void wifi_tcp_server_CloseClientSocket() {
-    shutdown(gpServerData->client.clientSocket);
-    gpServerData->client.clientSocket = -1;
+    if (gpServerData->client.clientSocket != -1) {
+        shutdown(gpServerData->client.clientSocket);
+        gpServerData->client.clientSocket = -1;
+    }
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.writeBufferLength = 0;
     gpServerData->client.tcpSendPending = 0;
