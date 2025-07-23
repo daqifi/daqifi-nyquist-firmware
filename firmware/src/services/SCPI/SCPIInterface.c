@@ -309,6 +309,12 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     DIORuntimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
+    // Check for NULL pointers to prevent crashes
+    if (!pBoardData) {
+        context->interface->write(context, "ERROR: BoardData not available\r\n", 32);
+        return SCPI_RES_ERR;
+    }
+    
     // Header with device identification
     snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n", 
         BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV);
@@ -318,7 +324,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, "[NETWORK]\r\n", 11);
     
     // WiFi status
-    if (pWifiSettings->isEnabled) {
+    if (pWifiSettings && pWifiSettings->isEnabled) {
         char ipStr[16];
         snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", 
             (uint8_t)(pWifiSettings->ipAddr.Val & 0xFF),
@@ -345,7 +351,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
         hasUSBPower ? "Connected" : "Disconnected",
-        pWifiSettings->isEnabled ? "Enabled" : "Disabled",
+        (pWifiSettings && pWifiSettings->isEnabled) ? "Enabled" : "Disabled",
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
     context->interface->write(context, buffer, strlen(buffer));
     
@@ -398,12 +404,12 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, buffer, strlen(buffer));
     
     // Show which user ADC channels (U0-U7) are enabled
-    if (adcEnabled > 0) {
+    if (adcEnabled > 0 && pAInConfig) {
         uint8_t userChannelsEnabled = 0;
         int userChannelCount = 0;
         
         // Check channels 8-15 which correspond to U0-U7
-        for (int i = 8; i < 16; i++) {
+        for (int i = 8; i < 16 && i < pAInConfig->Size; i++) {
             if (pAInConfig->Data[i].IsEnabled) {
                 userChannelsEnabled |= (1 << (i - 8));
                 userChannelCount++;
