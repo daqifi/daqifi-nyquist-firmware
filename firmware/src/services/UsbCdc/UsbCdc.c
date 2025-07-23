@@ -19,16 +19,6 @@ static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
 /**
- * Tracks state for parsing multi-byte escape sequences
- */
-static enum {
-    ESC_STATE_NONE,
-    ESC_STATE_ESC,      // Received ESC
-    ESC_STATE_BRACKET,  // Received ESC[
-    ESC_STATE_DELETE    // Received ESC[3 (waiting for ~)
-} escapeState = ESC_STATE_NONE;
-
-/**
  * Filters input characters to reject potentially dangerous control characters
  * Used only in normal command mode, NOT in transparent mode
  * 
@@ -40,15 +30,15 @@ static enum {
  * @param ch Character to check
  * @return true if character is safe to process, false if it should be rejected
  */
-static bool UsbCdc_IsCharacterSafe(uint8_t ch) {
+static bool UsbCdc_IsCharacterSafe(UsbCdcData_t* client, uint8_t ch) {
     // State machine for ESC sequence parsing
-    switch (escapeState) {
+    switch (client->escapeState) {
         case ESC_STATE_ESC:
             if (ch == '[') {
-                escapeState = ESC_STATE_BRACKET;
+                client->escapeState = ESC_STATE_BRACKET;
                 return true;  // Allow ESC[
             } else {
-                escapeState = ESC_STATE_NONE;
+                client->escapeState = ESC_STATE_NONE;
                 return false; // Reject other ESC sequences
             }
             
@@ -61,13 +51,13 @@ static bool UsbCdc_IsCharacterSafe(uint8_t ch) {
                 case 'D':  // Left arrow
                 case 'H':  // Home
                 case 'F':  // End
-                    escapeState = ESC_STATE_NONE;
+                    client->escapeState = ESC_STATE_NONE;
                     return true;
                 case '3':  // Delete (ESC[3~)
-                    escapeState = ESC_STATE_DELETE;
+                    client->escapeState = ESC_STATE_DELETE;
                     return true;
                 default:
-                    escapeState = ESC_STATE_NONE;
+                    client->escapeState = ESC_STATE_NONE;
                     return false; // Reject other ESC[ sequences
             }
             
@@ -90,7 +80,7 @@ static bool UsbCdc_IsCharacterSafe(uint8_t ch) {
                 case 0x7F:   // DEL (127) - delete character
                 case 0x1B:   // ESC (27) - start of escape sequence
                     if (ch == 0x1B) {
-                        escapeState = ESC_STATE_ESC;
+                        client->escapeState = ESC_STATE_ESC;
                     }
                     return true;
                 default:
@@ -456,7 +446,7 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
         if (client->isTransparentModeActive == 0) {
             for (size_t i = 0; i < client->readBufferLength; ++i) {
                 // Filter out potentially dangerous characters
-                if (UsbCdc_IsCharacterSafe(client->readBuffer[i])) {
+                if (UsbCdc_IsCharacterSafe(client, client->readBuffer[i])) {
                     microrl_insert_char(&client->console, client->readBuffer[i]);
                 } else {
                     // Log rejected character (in debug builds)
@@ -724,6 +714,9 @@ void UsbCdc_Initialize() {
 
     //Release ownership of the mutex object
     xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+    
+    // Initialize escape sequence state
+    gRunTimeUsbSttings.escapeState = ESC_STATE_NONE;
 
 }
 
