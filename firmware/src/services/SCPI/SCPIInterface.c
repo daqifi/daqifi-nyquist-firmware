@@ -827,7 +827,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:MASK?", .callback = SCPI_LANMaskGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:MASK", .callback = SCPI_LANMaskSet,},
     {.pattern = "SYSTem:COMMunicate:LAN:GATEway?", .callback = SCPI_LANGatewayGet,},
-    {.pattern = "SYSTem:COMMunicate:LAN:GATEway", .callback = SCPI_NotImplemented,},
+    {.pattern = "SYSTem:COMMunicate:LAN:GATEway", .callback = SCPI_LANGatewaySet,},
     //    {.pattern = "SYSTem:COMMunicate:LAN:DNS1?", .callback = SCPI_LANDns1Get, },
     {.pattern = "SYSTem:COMMunicate:LAN:DNS1", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:DNS2?", .callback = SCPI_NotImplemented,},

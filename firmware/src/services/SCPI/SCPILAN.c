@@ -287,7 +287,7 @@ scpi_result_t SCPI_LANGatewayGet(scpi_t * context) {
 scpi_result_t SCPI_LANGatewaySet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    return SCPI_LANAddrGetImpl(
+    return SCPI_LANAddrSetImpl(
             context,
             &pRunTimeWifiSettings->gateway);
 }
@@ -587,153 +587,12 @@ scpi_result_t SCPI_LANSettingsClear(scpi_t * context) {
 
     return SCPI_RES_OK;
 }
-//scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context)
-//{
-//    uint8_t index = 0;
-//    WifiSettings * pWifiSettings = (WifiSettings *)BoardData_Get(                         
-//                        BOARDDATA_WIFI_SETTINGS,                            
-//                        0); 
-//    uint8_t numberOfResults = pWifiSettings->av_num;
-//
-//
-//    for(index = 0;index<numberOfResults;index++)
-//    {
-//        SCPI_ResultInt32(                                                   
-//                    context,                                                
-//                    (int) pWifiSettings->av_ssid_str[index]);
-//    }
-//    return SCPI_RES_OK;
-//}
-//
-
-//
-//scpi_result_t SCPI_LANAVSecurityGet(scpi_t * context)
-//{
-//    uint8_t index = 0;
-//    WifiSettings * pWifiSettings = (WifiSettings *)BoardData_Get(                          
-//                        BOARDDATA_WIFI_SETTINGS,                            
-//                        0); 
-//    uint8_t numberOfResults = pWifiSettings->av_num;
-//
-//    for(index = 0;index<numberOfResults;index++)
-//    {
-//        SCPI_ResultInt32(                                                   
-//                    context,                                                
-//                    pWifiSettings->av_securityMode[index]);
-//    }
-//
-//    return SCPI_RES_OK;
-//}
 
 scpi_result_t SCPI_LANHostnameGet(scpi_t * context) {
-    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    return SCPI_LANStringGetImpl(context, pRunTimeWifiSettings->hostName);
+    const tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG, 0);
+    SCPI_LANStringGetImpl(context, pBoardConfig->hostName);
+    return SCPI_RES_OK;
 }
-//
-//scpi_result_t SCPI_LANHostnameSet(scpi_t * context)
-//{
-//    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
-//                        BOARDRUNTIME_WIFI_SETTINGS);
-//    
-//    return SCPI_LANStringSetImpl(                                           
-//                        context,                                            
-//                        pRunTimeWifiSettings->settings.wifi.hostName,       
-//                        WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
-//}
-/**
- * SCPI Callback: Set the mac address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-//scpi_result_t SCPI_LANMacSet(scpi_t * context)
-//{
-//    char value[MAX_MAC_ADDR_STR_LEN + 1];
-//    size_t len = SCPI_SafeParamString(context, value, MAX_MAC_ADDR_STR_LEN, TRUE);
-//   
-//    WifiSettings * pRunTimeWifiSettings = (WifiSettings *)BoardRunTimeConfig_Get(         
-//                        BOARDRUNTIME_WIFI_SETTINGS);
-//    
-//    if (len < 1)
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    
-//    if (!MacAddr_FromString(                                                
-//                        value,                                              
-//                        len,                                                
-//                        pRunTimeWifiSettings->macAddr.addr))
-//    {
-//        return SCPI_RES_ERR;
-//    }
-//    
-//    return SCPI_RES_OK;
-//}
-///**
-// * SCPI Callback: Set the IP address of the device
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANDns1Set(scpi_t * context)
-//{
-//    WifiSettings * pRunTimeWifiSettings = (WifiSettings *)BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
-//    return SCPI_LANAddrGetImpl(                                             
-//                        context,                               
-//                        &pRunTimeWifiSettings->priDns);
-//}
-
-
-/**
- * SCPI Callback: Get the Ip address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-//scpi_result_t SCPI_LANDns2Get(scpi_t * context)
-//{
-//    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
-//                        BOARDDATA_WIFI_SETTINGS,                            
-//                        0); 
-//    return SCPI_LANAddrGetImpl(                                             
-//                        context,                          
-//                        &pWifiSettings->settings.wifi.secDns);
-//}
-
-/**
- * SCPI Callback: Set the IP address of the device
- * @return SCPI_RES_OK on success SCPI_RES_ERR on error
- */
-//scpi_result_t SCPI_LANDns2Set(scpi_t * context)
-//{
-//    DaqifiSettings * pRunTimeWifiSettings = (DaqifiSettings *)BoardRunTimeConfig_Get(         
-//                        BOARDRUNTIME_WIFI_SETTINGS);
-//    return SCPI_LANAddrGetImpl(                                             
-//                        context,                                            
-//                        &pRunTimeWifiSettings->settings.wifi.secDns);
-//}
-//scpi_result_t SCPI_LANAVNetTypeGet(scpi_t * context)
-//{
-//    uint8_t index = 0;
-//    DaqifiSettings * pWifiSettings = (DaqifiSettings *)BoardData_Get(                         
-//                        BOARDDATA_WIFI_SETTINGS,                            
-//                        0); 
-//    uint8_t numberOfResults = pWifiSettings->settings.wifi.av_num;
-//
-//    for(index = 0;index<numberOfResults;index++)
-//    {
-//        SCPI_ResultInt32(                                                   
-//                context,                                                    
-//                (int)pWifiSettings->settings.wifi.av_networkType[index]);
-//    }
-//    
-//    return SCPI_RES_OK;
-//}
-///**
-// * SCPI Callback: Get the Ip address of the device
-// * @return SCPI_RES_OK on success SCPI_RES_ERR on error
-// */
-//scpi_result_t SCPI_LANDns1Get(scpi_t * context)
-//{
-//    WifiSettings * pWifiSettings = (WifiSettings *)BoardData_Get(                         
-//                        BOARDDATA_WIFI_SETTINGS,                            
-//                        0); 
-//    return SCPI_LANAddrGetImpl(                                             
-//                        context,                                            
-//                        &pWifiSettings->priDns);
-//}
