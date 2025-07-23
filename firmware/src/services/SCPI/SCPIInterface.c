@@ -18,6 +18,7 @@
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
+#include "services/daqifi_settings.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
@@ -303,21 +304,20 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
  */
 static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     char buffer[256];
-    tBoardConfig * pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
     
-    // Board identification
-    snprintf(buffer, sizeof(buffer), "Board: %s\r\n", pBoardConfig->DeviceName);
+    // Get board info from daqifi_settings.h constants
+    snprintf(buffer, sizeof(buffer), "Board: NYQUIST%d\r\n", BOARD_VARIANT);
     context->interface->write(context, buffer, strlen(buffer));
     
-    snprintf(buffer, sizeof(buffer), "Variant: Nq%d\r\n", pBoardConfig->BoardVariant);
+    snprintf(buffer, sizeof(buffer), "Variant: Nq%d\r\n", BOARD_VARIANT);
     context->interface->write(context, buffer, strlen(buffer));
     
-    snprintf(buffer, sizeof(buffer), "Hardware: %s\r\n", pBoardConfig->HardwareRevStr);
+    snprintf(buffer, sizeof(buffer), "Hardware: %s\r\n", BOARD_HARDWARE_REV);
     context->interface->write(context, buffer, strlen(buffer));
     
-    snprintf(buffer, sizeof(buffer), "Firmware: %s\r\n", pBoardConfig->FirmwareRevStr);
+    snprintf(buffer, sizeof(buffer), "Firmware: %s\r\n", BOARD_FIRMWARE_REV);
     context->interface->write(context, buffer, strlen(buffer));
     
     // WiFi status
