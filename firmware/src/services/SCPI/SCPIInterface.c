@@ -298,6 +298,60 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
 }
 
 /**
+ * SCPI Callback: Returns system information in human-readable text format
+ * @return SCPI_RES_OK on success
+ */
+static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
+    char buffer[256];
+    tBoardConfig * pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+    
+    // Board identification
+    snprintf(buffer, sizeof(buffer), "Board: %s\r\n", pBoardConfig->DeviceName);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    snprintf(buffer, sizeof(buffer), "Variant: Nq%d\r\n", pBoardConfig->BoardVariant);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    snprintf(buffer, sizeof(buffer), "Hardware: %s\r\n", pBoardConfig->HardwareRevStr);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    snprintf(buffer, sizeof(buffer), "Firmware: %s\r\n", pBoardConfig->FirmwareRevStr);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // WiFi status
+    snprintf(buffer, sizeof(buffer), "WiFi Enabled: %s\r\n", pWifiSettings->isEnabled ? "Yes" : "No");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    if (pWifiSettings->isEnabled) {
+        snprintf(buffer, sizeof(buffer), "WiFi Mode: %s\r\n", 
+            pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA");
+        context->interface->write(context, buffer, strlen(buffer));
+        
+        snprintf(buffer, sizeof(buffer), "SSID: %s\r\n", pWifiSettings->ssid);
+        context->interface->write(context, buffer, strlen(buffer));
+        
+        // Convert IP address to string
+        char ipStr[16];
+        snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", 
+            (uint8_t)(pWifiSettings->ipAddr.Val & 0xFF),
+            (uint8_t)((pWifiSettings->ipAddr.Val >> 8) & 0xFF),
+            (uint8_t)((pWifiSettings->ipAddr.Val >> 16) & 0xFF),
+            (uint8_t)((pWifiSettings->ipAddr.Val >> 24) & 0xFF));
+        snprintf(buffer, sizeof(buffer), "IP Address: %s\r\n", ipStr);
+        context->interface->write(context, buffer, strlen(buffer));
+    }
+    
+    // Power status
+    snprintf(buffer, sizeof(buffer), "Battery: %.2fV (%d%%)\r\n", 
+        pBoardData->PowerData.battVoltage, pBoardData->PowerData.chargePct);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    return SCPI_RES_OK;
+}
+
+/**
  * Gets the system log
  * @param context
  * @return 
@@ -772,6 +826,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:REboot", .callback = SCPI_Reset,},
     {.pattern = "HELP", .callback = SCPI_Help,},
     {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet,},
+    {.pattern = "SYSTem:INFo?", .callback = SCPI_SysInfoTextGet,},
     {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
     {.pattern = "SYSTem:LOG:TEST", .callback = SCPI_SysLogTest,},
     {.pattern = "SYSTem:LOG:CLEar", .callback = SCPI_SysLogClear,},
