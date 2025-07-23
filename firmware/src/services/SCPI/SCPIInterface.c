@@ -306,46 +306,100 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     char buffer[256];
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
+    AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS, 0);
+    DIORunTimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS, 0);
     
-    // Get board info from daqifi_settings.h constants
-    snprintf(buffer, sizeof(buffer), "Board: NYQUIST%d\r\n", BOARD_VARIANT);
+    // Header with device identification
+    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s | SN:%llu ===\r\n", 
+        BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV, 
+        BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_SERIAL_NUMBER, 0) ? 
+        *(uint64_t*)BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_SERIAL_NUMBER, 0) : 0ULL);
     context->interface->write(context, buffer, strlen(buffer));
     
-    snprintf(buffer, sizeof(buffer), "Variant: Nq%d\r\n", BOARD_VARIANT);
-    context->interface->write(context, buffer, strlen(buffer));
-    
-    snprintf(buffer, sizeof(buffer), "Hardware: %s\r\n", BOARD_HARDWARE_REV);
-    context->interface->write(context, buffer, strlen(buffer));
-    
-    snprintf(buffer, sizeof(buffer), "Firmware: %s\r\n", BOARD_FIRMWARE_REV);
-    context->interface->write(context, buffer, strlen(buffer));
+    // NETWORK Section
+    context->interface->write(context, "[NETWORK]\r\n", 11);
     
     // WiFi status
-    snprintf(buffer, sizeof(buffer), "WiFi Enabled: %s\r\n", pWifiSettings->isEnabled ? "Yes" : "No");
-    context->interface->write(context, buffer, strlen(buffer));
-    
     if (pWifiSettings->isEnabled) {
-        snprintf(buffer, sizeof(buffer), "WiFi Mode: %s\r\n", 
-            pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA");
-        context->interface->write(context, buffer, strlen(buffer));
-        
-        snprintf(buffer, sizeof(buffer), "SSID: %s\r\n", pWifiSettings->ssid);
-        context->interface->write(context, buffer, strlen(buffer));
-        
-        // Convert IP address to string
         char ipStr[16];
         snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", 
             (uint8_t)(pWifiSettings->ipAddr.Val & 0xFF),
             (uint8_t)((pWifiSettings->ipAddr.Val >> 8) & 0xFF),
             (uint8_t)((pWifiSettings->ipAddr.Val >> 16) & 0xFF),
             (uint8_t)((pWifiSettings->ipAddr.Val >> 24) & 0xFF));
-        snprintf(buffer, sizeof(buffer), "IP Address: %s\r\n", ipStr);
+        
+        snprintf(buffer, sizeof(buffer), "  WiFi: ON | Mode: %s | SSID: %s | Ch: %d\r\n", 
+            pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
+            pWifiSettings->ssid, pWifiSettings->channel);
         context->interface->write(context, buffer, strlen(buffer));
+        
+        snprintf(buffer, sizeof(buffer), "  IP: %s | Port: %d | Security: %s\r\n", 
+            ipStr, pWifiSettings->tcpServerPort,
+            pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
+        context->interface->write(context, buffer, strlen(buffer));
+    } else {
+        context->interface->write(context, "  WiFi: OFF\r\n", 13);
     }
     
-    // Power status
-    snprintf(buffer, sizeof(buffer), "Battery: %.2fV (%d%%)\r\n", 
-        pBoardData->PowerData.battVoltage, pBoardData->PowerData.chargePct);
+    // CONNECTIVITY Section
+    context->interface->write(context, "[CONNECTIVITY]\r\n", 16);
+    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
+        pBoardData->PowerData.externalPowerSource == USB_POWER ? "Connected" : "Disconnected",
+        pWifiSettings->isEnabled ? "Enabled" : "Disabled",
+        pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // POWER Section
+    context->interface->write(context, "[POWER]\r\n", 9);
+    const char* powerState = "Unknown";
+    switch(pBoardData->PowerData.powerState) {
+        case POWERED_UP: powerState = "RUN"; break;
+        case POWERING_UP: powerState = "BOOT"; break;
+        case POWERED_DOWN: powerState = "OFF"; break;
+        case POWERING_DOWN: powerState = "SHUTDOWN"; break;
+    }
+    
+    snprintf(buffer, sizeof(buffer), "  State: %s | Mode: %s | PowerSave: %s\r\n", 
+        powerState,
+        pBoardData->PowerData.USBSleep ? "SLEEP" : "ACTIVE",
+        pBoardData->PowerData.powerDnAllowed ? "Allowed" : "Blocked");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charge: %s\r\n", 
+        pBoardData->PowerData.battVoltage, 
+        pBoardData->PowerData.chargePct,
+        pBoardData->PowerData.battLow ? "[LOW]" : "[OK]",
+        pBoardData->PowerData.BQ24297Data.chargeAllowed ? "ON" : "OFF");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // STATUS Section
+    context->interface->write(context, "[STATUS]\r\n", 10);
+    
+    // Channel status
+    int adcEnabled = 0, dioEnabled = 0;
+    if (pAInConfig) {
+        for (int i = 0; i < pAInConfig->Size; i++) {
+            if (pAInConfig->Data[i].Enabled) adcEnabled++;
+        }
+    }
+    if (pDIOConfig) {
+        for (int i = 0; i < pDIOConfig->Size; i++) {
+            if (pDIOConfig->Data[i].Enabled) dioEnabled++;
+        }
+    }
+    snprintf(buffer, sizeof(buffer), "  Channels: ADC %d/%d | DIO %d/%d enabled\r\n", 
+        adcEnabled, pAInConfig ? pAInConfig->Size : 0,
+        dioEnabled, pDIOConfig ? pDIOConfig->Size : 0);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // Streaming and sampling
+    snprintf(buffer, sizeof(buffer), "  Streaming: %s | Samples: AIN %d, DIO %d\r\n",
+        pBoardData->StreamTrigStamp > 0 ? "Active" : "Idle",
+        pBoardData->AInSamples.Count, pBoardData->DIOSamples.List.Count);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // Uptime
+    snprintf(buffer, sizeof(buffer), "  Uptime: %lu ms\r\n", Timer_ReadMilliseconds());
     context->interface->write(context, buffer, strlen(buffer));
     
     return SCPI_RES_OK;

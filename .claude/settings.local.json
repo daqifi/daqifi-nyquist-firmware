@@ -8,7 +8,8 @@
       "Bash(gh auth:*)",
       "Bash(gh repo view:*)",
       "Bash(picocom:*)",
-      "Bash(# Send command and immediately read response\n(echo -e \"\"*IDN?\\r\"\"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20)"
+      "Bash(# Send command and immediately read response\n(echo -e \"\"*IDN?\\r\"\"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20)",
+      "Bash(sudo chmod:*)"
     ],
     "deny": []
   }
