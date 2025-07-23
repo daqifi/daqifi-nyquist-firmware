@@ -263,7 +263,7 @@ scpi_result_t SCPI_LANMaskGet(scpi_t * context) {
 scpi_result_t SCPI_LANMaskSet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    return SCPI_LANAddrGetImpl(
+    return SCPI_LANAddrSetImpl(
             context,
             &pRunTimeWifiSettings->ipMask);
 }
