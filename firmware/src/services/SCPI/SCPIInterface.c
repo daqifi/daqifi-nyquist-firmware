@@ -306,14 +306,12 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     char buffer[256];
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
-    AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS, 0);
-    DIORunTimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS, 0);
+    AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    DIORuntimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
     // Header with device identification
-    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s | SN:%llu ===\r\n", 
-        BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV, 
-        BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_SERIAL_NUMBER, 0) ? 
-        *(uint64_t*)BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_SERIAL_NUMBER, 0) : 0ULL);
+    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n", 
+        BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV);
     context->interface->write(context, buffer, strlen(buffer));
     
     // NETWORK Section
@@ -328,13 +326,13 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             (uint8_t)((pWifiSettings->ipAddr.Val >> 16) & 0xFF),
             (uint8_t)((pWifiSettings->ipAddr.Val >> 24) & 0xFF));
         
-        snprintf(buffer, sizeof(buffer), "  WiFi: ON | Mode: %s | SSID: %s | Ch: %d\r\n", 
+        snprintf(buffer, sizeof(buffer), "  WiFi: ON | Mode: %s | SSID: %s\r\n", 
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
-            pWifiSettings->ssid, pWifiSettings->channel);
+            pWifiSettings->ssid);
         context->interface->write(context, buffer, strlen(buffer));
         
         snprintf(buffer, sizeof(buffer), "  IP: %s | Port: %d | Security: %s\r\n", 
-            ipStr, pWifiSettings->tcpServerPort,
+            ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
         context->interface->write(context, buffer, strlen(buffer));
     } else {
@@ -343,8 +341,10 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     
     // CONNECTIVITY Section
     context->interface->write(context, "[CONNECTIVITY]\r\n", 16);
+    bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER || 
+                        pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
-        pBoardData->PowerData.externalPowerSource == USB_POWER ? "Connected" : "Disconnected",
+        hasUSBPower ? "Connected" : "Disconnected",
         pWifiSettings->isEnabled ? "Enabled" : "Disabled",
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
     context->interface->write(context, buffer, strlen(buffer));
@@ -354,9 +354,10 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     const char* powerState = "Unknown";
     switch(pBoardData->PowerData.powerState) {
         case POWERED_UP: powerState = "RUN"; break;
-        case POWERING_UP: powerState = "BOOT"; break;
+        case POWERED_UP_EXT_DOWN: powerState = "PARTIAL"; break;
         case POWERED_DOWN: powerState = "OFF"; break;
-        case POWERING_DOWN: powerState = "SHUTDOWN"; break;
+        case MICRO_ON: powerState = "STANDBY"; break;
+        default: powerState = "Unknown"; break;
     }
     
     snprintf(buffer, sizeof(buffer), "  State: %s | Mode: %s | PowerSave: %s\r\n", 
@@ -376,30 +377,30 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, "[STATUS]\r\n", 10);
     
     // Channel status
-    int adcEnabled = 0, dioEnabled = 0;
+    int adcEnabled = 0, dioInputs = 0;
     if (pAInConfig) {
         for (int i = 0; i < pAInConfig->Size; i++) {
-            if (pAInConfig->Data[i].Enabled) adcEnabled++;
+            if (pAInConfig->Data[i].IsEnabled) adcEnabled++;
         }
     }
     if (pDIOConfig) {
         for (int i = 0; i < pDIOConfig->Size; i++) {
-            if (pDIOConfig->Data[i].Enabled) dioEnabled++;
+            if (pDIOConfig->Data[i].IsInput) dioInputs++;
         }
     }
-    snprintf(buffer, sizeof(buffer), "  Channels: ADC %d/%d | DIO %d/%d enabled\r\n", 
+    snprintf(buffer, sizeof(buffer), "  Channels: ADC %d/%d enabled | DIO %d/%d inputs\r\n", 
         adcEnabled, pAInConfig ? pAInConfig->Size : 0,
-        dioEnabled, pDIOConfig ? pDIOConfig->Size : 0);
+        dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
     context->interface->write(context, buffer, strlen(buffer));
     
     // Streaming and sampling
-    snprintf(buffer, sizeof(buffer), "  Streaming: %s | Samples: AIN %d, DIO %d\r\n",
+    snprintf(buffer, sizeof(buffer), "  Streaming: %s | Trigger: %s\r\n",
         pBoardData->StreamTrigStamp > 0 ? "Active" : "Idle",
-        pBoardData->AInSamples.Count, pBoardData->DIOSamples.List.Count);
+        pBoardData->StreamTrigStamp > 0 ? "Armed" : "Off");
     context->interface->write(context, buffer, strlen(buffer));
     
-    // Uptime
-    snprintf(buffer, sizeof(buffer), "  Uptime: %lu ms\r\n", Timer_ReadMilliseconds());
+    // System uptime - use timestamp as approximation
+    snprintf(buffer, sizeof(buffer), "  Timestamp: %u\r\n", pBoardData->StreamTrigStamp);
     context->interface->write(context, buffer, strlen(buffer));
     
     return SCPI_RES_OK;
