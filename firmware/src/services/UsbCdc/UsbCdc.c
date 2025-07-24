@@ -248,8 +248,8 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             
             // CRITICAL: Enable OTG immediately to prevent power loss!
             // Cannot wait for Power_Tasks to detect this
-            extern void BQ24297_WriteRegister(uint8_t reg, uint8_t value);
-            BQ24297_WriteRegister(0x01, 0b01100001);  // OTG enable NOW!
+            extern void BQ24297_EnableOTG(void);
+            BQ24297_EnableOTG();
             
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             break;

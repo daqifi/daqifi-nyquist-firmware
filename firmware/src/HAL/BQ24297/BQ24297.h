@@ -234,18 +234,34 @@ void BQ24297_ForceDPDM( void );
 void BQ24297_AutoSetILim( void );
 
 /*!
- * Function to read a BQ24297 register (for external use)
- * @param[in] reg Register to read
- * @return Register value
+ * Enable OTG boost mode
+ * @note This will disable charging as OTG and charging are mutually exclusive
  */
-uint8_t BQ24297_ReadRegister(uint8_t reg);
+void BQ24297_EnableOTG(void);
 
 /*!
- * Function to write a BQ24297 register (for external use)  
- * @param[in] reg Register to write
- * @param[in] value Data to write
+ * Disable OTG boost mode and enable charging if battery present
+ * @param[in] enableCharging If true, enable charging after disabling OTG
  */
-void BQ24297_WriteRegister(uint8_t reg, uint8_t value);
+void BQ24297_DisableOTG(bool enableCharging);
+
+/*!
+ * Get current OTG mode status
+ * @return true if OTG is enabled, false otherwise
+ */
+bool BQ24297_IsOTGEnabled(void);
+
+/*!
+ * Get current charge enable status
+ * @return true if charging is enabled, false otherwise
+ */
+bool BQ24297_IsChargingEnabled(void);
+
+/*!
+ * Switch power mode based on external power availability
+ * @param[in] externalPowerPresent true if USB/charger connected, false if battery only
+ */
+void BQ24297_SetPowerMode(bool externalPowerPresent);
 
     
 #ifdef	__cplusplus

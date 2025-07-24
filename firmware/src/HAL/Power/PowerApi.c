@@ -463,18 +463,17 @@ static void Power_Update_Settings(void) {
     
     // CRITICAL: Dynamically switch between OTG and charge modes based on power source
     // This must happen at runtime when USB is connected/disconnected
-    uint8_t currentReg01 = BQ24297_ReadRegister(0x01);
-    bool otgEnabled = (currentReg01 & 0x20) != 0;
+    bool otgEnabled = BQ24297_IsOTGEnabled();
+    bool hasExternalPower = (pData->externalPowerSource != NO_EXT_POWER);
     
-    if (pData->externalPowerSource != NO_EXT_POWER && otgEnabled) {
+    if (hasExternalPower && otgEnabled) {
         // External power present but OTG is on - switch to charge mode
         LOG_D("Power_Update_Settings: External power detected, switching from OTG to charge mode");
-        BQ24297_WriteRegister(0x01, 0b01010001);  // Charge enable, OTG disable
-        BQ24297_ChargeEnable(pData->BQ24297Data.status.batPresent);
-    } else if (pData->externalPowerSource == NO_EXT_POWER && !otgEnabled) {
+        BQ24297_SetPowerMode(true);
+    } else if (!hasExternalPower && !otgEnabled) {
         // No external power but OTG is off - switch to OTG mode
         LOG_D("Power_Update_Settings: No external power, switching from charge to OTG mode");
-        BQ24297_WriteRegister(0x01, 0b01100001);  // OTG enable, charge disable
+        BQ24297_SetPowerMode(false);
     }
 }
 

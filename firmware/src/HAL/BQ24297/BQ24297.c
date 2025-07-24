@@ -90,23 +90,17 @@ void BQ24297_Config_Settings(void) {
     
     // Check current power status to decide on OTG mode
     BQ24297_UpdateStatus();
-    uint8_t reg01_value;
     
-    if (pData->status.pgStat && (pData->status.vBusStat == VBUS_USB || pData->status.vBusStat == VBUS_CHARGER)) {
-        // External power detected - can disable OTG and enable charging
-        reg01_value = 0b01010001;  // Charge enabled, OTG disabled
-        LOG_D("BQ24297: External power detected, disabling OTG for charging");
-    } else {
-        // No external power - must enable OTG for boost
-        reg01_value = 0b01100001;  // OTG enabled, charge disabled (mutually exclusive)
-        LOG_D("BQ24297: No external power, enabling OTG for battery boost");
-    }
+    // Set initial power mode based on detected power source
+    bool hasExternalPower = pData->status.pgStat && 
+                           (pData->status.vBusStat == VBUS_USB || 
+                            pData->status.vBusStat == VBUS_CHARGER);
     
-    BQ24297_Write_I2C(0x01, reg01_value);
+    BQ24297_SetPowerMode(hasExternalPower);
     
     // Debug: Read back REG01 to verify configuration
     reg = BQ24297_Read_I2C(0x01);
-    LOG_D("BQ24297: REG01 after config = 0x%02X (expect 0x%02X)", reg, reg01_value);
+    LOG_D("BQ24297: REG01 after config = 0x%02X", reg);
 
     // Set fast charge to 2000mA - this should never need to be updated
     BQ24297_Write_I2C(0x02, 0b01100000);
@@ -316,11 +310,53 @@ static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
 
 }
 
-// Public wrapper functions for external access
-uint8_t BQ24297_ReadRegister(uint8_t reg) {
-    return BQ24297_Read_I2C(reg);
+void BQ24297_EnableOTG(void) {
+    // Read current REG01 value
+    uint8_t reg = BQ24297_Read_I2C(0x01);
+    
+    // Set OTG enable (bit 5) and clear charge enable (bit 4)
+    // Preserve watchdog reset bit and SYS_MIN settings
+    reg = (reg & 0b11001111) | 0b00100001;  // Clear bits 5:4, then set OTG
+    
+    BQ24297_Write_I2C(0x01, reg);
+    LOG_D("BQ24297_EnableOTG: REG01 = 0x%02X", reg);
 }
 
-void BQ24297_WriteRegister(uint8_t reg, uint8_t value) {
-    BQ24297_Write_I2C(reg, value);
+void BQ24297_DisableOTG(bool enableCharging) {
+    // Read current REG01 value
+    uint8_t reg = BQ24297_Read_I2C(0x01);
+    
+    // Clear OTG enable (bit 5)
+    reg = reg & 0b11011111;
+    
+    // Set charge enable if requested and battery is present
+    if (enableCharging && pData->status.batPresent && pData->chargeAllowed) {
+        reg = reg | 0b00010000;  // Set bit 4
+    }
+    
+    BQ24297_Write_I2C(0x01, reg);
+    LOG_D("BQ24297_DisableOTG: REG01 = 0x%02X, charging = %s", 
+          reg, (reg & 0x10) ? "enabled" : "disabled");
+}
+
+bool BQ24297_IsOTGEnabled(void) {
+    uint8_t reg = BQ24297_Read_I2C(0x01);
+    return (reg & 0b00100000) != 0;
+}
+
+bool BQ24297_IsChargingEnabled(void) {
+    uint8_t reg = BQ24297_Read_I2C(0x01);
+    return (reg & 0b00010000) != 0;
+}
+
+void BQ24297_SetPowerMode(bool externalPowerPresent) {
+    if (externalPowerPresent) {
+        // External power available - disable OTG and enable charging
+        LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
+        BQ24297_DisableOTG(true);
+    } else {
+        // Battery power only - enable OTG for boost
+        LOG_D("BQ24297_SetPowerMode: No external power, switching to OTG boost mode");
+        BQ24297_EnableOTG();
+    }
 }
