@@ -5,6 +5,7 @@
 #include "BQ24297.h"
 #include "Util/Logger.h"
 #include "services/UsbCdc/UsbCdc.h"
+#include "peripheral/gpio/plib_gpio.h"
 
 //! Pointer to the BQ24297 device configuration data structure
 static tBQ24297Config *pConfigBQ24;
@@ -41,6 +42,22 @@ void BQ24297_InitHardware(
                         DRV_IO_INTENT_READWRITE|DRV_IO_INTENT_BLOCKING);
 
     // Set I/O such that we can power up when needed
+    LOG_D("BQ24297_InitHardware: Setting OTG GPIO - Port=%d, Bit=%d, Val=%d", 
+          pConfigBQ24->OTG_Ch, pConfigBQ24->OTG_Bit, pWriteVariables->OTG_Val);
+    
+    // CRITICAL: Use the correct GPIO macros for BATT_MAN_OTG pin
+    // The board config says port K but the macros are for port F!
+    if (pWriteVariables->OTG_Val) {
+        BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
+        BATT_MAN_OTG_Set();          // Set high for OTG enable
+        LOG_D("BQ24297_InitHardware: Used BATT_MAN_OTG_Set() macro (Port F)");
+    } else {
+        BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
+        BATT_MAN_OTG_Clear();        // Set low for OTG disable
+        LOG_D("BQ24297_InitHardware: Used BATT_MAN_OTG_Clear() macro (Port F)");
+    }
+    
+    // Also try the original port write in case port K is correct
     GPIO_PortWrite(pConfigBQ24->OTG_Ch,                                
                         pConfigBQ24->OTG_Bit,                               
                         pWriteVariables->OTG_Val);
@@ -322,6 +339,11 @@ static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
 }
 
 void BQ24297_EnableOTG(void) {
+    // CRITICAL: Set GPIO pin FIRST for OTG enable
+    BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
+    BATT_MAN_OTG_Set();          // Set high for OTG enable
+    LOG_D("BQ24297_EnableOTG: Set BATT_MAN_OTG GPIO high");
+    
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
     
@@ -338,6 +360,11 @@ void BQ24297_EnableOTG(void) {
 }
 
 void BQ24297_DisableOTG(bool enableCharging) {
+    // Clear GPIO pin for OTG disable
+    BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
+    BATT_MAN_OTG_Clear();         // Set low for OTG disable
+    LOG_D("BQ24297_DisableOTG: Cleared BATT_MAN_OTG GPIO");
+    
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
     

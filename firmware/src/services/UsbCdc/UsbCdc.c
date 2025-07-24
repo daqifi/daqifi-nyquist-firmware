@@ -9,6 +9,7 @@
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
 #include "HAL/BQ24297/BQ24297.h"
+#include "peripheral/gpio/plib_gpio.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
@@ -245,10 +246,14 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
             /* VBUS is not available any more. Detach the device. */
             gRunTimeUsbSttings.isVbusDetected = false;
+            
+            // CRITICAL: Set GPIO pin IMMEDIATELY for OTG enable
+            BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
+            BATT_MAN_OTG_Set();          // Set high for OTG enable
+            
             LOG_D("USB: VBUS removed - EMERGENCY OTG ENABLE!");
             
-            // CRITICAL: Enable OTG immediately to prevent power loss!
-            // Cannot wait for Power_Tasks to detect this
+            // Enable OTG in BQ24297 (this also sets GPIO)
             BQ24297_EnableOTG();
             
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);

@@ -21,6 +21,7 @@
 #include "services/daqifi_settings.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/BQ24297/BQ24297.h"
+#include "peripheral/gpio/plib_gpio.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
 #include "SCPIDIO.h"
@@ -499,10 +500,15 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         // NTC and current limit
         const char* ntcStr[] = {"OK", "Hot", "Cold (Battery disconnected?)", "Hot/Cold"};
         const char* iLimStr[] = {"100mA", "150mA", "500mA", "900mA", "1A", "1.5A", "2A", "3A"};
-        snprintf(buffer, sizeof(buffer), "  NTC: %s | Current Limit: %s | OTG: %s\r\n",
+        
+        // Read OTG GPIO pin state for debugging
+        bool otgGpioState = BATT_MAN_OTG_Get();
+        
+        snprintf(buffer, sizeof(buffer), "  NTC: %s | Current Limit: %s | OTG: %s (GPIO: %s)\r\n",
             (pBQ24297Data->status.ntcFault < 4) ? ntcStr[pBQ24297Data->status.ntcFault] : "Fault",
             (pBQ24297Data->status.inLim < 8) ? iLimStr[pBQ24297Data->status.inLim] : "Unknown",
-            pBQ24297Data->status.otg ? "ON" : "OFF");
+            pBQ24297Data->status.otg ? "ON" : "OFF",
+            otgGpioState ? "HIGH" : "LOW");
         context->interface->write(context, buffer, strlen(buffer));
         
         // Power-up readiness - the key diagnostic info
