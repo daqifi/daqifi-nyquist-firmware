@@ -55,7 +55,8 @@ void BQ24297_Config_Settings(void) {
     
     // Give BQ24297 and USB subsystem time to detect power sources
     // This delay is critical for proper USB VBUS detection on startup
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    // 150ms provides a safety margin while being 3x faster than original 500ms
+    vTaskDelay(150 / portTICK_PERIOD_MS);
     
     // Read the current status data
     BQ24297_UpdateStatus();
