@@ -24,6 +24,7 @@
 *.p1
 *.production
 *.debug
+memoryfile.xml
 
 # OS-specific files
 .DS_Store
@@ -40,6 +41,10 @@ funclist
 # Temporary files
 *.tmp
 *.temp
+
+# Log files
+*.log
+MPLABXLog.xml
 
 # Local settings
 .vscode/
