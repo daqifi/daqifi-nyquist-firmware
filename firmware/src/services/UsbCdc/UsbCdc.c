@@ -692,6 +692,7 @@ void UsbCdc_Initialize() {
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
+    gRunTimeUsbSttings.isVbusDetected = false;  // Initialize VBUS detection state
 
     gRunTimeUsbSttings.deviceLineCodingData.dwDTERate = 9600;
     gRunTimeUsbSttings.deviceLineCodingData.bParityType = 0;

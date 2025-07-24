@@ -4,6 +4,7 @@
  */
 #include "BQ24297.h"
 #include "Util/Logger.h"
+#include "services/UsbCdc/UsbCdc.h"
 
 //! Pointer to the BQ24297 device configuration data structure
 static tBQ24297Config *pConfigBQ24;
@@ -52,8 +53,9 @@ void BQ24297_Config_Settings(void) {
     LOG_D("BQ24297_Config_Settings: Starting initialization (initComplete=%s)", 
           pData->initComplete ? "true" : "false");
     
-    // Give BQ24297 time to detect power source
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    // Give BQ24297 and USB subsystem time to detect power sources
+    // This delay is critical for proper USB VBUS detection on startup
+    vTaskDelay(500 / portTICK_PERIOD_MS);
     
     // Read the current status data
     BQ24297_UpdateStatus();
@@ -91,10 +93,18 @@ void BQ24297_Config_Settings(void) {
     // Check current power status to decide on OTG mode
     BQ24297_UpdateStatus();
     
+    // Also check microcontroller's USB VBUS detection
+    bool usbVbusDetected = UsbCdc_IsVbusDetected();
+    
     // Set initial power mode based on detected power source
-    bool hasExternalPower = pData->status.pgStat && 
-                           (pData->status.vBusStat == VBUS_USB || 
-                            pData->status.vBusStat == VBUS_CHARGER);
+    // Use EITHER BQ24297's power detection OR microcontroller's USB detection
+    bool hasExternalPower = (pData->status.pgStat && 
+                            (pData->status.vBusStat == VBUS_USB || 
+                             pData->status.vBusStat == VBUS_CHARGER)) ||
+                           usbVbusDetected;
+    
+    LOG_D("BQ24297_Config_Settings: pgStat=%d, vBusStat=%d, usbVbus=%d -> hasExtPower=%d",
+          pData->status.pgStat, pData->status.vBusStat, usbVbusDetected, hasExternalPower);
     
     BQ24297_SetPowerMode(hasExternalPower);
     

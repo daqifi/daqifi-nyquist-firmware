@@ -422,7 +422,7 @@ static void Power_Update_Settings(void) {
         // This means USB is connected even though BQ24297 can't detect it
         pData->externalPowerSource = USB_500MA_EXT_POWER;
         LOG_D("Power_Update_Settings: USB VBUS detected by MCU despite OTG mode");
-        return;
+        // Don't return early - we need to switch OTG off!
     }
 
     // Update external power source based on BQ24297 detection

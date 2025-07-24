@@ -378,7 +378,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.battVoltage, 
         pBoardData->PowerData.chargePct,
         pBoardData->PowerData.battLow ? "[LOW]" : "[OK]",
-        pBoardData->PowerData.BQ24297Data.chargeAllowed ? "ON" : "OFF");
+        (pBoardData->PowerData.BQ24297Data.status.chg && !pBoardData->PowerData.BQ24297Data.status.otg) ? "ON" : "OFF");
     context->interface->write(context, buffer, strlen(buffer));
     
     // STATUS Section
