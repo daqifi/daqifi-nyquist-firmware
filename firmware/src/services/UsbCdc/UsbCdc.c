@@ -49,21 +49,14 @@ static bool UsbCdc_IsCharacterSafe(UsbCdcData_t* client, uint8_t ch) {
                 case 'B':  // Down arrow
                 case 'C':  // Right arrow
                 case 'D':  // Left arrow
-                case 'H':  // Home
-                case 'F':  // End
+                case 'H':  // Home (not supported by microrl)
+                case 'F':  // End (not supported by microrl)
                     client->escapeState = ESC_STATE_NONE;
-                    return true;
-                case '3':  // Delete (ESC[3~)
-                    client->escapeState = ESC_STATE_DELETE;
                     return true;
                 default:
                     client->escapeState = ESC_STATE_NONE;
                     return false; // Reject other ESC[ sequences
             }
-            
-        case ESC_STATE_DELETE:
-            client->escapeState = ESC_STATE_NONE;
-            return (ch == '~'); // Only allow ~ after ESC[3
             
         default:  // ESC_STATE_NONE
             // Allow printable ASCII characters (space through ~)

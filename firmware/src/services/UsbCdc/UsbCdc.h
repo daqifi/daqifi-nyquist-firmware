@@ -117,10 +117,9 @@ extern "C" {
         
         /** Escape sequence parsing state for input filtering */
         enum {
-            ESC_STATE_NONE,
+            ESC_STATE_NONE = 0, // Normal input
             ESC_STATE_ESC,      // Received ESC
-            ESC_STATE_BRACKET,  // Received ESC[
-            ESC_STATE_DELETE    // Received ESC[3 (waiting for ~)
+            ESC_STATE_BRACKET   // Received ESC[
         } escapeState;
     } UsbCdcData_t;
     UsbCdcData_t* UsbCdc_GetSettings();

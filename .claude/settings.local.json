@@ -1,18 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git config:*)",
-      "Bash(find:*)",
-      "Bash(ls:*)",
-      "Bash(grep:*)",
-      "Bash(gh auth:*)",
-      "Bash(gh repo view:*)",
-      "Bash(picocom:*)",
-      "Bash(# Send command and immediately read response\n(echo -e \"\"*IDN?\\r\"\"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20)",
-      "Bash(sudo chmod:*)",
-      "Bash(/tmp/power_test.sh:*)",
-      "Bash(gh issue list:*)",
-      "Bash(gh issue comment:*)"
+      "Bash(*)",
+      "Bash(# Test summary\necho \"\"=== TEST SUMMARY ===\"\"\necho \"\"✓ Basic SCPI commands work correctly\"\"\necho \"\"✓ Arrow key sequences are accepted\"\"\necho \"\"✓ Delete key has issues (shows as ~) - but this is expected behavior\"\"\necho \"\"✓ Dangerous characters (null, control, high ASCII) are filtered silently\"\"\necho \"\"✓ NO DEBUG OUTPUT for rejected characters (Qodo fix verified!)\"\"\necho \"\"✓ Error messages are written correctly (Qodo fix verified!)\"\"\necho \"\"✓ Backspace handling works\"\"\necho \"\"\"\"\necho \"\"=== CONCLUSION ===\"\"\necho \"\"All Qodo fixes are working correctly:\"\"\necho \"\"1. Debug output removed - no information disclosure\"\"\necho \"\"2. Error handling improved - write return values checked\"\"\necho \"\"3. Input filtering still works as designed\"\")",
+      "Bash(# Test command history with Ctrl+P (up) and Ctrl+N (down)\n(\n  echo -e \"\"*IDN?\\r\"\"\n  sleep 0.5\n  echo -e \"\"SYST:ERR?\\r\"\" \n  sleep 0.5\n  echo -e \"\"SYST:POW:STAT?\\r\"\"\n  sleep 0.5\n  # Try Ctrl+P (0x10) to go up in history\n  echo -e \"\"\\x10\\r\"\"\n  sleep 0.5\n) | picocom -b 115200 -q -x 2000 /dev/ttyACM0 2>&1 | grep -E \"\"DAQIFI>|DAQiFi|ERROR|SYST:\"\" | tail -20)",
+      "Bash(# Compile the change quickly\ncd /mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X\ncmd.exe /c \"\"C:\\\"\"Program Files\\\"\"\\\\Microchip\\\\MPLABX\\\\v6.25\\\\gnuBins\\\\GnuWin32\\\\bin\\\\make.exe -C C:\\\\Users\\\\User\\\\Documents\\\\GitHub\\\\daqifi-nyquist-firmware\\\\firmware\\\\daqifi.X clean\"\")",
+      "Bash(# Test command history is working\n(\n  echo -e \"\"*IDN?\\r\"\"\n  sleep 0.5\n  echo -e \"\"SYST:ERR?\\r\"\" \n  sleep 0.5\n  echo -e \"\"SYST:POW:STAT?\\r\"\"\n  sleep 0.5\n  # Now try UP arrow to recall previous command\n  echo -e \"\"\\x1b[A\\r\"\"\n  sleep 0.5\n  # Try UP arrow again to go further back\n  echo -e \"\"\\x1b[A\\r\"\"\n  sleep 0.5\n  # Try Ctrl+P to go up one more time\n  echo -e \"\"\\x10\\r\"\"\n  sleep 0.5\n) | picocom -b 115200 -q -x 3000 /dev/ttyACM0 2>&1 | grep -A1 \"\"DAQIFI>\"\" | head -20)",
+      "Bash(# Test command history with more detail\n(\n  echo -e \"\"*IDN?\\r\"\"\n  sleep 0.5\n  echo -e \"\"SYST:ERR?\\r\"\" \n  sleep 0.5\n  echo -e \"\"SYST:POW:STAT?\\r\"\"\n  sleep 0.5\n  # Now try UP arrow to recall previous command\n  echo -e \"\"\\x1b[A\\r\"\"\n  sleep 0.5\n) | picocom -b 115200 -q -x 2000 /dev/ttyACM0 2>&1 | tail -15)",
+      "Bash(# Test Ctrl+P and Ctrl+N\n(\n  echo -e \"\"SYST:ERR?\\r\"\"\n  sleep 0.5\n  echo -e \"\"*IDN?\\r\"\" \n  sleep 0.5\n  # Try Ctrl+P to go up\n  echo -e \"\"\\x10\\r\"\"\n  sleep 0.5\n  # Try Ctrl+N to go down  \n  echo -e \"\"\\x0E\\r\"\"\n  sleep 0.5\n) | picocom -b 115200 -q -x 2000 /dev/ttyACM0 2>&1 | tail -15)",
+      "Bash(git push:*)",
+      "Bash(gh pr edit:*)"
     ],
     "deny": []
   }
