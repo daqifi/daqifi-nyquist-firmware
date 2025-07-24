@@ -250,6 +250,8 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             LOG_D("USB: VBUS removed - switching to battery power");
             
             // Update BQ24297 power mode to battery operation
+            // NOTE: Testing shows OTG must be enabled to prevent power-off
+            // Theory: OTG provides power path from battery to system
             BQ24297_SetPowerMode(false);
             
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);

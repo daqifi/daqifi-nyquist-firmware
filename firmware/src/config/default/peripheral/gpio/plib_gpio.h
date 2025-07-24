@@ -370,6 +370,11 @@
 #define BATT_MAN_INT_InterruptDisable()  (CNENACLR = (1U<<4))
 
 /*** Macros for BATT_MAN_OTG pin ***/
+/* BQ24297 OTG enable pin - controls boost converter for battery operation
+ * Hardware: RK5 (Port K, bit 5) per schematic
+ * Note: Previous implementation incorrectly used RF5 (I2C SCL pin)
+ * Testing indicates OTG must be enabled for device to remain powered on battery
+ */
 #define BATT_MAN_OTG_Set()               (LATKSET = (1U<<5))
 #define BATT_MAN_OTG_Clear()             (LATKCLR = (1U<<5))
 #define BATT_MAN_OTG_Toggle()            (LATKINV= (1U<<5))

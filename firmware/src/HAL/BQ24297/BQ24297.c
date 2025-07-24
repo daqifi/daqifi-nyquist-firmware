@@ -45,7 +45,9 @@ void BQ24297_InitHardware(
     LOG_D("BQ24297_InitHardware: Setting OTG GPIO - Port=%d, Bit=%d, Val=%d", 
           pConfigBQ24->OTG_Ch, pConfigBQ24->OTG_Bit, pWriteVariables->OTG_Val);
     
-    // Use the GPIO macros for BATT_MAN_OTG pin (Port K, bit 5)
+    // Use the GPIO macros for BATT_MAN_OTG pin
+    // Note: Hardware schematic shows RK5 as OTG control pin
+    // Previous code incorrectly used RF5 which is the I2C SCL pin
     if (pWriteVariables->OTG_Val) {
         BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
         BATT_MAN_OTG_Set();          // Set high for OTG enable
@@ -83,16 +85,20 @@ void BQ24297_Config_Settings(void) {
     // REG00: 0b00000XXX
     BQ24297_Write_I2C(0x00, reg & 0b00000111);
 
-    // CRITICAL: OTG mode configuration for this board
-    // Testing shows the device powers off without OTG when USB is disconnected
-    // This indicates the boost converter is needed for battery operation
+    // OTG mode configuration - Required for battery operation on this board
     // 
-    // Theory: The 3.3V regulator needs VSYS > ~4V for proper operation
-    // Without OTG boost: VSYS = Battery voltage (~3.7-4.2V) 
-    // With OTG boost: VSYS = 5V (boosted from battery)
+    // OBSERVED BEHAVIOR:
+    // - Device powers off when USB is disconnected if OTG is disabled
+    // - Device remains powered when OTG is enabled during battery operation
+    // 
+    // THEORY (not confirmed):
+    // The BQ24297's power path may not automatically connect battery to VSYS
+    // when OTG is disabled. Enabling OTG creates a power path from battery
+    // through the boost converter to VSYS, allowing the 3.3V regulator to
+    // maintain power to the microcontroller.
     //
-    // Unfortunately, OTG mode prevents accurate USB detection by BQ24297
-    // We must use the microcontroller's VBUS detection as a workaround
+    // NOTE: This is unexpected behavior as the BQ24297 advertises automatic
+    // power path management. Further investigation may reveal the true cause.
     
     // Check current power status to decide on OTG mode
     BQ24297_UpdateStatus();
@@ -118,9 +124,8 @@ void BQ24297_Config_Settings(void) {
     // [3:1] = 000 (SYS_MIN = 3.0V)
     // [0] = 1 (reserved)
     
-    // The device requires OTG boost mode to operate on battery power
-    // Without OTG: VSYS = Battery voltage (~3.7-4.2V) - insufficient for 3.3V regulator
-    // With OTG: VSYS = 5V (boosted from battery) - proper operation
+    // Based on testing, OTG must be enabled for battery operation
+    // THEORY: Without OTG, the power path from battery to system may be interrupted
     
     if (hasExternalPower) {
         // External power available - disable OTG, enable charging
@@ -409,8 +414,10 @@ void BQ24297_SetPowerMode(bool externalPowerPresent) {
         LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
         BQ24297_DisableOTG(true);
     } else {
-        // Battery power only - enable OTG boost for proper operation
-        LOG_D("BQ24297_SetPowerMode: No external power, enabling OTG boost mode");
+        // Battery power only - enable OTG 
+        // Testing shows device powers off without OTG when on battery
+        // Theory: OTG may be required to maintain power path from battery to system
+        LOG_D("BQ24297_SetPowerMode: No external power, enabling OTG mode");
         BQ24297_EnableOTG();
     }
 }
