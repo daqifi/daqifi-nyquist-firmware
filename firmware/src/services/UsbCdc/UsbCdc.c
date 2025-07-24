@@ -8,6 +8,7 @@
 // services
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
+#include "HAL/BQ24297/BQ24297.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
@@ -248,7 +249,6 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             
             // CRITICAL: Enable OTG immediately to prevent power loss!
             // Cannot wait for Power_Tasks to detect this
-            extern void BQ24297_EnableOTG(void);
             BQ24297_EnableOTG();
             
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);

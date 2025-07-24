@@ -330,6 +330,10 @@ void BQ24297_EnableOTG(void) {
     
     BQ24297_Write_I2C(0x01, reg);
     LOG_D("BQ24297_EnableOTG: REG01 = 0x%02X", reg);
+    
+    // Update local status to reflect the change
+    pData->status.otg = true;
+    pData->status.chg = false;
 }
 
 void BQ24297_DisableOTG(bool enableCharging) {
@@ -347,6 +351,10 @@ void BQ24297_DisableOTG(bool enableCharging) {
     BQ24297_Write_I2C(0x01, reg);
     LOG_D("BQ24297_DisableOTG: REG01 = 0x%02X, charging = %s", 
           reg, (reg & 0x10) ? "enabled" : "disabled");
+    
+    // Update local status to reflect the change
+    pData->status.otg = false;
+    pData->status.chg = (reg & 0x10) ? true : false;
 }
 
 bool BQ24297_IsOTGEnabled(void) {
