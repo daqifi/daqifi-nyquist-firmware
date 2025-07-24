@@ -159,6 +159,159 @@ The report includes detailed technical analysis, code examples, and a prioritize
 
 ## Development Notes
 
+### Building with Linux/WSL
+
+The project can be built using Microchip tools in WSL/Linux:
+
+#### Prerequisites in WSL
+- MPLAB X IDE v6.25: `/opt/microchip/mplabx/v6.25/`
+- XC32 Compiler v4.60: `/opt/microchip/xc32/v4.60/`
+- Java Runtime (for IPE): `sudo apt install default-jre-headless`
+- USB tools (for device access): `sudo apt install usbutils`
+
+#### Building from Command Line
+1. Navigate to project directory:
+   ```bash
+   cd /mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X
+   ```
+
+2. Generate Linux-compatible makefiles:
+   ```bash
+   prjMakefilesGenerator -v .
+   ```
+
+3. Clean build (optional):
+   ```bash
+   make -f nbproject/Makefile-default.mk CONF=default clean
+   ```
+
+4. Build the project:
+   ```bash
+   make -f nbproject/Makefile-default.mk CONF=default build -j4
+   ```
+
+5. Output hex file location:
+   ```
+   dist/default/production/daqifi.X.production.hex
+   ```
+
+#### Programming with PICkit 4
+**Note**: USB passthrough of PICkit 4 to WSL may not work reliably due to USBPcap filter interference. Use Windows tools instead:
+
+1. From Windows PowerShell or Command Prompt:
+   ```cmd
+   C:\"Program Files"\Microchip\MPLABX\v6.25\mplab_platform\mplab_ipe\ipecmd.exe -TPPK4 -P32MZ2048EFM144 -M -F"dist\default\production\daqifi.X.production.hex"
+   ```
+
+2. For Linux builds, the hex file will be at the WSL path:
+   ```
+   \\wsl$\Ubuntu\mnt\c\Users\User\Documents\GitHub\daqifi-nyquist-firmware\firmware\daqifi.X\dist\default\production\daqifi.X.production.hex
+   ```
+
+### Device Testing and SCPI Communication
+
+#### USB Device Access from WSL
+1. **Initial device attachment** (from Windows PowerShell as admin):
+   ```powershell
+   usbipd list
+   # Find DAQiFi device (e.g., "USB Serial Device (COM3)")
+   usbipd attach --wsl --busid <BUSID>
+   ```
+   Note: May require `--force` if USBPcap filter is installed
+
+2. **Reconnecting device from WSL side** (after PC sleep or device reprogramming):
+   ```bash
+   # List USB devices to find DAQiFi
+   powershell.exe -Command "usbipd list"
+   # Look for: 2-4    04d8:f794  USB Serial Device (COM3)
+   
+   # Attach from WSL
+   powershell.exe -Command "usbipd attach --wsl --busid 2-4"
+   
+   # Wait for device to appear
+   sleep 2 && ls -la /dev/ttyACM*
+   ```
+
+3. **Verify device in WSL**:
+   ```bash
+   lsusb | grep -i "04d8"
+   # Should show: Microchip Technology, Inc. Nyquist
+   
+   ls -la /dev/ttyACM*
+   # Should show: /dev/ttyACM0
+   ```
+
+#### Sending SCPI Commands
+Use picocom for reliable serial communication:
+```bash
+# Query device identification
+(echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20
+
+# Common SCPI commands:
+# WiFi configuration
+(echo -e "SYST:COMM:LAN:SSID?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20
+(echo -e "SYST:COMM:LAN:SSID \"NetworkName\"\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20
+
+# Power management
+(echo -e "SYST:POW:STAT?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20
+(echo -e "SYST:POW:STAT 2\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -20
+```
+
+Power states:
+- 0: POWERED_DOWN
+- 1: MICRO_ON (USB powered, minimal functionality)
+- 2: POWERED_UP (Full power, all modules active)
+- 3: POWERED_UP_EXT_DOWN (Partial power)
+
+#### Windows Network Access
+Check WiFi networks from WSL using Windows netsh:
+```bash
+# List all visible WiFi networks
+powershell.exe -Command "netsh wlan show networks"
+
+# Check current WiFi interface status
+powershell.exe -Command "netsh wlan show interfaces"
+```
+
+#### DAQiFi WiFi Access Point
+When powered up, the device creates an open WiFi access point:
+- Default SSID: "DAQiFi"
+- Authentication: Open (no password)
+- The device must be in POWERED_UP state for WiFi to operate
+
+### Automated Testing Notes
+
+#### Quick Device Recovery Script
+Create a script to quickly reconnect the device:
+```bash
+#!/bin/bash
+# reconnect_device.sh
+echo "Reconnecting DAQiFi device..."
+powershell.exe -Command "usbipd attach --wsl --busid 2-4"
+sleep 2
+if [ -e /dev/ttyACM0 ]; then
+    echo "Device connected at /dev/ttyACM0"
+else
+    echo "Device not found, checking USB..."
+    lsusb | grep -i "04d8"
+fi
+```
+
+#### WiFi Configuration Test Sequence
+1. **Power off**: `SYST:POW:STAT 0`
+2. **Configure SSID**: `SYST:COMM:LAN:SSID "TestSSID"`
+3. **Apply settings**: `SYST:COMM:LAN:APPLY`
+4. **Power on**: `SYST:POW:STAT 1`
+5. **Check networks**: `cmd.exe /c "netsh wlan show networks"`
+6. **Save settings**: `SYST:COMM:LAN:SAVE`
+
+#### Key Testing Insights
+- WiFi initialization takes ~2-3 seconds after power up
+- APPLY command needed to activate runtime settings
+- SAVE command needed to persist to NVM
+- Device may load saved NVM settings on power up, not runtime settings
+- Power states: 0=off, 1=on for setting; 1=MICRO_ON, 2=POWERED_UP for reading
+
 ### Git Configuration
 - Ignore line ending changes when reviewing diffs (Windows/Linux compatibility)
 
