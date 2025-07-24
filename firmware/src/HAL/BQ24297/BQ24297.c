@@ -45,22 +45,16 @@ void BQ24297_InitHardware(
     LOG_D("BQ24297_InitHardware: Setting OTG GPIO - Port=%d, Bit=%d, Val=%d", 
           pConfigBQ24->OTG_Ch, pConfigBQ24->OTG_Bit, pWriteVariables->OTG_Val);
     
-    // CRITICAL: Use the correct GPIO macros for BATT_MAN_OTG pin
-    // The board config says port K but the macros are for port F!
+    // Use the GPIO macros for BATT_MAN_OTG pin (Port K, bit 5)
     if (pWriteVariables->OTG_Val) {
         BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
         BATT_MAN_OTG_Set();          // Set high for OTG enable
-        LOG_D("BQ24297_InitHardware: Used BATT_MAN_OTG_Set() macro (Port F)");
+        LOG_D("BQ24297_InitHardware: Set OTG GPIO high");
     } else {
         BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
         BATT_MAN_OTG_Clear();        // Set low for OTG disable
-        LOG_D("BQ24297_InitHardware: Used BATT_MAN_OTG_Clear() macro (Port F)");
+        LOG_D("BQ24297_InitHardware: Set OTG GPIO low");
     }
-    
-    // Also try the original port write in case port K is correct
-    GPIO_PortWrite(pConfigBQ24->OTG_Ch,                                
-                        pConfigBQ24->OTG_Bit,                               
-                        pWriteVariables->OTG_Val);
 }
 
 void BQ24297_Config_Settings(void) {
@@ -89,14 +83,6 @@ void BQ24297_Config_Settings(void) {
     // REG00: 0b00000XXX
     BQ24297_Write_I2C(0x00, reg & 0b00000111);
 
-    // Reset watchdog, enable charging by default, set system voltage limit to 3.0V: SYS_MIN = 0b000
-    // REG01 bits:
-    // [7:6] = 01 (reset watchdog)
-    // [5] = OTG - set based on power detection
-    // [4] = 1 (CHARGE ENABLE - default on to prevent battery depletion)
-    // [3:1] = 000 (SYS_MIN = 3.0V)
-    // [0] = 1 (reserved)
-    
     // CRITICAL: OTG mode configuration for this board
     // Testing shows the device powers off without OTG when USB is disconnected
     // This indicates the boost converter is needed for battery operation
@@ -124,7 +110,31 @@ void BQ24297_Config_Settings(void) {
     LOG_D("BQ24297_Config_Settings: pgStat=%d, vBusStat=%d, usbVbus=%d -> hasExtPower=%d",
           pData->status.pgStat, pData->status.vBusStat, usbVbusDetected, hasExternalPower);
     
-    BQ24297_SetPowerMode(hasExternalPower);
+    // Configure REG01 based on power status
+    // REG01 bits:
+    // [7:6] = 01 (reset watchdog)
+    // [5] = OTG (0=disable, 1=enable)
+    // [4] = CHARGE ENABLE (0=disable, 1=enable)
+    // [3:1] = 000 (SYS_MIN = 3.0V)
+    // [0] = 1 (reserved)
+    
+    // EXPERIMENTAL: Test if system works without OTG boost
+    // Original code always disabled OTG here which caused power-off
+    // Let's try enabling charging when external power is present,
+    // but NOT force OTG when on battery - see if natural battery voltage works
+    
+    if (hasExternalPower) {
+        // External power available - disable OTG, enable charging
+        // REG01: 0b01010001 (OTG=0, CHG=1)
+        BQ24297_Write_I2C(0x01, 0b01010001);
+        LOG_D("BQ24297_Config_Settings: External power detected, configured for charging mode");
+    } else {
+        // Battery power only - disable both OTG and charging initially
+        // REG01: 0b01000001 (OTG=0, CHG=0)
+        // This lets the system try to run on battery voltage directly
+        BQ24297_Write_I2C(0x01, 0b01000001);
+        LOG_D("BQ24297_Config_Settings: No external power, disabled OTG - testing battery direct power");
+    }
     
     // Debug: Read back REG01 to verify configuration
     reg = BQ24297_Read_I2C(0x01);
@@ -339,10 +349,10 @@ static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
 }
 
 void BQ24297_EnableOTG(void) {
-    // CRITICAL: Set GPIO pin FIRST for OTG enable
+    // Set GPIO pin for OTG enable
     BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
     BATT_MAN_OTG_Set();          // Set high for OTG enable
-    LOG_D("BQ24297_EnableOTG: Set BATT_MAN_OTG GPIO high");
+    LOG_D("BQ24297_EnableOTG: Set OTG GPIO high (RK5)");
     
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
@@ -363,7 +373,7 @@ void BQ24297_DisableOTG(bool enableCharging) {
     // Clear GPIO pin for OTG disable
     BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
     BATT_MAN_OTG_Clear();         // Set low for OTG disable
-    LOG_D("BQ24297_DisableOTG: Cleared BATT_MAN_OTG GPIO");
+    LOG_D("BQ24297_DisableOTG: Cleared OTG GPIO (RK5)");
     
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
@@ -401,8 +411,11 @@ void BQ24297_SetPowerMode(bool externalPowerPresent) {
         LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
         BQ24297_DisableOTG(true);
     } else {
-        // Battery power only - enable OTG for boost
-        LOG_D("BQ24297_SetPowerMode: No external power, switching to OTG boost mode");
-        BQ24297_EnableOTG();
+        // Battery power only - disable OTG and charging to test direct battery power
+        LOG_D("BQ24297_SetPowerMode: No external power, disabling OTG - testing battery direct");
+        BQ24297_DisableOTG(false);
+        
+        // NOTE: If device powers off, we may need to enable OTG boost
+        // But let's first test if the system can run directly from battery voltage
     }
 }
