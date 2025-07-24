@@ -234,6 +234,8 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
             /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
+            gRunTimeUsbSttings.isVbusDetected = true;
+            LOG_D("USB: VBUS detected by microcontroller");
             vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
@@ -241,6 +243,14 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_POWER_REMOVED:
 
             /* VBUS is not available any more. Detach the device. */
+            gRunTimeUsbSttings.isVbusDetected = false;
+            LOG_D("USB: VBUS removed - EMERGENCY OTG ENABLE!");
+            
+            // CRITICAL: Enable OTG immediately to prevent power loss!
+            // Cannot wait for Power_Tasks to detect this
+            extern void BQ24297_WriteRegister(uint8_t reg, uint8_t value);
+            BQ24297_WriteRegister(0x01, 0b01100001);  // OTG enable NOW!
+            
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             break;
 
@@ -809,4 +819,8 @@ bool UsbCdc_IsActive() {
 
 void UsbCdc_SetTransparentMode(bool value) {
     gRunTimeUsbSttings.isTransparentModeActive = value;
+}
+
+bool UsbCdc_IsVbusDetected(void) {
+    return gRunTimeUsbSttings.isVbusDetected;
 }

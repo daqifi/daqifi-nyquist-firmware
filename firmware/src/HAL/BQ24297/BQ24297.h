@@ -233,6 +233,19 @@ void BQ24297_ForceDPDM( void );
  */
 void BQ24297_AutoSetILim( void );
 
+/*!
+ * Function to read a BQ24297 register (for external use)
+ * @param[in] reg Register to read
+ * @return Register value
+ */
+uint8_t BQ24297_ReadRegister(uint8_t reg);
+
+/*!
+ * Function to write a BQ24297 register (for external use)  
+ * @param[in] reg Register to write
+ * @param[in] value Data to write
+ */
+void BQ24297_WriteRegister(uint8_t reg, uint8_t value);
 
     
 #ifdef	__cplusplus

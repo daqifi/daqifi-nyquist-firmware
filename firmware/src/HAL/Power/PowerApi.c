@@ -8,7 +8,10 @@
 #include "state/board/BoardConfig.h"
 #include "state/data/BoardData.h"
 #include "HAL/ADC.h"
+#include "HAL/BQ24297/BQ24297.h"
+#include "Util/Logger.h"
 #include "../../services/wifi_services/wifi_manager.h"
+#include "../../services/UsbCdc/UsbCdc.h"
 //typedef enum
 //{
 //    /* Source of clock is internal fast RC */
@@ -137,6 +140,7 @@ void Power_Init(
 void Power_Tasks(void) {
     // If we haven't initialized the battery management settings, do so now
     if (pData->BQ24297Data.initComplete == false) {
+        LOG_D("Power_Tasks: Calling BQ24297_Config_Settings (initComplete=false)");
         BQ24297_Config_Settings();
     }
 
@@ -302,10 +306,26 @@ static void Power_UpdateState(void) {
              * NOTE: This is the default state if code is running!
              * There is no Vref at this time, so any read to ADC is invalid!
              */
+            // Update BQ24297 status and external power source detection
+            LOG_D("Power_UpdateState: MICRO_ON - updating BQ24297 status");
+            BQ24297_UpdateStatus();
+            Power_Update_Settings();
+            
             if (pData->requestedPowerState == DO_POWER_UP) {
 
+                /* Power-up Condition Check:
+                 * 
+                 * The device can power up if EITHER condition is met:
+                 * 1. Battery voltage > 3.0V (vsysStat == false)
+                 * 2. External power is connected (pgStat == true)
+                 * 
+                 * If battery <= 3.0V AND no external power, the device will
+                 * power off when the power button is released.
+                 * 
+                 * See GitHub issue #23: "Disconnecting USB causes device to power off"
+                 */
                 if (!pData->BQ24297Data.status.vsysStat ||
-                        pData->BQ24297Data.status.pgStat) // If batt voltage is greater than VSYSMIN or power is good, we can power up
+                        pData->BQ24297Data.status.pgStat)
                 {
                     Power_Up();
                 } else {
@@ -385,11 +405,77 @@ static void Power_UpdateChgPct(void) {
 static void Power_Update_Settings(void) {
     // Change charging/other power settings based on current status
 
+    bool usbVbusDetected = UsbCdc_IsVbusDetected();
+    
+    LOG_D("Power_Update_Settings: pgStat=%d, vBusStat=0x%02X, inLim=%d, otg=%d, usbVbus=%d", 
+          pData->BQ24297Data.status.pgStat,
+          pData->BQ24297Data.status.vBusStat,
+          pData->BQ24297Data.status.inLim,
+          pData->BQ24297Data.status.otg,
+          usbVbusDetected);
+
+    // SOLUTION: Use microcontroller's USB VBUS detection when BQ24297 is in OTG mode
+    // The microcontroller's USB peripheral can detect VBUS independently of BQ24297
+    // This allows accurate USB detection even when OTG boost mode is active
+    if (pData->BQ24297Data.status.otg && usbVbusDetected) {
+        // OTG mode active but microcontroller detects USB VBUS
+        // This means USB is connected even though BQ24297 can't detect it
+        pData->externalPowerSource = USB_500MA_EXT_POWER;
+        LOG_D("Power_Update_Settings: USB VBUS detected by MCU despite OTG mode");
+        return;
+    }
+
+    // Update external power source based on BQ24297 detection
+    if (pData->BQ24297Data.status.pgStat) {
+        // External power is present - determine type from vBusStat
+        switch (pData->BQ24297Data.status.vBusStat) {
+            case 0b01: // USB host
+                // Check actual current limit to distinguish USB types
+                if (pData->BQ24297Data.status.inLim <= ILim_150) {
+                    pData->externalPowerSource = USB_100MA_EXT_POWER;
+                } else {
+                    pData->externalPowerSource = USB_500MA_EXT_POWER;
+                }
+                break;
+            case 0b10: // Adapter/charger
+                pData->externalPowerSource = CHARGER_2A_EXT_POWER;
+                break;
+            case 0b11: // OTG
+                // OTG mode - no external power, running from battery
+                pData->externalPowerSource = NO_EXT_POWER;
+                break;
+            case 0b00: // Unknown but power good
+            default:
+                // Default to USB when power is good but type unknown
+                pData->externalPowerSource = USB_500MA_EXT_POWER;
+                break;
+        }
+    } else {
+        // No external power
+        pData->externalPowerSource = NO_EXT_POWER;
+    }
+
     // Check new power source and set parameters accordingly
     BQ24297_AutoSetILim();
 
     // Enable/disable charging
     BQ24297_ChargeEnable(pData->BQ24297Data.status.batPresent);
+    
+    // CRITICAL: Dynamically switch between OTG and charge modes based on power source
+    // This must happen at runtime when USB is connected/disconnected
+    uint8_t currentReg01 = BQ24297_ReadRegister(0x01);
+    bool otgEnabled = (currentReg01 & 0x20) != 0;
+    
+    if (pData->externalPowerSource != NO_EXT_POWER && otgEnabled) {
+        // External power present but OTG is on - switch to charge mode
+        LOG_D("Power_Update_Settings: External power detected, switching from OTG to charge mode");
+        BQ24297_WriteRegister(0x01, 0b01010001);  // Charge enable, OTG disable
+        BQ24297_ChargeEnable(pData->BQ24297Data.status.batPresent);
+    } else if (pData->externalPowerSource == NO_EXT_POWER && !otgEnabled) {
+        // No external power but OTG is off - switch to OTG mode
+        LOG_D("Power_Update_Settings: No external power, switching from charge to OTG mode");
+        BQ24297_WriteRegister(0x01, 0b01100001);  // OTG enable, charge disable
+    }
 }
 
 

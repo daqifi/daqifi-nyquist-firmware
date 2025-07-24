@@ -20,6 +20,7 @@
 #include "state/board/BoardConfig.h"
 #include "services/daqifi_settings.h"
 #include "state/runtime/BoardRuntimeConfig.h"
+#include "HAL/BQ24297/BQ24297.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
 #include "SCPIDIO.h"
@@ -465,6 +466,54 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     // System uptime - use timestamp as approximation
     snprintf(buffer, sizeof(buffer), "  Timestamp: %u\r\n", pBoardData->StreamTrigStamp);
     context->interface->write(context, buffer, strlen(buffer));
+    
+    // BATTERY DIAGNOSTICS Section
+    context->interface->write(context, "\r\n[BATTERY DIAGNOSTICS]\r\n", 24);
+    
+    // Battery voltage and charge from ADC
+    snprintf(buffer, sizeof(buffer), "  ADC: %d%% | %.2fV\r\n",
+        pBoardData->PowerData.chargePct,
+        pBoardData->PowerData.battVoltage);
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // BQ24297 status - get fresh data
+    tBQ24297Data * pBQ24297Data = &pBoardData->PowerData.BQ24297Data;
+    if (pBQ24297Data->initComplete) {
+        BQ24297_UpdateStatus();
+        
+        // Battery detection and charging
+        const char* chgStatStr[] = {"Not Charging", "Pre-charge", "Fast Charge", "Charge Done"};
+        snprintf(buffer, sizeof(buffer), "  BQ24297: Battery %s | Charging: %s\r\n",
+            pBQ24297Data->status.batPresent ? "Present" : "Not Present",
+            (pBQ24297Data->status.chgStat < 4) ? chgStatStr[pBQ24297Data->status.chgStat] : "Unknown");
+        context->interface->write(context, buffer, strlen(buffer));
+        
+        // Power conditions with clear explanations
+        snprintf(buffer, sizeof(buffer), "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext Power: %s)\r\n",
+            pBQ24297Data->status.vsysStat,
+            pBQ24297Data->status.vsysStat ? "NO" : "YES",
+            pBQ24297Data->status.pgStat,
+            pBQ24297Data->status.pgStat ? "YES" : "NO");
+        context->interface->write(context, buffer, strlen(buffer));
+        
+        // NTC and current limit
+        const char* ntcStr[] = {"OK", "Hot", "Cold (Battery disconnected?)", "Hot/Cold"};
+        const char* iLimStr[] = {"100mA", "150mA", "500mA", "900mA", "1A", "1.5A", "2A", "3A"};
+        snprintf(buffer, sizeof(buffer), "  NTC: %s | Current Limit: %s | OTG: %s\r\n",
+            (pBQ24297Data->status.ntcFault < 4) ? ntcStr[pBQ24297Data->status.ntcFault] : "Fault",
+            (pBQ24297Data->status.inLim < 8) ? iLimStr[pBQ24297Data->status.inLim] : "Unknown",
+            pBQ24297Data->status.otg ? "ON" : "OFF");
+        context->interface->write(context, buffer, strlen(buffer));
+        
+        // Power-up readiness - the key diagnostic info
+        bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
+        snprintf(buffer, sizeof(buffer), "  >>> Power-up Ready: %s %s\r\n",
+            canPowerUp ? "YES" : "NO",
+            canPowerUp ? "" : "(Battery <3.0V AND no external power)");
+        context->interface->write(context, buffer, strlen(buffer));
+    } else {
+        context->interface->write(context, "  BQ24297: Not initialized\r\n", 28);
+    }
     
     return SCPI_RES_OK;
 }
