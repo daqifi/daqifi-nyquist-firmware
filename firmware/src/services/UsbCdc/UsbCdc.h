@@ -114,6 +114,13 @@ extern "C" {
         char cmdHistory[SCPI_CMD_HISTORY_SIZE][SCPI_CMD_MAX_LENGTH];
         uint8_t cmdHistoryHead;  // Next write position
         uint8_t cmdHistoryCount; // Number of commands stored
+        
+        /** Escape sequence parsing state for input filtering */
+        enum {
+            ESC_STATE_NONE = 0, // Normal input
+            ESC_STATE_ESC,      // Received ESC
+            ESC_STATE_BRACKET   // Received ESC[
+        } escapeState;
     } UsbCdcData_t;
     UsbCdcData_t* UsbCdc_GetSettings();
     /**

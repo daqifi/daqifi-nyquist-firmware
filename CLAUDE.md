@@ -313,4 +313,127 @@ fi
 - Power states: 0=off, 1=on for setting; 1=MICRO_ON, 2=POWERED_UP for reading
 
 ### Git Configuration
-- Ignore line ending changes when reviewing diffs (Windows/Linux compatibility)
+- Ignore line ending changes when reviewing diffs (Windows/Linux compatibility)
+
+## Continuous Testing and Automation
+
+### Setting Up for Unprompted Testing
+
+1. **Permissions Configuration** (`.claude/settings.local.json`):
+   ```json
+   {
+     "permissions": {
+       "allow": [
+         "Bash(*)"
+       ],
+       "deny": []
+     }
+   }
+   ```
+   - Use wildcard `Bash(*)` for unrestricted testing
+   - Avoids interruption prompts during test execution
+   - Can be more restrictive for production use
+
+2. **Device Connection from WSL**:
+   ```bash
+   # List USB devices
+   powershell.exe -Command "usbipd list"
+   
+   # Attach DAQiFi device (usually 2-4)
+   powershell.exe -Command "usbipd attach --wsl --busid 2-4"
+   
+   # Verify connection
+   ls -la /dev/ttyACM0
+   ```
+
+3. **Programming Device from WSL**:
+   ```bash
+   # Using Windows IPE (more reliable than WSL passthrough)
+   cmd.exe /c "C:\"Program Files\"\\Microchip\\MPLABX\\v6.25\\mplab_platform\\mplab_ipe\\ipecmd.exe -P32MZ2048EFM144 -TPPK4 -F\"C:\\path\\to\\firmware.hex\" -M -OL"
+   
+   # IMPORTANT: After programming, always reattach the device to WSL
+   powershell.exe -Command "usbipd attach --wsl --busid 2-4"
+   ```
+
+### Real-Time Testing Guidelines
+
+1. **Avoid Echo Output to Windows**:
+   - Don't echo test results - Claude should observe and report internally
+   - Reduces prompting issues and improves test speed
+   - Example: Instead of `echo "Test passed"`, observe results and summarize
+
+2. **Efficient Test Commands**:
+   ```bash
+   # Good: Direct picocom command with minimal output
+   (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -5
+   
+   # Avoid: Multiple echo statements that trigger prompts
+   ```
+
+3. **State Management for Testing**:
+   - Always ensure device is in known state before tests
+   - Power cycle if needed: `SYST:POW:STAT 0` then `SYST:POW:STAT 1`
+   - Clear error queue: `SYST:ERR?` until "No error"
+   - Abort ongoing operations: `ABOR`
+
+4. **Test Automation Scripts**:
+   - Create self-contained test scripts that manage state
+   - Include setup, test, and cleanup phases
+   - Return clear pass/fail status
+   - Log results to files for post-analysis
+
+### Testing Best Practices
+
+1. **Device State Verification**:
+   ```bash
+   # Check device ready
+   *IDN?  # Should return DAQiFi info
+   
+   # Check power state
+   SYST:POW:STAT?  # 1=MICRO_ON, 2=POWERED_UP
+   
+   # Check errors
+   SYST:ERR?  # Should be "No error"
+   ```
+
+2. **Common Testing Patterns**:
+   - Input filtering: Send dangerous characters, verify they're filtered
+   - Command execution: Send valid commands, verify responses
+   - Error handling: Send invalid commands, check error messages
+   - State persistence: Change settings, power cycle, verify retained
+
+3. **Automated Test Execution**:
+   - Use bash scripts with proper error handling
+   - Capture output for analysis without displaying
+   - Report summary results only
+   - Example structure:
+     ```bash
+     #!/bin/bash
+     # Setup
+     device_setup() { ... }
+     
+     # Tests
+     test_feature() { 
+         result=$(send_command "...")
+         [[ "$result" == "expected" ]] && return 0 || return 1
+     }
+     
+     # Run tests and report
+     device_setup
+     test_feature && echo "PASS" || echo "FAIL"
+     ```
+
+### Known Issues and Workarounds
+
+1. **USBPcap Filter**: Interferes with device passthrough
+   - Use `--force` flag if needed
+   - Or program from Windows side directly
+
+2. **Line Ending Issues**: Windows creates CRLF in scripts
+   - Fix with: `dos2unix script.sh` or use `sed -i 's/\r$//'`
+   - Or create scripts directly in WSL
+
+3. **Permission Prompts**: Even with wildcards, complex commands may prompt
+   - Keep commands simple
+   - Use script files instead of complex one-liners
+   - Batch related commands together

@@ -18,6 +18,74 @@
 static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
+/**
+ * Filters input characters to reject potentially dangerous control characters
+ * Used only in normal command mode, NOT in transparent mode
+ * 
+ * Security rationale:
+ * - Allows specific safe ESC sequences (arrow keys, home/end)
+ * - Blocks dangerous terminal manipulation sequences
+ * - Protects against injection of non-printable characters
+ * 
+ * @param ch Character to check
+ * @return true if character is safe to process, false if it should be rejected
+ */
+static bool UsbCdc_IsCharacterSafe(UsbCdcData_t* client, uint8_t ch) {
+    // State machine for ESC sequence parsing
+    switch (client->escapeState) {
+        case ESC_STATE_ESC:
+            if (ch == '[') {
+                client->escapeState = ESC_STATE_BRACKET;
+                return true;  // Allow ESC[
+            } else {
+                client->escapeState = ESC_STATE_NONE;
+                return false; // Reject other ESC sequences
+            }
+            
+        case ESC_STATE_BRACKET:
+            // Allow specific sequences after ESC[
+            switch (ch) {
+                case 'A':  // Up arrow
+                case 'B':  // Down arrow
+                case 'C':  // Right arrow
+                case 'D':  // Left arrow
+                case 'H':  // Home (not supported by microrl)
+                case 'F':  // End (not supported by microrl)
+                    client->escapeState = ESC_STATE_NONE;
+                    return true;
+                default:
+                    client->escapeState = ESC_STATE_NONE;
+                    return false; // Reject other ESC[ sequences
+            }
+            
+        default:  // ESC_STATE_NONE
+            // Allow printable ASCII characters (space through ~)
+            if (ch >= 0x20 && ch <= 0x7E) {
+                return true;
+            }
+            
+            // Allow specific control characters
+            switch (ch) {
+                case '\r':   // Carriage return (0x0D) - end of command
+                case '\n':   // Line feed (0x0A) - end of command
+                case '\t':   // Tab (0x09) - may be used in commands
+                case '\b':   // Backspace (0x08) - command editing
+                case 0x7F:   // DEL (127) - delete character
+                case 0x1B:   // ESC (27) - start of escape sequence
+                    if (ch == 0x1B) {
+                        client->escapeState = ESC_STATE_ESC;
+                    }
+                    return true;
+                case 0x10:   // Ctrl+P (DLE) - command history up
+                case 0x0E:   // Ctrl+N (SO) - command history down
+                    return true;
+                default:
+                    // Reject other control characters
+                    return false;
+            }
+    }
+}
+
 __WEAK void UsbCdc_SleepStateUpdateCB(bool state) {
     UNUSED(state);
 }
@@ -373,11 +441,22 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
     if (client->readBufferLength > 0) {
         if (client->isTransparentModeActive == 0) {
             for (size_t i = 0; i < client->readBufferLength; ++i) {
-                microrl_insert_char(&client->console, client->readBuffer[i]);
+                // Filter out potentially dangerous characters
+                if (UsbCdc_IsCharacterSafe(client, client->readBuffer[i])) {
+                    microrl_insert_char(&client->console, client->readBuffer[i]);
+                } else {
+                    // Silently reject unsafe characters to avoid information disclosure
+                    // Character filtering is documented in the system design
+                }
             }
             client->readBufferLength = 0;
             return true;
-        } else { // Check for UNSET_TRANSPARENT_MODE_COMMAND length plus up to two terminating characters (\n\r).
+        } else { 
+            // IMPORTANT: Transparent mode should NOT filter characters
+            // This mode is used for raw binary data passthrough (e.g., firmware updates)
+            // Filtering would corrupt the data stream
+            
+            // Check for UNSET_TRANSPARENT_MODE_COMMAND length plus up to two terminating characters (\n\r).
             transparentModeCmdLength = strlen(UNSET_TRANSPARENT_MODE_COMMAND);
             if ((client->readBufferLength == transparentModeCmdLength) ||       \
                 (client->readBufferLength == transparentModeCmdLength + 1) ||   \
@@ -495,7 +574,12 @@ static int SCPI_USB_Error(scpi_t * context, int_fast16_t err) {
     // Don't print "No error" messages - err code 0 is used internally by SCPI lib
     if (err != 0) {
         sprintf(ip, "**ERROR: %d, \"%s\"\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
-        context->interface->write(context, ip, strlen(ip));
+        size_t len = strlen(ip);
+        size_t written = context->interface->write(context, ip, len);
+        if (written != len) {
+            // Write error occurred, but we can't do much about it in error handler
+            // The error has been formatted, partial write is better than none
+        }
     }
     return 0;
 }
@@ -631,6 +715,9 @@ void UsbCdc_Initialize() {
 
     //Release ownership of the mutex object
     xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+    
+    // Initialize escape sequence state
+    gRunTimeUsbSttings.escapeState = ESC_STATE_NONE;
 
 }
 
