@@ -83,6 +83,9 @@ static bool UsbCdc_IsCharacterSafe(UsbCdcData_t* client, uint8_t ch) {
                         client->escapeState = ESC_STATE_ESC;
                     }
                     return true;
+                case 0x10:   // Ctrl+P (DLE) - command history up
+                case 0x0E:   // Ctrl+N (SO) - command history down
+                    return true;
                 default:
                     // Reject other control characters
                     return false;
