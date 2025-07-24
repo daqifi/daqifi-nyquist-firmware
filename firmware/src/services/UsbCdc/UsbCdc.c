@@ -235,23 +235,10 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
-            /* VBUS was detected. We can attach the device */
+            /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
             gRunTimeUsbSttings.isVbusDetected = true;
-            LOG_D("USB: VBUS detected - switching to charging mode");
-            
-            // Give BQ24297 time to detect USB power
-            vTaskDelay(50 / portTICK_PERIOD_MS);
-            
-            // Update BQ24297 status to ensure it detects external power
-            BQ24297_UpdateStatus();
-            
-            // Update BQ24297 power mode to external power operation
-            // This should disable OTG and enable charging
-            BQ24297_SetPowerMode(true);
-            
-            // Additional delay for mode switch to complete
-            vTaskDelay(50 / portTICK_PERIOD_MS);
-            
+            LOG_D("USB: VBUS detected by microcontroller");
+            vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
 
