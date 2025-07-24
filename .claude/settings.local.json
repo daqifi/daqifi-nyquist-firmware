@@ -4,7 +4,8 @@
       "Bash(*)",
       "Bash(git apply:*)",
       "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/create_boarddata_init_issue.sh:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(git rm:*)"
     ],
     "deny": []
   }
