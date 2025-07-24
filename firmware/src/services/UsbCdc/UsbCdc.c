@@ -449,8 +449,8 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
                 if (UsbCdc_IsCharacterSafe(client, client->readBuffer[i])) {
                     microrl_insert_char(&client->console, client->readBuffer[i]);
                 } else {
-                    // Log rejected character (in debug builds)
-                    LOG_D("USB: Rejected unsafe character 0x%02X", client->readBuffer[i]);
+                    // Silently reject unsafe characters to avoid information disclosure
+                    // Character filtering is documented in the system design
                 }
             }
             client->readBufferLength = 0;
@@ -578,7 +578,12 @@ static int SCPI_USB_Error(scpi_t * context, int_fast16_t err) {
     // Don't print "No error" messages - err code 0 is used internally by SCPI lib
     if (err != 0) {
         sprintf(ip, "**ERROR: %d, \"%s\"\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
-        context->interface->write(context, ip, strlen(ip));
+        size_t len = strlen(ip);
+        size_t written = context->interface->write(context, ip, len);
+        if (written != len) {
+            // Write error occurred, but we can't do much about it in error handler
+            // The error has been formatted, partial write is better than none
+        }
     }
     return 0;
 }
