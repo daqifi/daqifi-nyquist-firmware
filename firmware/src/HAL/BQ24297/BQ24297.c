@@ -118,10 +118,9 @@ void BQ24297_Config_Settings(void) {
     // [3:1] = 000 (SYS_MIN = 3.0V)
     // [0] = 1 (reserved)
     
-    // EXPERIMENTAL: Test if system works without OTG boost
-    // Original code always disabled OTG here which caused power-off
-    // Let's try enabling charging when external power is present,
-    // but NOT force OTG when on battery - see if natural battery voltage works
+    // The device requires OTG boost mode to operate on battery power
+    // Without OTG: VSYS = Battery voltage (~3.7-4.2V) - insufficient for 3.3V regulator
+    // With OTG: VSYS = 5V (boosted from battery) - proper operation
     
     if (hasExternalPower) {
         // External power available - disable OTG, enable charging
@@ -129,11 +128,10 @@ void BQ24297_Config_Settings(void) {
         BQ24297_Write_I2C(0x01, 0b01010001);
         LOG_D("BQ24297_Config_Settings: External power detected, configured for charging mode");
     } else {
-        // Battery power only - disable both OTG and charging initially
-        // REG01: 0b01000001 (OTG=0, CHG=0)
-        // This lets the system try to run on battery voltage directly
-        BQ24297_Write_I2C(0x01, 0b01000001);
-        LOG_D("BQ24297_Config_Settings: No external power, disabled OTG - testing battery direct power");
+        // Battery power only - enable OTG boost, disable charging
+        // REG01: 0b01100001 (OTG=1, CHG=0)
+        BQ24297_Write_I2C(0x01, 0b01100001);
+        LOG_D("BQ24297_Config_Settings: No external power, enabled OTG boost mode");
     }
     
     // Debug: Read back REG01 to verify configuration
@@ -411,11 +409,8 @@ void BQ24297_SetPowerMode(bool externalPowerPresent) {
         LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
         BQ24297_DisableOTG(true);
     } else {
-        // Battery power only - disable OTG and charging to test direct battery power
-        LOG_D("BQ24297_SetPowerMode: No external power, disabling OTG - testing battery direct");
-        BQ24297_DisableOTG(false);
-        
-        // NOTE: If device powers off, we may need to enable OTG boost
-        // But let's first test if the system can run directly from battery voltage
+        // Battery power only - enable OTG boost for proper operation
+        LOG_D("BQ24297_SetPowerMode: No external power, enabling OTG boost mode");
+        BQ24297_EnableOTG();
     }
 }
