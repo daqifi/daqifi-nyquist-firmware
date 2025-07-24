@@ -409,15 +409,30 @@ bool BQ24297_IsChargingEnabled(void) {
 }
 
 void BQ24297_SetPowerMode(bool externalPowerPresent) {
+    // Log current state before change
+    uint8_t reg = BQ24297_Read_I2C(0x01);
+    LOG_D("BQ24297_SetPowerMode: Current REG01=0x%02X (OTG=%d, CHG=%d)", 
+          reg, (reg & 0x20) ? 1 : 0, (reg & 0x10) ? 1 : 0);
+    
     if (externalPowerPresent) {
         // External power available - disable OTG and enable charging
         LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
         BQ24297_DisableOTG(true);
+        
+        // Verify the change
+        reg = BQ24297_Read_I2C(0x01);
+        LOG_D("BQ24297_SetPowerMode: After switch REG01=0x%02X (OTG=%d, CHG=%d)", 
+              reg, (reg & 0x20) ? 1 : 0, (reg & 0x10) ? 1 : 0);
     } else {
         // Battery power only - enable OTG 
         // Testing shows device powers off without OTG when on battery
         // Theory: OTG may be required to maintain power path from battery to system
         LOG_D("BQ24297_SetPowerMode: No external power, enabling OTG mode");
         BQ24297_EnableOTG();
+        
+        // Verify the change
+        reg = BQ24297_Read_I2C(0x01);
+        LOG_D("BQ24297_SetPowerMode: After switch REG01=0x%02X (OTG=%d, CHG=%d)", 
+              reg, (reg & 0x20) ? 1 : 0, (reg & 0x10) ? 1 : 0);
     }
 }
