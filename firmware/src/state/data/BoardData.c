@@ -40,6 +40,7 @@ void InitializeBoardData(tBoardData* boardData) {
     boardData->PowerData.powerDnAllowed = true;
     boardData->PowerData.externalPowerSource = NO_EXT_POWER;
     boardData->PowerData.BQ24297Data.chargeAllowed = true;
+    boardData->PowerData.BQ24297Data.initComplete = false;  // Ensure BQ24297 initialization runs!
 
 
     boardData->UIReadVars.LED1 = false;

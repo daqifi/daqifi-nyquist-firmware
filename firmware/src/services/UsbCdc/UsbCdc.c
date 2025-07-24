@@ -8,6 +8,7 @@
 // services
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
+#include "HAL/BQ24297/BQ24297.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
@@ -234,6 +235,8 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
             /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
+            gRunTimeUsbSttings.isVbusDetected = true;
+            LOG_D("USB: VBUS detected by microcontroller");
             vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
@@ -241,6 +244,13 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_POWER_REMOVED:
 
             /* VBUS is not available any more. Detach the device. */
+            gRunTimeUsbSttings.isVbusDetected = false;
+            LOG_D("USB: VBUS removed - EMERGENCY OTG ENABLE!");
+            
+            // CRITICAL: Enable OTG immediately to prevent power loss!
+            // Cannot wait for Power_Tasks to detect this
+            BQ24297_EnableOTG();
+            
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             break;
 
@@ -682,6 +692,7 @@ void UsbCdc_Initialize() {
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
+    gRunTimeUsbSttings.isVbusDetected = false;  // Initialize VBUS detection state
 
     gRunTimeUsbSttings.deviceLineCodingData.dwDTERate = 9600;
     gRunTimeUsbSttings.deviceLineCodingData.bParityType = 0;
@@ -809,4 +820,8 @@ bool UsbCdc_IsActive() {
 
 void UsbCdc_SetTransparentMode(bool value) {
     gRunTimeUsbSttings.isTransparentModeActive = value;
+}
+
+bool UsbCdc_IsVbusDetected(void) {
+    return gRunTimeUsbSttings.isVbusDetected;
 }

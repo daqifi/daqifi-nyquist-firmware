@@ -477,7 +477,6 @@ void SYS_Initialize ( void* data )
 
 
 	GPIO_Initialize();
-
     OCMP8_Initialize();
 
     OCMP6_Initialize();

@@ -110,6 +110,9 @@ extern "C" {
         bool isCdcHostConnected;
         bool isTransparentModeActive;
         
+        /** USB VBUS detection from microcontroller (independent of BQ24297) */
+        bool isVbusDetected;
+        
         /** Command history for debugging */
         char cmdHistory[SCPI_CMD_HISTORY_SIZE][SCPI_CMD_MAX_LENGTH];
         uint8_t cmdHistoryHead;  // Next write position
@@ -162,6 +165,13 @@ extern "C" {
      *              if False transparent mode is cleared 
      */
     void UsbCdc_SetTransparentMode(bool value);
+    
+    /**
+     * Returns whether USB VBUS is detected by the microcontroller
+     * This is independent of BQ24297 detection and works even in OTG mode
+     * @return true if VBUS is detected, false otherwise
+     */
+    bool UsbCdc_IsVbusDetected(void);
    
 
 #ifdef	__cplusplus

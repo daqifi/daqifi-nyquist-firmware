@@ -315,6 +315,54 @@ fi
 ### Git Configuration
 - Ignore line ending changes when reviewing diffs (Windows/Linux compatibility)
 
+### Commit Message Format
+
+This project uses **Conventional Commits** format for all commit messages:
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+#### Types
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation only changes
+- `style`: Changes that don't affect code meaning (white-space, formatting)
+- `refactor`: Code change that neither fixes a bug nor adds a feature
+- `perf`: Performance improvement
+- `test`: Adding missing tests or correcting existing tests
+- `build`: Changes to build system or dependencies
+- `ci`: Changes to CI configuration files and scripts
+- `chore`: Other changes that don't modify src or test files
+
+#### Examples
+```
+fix(power): enable BQ24297 OTG mode for battery operation
+
+The device was powering off when USB disconnected due to insufficient
+voltage for the 3.3V regulator. OTG boost mode provides 5V from battery.
+
+Fixes #23
+```
+
+```
+feat(scpi): add battery diagnostics to SYST:INFO command
+
+Added comprehensive battery status information including charge state,
+voltage, NTC status, and power-up readiness.
+```
+
+#### Guidelines
+- Use present tense ("add" not "added")
+- Use imperative mood ("fix" not "fixes" or "fixed")
+- First line should be 72 characters or less
+- Reference issues and PRs in the footer
+- Breaking changes should be noted with `BREAKING CHANGE:` in the footer
+
 ## Continuous Testing and Automation
 
 ### Setting Up for Unprompted Testing

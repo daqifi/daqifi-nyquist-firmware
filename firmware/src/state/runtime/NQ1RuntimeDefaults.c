@@ -91,7 +91,16 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
        .EN_5V_ADC_Val = false,   // 5V ADC rail off
        .EN_12V_Val = true,      // 12V rail off (inverse logic)
        .EN_Vref_Val = false,    // Vref rail off
-       .BQ24297WriteVars.OTG_Val = true,    // Allow more than 100mA (after source check) during power up for debugging
+       /* OTG Mode Configuration:
+        * OTG mode IS REQUIRED for battery operation on this board!
+        * While BQ24297 has automatic power path, it only passes battery voltage to VSYS.
+        * The 3.3V regulator needs VSYS > ~4V for proper operation (3.3V + dropout).
+        * OTG mode enables the boost converter to provide 5V on VSYS from battery.
+        * 
+        * IMPORTANT: OTG mode prevents accurate USB detection by BQ24297.
+        * We use the microcontroller's VBUS detection instead (see PowerApi.c).
+        */
+       .BQ24297WriteVars.OTG_Val = true,
     },
     .UIWriteVars = {
         .LED1 = false,
