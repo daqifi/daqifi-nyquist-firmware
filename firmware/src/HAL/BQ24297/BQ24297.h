@@ -215,8 +215,15 @@ void BQ24297_Config_Settings( void );
       
 /*! 
  * Function to update status 
+ * WARNING: This reads REG09 which resets fault flags!
  */
 void BQ24297_UpdateStatus();
+
+/*!
+ * Function to update status without resetting fault flags
+ * Safe to call frequently as it doesn't read REG09
+ */
+void BQ24297_UpdateStatusSafe();
 
 /*!
  * Enable charge functions and save it in register

@@ -19,11 +19,12 @@ static tBQ24297Data *pData;
  */
 static uint8_t BQ24297_Read_I2C(uint8_t reg);
 
-/*! Funtion to read BQ24297 data by I2C communication
+/*! Funtion to write BQ24297 data by I2C communication
  * @param[in] reg Register to read
  * @param[in] txData Data to write
+ * @return true if write succeeded, false on error
  */
-static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData);
+static bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData);
 
 void BQ24297_InitHardware(                                                  
                         tBQ24297Config *pConfigInit,                        
@@ -193,43 +194,114 @@ void BQ24297_Config_Settings(void) {
     LOG_D("BQ24297_Config_Settings: Initialization complete, initComplete set to true");
 }
 
+/* 
+ * Updates BQ24297 status by reading all registers
+ * WARNING: This function reads REG09 which resets fault flags!
+ * Use BQ24297_UpdateStatusSafe() if you don't want to reset faults
+ */
 void BQ24297_UpdateStatus(void) {
     uint8_t regData = 0;
+    bool hasErrors = false;
 
+    // REG00: Input Source Control
     regData = BQ24297_Read_I2C(0x00);
-    pData->status.hiZ = (bool) (regData & 0b10000000);
-    pData->status.inLim = (uint8_t) (regData & 0b00000111);
+    if (regData != 0xFF) {
+        pData->status.hiZ = (bool) (regData & 0b10000000);
+        pData->status.inLim = (uint8_t) (regData & 0b00000111);
+    } else {
+        hasErrors = true;
+    }
 
+    // REG01: Power-On Configuration
     regData = BQ24297_Read_I2C(0x01);
-    LOG_D("BQ24297_UpdateStatus: REG01 = 0x%02X", regData);
-    pData->status.otg = (bool) (regData & 0b00100000);
-    pData->status.chg = (bool) (regData & 0b00010000);
+    if (regData != 0xFF) {
+        LOG_D("BQ24297_UpdateStatus: REG01 = 0x%02X", regData);
+        pData->status.otg = (bool) (regData & 0b00100000);
+        pData->status.chg = (bool) (regData & 0b00010000);
+    } else {
+        hasErrors = true;
+    }
 
+    // REG02: Charge Current Control
     regData = BQ24297_Read_I2C(0x02);
-    pData->status.ichg = (uint8_t) (regData & 0b11111100) >> 2;
+    if (regData != 0xFF) {
+        pData->status.ichg = (uint8_t) (regData & 0b11111100) >> 2;
+    } else {
+        hasErrors = true;
+    }
 
-    // Make sure we are not still trying to determine the input source
+    // REG07: Misc Operation Control
     regData = BQ24297_Read_I2C(0x07);
-    pData->status.iinDet_Read = (bool) (regData & 0b10000000);
+    if (regData != 0xFF) {
+        pData->status.iinDet_Read = (bool) (regData & 0b10000000);
+    } else {
+        hasErrors = true;
+    }
 
+    // REG08: System Status
     regData = BQ24297_Read_I2C(0x08);
-    pData->status.vBusStat = (uint8_t) (regData & 0b11000000) >> 6;
-    pData->status.chgStat = (uint8_t) (regData & 0b00110000) >> 4;
-    pData->status.dpmStat = (bool) (regData & 0b00001000);
-    pData->status.pgStat = (bool) (regData & 0b00000100);
-    pData->status.thermStat = (bool) (regData & 0b00000010);
-    pData->status.vsysStat = (bool) (regData & 0b00000001);
+    if (regData != 0xFF) {
+        pData->status.vBusStat = (uint8_t) (regData & 0b11000000) >> 6;
+        pData->status.chgStat = (uint8_t) (regData & 0b00110000) >> 4;
+        pData->status.dpmStat = (bool) (regData & 0b00001000);
+        pData->status.pgStat = (bool) (regData & 0b00000100);
+        pData->status.thermStat = (bool) (regData & 0b00000010);
+        pData->status.vsysStat = (bool) (regData & 0b00000001);
+    } else {
+        hasErrors = true;
+    }
 
-    // First read to REG09 resets faults
+    // REG09: Fault Status - Reading this resets fault flags!
     regData = BQ24297_Read_I2C(0x09);
+    if (regData != 0xFF) {
+        // First read resets faults, read again for current status
+        regData = BQ24297_Read_I2C(0x09);
+        if (regData != 0xFF) {
+            pData->status.watchdog_fault = (bool) (regData & 0b10000000);
+            pData->status.otg_fault = (bool) (regData & 0b01000000);
+            pData->status.chgFault = (uint8_t) (regData & 0b00110000) >> 4;
+            pData->status.bat_fault = (bool) (regData & 0b00001000);
+            pData->status.ntcFault = (uint8_t) (regData & 0b00000011);
+        }
+    } else {
+        hasErrors = true;
+    }
+    
+    if (hasErrors) {
+        LOG_E("BQ24297_UpdateStatus: I2C communication errors detected");
+    }
+}
 
-    // Second read to REG09 will send current status
-    regData = BQ24297_Read_I2C(0x09);
-    pData->status.watchdog_fault = (bool) (regData & 0b10000000);
-    pData->status.otg_fault = (bool) (regData & 0b01000000);
-    pData->status.chgFault = (uint8_t) (regData & 0b00110000) >> 4;
-    pData->status.bat_fault = (bool) (regData & 0b00001000);
-    pData->status.ntcFault = (uint8_t) (regData & 0b00000011);
+/*
+ * Updates BQ24297 status without resetting fault flags
+ * Safe to call frequently as it doesn't read REG09
+ */
+void BQ24297_UpdateStatusSafe(void) {
+    uint8_t regData = 0;
+    bool hasErrors = false;
+
+    // REG01: Power-On Configuration - Check OTG/CHG status
+    regData = BQ24297_Read_I2C(0x01);
+    if (regData != 0xFF) {
+        pData->status.otg = (bool) (regData & 0b00100000);
+        pData->status.chg = (bool) (regData & 0b00010000);
+    } else {
+        hasErrors = true;
+    }
+
+    // REG08: System Status - Check power status
+    regData = BQ24297_Read_I2C(0x08);
+    if (regData != 0xFF) {
+        pData->status.vBusStat = (uint8_t) (regData & 0b11000000) >> 6;
+        pData->status.chgStat = (uint8_t) (regData & 0b00110000) >> 4;
+        pData->status.pgStat = (bool) (regData & 0b00000100);
+    } else {
+        hasErrors = true;
+    }
+    
+    if (hasErrors) {
+        LOG_E("BQ24297_UpdateStatusSafe: I2C communication errors detected");
+    }
 }
 
 void BQ24297_ChargeEnable(bool chargeEnable) {
@@ -316,56 +388,78 @@ static uint8_t BQ24297_Read_I2C(uint8_t reg) {
     I2CData[0] = reg;
 
     if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
-        {
-            // For some reason, this is required if running from the 
-            // bootloader - otherwise I2C hangs
-            //vTaskDelay(10 / portTICK_PERIOD_MS); 
-            DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
-                    pConfigBQ24->I2C_Address,                           
-                    I2CData,                                        
-                    1,                                                  
-                    &rxData,                                            
-                    1);
+        // Perform I2C transfer with error checking
+        bool success = DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
+                pConfigBQ24->I2C_Address,                           
+                I2CData,                                        
+                1,                                                  
+                &rxData,                                            
+                1);
+        
+        if (!success) {
+            LOG_E("BQ24297_Read_I2C: Failed to read register 0x%02X", reg);
+            // Return 0xFF to indicate error (distinguishable from valid data)
+            return 0xFF;
         }
-
+    } else {
+        LOG_E("BQ24297_Read_I2C: Invalid I2C handle");
+        return 0xFF;
     }
-    return (rxData);
+    return rxData;
 }
 
-static void BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
+static bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
     uint8_t I2CData[2];
 
-    // Build pData packet
+    // Build data packet
     I2CData[0] = reg;
     I2CData[1] = txData;
 
     if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
-        // Write to selected register
-        DRV_I2C_WriteTransfer(                       
+        // Write to selected register with error checking
+        bool success = DRV_I2C_WriteTransfer(                       
                         pData->I2C_Handle,                                  
                         pConfigBQ24->I2C_Address,                           
                         I2CData,                                        
                         2);
-
+        
+        if (!success) {
+            LOG_E("BQ24297_Write_I2C: Failed to write 0x%02X to register 0x%02X", txData, reg);
+            return false;
+        }
+        return true;
+    } else {
+        LOG_E("BQ24297_Write_I2C: Invalid I2C handle");
+        return false;
     }
-
 }
 
 void BQ24297_EnableOTG(void) {
-    // Set GPIO pin for OTG enable
+    // Set GPIO pin for OTG enable FIRST
     BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
     BATT_MAN_OTG_Set();          // Set high for OTG enable
     LOG_D("BQ24297_EnableOTG: Set OTG GPIO high (RK5)");
     
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
+    if (reg == 0xFF) {
+        LOG_E("BQ24297_EnableOTG: Failed to read REG01");
+        // Still update status to reflect GPIO state
+        pData->status.otg = true;
+        pData->status.chg = false;
+        return;
+    }
     
     // Set OTG enable (bit 5) and clear charge enable (bit 4)
     // Preserve watchdog reset bit and SYS_MIN settings
     reg = (reg & 0b11001111) | 0b00100001;  // Clear bits 5:4, then set OTG
     
-    BQ24297_Write_I2C(0x01, reg);
-    LOG_D("BQ24297_EnableOTG: REG01 = 0x%02X", reg);
+    if (!BQ24297_Write_I2C(0x01, reg)) {
+        LOG_E("BQ24297_EnableOTG: Failed to write REG01");
+        // GPIO is still set, so OTG might work anyway
+    } else {
+        LOG_D("BQ24297_EnableOTG: REG01 = 0x%02X", reg);
+    }
     
     // Update local status to reflect the change
     pData->status.otg = true;
@@ -373,13 +467,19 @@ void BQ24297_EnableOTG(void) {
 }
 
 void BQ24297_DisableOTG(bool enableCharging) {
-    // Clear GPIO pin for OTG disable
+    // Clear GPIO pin for OTG disable FIRST
     BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
     BATT_MAN_OTG_Clear();         // Set low for OTG disable
     LOG_D("BQ24297_DisableOTG: Cleared OTG GPIO (RK5)");
     
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
+    if (reg == 0xFF) {
+        LOG_E("BQ24297_DisableOTG: Failed to read REG01");
+        // Still update status to reflect GPIO state
+        pData->status.otg = false;
+        return;
+    }
     
     // Clear OTG enable (bit 5)
     reg = reg & 0b11011111;
@@ -389,9 +489,13 @@ void BQ24297_DisableOTG(bool enableCharging) {
         reg = reg | 0b00010000;  // Set bit 4
     }
     
-    BQ24297_Write_I2C(0x01, reg);
-    LOG_D("BQ24297_DisableOTG: REG01 = 0x%02X, charging = %s", 
-          reg, (reg & 0x10) ? "enabled" : "disabled");
+    if (!BQ24297_Write_I2C(0x01, reg)) {
+        LOG_E("BQ24297_DisableOTG: Failed to write REG01");
+        // GPIO is still cleared, so OTG should be disabled
+    } else {
+        LOG_D("BQ24297_DisableOTG: REG01 = 0x%02X, charging = %s", 
+              reg, (reg & 0x10) ? "enabled" : "disabled");
+    }
     
     // Update local status to reflect the change
     pData->status.otg = false;
