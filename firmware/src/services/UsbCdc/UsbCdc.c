@@ -256,9 +256,14 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             /* VBUS is not available any more. Detach the device. */
             gRunTimeUsbSttings.isVbusDetected = false;
             
-            LOG_D("USB: VBUS removed - switching to battery power");
+            // CRITICAL: Enable OTG GPIO immediately to prevent power loss!
+            // Must happen BEFORE any delays or other operations
+            BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
+            BATT_MAN_OTG_Set();          // Set high for OTG enable
             
-            // Update BQ24297 power mode to battery operation
+            LOG_D("USB: VBUS removed - IMMEDIATE OTG GPIO SET!");
+            
+            // Now update BQ24297 registers (this will also set GPIO again)
             // NOTE: Testing shows OTG must be enabled to prevent power-off
             // Theory: OTG provides power path from battery to system
             BQ24297_SetPowerMode(false);

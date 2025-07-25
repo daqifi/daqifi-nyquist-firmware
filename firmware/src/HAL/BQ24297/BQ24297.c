@@ -130,14 +130,12 @@ void BQ24297_Config_Settings(void) {
     
     if (hasExternalPower) {
         // External power available - disable OTG, enable charging
-        // REG01: 0b01010001 (OTG=0, CHG=1)
-        BQ24297_Write_I2C(0x01, 0b01010001);
-        LOG_D("BQ24297_Config_Settings: External power detected, configured for charging mode");
+        LOG_D("BQ24297_Config_Settings: External power detected, configuring for charging mode");
+        BQ24297_DisableOTG(true);  // This sets GPIO AND register
     } else {
-        // Battery power only - enable OTG boost, disable charging
-        // REG01: 0b01100001 (OTG=1, CHG=0)
-        BQ24297_Write_I2C(0x01, 0b01100001);
-        LOG_D("BQ24297_Config_Settings: No external power, enabled OTG boost mode");
+        // Battery power only - enable OTG boost
+        LOG_D("BQ24297_Config_Settings: No external power, enabling OTG boost mode");
+        BQ24297_EnableOTG();  // This sets GPIO AND register
     }
     
     // Debug: Read back REG01 to verify configuration
