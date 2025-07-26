@@ -37,6 +37,24 @@ This is the DAQiFi Nyquist firmware project - a multi-channel data acquisition d
 
 Note: XC32 compiler is also available in Linux at `/opt/microchip/xc32/v4.60/bin/xc32-gcc`
 
+### Programming with PICkit 4 from Command Line
+1. Connect PICkit 4 to the device
+2. Use ipecmd to program the hex file:
+   ```bash
+   cd firmware/daqifi.X
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe" \
+     -TPPK4 -P32MZ2048EFM144 -M -F"dist/default/production/daqifi.X.production.hex" -OL
+   ```
+3. The device will be erased and programmed automatically
+4. Look for "Program Succeeded" message
+
+Command options:
+- `-TPPK4`: Use PICkit 4 as programmer
+- `-P32MZ2048EFM144`: Target device
+- `-M`: Program mode
+- `-F`: Hex file to program
+- `-OL`: Use loaded memories only
+
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
 - Release button when LEDs light solid
