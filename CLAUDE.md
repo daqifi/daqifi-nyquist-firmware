@@ -25,6 +25,18 @@ This is the DAQiFi Nyquist firmware project - a multi-channel data acquisition d
 4. Flash the bootloader first: `bootloader/firmware/usb_bootloader.X`
 5. Then flash the firmware using the Windows DAQiFi application or include it in bootloader Project Properties → Loading menu
 
+### Building from Command Line (Windows with WSL/Linux)
+1. Ensure MPLAB X is installed (typically in `C:\Program Files\Microchip\MPLABX`)
+2. Clean build artifacts: `rm -rf firmware/daqifi.X/build/`
+3. Build using MPLAB X's make utility:
+   ```bash
+   cd firmware/daqifi.X
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe"
+   ```
+4. The output hex file will be in `dist/default/production/daqifi.X.production.hex`
+
+Note: XC32 compiler is also available in Linux at `/opt/microchip/xc32/v4.60/bin/xc32-gcc`
+
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
 - Release button when LEDs light solid
@@ -314,6 +326,8 @@ fi
 
 ### Git Configuration
 - Ignore line ending changes when reviewing diffs (Windows/Linux compatibility)
+- ALWAYS test changes on hardware before committing
+- Use descriptive commit messages that explain the problem and solution
 
 ### Commit Message Format
 

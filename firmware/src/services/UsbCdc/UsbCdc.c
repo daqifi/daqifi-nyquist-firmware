@@ -9,7 +9,7 @@
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
 #include "HAL/BQ24297/BQ24297.h"
-#include "peripheral/gpio/plib_gpio.h"
+#include "state/data/BoardData.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
@@ -207,6 +207,7 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
  ***********************************************/
 void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t context) {
     USB_DEVICE_EVENT_DATA_CONFIGURED *configuredEventData;
+    tPowerData *pPowerData;
 
     switch (event) {
         case USB_DEVICE_EVENT_DECONFIGURED:
@@ -239,15 +240,17 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             gRunTimeUsbSttings.isVbusDetected = true;
             LOG_D("USB: VBUS detected by microcontroller");
             
-            // Give BQ24297 time to detect USB power before switching modes
-            // This delay is critical to prevent race conditions during power transitions
+            // Don't manipulate OTG here - MCU VBUS detection is unreliable
+            // Let Power_Update_Settings handle OTG/charging based on BQ24297 status
+            // Just force a power status update
+            pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+            if (pPowerData) {
+                // Force interrupt flag to trigger Power_Update_Settings
+                pPowerData->BQ24297Data.intFlag = true;
+                LOG_D("USB: VBUS event - triggering power status update");
+            }
+            
             vTaskDelay(100 / portTICK_PERIOD_MS);
-            
-            // Switch from OTG mode to charging mode when USB is connected
-            // Uses safe status update to avoid resetting fault flags
-            LOG_D("USB: VBUS detected - switching to charging mode");
-            BQ24297_SetPowerMode(true);
-            
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
 
@@ -256,17 +259,26 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             /* VBUS is not available any more. Detach the device. */
             gRunTimeUsbSttings.isVbusDetected = false;
             
-            // CRITICAL: Enable OTG GPIO immediately to prevent power loss!
-            // Must happen BEFORE any delays or other operations
-            BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
-            BATT_MAN_OTG_Set();          // Set high for OTG enable
+            LOG_E("USB: VBUS removed - USB POWER LOST!");
             
-            LOG_D("USB: VBUS removed - IMMEDIATE OTG GPIO SET!");
+            // CRITICAL: Enable OTG immediately to maintain power!
+            // Don't wait for Power_Tasks - that's too slow
+            pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+            if (pPowerData && !pPowerData->BQ24297Data.status.otg) {
+                LOG_E("USB: Enabling OTG immediately to maintain power!");
+                BQ24297_EnableOTG();
+            }
             
-            // Now update BQ24297 registers (this will also set GPIO again)
-            // NOTE: Testing shows OTG must be enabled to prevent power-off
-            // Theory: OTG provides power path from battery to system
-            BQ24297_SetPowerMode(false);
+            // Update status after enabling OTG
+            vTaskDelay(50 / portTICK_PERIOD_MS);  // Give hardware time to settle
+            BQ24297_UpdateStatus();
+            LOG_E("USB: After disconnect - pgStat=%d, vsysStat=%d, otg=%d", 
+                  pPowerData->BQ24297Data.status.pgStat,
+                  pPowerData->BQ24297Data.status.vsysStat,
+                  pPowerData->BQ24297Data.status.otg);
+            
+            // Still set interrupt flag for Power_Tasks to update state properly
+            pPowerData->BQ24297Data.intFlag = true;
             
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             break;

@@ -119,6 +119,10 @@ void Power_Init(
             &pWriteVariables->BQ24297WriteVars,
             &(pData->BQ24297Data));
 
+    // CRITICAL: Force 3.3V rail ON regardless of initial config
+    // The microcontroller is running, so 3.3V must already be on
+    // This ensures it stays on during USB disconnect
+    pWriteVariables->EN_3_3V_Val = true;
     WriteGpioPin(pConfig->EN_3_3V_Ch,
             pConfig->EN_3_3V_Bit,
             pWriteVariables->EN_3_3V_Val);
@@ -156,9 +160,20 @@ void Power_Tasks(void) {
          * -On temperature fault
          * -Safety timer timeout
          */
+        LOG_D("Power_Tasks: BQ24297 interrupt detected!");
         vTaskDelay(100 / portTICK_PERIOD_MS);
+        
+        // Store previous pgStat to detect changes
+        bool prevPgStat = pData->BQ24297Data.status.pgStat;
+        
         // Update battery management status - plugged in (USB, charger, etc), charging/discharging, etc.
         BQ24297_UpdateStatus();
+        
+        // Log if pgStat changed
+        if (prevPgStat != pData->BQ24297Data.status.pgStat) {
+            LOG_E("Power_Tasks: pgStat changed from %d to %d!", prevPgStat, pData->BQ24297Data.status.pgStat);
+        }
+        
         Power_Update_Settings();
         pData->BQ24297Data.intFlag = false; // Clear flag
     }
@@ -190,6 +205,8 @@ void Power_Write(void) {
 
     // Check to see if we are changing the state of this power pin
     if (EN_3_3V_Val_Current != pWriteVariables->EN_3_3V_Val) {
+        LOG_E("Power_Write: CHANGING 3.3V RAIL from %d to %d!", 
+              EN_3_3V_Val_Current, pWriteVariables->EN_3_3V_Val);
         WriteGpioPin(pConfig->EN_3_3V_Ch,
                 pConfig->EN_3_3V_Bit,
                 pWriteVariables->EN_3_3V_Val);
@@ -264,6 +281,8 @@ static void Power_Up(void) {
 }
 
 void Power_Down(void) {
+    LOG_E("Power_Down: CALLED! Turning off 3.3V rail. powerState=%d, requestedPowerState=%d", 
+          pData->powerState, pData->requestedPowerState);
     
     // 3.3V Disable - if powered externally, board will stay on and go to low power state, else off completely
     pWriteVariables->EN_3_3V_Val = false;
@@ -286,28 +305,39 @@ void Power_Down(void) {
 }
 
 static void Power_UpdateState(void) {
+    static POWER_STATE lastLoggedState = -1;
+    
+    // Log state changes
+    if (pData->powerState != lastLoggedState) {
+        LOG_D("Power_UpdateState: State changed from %d to %d", lastLoggedState, pData->powerState);
+        lastLoggedState = pData->powerState;
+    }
+    
     // Set power state immediately if DO_POWER_DOWN is requested
     if (pData->requestedPowerState == DO_POWER_DOWN) {
+        LOG_D("Power_UpdateState: DO_POWER_DOWN requested, setting state to POWERED_DOWN");
         pData->powerState = POWERED_DOWN;
     }
 
     switch (pData->powerState) {
         case POWERED_DOWN:
             /* Not initialized or powered down */
+            LOG_D("Power_UpdateState: In POWERED_DOWN state, powerDnAllowed=%d", pData->powerDnAllowed);
 
             // Check to see if we've finished signaling the user of insufficient power if necessary
             if (pData->powerDnAllowed == true) {
+                LOG_E("Power_UpdateState: Calling Power_Down() from POWERED_DOWN state!");
                 Power_Down();
             }
             break;
 
         case MICRO_ON:
+        {
             /* 3.3V rail enabled. Ready to check initial status 
              * NOTE: This is the default state if code is running!
              * There is no Vref at this time, so any read to ADC is invalid!
              */
             // Update BQ24297 status and external power source detection
-            LOG_D("Power_UpdateState: MICRO_ON - updating BQ24297 status");
             BQ24297_UpdateStatus();
             Power_Update_Settings();
             
@@ -324,17 +354,25 @@ static void Power_UpdateState(void) {
                  * 
                  * See GitHub issue #23: "Disconnecting USB causes device to power off"
                  */
+                LOG_D("Power_UpdateState: DO_POWER_UP requested - vsysStat=%d, pgStat=%d, batPresent=%d",
+                      pData->BQ24297Data.status.vsysStat, 
+                      pData->BQ24297Data.status.pgStat,
+                      pData->BQ24297Data.status.batPresent);
+                      
                 if (!pData->BQ24297Data.status.vsysStat ||
                         pData->BQ24297Data.status.pgStat)
                 {
+                    LOG_D("Power_UpdateState: Power-up conditions met, calling Power_Up()");
                     Power_Up();
                 } else {
                     // Otherwise insufficient power.  Notify user and power down
+                    LOG_E("Power_UpdateState: Insufficient power! vsysStat=1 (batt<3.0V) AND pgStat=0 (no ext power)");
                     pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
                     pData->powerState = POWERED_DOWN;
                 }
                 pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state after handling request
             }
+        }
             break;
 
         case POWERED_UP:
@@ -344,10 +382,19 @@ static void Power_UpdateState(void) {
             if (pData->requestedPowerState == DO_POWER_UP) pData->requestedPowerState = NO_CHANGE; // We are already powered so just reset the flag
             Power_UpdateChgPct();
             BQ24297_UpdateStatus();
+            Power_Update_Settings();  // Check for power source changes
+            
+            // Only trust battery percentage if we have a valid voltage reading
+            bool validBatteryReading = (pData->battVoltage > 2.5);  // Li-ion can't be < 2.5V
+            
+            // Use BQ24297 power detection only - MCU VBUS detection is unreliable
+            bool hasExternalPower = pData->BQ24297Data.status.pgStat;
+            
             if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN ||
-                    (pData->chargePct < BATT_LOW_TH &&
-                    !pData->BQ24297Data.status.pgStat)) {
+                    (validBatteryReading && pData->chargePct < BATT_LOW_TH &&
+                    !hasExternalPower)) {
                 // If battery is low on charge and we are not plugged in, disable external supplies
+                LOG_D("Power_UpdateState: Transitioning to POWERED_UP_EXT_DOWN - low battery!");
                 pWriteVariables->EN_5_10V_Val = false;
                 Power_Write();
                 pData->powerState = POWERED_UP_EXT_DOWN;
@@ -359,6 +406,9 @@ static void Power_UpdateState(void) {
         case POWERED_UP_EXT_DOWN:
             /* Board partially powered. Monitor for any changes */
             Power_UpdateChgPct();
+            
+            // Only trust battery percentage if we have a valid voltage reading
+            validBatteryReading = (pData->battVoltage > 2.5);  // Li-ion can't be < 2.5V
             if (pData->chargePct > (BATT_LOW_TH + BATT_LOW_HYST) ||
                     (pData->BQ24297Data.status.inLim > 1)) {
                 if (pData->requestedPowerState == DO_POWER_UP) {
@@ -371,9 +421,12 @@ static void Power_UpdateState(void) {
                 }
 
                 // Else, remain here because the user didn't want to be fully powered
-            } else if (pData->chargePct < BATT_EXH_TH) {
+            } else if (validBatteryReading && pData->chargePct < BATT_EXH_TH) {
+                // Only shut down if we have a valid battery reading AND it's truly exhausted
                 // Code below is commented out when I2C is disabled
                 // Insufficient power.  Notify user and power down.
+                LOG_E("Power_UpdateState: Battery exhausted! chgPct=%.1f < %.1f, transitioning to POWERED_DOWN", 
+                      pData->chargePct, BATT_EXH_TH);
                 pData->powerDnAllowed = false; // This will turn true after the LED sequence completes
                 pData->powerState = POWERED_DOWN;
             }
@@ -389,40 +442,51 @@ static void Power_UpdateChgPct(void) {
             BOARDDATA_AIN_LATEST,
             index);
     if (NULL != pAnalogSample) {
-        pData->battVoltage = ADC_ConvertToVoltage(pAnalogSample);
+        float newVoltage = ADC_ConvertToVoltage(pAnalogSample);
+        // Only update if we have a valid reading (not 0V)
+        if (newVoltage > 0.1) {
+            pData->battVoltage = newVoltage;
+        }
     }
 
-    // Function below is defined from 3.17-3.868.  Must coerce input value to within these bounds.
-    if (pData->battVoltage < 3.17) {
+    // Li-ion battery charge estimation based on voltage
+    // Typical Li-ion: 3.0V (empty) to 4.2V (full)
+    // Using simplified linear approximation
+    if (pData->battVoltage < 3.0) {
         pData->chargePct = 0;
-    } else if (pData->battVoltage > 3.868) {
+    } else if (pData->battVoltage > 4.2) {
         pData->chargePct = 100;
     } else {
-        pData->chargePct = 142.92 * pData->battVoltage - 452.93;
+        // Linear interpolation between 3.0V (0%) and 4.2V (100%)
+        pData->chargePct = (pData->battVoltage - 3.0) * 100.0 / 1.2;
     }
 }
 
 static void Power_Update_Settings(void) {
     // Change charging/other power settings based on current status
 
+    // Get MCU VBUS detection for debug logging only - NOT for decision making
     bool usbVbusDetected = UsbCdc_IsVbusDetected();
     
-    LOG_D("Power_Update_Settings: pgStat=%d, vBusStat=0x%02X, inLim=%d, otg=%d, usbVbus=%d", 
-          pData->BQ24297Data.status.pgStat,
-          pData->BQ24297Data.status.vBusStat,
-          pData->BQ24297Data.status.inLim,
-          pData->BQ24297Data.status.otg,
-          usbVbusDetected);
-
-    // SOLUTION: Use microcontroller's USB VBUS detection when BQ24297 is in OTG mode
-    // The microcontroller's USB peripheral can detect VBUS independently of BQ24297
-    // This allows accurate USB detection even when OTG boost mode is active
-    if (pData->BQ24297Data.status.otg && usbVbusDetected) {
-        // OTG mode active but microcontroller detects USB VBUS
-        // This means USB is connected even though BQ24297 can't detect it
-        pData->externalPowerSource = USB_500MA_EXT_POWER;
-        LOG_D("Power_Update_Settings: USB VBUS detected by MCU despite OTG mode");
-        // Don't return early - we need to switch OTG off!
+    // Only log when values change
+    static bool lastPgStat = -1;
+    static bool lastOtg = -1;
+    static uint8_t lastVBusStat = -1;
+    
+    if (pData->BQ24297Data.status.pgStat != lastPgStat ||
+        pData->BQ24297Data.status.otg != lastOtg ||
+        pData->BQ24297Data.status.vBusStat != lastVBusStat) {
+        
+        LOG_D("Power_Update_Settings: pgStat=%d, vBusStat=0x%02X, inLim=%d, otg=%d, [MCU_VBUS_DEBUG=%d]", 
+              pData->BQ24297Data.status.pgStat,
+              pData->BQ24297Data.status.vBusStat,
+              pData->BQ24297Data.status.inLim,
+              pData->BQ24297Data.status.otg,
+              usbVbusDetected);
+              
+        lastPgStat = pData->BQ24297Data.status.pgStat;
+        lastOtg = pData->BQ24297Data.status.otg;
+        lastVBusStat = pData->BQ24297Data.status.vBusStat;
     }
 
     // Update external power source based on BQ24297 detection
@@ -441,8 +505,9 @@ static void Power_Update_Settings(void) {
                 pData->externalPowerSource = CHARGER_2A_EXT_POWER;
                 break;
             case 0b11: // OTG
-                // OTG mode - no external power, running from battery
-                pData->externalPowerSource = NO_EXT_POWER;
+                // OTG mode active - but if pgStat=1, external power is actually present
+                // This happens during transition from OTG to charge mode
+                pData->externalPowerSource = USB_500MA_EXT_POWER;
                 break;
             case 0b00: // Unknown but power good
             default:
@@ -458,22 +523,13 @@ static void Power_Update_Settings(void) {
     // Check new power source and set parameters accordingly
     BQ24297_AutoSetILim();
 
-    // Enable/disable charging
-    BQ24297_ChargeEnable(pData->BQ24297Data.status.batPresent);
-    
-    // CRITICAL: Dynamically switch between OTG and charge modes based on power source
-    // This must happen at runtime when USB is connected/disconnected
-    bool otgEnabled = BQ24297_IsOTGEnabled();
-    bool hasExternalPower = (pData->externalPowerSource != NO_EXT_POWER);
-    
-    if (hasExternalPower && otgEnabled) {
-        // External power present but OTG is on - switch to charge mode
-        LOG_D("Power_Update_Settings: External power detected, switching from OTG to charge mode");
-        BQ24297_SetPowerMode(true);
-    } else if (!hasExternalPower && !otgEnabled) {
-        // No external power but OTG is off - switch to OTG mode
-        LOG_D("Power_Update_Settings: No external power, switching from charge to OTG mode");
-        BQ24297_SetPowerMode(false);
+    // Enable OTG when no external power to boost battery voltage
+    if (pData->externalPowerSource == NO_EXT_POWER && !pData->BQ24297Data.status.otg) {
+        LOG_D("Power_Update_Settings: No external power - enabling OTG boost");
+        BQ24297_EnableOTG();
+    } else if (pData->externalPowerSource != NO_EXT_POWER && pData->BQ24297Data.status.otg) {
+        LOG_D("Power_Update_Settings: External power restored - disabling OTG");
+        BQ24297_DisableOTG(true);
     }
 }
 

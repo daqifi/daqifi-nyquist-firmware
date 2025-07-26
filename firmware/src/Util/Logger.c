@@ -47,19 +47,26 @@ static int LogMessageImpl(const char* message)
         char buffer[STACK_LIST_NODE_SIZE];
         strcpy(buffer, message);
         
-        // Ensure message ends with \n (SCPI standard uses LF only)
+        // Ensure message ends with \r\n for PuTTY compatibility
         if (len >= 2 && buffer[len-2] == '\r' && buffer[len-1] == '\n') {
-            // Has \r\n, convert to just \n
-            buffer[len-2] = '\n';
-            buffer[len-1] = '\0';
-            len--;
+            // Already has \r\n, use as-is
         } else if (len >= 1 && buffer[len-1] == '\n') {
-            // Already has \n, use as-is
+            // Has just \n, add \r before it
+            if (len < STACK_LIST_NODE_SIZE - 2) {
+                // Shift the \n and add \r
+                buffer[len-1] = '\r';
+                buffer[len] = '\n';
+                buffer[len+1] = '\0';
+                len++;
+            }
         } else {
-            // No newline, add \n
-            buffer[len] = '\n';
-            buffer[len+1] = '\0';
-            len++;
+            // No newline, add \r\n
+            if (len < STACK_LIST_NODE_SIZE - 3) {
+                buffer[len] = '\r';
+                buffer[len+1] = '\n';
+                buffer[len+2] = '\0';
+                len += 2;
+            }
         }
         
         if (StackList_PushBack(m_ListPtr, (const uint8_t*)buffer, (size_t)len))

@@ -31,11 +31,15 @@ void InitializeBoardData(tBoardData* boardData) {
     // Set default battery values for debugging - allows power on without ADC active
 
 
-    boardData->PowerData.powerState = POWERED_DOWN;
+    // Initialize to MICRO_ON since the 3.3V rail is enabled if code is running
+    // This matches the hardware state after Power_Init() enables the 3.3V rail
+    boardData->PowerData.powerState = MICRO_ON;
     boardData->PowerData.requestedPowerState = NO_CHANGE;
     boardData->PowerData.battLow = false;
-    boardData->PowerData.battVoltage = 0.0;
-    boardData->PowerData.chargePct = 0;
+    // Initialize to nominal battery voltage to prevent false low-battery shutdowns
+    // before ADC readings are available. This prevents immediate power-off on USB disconnect.
+    boardData->PowerData.battVoltage = 3.7;  // Nominal Li-ion voltage
+    boardData->PowerData.chargePct = 50;     // Assume 50% charge until ADC reading available
     boardData->PowerData.USBSleep = false;
     boardData->PowerData.powerDnAllowed = true;
     boardData->PowerData.externalPowerSource = NO_EXT_POWER;
