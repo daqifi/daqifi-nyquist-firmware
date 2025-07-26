@@ -288,11 +288,32 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
              *    - LIMITATION: Only shows data connection, not power
              *    - USE: Determine if host is actively communicating
              * 
-             * RECOMMENDED APPROACH:
-             * - Trust BQ24297 pgStat as primary power indicator
-             * - Use USB stack state to detect active communication
-             * - Implement periodic OTG disable to check for USB (with safeguards)
-             * - Never trust MCU VBUS detection for decisions
+             * 6. BQ24297 INT Pin (RA4):
+             *    - RELIABLE: Hardware interrupt on power state changes
+             *    - LIMITATION: Need to configure interrupt handler
+             *    - USE: Immediate notification of USB connect/disconnect
+             * 
+             * POSSIBLE APPROACHES FOR USB RECONNECTION DETECTION:
+             * 
+             * A. Periodic OTG Toggle (RISKY):
+             *    - Disable OTG briefly to check pgStat
+             *    - Risk: Power loss if capacitors insufficient
+             *    - Mitigation: Very short disable time (<10ms)
+             * 
+             * B. USB Stack Monitoring (SAFE):
+             *    - Monitor USB enumeration attempts
+             *    - If host tries to enumerate, USB must be connected
+             *    - Limitation: Requires host activity
+             * 
+             * C. BQ24297 INT Pin Monitoring (BEST):
+             *    - Configure interrupt on RA4
+             *    - INT asserts on power state changes
+             *    - Can detect USB connection even in OTG mode
+             * 
+             * D. Hybrid Approach:
+             *    - Use INT pin for immediate detection
+             *    - Confirm with brief OTG disable if safe
+             *    - Fall back to USB stack monitoring
              */
             
             // CRITICAL: Enable OTG immediately to maintain power!
