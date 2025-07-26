@@ -261,6 +261,40 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             
             LOG_E("USB: VBUS removed - USB POWER LOST!");
             
+            /* USB CONNECTION DETECTION SOURCES - RELIABILITY ANALYSIS:
+             * 
+             * 1. MCU VBUS Detection (UsbCdc_IsVbusDetected):
+             *    - UNRELIABLE: Shows phantom connections due to residual voltage
+             *    - UNRELIABLE: Sometimes misses real connections
+             *    - USE: Debug logging only, NEVER for power decisions
+             * 
+             * 2. BQ24297 pgStat (Power Good):
+             *    - RELIABLE: Accurately detects external power presence
+             *    - LIMITATION: Cannot detect USB when OTG is enabled
+             *    - USE: Primary indicator when OTG is disabled
+             * 
+             * 3. BQ24297 vBusStat:
+             *    - RELIABLE: Shows USB type (USB host, adapter, OTG)
+             *    - LIMITATION: Only valid when pgStat=1
+             *    - USE: Determine power source type
+             * 
+             * 4. USB Stack State (gRunTimeUsbSttings.state):
+             *    - RELIABLE: Indicates USB enumeration state
+             *    - LIMITATION: Only shows logical connection, not power
+             *    - USE: Determine if USB communication is active
+             * 
+             * 5. USB CDC Host Connection (isCdcHostConnected):
+             *    - RELIABLE: Shows if host opened CDC port
+             *    - LIMITATION: Only shows data connection, not power
+             *    - USE: Determine if host is actively communicating
+             * 
+             * RECOMMENDED APPROACH:
+             * - Trust BQ24297 pgStat as primary power indicator
+             * - Use USB stack state to detect active communication
+             * - Implement periodic OTG disable to check for USB (with safeguards)
+             * - Never trust MCU VBUS detection for decisions
+             */
+            
             // CRITICAL: Enable OTG immediately to maintain power!
             // Don't wait for Power_Tasks - that's too slow
             pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);

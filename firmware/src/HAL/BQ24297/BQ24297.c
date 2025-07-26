@@ -46,12 +46,45 @@ void BQ24297_InitHardware(
     LOG_D("BQ24297_InitHardware: Setting OTG GPIO - Port=%d, Bit=%d, Val=%d", 
           pConfigBQ24->OTG_Ch, pConfigBQ24->OTG_Bit, pWriteVariables->OTG_Val);
     
+    /* CRITICAL POWER MANAGEMENT LESSONS LEARNED:
+     * 
+     * 1. GPIO INITIALIZATION:
+     *    - The GPIO init (plib_gpio.c) sets LATK = 0x30U, which means RK5 starts HIGH
+     *    - This enables OTG by default, ensuring battery power is available at startup
+     *    - DO NOT clear OTG here - it will cause immediate power loss on battery
+     * 
+     * 2. HARDWARE REALITY vs THEORY:
+     *    - THEORY: OTG is only needed to boost battery voltage to 5V for USB host
+     *    - REALITY: Device loses power without OTG when running on battery
+     *    - Root cause: OTG keeps BATFET enabled, providing battery-to-system path
+     *    - The 3.3V buck/boost regulator can handle 3V+ input, voltage isn't the issue
+     *    - Without OTG enabled, BATFET may disconnect battery from system
+     * 
+     * 3. WHY THE "BROKEN" CODE WORKED:
+     *    - Commit d39a432d changed OTG control from RF5 to RK5
+     *    - RF5 is the I2C SCL pin - toggling it corrupted I2C communication
+     *    - When I2C was corrupted, BQ24297 init failed, leaving OTG in default state
+     *    - Default state = OTG enabled = device stayed powered on battery
+     * 
+     * 4. TIMING IS CRITICAL:
+     *    - USB disconnect event → OTG must be enabled IMMEDIATELY
+     *    - Any delay (even 50-150ms) causes power loss
+     *    - Cannot wait for Power_Tasks or other state machines
+     * 
+     * 5. BQ24297 LIMITATIONS:
+     *    - Cannot detect USB power (pgStat) when OTG is enabled
+     *    - This makes USB reconnection detection challenging
+     *    - Disabling OTG to check for USB risks power loss
+     * 
+     * 6. MCU VBUS DETECTION IS UNRELIABLE:
+     *    - Residual voltage on VBUS causes false detection after disconnect
+     *    - Cannot be trusted for power management decisions
+     *    - Use only for debug logging
+     */
+    
     // GPIO control for OTG pin (RK5)
-    // CRITICAL: Keep OTG in its default state (HIGH) to maintain power continuity
-    // The GPIO init sets RK5 high, which enables OTG and ensures battery power
-    // We'll let the power management code decide when to switch modes
     BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
-    // Do NOT clear OTG here - preserve the GPIO init state
+    // Do NOT clear OTG here - preserve the GPIO init state (HIGH)
     LOG_D("BQ24297_InitHardware: OTG GPIO kept in default state (HIGH for power continuity)");
 }
 
