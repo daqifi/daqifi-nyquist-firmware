@@ -318,11 +318,9 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             
             // CRITICAL: Enable OTG immediately to maintain power!
             // Don't wait for Power_Tasks - that's too slow
-            pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-            if (pPowerData && !pPowerData->BQ24297Data.status.otg) {
-                LOG_E("USB: Enabling OTG immediately to maintain power!");
-                BQ24297_EnableOTG();
-            }
+            // Don't check status - just do it! Every microsecond counts!
+            LOG_E("USB: Enabling OTG immediately to maintain power!");
+            BQ24297_EnableOTG();
             
             // Update status after enabling OTG
             vTaskDelay(50 / portTICK_PERIOD_MS);  // Give hardware time to settle
