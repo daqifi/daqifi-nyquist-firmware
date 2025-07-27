@@ -449,16 +449,13 @@ static void Power_UpdateChgPct(void) {
         }
     }
 
-    // Li-ion battery charge estimation based on voltage
-    // Typical Li-ion: 3.0V (empty) to 4.2V (full)
-    // Using simplified linear approximation
-    if (pData->battVoltage < 3.0) {
+    // Function below is defined from 3.17-3.868.  Must coerce input value to within these bounds.
+    if (pData->battVoltage < 3.17) {
         pData->chargePct = 0;
-    } else if (pData->battVoltage > 4.2) {
+    } else if (pData->battVoltage > 3.868) {
         pData->chargePct = 100;
     } else {
-        // Linear interpolation between 3.0V (0%) and 4.2V (100%)
-        pData->chargePct = (pData->battVoltage - 3.0) * 100.0 / 1.2;
+        pData->chargePct = 142.92 * pData->battVoltage - 452.93;
     }
 }
 
