@@ -210,9 +210,9 @@ The project can be built using Microchip tools in WSL/Linux:
    prjMakefilesGenerator -v .
    ```
 
-3. Clean build (optional):
+3. Clean build directories (if previous build failed):
    ```bash
-   make -f nbproject/Makefile-default.mk CONF=default clean
+   rm -rf build dist
    ```
 
 4. Build the project:
@@ -222,16 +222,29 @@ The project can be built using Microchip tools in WSL/Linux:
 
 5. Output hex file location:
    ```
-   dist/default/production/daqifi.X.production.hex
+   dist/default/production/daqifi.X.production.hex (approx 1MB)
    ```
 
 #### Programming with PICkit 4
-**Note**: USB passthrough of PICkit 4 to WSL may not work reliably due to USBPcap filter interference. Use Windows tools instead:
 
-1. From Windows PowerShell or Command Prompt:
+##### From WSL (Verified Working Method)
+```bash
+"/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe" \
+  -TPPK4 -P32MZ2048EFM144 -M -F"dist/default/production/daqifi.X.production.hex" -OL
+```
+
+##### From Windows PowerShell or Command Prompt
+1. Navigate to project directory:
    ```cmd
-   C:\"Program Files"\Microchip\MPLABX\v6.25\mplab_platform\mplab_ipe\ipecmd.exe -TPPK4 -P32MZ2048EFM144 -M -F"dist\default\production\daqifi.X.production.hex"
+   cd C:\Users\User\Documents\GitHub\daqifi-nyquist-firmware\firmware\daqifi.X
    ```
+
+2. Program the device:
+   ```cmd
+   C:\"Program Files"\Microchip\MPLABX\v6.25\mplab_platform\mplab_ipe\ipecmd.exe -TPPK4 -P32MZ2048EFM144 -M -F"dist\default\production\daqifi.X.production.hex" -OL
+   ```
+
+**Important**: The `-OL` flag is required for successful programming
 
 2. For Linux builds, the hex file will be at the WSL path:
    ```
