@@ -8,6 +8,8 @@
 // services
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
+#include "HAL/BQ24297/BQ24297.h"
+#include "state/data/BoardData.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
@@ -205,6 +207,7 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
  ***********************************************/
 void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t context) {
     USB_DEVICE_EVENT_DATA_CONFIGURED *configuredEventData;
+    tPowerData *pPowerData;
 
     switch (event) {
         case USB_DEVICE_EVENT_DECONFIGURED:
@@ -234,6 +237,19 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
             /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
+            gRunTimeUsbSttings.isVbusDetected = true;
+            LOG_D("USB: VBUS detected by microcontroller");
+            
+            // Don't manipulate OTG here - MCU VBUS detection is unreliable
+            // Let Power_Update_Settings handle OTG/charging based on BQ24297 status
+            // Just force a power status update
+            pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+            if (pPowerData) {
+                // Force interrupt flag to trigger Power_Update_Settings
+                pPowerData->BQ24297Data.intFlag = true;
+                LOG_D("USB: VBUS event - triggering power status update");
+            }
+            
             vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
@@ -241,6 +257,87 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_POWER_REMOVED:
 
             /* VBUS is not available any more. Detach the device. */
+            gRunTimeUsbSttings.isVbusDetected = false;
+            
+            LOG_E("USB: VBUS removed - USB POWER LOST!");
+            
+            /* USB CONNECTION DETECTION SOURCES - RELIABILITY ANALYSIS:
+             * 
+             * 1. MCU VBUS Detection (UsbCdc_IsVbusDetected):
+             *    - UNRELIABLE: Shows phantom connections due to residual voltage
+             *    - UNRELIABLE: Sometimes misses real connections
+             *    - USE: Debug logging only, NEVER for power decisions
+             * 
+             * 2. BQ24297 pgStat (Power Good):
+             *    - RELIABLE: Accurately detects external power presence
+             *    - LIMITATION: Cannot detect USB when OTG is enabled
+             *    - USE: Primary indicator when OTG is disabled
+             * 
+             * 3. BQ24297 vBusStat:
+             *    - RELIABLE: Shows USB type (USB host, adapter, OTG)
+             *    - LIMITATION: Only valid when pgStat=1
+             *    - USE: Determine power source type
+             * 
+             * 4. USB Stack State (gRunTimeUsbSttings.state):
+             *    - RELIABLE: Indicates USB enumeration state
+             *    - LIMITATION: Only shows logical connection, not power
+             *    - USE: Determine if USB communication is active
+             * 
+             * 5. USB CDC Host Connection (isCdcHostConnected):
+             *    - RELIABLE: Shows if host opened CDC port
+             *    - LIMITATION: Only shows data connection, not power
+             *    - USE: Determine if host is actively communicating
+             * 
+             * 6. BQ24297 INT Pin (RA4):
+             *    - RELIABLE: Hardware interrupt on power state changes
+             *    - LIMITATION: Need to configure interrupt handler
+             *    - USE: Immediate notification of USB connect/disconnect
+             * 
+             * POSSIBLE APPROACHES FOR USB RECONNECTION DETECTION:
+             * 
+             * A. Periodic OTG Toggle (RISKY):
+             *    - Disable OTG briefly to check pgStat
+             *    - Risk: Power loss if capacitors insufficient
+             *    - Mitigation: Very short disable time (<10ms)
+             * 
+             * B. USB Stack Monitoring (SAFE):
+             *    - Monitor USB enumeration attempts
+             *    - If host tries to enumerate, USB must be connected
+             *    - Limitation: Requires host activity
+             * 
+             * C. BQ24297 INT Pin Monitoring (BEST):
+             *    - Configure interrupt on RA4
+             *    - INT asserts on power state changes
+             *    - Can detect USB connection even in OTG mode
+             * 
+             * D. Hybrid Approach:
+             *    - Use INT pin for immediate detection
+             *    - Confirm with brief OTG disable if safe
+             *    - Fall back to USB stack monitoring
+             */
+            
+            // CRITICAL: Enable OTG immediately to maintain power!
+            // Don't wait for Power_Tasks - that's too slow
+            // Don't check status - just do it! Every microsecond counts!
+            LOG_E("USB: Enabling OTG immediately to maintain power!");
+            BQ24297_EnableOTG();
+            
+            // Update status after enabling OTG
+            vTaskDelay(50 / portTICK_PERIOD_MS);  // Give hardware time to settle
+            BQ24297_UpdateStatus();
+            
+            // Get power data for logging and interrupt flag
+            pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+            if (pPowerData) {
+                LOG_E("USB: After disconnect - pgStat=%d, vsysStat=%d, otg=%d", 
+                      pPowerData->BQ24297Data.status.pgStat,
+                      pPowerData->BQ24297Data.status.vsysStat,
+                      pPowerData->BQ24297Data.status.otg);
+                
+                // Still set interrupt flag for Power_Tasks to update state properly
+                pPowerData->BQ24297Data.intFlag = true;
+            }
+            
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             break;
 
@@ -682,6 +779,7 @@ void UsbCdc_Initialize() {
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
+    gRunTimeUsbSttings.isVbusDetected = false;  // Initialize VBUS detection state
 
     gRunTimeUsbSttings.deviceLineCodingData.dwDTERate = 9600;
     gRunTimeUsbSttings.deviceLineCodingData.bParityType = 0;
@@ -809,4 +907,8 @@ bool UsbCdc_IsActive() {
 
 void UsbCdc_SetTransparentMode(bool value) {
     gRunTimeUsbSttings.isTransparentModeActive = value;
+}
+
+bool UsbCdc_IsVbusDetected(void) {
+    return gRunTimeUsbSttings.isVbusDetected;
 }

@@ -370,14 +370,19 @@
 #define BATT_MAN_INT_InterruptDisable()  (CNENACLR = (1U<<4))
 
 /*** Macros for BATT_MAN_OTG pin ***/
-#define BATT_MAN_OTG_Set()               (LATFSET = (1U<<5))
-#define BATT_MAN_OTG_Clear()             (LATFCLR = (1U<<5))
-#define BATT_MAN_OTG_Toggle()            (LATFINV= (1U<<5))
-#define BATT_MAN_OTG_OutputEnable()      (TRISFCLR = (1U<<5))
-#define BATT_MAN_OTG_InputEnable()       (TRISFSET = (1U<<5))
-#define BATT_MAN_OTG_Get()               ((PORTF >> 5) & 0x1U)
-#define BATT_MAN_OTG_GetLatch()          ((LATF >> 5) & 0x1U)
-#define BATT_MAN_OTG_PIN                  GPIO_PIN_RF5
+/* BQ24297 OTG enable pin - controls boost converter for battery operation
+ * Hardware: RK5 (Port K, bit 5) per schematic
+ * Note: Previous implementation incorrectly used RF5 (I2C SCL pin)
+ * Testing indicates OTG must be enabled for device to remain powered on battery
+ */
+#define BATT_MAN_OTG_Set()               (LATKSET = (1U<<5))
+#define BATT_MAN_OTG_Clear()             (LATKCLR = (1U<<5))
+#define BATT_MAN_OTG_Toggle()            (LATKINV= (1U<<5))
+#define BATT_MAN_OTG_OutputEnable()      (TRISKCLR = (1U<<5))
+#define BATT_MAN_OTG_InputEnable()       (TRISKSET = (1U<<5))
+#define BATT_MAN_OTG_Get()               ((PORTK >> 5) & 0x1U)
+#define BATT_MAN_OTG_GetLatch()          ((LATK >> 5) & 0x1U)
+#define BATT_MAN_OTG_PIN                  GPIO_PIN_RK5
 
 /*** Macros for WDRV_WINC_SS pin ***/
 #define WDRV_WINC_SS_Set()               (LATKSET = (1U<<4))

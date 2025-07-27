@@ -25,6 +25,36 @@ This is the DAQiFi Nyquist firmware project - a multi-channel data acquisition d
 4. Flash the bootloader first: `bootloader/firmware/usb_bootloader.X`
 5. Then flash the firmware using the Windows DAQiFi application or include it in bootloader Project Properties → Loading menu
 
+### Building from Command Line (Windows with WSL/Linux)
+1. Ensure MPLAB X is installed (typically in `C:\Program Files\Microchip\MPLABX`)
+2. Clean build artifacts: `rm -rf firmware/daqifi.X/build/`
+3. Build using MPLAB X's make utility:
+   ```bash
+   cd firmware/daqifi.X
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe"
+   ```
+4. The output hex file will be in `dist/default/production/daqifi.X.production.hex`
+
+Note: XC32 compiler is also available in Linux at `/opt/microchip/xc32/v4.60/bin/xc32-gcc`
+
+### Programming with PICkit 4 from Command Line
+1. Connect PICkit 4 to the device
+2. Use ipecmd to program the hex file:
+   ```bash
+   cd firmware/daqifi.X
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe" \
+     -TPPK4 -P32MZ2048EFM144 -M -F"dist/default/production/daqifi.X.production.hex" -OL
+   ```
+3. The device will be erased and programmed automatically
+4. Look for "Program Succeeded" message
+
+Command options:
+- `-TPPK4`: Use PICkit 4 as programmer
+- `-P32MZ2048EFM144`: Target device
+- `-M`: Program mode
+- `-F`: Hex file to program
+- `-OL`: Use loaded memories only
+
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
 - Release button when LEDs light solid
@@ -180,9 +210,9 @@ The project can be built using Microchip tools in WSL/Linux:
    prjMakefilesGenerator -v .
    ```
 
-3. Clean build (optional):
+3. Clean build directories (if previous build failed):
    ```bash
-   make -f nbproject/Makefile-default.mk CONF=default clean
+   rm -rf build dist
    ```
 
 4. Build the project:
@@ -192,16 +222,29 @@ The project can be built using Microchip tools in WSL/Linux:
 
 5. Output hex file location:
    ```
-   dist/default/production/daqifi.X.production.hex
+   dist/default/production/daqifi.X.production.hex (approx 1MB)
    ```
 
 #### Programming with PICkit 4
-**Note**: USB passthrough of PICkit 4 to WSL may not work reliably due to USBPcap filter interference. Use Windows tools instead:
 
-1. From Windows PowerShell or Command Prompt:
+##### From WSL (Verified Working Method)
+```bash
+"/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe" \
+  -TPPK4 -P32MZ2048EFM144 -M -F"dist/default/production/daqifi.X.production.hex" -OL
+```
+
+##### From Windows PowerShell or Command Prompt
+1. Navigate to project directory:
    ```cmd
-   C:\"Program Files"\Microchip\MPLABX\v6.25\mplab_platform\mplab_ipe\ipecmd.exe -TPPK4 -P32MZ2048EFM144 -M -F"dist\default\production\daqifi.X.production.hex"
+   cd C:\Users\User\Documents\GitHub\daqifi-nyquist-firmware\firmware\daqifi.X
    ```
+
+2. Program the device:
+   ```cmd
+   C:\"Program Files"\Microchip\MPLABX\v6.25\mplab_platform\mplab_ipe\ipecmd.exe -TPPK4 -P32MZ2048EFM144 -M -F"dist\default\production\daqifi.X.production.hex" -OL
+   ```
+
+**Important**: The `-OL` flag is required for successful programming
 
 2. For Linux builds, the hex file will be at the WSL path:
    ```
@@ -314,6 +357,56 @@ fi
 
 ### Git Configuration
 - Ignore line ending changes when reviewing diffs (Windows/Linux compatibility)
+- ALWAYS test changes on hardware before committing
+- Use descriptive commit messages that explain the problem and solution
+
+### Commit Message Format
+
+This project uses **Conventional Commits** format for all commit messages:
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+#### Types
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation only changes
+- `style`: Changes that don't affect code meaning (white-space, formatting)
+- `refactor`: Code change that neither fixes a bug nor adds a feature
+- `perf`: Performance improvement
+- `test`: Adding missing tests or correcting existing tests
+- `build`: Changes to build system or dependencies
+- `ci`: Changes to CI configuration files and scripts
+- `chore`: Other changes that don't modify src or test files
+
+#### Examples
+```
+fix(power): enable BQ24297 OTG mode for battery operation
+
+The device was powering off when USB disconnected due to insufficient
+voltage for the 3.3V regulator. OTG boost mode provides 5V from battery.
+
+Fixes #23
+```
+
+```
+feat(scpi): add battery diagnostics to SYST:INFO command
+
+Added comprehensive battery status information including charge state,
+voltage, NTC status, and power-up readiness.
+```
+
+#### Guidelines
+- Use present tense ("add" not "added")
+- Use imperative mood ("fix" not "fixes" or "fixed")
+- First line should be 72 characters or less
+- Reference issues and PRs in the footer
+- Breaking changes should be noted with `BREAKING CHANGE:` in the footer
 
 ## Continuous Testing and Automation
 

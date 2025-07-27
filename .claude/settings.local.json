@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(*)"
+      "Bash(*)",
+      "Bash(git apply:*)",
+      "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/create_boarddata_init_issue.sh:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(/opt/microchip/xc32/v4.60/bin/xc32-gcc:*)",
+      "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\")"
     ],
     "deny": []
   }

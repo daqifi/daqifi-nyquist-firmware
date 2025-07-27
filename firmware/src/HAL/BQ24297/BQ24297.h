@@ -215,8 +215,15 @@ void BQ24297_Config_Settings( void );
       
 /*! 
  * Function to update status 
+ * WARNING: This reads REG09 which resets fault flags!
  */
 void BQ24297_UpdateStatus();
+
+/*!
+ * Function to update status without resetting fault flags
+ * Safe to call frequently as it doesn't read REG09
+ */
+void BQ24297_UpdateStatusSafe();
 
 /*!
  * Enable charge functions and save it in register
@@ -233,6 +240,35 @@ void BQ24297_ForceDPDM( void );
  */
 void BQ24297_AutoSetILim( void );
 
+/*!
+ * Enable OTG boost mode
+ * @note This will disable charging as OTG and charging are mutually exclusive
+ */
+void BQ24297_EnableOTG(void);
+
+/*!
+ * Disable OTG boost mode and enable charging if battery present
+ * @param[in] enableCharging If true, enable charging after disabling OTG
+ */
+void BQ24297_DisableOTG(bool enableCharging);
+
+/*!
+ * Get current OTG mode status
+ * @return true if OTG is enabled, false otherwise
+ */
+bool BQ24297_IsOTGEnabled(void);
+
+/*!
+ * Get current charge enable status
+ * @return true if charging is enabled, false otherwise
+ */
+bool BQ24297_IsChargingEnabled(void);
+
+/*!
+ * Switch power mode based on external power availability
+ * @param[in] externalPowerPresent true if USB/charger connected, false if battery only
+ */
+void BQ24297_SetPowerMode(bool externalPowerPresent);
 
     
 #ifdef	__cplusplus
