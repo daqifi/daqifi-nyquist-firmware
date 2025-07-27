@@ -325,13 +325,18 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             // Update status after enabling OTG
             vTaskDelay(50 / portTICK_PERIOD_MS);  // Give hardware time to settle
             BQ24297_UpdateStatus();
-            LOG_E("USB: After disconnect - pgStat=%d, vsysStat=%d, otg=%d", 
-                  pPowerData->BQ24297Data.status.pgStat,
-                  pPowerData->BQ24297Data.status.vsysStat,
-                  pPowerData->BQ24297Data.status.otg);
             
-            // Still set interrupt flag for Power_Tasks to update state properly
-            pPowerData->BQ24297Data.intFlag = true;
+            // Get power data for logging and interrupt flag
+            pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+            if (pPowerData) {
+                LOG_E("USB: After disconnect - pgStat=%d, vsysStat=%d, otg=%d", 
+                      pPowerData->BQ24297Data.status.pgStat,
+                      pPowerData->BQ24297Data.status.vsysStat,
+                      pPowerData->BQ24297Data.status.otg);
+                
+                // Still set interrupt flag for Power_Tasks to update state properly
+                pPowerData->BQ24297Data.intFlag = true;
+            }
             
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             break;
