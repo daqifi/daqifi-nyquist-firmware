@@ -172,6 +172,22 @@ extern "C" {
      * @return true if VBUS is detected, false otherwise
      */
     bool UsbCdc_IsVbusDetected(void);
+    
+    /**
+     * Runtime USB settings structure
+     * Used for monitoring USB enumeration state
+     */
+    typedef struct {
+        USB_DEVICE_STATE state;
+        bool isVbusDetected;
+        bool isCdcHostConnected;
+    } tRunTimeUsbSettings;
+    
+    /**
+     * Get pointer to runtime USB settings
+     * @return Pointer to runtime USB settings structure
+     */
+    tRunTimeUsbSettings* UsbCdc_GetRuntimeSettings(void);
    
 
 #ifdef	__cplusplus

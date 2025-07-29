@@ -238,7 +238,16 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
             /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
             gRunTimeUsbSttings.isVbusDetected = true;
-            LOG_D("USB: VBUS detected by microcontroller");
+            
+            // Rate limit VBUS detection messages
+            static TickType_t lastVbusDetectTime = 0;
+            TickType_t currentTime = xTaskGetTickCount();
+            
+            if ((currentTime - lastVbusDetectTime) > (1000 / portTICK_PERIOD_MS)) {
+                LOG_D("USB: VBUS detected by microcontroller");
+                LOG_D("USB: VBUS event - triggering power status update");
+                lastVbusDetectTime = currentTime;
+            }
             
             // Don't manipulate OTG here - MCU VBUS detection is unreliable
             // Let Power_Update_Settings handle OTG/charging based on BQ24297 status
@@ -247,7 +256,6 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             if (pPowerData) {
                 // Force interrupt flag to trigger Power_Update_Settings
                 pPowerData->BQ24297Data.intFlag = true;
-                LOG_D("USB: VBUS event - triggering power status update");
             }
             
             vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -258,6 +266,17 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
             /* VBUS is not available any more. Detach the device. */
             gRunTimeUsbSttings.isVbusDetected = false;
+            
+            // Check if this is a real disconnect or false trigger at startup
+            tPowerData* pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+            if (pPowerData && pPowerData->BQ24297Data.initComplete) {
+                // Only trust this event if BQ24297 is initialized
+                BQ24297_UpdateStatusSafe();
+                if (pPowerData->BQ24297Data.status.pgStat) {
+                    LOG_D("USB: False VBUS removal detected (pgStat=1), ignoring");
+                    break;
+                }
+            }
             
             LOG_E("USB: VBUS removed - USB POWER LOST!");
             
@@ -597,13 +616,21 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
 
     if (len == 0)return 0;
 
-    while (CircularBuf_NumBytesFree(&client->wCirbuf) < len) {
+    // Add timeout to prevent infinite hang
+    // Maximum wait time: 500ms (250 iterations * 2ms each)
+    int maxWaitIterations = 250;
+    int waitCount = 0;
+    
+    while (CircularBuf_NumBytesFree(&client->wCirbuf) < len && waitCount < maxWaitIterations) {
         vTaskDelay(2);
+        waitCount++;
     }
 
     // if the data to write can't fit into the buffer entirely, discard it. 
     if (CircularBuf_NumBytesFree(&client->wCirbuf) < len) {
         //commTest.USBOverflow++;
+        LOG_E("USB: Write buffer timeout - needed %d bytes, only %d free", 
+              len, CircularBuf_NumBytesFree(&client->wCirbuf));
         return 0;
     }
 
@@ -911,4 +938,9 @@ void UsbCdc_SetTransparentMode(bool value) {
 
 bool UsbCdc_IsVbusDetected(void) {
     return gRunTimeUsbSttings.isVbusDetected;
+}
+
+tRunTimeUsbSettings* UsbCdc_GetRuntimeSettings(void) {
+    // Return pointer to runtime settings for monitoring USB state
+    return (tRunTimeUsbSettings*)&gRunTimeUsbSttings;
 }

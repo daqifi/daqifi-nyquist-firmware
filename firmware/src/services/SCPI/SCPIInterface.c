@@ -301,6 +301,81 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
 }
 
 /**
+ * SCPI Callback: Returns battery management system register information in binary format
+ * @return SCPI_RES_OK on success
+ */
+static scpi_result_t SCPI_BmsInfoGet(scpi_t * context) {
+    uint8_t regData[11];  // BQ24297 has registers 0x00 to 0x0A
+    
+    // Read all BQ24297 registers
+    for (int i = 0; i <= 0x0A; i++) {
+        regData[i] = BQ24297_Read_I2C(i);
+    }
+    
+    // Output header in text
+    context->interface->write(context, "BMS Register Dump (Binary):\r\n", 29);
+    
+    // Output each register with binary representation
+    char buffer[64];
+    for (int i = 0; i <= 0x0A; i++) {
+        uint8_t val = regData[i];
+        snprintf(buffer, sizeof(buffer), "REG%02X: 0x%02X = %c%c%c%c%c%c%c%c\r\n", 
+                i, val,
+                (val & 0x80) ? '1' : '0',
+                (val & 0x40) ? '1' : '0',
+                (val & 0x20) ? '1' : '0',
+                (val & 0x10) ? '1' : '0',
+                (val & 0x08) ? '1' : '0',
+                (val & 0x04) ? '1' : '0',
+                (val & 0x02) ? '1' : '0',
+                (val & 0x01) ? '1' : '0');
+        context->interface->write(context, buffer, strlen(buffer));
+    }
+    
+    // Add register interpretation for key registers
+    context->interface->write(context, "\r\nKey Register Bits:\r\n", 21);
+    
+    // REG00 interpretation
+    int vindpm_mv = 3880 + ((regData[0] >> 3) & 0x0F) * 80;  // VINDPM in mV
+    int iinlim_ma[] = {100, 150, 500, 900, 1000, 1500, 2000, 3000};
+    snprintf(buffer, sizeof(buffer), "REG00: HIZ=%d, VINDPM=%d.%02dV, IINLIM=%dmA\r\n",
+            (regData[0] >> 7) & 1,  // HIZ bit
+            vindpm_mv / 1000,       // VINDPM voltage integer
+            (vindpm_mv % 1000) / 10, // VINDPM voltage decimal
+            iinlim_ma[regData[0] & 0x07]);  // Input current limit
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // REG01 interpretation
+    snprintf(buffer, sizeof(buffer), "REG01: OTG=%d, CHG=%d, SYS_MIN=%d.%dV\r\n",
+            (regData[1] >> 5) & 1,  // OTG bit
+            (regData[1] >> 4) & 1,  // Charge enable bit
+            3 + ((regData[1] >> 1) & 0x07),  // SYS_MIN voltage
+            0);                               // Always .0 for SYS_MIN
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // REG07 interpretation
+    snprintf(buffer, sizeof(buffer), "REG07: BATFET=%s\r\n",
+            (regData[7] & 0x20) ? "DISABLED" : "Enabled");
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // REG08 interpretation
+    snprintf(buffer, sizeof(buffer), "REG08: vBusStat=%d, chgStat=%d, pgStat=%d, vsysStat=%d\r\n",
+            (regData[8] >> 6) & 0x03,  // vBusStat
+            (regData[8] >> 4) & 0x03,  // chgStat
+            (regData[8] >> 2) & 0x01,  // pgStat
+            regData[8] & 0x01);         // vsysStat
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    // REG09 interpretation
+    snprintf(buffer, sizeof(buffer), "REG09: BAT_FAULT=%d, NTC_FAULT=%d\r\n",
+            (regData[9] >> 3) & 0x01,  // BAT_FAULT
+            regData[9] & 0x03);         // NTC_FAULT
+    context->interface->write(context, buffer, strlen(buffer));
+    
+    return SCPI_RES_OK;
+}
+
+/**
  * SCPI Callback: Returns system information in human-readable text format
  * @return SCPI_RES_OK on success
  */
@@ -511,6 +586,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             otgGpioState ? "HIGH" : "LOW");
         context->interface->write(context, buffer, strlen(buffer));
         
+        // Read REG01 and REG07 for detailed status
+        uint8_t reg01 = BQ24297_Read_I2C(0x01);
+        uint8_t reg07 = BQ24297_Read_I2C(0x07);
+        
+        // BATFET status (REG07 bit 5: 0=enabled, 1=disabled)
+        bool batfetEnabled = !(reg07 & 0x20);
+        
+        // REG01 breakdown: [7:6]=watchdog, [5]=OTG, [4]=CHG_CONFIG, [3:1]=SYS_MIN, [0]=reserved
+        snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: 0x%02X (OTG=%d, CHG=%d) | REG07: 0x%02X\r\n",
+            batfetEnabled ? "Enabled" : "DISABLED!",
+            reg01,
+            (reg01 >> 5) & 1,  // OTG bit
+            (reg01 >> 4) & 1,  // Charge enable bit
+            reg07);
+        context->interface->write(context, buffer, strlen(buffer));
+        
         // Power-up readiness - the key diagnostic info
         bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
         snprintf(buffer, sizeof(buffer), "  >>> Power-up Ready: %s %s\r\n",
@@ -546,7 +637,18 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
     for (i = 0; i < logSize; ++i) {
         size_t messageSize = LogMessagePop((uint8_t*) buffer, 128);
         if (messageSize > 0) {
+            // Write the message
             context->interface->write(context, buffer, messageSize);
+            
+            // Flush after each message to prevent buffer overflow
+            // This ensures the USB buffer has time to process each message
+            if (context->interface->flush) {
+                context->interface->flush(context);
+            }
+            
+            // Small delay to allow USB task to process the data
+            // This prevents overwhelming the USB circular buffer
+            vTaskDelay(1);
         }
     }
 
@@ -1000,6 +1102,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "HELP", .callback = SCPI_Help,},
     {.pattern = "SYSTem:SYSInfoPB?", .callback = SCPI_SysInfoGet,},
     {.pattern = "SYSTem:INFo?", .callback = SCPI_SysInfoTextGet,},
+    {.pattern = "SYSTem:BMS:INFo?", .callback = SCPI_BmsInfoGet,},
     {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
     {.pattern = "SYSTem:LOG:TEST", .callback = SCPI_SysLogTest,},
     {.pattern = "SYSTem:LOG:CLEar", .callback = SCPI_SysLogClear,},

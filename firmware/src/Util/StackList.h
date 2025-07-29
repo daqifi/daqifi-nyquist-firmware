@@ -15,7 +15,8 @@ extern "C" {
 
 // Defines the maximum number of items in the list
 // Increased from 32 to 48 to capture more log messages without causing memory issues
-#define STACK_LIST_MAX_SIZE 48
+// Further increased to 64 with corresponding task stack increase
+#define STACK_LIST_MAX_SIZE 64
 
 /**
  * A single item in the list

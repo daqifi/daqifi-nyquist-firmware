@@ -1,0 +1,2393 @@
+			
+
+
+BQ2429x I2C Controlled 3-A Single Cell USB Charger With Narrow VDC Power Path Management and Adjustable Voltage USB OTG
+
+
+1 Features
+• 90% High efficiency Switch Mode 3-A charger
+• 3.9-V to 6.2-V Single input USB-compliant charger with 6.4-V overvoltage protection
+– USB Host or charging port D+/D- detection compatible to USB battery charger spec (BC1.2)
+– Supports nonstandard 2-A/1-A adapters detection (BQ24297)
+– Input voltage and current limit supports USB
+2.0 and USB 3.0
+– Input current limit: 100 mA, 150 mA, 500 mA, 900 mA, 1 A, 1.5 A, 2 A, and 3 A
+• USB OTG with adjustable output 4.55 V to 5.5 V at 1 A or 1.5 A
+– Fast OTG startup (22 ms typ)
+– 90% 5-V Boost Mode efficiency
+– Accurate ±15% Hiccup Mode overcurrent protection
+• Narrow VDC (NVDC) power path management
+– Instant system on with no battery or deeply discharged battery
+– Ideal diode operation in Battery Supplement Mode
+• 1.5-MHz Switching frequency for low profile 1.2- mm inductor
+• I2C Port for optimal system performance and
+status reporting
+• Autonomous battery charging with or without host management
+– Battery charge enable and preconditioning
+– Charge termination and recharge
+• High Accuracy
+– ±0.5% Charge voltage regulation
+– ±7% Charge current regulation
+– ±7.5% Input current regulation
+– ±3% Output voltage regulation in USB OTG Boost Mode
+• High Integration
+– Power path management
+– Synchronous switching MOSFETs
+– Integrated current sensing
+– Bootstrap diode
+– 
+Internal loop compensation
+• Safety
+– Battery temperature sensing for charging and discharging in OTG Mode
+– Battery charging safety timer
+– Thermal regulation and thermal shutdown
+– Input and system overvoltage protection
+– MOSFET Over-current protection
+• Charge status outputs for LED or host processor
+• Maximum power tracking capability by input voltage regulation
+• 20-µA Low battery leakage current and support Shipping Mode
+• 4.00-mm x 4.00-mm VQFN-24 package
+• Safety-Related Certifications:
+– TUV IEC 62368 Certification (BQ24297)
+2 Applications
+• Tablet PC, smart phone, internet devices
+• Portable audio speaker
+• Handheld computers, PDA, and POS
+3 Description
+The BQ24296/BQ24297 are highly-integrated switch- mode battery charge management and system power path management devices for 1 cell Li-Ion and Li- polymer batteries in a wide range of smart phone and tablet applications.
+Device Information(1)
+PART NUMBERPACKAGEBODY SIZE (NOM)BQ24296/7VQFN (24)4.00 mm x 4.00 mm(1)	For all available packages, see the orderable addendum at the end of the data sheet.
+
+
+
+Application Schematic
+
+
+Table of Contents
+
+1 Features	1
+2 Applications	1
+3 Description	1
+4 Revision History	2
+5 Description (continued)	4
+6 Device Comparison Table	5
+7 Pin Configuration and Functions	6
+8 Specifications	8
+8.1 Absolute Maximum Ratings(1)	8
+8.2 ESD Ratings	8
+8.3 Recommended Operating Conditions	8
+8.4 Thermal Information	9
+8.5 Electrical Characteristics	9
+8.6 Timing Requirements	13
+8.7 Typical Characteristics	13
+9 Detailed Description	16
+9.1 Overview	16
+9.2 Functional Block Diagram	17
+9.3 Feature Description	18
+9.4 Device Functional Modes	30
+9.5 
+Programming	31
+9.6 Register Map	35
+10 Application and Implementation	42
+10.1 Application Information	42
+10.2 Typical Application	42
+11 Power Supply Recommendations	47
+12 Layout	48
+12.1 Layout Guidelines	48
+12.2 Layout Example	49
+13 Device and Documentation Support	50
+13.1 Device Support	50
+13.2 Documentation Support	50
+13.3 Receiving Notification of Documentation Updates	50
+13.4 Support Resources	50
+13.5 Trademarks	50
+13.6 Electrostatic Discharge Caution	50
+13.7 Glossary	50
+14 Mechanical, Packaging, and Orderable Information	51
+1 
+
+
+
+4 Revision History
+NOTE: Page numbers for previous revisions may differ from page numbers in the current version.
+Changes from Revision C (December 2016) to Revision D (April 2023)	Page
+• Added TUV IEC 62368 Certification Feature	1
+• Changed BTST from anode to cathode and REGN from cathode to anode in descriptions	6
+• Updated inclusive terminology throughout data sheet	31
+
+Changes from Revision B (November 2014) to Revision C (December 2016)	Page
+• Changed CE to CE for BQ24297 in Pin Functions	6
+• Changed VREF to VREGN in Figure 9-8	25
+• Changed 20°C to –20°C and VREF to VREGN in Figure 9-9	25
+• Changed Equation 1	25
+• Changed Bit 3 RESET from 1 to 0 in Table 9-11	38
+• Changed Bit 2 RESET from 1 to 0 in Table 9-11	38
+• Changed 0 to 1 for REG05 Bit 2 Reset in Table 9-12	38
+• Changed 1 to 0 for REG05 Bit 1 Reset in Table 9-12	38
+• Changed DPDM_EN to IINDET_EN in Table 9-14	40
+• Changed D+/D– to Input current limit in Table 9-14	40
+• Added note to Figure 10-1	42
+• Added note to Figure 10-2	42
+• Changed last paragraph in Section 10.2.2.3 section	44
+
+Changes from Revision A (October 2013) to Revision B (November 2014)	Page
+
+• Added Handling Rating table, Feature Description section, Device Functional Modes, Application and Implementation section, Power Supply Recommendations section, Layout section, Device and Documentation Support section, and Mechanical, Packaging, and Orderable Information section.	1
+• Changed front page schematic	1
+• Changed REG01[4] = 1 to REG01[5] = 1 in OTG description	6
+• Added (10k? NTC thermister only) to QON description	6
+• Added ESD information to Handling Ratings	8
+• Changed ICHG = 1792 mA in IICHG_REG_ACC test conditions	9
+• 
+• Changed falling to rising in VHTF	9
+• Changed VHTF TYP to 47.2%	9
+• Changed Input high threshold (OTG) MIN to 1.1 V	9
+• Changed Table 9-2	19
+• Changed Figure 9-5	24
+• Changed RT1 = 5.25 k?	25
+• Deleted and LSFET from Voltage and Current Monitoring in Buck Mode description	29
+• Deleted HSFET and from Voltage and Current Monitoring in Boost Mode description	30
+• Changed text in Section 9.3.5.4.1	30
+• Changed REG09[5] to REG09[3] in Battery Over-Voltage Protection (BATOVP) section	30
+• Changed REG09 Bit 3 description 1 – Battery OVP	41
+Changes from Revision * (September 2013) to Revision A (October 2013)	Page
+• Deleted H from BQ24297 PART NUMBER	1
+
+
+5 Description (continued)
+Its low impedance power path optimizes switch-mode operation efficiency, reduces battery charge time and extends battery life during discharging phase. The I2C serial interface with charging and system settings makes the device a truly flexible solution.
+The device supports 3.9-V to 6.2-V USB input sources, including standard USB host port and USB charging port with 6.4-V over-voltage protection. The device is compliant with USB 2.0 and USB 3.0 power specifications with input current and voltage regulation. To set the default input current limit, the BQ24296 takes the result from the detection circuit in the system, such as USB PHY device and the BQ24297 detects the input source through D+/D- detection following the USB battery charging spec 1.2. In addition, the BQ24297 detects non-standard 2-A/1-A adapters. The device also supports USB On-the-Go operation by providing fast startup and supplying adjustable voltage 4.55-V to 5.5-V (default 5 V) on the VBUS with an accurate current limit up to 1.5 A.
+The power path management regulates the system slightly above battery voltage but does not drop below 3.5-V minimum system voltage (programmable). With this feature, the system keeps operating even when the battery is completely depleted or removed. When the input source current or voltage limit is reached, the power path management automatically reduces the charge current to zero and then starts discharges the battery until the system power requirement is met. This supplement mode operation keeps the input source from getting overloaded.
+The device initiates and completes a charging cycle when host control is not available. It automatically charges the battery in three phases: pre-conditioning, constant current, and constant voltage. In the end, the charger automatically terminates when the charge current is below a preset limit in the constant voltage phase. Later on, when the battery voltage falls below the recharge threshold, the charger automatically starts another charging cycle.
+The charge device provides various safety features for battery charging and system operation, including negative thermistor monitoring, charging safety timer, and over-voltage/over-current protections. The thermal regulation reduces charge current when the junction temperature exceeds 120°C (programmable).
+The STAT output reports the charging status and any fault conditions. The INT immediately notifies the host when a fault occurs.
+The BQ24296 and BQ24297 are available in a 24-pin, 4.00 x 4.00 mm2 thin VQFN package.
+
+6 Device Comparison Table
+
+BQ24296BQ24297I2C Address6BH6BHUSB OTGYes
+Adjustable 4.5 V to 5.5 V at 1.5 A (max)Yes
+Adjustable 4.5 V to 5.5 V at 1.5 A (max)USB DetectionPSELD+/D–Default Battery Voltage4.208 V4.208 VDefault Charge Current2.048 A2.048 ADefault Adapter Current Limit3 A3 ADefault Pre-Charge Current / Max Pre- Charge Current256 mA / 2.048 A256 mA / 2.048 ADefault Termination Current256 mA256 mACharging Temperature ProfileCold/HotCold/HotStatus OutputSTAT, PGSTATSTAT During FaultBlinking at 1 HzBlinking at 1 HzDefault Safety Timer12 hr12 hrDefault VINDPM4.36 V4.36 VDefault Pre-charge Timer4 hr4 hr
+7 Pin Configuration and Functions
+
+
+
+
+
+VBUS PSEL
+
+
+ PG STAT
+SCL SDA
+
+PGND PGND SYS SYS BAT BAT
+
+
+
+
+Figure 7-1. 24-Pin VQFN RGE Package (Top View)
+
+
+
+
+
+
+VBUS
+
+D+
+
+  D– STAT SCL
+SDA
+
+PGND PGND SYS SYS
+BAT BAT
+
+
+
+
+
+Figure 7-2. 24-Pin VQFN RGE Package (Top View) Table 7-1. Pin Functions
+
+Table 7-1. Pin Functions (continued)
+PINNUMBERTYPEDESCRIPTIONBQ24296BQ24297
+
+PG–3OOpen drain active low power good indicator. Connect to the pull up rail via 10-k? resistor. LOW indicates a good input source if the input voltage is between UVLO and ACOV, above SLEEP mode threshold, and current limit is above 30 mA.–D–3I
+Analo gNegative line of the USB data line pair. D+/D– based USB host/charging port detection. The detection includes data contact detection (DCD), primary detection in bc1.2, and non-standard adapters.STATSTAT4OOpen drain charge status output to indicate various charger operation. Connect to the pull up rail via 10-k? resistor. LOW indicates charge in progress. HIGH indicates charge complete or charge disabled. When any fault condition occurs, STAT pin in the charge blinks at 1 Hz.SCLSCL5II2C Interface clock. Connect SCL to the logic rail through a 10-k? resistor.SDASDA6I/OI2C Interface data. Connect SDA to the logic rail through a 10-k? resistor.INTINT7OOpen-drain Interrupt Output. Connect the INT to a logic rail via 10k? resistor. The INT pin sends active low, 256-µs pulse to host to report charger device status and fault.OTGOTG8I
+DigitalUSB current limit selection pin during buck mode, and active high enable pin during boost mode.
+For BQ24296, when in buck mode with USB host (PSEL = High), when OTG = High, IIN limit = 500 mA and when OTG = Low, IIN limit = 100 mA.
+For BQ24297, when in buck mode with USB host, when OTG = High, IIN limit = 500 mA and when OTG = Low, IIN limit = 100 mA.
+The boost mode is activated when the REG01[5] = 1 and OTG pin is High.
+
+CE
+
+CE9IActive low Charge Enable pin. Battery charging is enabled when REG01[5:4] = 01 and CE pin = Low.CEpin must be pulled high or low.ILIMILIM10IILIM pin sets the maximum input current limit by regulating the ILIM voltage at 1 V. A resistor is connected from ILIM pin to ground to set the maximum limit as IINMAX = (1V/RILIM) × KILIM. The actual input current limit is the lower one set by ILIM and by I2C REG00[2:0]. The minimum input current programmed on ILIM pin is 500 mA.TSTS11I
+Analo gTemperature qualification voltage input. Connect a negative temperature coefficient thermistor. Program temperature window with a resistor divider from REGN to TS to GND. Charge suspends or Boost disable when TS pin is out of range. A 103AT-2 thermistor is recommended.QONQON12IBATFET enable control in shipping mode. A logic low to high transition on this pin with minimum 2-ms high level turns on BATFET to exit shipping mode. It has internal 1-M? (Typ) pull down. For backward compatibility, when BATFET enable control function is not used, the pin can be no connect or tied to TS pin (10-k? NTC thermister only). (Refer to Section 9.3.1.2.2 for detail description).BATBAT13,14PBattery connection point to the positive pin of the battery pack. The internal BATFET is connected between BAT and SYS. Connect a 10 µF closely to the BAT pin.SYSSYS15,16ISystem connection point. The internal BATFET is connected between BAT and SYS. When the battery falls below the minimum system voltage, switch-mode converter keeps SYS above the minimum system voltage.PGNDPGND17,18PPower ground connection for high-current power converter node. Internally, PGND is connected to the source of the n-channel LSFET. On PCB layout, connect directly to ground connection of input and output capacitors of the charger. A single point connection is recommended between power PGND and the analog GND near the IC PGND pin.SWSW19,20OSwitching node connecting to output inductor. Internally SW is connected to the source of the n- channel HSFET and the drain of the n-channel LSFET. Connect the 0.047-µF bootstrap capacitor from SW to BTST.BTSTBTST21PPWM high side driver positive supply. Internally, the BTST is connected to the cathode of the boost- strap diode. Connect the 0.047-µF bootstrap capacitor from SW to BTST.REGNREGN22PPWM low side driver positive supply output. Internally, REGN is connected to the anode of the
+boost-strap diode. Connect a 4.7-µF (10-V rating) ceramic capacitor from REGN to analog GND. The capacitor should be placed close to the IC. REGN also serves as bias rail of TS pin.PMIDPMID23OConnected to the drain of the reverse blocking MOSFET and the drain of HSFET. Given the total input capacitance, connect a 1-µF capacitor on VBUS to PGND, and the recommended 8.2 µF or more on PMID to PGND.Thermal PadThermal Pad–PExposed pad beneath the IC for heat dissipation. Always solder thermal pad to the board, and have vias on the thermal pad plane star-connecting to PGND and ground plane for high-current power converter.
+8 Specifications
+8.1 Absolute Maximum Ratings(1)
+MINMAXUNIT
+
+
+
+
+
+
+Voltage
+(with respect to GND)VBUS (converter not switching)–215(2)V1.1 PMID (converter not switching)–0.315(2)V1.1 STAT, PG–0.312V1.1 BTST–0.312V1.1 SW–27
+ 8 (Peak for 20ns duration)V1.1 BAT, SYS (converter not switching)–0.36V1.1 SDA, SCL, INT, OTG, ILIM, REGN, TS, QON , CE , D+, D–, PSEL–0.37V1.1 BTST TO SW–0.37V1.1 PGND to GND–0.30.3VOutput sink currentINT, STAT, PG6mAJunction temperature–40150°CStorage temperature range, Tstg–65150°C(1) Stresses beyond those listed under absolute maximum ratings may cause permanent damage to the device. These are stress ratings only, and functional operation of the device at these or any other conditions beyond those indicated under recommended operating conditions is not implied. Exposure to absolute-maximum-rated conditions for extended periods may affect device reliability. All voltage values are with respect to the network ground pin unless otherwise noted.
+(2) VBUS is specified up to 16 V for a maximum of 24 hours under no load conditions.
+
+8.2 ESD Ratings
+VALUEUNIT
+V(ESD)
+Electrostatic dischargeHuman body model (HBM), per ANSI/ESDA/JEDEC JS-001(1)1000V1.1 1.1 Charged device model (CDM), per JEDEC specification JESD22- C101(2)250V(1) JEDEC document JEP155 states that 500-V HBM allows safe manufacturing with a standard ESD control process.
+(2) JEDEC document JEP157 states that 250-V CDM allows safe manufacturing with a standard ESD control process.
+
+8.3 Recommended Operating Conditions
+MINMAXUNITVINInput voltage3.96.2(1)VIINInput current (VBUS)3AISYSOutput current (SYS)3.5AVBATBattery voltage4.4V
+IBATFast charging current3A1.1 Discharging current with internal MOSFET5.5ATAOperating free-air temperature range–4085°C(1)	The inherent switching noise voltage spikes should not exceed the absolute maximum rating on either the BTST or SW pins. A tight layout minimizes switching noise.
+
+
+8.4 Thermal Information
+
+THERMAL METRIC(1)BQ2429x
+UNIT1.1 RGE (VQFN)1.1 1.1 24 PIN1.1 R?JAJunction-to-ambient thermal resistance32.2°C/WR?JC(top)Junction-to-case (top) thermal resistance29.8°C/WR?JBJunction-to-board thermal resistance9.1°C/W?JTJunction-to-top characterization parameter0.3°C/W?JBJunction-to-board characterization parameter9.1°C/WR?JC(bot)Junction-to-case (bottom) thermal resistance2.2°C/W(1)	For more information about traditional and new thermal metrics, see the Semiconductor and IC Package Thermal Metrics application report.
+
+8.5 Electrical Characteristics
+VVBUS_UVLOZ < VVBUS < VACOV and VVBUS > VBAT + VSLEEP, TJ = –40°C to 125°C and TJ = 25°C for typical values (unless otherwise noted)
+PARAMETERTEST CONDITIONSMINTYPMAXUNITQUIESCENT CURRENTS
+
+
+
+IBAT
+
+
+Battery discharge current (BAT, SW, SYS)VVBUS < VUVLO, VBAT = 4.2 V, leakage between BAT and VBUS5µAHigh-Z Mode, or no VBUS, BATFET disabled (REG07[5] = 1), –40°C – 85°C1620µAHigh-Z Mode, or no VBUS, BATFET enabled (REG07[5] = 0), –40°C – 85°C3255µA
+
+
+
+
+IVBUS
+
+
+Input supply current (VBUS)VVBUS = 5 V, High-Z mode, No battery1530µAVVBUS > VUVLO, VVBUS > VBAT, converter not switching1.5	3mAVVBUS > VUVLO, VVBUS > VBAT, converter switching, VBAT =
+3.2 V, ISYS = 0 A4mAVVBUS > VUVLO, VVBUS > VBAT, converter switching, charge disable, VBAT = 3.8 V, ISYS = 100 µA3.5mAIBOOSTBattery discharge current in boost modeVBAT = 4.2 V, Boost mode, IVBUS = 0 A, converter switching3.5mAVBUS/BAT POWER UPVVBUS_OPVBUS operating voltage3.96.2VVVBUS_UVLOZVBUS for active I2C, no batteryVVBUS rising3.6VVSLEEPSleep mode falling thresholdVVBUS falling, VVBUS-VBAT3580120mVVSLEEPZSleep mode rising thresholdVVBUS rising, VVBUS-VBAT170250350mVVACOVVBUS over-voltage rising thresholdVVBUS rising6.26.46.6VVACOV_HYSTVBUS over-voltage falling hysteresisVVBUS falling250mVVBAT_UVLOZBattery for active I2C, no VBUSVBAT rising2.3VVBAT_DPLBattery depletion thresholdVBAT falling2.42.6VVBAT_DPL_HYBattery depletion rising hysteresisVBAT rising200mVVVBUSMINBad adapter detection thresholdVVBUS falling3.8VIBADSRCBad adapter detection current source30mAPOWER PATH MANAGEMENTVSYS_MAXTypical system regulation voltageIsys = 0 A, BATFET (Q4) off, VBAT up to 4.2 V, REG01[3:1] = 101, VSYSMIN = 3.5 V3.54.35VVSYS_MINSystem voltage outpuREG01[3:1] = 101, VSYSMIN = 3.5 V3.53.65VRON(RBFET)Top reverse blocking MOSFET on- resistance between VBUS and PMIID2841m?
+RON(HSFET)Internal top switching MOSFET on- resistance between PMID and SWTJ = –40°C – 85°C3951m?TJ = -40°C – 125°C3958
+8.5 Electrical Characteristics (continued)
+VVBUS_UVLOZ < VVBUS < VACOV and VVBUS > VBAT + VSLEEP, TJ = –40°C to 125°C and TJ = 25°C for typical values (unless otherwise noted)
+PARAMETERTEST CONDITIONSMINTYPMAXUNIT
+RON(LSFET)Internal bottom switching MOSFET on- resistance between SW and PGNDTJ = –40°C – 85°C6182m?TJ = -40°C – 125°C6190VFWDBATFET forward voltage in supplement modeBAT discharge current 10mA30mVVSYS_BATSYS/BAT comparatorVSYS falling70mVVBATGDBattery good comparator rising thresholdVBAT rising3.55VVBATGD_HYSTBattery good comparator falling thresholdVBAT falling100mVBATTERY CHARGERVBAT_REG_ACCCharge voltage regulation accuracyVBAT = 4.112 V and 4.208 V–0.5%0.5%
+
+IICHG_REG_ACC
+Fast charge current regulation accuracyVBAT = 3.8 V, ICHG = 1024 mA, TJ = 25°C-4%4%VBAT = 3.8 V, ICHG = 1024 mA, TJ = -20°C – 125°C-7%7%VBAT = 3.8 V, ICHG = 1792 mA, TJ = -20°C – 125°C–10%10%ICHG_20pctCharge current with 20% option onVBAT = 3.1 V, ICHG = 104 mA, REG02 = 03 and REG02[0] = 175175mAVBATLOWVBattery LOWV falling thresholdFast charge to precharge, REG04[1] = 12.62.82.9VVBATLOWV_HYSTBattery LOWV rising thresholdPrecharge to fast charge, REG04[1] = 1 (Typical 200-mV hysteresis)2.83.03.1VIPRECHG_ACCPrecharge current regulation accuracyVBAT = 2.6 V, ICHG = 256 mA–20%20%ITYP_TERM_ACCTypical termination currentITERM = 256 mA, ICHG = 2048 mA265mAITERM_ACCTermination current accuracyITERM = 256 mA, ICHG = 2048 mA     – 22.5%22.5%VSHORTBattery short voltageVBAT falling2.0VVSHORT_HYSTBattery Short Voltage hysteresisVBAT rising200mVISHORTBattery short currentVBAT < 2.2 V100mAVRECHGRecharge threshold below VBAT_REGVBAT falling, REG04[0] = 0100mVtRECHGRecharge deglitch timeVBAT falling, REG04[0] = 020ms
+RON_BATFETSYS-BAT MOSFET on-resistanceTJ = 25°C2428m?TJ = –40°C – 125°C2435INPUT VOLTAGE/CURRENT REGULATIONVINDPM_REG_ACCInput voltage regulation accuracy-2%2%
+
+
+IUSB_DPM
+
+USB Input current regulation limit, VBUS = 5V, current pulled from SWUSB10085100mAUSB150125150mAUSB500440500mAUSB900750900mAIADPT_DPMInput current regulation accuracyIADP = 1.5 A, REG00[2:0] = 1011.31.5AIIN_STARTInput current limit during system start upVSYS < 2.2 V100mAKILIMIIN = KILIM/RILIMIINDPM = 1.5 A395435475A x ?D+/D- DETECTION (BQ24297)VD+_SRCD+ voltage source0.50.7VID+_SRCD+ connection check current source714µAID–_SINKD– current sink50100150µA
+ID_LKGLeakage current into D+/D–D–, switch open–11µAD+, switch open–11µAVD+_LOWD+ low comparator threshold0.8VVD–_LOWdatrefD– low comparator threshold250400mVRD–_DWND– pulldown for connection check14.2524.8k?tSDP_DEFAULTCharging timer with 100mA USB host in default mode45minsVadpt1_loD+ low comparator threshold for non- standard adapter Divider-1As percentage of REGN, 0°C – 85°C(1)46.5%48%49.5%
+8.5 Electrical Characteristics (continued)
+VVBUS_UVLOZ < VVBUS < VACOV and VVBUS > VBAT + VSLEEP, TJ = –40°C to 125°C and TJ = 25°C for typical values (unless otherwise noted)
+PARAMETERTEST CONDITIONSMINTYPMAXUNITVadpt1_hiD+ low comparator threshold for non- standard adapter divider-1As percentage of REGN, 0°C – 85°C(1)58.5%60%61.5%Vadpt2_loD+ low comparator threshold for non- standard adapter divider-2As percentage of REGN, 0°C – 85°C(1)15.5%17%18.5%Vadpt2_hiD+ low comparator threshold for Non- standard adapter divider-2As percentage of REGN, 0°C – 85°C(1)28.5%30%31.5%Vadpt3_loD- low comparator threshold for non- standard adapter divider-3As percentage of REGN, 0°C – 85°C(1)46.5%48%49.5%Vadpt3_hiD- high comparator threshold for non- standard adapter divider-3As percentage of REGN, 0°C – 85°C(1)58.5%60%61.5%BAT OVER-VOLTAGE PROTECTIONVBATOVPBattery over-voltage thresholdVBAT rising, as percentage of VBAT_REG104%VBATOVP_HYSTBattery over-voltage hysteresisVBAT falling, as percentage of VBAT_REG2%tBATOVPBattery over-voltage deglitch time to disable charge1µsTHERMAL REGULATION AND THERMAL SHUTDOWNTJunction_REGJunction temperature regulation accuracyREG06[1:0] = 11120°CTSHUTThermal shutdown rising temperatureTemperature increasing160°CTSHUT_HYSThermal shutdown hysteresis30°CThermal shutdown rising deglitchTemperature increasing delay1msThermal shutdown falling deglitchTemperature decreasing delay1msCOLD/HOT THERMISTER COMPARATORVLTFCold temperature threshold, TS pin voltage rising thresholdCharger suspends charge. as percentage to VREGN73%73.5%74%VLTF_HYSCold temperature hysteresis, TS pin voltage fallingAs percentage to VREGN0.4%VHTFHot temperature TS pin voltage rising thresholdAs percentage to VREGN46.6%47.2%48.8%VTCOCut-off temperature TS pin voltage falling thresholdAs percentage to VREGN44.2%44.7%45.2%Deglitch time for temperature out of range detection
+VTS > VLTF, or VTS < VTCO, or VTS < VHTF10msVBCOLD0Cold temperature threshold, TS pin voltage rising thresholdAs percentage to VREGN REG02[1] = 0 (Approx. -10°C w/ 103AT)75.5%76%76.5%VBCOLD0_HYSAs percentage to VREGN REG02[1] = 0 (Approx. 1°C w/ 103AT)1%VBCOLD1Cold temperature threshold 1, TS pin voltage rising thresholdAs percentage to VREGN REG02[1] = 1 (Approx. -20°C w/ 103AT)78.5%79%79.5%VBCOLD1_HYSAs percentage to VREGN REG02[1] = 1 (Approx. 1°C w/ 103AT)1%VBHOT0Hot temperature threshold, TS pin voltage falling thresholdAs percentage to VREGN REG06[3:2] = 01 (Approx. 55°C w/ 103AT)35.5%36%36.5%VBHOT0_HYSAs percentage to VREGN REG06[3:2] = 01 (Approx. 3°C w/ 103AT)3%VBHOT1Hot temperature threshold 1, TS pin voltage falling thresholdAs percentage to VREGN REG06[3:2] = 00 (Approx. 60°C w/ 103AT)32.5%33%33.5%VBHOT1_HYSAs percentage to VREGN REG06[3:2] = 00 (Approx. 3°C w/ 103AT)3%VBHOT2Hot temperature threshold 2, TS pin voltage falling thresholdAs percentage to VREGN REG06[3:2] = 10 (Approx. 65°C w/ 103AT)29.5%30%30.5%VBHOT2_HYSAs percentage to VREGN REG06[3:2] = 10 (Approx. 3°C w/ 103AT)3%CHARGE OVER-CURRENT COMPARATORIHSFET_OCPHSFET cycle by cycle over-current threshold5.37.5A
+8.5 Electrical Characteristics (continued)
+VVBUS_UVLOZ < VVBUS < VACOV and VVBUS > VBAT + VSLEEP, TJ = –40°C to 125°C and TJ = 25°C for typical values (unless otherwise noted)
+PARAMETERTEST CONDITIONSMINTYPMAXUNITIBATFET_OCPSystem over load threshold5.56.6AVLSFET_UCPLSFET charge under-current falling thresholdFrom sync mode to non-sync mode100mAFSWPWM Switching frequency, and digital clock130015001700kHzDMAXMaximum PWM duty cycle97%VBTST_REFRESHBootstrap refresh comparator thresholdVBTST-VSW when LSFET refresh pulse is requested, VBUS = 5 V3.6VBOOST MODE OPERATIONVOTG_REG_ACCOTG output voltageI(VBUS) = 0, REG06[7:4] = 0111 (4.998 V)5VVOTG_REG_ACCOTG output voltage accuracyI(VBUS) = 0, REG06[7:4] = 0111 (4.998 V)-3%3%VOTG_BATBattery voltage exiting OTG modeBAT falling, REG04[1] = 12.9V
+IOTGOTG mode output currentREG01[0] = 01AREG01[0] = 11.5AVOTG_OVPOTG over-voltage thresholdRising threshold5.8	6VVOTG_OVP_HYSOTG over-voltage threshold hysteresisFalling threshold300mVIOTG_LSOCPLSFET cycle by cycle current limit5AIOTG_HSZCPHSFET under current falling threshold100mA
+IRBFET_OCPRBFET over-current thresholdREG01[0] = 01.001.151.30AREG01[0] = 11.501.701.90REGN LDO
+VREGNREGN LDO output voltageVVBUS = 6 V, IREGN = 40 mA4.855.5VVVBUS = 5 V, IREGN = 20 mA4.74.8VIREGNREGN LDO current limitVVBUS = 5 V, VREGN = 3.8 V50mA
+	
+LOGIC I/O PIN CHARACTERISTICS (OTG, CE, STAT, QON , PSEL, PG)VILOInput low threshold0.4VVIHInput high threshold ( CE, STAT, QON , PSEL, PG)1.3VVIH_OTGInput high threshold (OTG)1.1VVOUT_LOOutput low saturation voltageSink current = 5 mA0.4VIBIASHigh level leakage current (OTG, CE, STAT , PSEL, PG)Pull-up rail 1.8 V1µAIBIASHigh level leakage current (QON)Pull-up rail 3.6 V8µAI2C INTERFACE (SDA, SCL, INT)VIHInput high threshold levelVPULL-UP = 1.8 V, SDA and SCL1.3VVILInput low threshold levelVPULL-UP = 1.8 V, SDA and SCL0.4VVOLOutput low threshold levelSink current = 5 mA0.4VIBIASHigh-level leakage currentVPULL-UP = 1.8 V, SDA and SCL1µAfSCLSCL clock frequency400kHzDIGITAL CLOCK AND WATCHDOG TIMERfHIZDigital crude clockREGN LDO disabled153550kHzfDIGDigital clockREGN LDO enabled130015001700kHz(1)	REGN LDO is configured in drop-out mode. VBUS is close to REGN when IREGN = 0 mA.
+
+
+8.6 Timing Requirements
+MIN	TYP	MAXUNITVBUS/BAT POWER UPtBADSRCBad source detection duration30msBOOST MODE OPERATIONtOTG_OCP_OFFOTG mode over-current protection off cycle time32mstOTG_OCP_ONOTG mode over-current protection on cycle time260µsQON TIMINGtQONQON pin high time to turn on BATFET2msDIGITAL CLOCK AND WATCHDOG TIMER
+tWDTREG05[5:4] = 11REGN LDO disabled112	160s8.5 8.5 REGN LDO enabled136	1608.5 
+Figure 8-1. I2C-Compatible Interface Timing Diagram
+
+8.7 Typical Characteristics
+Table 8-1. Table of Figures
+FIGURECharging Efficiency vs Charging Current (DCR = 10 m?)Figure 8-2System Efficiency vs System Load Current (DCR = 10 m?)Figure 8-3Boost Mode Efficiency vs VBUS Load Current (DCR = 10 m?)Figure 8-4SYS Voltage Regulation vs System Load CurrentFigure 8-5Boost Mode VBUS Voltage Regulation (Typical Output = 4.998 V, REG06[7:4] = 0111) vs VBUS Load CurrentFigure 8-6SYS Voltage vs TemperatureFigure 8-7BAT Voltage vs TemperatureFigure 8-8Input Current Limit vs TemperatureFigure 8-9Charge Current vs Package TemperatureFigure 8-10
+8.7 Typical Characteristics (continued)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Figure 8-2. Charge Efficiency vs Charge Current	Figure 8-3. System Efficiency vs System Load Current
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Figure 8-4. Boost Mode Efficiency vs VBUS Load Current	Figure 8-5. SYS Voltage Regulation vs System Load Current
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Typical Output = 4.998 V, REG06[7:4] = 0111
+Figure 8-6. Boost Mode VBUS Voltage Regulation vs VBUS Load Current
+
+Figure 8-7. SYS Voltage vs Temperature
+
+8.7 Typical Characteristics (continued)
+
+VREG = 4.208V
+VREG = 4.35V
+9 Detailed Description
+9.1 Overview
+The BQ24296, BQ24297 is an I2C controlled power path management device and a single cell Li-Ion battery charger. It integrates the input reverse-blocking FET (RBFET, Q1), high-side switching FET (HSFET, Q2), low-side switching FET (LSFET, Q3), and battery FET (BATFET, Q4) between system and battery. The device also integrates the bootstrap diode for the high-side gate drive.
+
+9.2 Functional Block Diagram
+1.1 
+VBUS
+
+
+
+
+
+
+
+VVBUS_UVLOZ
+
+
+
+
+
+
+UVLO
+
+
+
+RBFET (Q1)
+
+
+PMID
+
+
+
+
+
+VBATZ+VSLEEP
+
+
+
+
+
+
+VACOV
+
+
+SLEEP
+
+
+
+ACOV
+
+
+
+
+
+EN_HIZ
+
+
+
+REGN LDO
+
+
+
+
+
+
+
+
+
+FBO
+
+
+REGN
+
+
+BTST
+
+
+
+
+
+
+
+
+
+
+VINDPM
+
+
+
+
+
+IINDPM
+
+
+   VBUS VOTG _OVP 
+
+     I(Q2) IOTG_HSZCP
+
+     I(Q3) IOTG_LSOCP
+
+
+VBUS_OVP_BOOST
+
+
+Q2_UCP_BOOST
+
+
+Q3_OCP_BOOST
+
+
+
+
+
+
+
+
+
+
+CONVERTER CONTROL
+
+
+
+
+
+
+
+HSFET (Q2)
+
+IC TJ TREG
+
+BAT
+   104%xVBAT_REG  BAT
+I
+
+BATOVP
+
+REGN
+
+
+LSFET (Q3)
+
+
+
+  SYS VSYSMIN
+
+ VBAT_REG
+
+
+
+
+
+ICHG_REG
+
+LSFET_UCP
+I(Q3) 
+
+UCP
+
+
+EN_HIZ
+
+
+Q2_OCP
+
+I(Q2)
+  IHSFET_OCP
+
+VBTST-SW
+
+EN_CHARGE
+EN_BOOST
+
+REFRESH
+VBTST_REFRESH
+
+
+
+ 
+
+ICHG
+
+
+
+
+
+
+
+
+ILIM
+
+
+
+REF DAC
+
+
+
+
+
+
+
+CONVERTER CONTROL
+
+
+
+
+
+BAD_SRC
+
+
+
+
+
+
+
+IBADSRC IDC
+
+IC TJ
+
+VBAT_REG ICHG_REG
+
+
+Q4 Gate Control
+
+
+
+BATFET (Q4)
+
+
+
+
+
+
+
+BAT
+
+D+ (BQ24297)
+
+
+USB Host
+ 
+STATE MACHINE
+
+ TSHUT 	T
+
+
+SHUT
+
+D– (BQ24297)
+PSEL(BQ24296)
+OTG
+
+INT
+
+Adapter
+Detection
+
+
+USB
+Adapter
+
+BAT_GD
+
+
+ RECHRG
+
+BAT
+ VBATGD
+
+VBAT_REG - VRECHG
+ BAT
+
+
+BQ24296/297
+
+QON
+
+
+
+STAT
+
+PG(BQ24296)
+
+
+
+
+
+
+
+I2C
+Interface
+
+
+CHARGE CONTROL STATE MACHINE
+
+TERMINATION
+
+SUSPEND BATLOWV
+
+BATSHORT
+
+ICHG
+ ITERM
+
+
+VBATLOWV BAT
+VSHORT BAT
+
+
+BATTERY
+THERMISTER	TS
+SENSING
+
+
+
+SCL  SDA	CE
+
+9.3 Feature Description
+9.3.1 Device Power Up
+9.3.1.1 Power-On-Reset (POR)
+The internal bias circuits are powered from the higher voltage of VBUS and BAT. When VBUS or VBAT rises above UVLOZ, the sleep comparator, battery depletion comparator and BATFET driver are active. I2C interface is ready for communication and all the registers are reset to default value. The host can access all the registers after POR.
+9.3.1.2 Power Up from Battery without DC Source
+If only battery is present and the voltage is above depletion threshold (VBAT_DEPL), the BATFET turns on and connects battery to system. The REGN LDO stays off to minimize the quiescent current. The low RDSON in BATFET and the low quiescent current on BAT minimize the conduction loss and maximize the battery run time. During both boost and charge mode, the device always monitors the discharge current through BATFET. When the system is overloaded or shorted, the device will immediately turn off BATFET and keep BATFET off until the input source plugs in again.
+9.3.1.2.1 BATFET Turn Off
+The BATFET can be forced off by the host through I2C REG07[5] . This bit allows the user to independently turn off the BATFET when the battery condition becomes abnormal during charging. When BATFET is off, there is no path to charge or discharge the battery. When battery is not attached, the BATFET should be turned off by setting REG07[5] to 1 to disable charging and supplement mode.
+9.3.1.2.2 Shipping Mode
+To extend battery life and minimize power when system is powered off during system idle, shipping, or storage, the device can turn off BATFET so that the system voltage is zero to minimize the leakage. The BATFET can be turned off by setting REG07[5] (BATFET_DISABLE) bit.
+In order to keep BATFET off during shipping mode, the host has to disable the watchdog timer (REG05[5:4] = 00) and disable BATFET (REG07[5] = 1) at the same time. Once the BATFET is disabled, one of the following events can turn on BATFET and clear REG07[5] (BATFET_DISABLE) bit.
+1. Plug in adapter
+2. Write REG07[5] = 0
+3. watchdog timer expiration
+4. Register reset (REG01[7] = 1)
+5. A logic low to high transition on QON pin (refer to Figure 9-1 for detail timing)
+
+
+
+QON
+
+Min. 2ms
+
+
+
+
+
+
+
+BATFET Status
+Turn off by i2c command REG07[5]=1
+
+
+9.3.1.3 Power Up from DC Source
+
+Turn on by QON REG07[5]=0
+
+
+Figure 9-1. QON Timing
+
+When the DC source plugs in, the charger device checks the input source voltage to turn on REGN LDO and all the bias circuits. It also checks the input current limit before starts the buck converter.
+
+9.3.1.3.1 REGN LDO
+The REGN LDO supplies internal bias circuits as well as the HSFET and LSFET gate drive. The LDO also provides bias rail to TS external resistors. The pull-up rail of STAT and PG (BQ24296) can be connected to REGN as well.
+The REGN is enabled when all the conditions are valid.
+1. VBUS above VVBUS_UVLOZ
+2. VBUS above VBAT + VSLEEPZ in buck mode or VBUS below VBAT + VSLEEP in boost mode
+3. After typical 220-ms delay (100 ms minimum) is complete
+If one of the above conditions is not valid, the device is in high impedance mode (HIZ) with REGN LDO off. The device draws less than IVBUS (15 µA typical) from VBUS during HIZ state. The battery powers up the system when the device is in HIZ.
+9.3.1.3.2 Input Source Qualification
+After REGN LDO powers up, the device checks the current capability of the input source. The input source has to meet the following requirements to start the buck converter.
+1. VBUS voltage below VACOV (not in VBUS over-voltage)
+2. VBUS voltage above VBADSRC (3.8 V typical) when pulling IBADSRC (30 mA typical) (poor source detection)
+
+Once the input source passes all the conditions above, the status register REG08[2] goes high and the PG pin (BQ24296) goes low. An INT is asserted to the host.
+If the device fails the poor source detection, it will repeat the detection every 2 seconds.
+9.3.1.3.3 Input Current Limit Detection
+The USB ports on personal computers are convenient charging source for portable devices (PDs). If the portable device is attached to a USB host, the USB specification requires the portable device to draw limited current (100 mA/500 mA in USB 2.0, and 150 mA/900 mA in USB 3.0). If the portable device is attached to a charging port, it is allowed to draw up to 3 A.
+
+After the PG is LOW (BQ24296) or REG08[2] goes HIGH, the charger device always runs input current limit detection when a DC source plugs in unless the charger is in HIZ during host mode.
+The BQ24297 follows Battery Charging Specification 1.2 (BC1.2) to detect input source through USB D+/D- lines. The BQ24296 sets input current limit through PSEL and OTG pins. After the input current limit detection is done, the detection result is reported in VBUS_STAT registers (REG08[7:6]) and input current limit is updated in IINLIM register (REG00[2:0]). In additon, host can write to REG00[2:0] to change the input current limit.
+9.3.1.3.4 D+/D– Detection Sets Input Current Limit (BQ24297)
+The BQ24297 contains a D+/D– based input source detection to program the input current limit. The D+/D- detection has three steps: data contact detect (DCD), primary detection, and non-standard adapter detection. When the charging source passes data contact detect, the device would proceed to run primary detection. Otherwise the charger would proceed to run non-standard adapter detection.
+
+D+
+
+VDP_SRC
+
+
+VLGC_HI
+IDP_SRC
+
+CHG_DET
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Figure 9-2. USB D+/D- Detection
+DCD (Data Contact Detection) uses a current source to detect when the D+/D– pins have made contact during an attach event. The protocol for data contact detect is as follows:
+• Detect VBUS present and REG08[2] = 1 (power good)
+• Turn on D+ IDP_SRC and the D– pull-down resistor RDM_DWN for 40 ms
+• If the USB connector is properly attached, the D+ line goes from HIGH to LOW, wait up to 0.5 sec.
+• Turn off IDP_SRC and disconnect RDM_DWN
+The primary detection is used to distinguish between USB host (Standard Down Stream Port, or SDP) and different type of charging ports (Charging Down Stream Port, or CDP, and Dedicated Charging Port, or DCP). The protocol for primary detection is as follows:
+• Turn on VDP_SRC on D+ and IDM_SINK on D– for 40 ms
+• If PD is attached to a USB host (SDP), the D– is low. If PD is attached to a charging port (CDP or DCP), the D– is high
+• Turn off VDP_SRC and IDM_SINK
+Table 9-1 shows the input current limit setting after D+/D– detection.
+Table 9-1. BQ24297 USB D+/D– Detection
+D+/D– DETECTIONOTGINPUT CURRENT LIMITREG08[7:6]0.5 sec timer expired in DCD (D+/D- floating)—Proceed to non-standard adapter detection00USB hostLOW100 mA01USB hostHIGH500 mA01Charging port—3 A10
+When DCD 0.5 sec timer expires, the non-standard adapter detection is used to distinguish three different divider bias conditions on D+/D- pins. When non-standard adapter is detected, the input current limit (REG0[2:0]) is set based on the table shown below and REG08[7:6] is set to 10 (Adapter port). If non-standard adapter is not detected, REG08[7:6] is set to 00 (Unknown) and the input current limit is set in REG0[2:0] to 500 mA by default.
+
+Table 9-2. BQ24297 Non-Standard Adapter Detection
+NON- STANDARD ADAPTER
+D+ THRESHOLD
+D- THRESHOLDINPUT CURRENT LIMITDivider 1Vadpt1_lo < VD+ < Vadpt1_hi
+For VBUS = 5 V, typical range 2.4 V < VD+ < 3.1 VVD- < Vadpt1_lo or VD- > Vadpt1_hi
+For VBUS = 5 V, typical range VD- < 2.4 V or VD- >
+3.1 V2.0ADivider 2Vadpt2_lo < VD+ < Vadpt2_hi
+For VBUS = 5 V, typical range 0.85 V < VD+ < 1.5 VNA2.0ADivider 3VD+< Vadpt3_lo or VD+> Vadpt3_hi
+For VBUS = 5 V, typical range VD+ < 2.4 V or VD+ > 3.1 VVadpt3_lo < VD- < Vadpt3_hi
+For VBUS = 5 V, typical range 2.4 V < VD- < 3.1 V1A
+After D+/D- detection is completed with an input source already plugged in, the input current limit is not changed unless DPDM_EN (REG07[7]) bit is set to force detection.
+9.3.1.3.5 PSEL/OTG Pins Set Input Current Limit
+The BQ24296 has PSEL instead of D+/D-. It directly takes the USB PHY device output to decide whether the input is USB host or charging port.
+Table 9-3. BQ24296 Input Current Limit Detection
+PSELOTGINPUT CURRENT LIMITREG08[7:6]HIGHLOW100 mA01HIGHHIGH500 mA01LOW—3 A109.3.1.3.6 HIZ State with 100mA USB Host
+In battery charging spec, the good battery threshold is the minimum charge level of a battery to power up the portable device successfully. When the input source is 100-mA USB host, and the battery is above bat-good threshold (VBATGD), the device follows battery charging spec and enters high impedance state (HIZ). In HIZ state, the device is in the lowest quiescent state with REGN LDO and the bias circuits off. The charger device sets REG00[7] to 1, and the VBUS current during HIZ state will be less than 30 µA. The system is supplied by the battery.
+Once the charger device enters HIZ state in host mode, it stays in HIZ until the host writes REG00[7] = 0. When the processor host wakes up, it is recommended to first check if the charger is in HIZ state.
+In default mode, the charger IC will reset REG00[7] back to 0 when input source is removed. When another source plugs in, the charger IC will run detection again, and update the input current limit.
+9.3.1.3.7 Force Input Current Limit Detection
+While adapter is plugged-in, the host can force the charger device to run input current limit detection by setting REG07[7] = 1 or when watchdog timeout. During the forced detection, the input current limit is set to 100 mA. After the detection is completed, REG07[7] will return to 0 by itself and new input current limit is set based on D+/D- (BQ24297) or PSEL/OTG (BQ24296).
+9.3.1.4 Converter Power-Up
+After the input current limit is set, the converter is enabled and the HSFET and LSFET start switching. If battery charging is disabled, BATFET turns off. Otherwise, BATFET stays on to charge the battery.
+The device provides soft-start when ramp up the system rail. When the system rail is below 2.2 V, the input current limit is forced to 100mA. After the system rises above 2.2 V, the charger device sets the input current limit set by the lower value between register and ILIM pin.
+As a battery charger, the charger deploys a 1.5-MHz step-down switching regulator. The fixed frequency oscillator keeps tight control of the switching frequency under all conditions of input voltage, battery voltage, charge current and temperature, simplifying output filter design.
+
+A type III compensation network allows using ceramic capacitors at the output of the converter. An internal saw-tooth ramp is compared to the internal error control signal to vary the duty cycle of the converter. The ramp height is proportional to the PMID voltage to cancel out any loop gain variation due to a change in input voltage.
+In order to improve light-load efficiency, the device switches to PFM control at light load when battery is below minimum system voltage setting or charging is disabled. During the PFM operation, the switching duty cycle is set by the ratio of SYS and VBUS.
+9.3.1.5 Boost Mode Operation from Battery
+The device supports boost converter operation to deliver power from the battery to other portable devices through USB port. The boost mode output current rating meets the USB On-The-Go 1-A output requirement. The maximum output current is 1.5 A. The boost operation can be enabled if the following conditions are valid:
+1. BAT above BATLOWV threshold (VBATLOWV set by REG04[1])
+2. VBUS less than VBAT + VSLEEP (in sleep mode)
+3. Boost mode operation is enabled (OTG pin HIGH and REG01[5:4] = 10)
+4. Thermistor Temperature is within boost mode temperature monitor threshold unless BHOT[1:0] is set to 11 (REG06[1:0]) to disable this monitor function
+5. After 30ms delay from boost mode enable
+In boost mode, the device employs a 1.5-MHz step-up switching regulator. Similar to buck operation, the device switches from PWM operation to PFM operation at light load to improve efficiency.
+During boost mode, the status register REG08[7:6] is set to 11, the VBUS output is 5 V and the output current can reach up to 1 A or 1.5 A, selected via I2C (REG01[0]). In addition, the device provides adjustable boost voltage from 4.55 V to 5.5 V by changing BOOSTV bits in REG06[7:4]
+Any fault during boost operation, including VBUS over-voltage or over-current, sets the fault register REG09[6] to 1 and an INT is asserted.
+9.3.2 Power Path Management
+The device accommodates a wide range of input sources from USB, wall adapter, to car battery. The device provides automatic power path selection to supply the system (SYS) from input source (VBUS), battery (BAT), or both.
+9.3.2.1 Narrow VDC Architecture
+The device deploys Narrow VDC architecture (NVDC) with BATFET separating system from battery. The minimum system voltage is set by REG01[3:1]. Even with a fully depleted battery, the system is regulated above the minimum system voltage (default 3.5 V).
+When the battery is below minimum system voltage setting, the BATFET operates in linear mode (LDO mode), and the system is 150 mV above the minimum system voltage setting. As the battery voltage rises above the minimum system voltage, BATFET is fully on and the voltage difference between the system and battery is the VDS of BATFET.
+When the battery charging is disabled or terminated, the system is always regulated at 150 mV above the minimum system voltage setting. The status register REG08[0] goes high when the system is in minimum system voltage regulation.
+
+4.5
+4.3
+
+
+SYS (V)
+
+4.1
+
+3.9
+3.7
+
+3.5
+3.3
+3.1
+2.7 2.9 3.1 3.3 3.5 3.7 3.9 4.1 4.3
+BAT (V)
+Figure 9-3. V(SYS) vs V(BAT)
+9.3.2.2 Dynamic Power Management
+To meet maximum current limit in USB spec and avoid over loading the adapter, the device features Dynamic Power Management (DPM), which continuously monitors the input current and input voltage.
+When input source is over-loaded, either the current exceeds the input current limit (REG00[2:0]) or the voltage falls below the input voltage limit (REG00[6:3]). The device then reduces the charge current until the input current falls below the input current limit and the input voltage rises above the input voltage limit.
+When the charge current is reduced to zero, but the input source is still overloaded, the system voltage starts to drop. Once the system voltage falls below the battery voltage, the device automatically enters the supplement mode where the BATFET turns on and battery starts discharging so that the system is supported from both the input source and battery.
+During DPM mode (either VINDPM or IINDPM), the status register REG08[3] will go high.
+Figure 9-4 shows the DPM response with 5-V/1.2-A adapter, 3.2-V battery, 2.0-A charge current and 3.4-V minimum system voltage setting.
+
+
+Voltage
+5V
+
+
+VBUS
+
+
+
+
+3.6V
+3.4V
+3.2V
+3.18V
+
+
+Current
+3A
+2.3A
+2.0A
+
+1.5A
+1.0A
+0.5A
+
+SYS BAT
+
+
+
+
+
+ICHG
+
+
+IIN
+
+
+
+-0.7A
+
+
+DPM
+
+
+
+Supplement
+
+
+DPM
+
+Figure 9-4. DPM Response
+
+9.3.2.3 Supplement Mode
+When the system voltage falls below the battery voltage, the BATFET turns on and the BATFET gate is regulated the gate drive of BATFET so that the minimum BATFET VDS stays at 30 mV when the current is low. This prevents oscillation from entering and exiting the supplement mode. As the discharge current increases, the BATFET gate is regulated with a higher voltage to reduce RDSON until the BATFET is in full conduction. At this point onwards, the BATFET VDS linearly increases with discharge current. Figure 9-5 shows the V-I curve of the BATFET gate regulation operation. BATFET turns off to exit supplement mode when the battery is below battery depletion threshold.
+3.0
+2.5
+
+2.0
+1.5
+1.0
+0.5
+0
+0	10  20  30  40  50  60  70  80
+V(BAT-SYS) (mV)
+Figure 9-5. BATFET V-I Curve
+9.3.3 Battery Charging Management
+The device charges 1-cell Li-Ion battery with up to 3-A charge current for high capacity tablet battery. The 24-m? BATFET improves charging efficiency and minimizes the voltage drop during discharging.
+9.3.3.1 Autonomous Charging Cycle
+With battery charging enabled at POR (REG01[5:4] = 01), the charger device complete a charging cycle without host involvement. The device default charging parameters are listed in the following table.
+Table 9-4. Charging Parameter Default Setting
+DEFAULT MODEBQ24296 / BQ24297Charging voltage4.208 VCharging current2.048 APre-charge current256 mATermination current256 mATemperature profileHot/ColdSafety timer12 hours(1)(1)	See Charging Safety Timer for more information.
+A new charge cycle starts when the following conditions are valid:
+• Converter starts
+• Battery charging is enabled by I2C register bit (REG01[5:4]) = 01 and CE is low
+• No thermistor fault on TS
+• No safety timer fault
+• BATFET is not forced to turn off (REG07[5])
+The charger device automatically terminates the charging cycle when the charging current is below termination threshold and charge voltage is above recharge threshold. When a full battery voltage is discharged below recharge threshold (REG04[0]), the device automatically starts another charging cycle. After the charge done, either toggle CE pin or REG01[5:4] will initiate a new charging cycle.
+
+The STAT output indicates the charging status of charging (LOW), charging complete or charge disable (HIGH) or charging fault (Blinking). The status register REG08[5:4] indicates the different charging phases: 00-charging disable, 01-precharge, 10-fast charge (constant current) and constant voltage mode, 11-charging done. Once a charging cycle is complete, an INT is asserted to notify the host.
+The host can always control the charging operation and optimize the charging parameters by writing to the registers through I2C.
+9.3.3.2 Battery Charging Profile
+The device charges the battery in three phases: preconditioning, constant current and constant voltage. At the beginning of a charging cycle, the device checks the battery voltage and applies current.
+Table 9-5. Charging Current Setting
+VBATCHARGING CURRENTREG DEFAULT SETTINGREG08[5:4]VBAT < VSHORT
+(Typical 2 V)100 mA–01VSHORT ? VBAT < VBATLOWV
+(Typical 2 V ? VBAT < 3 V)REG03[7:4]256 mA01VBAT ? VBATLOWV
+(Typical VBAT ? 3 V)REG02[7:2]2048 mA10
+If the charger device is in DPM regulation or thermal regulation during charging, the actual charging current will be less than the programmed value. In this case, termination is temporarily disabled and the charging safety timer is counted at half the clock rate.
+
+Regulation Voltage
+(3.5V – 4.4V)
+Fast Charge Current (500mA-3008mA)
+
+
+
+VBAT_LOWV (2.8V/3V)
+
+
+VBAT_SHORT (2V)
+
+
+IPRECHARGE (128mA-2048mA)
+ITERMINATION (128mA-2048mA)
+IBATSHORT (100mA)
+
+
+
+
+
+9.3.3.3 Thermistor Qualification
+
+
+Figure 9-6. Battery Charging Profile
+
+Expiration
+
+The charger device provides a single thermistor input for battery temperature monitor.
+9.3.3.3.1 Cold/Hot Temperature Window
+The device continuously monitors battery temperature by measuring the voltage between the TS pin and ground, typically determined by a negative temperature coefficient thermistor and an external voltage divider. The device compares this voltage against its internal thresholds to determine if charge or boost is allowed.
+
+To initiate a charge cycle, the battery temperature must be within the VLTF to VHTF thresholds. During the charge cycle the battery temperature must be within the VLTF to VTCO thresholds, else the device suspends charging and waits until the battery temperature is within the VLTF to VHTF range.
+For battery protection during boost mode, the device monitors the battery temperature to be within the VBCOLDx to VBHOTx thresholds unless boost mode temperature is disabled by setting BHOT bits (REG06[3:2]) to 11. When temperature is outside of the temperature thresholds, the boost mode is suspended and REG08[7:6] bits (VBUS_STAT) are set to 00. Once temperature returns within thresholds, the boost mode is recovered.
+
+
+
+
+
+
+
+
+RTH 103AT
+
+
+
+Figure 9-7. TS Resistor Network
+When the TS fault occurs, the fault register REG09[2:0] indicates the actual condition on each TS pin and an INT is asserted to the host. The STAT pin indicates the fault when charging is suspended.
+
+
+
+
+
+VREGN
+
+
+VLTF VLTFH
+
+TEMPERATURE RANGE TO INITIATE CHARGE
+ 
+TEMPERATURE RANGE DURING A CHARGE CYCLE
+
+
+
+
+VREGN
+
+
+VLTF VLTFH
+
+
+
+
+
+
+VHTF
+
+
+
+
+AGND
+
+VTCO AGND
+
+Figure 9-8. TS Pin Thermistor Sense Thresholds in Charge Mode
+
+
+
+VREGN
+
+
+V BCOLDx
+(-10ºC / -20ºC)
+
+Temperature Range to Boost
+
+
+Boost Disable
+
+
+
+Boost Enable
+
+V BHOTx
+(55ºC / 60ºC / 65ºC)
+
+Boost Disable
+
+AGND
+Figure 9-9. TS Pin Thermistor Sense Thresholds in Boost Mode
+Assuming a 103AT NTC thermistor is used on the battery pack Figure 9-8, the value RT1 and RT2 can be determined by using the following equation:
+
+
+
+V	?RTH
+
+
+?RTH
+
+?	1	1	?
+?	?
+
+REGN	COLD	HOT  ? V	V	?
+
+RT2 ?
+
+
+RTH
+
+
+? ? VREGN ?
+
+?
+* RTH
+
+?  LTF	TCO ?
+* ? VREGN ? ?
+* 
+HOT
+
+?	1?
+? VTCO	?
+
+COLD
+
+?	1?
+? VLTF	?
+
+
+
+
+
+RT1 ?
+
+VREGN ? 1 VLTF
+
+1	1
+?
+RT2	RTHCOLD
+
+
+
+
+
+(1)
+
+Select 0°C to 45°C range for Li-ion or Li-polymer battery, RTHCOLD = 27.28 k?
+RTHHOT = 4.911 k? RT1 = 5.25 k?
+RT2 = 31.23 k?
+9.3.3.4 Charging Termination
+The device terminates a charge cycle when the battery voltage is above recharge threshold, and the current is below termination current. After the charging cycle is complete, the BATFET turns off. The converter keeps running to power the system, and BATFET can turn back on to engage supplement mode.
+When termination occurs, the status register REG08[5:4] is 11, and an INT is asserted to the host. Termination is temporarily disabled if the charger device is in input current/voltage regulation or thermal regulation. Termination can be disabled by writing 0 to REG05[7].
+9.3.3.4.1 Termination When REG02[0] = 1
+When REG02[0] is HIGH to reduce the charging current by 80%, the charging current could be less than the termination current. The charger device termination function should be disabled. When the battery is charged to fully capacity, the host disables charging through CE pin or REG01[5:4].
+
+9.3.3.5 Charging Safety Timer
+The device has safety timer to prevent extended charging cycle due to abnormal battery conditions. The safety timer is 4 hours when the battery is below batlowv threshold. The user can program fast charge safety timer (default 12 hours) through I2C (REG05[2:1]). When safety timer expires, the fault register REG09[5:4] goes 11 and an INT is asserted to the host. The safety timer feature can be disabled via I2C (REG05[3]).
+The following actions restart the safety timer after safety timer expires:
+
+• Toggle the CE pin HIGH to LOW to HIGH (charge enable)
+• Write REG01[5:4] from 00 to 01 (charge enable)
+• Write REG05[3] from 0 to 1 (safety timer enable)
+During input voltage/current regulation, thermal regulation, or FORCE_20PCT bit (REG02[0]) is set , the safety timer counting at half clock rate since the actual charge current is likely to be below the register setting. For example, if the charger is in input current regulation (IINDPM) throughout the whole charging cycle, and the safety time is set to 5 hours, the safety timer will expire in 10 hours. This feature can be disabled by writing 0 to REG07[6].
+9.3.3.5.1 Safety Timer Configuration Change
+When safety timer value needs to be changed, it is recommended that the timer is disabled first before new configuration is written to REG05[2:1]. The safety timer can be disable by writing 1 to REG05[3]. This ensures the safety timer restart counting after new value is configured.
+9.3.3.6 USB Timer When Charging from USB100mA Source
+The total charging time in default mode from USB100mA source is limited by a 45-min max timer. At the end of the timer, the device stops the converter and goes to HIZ.
+
+9.3.4 Status Outputs (PG, STAT, and INT)
+
+9.3.4.1 Power Good Indicator ( PG) (BQ24296)
+
+In BQ24296, PG goes LOW to indicate a good input source when:
+1. VBUS above VBUS_UVLO
+2. VBUS above battery (not in sleep)
+3. VBUS below VACOV threshold
+4. VBUS above VBUS_MIN when IBADSRC current is applied (not a poor source)
+9.3.4.2 Charging Status Indicator (STAT)
+The device indicates charging state on the open drain STAT pin. The STAT pin can drive LED as the application diagram shows.
+Table 9-6. STAT Pin State
+CHARGING STATESTATCharging in progress (including recharge)LOWCharging completeHIGHSleep mode, charge disableHIGHCharge suspend (Input over-voltage, TS fault, timer fault, input or system over-voltage)blinking at 1Hz9.3.4.3 Interrupt to Host (INT)
+In some applications, the host does not always monitor the charger operation. The INT notifies the system on the device operation. The following events will generate a 256-µs INT pulse.
+1. USB/adapter source identified (through PSEL or DPDM detection, and OTG pin)
+2. Good input source detected
+• not in sleep
+• VBUS below VACOV threshold
+• 
+• current limit above IBADSRC
+3. Input removed or VBUS above VACOV threshold
+4. Charge Complete
+5. Any FAULT event in REG09
+For the first four events, INT pulse is always generated. For the last event, when a fault occurs, the charger device sends out INT and latches the fault state in REG09 until the host reads the fault register. If a prior fault exists, the charger device would not send any INT upon new faults except NTC fault (REG09[2:0]). The NTC fault is not latched and always reports the current thermistor conditions. In order to read the current fault status, the host has to read REG09 two times consecutively. The 1st reads fault register status from the last read and the 2nd reads the current fault register status.
+9.3.5 Protections
+9.3.5.1 Input Current Limit on ILIM
+For safe operation, the device has an additional hardware pin on ILIM to limit maximum input current on ILIM pin. The input maximum current is set by a resistor from ILIM pin to ground as:
+
+
+IINMAX
+
+
+? 1V RILIM
+
+
+?KLIM
+
+
+
+(2)
+
+The actual input current limit is the lower value between ILIM setting and register setting (REG00[2:0]). For example, if the register setting is 111 for 3 A, and ILIM has a 316-? resistor to ground for 1.5 A, the input current limit is 1.5 A. ILIM pin can be used to set the input current limit rather than the register settings.
+The device regulates ILIM pin at 1 V. If ILIM voltage exceeds 1 V, the device enters input current regulation (Refer to Dynamic Power Path Management section).
+The voltage on ILIM pin is proportional to the input current. ILIM pin can be used to monitor the input current following Equation 3:
+I	? VILIM ?I
+
+IN	1V
+
+INMAX
+
+(3)
+
+For example, if ILIM pin sets 2 A, and the ILIM voltage is 0.75 V, the actual input current 1.5 A. If ILIM pin is open, the input current is limited to zero since ILIM voltage floats above 1 V. If ILIM pin is short, the input current limit is set by the register.
+9.3.5.2 Thermal Regulation and Thermal Shutdown
+During charge operation, the device monitors the internal junction temperature TJ to avoid overheat the chip and limits the IC surface temperature. When the internal junction temperature exceeds the preset limit (REG06[1:0]), the device lowers down the charge current. The wide thermal regulation range from 60°C to 120°C allows the user to optimize the system thermal performance.
+During thermal regulation, the actual charging current is usually below the programmed battery charging current. Therefore, termination is disabled, the safety timer runs at half the clock rate, and the status register REG08[1] goes high.
+Additionally, the device has thermal shutdown to turn off the converter. The fault register REG09[5:4] is 10 and an INT is asserted to the host.
+9.3.5.3 Voltage and Current Monitoring in Buck Mode
+The device closely monitors the input and system voltage, as well as HSFET current for safe buck mode operation.
+
+9.3.5.3.1 Input Over-Voltage (ACOV)
+The maximum input voltage for buck mode operation is VVBUS_OP. If VBUS voltage exceeds VACOV, the device stops switching immediately. During input over voltage (ACOV), the fault register REG09[5:4] will be set to 01. An INT is asserted to the host.
+9.3.5.3.2 System Over-Voltage Protection (SYSOVP)
+The charger device clamps the system voltage during load transient so that the components connect to system would not be damaged due to high voltage. When SYSOVP is detected, the converter stops immediately to clamp the overshoot.
+9.3.5.4 Voltage and Current Monitoring in Boost Mode
+The charger device closely monitors the VBUS voltage, as well as LSFET current to ensure safe boost mode operation.
+9.3.5.4.1 Over-Current Protection
+The charger device closely monitors the RBFET (Q1) and LSFET (Q3) current to ensure safe boost mode operation. During over-current condition, the device will operate in hiccup mode for protection. While in hiccup mode cycle, the device turns off RBFET for tOTG_OCP_OFF (32 ms typical) and turns on RBFET for tOTG_OCP_ON (260 us typical) in an attempt to restart. If the over-current condition is removed, the boost converter will maintain the RBFET on state and the VBUS OTG output will operate normally. When over-current condition continues to exist, the device will repeat the hiccup cycle until over-current condition is removed. When over-current condition is detected, the fault register bit BOOST_FAULT (REG09[6]) is set high to indicate fault in boost operation. An INT is asserted to the host.
+9.3.5.4.2 VBUS Over-Voltage Protection
+When an adapter plugs in during boost mode, the VBUS voltage will rise above regulation target. Once the VBUS voltage exceeds VOTG_OVP, the device stops switching and the device exits boost mode. During the over-voltage, the fault register bit BOOST_FAULT (REG09[6]) is set high to indicate fault in boost operation. An INT is asserted to the host.
+9.3.5.5 Battery Protection
+9.3.5.5.1 Battery Over-Voltage Protection (BATOVP)
+The battery over-voltage limit is clamped at VBAT_OVP (4% nominal) above the battery regulation voltage. When battery over voltage occurs, the charger device immediately disables charge. The fault register REG09[3] goes high and an INT is asserted to the host.
+9.3.5.5.2 Battery Short Protection
+If the battery voltage falls below Vshort (2V typical), the device immediately turns off BATFET to disable the battery charging or supplement mode. 1ms later, the BATFET turns on and charge the battery with 100-mA current. The device does not turn on BATFET to discharge a battery that is below 2.5 V.
+9.3.5.5.3 System Over-Current Protection
+If the system is shorted or exceeds the over-current limit, the device latches off BATFET. DC source insertion on VBUS is required to reset the latch-off condition and turn on BATFET.
+9.4 Device Functional Modes
+9.4.1 Host Mode and Default Mode
+The device is a host controlled device, but it can operate in default mode without host management. In default mode, the device can be used as an autonomous charger with no host or with host in sleep.
+When the charger is in default mode, REG09[7] is HIGH. When the charger is in host mode, REG09[7] is LOW. After power-on-reset, the device starts in watchdog timer expiration state, or default mode. All the registers are in the default settings. The device keeps charging the battery by default with 12-hour fast charging safety timer. At the end of the 12 hours, the charging is stopped and the buck converter continues to operate to supply system load.
+
+Any write command to device transitions the device from default mode to host mode. All the device parameters can be programmed by the host. To keep the device in host mode, the host has to reset the watchdog timer by writing 1 to REG01[6] before the watchdog timer expires (REG05[5:4]), or disable watchdog timer by setting REG05[5:4] = 00.
+When the host changes watchdog timer configuration (REG05[5:4]), it is recommended to first disable watchdog by writing 00 to REG05[5:4] and then change the watchdog to new timer values. This ensures the watchdog timer is restarted after new value is written.
+
+Figure 9-10. Watchdog Timer Flow Chart
+9.4.1.1 Plug in USB100mA Source with Good Battery
+When the input source is detected as 100mA USB host, and the battery voltage is above batgood threshold (VBATGD), the charger device enters HIZ state to meet the battery charging spec requirement.
+If the charger device is in host mode, it will stay in HIZ state even after the USB100mA source is removed, and the adapter plugs in. During the HIZ state, REG00[7] is set HIGH and the system load is supplied from battery. It is recommended that the processor host always checks if the charger IC is in HIZ state when it wakes up. The host can write REG00[7] to 0 to exit HIZ state.
+If the charger is in default mode, when the DC source is removed, the charger device will get out of HIZ state automatically. When the input source plugs in again, the charger IC runs detection on the input source and update the input current limit.
+9.4.1.2 USB Timer When Charging from USB100mA Source
+The total charging time in default mode from USB100mA source is limited by a 45-min max timer. At the end of the timer, the device stops the converter and goes to HIZ.
+9.5 Programming
+9.5.1 Serial Interface
+The device uses I2C compatible interface for flexible charging parameter programming and instantaneous device status reporting. I2C is a bi-directional 2-wire serial interface developed by Philips Semiconductor (now NXP Semiconductors). Only two bus lines are required: a serial data line (SDA) and a serial clock line (SCL). Devices can be considered as hosts or targets when performing data transfers. A host is the device which initiates a data transfer on the bus and generates the clock signals to permit that transfer. At that time, any device addressed is considered a target.
+
+The device operates as a target device with address 6BH, receiving control inputs from the host device like microcontroller or a digital signal processor. The I2C interface supports both standard mode (up to 100 kbits), and fast mode (up to 400 kbits).
+Both SDA and SCL are bi-directional lines, connecting to the positive supply voltage via a current source or pull-up resistor. When the bus is free, both lines are HIGH. The SDA and SCL pins are open drain.
+9.5.1.1 Data Validity
+The data on the SDA line must be stable during the HIGH period of the clock. The HIGH or LOW state of the data line can only change when the clock signal on the SCL line is LOW. One clock pulse is generated for each data bit transferred.
+
+
+
+SDA
+
+
+
+
+
+SCL
+
+
+Data line stable; Data valid
+
+Change of data allowed
+
+Figure 9-11. Bit Transfer on the I2C Bus
+9.5.1.2 START and STOP Conditions
+All transactions begin with a START (S) and can be terminated by a STOP (P). A HIGH to LOW transition on the SDA line while SCl is HIGH defines a START condition. A LOW to HIGH transition on the SDA line when the SCL is HIGH defines a STOP condition.
+START and STOP conditions are always generated by the host. The bus is considered busy after the START condition, and free after the STOP condition.
+
+
+
+SDA
+
+
+
+
+
+SCL
+
+SDA
+
+
+
+
+
+SCL
+
+
+
+START (S)	STOP (P)
+Figure 9-12. START and STOP Conditions
+9.5.1.3 Byte Format
+Every byte on the SDA line must be 8 bits long. The number of bytes to be transmitted per transfer is unrestricted. Each byte has to be followed by an Acknowledge bit. Data is transferred with the Most Significant Bit (MSB) first. If a target cannot receive or transmit another complete byte of data until it has performed some other function, it can hold the clock line SCL low to force the host into a wait state (clock stretching). Data transfer then continues when the target is ready for another byte of data and release the clock line SCL.
+
+
+Acknowledgement
+
+Acknowledgement
+
+
+
+
+
+SCL
+
+
+
+START or
+Repeated START
+
+1	2	7	8	9
+ACK
+
+1	2	8	9
+ACK
+
+
+
+STOP or Repeate d START
+
+Figure 9-13. Data Transfer on the I2C Bus
+9.5.1.4 Acknowledge (ACK) and Not Acknowledge (NACK)
+The acknowledge takes place after every byte. The acknowledge bit allows the receiver to signal the transmitter that the byte was successfully received and another byte may be sent. All clock pulses, including the acknowledge 9th clock pulse, are generated by the host.
+The transmitter releases the SDA line during the acknowledge clock pulse so the receiver can pull the SDA line LOW and it remains stable LOW during the HIGH period of this clock pulse.
+When SDA remains HIGH during the 9th clock pulse, this is the Not Acknowledge signal. The host can then generate either a STOP to abort the transfer or a repeated START to start a new transfer.
+9.5.1.5 Target Address and Data Direction Bit
+After the START, a target address is sent. This address is 7 bits long followed by the eighth bit as a data direction bit (bit R/W). A zero indicates a transmission (WRITE) and a one indicates a request for data (READ).
+
+
+
+SDA
+
+
+
+SCL
+
+
+START
+
+
+ADDRESS	R/W
+
+
+ACK
+
+
+DATA
+
+
+ACK
+
+
+DATA
+
+
+ACK
+
+
+STOP
+
+Figure 9-14. Complete Data Transfer
+
+9.5.1.5.1 Single Read and Write
+
+
+STarget Addr0ACKReg AddrACKData to AddrACKP
+Figure 9-15. Single Write
+
+
+STarget Addr0ACKReg AddrACKSTarget Addr1ACK
+
+
+DataNCKP
+Figure 9-16. Single Read
+If the register address is not defined, the charger IC send back NACK and go back to the idle state.
+
+9.5.1.5.2 Multi-Read and Multi-Write
+The charger device supports multi-read and multi-write on REG00 through REG08.
+
+
+STarget Addr0ACKReg AddrACK
+
+
+Figure 9-17. Multi-Write
+
+
+STarget Addr0ACKReg AddrACKSTarget Addr1ACK
+
+
+Figure 9-18. Multi-Read
+The fault register REG09 locks the previous fault and only clears it after the register is read. For example, if Charge Safety Timer Expiration fault occurs but recovers later, the fault register REG09 reports the fault when it is read the first time, but returns to normal when it is read the second time. To verify real time fault, the fault register REG09 should be read twice to get the real condition. In addition, the fault register REG09 does not support multi-read or multi-write.
+REG09 is a fault register. It keeps all the fault information from last read until the host issues a new read. For example, if there is a TS fault but gets recovered immediately, the host still sees TS fault during the first read. In order to get the fault information at present, the host has to read REG09 for the second time. REG09 does not support multi-read and multi-write.
+
+9.6 Register Map
+9.6.1 I2C Registers
+Address: 6BH. REG00-07 support Read and Write. REG08-0A are Read only.
+9.6.1.1 Input Source Control Register REG00 [reset = 00110xxx, or 3x]
+Figure 9-19. Input Source Control Register REG00 Format
+76543210EN_HIZVINDPM[3]VINDPM[2]VINDPM[1]VINDPM[0]IINLIM[2]IINLIM[1]IINLIM[0]R/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-7. Input Source Control Register REG00 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTEBit 7EN_HIZR/W00 – Disable, 1 – EnableDefault: Disable (0)Input Voltage LimitBit 6VINDPM[3]R/W0640 mVOffset 3.88 V, Range: 3.88 V – 5.08 V
+Default: 4.36 V (0110)Bit 5VINDPM[2]R/W1320 mVBit 4VINDPM[1]R/W1160 mVBit 3VINDPM[0]R/W080 mVInput Current Limit (Actual input current limit is the lower of I2C and ILIM)Bit 2IINLIM[2]R/Wx000 – 100 mA, 001 – 150 mA,
+010 – 500 mA, 011 – 900 mA, 100 – 1 A,
+101 – 1.5 A,
+110 – 2 A, 111 – 3ABQ24296
+PSEL = Lo : 3 A (111)
+PSEL = Hi : 100 mA (000) (OTG pin = Lo) or
+500 mA (OTG pin = Hi) BQ24297
+Default SDP : 100 mA (000) (OTG pin = Lo) or 500 mA (OTG pin = Hi)
+Default DCP/CDP: 3 A (111)
+Default Divider 1 and 2 : 2 A (110)
+Default Divider 3 : 1 A (100)Bit 1IINLIM[1]R/WxBit 0IINLIM[0]R/Wx
+9.6.1.2 Power-On Configuration Register REG01 [reset = 00011011, or 0x1B]
+Figure 9-20. Power-On Configuration Register REG01 Format
+76543210Register ResetI2C Watchdog Timer ResetOTG_CONFIGCHG_CONFIGSYS_MIN[2]SYS_MIN[1]SYS_MIN[0]BOOST_LIMR/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-8. Power-On Configuration Register REG01 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTEBit 7Register ResetR/W00 – Keep current register setting,
+1 – Reset to defaultDefault: Keep current register setting (0) Note: Register Reset bit does not reset device to default modeBit 6I2C Watchdog Timer ResetR/W00 – Normal ; 1 – ResetDefault: Normal (0)
+Note: Consecutive I2C watchdog timer reset requires minimum 20-µs delayCharger ConfigurationBit 5OTG_CONFIGR/W00 – OTG Disable; 1 – OTG Enable(1)Default: OTG disable (0)
+Note: OTG_CONFIG would over-ride Charge Enable Function in CHG_CONFIGBit 4CHG_CONFI GR/W10- Charge Disable; 1- Charge Enable(1)Default: Charge Battery (1)Minimum System Voltage LimitBit 3SYS_MIN[2]R/W10.4 VOffset: 3.0 V, Range 3.0 V – 3.7 V
+Default: 3.5 V (101)Bit 2SYS_MIN[1]R/W00.2 VBit 1SYS_MIN[0]R/W10.1 VBoost Mode Current LimitBit 0BOOST_LIMR/W10 – 1 A, 1 – 1.5 ADefault: 1.5 A (1)(1)	The CHG_CONFIG and OTG_CONFIG bits cannot be set at the same time.
+
+9.6.1.3 Charge Current Control Register REG02 [reset = 01100000, or 60]
+Figure 9-21. Charge Current Control Register REG02 Format
+76543210ICHG[5]ICHG[4]ICHG[3]ICHG[2]ICHG[1]ICHG[0]BCOLDFORCE_20PCTR/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-9. Charge Current Control Register REG02 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTEFast Charge Current LimitBit 7ICHG[5]R/W02048 mAOffset: 512 mA
+Range: 512 – 3008 mA (000000 –
+100111)
+Default: 2048 mA (011000)
+Note: ICHG higher than 3008mA is not supportedBit 6ICHG[4]R/W11024 mABit 5ICHG[3]R/W1512 mABit 4ICHG[2]R/W0256 mABit 3ICHG[1]R/W0128 mABit 2ICHG[0]R/W064 mABit 1BCOLDR/W0Set Boost Mode temperature monitor threshold voltage to disable boost mode 0 – Vbcold0 (Typ. 76% of REGN or -10°C w/ 103AT thermistor )
+1 – Vbcold1 (Typ. 79% of REGN or -20°C w/ 103AT thermistor)Default: Vbcold0 (0)Bit 0FORCE_20PCTR/W00 – ICHG as Fast Charge
+Current (REG02[7:2]) and IPRECH as Pre-Charge Current (REG03[7:4]) programmed
+1 – ICHG as 20% Fast Charge Current (REG02[7:2]) and IPRECH as
+50% Pre-Charge Current (REG03[7:4]) programmedDefault: ICHG as Fast Charge Current (REG02[7:2]) and IPRECH as Pre-Charge Current (REG03[7:4]) programmed (0)
+9.6.1.4 Pre-Charge/Termination Current Control Register REG03 [reset = 00010001, or 0x11]
+Figure 9-22. Pre-Charge/Termination Current Control Register REG03 Format
+76543210IPRECHG[3]IPRECHG[2]IPRECHG[1]IPRECHG[0]ITERM[3]ITERM[2]ITERM[1]ITERM[0]R/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-10. Pre-Charge/Termination Current Control Register REG03 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTEPre-Charge Current LimitBit 7IPRECHG[3]R/W01024 mAOffset: 128 mA,
+Range: 128 mA – 2048 mA
+Default: 256 mA (0001)Bit 6IPRECHG[2]R/W0512 mABit 5IPRECHG[1]R/W0256 mABit 4IPRECHG[0]R/W1128 mATermination Current LimitBit 3ITERM[3]R/W01024 mAOffset: 128 mA
+Range: 128 mA – 2048 mA
+Default: 256 mA (0001)Bit 2ITERM[2]R/W0512 mABit 1ITERM[1]R/W0256 mABit 0ITERM[0]R/W1128 mA
+9.6.1.5 Charge Voltage Control Register REG04 [reset = 10110010, or 0xB2]
+Figure 9-23. Charge Voltage Control Register REG04 Format
+76543210VREG[5]VREG[4]VREG[3]VREG[2]VREG[1]VREG[0]BATLOWVVRECHGR/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-11. Charge Voltage Control Register REG04 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTECharge Voltage LimitBit 7VREG[5]R/W1512 mVOffset: 3.504 V
+Range: 3.504 V – 4.400 V
+Default: 4.208 V (101100)Bit 6VREG[4]R/W0256 mVBit 5VREG[3]R/W1128 mVBit 4VREG[2]R/W164 mVBit 3VREG[1]R/W032 mVBit 2VREG[0]R/W016 mVBit 1BATLOWVR/W10 – 2.8 V, 1 – 3.0 VDefault: 3.0 V (1) (pre-charge to fast charge)Battery Recharge Threshold (below battery regulation voltage)Bit 0VRECHGR/W00 – 100 mV, 1 – 300 mVDefault: 100 mV (0)9.6.1.6 Charge Termination/Timer Control Register REG05 [reset = 10011010, or 0x9A]
+Figure 9-24. Charge Termination/Timer Control Register REG05 Format
+76543210EN_TERMReservedWATCHDOG[1]WATCHDOG[0]EN_TIMERCHG_TIMER[1]CHG_TIMER[0]ReservedR/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-12. Charge Termination/Timer Control Register REG05 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTECharging Termination EnableBit 7EN_TERMR/W10 – Disable, 1 – EnableDefault: Enable termination (1)Bit 6ReservedR/W00 - ReservedI2C Watchdog Timer SettingBit 5WATCHDOG[1]R/W000 – Disable timer, 01 – 40 s, 10 –
+80 s, 11 – 160 sDefault: 40 s (01)Bit 4WATCHDOG[0]R/W1Charging Safety Timer EnableBit 3EN_TIMERR/W10 – Disable, 1 – EnableDefault: Enable (1)Fast Charge Timer SettingBit 2CHG_TIMER[1]R/W100 – 5 hrs, 01 – 8 hrs, 10 – 12 hrs,
+11 – 20 hrsDefault: 12 hrs (10)
+(See Charging Safety Timer for details)Bit 1CHG_TIMER[0]R/W0Bit 0ReservedR/W00 - Reserved
+9.6.1.7 Boost Voltage/Thermal Regulation Control Register REG06 [reset = 01110011, or 0x73]
+Figure 9-25. Boost Voltage/Thermal Regulation Control Register REG06 Format
+76543210BOOSTV[3]BOOSTV[2]BOOSTV[1]BOOSTV[0]BHOT[1]BHOT[0]TREG[1]TREG[0]R/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-13. Boost Voltage/Thermal Regulation Control Register REG06 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTEBit 7BOOSTV[3]R/W0512 mVOffset: 4.55 V
+Range: 4.55 V – 5.51 V
+Default:4.998 V (0111)Bit 6BOOSTV[2]R/W1256 mVBit 5BOOSTV[1]R/W1128 mVBit 4BOOSTV[0]R/W164 mVBit 3BHOT[1]R/W0Set Boost Mode temperature monitor threshold voltage to disable boost mode
+Voltage to disable boost mode
+00 – Vbhot1 (33% of REGN or 55°C w/ 103AT thermistor)
+01 – Vbhot0 (36% of REGN or 60°C w/ 103AT thermistor)
+10 – Vbhot2 (30% of REGN or 65°C w/ 103AT thermistor)
+11 – Disable boost mode thermal protection.Default: Vbhot1 (00)
+Note: For BHOT[1:0] = 11, boost mode operates without temperature monitor and the NTC_FAULT is generated based on Vbhot1 thresholdBit 2BHOT[0]R/W0Thermal Regulation ThresholdBit 1TREG[1]R/W100 – 60°C, 01 – 80°C, 10 – 100°C, 11 – 120°CDefault: 120°C (11)Bit 0TREG[0]R/W1
+9.6.1.8 Misc Operation Control Register REG07 [reset = 01001011, or 4B]
+Figure 9-26. Misc Operation Control Register REG07 Format
+76543210DPDM_ENTMR2X_ENBATFET_DisableReservedReservedReservedINT_MASK[1]INT_MASK[0]R/WR/WR/WR/WR/WR/WR/WR/WLEGEND: R/W = Read/Write
+Table 9-14. Misc Operation Control Register REG07 Field Description
+BITFIELDTYPERESETDESCRIPTIONNOTEForce DPDM detectionBit 7IINDET_ENR/W00 – Not in Input current limit detection;
+1 – Force Input current limit detection when VBUS power is presenceDefault: Not in Input current limit detection (0), Back to 0 after detection completeSafety Timer Setting during Input DPM and Thermal RegulationBit 6TMR2X_ENR/W10 – Safety timer not slowed by 2X during input DPM or thermal regulation,
+1 – Safety timer slowed by 2X during input DPM or thermal regulationDefault: Safety timer slowed by 2X (1)Force BATFET OffBit 5BATFET_DisableR/W00 – Allow BATFET (Q4) turn on,
+1 – Turn off BATFET (Q4)Default: Allow BATFET (Q4) turn on(0)Bit 4ReservedR/W00 - ReservedBit 3ReservedR/W11 - ReservedBit 2ReservedR/W00 - ReservedBit 1INT_MASK[1]R/W10 – No INT during CHRG_FAULT,
+1 – INT on CHRG_FAULTDefault: INT on CHRG_FAULT (1)Bit 0INT_MASK[0]R/W10 – No INT during BAT_FAULT,
+1 – INT on BAT_FAULTDefault: INT on BAT_FAULT (1)9.6.1.9 System Status Register REG08
+Figure 9-27. System Status Register REG08 Format
+76543210VBUS_STAT[1]VBUS_STAT[0]CHRG_STAT[1]CHRG_STAT[0]DPM_STATPG_STATTHERM_STATVSYS_STATRRRRRRRRLEGEND: R = Read only
+Table 9-15. System Status Register REG08 Field Description
+BITFIELDTYPEDESCRIPTIONBit 7VBUS_STAT[1]R00 – Unknown (no input, or DPDM detection incomplete), 01 – USB host, 10 – Adapter port, 11 – OTGBit 6VBUS_STAT[0]RBit 5CHRG_STAT[1]R00 – Not Charging, 01 – Pre-charge (<VBATLOWV), 10 – Fast Charging, 11 – Charge Termination DoneBit 4CHRG_STAT[0]RBit 3DPM_STATR0 – Not DPM, 1 – VINDPM or IINDPMBit 2PG_STATR0 – Not Power Good, 1 – Power GoodBit 1THERM_STATR0 – Normal, 1 – In Thermal Regulation
+Table 9-15. System Status Register REG08 Field Description (continued)
+BITFIELDTYPEDESCRIPTIONBit 0VSYS_STATR0 – Not in VSYSMIN regulation (BAT > VSYSMIN), 1 – In VSYSMIN regulation (BAT < VSYSMIN)9.6.1.10 New Fault Register REG09
+Figure 9-28. New Fault Register REG09 Format
+76543210WATCHDOG_ FAULTOTG_FAULTCHRG_FAULT[1]CHRG_FAULT[0]BAT_FAULTReservedNTC_FAULT[1]NTC_FAULT[0]RRRRRRRRLEGEND: R = Read only
+Table 9-16. New Fault Register REG09 Field Description(1) (2) (3)
+BITFIELDTYPEDESCRIPTIONBit 7WATCHDOG_FAULTR0 – Normal, 1- Watchdog timer expirationBit 6OTG_FAULTR0 – Normal, 1 – VBUS overloaded in OTG, or VBUS OVP, or battery is too low (any conditions that cannot start boost function)Bit 5CHRG_FAULT[1]R00 – Normal, 01 – Input fault (OVP or bad source), 10 - Thermal shutdown, 11 – Charge Timer ExpirationBit 4CHRG_FAULT[0]RBit 3BAT_FAULTR0 – Normal, 1 – Battery OVPBit 2ReservedRReserved – 0Bit 1NTC_FAULT[1]R0-Normal 1–Cold Note: Cold temperature threshold is different based on device operates in buck or boost modeBit 0NTC_FAULT[0]R0-Normal 1–Hot Note: Hot temperature threshold is different based on device operates in buck or boost mode(1) REG09 only supports single byte I2C read.
+(2) All register bits in REG09 are latched fault. First time read of REG09 clears the previous fault and second read updates fault register to any fault that still presents.
+(3) When adapter is unplugged, input fault (bad source) in CHRG_FAULT bits[5:4] is set to 01 once.
+9.6.1.11 Vender / Part / Revision Status Register REG0A
+Figure 9-29. Vender / Part / Revision Status Register REG0A Format
+76543210PN[2]PN[1]PN[0]ReservedReservedRev[2]Rev[1]Rev[0]RRRRRRRRLEGEND: R = Read only
+Table 9-17. Vender / Part / Revision Status Register REG0A Field Description
+BITFIELDTYPEDESCRIPTIONBit 7PN[2]R001 (BQ24296)
+011 (BQ24297)Bit 6PN[1]RBit 5PN[0]RBit 4ReservedR0 – ReservedBit 3ReservedR0 – ReservedBit 2Rev[2]R000Bit 1Rev[1]RBit 0Rev[0]R
+10 Application and Implementation
+
+Note
+Information in the following applications sections is not part of the TI component specification, and TI does not warrant its accuracy or completeness. TI’s customers are responsible for determining suitability of components for their purposes, as well as validating and testing their design implementation to confirm system functionality.
+
+10.1 Application Information
+The BQ24296 and BQ24297 evaluation module (EVM) PWR021 is a complete charger module for evaluating the BQ24296 and BQ24297. The application curves were taken using the BQ24296/297 VM-021.
+10.2 Typical Application
+
+VREF is the pull up voltage of I2C communication interface.
+Figure 10-1. BQ24296 with PSEL from PHY, Charging from SDP/DCP, and Optional BATFET Enable Interface
+
+
+
+VREF is the pull up voltage of I2C communication interface.
+Figure 10-2. BQ24297 with USB D+/D- Detection, USB On-The-Go (OTG) and Optional BATFET Enable Interface
+10.2.1 Design Requirements
+Table 10-1. Design Requirements
+DESIGN PARAMATEREXAMPLE VALUEInput voltage range3.9 V to 6.2 VInput current limit3000 mAFast charge current3000 mABoost mode output current1.5 A10.2.2 Detailed Design Procedure
+10.2.2.1 Inductor Selection
+The device has 1.5-MHz switching frequency to allow the use of small inductor and capacitor values. The Inductor saturation current should be higher than the charging current (ICHG) plus half the ripple current (IRIPPLE):
+
+
+ISAT ?
+
+ICHG ?
+
+?1/ 2? IRIPPLE
+
+
+(4) ?
+(1) 
+The inductor ripple current depends on input voltage (VBUS), duty cycle (D = VBAT/VVBUS), switching frequency (fs) and inductance (L):
+
+
+
+IRIPPLE
+
+? VIN ?D ? (1? D)
+?s ?L
+
+
+
+(5) ?
+(1) 
+The maximum inductor ripple current happens with D = 0.5 or close to 0.5. Usually inductor ripple is designed in the range of (20 – 40%) maximum charging current as a trade-off between inductor size and efficiency for a practical design.
+
+10.2.2.2 Input Capacitor
+Input capacitor should have enough ripple current rating to absorb input switching ripple current. The worst case RMS ripple current is half of the charging current when duty cycle is 0.5. If the converter does not operate at 50% duty cycle, then the worst case capacitor RMS current ICIN occurs where the duty cycle is closest to 50% and can be estimated by the following equation:
+
+
+ICIN ? ICHG ?
+(6) 
+?
+(1) 
+For best performance, VBUS should be decouple to PGND with 1-?F capacitance. The remaining input capacitor should be place on PMID.
+Low ESR ceramic capacitor such as X7R or X5R is preferred for input decoupling capacitor and should be placed to the drain of the high side MOSFET and source of the low side MOSFET as close as possible. Voltage rating of the capacitor must be higher than normal input voltage level. 25-V rating or higher capacitor is preferred for 15-V input voltage. 22-?F capacitance is suggested for typical of 3-A to 4-A charging current.
+10.2.2.3 Output Capacitor
+Output capacitor also should have enough ripple current rating to absorb output switching ripple current. The output capacitor RMS current ICOUT is given:
+I	? IRIPPLE ? 0.29 ?I
+
+COUT	RIPPLE
+(7) 
+?
+(1) 
+The output capacitor voltage ripple can be calculated as follows:
+
+
+
+?VO ?
+
+
+VOUT
+
+?
+2 ?1?
+
+VOUT ?
+
+
+8LC?s ?
+
+VIN ?
+
+?	?	(8)
+
+At certain input/output voltage and switching frequency, the voltage ripple can be reduced by increasing the output filter LC.
+The charger device has internal loop compensator. To get good loop stability, the resonant frequency of the output inductor and output capacitor should be designed between 15 kHz and 36 kHz. The preferred ceramic capacitor is 6 V or higher rating, X7R or X5R.
+
+10.2.3 Application Performance Plots
+
+
+
+
+
+
+VBUS
+5V/div
+
+
+REGN
+5V/div
+
+
+SYS
+2V/div
+IVBUS
+100mA/div
+
+100ms/div
+VBAT = 3.2 V
+Figure 10-3. BQ24296 Power Up with Charge Enabled
+
+
+
+
+VBUS
+5V/div
+
+
+REGN
+5V/div
+
+
+
+SYS
+2V/div
+IBAT
+2A/div
+100ms/div
+VBAT = 3.2 V
+Figure 10-4. BQ24297 Power Up with Charge Enabled
+
+
+
+
+VBUS
+5V/div
+
+
+REGN
+5V/div
+
+
+
+
+SYS
+2V/div IBAT
+2A/div
+100ms/div
+VBAT = 3.2 V
+Figure 10-5. BQ24297 Power Up with Charge Disabled
+
+
+
+
+STAT
+2V/div
+
+
+CE
+2V/div
+
+
+SW
+5V/div
+
+
+IBAT
+1A/div
+200?s/div
+VBAT = 5 V
+Figure 10-6. Charge Enable
+
+
+STAT
+2V/div
+
+
+CE
+5V/div
+
+
+SW
+5V/div
+
+
+
+IBAT
+1A/div
+
+4?s/div
+Figure 10-7. Charge Disable
+
+
+
+
+
+
+
+
+IL
+1A/div
+
+
+
+
+
+SW
+2V/div
+
+
+400ns/div
+VBUS = 5 V, No Battery, ISYS = 40 mA, Charge Disable
+Figure 10-8. PWM Switching in Buck Mode
+
+
+
+SYS3p7
+100mV/div
+
+
+
+
+
+
+
+
+SW
+2V/div
+
+
+IL
+1A/div
+
+
+4?s/div
+VBUS = 5 V, VBAT = 3.6 V, ICHG = 2.5 A
+Figure 10-9. PFM Switching in Buck Mode
+SYS3p5
+500mV/div
+
+
+
+
+
+
+ISYS
+2A/div
+
+
+
+
+
+IVBUS
+2A/div
+
+
+2ms/div
+VBUS = 5 V, IIN = 3 A, No Battery, Charge Disable
+Figure 10-10. Input Current DPM Response without Battery
+
+SYS3p8
+500mV/div
+
+
+
+
+ISYS
+2A/div
+
+IBAT
+2A/div IVBUS
+2A/div
+
+
+
+
+20ms/div
+VBUS = 5 V, IIN = 1.5 A, VBAT = 3.8 V
+Figure 10-11. Load Transient During Supplement Mode
+
+
+
+
+
+
+
+
+SW
+2V/div
+IL
+1A/div
+
+
+
+
+
+
+400ns/div
+VBAT = 3.8 V, ILOAD = 1 A
+Figure 10-12. Boost Mode Switching
+
+
+VBUS
+200mV/div
+
+IBAT
+1A/div
+
+
+
+
+
+
+
+IVBUS
+1A/div
+
+
+4ms/div
+VBAT = 3.8 V
+Figure 10-13. Boost Mode Load Transient
+11 Power Supply Recommendations
+In order to provide an output voltage on SYS, the BQ24296/297 require a power supply between 3.9 V and
+6.2 V input with at least 100-mA current rating connected to VBUS; or, a single-cell Li-Ion battery with voltage > VBATUVLO connected to BAT. The source current rating needs to be at least 3 A in order for the buck converter of the charger to provide maximum output power to SYS.
+
+12 Layout
+12.1 Layout Guidelines
+The switching node rise and fall times should be minimized for minimum switching loss. Proper layout of the components to minimize high frequency current path loop (see Figure 12-1) is important to prevent electrical and magnetic field radiation and high frequency resonant problems. Here is a PCB layout priority list for proper layout. Layout PCB according to this specific order is essential.
+1. Place input capacitor as close as possible to PMID pin and GND pin connections and use shortest copper trace connection or GND plane.
+2. Place inductor input pin to SW pin as close as possible. Minimize the copper area of this trace to lower electrical and magnetic field radiation but make the trace wide enough to carry the charging current. Do not use multiple layers in parallel for this connection. Minimize parasitic capacitance from this area to any other trace or plane.
+3. Put output capacitor near to the inductor and the IC. Ground connections need to be tied to the IC ground with a short copper trace connection or GND plane.
+4. Route analog ground separately from power ground. Connect analog ground and connect power ground separately. Connect analog ground and power ground together using thermal pad as the single ground connection point. Or using a 0? resistor to tie analog ground to power ground.
+5. Use single ground connection to tie charger power ground to charger analog ground. Just beneath the IC. Use ground copper pour but avoid power pins to reduce inductive and capacitive noise coupling.
+6. Decoupling capacitors should be placed next to the IC pins and make trace connection as short as possible.
+7. It is critical that the exposed thermal pad on the backside of the IC package be soldered to the PCB ground. Ensure that there are sufficient thermal vias directly under the IC, connecting to the ground plane on the other layers.
+8. The via size and number should be enough for a given current path.
+See the EVM design for the recommended component placement with trace and via locations. For the VQFN information, refer to Quad Flatpack No-Lead Logic Packages Application Report and QFN and SON PCB Attachment Application Report.
+
+Figure 12-1. High Frequency Current Path
+
+12.2 Layout Example
+
+
+
+
+
+PGND PGND
+
+VBUS
+
+
+CPMID
+
+CREGN CBTST
+RBTST
+
+
+
+
+
+L
+PGND
+
+
+
+
+Top layer
+2nd layer (PGND)
+
+
+
+PIN1	PGND
+
+CSYS
+
+
+
+
+
+
+CBAT
+PGND
+
+
+
+VSYS VBAT
+PGND
+
+	via
+
+
+
+PGND on Top layer
+
+
+Figure 12-2. Layout Example
+
+13 Device and Documentation Support
+13.1 Device Support
+13.1.1 Third-Party Products Disclaimer
+TI'S PUBLICATION OF INFORMATION REGARDING THIRD-PARTY PRODUCTS OR SERVICES DOES NOT CONSTITUTE AN ENDORSEMENT REGARDING THE SUITABILITY OF SUCH PRODUCTS OR SERVICES OR A WARRANTY, REPRESENTATION OR ENDORSEMENT OF SUCH PRODUCTS OR SERVICES, EITHER ALONE OR IN COMBINATION WITH ANY TI PRODUCT OR SERVICE.
+13.2 Documentation Support
+13.2.1 Related Documentation
+BQ24296/7 EVM (PWR021) User’s Guide
+Quad Flatpack No-Lead Logic Packages Application Report QFN/SON PCB Attachment Application Report
+13.3 Receiving Notification of Documentation Updates
+To receive notification of documentation updates, navigate to the device product folder on ti.com. Click on Subscribe to updates to register and receive a weekly digest of any product information that has changed. For change details, review the revision history included in any revised document.
+13.4 Support Resources
+TI E2E™ support forums are an engineer's go-to source for fast, verified answers and design help — straight from the experts. Search existing answers or ask your own question to get the quick design help you need.
+Linked content is provided "AS IS" by the respective contributors. They do not constitute TI specifications and do not necessarily reflect TI's views; see TI's Terms of Use.
+13.5 Trademarks
+TI E2E™ is a trademark of Texas Instruments.
+All trademarks are the property of their respective owners.
+13.6 Electrostatic Discharge Caution
+This integrated circuit can be damaged by ESD. Texas Instruments recommends that all integrated circuits be handled with appropriate precautions. Failure to observe proper handling and installation procedures can cause damage.
+ESD damage can range from subtle performance degradation to complete device failure. Precision integrated circuits may be more susceptible to damage because very small parametric changes could cause the device not to meet its published specifications.
+
+13.7 Glossary
+TI Glossary	This glossary lists and explains terms, acronyms, and definitions.
+
+14 Mechanical, Packaging, and Orderable Information
+The following pages include mechanical packaging and orderable information. This information is the most current data available for the designated devices. This data is subject to change without notice and revision of this document. For browser-based versions of this data sheet, refer to the left-hand navigation.
+
+PACKAGE OPTION ADDENDUM
+
+www.ti.com	27-Jun-2025
+
+
+
+PACKAGING INFORMATION
+
+Orderable part numberStatus
+(1)Material type
+(2)Package | PinsPackage qty | CarrierRoHS
+(3)Lead finish/ Ball material
+(4)MSL rating/ Peak reflow
+(5)Op temp (°C)Part marking
+(6)BQ24296RGERActiveProductionVQFN (RGE) | 243000 | LARGE T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24296BQ24296RGER.AActiveProductionVQFN (RGE) | 243000 | LARGE T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24296BQ24296RGER.BActiveProductionVQFN (RGE) | 243000 | LARGE T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24296BQ24296RGETActiveProductionVQFN (RGE) | 24250 | SMALL T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24296BQ24296RGET.AActiveProductionVQFN (RGE) | 24250 | SMALL T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24296BQ24296RGET.BActiveProductionVQFN (RGE) | 24250 | SMALL T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24296BQ24297RGERActiveProductionVQFN (RGE) | 243000 | LARGE T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24297BQ24297RGER.AActiveProductionVQFN (RGE) | 243000 | LARGE T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24297BQ24297RGER.BActiveProductionVQFN (RGE) | 243000 | LARGE T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24297BQ24297RGETActiveProductionVQFN (RGE) | 24250 | SMALL T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24297BQ24297RGET.AActiveProductionVQFN (RGE) | 24250 | SMALL T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24297BQ24297RGET.BActiveProductionVQFN (RGE) | 24250 | SMALL T&RYesNIPDAULevel-2-260C-1 YEAR-40 to 85BQ 24297(1) Status: For more details on status, see our product life cycle.
+
+(2) Material type: When designated, preproduction parts are prototypes/experimental devices, and are not yet approved or released for full production. Testing and final process, including without limitation quality assurance, reliability performance testing, and/or process qualification, may not yet be complete, and this item is subject to further changes or possible discontinuation. If available for ordering, purchases will be subject to an additional waiver at checkout, and are intended for early internal evaluation purposes only. These items are sold without warranties of any kind.
+
+(3) RoHS values: Yes, No, RoHS Exempt. See the TI RoHS Statement for additional information and value definition.
+
+
+Addendum-Page 1
+
+PACKAGE OPTION ADDENDUM
+
+www.ti.com	27-Jun-2025
+
+
+
+
+(4) Lead finish/Ball material: Parts may have multiple material finish options. Finish options are separated by a vertical ruled line. Lead finish/Ball material values may wrap to two lines if the finish value exceeds the maximum column width.
+
+(5) MSL rating/Peak reflow: The moisture sensitivity level ratings and peak solder (reflow) temperatures. In the event that a part has multiple moisture sensitivity ratings, only the lowest level per JEDEC standards is shown. Refer to the shipping label for the actual reflow temperature that will be used to mount the part to the printed circuit board.
+
+(6) Part marking: There may be an additional marking, which relates to the logo, the lot trace code information, or the environmental category of the part.
+
+Multiple part markings will be inside parentheses. Only one part marking contained in parentheses and separated by a "~" will appear on a part. If a line is indented then it is a continuation of the previous line and the two combined represent the entire part marking for that device.
+
+Important Information and Disclaimer:The information provided on this page represents TI's knowledge and belief as of the date that it is provided. TI bases its knowledge and belief on information provided by third parties, and makes no representation or warranty as to the accuracy of such information. Efforts are underway to better integrate information from third parties. TI has taken and continues to take reasonable steps to provide representative and accurate information but may not have conducted destructive testing or chemical analysis on incoming materials and chemicals. TI and TI suppliers consider certain information to be proprietary, and thus CAS numbers and other limited information may not be available for release.
+
+In no event shall TI's liability arising out of such information exceed the total purchase price of the TI part(s) at issue in this document sold by TI to Customer on an annual basis.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Addendum-Page 2
+
+PACKAGE MATERIALS INFORMATION
+
+www.ti.com	30-May-2024
+
+TAPE AND REEL INFORMATION
+
+REEL DIMENSIONS	TAPE DIMENSIONS
+
+
+
+
+
+
+
+A0Dimension designed to accommodate the component widthB0Dimension designed to accommodate the component lengthK0Dimension designed to accommodate the component thicknessWOverall width of the carrier tapeP1Pitch between successive cavity centers
+Reel Width (W1)
+QUADRANT ASSIGNMENTS FOR PIN 1 ORIENTATION IN TAPE
+Sprocket Holes
+
+
+Q1	Q2	Q1	Q2
+
+Q3	Q4	Q3	Q4	User Direction of Feed
+
+
+Pocket Quadrants
+
+
+*All dimensions are nominal
+DevicePackage TypePackage DrawingPinsSPQReel Diameter (mm)Reel Width W1 (mm)A0
+(mm)B0
+(mm)K0
+(mm)P1
+(mm)W
+(mm)  Pin1 QuadrantBQ24296RGERVQFNRGE243000330.012.44.254.251.158.012.0Q2BQ24296RGETVQFNRGE24250180.012.44.254.251.158.012.0Q2BQ24297RGERVQFNRGE243000330.012.44.254.251.158.012.0Q2BQ24297RGETVQFNRGE24250180.012.44.254.251.158.012.0Q2
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Pack Materials-Page 1
+
+PACKAGE MATERIALS INFORMATION
+
+www.ti.com	30-May-2024
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+*All dimensions are nominal
+DevicePackage TypePackage DrawingPinsSPQLength (mm)Width (mm)Height (mm)BQ24296RGERVQFNRGE243000346.0346.033.0BQ24296RGETVQFNRGE24250210.0185.035.0BQ24297RGERVQFNRGE243000346.0346.033.0BQ24297RGETVQFNRGE24250210.0185.035.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Pack Materials-Page 2
+
+GENERIC PACKAGE VIEW
+RGE 24	VQFN - 1 mm max height
+PLASTIC QUAD FLATPACK - NO LEAD
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Images above are just a representation of the package family, actual package may vary. Refer to the product data sheet for package details.
+
+4204104/H
+
+
+
+
+4.1
+3.9
+
+PLASTIC QUAD FLATPACK- NO LEAD
+
+A
+
+
+
+
+
+
+
+
+
+PIN 1 INDEX AREA
+
+4.1
+3.9
+
+
+
+
+
+
+
+
+
+
+
+
+
+1 MAX	C
+
+
+
+0.05
+0.00
+
+
+
+
+2.7±0.1
+2X 2.5
+7	12
+
+SEATING PLANE
+
+0.08C
+
+
+
+
+
+
+TYP
+
+
+
+20X 0.5
+6
+
+
+
+
+
+2X
+2.5
+
+
+
+13
+
+
+
+
+25	S
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+NOTES:
+
+1
+
+    PIN 1 ID (OPTIONAL)
+
+
+
+
+24
+SYMM
+
+18
+
+
+19
+0.48
+0.28
+
+
+
+
+
+
+
+
+4219016 / A 08/2017
+
+
+1. All linear dimensions are in millimeters. Any dimensions in parenthesis are for reference only. Dimensioning and tolerancing per ASME Y14.5M.
+2. This drawing is subject to change without notice.
+3. The package thermal pad must be soldered to the printed circuit board for thermal and mechanical performance.
+1. 
+
+RGE0024H
+
+EXAMPLE BOARD LAYOUT
+VQFN - 1 mm max height
+PLASTIC QUAD FLATPACK- NO LEAD
+
+
+
+NOTES: (continued)
+
+4. This package is designed to be soldered to a thermal pad on the board. For more information, see Texas Instruments literature number SLUA271 (www.ti.com/lit/slua271).
+5. Solder mask tolerances between and around signal pads can vary based on board fabrication site.
+
+
+
+
+
+www.ti.com
+
+PLASTIC QUAD FLATPACK- NO LEAD
+NOTES: (continued)
+
+6. Laser cutting apertures with trapezoidal walls and rounded corners may offer better paste release. IPC-7525 may have alternate design recommendations..
+1. 
+IMPORTANT NOTICE AND DISCLAIMER
+TI PROVIDES TECHNICAL AND RELIABILITY DATA (INCLUDING DATA SHEETS), DESIGN RESOURCES (INCLUDING REFERENCE DESIGNS), APPLICATION OR OTHER DESIGN ADVICE, WEB TOOLS, SAFETY INFORMATION, AND OTHER RESOURCES “AS IS” AND WITH ALL FAULTS, AND DISCLAIMS ALL WARRANTIES, EXPRESS AND IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT OF THIRD PARTY INTELLECTUAL PROPERTY RIGHTS.
+These resources are intended for skilled developers designing with TI products. You are solely responsible for (1) selecting the appropriate TI products for your application, (2) designing, validating and testing your application, and (3) ensuring your application meets applicable standards, and any other safety, security, regulatory or other requirements.
+These resources are subject to change without notice. TI grants you permission to use these resources only for development of an application that uses the TI products described in the resource. Other reproduction and display of these resources is prohibited. No license is granted to any other TI intellectual property right or to any third party intellectual property right. TI disclaims responsibility for, and you will fully indemnify TI and its representatives against, any claims, damages, costs, losses, and liabilities arising out of your use of these resources.
+TI’s products are provided subject to TI’s Terms of Sale or other applicable terms available either on ti.com or provided in conjunction with such TI products. TI’s provision of these resources does not expand or otherwise alter TI’s applicable warranties or warranty disclaimers for TI products.
+TI objects to and rejects any additional or different terms you may have proposed.
+
+Mailing Address: Texas Instruments, Post Office Box 655303, Dallas, Texas 75265 Copyright © 2025, Texas Instruments Incorporated
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

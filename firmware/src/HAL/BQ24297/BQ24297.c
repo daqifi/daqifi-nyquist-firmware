@@ -5,6 +5,7 @@
 #include "BQ24297.h"
 #include "Util/Logger.h"
 #include "services/UsbCdc/UsbCdc.h"
+#include "services/UsbReconnection/UsbReconnection.h"
 #include "peripheral/gpio/plib_gpio.h"
 
 //! Pointer to the BQ24297 device configuration data structure
@@ -17,14 +18,14 @@ static tBQ24297Data *pData;
 /*! Funtion to read BQ24297 data by I2C communication
  * @param[in] reg Register to read
  */
-static uint8_t BQ24297_Read_I2C(uint8_t reg);
+uint8_t BQ24297_Read_I2C(uint8_t reg);
 
 /*! Funtion to write BQ24297 data by I2C communication
  * @param[in] reg Register to read
  * @param[in] txData Data to write
  * @return true if write succeeded, false on error
  */
-static bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData);
+bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData);
 
 void BQ24297_InitHardware(                                                  
                         tBQ24297Config *pConfigInit,                        
@@ -84,8 +85,12 @@ void BQ24297_InitHardware(
     
     // GPIO control for OTG pin (RK5)
     BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
-    // Do NOT clear OTG here - preserve the GPIO init state (HIGH)
-    LOG_D("BQ24297_InitHardware: OTG GPIO kept in default state (HIGH for power continuity)");
+    
+    // Start with OTG DISABLED (GPIO LOW) since we're likely powered by USB at startup
+    // OTG pin is ACTIVE HIGH - HIGH = boost mode enabled, LOW = normal charging
+    // We'll enable it only if we detect actual USB disconnect
+    BATT_MAN_OTG_Clear();  // Set LOW = OTG disabled = allow charging
+    LOG_D("BQ24297_InitHardware: OTG GPIO initialized LOW (OTG disabled)");
 }
 
 void BQ24297_Config_Settings(void) {
@@ -94,6 +99,13 @@ void BQ24297_Config_Settings(void) {
     
     LOG_D("BQ24297_Config_Settings: Starting initialization");
     
+    // CRITICAL: Log all registers at startup for debugging
+    LOG_E("BQ24297_Config_Settings: Initial register dump:");
+    for (int i = 0; i <= 0x0A; i++) {
+        reg = BQ24297_Read_I2C(i);
+        LOG_E("  REG%02X = 0x%02X", i, reg);
+    }
+    
     // Read initial status without changing OTG state
     // This preserves the power path if OTG is already enabled
     BQ24297_UpdateStatus();
@@ -101,10 +113,22 @@ void BQ24297_Config_Settings(void) {
     // At this point, the chip has evaluated the power source, so we should get the current limit
     // and save it when writing to register 0
     reg = BQ24297_Read_I2C(0x00);
+    
+    // CRITICAL: Always clear HIZ mode on initialization - it can cause power loss!
+    if (reg & 0x80) {
+        LOG_E("BQ24297_Config_Settings: HIZ mode detected (REG00=0x%02X), clearing!", reg);
+    }
 
-    // Set input voltage limit to 3.88V: VINDPM = 0
-    // REG00: 0b00000XXX
-    BQ24297_Write_I2C(0x00, reg & 0b00000111);
+    // Set input voltage limit to 3.88V (minimum): VINDPM = 0
+    // This gives maximum headroom before input voltage regulation kicks in
+    // REG00: [7]=0 (CLEAR HIZ), [6:3]=0000 (3.88V min), [2:0]=keep current limit
+    BQ24297_Write_I2C(0x00, reg & 0b00000111);  // This also clears HIZ bit
+    
+    // Verify HIZ was cleared
+    reg = BQ24297_Read_I2C(0x00);
+    if (reg & 0x80) {
+        LOG_E("BQ24297_Config_Settings: WARNING - HIZ mode still active after clear attempt!");
+    }
 
     // Power Mode Configuration
     // 
@@ -122,23 +146,30 @@ void BQ24297_Config_Settings(void) {
     // Check current power status to decide on OTG mode
     BQ24297_UpdateStatus();
     
-    // If OTG is enabled at startup AND we detect external power, we need to carefully
-    // transition to avoid power loss
-    bool otgEnabledAtStartup = pData->status.otg;
-    bool hasExternalPower = pData->status.pgStat;
+    // OTG GPIO starts disabled (LOW) from init
+    // Check if we need to enable it because USB is NOT connected
+    
+    // Read actual hardware state
+    bool otgGpioEnabled = BATT_MAN_OTG_Get(); // HIGH = enabled (active high)
+    bool otgRegEnabled = pData->status.otg;
+    
+    // Check for external power
+    // Note: pgStat might not work if OTG is enabled, so also check vBusStat
+    bool hasExternalPower = pData->status.pgStat || 
+                           (pData->status.vBusStat == 0x01) ||  // USB host
+                           (pData->status.vBusStat == 0x02);     // Adapter
     
     // Log MCU VBUS for debug only
     bool usbVbusDebug = UsbCdc_IsVbusDetected();
-    LOG_D("BQ24297_Config_Settings: pgStat=%d, vBusStat=%d, otg=%d [MCU_VBUS_DEBUG=%d]",
-          pData->status.pgStat, pData->status.vBusStat, otgEnabledAtStartup, usbVbusDebug);
+    LOG_D("BQ24297_Config_Settings: pgStat=%d, vBusStat=%d, otgGpio=%d, otgReg=%d [MCU_VBUS_DEBUG=%d]",
+          pData->status.pgStat, pData->status.vBusStat, otgGpioEnabled, otgRegEnabled, usbVbusDebug);
     
-    // Special case: If OTG is on but external power is detected, we need to
-    // transition carefully to avoid power loss
-    if (otgEnabledAtStartup && hasExternalPower) {
-        LOG_D("BQ24297_Config_Settings: OTG enabled with external power - will switch to charge mode");
-        // Keep OTG on for now, let Power_Update_Settings handle the transition
-        // This ensures continuous power during the switch
-        hasExternalPower = true;
+    // If we detect external power, we can safely disable OTG
+    if (hasExternalPower || usbVbusDebug) {
+        LOG_D("BQ24297_Config_Settings: External power detected - will disable OTG for charging");
+        // We'll disable OTG below in the register configuration
+    } else {
+        LOG_D("BQ24297_Config_Settings: No external power - keeping OTG enabled");
     }
     
     // Configure REG01 based on power status
@@ -149,24 +180,36 @@ void BQ24297_Config_Settings(void) {
     // [3:1] = 000 (SYS_MIN = 3.0V)
     // [0] = 1 (reserved)
     
-    // CRITICAL INSIGHT: Device worked when I2C was corrupted because
-    // BQ24297 initialization failed, leaving it in default/bootloader state.
-    // Let's try minimal configuration - just enable charging, don't touch OTG
+    // Configure power mode based on external power detection
+    // GPIO starts LOW (OTG disabled) from init
+    // Note: CE pin is grounded (always LOW) for charging to work
     
-    // EXPERIMENT: Enable OTG to boost battery voltage for 3.3V regulator
-    // The 3.3V regulator may need >4V input which battery alone can't provide
-    if (!hasExternalPower) {
-        // No external power - enable OTG boost
-        // REG01: 0b01100001 (OTG=1, CHG=0, SYS_MIN=3.0V)
-        BQ24297_Write_I2C(0x01, 0b01100001);
-        BATT_MAN_OTG_Set();
-        LOG_D("BQ24297_Config_Settings: No external power - OTG ENABLED for boost");
+    if (hasExternalPower || usbVbusDebug) {
+        // External power detected - disable OTG and enable charging
+        // Set GPIO LOW to disable OTG (active high logic)
+        BATT_MAN_OTG_OutputEnable();
+        BATT_MAN_OTG_Clear();  // Set LOW for OTG disable
+        // Small delay to ensure GPIO settles
+        vTaskDelay(2 / portTICK_PERIOD_MS);
+        
+        // REG01: 0b01010001 (watchdog reset, OTG=0, CHG=1, SYS_MIN=3.0V minimum)
+        // CRITICAL: Using SYS_MIN=3.0V (000) instead of default 3.5V to prevent BATFET disable
+        if (!BQ24297_Write_I2C(0x01, 0b01010001)) {
+            LOG_E("BQ24297_Config_Settings: Failed to write charge mode!");
+        }
+        LOG_D("BQ24297_Config_Settings: External power - OTG disabled (GPIO=LOW), charging enabled");
     } else {
-        // External power - normal charging
-        // REG01: 0b01010001 (OTG=0, CHG=1, SYS_MIN=3.0V)
-        BQ24297_Write_I2C(0x01, 0b01010001);
-        BATT_MAN_OTG_Clear();
-        LOG_D("BQ24297_Config_Settings: External power - charging enabled");
+        // No external power - enable OTG
+        // First set GPIO HIGH to enable OTG
+        BATT_MAN_OTG_OutputEnable();
+        BATT_MAN_OTG_Set();  // Set HIGH for OTG enable
+        vTaskDelay(2 / portTICK_PERIOD_MS);
+        
+        // REG01: 0b01100001 (watchdog reset, OTG=1, CHG=0, SYS_MIN=3.0V)
+        if (!BQ24297_Write_I2C(0x01, 0b01100001)) {
+            LOG_E("BQ24297_Config_Settings: Failed to write OTG mode!");
+        }
+        LOG_D("BQ24297_Config_Settings: No external power - OTG ENABLED (GPIO=HIGH)");
     }
     
     // Debug: Read back REG01 to verify configuration
@@ -181,13 +224,27 @@ void BQ24297_Config_Settings(void) {
 
     // Set fast charge to 2000mA - this should never need to be updated
     BQ24297_Write_I2C(0x02, 0b01100000);
+    
+    // REG03: Pre-charge and termination current
+    // Set minimum termination current (128mA) to avoid premature termination
+    // [7:5]=000 (128mA precharge), [4]=0 (reserved), [3:0]=0001 (128mA termination)
+    BQ24297_Write_I2C(0x03, 0b00000001);
 
-    // Set charge voltage to 4.096V
+    // REG04: Charge voltage and battery thresholds
+    // [7:2]=100101 (4.096V), [1]=1 (3.0V battery low), [0]=0 (100mV recharge)
+    // Set BATLOWV to 3.0V (higher threshold) to keep BATFET enabled longer
     BQ24297_Write_I2C(0x04, 0b10010110);
 
-    // Disable watchdog WATCHDOG = 0, set charge timer to 20hr
-    // REG05: 0b10001110
+    // REG05: Disable watchdog and maximize charge timer
+    // [7]=1 (enable termination), [6]=0 (disable timer), [5:4]=00 (disable watchdog)
+    // [3]=0 (normal), [2:1]=11 (20hr timer), [0]=0 (reserved)
+    // CRITICAL: Watchdog disabled to prevent unexpected BATFET disable
     BQ24297_Write_I2C(0x05, 0b10001110);
+    
+    // REG06: Boost voltage and thermal regulation
+    // [7:4]=0111 (4.998V boost), [3:2]=00 (reserved), [1:0]=11 (120C thermal limit)
+    // Keep default boost voltage but set highest thermal limit
+    BQ24297_Write_I2C(0x06, 0b01110011);
     
     // CRITICAL: Ensure BATFET is enabled (REG07 bit 5 = 0)
     // Without BATFET, there's no path from battery to system!
@@ -228,6 +285,13 @@ void BQ24297_Config_Settings(void) {
     // Charging is already enabled in REG01 configuration above
     // BQ24297 will handle battery presence detection internally
 
+    // Final register dump for debugging
+    LOG_E("BQ24297_Config_Settings: Final register configuration:");
+    for (int i = 0; i <= 0x0A; i++) {
+        reg = BQ24297_Read_I2C(i);
+        LOG_E("  REG%02X = 0x%02X", i, reg);
+    }
+    
     // Final status check
     reg = BQ24297_Read_I2C(0x01);
     LOG_D("BQ24297_Config_Settings: Complete. REG01 = 0x%02X, OTG = %s, Charge = %s", 
@@ -237,6 +301,10 @@ void BQ24297_Config_Settings(void) {
 
     pData->initComplete = true;
     LOG_D("BQ24297_Config_Settings: Initialization complete, initComplete set to true");
+    
+    // Initialize USB reconnection detection now that BQ24297 is ready
+    UsbReconnection_Init();
+    LOG_D("BQ24297_Config_Settings: USB reconnection detection initialized");
 }
 
 /* 
@@ -307,6 +375,13 @@ void BQ24297_UpdateStatus(void) {
                   regData, pData->status.vsysStat, 
                   pData->status.vsysStat ? "<" : ">", 
                   pData->status.pgStat, pData->status.vBusStat);
+                  
+            // Extra logging when vsysStat indicates low battery
+            if (pData->status.vsysStat) {
+                LOG_E("BQ24297: WARNING - Battery voltage < 3.0V (vsysStat=1)! Device may power off!");
+                LOG_E("BQ24297: This is why OTG boost is normally needed during USB disconnect");
+            }
+            
             lastReg08 = regData;
         }
     } else {
@@ -421,33 +496,40 @@ void BQ24297_AutoSetILim(void) {
     uint8_t reg0;
 
     reg0 = BQ24297_Read_I2C(0x00);
+    
+    // Log if HIZ mode is detected during AutoSetILim
+    if (reg0 & 0x80) {
+        LOG_E("BQ24297_AutoSetILim: WARNING - HIZ mode detected (REG00=0x%02X)! Will be cleared.", reg0);
+    }
 
     //  Set system input current
+    // CRITICAL: Never preserve HIZ bit (bit 7) when writing to REG00!
+    // Use mask 0b01111000 instead of 0b11111000 to clear HIZ
     switch (pData->status.vBusStat) {
         case 0b00:
             // Unknown - assume it is a charger. Set IINLIM to 2000mA       
             //- maximum allowed on charger
-            BQ24297_Write_I2C(0x00, 0b00000110 | (reg0 & 0b11111000));
+            BQ24297_Write_I2C(0x00, 0b00000110 | (reg0 & 0b01111000));
             break;
         case 0b01:
             // NOTE: Originally set to 500mA for USB 2.0 compliance, but this
             // caused audible whining from the power supply. Using 2A instead.
             // Most modern USB ports can handle this, especially with enumeration.
             // Original 500mA setting:
-            // BQ24297_Write_I2C(0x00, 0b00000010 | (reg0 & 0b11111000));
-            BQ24297_Write_I2C(0x00, 0b00000110 | (reg0 & 0b11111000));
+            // BQ24297_Write_I2C(0x00, 0b00000010 | (reg0 & 0b01111000));
+            BQ24297_Write_I2C(0x00, 0b00000110 | (reg0 & 0b01111000));
             break;
         case 0b10:
             // Unknown - assume it is a charger. Set IINLIM to 2000mA 
             //maximum allowed on charger
-            BQ24297_Write_I2C(0x00, 0b00000110 | (reg0 & 0b11111000));
+            BQ24297_Write_I2C(0x00, 0b00000110 | (reg0 & 0b01111000));
             break;
         default:
             break;
     }
 }
 
-static uint8_t BQ24297_Read_I2C(uint8_t reg) {
+uint8_t BQ24297_Read_I2C(uint8_t reg) {
     uint8_t I2CData[1];
     uint8_t rxData = 0;
 
@@ -475,7 +557,7 @@ static uint8_t BQ24297_Read_I2C(uint8_t reg) {
     return rxData;
 }
 
-static bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
+bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
     uint8_t I2CData[2];
 
     // Build data packet
@@ -502,12 +584,83 @@ static bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
 }
 
 void BQ24297_EnableOTG(void) {
-    LOG_E("BQ24297_EnableOTG: ENABLING OTG MODE FOR BATTERY OPERATION!");
+    // CRITICAL LOGGING: Capture complete state at USB disconnect
+    LOG_E("BQ24297_EnableOTG: USB DISCONNECT DETECTED - FULL REGISTER DUMP:");
+    uint8_t regDump[11];
+    for (int i = 0; i <= 0x0A; i++) {
+        regDump[i] = BQ24297_Read_I2C(i);
+        LOG_E("  REG%02X = 0x%02X", i, regDump[i]);
+    }
     
-    // Set GPIO pin for OTG enable FIRST
-    BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
-    BATT_MAN_OTG_Set();          // Set high for OTG enable
-    LOG_D("BQ24297_EnableOTG: Set OTG GPIO high (RK5)");
+    // Analyze critical registers
+    LOG_E("BQ24297_EnableOTG: Critical status:");
+    LOG_E("  HIZ Mode: %s (REG00 bit 7 = %d)", 
+          (regDump[0] & 0x80) ? "ACTIVE!" : "Inactive", (regDump[0] >> 7) & 1);
+    LOG_E("  Battery voltage: %s 3.0V (vsysStat=%d)", 
+          (regDump[8] & 0x01) ? "BELOW" : "ABOVE", regDump[8] & 0x01);
+    LOG_E("  BATFET: %s (REG07 bit 5 = %d)", 
+          (regDump[7] & 0x20) ? "DISABLED!" : "Enabled", (regDump[7] >> 5) & 1);
+    LOG_E("  Faults REG09 = 0x%02X: BAT_FAULT=%d, NTC=%d", 
+          regDump[9], (regDump[9] >> 3) & 1, regDump[9] & 0x03);
+    
+    // CRITICAL: Clear HIZ mode if active - it blocks register writes!
+    if (regDump[0] & 0x80) {
+        LOG_E("BQ24297_EnableOTG: Clearing HIZ mode first!");
+        uint8_t reg00 = regDump[0] & 0x7F;  // Clear bit 7 (HIZ)
+        if (!BQ24297_Write_I2C(0x00, reg00)) {
+            LOG_E("BQ24297_EnableOTG: Failed to clear HIZ mode!");
+        } else {
+            vTaskDelay(5 / portTICK_PERIOD_MS);  // Let it settle
+            LOG_D("BQ24297_EnableOTG: HIZ mode cleared");
+        }
+    }
+    
+    // SAFETY CHECK: Cannot enable OTG if external power is present
+    bool pgStat = (regDump[8] >> 2) & 0x01;
+    bool dpmStat = (regDump[8] >> 3) & 0x01;  // DPM status (VINDPM or IINDPM)
+    
+    // Log DPM status for debugging
+    if (dpmStat) {
+        LOG_E("BQ24297_EnableOTG: DPM active (REG08 bit 3=1) - Input voltage/current regulation!");
+    }
+    
+    if (pgStat) {
+        LOG_D("BQ24297_EnableOTG: External power detected (pgStat=1), cannot enable OTG!");
+        LOG_D("BQ24297_EnableOTG: This is likely a false disconnect - aborting OTG enable");
+        return;
+    }
+    
+    // Additional check: if VBUS_STAT shows USB host or adapter, don't enable OTG
+    uint8_t vbusStat = (regDump[8] >> 6) & 0x03;
+    if (vbusStat == 0x01 || vbusStat == 0x02) {
+        LOG_D("BQ24297_EnableOTG: VBUS_STAT=%d indicates external power, aborting OTG enable", vbusStat);
+        return;
+    } else if (vbusStat == 0x03) {
+        LOG_D("BQ24297_EnableOTG: VBUS_STAT=3 indicates OTG already active!");
+        // Check if REG01 matches
+        if ((regDump[1] & 0x20) != 0) {
+            LOG_D("BQ24297_EnableOTG: OTG already enabled in REG01, updating status and returning");
+            pData->status.otg = true;
+            pData->status.chg = false;
+            return;
+        } else {
+            LOG_E("BQ24297_EnableOTG: VBUS_STAT=OTG but REG01 OTG bit is clear - inconsistent state!");
+        }
+    }
+    
+    // Check if GPIO is already in correct state
+    bool otgGpioEnabled = BATT_MAN_OTG_Get(); // HIGH = enabled (active high)
+    
+    if (otgGpioEnabled) {
+        LOG_D("BQ24297_EnableOTG: OTG GPIO already HIGH (enabled), checking register");
+    } else {
+        LOG_E("BQ24297_EnableOTG: ENABLING OTG MODE FOR BATTERY OPERATION!");
+        
+        // Set GPIO pin for OTG enable FIRST (active high)
+        BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
+        BATT_MAN_OTG_Set();          // Set HIGH for OTG enable
+        LOG_D("BQ24297_EnableOTG: Set OTG GPIO HIGH (RK5) for enable");
+    }
     
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
@@ -520,20 +673,68 @@ void BQ24297_EnableOTG(void) {
     }
     
     // Set OTG enable (bit 5) and clear charge enable (bit 4)
-    // Preserve watchdog reset bit and SYS_MIN settings
-    reg = (reg & 0b11001111) | 0b00100001;  // Clear bits 5:4, then set OTG
+    // Also set watchdog reset (bit 6)
+    // CRITICAL: Set SYS_MIN to 3.0V (minimum) to prevent BATFET disable
+    // Preserve boost current limit from existing setting
+    uint8_t boostLimit = reg & 0x01;  // Preserve bit 0 (boost current limit)
+    // REG01: [7:6]=01 (watchdog reset), [5]=1 (OTG), [4]=0 (no charge), [3:1]=000 (3.0V), [0]=boost limit
+    // IMPORTANT: CHG_CONFIG[5:4] must be 10 for OTG (not 11)!
+    reg = 0b01100000 | boostLimit;  // Watchdog reset + OTG enable + SYS_MIN=3.0V + preserved boost limit
+    LOG_D("BQ24297_EnableOTG: Setting REG01 = 0x%02X (OTG=1, CHG=0)", reg);
     
-    if (!BQ24297_Write_I2C(0x01, reg)) {
-        LOG_E("BQ24297_EnableOTG: Failed to write REG01");
-        // GPIO is still set, so OTG might work anyway
-    } else {
-        LOG_D("BQ24297_EnableOTG: REG01 = 0x%02X", reg);
+    // Write with retry logic
+    bool writeSuccess = false;
+    for (int retry = 0; retry < 3; retry++) {
+        // Re-check pgStat before each attempt - it may have changed!
+        uint8_t reg08 = BQ24297_Read_I2C(0x08);
+        if ((reg08 >> 2) & 0x01) {
+            LOG_E("BQ24297_EnableOTG: pgStat=1 detected during retry %d, aborting OTG enable", retry + 1);
+            return;
+        }
+        
+        if (BQ24297_Write_I2C(0x01, reg)) {
+            LOG_D("BQ24297_EnableOTG: REG01 write = 0x%02X", reg);
+            
+            // Read back to verify
+            vTaskDelay(5 / portTICK_PERIOD_MS);
+            uint8_t readback = BQ24297_Read_I2C(0x01);
+            
+            if ((readback & 0x30) == 0x20) {  // Check OTG bit is set, charge bit is clear
+                LOG_D("BQ24297_EnableOTG: REG01 verified = 0x%02X (OTG=1)", readback);
+                writeSuccess = true;
+                break;
+            } else {
+                LOG_E("BQ24297_EnableOTG: REG01 readback = 0x%02X, expected 0x%02X, retry %d", 
+                      readback, reg, retry + 1);
+                
+                // If we're getting 0x01 or 0x11, it might mean power was detected
+                if ((readback & 0xF0) == 0x00 || (readback & 0xF0) == 0x10) {
+                    LOG_E("BQ24297_EnableOTG: Charge mode detected, likely due to power reconnection");
+                    return;
+                }
+            }
+        } else {
+            LOG_E("BQ24297_EnableOTG: Failed to write REG01, retry %d", retry + 1);
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
     
-    // Read back to verify
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    reg = BQ24297_Read_I2C(0x01);
-    LOG_E("BQ24297_EnableOTG: REG01 readback = 0x%02X (OTG=%d)", reg, (reg >> 5) & 1);
+    if (!writeSuccess) {
+        LOG_E("BQ24297_EnableOTG: Failed to enable OTG after 3 retries!");
+        
+        // RECOVERY: If we can't enable OTG, at least ensure GPIO is in safe state
+        // Set GPIO back to LOW and try to enable charging instead
+        BATT_MAN_OTG_Clear();  // Set LOW to disable OTG
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+        
+        // Try to enable charging mode as fallback
+        reg = 0b01010001;  // Watchdog reset + Charge enable + SYS_MIN=3.0V (minimum)
+        if (BQ24297_Write_I2C(0x01, reg)) {
+            LOG_E("BQ24297_EnableOTG: Recovery - enabled charging mode instead");
+        } else {
+            LOG_E("BQ24297_EnableOTG: Recovery failed - check I2C communication!");
+        }
+    }
     
     // CRITICAL: Check BATFET is enabled in REG07
     reg = BQ24297_Read_I2C(0x07);
@@ -560,13 +761,27 @@ void BQ24297_EnableOTG(void) {
 }
 
 void BQ24297_DisableOTG(bool enableCharging) {
-    // Clear GPIO pin for OTG disable FIRST
+    // CRITICAL: Clear HIZ mode FIRST before any other operations
+    // HIZ mode can be triggered during OTG transitions and cause power loss
+    uint8_t reg00 = BQ24297_Read_I2C(0x00);
+    if (reg00 != 0xFF && (reg00 & 0x80)) {
+        LOG_D("BQ24297_DisableOTG: Clearing HIZ mode before OTG disable");
+        reg00 &= 0x7F;  // Clear bit 7 to exit HIZ mode
+        BQ24297_Write_I2C(0x00, reg00);
+        vTaskDelay(2 / portTICK_PERIOD_MS);
+    }
+    
+    // Set GPIO pin LOW for OTG disable FIRST (active high logic)
     BATT_MAN_OTG_OutputEnable();  // Make sure it's an output
-    BATT_MAN_OTG_Clear();         // Set low for OTG disable
-    LOG_D("BQ24297_DisableOTG: Cleared OTG GPIO (RK5)");
+    BATT_MAN_OTG_Clear();         // Set LOW for OTG disable
+    LOG_D("BQ24297_DisableOTG: Set OTG GPIO LOW (RK5) for disable");
+    
+    // Small delay to ensure GPIO settles
+    vTaskDelay(2 / portTICK_PERIOD_MS);
     
     // Read current REG01 value
     uint8_t reg = BQ24297_Read_I2C(0x01);
+    uint8_t original_reg = reg;
     if (reg == 0xFF) {
         LOG_E("BQ24297_DisableOTG: Failed to read REG01");
         // Still update status to reflect GPIO state
@@ -577,22 +792,59 @@ void BQ24297_DisableOTG(bool enableCharging) {
     // Clear OTG enable (bit 5)
     reg = reg & 0b11011111;
     
-    // Set charge enable if requested and battery is present
-    if (enableCharging && pData->status.batPresent && pData->chargeAllowed) {
+    // Set watchdog reset (bit 6)
+    reg = reg | 0b01000000;
+    
+    // Set charge enable if requested
+    if (enableCharging) {
         reg = reg | 0b00010000;  // Set bit 4
+        LOG_D("BQ24297_DisableOTG: Enabling charging");
+    } else {
+        reg = reg & 0b11101111;  // Clear bit 4
     }
+    
+    // CRITICAL: Keep SYS_MIN at 3.0V minimum (bits 3:1 = 000) and bit 0 set (reserved)
+    // This prevents BATFET from being disabled due to low battery voltage
+    reg = (reg & 0b11110001) | 0b00000001;
     
     if (!BQ24297_Write_I2C(0x01, reg)) {
         LOG_E("BQ24297_DisableOTG: Failed to write REG01");
-        // GPIO is still cleared, so OTG should be disabled
+        // GPIO is still set, so OTG should be disabled
     } else {
-        LOG_D("BQ24297_DisableOTG: REG01 = 0x%02X, charging = %s", 
-              reg, (reg & 0x10) ? "enabled" : "disabled");
+        LOG_D("BQ24297_DisableOTG: REG01 changed from 0x%02X to 0x%02X, charging = %s", 
+              original_reg, reg, (reg & 0x10) ? "enabled" : "disabled");
+    }
+    
+    // CRITICAL: Ensure HIZ mode is still cleared after REG01 write
+    // Writing to REG01 can sometimes trigger HIZ mode
+    vTaskDelay(5 / portTICK_PERIOD_MS);
+    reg00 = BQ24297_Read_I2C(0x00);
+    if (reg00 != 0xFF && (reg00 & 0x80)) {
+        LOG_E("BQ24297_DisableOTG: HIZ mode triggered after REG01 write! Clearing again!");
+        reg00 &= 0x7F;  // Clear bit 7 to exit HIZ mode
+        BQ24297_Write_I2C(0x00, reg00);
     }
     
     // Update local status to reflect the change
     pData->status.otg = false;
     pData->status.chg = (reg & 0x10) ? true : false;
+    
+    // IMPORTANT: After disabling OTG, the BQ24297 will perform input detection
+    // This can take 200-500ms and may cause temporary instability
+    // Log this so we can track it
+    LOG_D("BQ24297_DisableOTG: OTG disabled, input detection will begin");
+    
+    // Give the BQ24297 time to start input detection
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+    
+    // Check if DPM is active (indicating input detection in progress)
+    uint8_t reg08 = BQ24297_Read_I2C(0x08);
+    if ((reg08 & 0x08) != 0) {
+        LOG_D("BQ24297_DisableOTG: DPM active (REG08=0x%02X), input detection in progress", reg08);
+    }
+    
+    // Force a status update to refresh all fields
+    BQ24297_UpdateStatus();
 }
 
 bool BQ24297_IsOTGEnabled(void) {

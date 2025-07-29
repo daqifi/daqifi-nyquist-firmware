@@ -12,6 +12,7 @@
 #include "Util/Logger.h"
 #include "../../services/wifi_services/wifi_manager.h"
 #include "../../services/UsbCdc/UsbCdc.h"
+#include "../../services/UsbReconnection/UsbReconnection.h"
 //typedef enum
 //{
 //    /* Source of clock is internal fast RC */
@@ -147,6 +148,61 @@ void Power_Tasks(void) {
         LOG_D("Power_Tasks: Calling BQ24297_Config_Settings (initComplete=false)");
         BQ24297_Config_Settings();
     }
+    
+    // CRITICAL SAFETY CHECKS: Ensure HIZ mode is cleared and BATFET is enabled
+    
+    // Check REG00 for HIZ mode - if set (1), it blocks charging and can cause power loss
+    uint8_t reg00 = BQ24297_Read_I2C(0x00);
+    if (reg00 != 0xFF && (reg00 & 0x80)) {
+        LOG_E("Power_Tasks: CRITICAL - HIZ mode is ACTIVE! Clearing immediately!");
+        reg00 &= 0x7F;  // Clear bit 7 to exit HIZ mode
+        BQ24297_Write_I2C(0x00, reg00);
+        
+        // Force a power settings update after clearing HIZ
+        BQ24297_UpdateStatus();
+        Power_Update_Settings();
+    }
+    
+    // Check REG07 bit 5 - if set (1), BATFET is disabled which will cause power loss
+    uint8_t reg07 = BQ24297_Read_I2C(0x07);
+    if (reg07 != 0xFF && (reg07 & 0x20)) {
+        LOG_E("Power_Tasks: CRITICAL - BATFET is DISABLED! Re-enabling immediately!");
+        reg07 &= 0xDF;  // Clear bit 5 to enable BATFET
+        BQ24297_Write_I2C(0x07, reg07);
+        
+        // Log all registers to understand why BATFET was disabled
+        LOG_E("Power_Tasks: Register dump after BATFET re-enable:");
+        for (int i = 0; i <= 0x0A; i++) {
+            uint8_t val = BQ24297_Read_I2C(i);
+            LOG_E("  REG%02X = 0x%02X", i, val);
+        }
+    }
+
+    // Check for USB reconnection in OTG mode
+    UsbReconnection_Task();
+    
+    // Handle USB reconnection if detected
+    if (UsbReconnection_IsDetected()) {
+        // Check if we're actually in OTG mode before trying to disable it
+        if (pData->BQ24297Data.status.otg) {
+            LOG_E("Power_Tasks: USB reconnection detected! Disabling OTG to resume charging");
+            
+            // Disable OTG to allow charging
+            BQ24297_DisableOTG(true);
+            
+            // Force status update
+            BQ24297_UpdateStatus();
+            Power_Update_Settings();
+            
+            // Set interrupt flag to process power state change
+            pData->BQ24297Data.intFlag = true;
+        } else {
+            LOG_D("Power_Tasks: USB reconnection detected but OTG already disabled");
+        }
+        
+        // Always clear the detection flag
+        UsbReconnection_Clear();
+    }
 
     // Update power settings based on BQ24297 interrupt change
     if (pData->BQ24297Data.intFlag) {
@@ -160,7 +216,19 @@ void Power_Tasks(void) {
          * -On temperature fault
          * -Safety timer timeout
          */
+        // Add minimum interval between interrupt processing (500ms)
+        static TickType_t lastInterruptTime = 0;
+        TickType_t currentTime = xTaskGetTickCount();
+        
+        if ((currentTime - lastInterruptTime) < (500 / portTICK_PERIOD_MS)) {
+            // Too soon since last interrupt, ignore
+            pData->BQ24297Data.intFlag = false;
+            return;
+        }
+        
         LOG_D("Power_Tasks: BQ24297 interrupt detected!");
+        lastInterruptTime = currentTime;
+        
         vTaskDelay(100 / portTICK_PERIOD_MS);
         
         // Store previous pgStat to detect changes
@@ -462,6 +530,16 @@ static void Power_UpdateChgPct(void) {
 static void Power_Update_Settings(void) {
     // Change charging/other power settings based on current status
 
+    // Check if input detection is in progress (DPM_STAT = 1)
+    if (pData->BQ24297Data.status.dpmStat) {
+        static uint32_t dpmWarnCount = 0;
+        if ((dpmWarnCount++ % 10) == 0) { // Log every 10th occurrence to reduce spam
+            LOG_D("Power_Update_Settings: DPM active (input detection in progress), deferring power decisions");
+        }
+        // Don't make power state changes while input detection is active
+        return;
+    }
+
     // Get MCU VBUS detection for debug logging only - NOT for decision making
     bool usbVbusDetected = UsbCdc_IsVbusDetected();
     
@@ -520,14 +598,43 @@ static void Power_Update_Settings(void) {
     // Check new power source and set parameters accordingly
     BQ24297_AutoSetILim();
 
-    // Enable OTG when no external power to boost battery voltage
+    // Static variables for state change detection
+    static EXT_POWER_SOURCE lastExternalPowerSource = NO_EXT_POWER;
+    static bool lastOtgState = false;
+    
+    // Only log when state changes to reduce spam
+    bool powerSourceChanged = (lastExternalPowerSource != pData->externalPowerSource);
+    bool otgStateChanged = (lastOtgState != pData->BQ24297Data.status.otg);
+    
+    // Re-enable OTG when no external power to boost battery voltage
     if (pData->externalPowerSource == NO_EXT_POWER && !pData->BQ24297Data.status.otg) {
-        LOG_D("Power_Update_Settings: No external power - enabling OTG boost");
+        if (powerSourceChanged || otgStateChanged) {
+            LOG_E("Power_Update_Settings: No external power detected - enabling OTG boost");
+        }
         BQ24297_EnableOTG();
     } else if (pData->externalPowerSource != NO_EXT_POWER && pData->BQ24297Data.status.otg) {
-        LOG_D("Power_Update_Settings: External power restored - disabling OTG");
+        if (powerSourceChanged || otgStateChanged) {
+            LOG_D("Power_Update_Settings: External power restored - disabling OTG");
+        }
         BQ24297_DisableOTG(true);
+    } else if (pData->BQ24297Data.status.otg && usbVbusDetected) {
+        // Special case: OTG is enabled but MCU detects USB VBUS
+        // This happens when USB is reconnected while in OTG mode
+        // The BQ24297 can't detect it because OTG boost is driving VBUS
+        static uint32_t otgCheckCount = 0;
+        if ((otgCheckCount++ % 50) == 0) { // Log every 50th occurrence
+            LOG_E("Power_Update_Settings: USB VBUS detected while in OTG mode - disabling OTG for charging");
+        }
+        BQ24297_DisableOTG(true);
+        
+        // Force a status update after disabling OTG
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        BQ24297_UpdateStatus();
     }
+    
+    // Update last known states
+    lastExternalPowerSource = pData->externalPowerSource;
+    lastOtgState = pData->BQ24297Data.status.otg;
 }
 
 
