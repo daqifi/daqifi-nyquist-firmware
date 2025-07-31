@@ -374,8 +374,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     switch(pBoardData->PowerData.powerState) {
         case POWERED_UP: powerState = "RUN"; break;
         case POWERED_UP_EXT_DOWN: powerState = "PARTIAL"; break;
-        case POWERED_DOWN: powerState = "OFF"; break;
-        case MICRO_ON: powerState = "STANDBY"; break;
+        case STANDBY: powerState = "STANDBY"; break;
         default: powerState = "Unknown"; break;
     }
     
@@ -658,7 +657,8 @@ static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context) {
 }
 
 /**
- * GEts the power state
+ * Gets the power state
+ * Returns 0 for standby/off, 1 for any powered state
  * @param context
  * @return 
  */
@@ -666,7 +666,9 @@ static scpi_result_t SCPI_GetPowerState(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
-    SCPI_ResultInt32(context, (int) (pPowerData->powerState));
+    // Simplify to binary: 0=standby/off, 1=powered on
+    int state = (pPowerData->powerState == STANDBY) ? 0 : 1;
+    SCPI_ResultInt32(context, state);
     return SCPI_RES_OK;
 }
 

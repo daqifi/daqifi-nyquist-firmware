@@ -55,7 +55,7 @@ void Button_Tasks( void )
     {
         buttonPressCount++;
         switch(gpPowerData->powerState){
-            case MICRO_ON:
+            case STANDBY:
                 if((buttonPressCount > BUTTON_POWER_ON_TH) && !oneShot)
                 {
                     // Signal board to power up

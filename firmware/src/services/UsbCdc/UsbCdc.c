@@ -529,13 +529,15 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     if (len == 0)return 0;
 
     // Add timeout to prevent infinite hang
-    // Maximum wait time: 500ms (250 iterations * 2ms each)
-    int maxWaitIterations = 250;
-    int waitCount = 0;
+    // Maximum wait time: 500ms
+    TickType_t startTime = xTaskGetTickCount();
+    TickType_t timeoutTicks = 500 / portTICK_PERIOD_MS;
     
-    while (CircularBuf_NumBytesFree(&client->wCirbuf) < len && waitCount < maxWaitIterations) {
-        vTaskDelay(2);
-        waitCount++;
+    while (CircularBuf_NumBytesFree(&client->wCirbuf) < len) {
+        if ((xTaskGetTickCount() - startTime) >= timeoutTicks) {
+            break;  // Timeout reached
+        }
+        vTaskDelay(2 / portTICK_PERIOD_MS);
     }
 
     // if the data to write can't fit into the buffer entirely, discard it. 

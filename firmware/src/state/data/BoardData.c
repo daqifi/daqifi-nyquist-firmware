@@ -31,9 +31,9 @@ void InitializeBoardData(tBoardData* boardData) {
     // Set default battery values for debugging - allows power on without ADC active
 
 
-    // Initialize to MICRO_ON since the 3.3V rail is enabled if code is running
+    // Initialize to STANDBY since the 3.3V rail is enabled if code is running
     // This matches the hardware state after Power_Init() enables the 3.3V rail
-    boardData->PowerData.powerState = MICRO_ON;
+    boardData->PowerData.powerState = STANDBY;
     boardData->PowerData.requestedPowerState = NO_CHANGE;
     boardData->PowerData.battLow = false;
     // Initialize to nominal battery voltage to prevent false low-battery shutdowns

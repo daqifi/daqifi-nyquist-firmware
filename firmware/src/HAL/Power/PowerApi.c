@@ -304,7 +304,7 @@ void Power_Down(void) {
     // CRITICAL: Set 3.3V_EN pin as INPUT for power down
     PWR_3_3V_EN_InputEnable();
 
-    pData->powerState = MICRO_ON; // Set back to default state
+    pData->powerState = STANDBY; // Set back to default state
     pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
 
     // Delay 1000ms for power to discharge
@@ -333,31 +333,30 @@ static void Power_UpdateState(void) {
     
     // Set power state immediately if DO_POWER_DOWN is requested
     if (pData->requestedPowerState == DO_POWER_DOWN) {
-        pData->powerState = POWERED_DOWN;
+        pData->powerState = STANDBY;
     }
 
     switch (pData->powerState) {
-        case POWERED_DOWN:
-            /* Not initialized or powered down */
-
+        case STANDBY:
+        {
+            /* Standby/Off state
+             * - On USB power: MCU stays on (3.3V enabled) 
+             * - On battery: MCU powers off (3.3V disabled)
+             * This is the default state if code is running on USB power
+             */
+            
             // Check to see if we've finished signaling the user of insufficient power if necessary
             if (pData->powerDnAllowed == true) {
                 Power_Down();
+                break;  // Exit early if powering down
             }
-            break;
 
-        case MICRO_ON:
-        {
-            /* 3.3V rail enabled. Ready to check initial status 
-             * NOTE: This is the default state if code is running!
-             * There is no Vref at this time, so any read to ADC is invalid!
-             */
             // Update BQ24297 status and external power source detection
-            // Rate limit to reduce log spam during MICRO_ON state
-            static TickType_t lastMicroOnUpdate = 0;
+            // Rate limit to reduce log spam during STANDBY state
+            static TickType_t lastStandbyUpdate = 0;
             TickType_t currentTime = xTaskGetTickCount();
-            if ((currentTime - lastMicroOnUpdate) >= (1000 / portTICK_PERIOD_MS)) {
-                lastMicroOnUpdate = currentTime;
+            if ((currentTime - lastStandbyUpdate) >= (1000 / portTICK_PERIOD_MS)) {
+                lastStandbyUpdate = currentTime;
                 BQ24297_UpdateStatus();
                 Power_Update_Settings();
             }
@@ -374,7 +373,7 @@ static void Power_UpdateState(void) {
                     // Otherwise insufficient power.  Notify user and power down
                     LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
                     pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
-                    pData->powerState = POWERED_DOWN;
+                    // Already in STANDBY state, no need to set it again
                 }
                 pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state after handling request
             }
@@ -437,10 +436,10 @@ static void Power_UpdateState(void) {
                 // Only shut down if we have a valid battery reading AND it's truly exhausted
                 // Code below is commented out when I2C is disabled
                 // Insufficient power.  Notify user and power down.
-                LOG_D("Power_UpdateState: Battery exhausted (%.1f%% < %.1f%%), transitioning to POWERED_DOWN", 
+                LOG_D("Power_UpdateState: Battery exhausted (%.1f%% < %.1f%%), transitioning to STANDBY", 
                       pData->chargePct, BATT_EXH_TH);
                 pData->powerDnAllowed = false; // This will turn true after the LED sequence completes
-                pData->powerState = POWERED_DOWN;
+                pData->powerState = STANDBY;
             }
 
             break;
