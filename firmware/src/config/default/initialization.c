@@ -46,7 +46,6 @@
 #include "configuration.h"
 #include "definitions.h"
 #include "device.h"
-#include "early_3v3_enable.h"
 
 
 // ****************************************************************************
@@ -478,9 +477,6 @@ void SYS_Initialize ( void* data )
 
 
 	GPIO_Initialize();
-    
-    /* Enable 3.3V power rail immediately to prevent power-off on button release */
-    Early_3V3_Enable();
 
     OCMP8_Initialize();
 

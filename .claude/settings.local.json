@@ -32,7 +32,16 @@
       "Bash(cmd.exe /c \"cd \"\"C:\\Users\\User\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\"\" && \"\"C:\\Program Files\\Microchip\\MPLABX\\v6.25\\gnuBins\\GnuWin32\\bin\\make.exe\"\"\")",
       "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\" -f nbproject/Makefile-default.mk build)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\" -f nbproject/Makefile-default.mk CONF=default build)",
+      "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\" -j4)",
+      "Bash(cmd.exe:*)",
+      "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\" -f nbproject/Makefile-default.mk CONF=default clean build)",
+      "Bash(git rev-parse:*)",
+      "Bash(sed:*)",
+      "Bash(python3:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh:*)"
     ],
     "deny": []
   }
