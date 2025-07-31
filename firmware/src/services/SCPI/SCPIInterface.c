@@ -20,8 +20,8 @@
 #include "state/board/BoardConfig.h"
 #include "services/daqifi_settings.h"
 #include "state/runtime/BoardRuntimeConfig.h"
-#include "HAL/BQ24297/BQ24297.h"
 #include "peripheral/gpio/plib_gpio.h"
+#include "HAL/BQ24297/BQ24297.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
 #include "SCPIDIO.h"
@@ -246,15 +246,25 @@ static microrl_t* SCPI_GetMicroRLClient(scpi_t* context) {
  * Triggers a board reset 
  */
 static scpi_result_t SCPI_Reset(scpi_t * context) {
-    UNUSED(context);
-
-    // TODO: Send a shutdown message. The purpose of this message is to shut down timers
-    // and anything else we don't want to leave running when the board goes offline.
-    // We'll need something similar for the bootloader- in that case we wont be re-initializing
-    // the board right away so we don't want to leave some things (like streaming data) active.
-    vTaskDelay(100); // be sure any pending flash or other operations complete before the reset
+    // Send notification that reset is occurring
+    // This gives connected clients a chance to know what happened
+    const char* msg = "System reset initiated\r\n";
+    context->interface->write(context, msg, strlen(msg));
+    
+    // Ensure the message is sent before reset
+    if (context->interface && context->interface->flush) {
+        context->interface->flush(context);
+    }
+    
+    // Allow time for message transmission and any pending operations
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    
+    // Perform the software reset
     RCON_SoftwareReset();
-    return SCPI_RES_ERR; // If we get here, the reset didn't work
+    
+    // If we get here, the reset didn't work
+    SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+    return SCPI_RES_ERR;
 }
 
 /**
@@ -299,6 +309,7 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     context->interface->write(context, (char*) buffer, count);
     return SCPI_RES_OK;
 }
+
 
 /**
  * SCPI Callback: Returns system information in human-readable text format
@@ -363,8 +374,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     switch(pBoardData->PowerData.powerState) {
         case POWERED_UP: powerState = "RUN"; break;
         case POWERED_UP_EXT_DOWN: powerState = "PARTIAL"; break;
-        case POWERED_DOWN: powerState = "OFF"; break;
-        case MICRO_ON: powerState = "STANDBY"; break;
+        case STANDBY: powerState = "STANDBY"; break;
         default: powerState = "Unknown"; break;
     }
     
@@ -511,6 +521,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             otgGpioState ? "HIGH" : "LOW");
         context->interface->write(context, buffer, strlen(buffer));
         
+        // Read REG01 and REG07 for detailed status
+        uint8_t reg01 = BQ24297_Read_I2C(0x01);
+        uint8_t reg07 = BQ24297_Read_I2C(0x07);
+        
+        // BATFET status (REG07 bit 5: 0=enabled, 1=disabled)
+        bool batfetEnabled = !(reg07 & 0x20);
+        
+        // REG01 breakdown: [7:6]=watchdog, [5]=OTG, [4]=CHG_CONFIG, [3:1]=SYS_MIN, [0]=reserved
+        snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: 0x%02X (OTG=%d, CHG=%d) | REG07: 0x%02X\r\n",
+            batfetEnabled ? "Enabled" : "DISABLED!",
+            reg01,
+            (reg01 >> 5) & 1,  // OTG bit
+            (reg01 >> 4) & 1,  // Charge enable bit
+            reg07);
+        context->interface->write(context, buffer, strlen(buffer));
+        
         // Power-up readiness - the key diagnostic info
         bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
         snprintf(buffer, sizeof(buffer), "  >>> Power-up Ready: %s %s\r\n",
@@ -546,7 +572,19 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
     for (i = 0; i < logSize; ++i) {
         size_t messageSize = LogMessagePop((uint8_t*) buffer, 128);
         if (messageSize > 0) {
+            // Write the message
             context->interface->write(context, buffer, messageSize);
+            
+            // Flush after each message to prevent buffer overflow
+            // This ensures the USB buffer has time to process each message
+            if (context->interface->flush) {
+                context->interface->flush(context);
+            }
+            
+            // Small delay to allow USB task to process the data
+            // This prevents overwhelming the USB circular buffer
+            // Reduced delay for faster log output
+            // vTaskDelay(1);  // Commented out for maximum speed
         }
     }
 
@@ -619,7 +657,8 @@ static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context) {
 }
 
 /**
- * GEts the power state
+ * Gets the power state
+ * Returns 0 for standby/off, 1 for any powered state
  * @param context
  * @return 
  */
@@ -627,7 +666,9 @@ static scpi_result_t SCPI_GetPowerState(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
-    SCPI_ResultInt32(context, (int) (pPowerData->powerState));
+    // Simplify to binary: 0=standby/off, 1=powered on
+    int state = (pPowerData->powerState == STANDBY) ? 0 : 1;
+    SCPI_ResultInt32(context, state);
     return SCPI_RES_OK;
 }
 
@@ -663,6 +704,47 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
                 pPowerData);
     }
 
+    return SCPI_RES_OK;
+}
+
+
+/**
+ * SCPI Callback: Control OTG mode
+ * Command: SYST:POW:OTG 0|1
+ * 0 = Disable OTG
+ * 1 = Enable OTG
+ */
+static scpi_result_t SCPI_SetOTGMode(scpi_t * context) {
+    int param;
+    
+    if (!SCPI_ParamInt32(context, &param, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    
+    if (param != 0 && param != 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    
+    if (param == 1) {
+        LOG_D("SCPI: Manually enabling OTG mode");
+        BQ24297_EnableOTG();
+    } else {
+        LOG_D("SCPI: Manually disabling OTG mode");
+        BQ24297_DisableOTG(true);
+    }
+    
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Get OTG status
+ * Query: SYST:POW:OTG?
+ * Returns: 0 (disabled) or 1 (enabled)
+ */
+static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
+    bool otg_enabled = BQ24297_IsOTGEnabled();
+    SCPI_ResultInt32(context, otg_enabled ? 1 : 0);
     return SCPI_RES_OK;
 }
 
@@ -705,7 +787,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {
-        if (freq >= 1 && freq <= 15000)///TODO: Test higher throughput
+        // Maximum frequency limited to 15kHz pending optimization
+        // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/58
+        if (freq >= 1 && freq <= 15000)
         {
             /**
              * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
@@ -1027,6 +1111,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet,},
     {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState,},
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
+    {.pattern = "SYSTem:POWer:OTG?", .callback = SCPI_GetOTGMode,},
+    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_SetOTGMode,},
     {.pattern = "SYSTem:FORce5V5POWer:STATe", .callback = SCPI_Force5v5PowerStateSet},
 
     // DIO

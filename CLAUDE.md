@@ -27,13 +27,14 @@ This is the DAQiFi Nyquist firmware project - a multi-channel data acquisition d
 
 ### Building from Command Line (Windows with WSL/Linux)
 1. Ensure MPLAB X is installed (typically in `C:\Program Files\Microchip\MPLABX`)
-2. Clean build artifacts: `rm -rf firmware/daqifi.X/build/`
+2. Clean build artifacts: `rm -rf firmware/daqifi.X/build/ dist/`
 3. Build using MPLAB X's make utility:
    ```bash
    cd firmware/daqifi.X
-   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe"
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe" -f nbproject/Makefile-default.mk CONF=default build -j$(nproc)
    ```
-4. The output hex file will be in `dist/default/production/daqifi.X.production.hex`
+   Note: `-j$(nproc)` uses all available CPU cores for faster builds
+4. The output hex file will be in `dist/default/production/daqifi.X.production.hex` (approx 1MB)
 
 Note: XC32 compiler is also available in Linux at `/opt/microchip/xc32/v4.60/bin/xc32-gcc`
 

@@ -21,13 +21,11 @@ extern "C" {
  */
 typedef enum
  {  
-    /* Powered down */
-    POWERED_DOWN = 0,
-    /* 3.3V rail enabled. Ready to check initial status */
-    MICRO_ON,
+    /* Standby/Off state - MCU on if USB powered, off if battery powered */
+    STANDBY = 0,
     /* Board fully powered. Monitor for any changes/faults */ 
     POWERED_UP,
-    /* Board partially powered. External power disabled */         
+    /* Board partially powered. External power disabled (low battery mode) */         
     POWERED_UP_EXT_DOWN,
  } POWER_STATE;
  

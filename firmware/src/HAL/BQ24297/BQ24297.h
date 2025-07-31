@@ -270,6 +270,39 @@ bool BQ24297_IsChargingEnabled(void);
  */
 void BQ24297_SetPowerMode(bool externalPowerPresent);
 
+/*!
+ * Read a BQ24297 register via I2C
+ * @param[in] reg Register address to read
+ * @return Register value or 0xFF on error
+ */
+uint8_t BQ24297_Read_I2C(uint8_t reg);
+
+/*!
+ * Write to a BQ24297 register via I2C
+ * @param[in] reg Register address to write
+ * @param[in] data Data to write to register
+ * @return true on success, false on error
+ */
+bool BQ24297_Write_I2C(uint8_t reg, uint8_t data);
+
+/*!
+ * Check if battery is present
+ * Consolidated battery detection logic that checks:
+ * - Thermistor status (COLD = open circuit = no battery)
+ * - Thermistor HOT (stuck low) with voltage check
+ * - Normal thermistor indicates battery present
+ * @return true if battery is present, false otherwise
+ */
+bool BQ24297_IsBatteryPresent(void);
+
+/*!
+ * Update battery status and charging allowed flag
+ * Updates batPresent and chargeAllowed flags based on:
+ * - Battery presence detection
+ * - Thermistor fault status
+ * Disables charging if thermistor is stuck low (HOT) for safety
+ */
+void BQ24297_UpdateBatteryStatus(void);
     
 #ifdef	__cplusplus
 }

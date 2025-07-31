@@ -257,7 +257,7 @@ static void app_TasksCreate() {
     BaseType_t errStatus;
     errStatus = xTaskCreate((TaskFunction_t) app_PowerAndUITask,
             "PowerAndUITask",
-            2048,
+            4096,  // Further increased to prevent stack overflow during disconnect/reconnect
             NULL,
             2,
             NULL);

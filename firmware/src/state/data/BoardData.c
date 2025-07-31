@@ -31,9 +31,9 @@ void InitializeBoardData(tBoardData* boardData) {
     // Set default battery values for debugging - allows power on without ADC active
 
 
-    // Initialize to MICRO_ON since the 3.3V rail is enabled if code is running
+    // Initialize to STANDBY since the 3.3V rail is enabled if code is running
     // This matches the hardware state after Power_Init() enables the 3.3V rail
-    boardData->PowerData.powerState = MICRO_ON;
+    boardData->PowerData.powerState = STANDBY;
     boardData->PowerData.requestedPowerState = NO_CHANGE;
     boardData->PowerData.battLow = false;
     // Initialize to nominal battery voltage to prevent false low-battery shutdowns
@@ -41,7 +41,7 @@ void InitializeBoardData(tBoardData* boardData) {
     boardData->PowerData.battVoltage = 3.7;  // Nominal Li-ion voltage
     boardData->PowerData.chargePct = 50;     // Assume 50% charge until ADC reading available
     boardData->PowerData.USBSleep = false;
-    boardData->PowerData.powerDnAllowed = true;
+    boardData->PowerData.powerDnAllowed = false;
     boardData->PowerData.externalPowerSource = NO_EXT_POWER;
     boardData->PowerData.BQ24297Data.chargeAllowed = true;
     boardData->PowerData.BQ24297Data.initComplete = false;  // Ensure BQ24297 initialization runs!

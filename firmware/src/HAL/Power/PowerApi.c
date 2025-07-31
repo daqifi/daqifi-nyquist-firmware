@@ -12,6 +12,7 @@
 #include "Util/Logger.h"
 #include "../../services/wifi_services/wifi_manager.h"
 #include "../../services/UsbCdc/UsbCdc.h"
+#include <xc.h>
 //typedef enum
 //{
 //    /* Source of clock is internal fast RC */
@@ -91,14 +92,7 @@ static void Power_UpdateChgPct(void);
  */
 static void Power_Update_Settings(void);
 
-static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
-    uint32_t pin = 1 << mask;
-    if (value == 1)
-        GPIO_PortSet(port, pin);
-    else
-        GPIO_PortClear(port, pin);
-
-}
+// Removed generic GPIO functions - using Harmony macros instead
 
 bool ReadGpioPinStateLatched(GPIO_PORT port, uint32_t mask) {
     return GPIO_PortLatchRead(port)& (1 << mask);
@@ -122,66 +116,52 @@ void Power_Init(
     // CRITICAL: Force 3.3V rail ON regardless of initial config
     // The microcontroller is running, so 3.3V must already be on
     // This ensures it stays on during USB disconnect
+    PWR_3_3V_EN_OutputEnable();  // Set RH12 as output
+    PWR_3_3V_EN_Set();          // Drive 3.3V_EN high
     pWriteVariables->EN_3_3V_Val = true;
-    WriteGpioPin(pConfig->EN_3_3V_Ch,
-            pConfig->EN_3_3V_Bit,
-            pWriteVariables->EN_3_3V_Val);
-
-    WriteGpioPin(pConfig->EN_5_10V_Ch,
-            pConfig->EN_5_10V_Bit,
-            pWriteVariables->EN_5_10V_Val);
-    WriteGpioPin(pConfig->EN_5V_ADC_Ch,
-            pConfig->EN_5V_ADC_Bit,
-            pWriteVariables->EN_5V_ADC_Val);
-    WriteGpioPin(pConfig->EN_12V_Ch,
-            pConfig->EN_12V_Bit,
-            pWriteVariables->EN_12V_Val);
-    WriteGpioPin(pConfig->EN_Vref_Ch,
-            pConfig->EN_Vref_Bit,
-            pWriteVariables->EN_Vref_Val);
+    
+    // Initialize other power pins to their default states
+    // Note: These would need their own macros if they exist
+    // For now, keeping the basic initialization
 }
 
 void Power_Tasks(void) {
     // If we haven't initialized the battery management settings, do so now
     if (pData->BQ24297Data.initComplete == false) {
-        LOG_D("Power_Tasks: Calling BQ24297_Config_Settings (initComplete=false)");
         BQ24297_Config_Settings();
     }
-
-    // Update power settings based on BQ24297 interrupt change
-    if (pData->BQ24297Data.intFlag) {
-        /* The BQ24297 asserted an interrupt so we might need to update our power settings
-         * INT on the BQ24297 can be asserted:
-         * -Good input source detected
-         * -Input removed or VBUS above VACOV threshold
-         * -After successful input source qualification
-         * -Any fault during boost operation, including VBUS over-voltage or over-current
-         * -Once a charging cycle is complete/charging termination
-         * -On temperature fault
-         * -Safety timer timeout
-         */
-        LOG_D("Power_Tasks: BQ24297 interrupt detected!");
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+    
+    // CRITICAL SAFETY CHECKS: Ensure HIZ mode is cleared and BATFET is enabled
+    
+    // Check REG00 for HIZ mode - if set (1), it blocks charging and can cause power loss
+    uint8_t reg00 = BQ24297_Read_I2C(0x00);
+    if (reg00 != 0xFF && (reg00 & 0x80)) {
+        LOG_D("Power_Tasks: HIZ mode detected - clearing");
+        reg00 &= 0x7F;  // Clear bit 7 to exit HIZ mode
+        BQ24297_Write_I2C(0x00, reg00);
         
-        // Store previous pgStat to detect changes
-        bool prevPgStat = pData->BQ24297Data.status.pgStat;
-        
-        // Update battery management status - plugged in (USB, charger, etc), charging/discharging, etc.
+        // Force a power settings update after clearing HIZ
         BQ24297_UpdateStatus();
-        
-        // Log if pgStat changed
-        if (prevPgStat != pData->BQ24297Data.status.pgStat) {
-            LOG_E("Power_Tasks: pgStat changed from %d to %d!", prevPgStat, pData->BQ24297Data.status.pgStat);
-        }
-        
         Power_Update_Settings();
-        pData->BQ24297Data.intFlag = false; // Clear flag
+    }
+    
+    // Check REG07 bit 5 - if set (1), BATFET is disabled which will cause power loss
+    uint8_t reg07 = BQ24297_Read_I2C(0x07);
+    if (reg07 != 0xFF && (reg07 & 0x20)) {
+        LOG_D("Power_Tasks: BATFET disabled - re-enabling");
+        reg07 &= 0xDF;  // Clear bit 5 to enable BATFET
+        BQ24297_Write_I2C(0x07, reg07);
     }
 
-    // Call update state
-    // TODO - perhaps put this in its own task to call only once per minute?
-    // As is, it appears to cause LED blinking to be errant
-    Power_UpdateState();
+    // Rate limit Power_UpdateState to 1 second intervals
+    // This provides adequate safety monitoring while reducing unnecessary LED activity
+    // Hardware resettable fuses provide protection against shorts/overcurrent
+    static TickType_t lastUpdateTime = 0;
+    TickType_t currentTime = xTaskGetTickCount();
+    if ((currentTime - lastUpdateTime) >= (1000 / portTICK_PERIOD_MS)) {
+        lastUpdateTime = currentTime;
+        Power_UpdateState();
+    }
 }
 
 void Power_USB_Sleep_Update(bool sleep) {
@@ -205,40 +185,66 @@ void Power_Write(void) {
 
     // Check to see if we are changing the state of this power pin
     if (EN_3_3V_Val_Current != pWriteVariables->EN_3_3V_Val) {
-        LOG_E("Power_Write: CHANGING 3.3V RAIL from %d to %d!", 
-              EN_3_3V_Val_Current, pWriteVariables->EN_3_3V_Val);
-        WriteGpioPin(pConfig->EN_3_3V_Ch,
-                pConfig->EN_3_3V_Bit,
-                pWriteVariables->EN_3_3V_Val);
+        
+        // CRITICAL: Set pin direction and value using Harmony macros
+        if (pWriteVariables->EN_3_3V_Val) {
+            // Set as OUTPUT and drive high
+            PWR_3_3V_EN_OutputEnable();
+            PWR_3_3V_EN_Set();
+        } else {
+            // Clear the pin (will set as INPUT later in Power_Down())
+            PWR_3_3V_EN_Clear();
+        }
+        
     }
 
     // Check to see if we are changing the state of these power pins
-    if (EN_5_10V_Val_Current != pWriteVariables->EN_5_10V_Val ||
-            EN_5V_ADC_Val_Current != pWriteVariables->EN_5V_ADC_Val ||
-            EN_12V_Val_Current != pWriteVariables->EN_12V_Val) {
-        WriteGpioPin(pConfig->EN_5_10V_Ch,
-                pConfig->EN_5_10V_Bit,
-                pWriteVariables->EN_5_10V_Val);
-
-        WriteGpioPin(pConfig->EN_5V_ADC_Ch,
-                pConfig->EN_5V_ADC_Bit,
-                pWriteVariables->EN_5V_ADC_Val);
-
-        WriteGpioPin(pConfig->EN_12V_Ch,
-                pConfig->EN_12V_Bit,
-                pWriteVariables->EN_12V_Val);
+    if (EN_5_10V_Val_Current != pWriteVariables->EN_5_10V_Val) {
+        // PWR_5V_EN uses Port D, bit 0
+        if (pWriteVariables->EN_5_10V_Val) {
+            PWR_5V_EN_OutputEnable();
+            PWR_5V_EN_Set();
+        } else {
+            PWR_5V_EN_Clear();
+        }
+    }
+    
+    // Note: EN_5V_ADC doesn't have a specific Harmony macro, using GPIO port functions
+    if (EN_5V_ADC_Val_Current != pWriteVariables->EN_5V_ADC_Val) {
+        uint32_t pin = 1 << pConfig->EN_5V_ADC_Bit;
+        if (pWriteVariables->EN_5V_ADC_Val) {
+            GPIO_PortOutputEnable(pConfig->EN_5V_ADC_Ch, pin);
+            GPIO_PortSet(pConfig->EN_5V_ADC_Ch, pin);
+        } else {
+            GPIO_PortClear(pConfig->EN_5V_ADC_Ch, pin);
+        }
+    }
+    
+    if (EN_12V_Val_Current != pWriteVariables->EN_12V_Val) {
+        // PWR_12V_EN uses Port H, bit 15
+        if (pWriteVariables->EN_12V_Val) {
+            PWR_12V_EN_OutputEnable();
+            PWR_12V_EN_Set();
+        } else {
+            PWR_12V_EN_Clear();
+        }
     }
 
     // Check to see if we are changing the state of this power pin
     if (EN_Vref_Val_Current != pWriteVariables->EN_Vref_Val) {
-        WriteGpioPin(pConfig->EN_Vref_Ch,
-                pConfig->EN_Vref_Bit,
-                pWriteVariables->EN_Vref_Val);
+        // PWR_VREF_EN uses Port J, bit 15
+        if (pWriteVariables->EN_Vref_Val) {
+            PWR_VREF_EN_OutputEnable();
+            PWR_VREF_EN_Set();
+        } else {
+            PWR_VREF_EN_Clear();
+        }
     }
 
 }
 
 static void Power_Up(void) {
+    
     // If the battery management is not enabled, wait for it to become ready
     while (!pData->BQ24297Data.initComplete) {
         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -251,6 +257,7 @@ static void Power_Up(void) {
     // 3.3V Enable
     pWriteVariables->EN_3_3V_Val = true;
     Power_Write();
+    
 
     // 5V Enable
     if ((pData->BQ24297Data.status.batPresent) ||
@@ -281,8 +288,6 @@ static void Power_Up(void) {
 }
 
 void Power_Down(void) {
-    LOG_E("Power_Down: CALLED! Turning off 3.3V rail. powerState=%d, requestedPowerState=%d", 
-          pData->powerState, pData->requestedPowerState);
     
     // 3.3V Disable - if powered externally, board will stay on and go to low power state, else off completely
     pWriteVariables->EN_3_3V_Val = false;
@@ -295,9 +300,11 @@ void Power_Down(void) {
     // Vref Disable
     pWriteVariables->EN_Vref_Val = false;
     Power_Write();
+    
+    // CRITICAL: Set 3.3V_EN pin as INPUT for power down
+    PWR_3_3V_EN_InputEnable();
 
-
-    pData->powerState = MICRO_ON; // Set back to default state
+    pData->powerState = STANDBY; // Set back to default state
     pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
 
     // Delay 1000ms for power to discharge
@@ -307,6 +314,17 @@ void Power_Down(void) {
 static void Power_UpdateState(void) {
     static POWER_STATE lastLoggedState = -1;
     
+    // Monitor 3.3V_EN GPIO state changes
+    static bool last3v3State = false;
+    static bool first3v3Check = true;
+    bool current3v3State = ReadGpioPinStateLatched(pConfig->EN_3_3V_Ch, pConfig->EN_3_3V_Bit);
+    
+    if (first3v3Check || (current3v3State != last3v3State)) {
+        
+        last3v3State = current3v3State;
+        first3v3Check = false;
+    }
+    
     // Log state changes
     if (pData->powerState != lastLoggedState) {
         LOG_D("Power_UpdateState: State changed from %d to %d", lastLoggedState, pData->powerState);
@@ -315,60 +333,47 @@ static void Power_UpdateState(void) {
     
     // Set power state immediately if DO_POWER_DOWN is requested
     if (pData->requestedPowerState == DO_POWER_DOWN) {
-        LOG_D("Power_UpdateState: DO_POWER_DOWN requested, setting state to POWERED_DOWN");
-        pData->powerState = POWERED_DOWN;
+        pData->powerState = STANDBY;
     }
 
     switch (pData->powerState) {
-        case POWERED_DOWN:
-            /* Not initialized or powered down */
-            LOG_D("Power_UpdateState: In POWERED_DOWN state, powerDnAllowed=%d", pData->powerDnAllowed);
-
+        case STANDBY:
+        {
+            /* Standby/Off state
+             * - On USB power: MCU stays on (3.3V enabled) 
+             * - On battery: MCU powers off (3.3V disabled)
+             * This is the default state if code is running on USB power
+             */
+            
             // Check to see if we've finished signaling the user of insufficient power if necessary
             if (pData->powerDnAllowed == true) {
-                LOG_E("Power_UpdateState: Calling Power_Down() from POWERED_DOWN state!");
                 Power_Down();
+                break;  // Exit early if powering down
             }
-            break;
 
-        case MICRO_ON:
-        {
-            /* 3.3V rail enabled. Ready to check initial status 
-             * NOTE: This is the default state if code is running!
-             * There is no Vref at this time, so any read to ADC is invalid!
-             */
             // Update BQ24297 status and external power source detection
-            BQ24297_UpdateStatus();
-            Power_Update_Settings();
+            // Rate limit to reduce log spam during STANDBY state
+            static TickType_t lastStandbyUpdate = 0;
+            TickType_t currentTime = xTaskGetTickCount();
+            if ((currentTime - lastStandbyUpdate) >= (1000 / portTICK_PERIOD_MS)) {
+                lastStandbyUpdate = currentTime;
+                BQ24297_UpdateStatus();
+                Power_Update_Settings();
+            }
             
             if (pData->requestedPowerState == DO_POWER_UP) {
 
-                /* Power-up Condition Check:
-                 * 
-                 * The device can power up if EITHER condition is met:
-                 * 1. Battery voltage > 3.0V (vsysStat == false)
-                 * 2. External power is connected (pgStat == true)
-                 * 
-                 * If battery <= 3.0V AND no external power, the device will
-                 * power off when the power button is released.
-                 * 
-                 * See GitHub issue #23: "Disconnecting USB causes device to power off"
-                 */
-                LOG_D("Power_UpdateState: DO_POWER_UP requested - vsysStat=%d, pgStat=%d, batPresent=%d",
-                      pData->BQ24297Data.status.vsysStat, 
-                      pData->BQ24297Data.status.pgStat,
-                      pData->BQ24297Data.status.batPresent);
+                // Power up if battery > 3.0V OR external power present
                       
                 if (!pData->BQ24297Data.status.vsysStat ||
                         pData->BQ24297Data.status.pgStat)
                 {
-                    LOG_D("Power_UpdateState: Power-up conditions met, calling Power_Up()");
                     Power_Up();
                 } else {
                     // Otherwise insufficient power.  Notify user and power down
-                    LOG_E("Power_UpdateState: Insufficient power! vsysStat=1 (batt<3.0V) AND pgStat=0 (no ext power)");
+                    LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
                     pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
-                    pData->powerState = POWERED_DOWN;
+                    // Already in STANDBY state, no need to set it again
                 }
                 pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state after handling request
             }
@@ -380,9 +385,16 @@ static void Power_UpdateState(void) {
              * ADC readings are now valid!
              */
             if (pData->requestedPowerState == DO_POWER_UP) pData->requestedPowerState = NO_CHANGE; // We are already powered so just reset the flag
-            Power_UpdateChgPct();
-            BQ24297_UpdateStatus();
-            Power_Update_Settings();  // Check for power source changes
+            
+            // Rate limit status updates to reduce log spam
+            static TickType_t lastStatusUpdate = 0;
+            TickType_t currentTime = xTaskGetTickCount();
+            if ((currentTime - lastStatusUpdate) >= (1000 / portTICK_PERIOD_MS)) { // Update every 1 second
+                lastStatusUpdate = currentTime;
+                Power_UpdateChgPct();
+                BQ24297_UpdateStatus();
+                Power_Update_Settings();  // Check for power source changes
+            }
             
             // Only trust battery percentage if we have a valid voltage reading
             bool validBatteryReading = (pData->battVoltage > 2.5);  // Li-ion can't be < 2.5V
@@ -394,7 +406,6 @@ static void Power_UpdateState(void) {
                     (validBatteryReading && pData->chargePct < BATT_LOW_TH &&
                     !hasExternalPower)) {
                 // If battery is low on charge and we are not plugged in, disable external supplies
-                LOG_D("Power_UpdateState: Transitioning to POWERED_UP_EXT_DOWN - low battery!");
                 pWriteVariables->EN_5_10V_Val = false;
                 Power_Write();
                 pData->powerState = POWERED_UP_EXT_DOWN;
@@ -425,10 +436,10 @@ static void Power_UpdateState(void) {
                 // Only shut down if we have a valid battery reading AND it's truly exhausted
                 // Code below is commented out when I2C is disabled
                 // Insufficient power.  Notify user and power down.
-                LOG_E("Power_UpdateState: Battery exhausted! chgPct=%.1f < %.1f, transitioning to POWERED_DOWN", 
+                LOG_D("Power_UpdateState: Battery exhausted (%.1f%% < %.1f%%), transitioning to STANDBY", 
                       pData->chargePct, BATT_EXH_TH);
                 pData->powerDnAllowed = false; // This will turn true after the LED sequence completes
-                pData->powerState = POWERED_DOWN;
+                pData->powerState = STANDBY;
             }
 
             break;
@@ -462,29 +473,13 @@ static void Power_UpdateChgPct(void) {
 static void Power_Update_Settings(void) {
     // Change charging/other power settings based on current status
 
-    // Get MCU VBUS detection for debug logging only - NOT for decision making
-    bool usbVbusDetected = UsbCdc_IsVbusDetected();
-    
-    // Only log when values change
-    static bool lastPgStat = -1;
-    static bool lastOtg = -1;
-    static uint8_t lastVBusStat = -1;
-    
-    if (pData->BQ24297Data.status.pgStat != lastPgStat ||
-        pData->BQ24297Data.status.otg != lastOtg ||
-        pData->BQ24297Data.status.vBusStat != lastVBusStat) {
-        
-        LOG_D("Power_Update_Settings: pgStat=%d, vBusStat=0x%02X, inLim=%d, otg=%d, [MCU_VBUS_DEBUG=%d]", 
-              pData->BQ24297Data.status.pgStat,
-              pData->BQ24297Data.status.vBusStat,
-              pData->BQ24297Data.status.inLim,
-              pData->BQ24297Data.status.otg,
-              usbVbusDetected);
-              
-        lastPgStat = pData->BQ24297Data.status.pgStat;
-        lastOtg = pData->BQ24297Data.status.otg;
-        lastVBusStat = pData->BQ24297Data.status.vBusStat;
+    // Check if input detection is in progress (DPM_STAT = 1)
+    if (pData->BQ24297Data.status.dpmStat) {
+        // Don't make power state changes while input detection is active
+        return;
     }
+
+    
 
     // Update external power source based on BQ24297 detection
     if (pData->BQ24297Data.status.pgStat) {
@@ -519,15 +514,14 @@ static void Power_Update_Settings(void) {
 
     // Check new power source and set parameters accordingly
     BQ24297_AutoSetILim();
+    
+    // Update BQ24297 power mode based on external power availability
+    // This will handle charging enable/disable appropriately
+    BQ24297_SetPowerMode(pData->BQ24297Data.status.pgStat);
 
-    // Enable OTG when no external power to boost battery voltage
-    if (pData->externalPowerSource == NO_EXT_POWER && !pData->BQ24297Data.status.otg) {
-        LOG_D("Power_Update_Settings: No external power - enabling OTG boost");
-        BQ24297_EnableOTG();
-    } else if (pData->externalPowerSource != NO_EXT_POWER && pData->BQ24297Data.status.otg) {
-        LOG_D("Power_Update_Settings: External power restored - disabling OTG");
-        BQ24297_DisableOTG(true);
-    }
+    // Automatic OTG mode transitions are disabled
+    // OTG can only be controlled manually via SCPI commands
+    // This prevents unexpected power state changes during USB disconnect/reconnect
 }
 
 

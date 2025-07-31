@@ -72,9 +72,9 @@ void GPIO_Initialize ( void )
     ANSELACLR = 0x20U; /* Digital Mode Enable */
     CNPUASET = 0x1cU; /* Pull-Up Enable */
 
-    /* Change Notice Enable */
-    CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK;
-    IEC3SET = _IEC3_CNAIE_MASK;
+    /* Change Notice Disabled - Not using BQ24297 INT pin */
+    /* CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK; */
+    /* IEC3SET = _IEC3_CNAIE_MASK; */
     /* PORTB Initialization */
     LATB = 0x0U; /* Initial Latch Value */
     TRISBCLR = 0x4000U; /* Direction Control */
