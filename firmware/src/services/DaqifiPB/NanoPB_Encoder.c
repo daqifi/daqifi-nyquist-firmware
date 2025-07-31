@@ -425,8 +425,8 @@ size_t Nanopb_Encode(tBoardData* state,
                         if (!pPublicSampleList->isSampleValid[i])
                             continue;
                         data = pPublicSampleList->sampleElement[i];
-                        if (message.analog_in_data_count > maxDataIndex)
-                            continue;
+                        if (message.analog_in_data_count >= maxDataIndex)
+                            break;  // Stop if we've reached the array limit
                         // Use sequential packing like the old firmware
                         message.analog_in_data[message.analog_in_data_count] = data.Value;
                         message.analog_in_data_count++;
