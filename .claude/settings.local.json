@@ -45,7 +45,8 @@
       "Bash(nproc)",
       "Bash(while:*)",
       "Bash(do sleep:*)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(find:*)"
     ],
     "deny": []
   }
