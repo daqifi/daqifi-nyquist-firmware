@@ -425,9 +425,10 @@ size_t Nanopb_Encode(tBoardData* state,
                         if (!pPublicSampleList->isSampleValid[i])
                             continue;
                         data = pPublicSampleList->sampleElement[i];
-                        if (data.Channel > maxDataIndex)
+                        if (message.analog_in_data_count > maxDataIndex)
                             continue;
-                        message.analog_in_data[data.Channel] = data.Value;
+                        // Use sequential packing like the old firmware
+                        message.analog_in_data[message.analog_in_data_count] = data.Value;
                         message.analog_in_data_count++;
                     }
 
@@ -641,7 +642,7 @@ size_t Nanopb_Encode(tBoardData* state,
                  * @brief Encodes the available range settings for analog input modules.
                  *
                  * This tag stores the supported voltage ranges for each analog input module,
-                 * indicating the possible ranges a module can operate within (e.g., 0-5V, ±10V).
+                 * indicating the possible ranges a module can operate within (e.g., 0-5V, ï¿½10V).
                  */
                 message.analog_in_port_av_range[0] =
                         pRuntimeAInModules->Data[AIn_MC12bADC].Range;
