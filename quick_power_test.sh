@@ -37,7 +37,7 @@ send_scpi "SYST:POW:STAT?"
 
 # Test 3: Check battery and OTG
 echo -e "${GREEN}3. Battery and OTG Status${NC}"
-send_scpi "SYST:BAT:STATus?"
+send_scpi "SYST:POW:SOURce?"
 send_scpi "SYST:POW:OTG?"
 
 # Test 4: Power down
