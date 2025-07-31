@@ -46,7 +46,10 @@
       "Bash(while:*)",
       "Bash(do sleep:*)",
       "Bash(done)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git clone:*)",
+      "Bash(cat:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

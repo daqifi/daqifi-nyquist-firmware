@@ -1107,7 +1107,7 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:COMMunication:TCPIP:CONTROL?", .callback = SCPI_NotImplemented, },
 
     // Power
-    {.pattern = "SYSTem:BAT:STAT?", .callback = SCPI_BatteryStatusGet,},
+    {.pattern = "SYSTem:BAT:STATus?", .callback = SCPI_BatteryStatusGet,},
     {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet,},
     {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState,},
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},

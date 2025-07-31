@@ -31,7 +31,7 @@ send_scpi "SYST:POW:STAT?"
 send_scpi "SYST:INFO?"
 
 # Check battery status
-send_scpi "SYST:BAT:STAT?"
+send_scpi "SYST:BAT:STATus?"
 send_scpi "SYST:BAT:LEV?"
 
 # Check OTG mode (should be OFF)
@@ -234,7 +234,7 @@ echo "=== Power State Test Suite ==="
 echo -e "\n--- Initial State ---"
 send_scpi "*IDN?"
 send_scpi "SYST:POW:STAT?"
-send_scpi "SYST:BAT:STAT?"
+send_scpi "SYST:BAT:STATus?"
 send_scpi "SYST:POW:OTG?"
 
 # Power transitions
