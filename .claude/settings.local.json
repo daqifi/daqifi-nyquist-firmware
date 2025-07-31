@@ -46,7 +46,14 @@
       "Bash(while:*)",
       "Bash(do sleep:*)",
       "Bash(done)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git clone:*)",
+      "Bash(cat:*)",
+      "Bash(mv:*)",
+      "Bash(./test_implemented_wifi_commands.sh:*)",
+      "Bash(dos2unix:*)",
+      "Bash(/tmp/test_wifi.sh:*)",
+      "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/test_wifi_commands.sh)"
     ],
     "deny": []
   }

@@ -631,11 +631,11 @@ static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
 }
 
 /**
- * Gets the external power status
+ * Gets the external power source type
  * @param context
  * @return 
  */
-static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context) {
+static scpi_result_t SCPI_PowerSourceGet(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
@@ -645,6 +645,7 @@ static scpi_result_t SCPI_BatteryStatusGet(scpi_t * context) {
 
 /**
  * Gets the battery level
+ * Returns -1 if device is in standby (battery monitoring inactive)
  * @param context
  * @return 
  */
@@ -652,7 +653,14 @@ static scpi_result_t SCPI_BatteryLevelGet(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
-    SCPI_ResultInt32(context, (int) (pPowerData->chargePct));
+    
+    // Battery monitoring is only active when powered up
+    if (pPowerData->powerState == STANDBY) {
+        SCPI_ResultInt32(context, -1);
+    } else {
+        SCPI_ResultInt32(context, (int) (pPowerData->chargePct));
+    }
+    
     return SCPI_RES_OK;
 }
 
@@ -977,7 +985,9 @@ scpi_result_t SCPI_GetSerialNumber(scpi_t * context) {
             BOARDCONFIG_ALL_CONFIG,
             0);
 
+    // Return in standard SCPI hexadecimal format with #H prefix
     SCPI_ResultUInt64Base(context, pBoardConfig->boardSerialNumber, 16);
+    
     return SCPI_RES_OK;
 }
 
@@ -1107,7 +1117,7 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:COMMunication:TCPIP:CONTROL?", .callback = SCPI_NotImplemented, },
 
     // Power
-    {.pattern = "SYSTem:BAT:STAT?", .callback = SCPI_BatteryStatusGet,},
+    {.pattern = "SYSTem:POWer:SOURce?", .callback = SCPI_PowerSourceGet,},
     {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet,},
     {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState,},
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
@@ -1168,7 +1178,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad,},
     {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave,},
     {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad,},
-    {.pattern = "SYSTem:COMMunicate:LAN:CLEAR", .callback = SCPI_LANSettingsClear,},
     //
     {.pattern = "SYSTem:COMMunicate:LAN:GETChipInfo?", .callback = SCPI_LANGetChipInfo,},
     // ADC

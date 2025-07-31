@@ -579,14 +579,6 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-scpi_result_t SCPI_LANSettingsClear(scpi_t * context) {
-    // Clear WiFi settings from NVM
-    if (!daqifi_settings_ClearNvm(DaqifiSettings_Wifi)) {
-        return SCPI_RES_ERR;
-    }
-
-    return SCPI_RES_OK;
-}
 
 scpi_result_t SCPI_LANHostnameGet(scpi_t * context) {
     SCPI_LANStringGetImpl(context, DEFAULT_NETWORK_HOST_NAME);
