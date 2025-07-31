@@ -985,10 +985,8 @@ scpi_result_t SCPI_GetSerialNumber(scpi_t * context) {
             BOARDCONFIG_ALL_CONFIG,
             0);
 
-    // Format as hex string without the #H prefix
-    char serialStr[17];  // 16 hex chars + null terminator
-    snprintf(serialStr, sizeof(serialStr), "%016llX", pBoardConfig->boardSerialNumber);
-    SCPI_ResultCharacters(context, serialStr, strlen(serialStr));
+    // Return in standard SCPI hexadecimal format with #H prefix
+    SCPI_ResultUInt64Base(context, pBoardConfig->boardSerialNumber, 16);
     
     return SCPI_RES_OK;
 }
