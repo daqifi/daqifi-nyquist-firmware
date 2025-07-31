@@ -41,7 +41,7 @@ void InitializeBoardData(tBoardData* boardData) {
     boardData->PowerData.battVoltage = 3.7;  // Nominal Li-ion voltage
     boardData->PowerData.chargePct = 50;     // Assume 50% charge until ADC reading available
     boardData->PowerData.USBSleep = false;
-    boardData->PowerData.powerDnAllowed = true;
+    boardData->PowerData.powerDnAllowed = false;
     boardData->PowerData.externalPowerSource = NO_EXT_POWER;
     boardData->PowerData.BQ24297Data.chargeAllowed = true;
     boardData->PowerData.BQ24297Data.initComplete = false;  // Ensure BQ24297 initialization runs!
