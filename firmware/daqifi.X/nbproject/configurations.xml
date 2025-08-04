@@ -907,12 +907,6 @@
         <logicalFolder name="UsbCdc" displayName="UsbCdc" projectFiles="true">
           <itemPath>../src/services/UsbCdc/UsbCdc.c</itemPath>
         </logicalFolder>
-        <logicalFolder name="UsbReconnection"
-                       displayName="UsbReconnection"
-                       projectFiles="true">
-          <itemPath>../src/services/UsbReconnection/UsbReconnection.c</itemPath>
-          <itemPath>../src/services/UsbReconnection/UsbReconnection.h</itemPath>
-        </logicalFolder>
         <logicalFolder name="wifi_services"
                        displayName="wifi_services"
                        projectFiles="true">
@@ -1975,24 +1969,6 @@
         </C32Global>
       </item>
       <item path="../src/services/UsbCdc/UsbCdc.h" ex="false" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
-      <item path="../src/services/UsbReconnection/UsbReconnection.c"
-            ex="false"
-            overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -3717,7 +3693,7 @@
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/default/daqifi_ptg"/>
+                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
