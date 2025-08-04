@@ -173,13 +173,11 @@ void Power_Write(void) {
 
     bool EN_3_3V_Val_Current;
     bool EN_5_10V_Val_Current;
-    bool EN_5V_ADC_Val_Current;
     bool EN_12V_Val_Current;
     bool EN_Vref_Val_Current;
 
     EN_3_3V_Val_Current = ReadGpioPinStateLatched(pConfig->EN_3_3V_Ch, pConfig->EN_3_3V_Bit);
     EN_5_10V_Val_Current = ReadGpioPinStateLatched(pConfig->EN_5_10V_Ch, pConfig->EN_5_10V_Bit);
-    EN_5V_ADC_Val_Current = ReadGpioPinStateLatched(pConfig->EN_5V_ADC_Ch, pConfig->EN_5V_ADC_Bit);
     EN_12V_Val_Current = ReadGpioPinStateLatched(pConfig->EN_12V_Ch, pConfig->EN_12V_Bit);
     EN_Vref_Val_Current = ReadGpioPinStateLatched(pConfig->EN_Vref_Ch, pConfig->EN_Vref_Bit);
 
@@ -206,17 +204,6 @@ void Power_Write(void) {
             PWR_5V_EN_Set();
         } else {
             PWR_5V_EN_Clear();
-        }
-    }
-    
-    // Note: EN_5V_ADC doesn't have a specific Harmony macro, using GPIO port functions
-    if (EN_5V_ADC_Val_Current != pWriteVariables->EN_5V_ADC_Val) {
-        uint32_t pin = 1 << pConfig->EN_5V_ADC_Bit;
-        if (pWriteVariables->EN_5V_ADC_Val) {
-            GPIO_PortOutputEnable(pConfig->EN_5V_ADC_Ch, pin);
-            GPIO_PortSet(pConfig->EN_5V_ADC_Ch, pin);
-        } else {
-            GPIO_PortClear(pConfig->EN_5V_ADC_Ch, pin);
         }
     }
     
@@ -267,11 +254,6 @@ static void Power_Up(void) {
     Power_Write();
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
-    // 5V ADC Enable
-    pWriteVariables->EN_5V_ADC_Val = true;
-    Power_Write();
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-
     // 12V Enable (set low to turn on, set as input (or high if configured
     // as open collector) to turn off)
     pWriteVariables->EN_12V_Val = false;
@@ -293,8 +275,6 @@ void Power_Down(void) {
     pWriteVariables->EN_3_3V_Val = false;
     // 5V Disable
     pWriteVariables->EN_5_10V_Val = false;
-    // 5V ADC Disable
-    pWriteVariables->EN_5V_ADC_Val = false;
     // 12V Disable (set low to turn on, set as input (or high if configured as open collector) to turn off)
     pWriteVariables->EN_12V_Val = true;
     // Vref Disable

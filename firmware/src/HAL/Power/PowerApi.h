@@ -74,8 +74,6 @@ typedef struct sPowerConfig{
     GPIO_PIN EN_3_3V_Bit; 
     GPIO_PORT EN_5_10V_Ch; 
     GPIO_PIN EN_5_10V_Bit; 
-    GPIO_PORT EN_5V_ADC_Ch; 
-    GPIO_PIN EN_5V_ADC_Bit; 
     GPIO_PORT EN_12V_Ch; 
     GPIO_PIN EN_12V_Bit; 
     GPIO_PORT USB_Dp_Ch; 
@@ -116,7 +114,6 @@ typedef struct sPowerWriteVars
    unsigned char EN_Vref_Val;
    unsigned char EN_3_3V_Val;
    unsigned char EN_5_10V_Val;
-   unsigned char EN_5V_ADC_Val;
    unsigned char EN_12V_Val;
    tBQ24297WriteVars BQ24297WriteVars;
 } tPowerWriteVars;
