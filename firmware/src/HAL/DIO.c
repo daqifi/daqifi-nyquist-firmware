@@ -17,6 +17,11 @@ static tBoardConfig *gpBoardConfig;
 static tBoardRuntimeConfig *gpRuntimeBoardConfig;
 
 static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
+    // Note: mask parameter is actually the bit position (0-15), not a bitmask
+    // Ensure mask is within valid range to prevent undefined behavior
+    if (mask > 15) {
+        return;  // Invalid bit position
+    }
     uint32_t pin = 1 << mask;
     if (value == 1)
         GPIO_PortSet(port, pin);
@@ -26,6 +31,11 @@ static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
 }
 
 static void SetGpioDir(GPIO_PORT port, uint32_t mask, bool isInput) {
+    // Note: mask parameter is actually the bit position (0-15), not a bitmask
+    // Ensure mask is within valid range to prevent undefined behavior
+    if (mask > 15) {
+        return;  // Invalid bit position
+    }
     uint32_t pin = 1 << mask ;
     if (isInput)
         GPIO_PortInputEnable(port, pin);
@@ -79,9 +89,16 @@ bool DIO_WriteStateAll(void) {
 }
 
 bool DIO_WriteStateSingle(uint8_t dataIndex) {
+    // Validate index bounds and ensure we don't exceed either config's size
+    if (dataIndex >= gpBoardConfig->DIOChannels.Size || 
+        dataIndex >= gpRuntimeBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
     GPIO_PORT enableChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ]. EnableChannel;
     GPIO_PIN enablePin = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnablePin;
+    
 
     GPIO_PORT dataChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataChannel;
     GPIO_PIN dataPin = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataPin;

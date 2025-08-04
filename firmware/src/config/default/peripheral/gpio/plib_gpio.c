@@ -69,16 +69,17 @@ void GPIO_Initialize ( void )
     ODCASET = 0xcU; /* Open Drain Enable */
     LATA = 0x0U; /* Initial Latch Value */
     TRISACLR = 0x20U; /* Direction Control */
+    TRISASET = 0x1U; /* Direction Control */
     ANSELACLR = 0x20U; /* Digital Mode Enable */
+    ANSELASET = 0x1U; /* Analog Mode Enable */
     CNPUASET = 0x1cU; /* Pull-Up Enable */
 
-    /* Change Notice Disabled - Not using BQ24297 INT pin */
-    /* CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK; */
-    /* IEC3SET = _IEC3_CNAIE_MASK; */
     /* PORTB Initialization */
     LATB = 0x0U; /* Initial Latch Value */
     TRISBCLR = 0x4000U; /* Direction Control */
+    TRISBSET = 0x2000U; /* Direction Control */
     ANSELBCLR = 0x4000U; /* Digital Mode Enable */
+    ANSELBSET = 0x2000U; /* Analog Mode Enable */
     /* PORTC Initialization */
     LATC = 0x0U; /* Initial Latch Value */
     TRISCCLR = 0x8U; /* Direction Control */
