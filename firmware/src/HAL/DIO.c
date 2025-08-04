@@ -17,11 +17,6 @@ static tBoardConfig *gpBoardConfig;
 static tBoardRuntimeConfig *gpRuntimeBoardConfig;
 
 static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
-    // Note: mask parameter is actually the bit position (0-15), not a bitmask
-    // Ensure mask is within valid range to prevent undefined behavior
-    if (mask > 15) {
-        return;  // Invalid bit position
-    }
     uint32_t pin = 1 << mask;
     if (value == 1)
         GPIO_PortSet(port, pin);
@@ -31,11 +26,6 @@ static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
 }
 
 static void SetGpioDir(GPIO_PORT port, uint32_t mask, bool isInput) {
-    // Note: mask parameter is actually the bit position (0-15), not a bitmask
-    // Ensure mask is within valid range to prevent undefined behavior
-    if (mask > 15) {
-        return;  // Invalid bit position
-    }
     uint32_t pin = 1 << mask ;
     if (isInput)
         GPIO_PortInputEnable(port, pin);
