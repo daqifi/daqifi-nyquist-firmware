@@ -16,8 +16,8 @@ static tBoardConfig *gpBoardConfig;
 //! Pointer to the runtime board configuration. It must be set in the initialization
 static tBoardRuntimeConfig *gpRuntimeBoardConfig;
 
-static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
-    uint32_t pin = 1 << mask;
+static void WriteGpioPin(GPIO_PORT port, uint32_t bitPos, uint32_t value) {
+    uint32_t pin = 1 << bitPos;
     if (value == 1)
         GPIO_PortSet(port, pin);
     else
@@ -25,8 +25,8 @@ static void WriteGpioPin(GPIO_PORT port, uint32_t mask, uint32_t value) {
 
 }
 
-static void SetGpioDir(GPIO_PORT port, uint32_t mask, bool isInput) {
-    uint32_t pin = 1 << mask ;
+static void SetGpioDir(GPIO_PORT port, uint32_t bitPos, bool isInput) {
+    uint32_t pin = 1 << bitPos ;
     if (isInput)
         GPIO_PortInputEnable(port, pin);
     else
