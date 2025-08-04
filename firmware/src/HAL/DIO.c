@@ -79,16 +79,9 @@ bool DIO_WriteStateAll(void) {
 }
 
 bool DIO_WriteStateSingle(uint8_t dataIndex) {
-    // Validate index bounds and ensure we don't exceed either config's size
-    if (dataIndex >= gpBoardConfig->DIOChannels.Size || 
-        dataIndex >= gpRuntimeBoardConfig->DIOChannels.Size) {
-        return false;
-    }
-    
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
     GPIO_PORT enableChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ]. EnableChannel;
     GPIO_PIN enablePin = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnablePin;
-    
 
     GPIO_PORT dataChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataChannel;
     GPIO_PIN dataPin = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataPin;
