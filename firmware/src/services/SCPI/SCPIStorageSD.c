@@ -56,6 +56,10 @@
 #define LAN_ACTIVE_ERROR_MSG "\r\nError !! Please Disable LAN\r\n"
 #define SD_CARD_NOT_ENABLED_ERROR_MSG "\r\nError !! Please Enabled SD Card\r\n"
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
+
+// Device path for SD card media detection - use device path not mount point
+// This is required for proper media status detection in the file system layer
+#define SD_CARD_DEVICE_PATH "/dev/mmcblka1"
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -172,7 +176,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     
     // Check if SD card is actually present and mounted
     // Use device path (/dev/mmcblka1) not mount point (/mnt/Daqifi) for media detection
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
+    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_DEVICE_PATH)) {
         // Log the error but send nothing - SCPI handler adds termination
         LOG_E("SD:LIST? - No SD card detected\r\n");
         result = SCPI_RES_OK;
@@ -248,7 +252,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     
     // Double-check that SD card is actually present
     // Use device path (/dev/mmcblka1) not mount point (/mnt/Daqifi) for media detection
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
+    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_DEVICE_PATH)) {
         context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
         result = SCPI_RES_ERR;
         goto __exit_point;
