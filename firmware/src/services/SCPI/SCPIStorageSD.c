@@ -180,53 +180,21 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     
     // Get optional directory parameter
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
-    
-    // Use a reasonable path buffer size (directory + filename + some overhead)
-    char dirPath[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 20];
+
     if (fileLen > 0) {
-        if (fileLen > sizeof(dirPath) - 1) {
-            LOG_E("SD:LIST? - Path too long: %d bytes\r\n", fileLen);
-            result = SCPI_RES_OK;
+        if (fileLen > SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX) {
+            LOG_E("SD:LIST? - Directory path too long: %d bytes\r\n", fileLen);
+            result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        memcpy(dirPath, pBuff, fileLen);
-        dirPath[fileLen] = '\0';
-    } else {
-        // Default to root directory
-        strcpy(dirPath, "/mnt/Daqifi");
+        memcpy(pSdCardRuntimeConfig->directory, pBuff, fileLen);
+        pSdCardRuntimeConfig->directory[fileLen] = '\0';
     }
-
-    // Perform synchronous directory listing
-    SYS_FS_HANDLE dirHandle = SYS_FS_DirOpen(dirPath);
-    if (dirHandle == SYS_FS_HANDLE_INVALID) {
-        LOG_E("SD:LIST? - Cannot open directory: %s\r\n", dirPath);
-        result = SCPI_RES_OK;
-        goto __exit_point;
-    }
+    // If no directory specified, the sd_card_manager will use the default from settings
     
-    // List files
-    SYS_FS_FSTAT stat;
-    int fileCount = 0;
-    
-    LOG_D("SD:LIST? - Opening directory: %s\r\n", dirPath);
-    
-    while (SYS_FS_DirRead(dirHandle, &stat) == SYS_FS_RES_SUCCESS) {
-        if (stat.fname[0] != '\0' && strcmp(stat.fname, ".") != 0 && strcmp(stat.fname, "..") != 0) {
-            // Send filename
-            context->interface->write(context, stat.fname, strlen(stat.fname));
-            context->interface->write(context, "\r\n", 2);
-            fileCount++;
-        }
-    }
-    
-    SYS_FS_DirClose(dirHandle);
-    
-    // Log the result
-    if (fileCount == 0) {
-        LOG_D("SD:LIST? - No files found in %s\r\n", dirPath);
-    } else {
-        LOG_D("SD:LIST? - Listed %d files from %s\r\n", fileCount, dirPath);
-    }
+    // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     
     result = SCPI_RES_OK;
 __exit_point:
