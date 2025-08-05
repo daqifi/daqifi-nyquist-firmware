@@ -420,13 +420,28 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
         return 0;
     }
+    
+    // Wait for buffer space with timeout (max 2 seconds)
+    const uint32_t maxWaitMs = 2000;
+    uint32_t waitedMs = 0;
+    const uint32_t waitIntervalMs = 10;
+    
     while (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
-        vTaskDelay(10);
+        vTaskDelay(waitIntervalMs / portTICK_PERIOD_MS);
+        waitedMs += waitIntervalMs;
+        
+        if (waitedMs >= maxWaitMs) {
+            // Timeout - buffer is not draining fast enough
+            LOG_E("SD: WriteToBuffer timeout - buffer full for %u ms\r\n", waitedMs);
+            return 0;
+        }
     }
-    // if the data to write can't fit into the buffer entirely, discard it. 
+    
+    // Double-check that we have space (should always be true here)
     if (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
         return 0;
     }
+    
     //Obtain ownership of the mutex object
     xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
     bytesAdded = CircularBuf_AddBytes(&gSdCardData.wCirbuf, (uint8_t*) pData, len);

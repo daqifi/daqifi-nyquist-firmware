@@ -55,7 +55,10 @@
       "Bash(/tmp/test_wifi.sh:*)",
       "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/test_wifi_commands.sh)",
       "Bash(git pull:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git branch:*)",
+      "Bash(/tmp/temp.sh:*)",
+      "Bash(timeout:*)"
     ],
     "deny": []
   }
