@@ -58,7 +58,8 @@
       "Bash(git push:*)",
       "Bash(git branch:*)",
       "Bash(/tmp/temp.sh:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(/tmp/test_sd_optimized.sh:*)"
     ],
     "deny": []
   }

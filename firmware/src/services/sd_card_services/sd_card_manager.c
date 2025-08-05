@@ -2,7 +2,7 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (SD_CARD_MANAGER_CONF_WBUFFER_SIZE*12)
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (SD_CARD_MANAGER_CONF_WBUFFER_SIZE*12)  // 60KB total
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/Daqifi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
@@ -303,27 +303,38 @@ void sd_card_manager_ProcessState() {
         {
             /* If read was success, try writing to the new file */
             int writeLen = -2;
-            if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0
-                    && gSdCardData.sdCardWritePending != 1) {
-                xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
-                gSdCardData.sdCardWritePending = 1;
-                CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
-                gSdCardData.totalBytesFlushPending += gSdCardData.writeBufferLength;
-                xSemaphoreGive(gSdCardData.wMutex);
-            } else if (gSdCardData.sdCardWritePending == 1) {
-                writeLen = SDCardWrite();
-            }
-            if (writeLen >= gSdCardData.writeBufferLength) {
-                gSdCardData.sdCardWritePending = 0;
-                gSdCardData.writeBufferLength = 0;
-                gSdCardData.sdCardWriteBufferOffset = 0;
-            } else if (writeLen >= 0) {
-                gSdCardData.writeBufferLength -= writeLen;
-                gSdCardData.sdCardWriteBufferOffset = writeLen;
-            } else if (writeLen == -1) {
-                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
-                break;
+            
+            // Process multiple chunks per cycle for better throughput
+            int chunksProcessed = 0;
+            const int maxChunksPerCycle = 4;  // Process up to 20KB per cycle
+            
+            while (chunksProcessed < maxChunksPerCycle) {
+                if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0
+                        && gSdCardData.sdCardWritePending != 1) {
+                    xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                    gSdCardData.sdCardWritePending = 1;
+                    CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                    gSdCardData.totalBytesFlushPending += gSdCardData.writeBufferLength;
+                    xSemaphoreGive(gSdCardData.wMutex);
+                    chunksProcessed++;
+                } else if (gSdCardData.sdCardWritePending == 1) {
+                    writeLen = SDCardWrite();
+                    if (writeLen >= gSdCardData.writeBufferLength) {
+                        gSdCardData.sdCardWritePending = 0;
+                        gSdCardData.writeBufferLength = 0;
+                        gSdCardData.sdCardWriteBufferOffset = 0;
+                    } else if (writeLen >= 0) {
+                        gSdCardData.writeBufferLength -= writeLen;
+                        gSdCardData.sdCardWriteBufferOffset = writeLen;
+                        break;  // Partial write, don't process more chunks
+                    } else if (writeLen == -1) {
+                        gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
+                        break;
+                    }
+                } else {
+                    break;  // No more data to process
+                }
             }
             uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
