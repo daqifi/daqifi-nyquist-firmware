@@ -182,8 +182,9 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
-        if (fileLen > SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX) {
-            LOG_E("SD:LIST? - Directory path too long: %d bytes\r\n", fileLen);
+        if (fileLen >= sizeof(pSdCardRuntimeConfig->directory)) {
+            LOG_E("SD:LIST? - Directory path too long: %d bytes, max: %d\r\n", 
+                  fileLen, sizeof(pSdCardRuntimeConfig->directory) - 1);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -192,10 +193,13 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
     // If no directory specified, the sd_card_manager will use the default from settings
     
-    // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
+    // Set mode to LIST_DIRECTORY and let sd_card_manager handle it asynchronously
+    // The results will be sent via sd_card_manager_DataReadyCB() callback to USB CDC
+    // Note: WiFi must be disabled before SD operations (mutual exclusion enforced at higher level)
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     
+    // Return OK immediately - the actual listing will be sent asynchronously
     result = SCPI_RES_OK;
 __exit_point:
     return result;
