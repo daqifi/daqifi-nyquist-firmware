@@ -63,7 +63,9 @@
       "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/sd_baseline_benchmark.sh)",
       "Bash(/tmp/extreme_pro_benchmark.sh:*)",
       "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/sd_card_benchmark.sh \"SanDisk 256GB Extreme PRO microSD A2\")",
-      "Bash(/tmp/random_pattern_baseline.sh:*)"
+      "Bash(/tmp/random_pattern_baseline.sh:*)",
+      "Bash(/tmp/test_mutex_comprehensive.sh:*)",
+      "Bash(/tmp/test_specific_mutex.sh:*)"
     ],
     "deny": []
   }

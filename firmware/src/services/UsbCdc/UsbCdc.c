@@ -309,7 +309,7 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len) {
  */
 static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
 
-    USB_DEVICE_CDC_RESULT writeResult;
+    USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_RESULT_OK;
 
     if (client->state != USB_CDC_STATE_PROCESS) {
         return false;
