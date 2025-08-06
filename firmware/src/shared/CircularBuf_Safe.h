@@ -90,8 +90,8 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
     
     uint16_t len16 = (uint16_t)len;
     TickType_t startTicks = xTaskGetTickCount();
-    TickType_t timeoutTicks = (timeoutMs == portMAX_DELAY) ? portMAX_DELAY : (timeoutMs / portTICK_PERIOD_MS);
-    TickType_t waitTicks = waitIntervalMs / portTICK_PERIOD_MS;
+    TickType_t timeoutTicks = (timeoutMs == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
+    TickType_t waitTicks = pdMS_TO_TICKS(waitIntervalMs);
     
     // Ensure at least 1 tick wait
     if (waitTicks == 0) {
@@ -99,6 +99,14 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
     }
     
     while (1) {
+        // Check timeout first to avoid unnecessary operations
+        if (timeoutTicks != portMAX_DELAY) {
+            TickType_t elapsedTicks = xTaskGetTickCount() - startTicks;
+            if (elapsedTicks >= timeoutTicks) {
+                return 0; // Timeout
+            }
+        }
+        
         xSemaphoreTake(mutex, portMAX_DELAY);
         if (CircularBuf_NumBytesFree(buf) >= len16) {
             // Space available, add the data
@@ -107,14 +115,6 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
             return (size_t)bytesAdded;
         }
         xSemaphoreGive(mutex);
-        
-        // Check timeout
-        if (timeoutTicks != portMAX_DELAY) {
-            TickType_t elapsedTicks = xTaskGetTickCount() - startTicks;
-            if (elapsedTicks >= timeoutTicks) {
-                return 0; // Timeout
-            }
-        }
         
         // Wait before retry
         vTaskDelay(waitTicks);
@@ -157,8 +157,12 @@ static inline bool CircularBuf_ProcessIfAvailable_Safe(CircularBuf_t* buf,
  */
 static inline bool CircularBuf_HasSpace_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                              size_t requiredSpace) {
+    // Reject if required space exceeds what buffer can report
+    if (requiredSpace > 0xFFFF) {
+        return false;
+    }
     xSemaphoreTake(mutex, portMAX_DELAY);
-    bool hasSpace = (CircularBuf_NumBytesFree(buf) >= requiredSpace);
+    bool hasSpace = (CircularBuf_NumBytesFree(buf) >= (uint16_t)requiredSpace);
     xSemaphoreGive(mutex);
     return hasSpace;
 }
@@ -213,7 +217,7 @@ static inline size_t CircularBuf_AddBytesIfSpace_Safe(CircularBuf_t* buf, Semaph
  */
 static inline void CircularBuf_Clear_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex) {
     xSemaphoreTake(mutex, portMAX_DELAY);
-    CircularBuf_Reset(buf);  // Using Reset as Clear might not exist
+    CircularBuf_Reset(buf);  // Verified: Reset is the correct function name
     xSemaphoreGive(mutex);
 }
 
