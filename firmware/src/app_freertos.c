@@ -139,7 +139,7 @@ static void app_SdCardTask(void* p_arg) {
         DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
         sd_card_manager_ProcessState();
         SYS_FS_Tasks();
-        vTaskDelay(1 / portTICK_PERIOD_MS);  // Reduced from 5ms to 1ms for better throughput
+        vTaskDelay(SD_CARD_MANAGER_TASK_DELAY_MS / portTICK_PERIOD_MS);
     }
 }
 

@@ -306,9 +306,8 @@ void sd_card_manager_ProcessState() {
             
             // Process multiple chunks per cycle for better throughput
             int chunksProcessed = 0;
-            const int maxChunksPerCycle = 4;  // Process up to 20KB per cycle
             
-            while (chunksProcessed < maxChunksPerCycle) {
+            while (chunksProcessed < SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE) {
                 if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0
                         && gSdCardData.sdCardWritePending != 1) {
                     xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
@@ -432,16 +431,14 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         return 0;
     }
     
-    // Wait for buffer space with timeout (max 2 seconds)
-    const uint32_t maxWaitMs = 2000;
+    // Wait for buffer space with timeout
     uint32_t waitedMs = 0;
-    const uint32_t waitIntervalMs = 10;
     
     while (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
-        vTaskDelay(waitIntervalMs / portTICK_PERIOD_MS);
-        waitedMs += waitIntervalMs;
+        vTaskDelay(SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS / portTICK_PERIOD_MS);
+        waitedMs += SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS;
         
-        if (waitedMs >= maxWaitMs) {
+        if (waitedMs >= SD_CARD_MANAGER_WRITE_TIMEOUT_MS) {
             // Timeout - buffer is not draining fast enough
             LOG_E("SD: WriteToBuffer timeout - buffer full for %u ms\r\n", waitedMs);
             return 0;

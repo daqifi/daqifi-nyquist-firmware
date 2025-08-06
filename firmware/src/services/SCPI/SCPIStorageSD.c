@@ -330,7 +330,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                 break;
         }
         
-        // Write to SD card (WriteToBuffer now has a 2-second timeout)
+        // Write to SD card (WriteToBuffer has timeout protection)
         size_t written = sd_card_manager_WriteToBuffer((const char*)testBuffer, chunkSize);
         if (written != chunkSize) {
             // Write failed - likely buffer timeout
