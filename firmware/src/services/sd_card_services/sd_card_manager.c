@@ -320,12 +320,14 @@ void sd_card_manager_ProcessState() {
                     if (writeLen >= gSdCardData.writeBufferLength) {
                         xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
                         gSdCardData.sdCardWritePending = 0;
-                        xSemaphoreGive(gSdCardData.wMutex);
                         gSdCardData.writeBufferLength = 0;
                         gSdCardData.sdCardWriteBufferOffset = 0;
+                        xSemaphoreGive(gSdCardData.wMutex);
                     } else if (writeLen >= 0) {
+                        xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
                         gSdCardData.writeBufferLength -= writeLen;
                         gSdCardData.sdCardWriteBufferOffset = writeLen;
+                        xSemaphoreGive(gSdCardData.wMutex);
                         break;  // Partial write, don't process more chunks
                     } else if (writeLen == -1) {
                         gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
@@ -336,16 +338,23 @@ void sd_card_manager_ProcessState() {
             }
             uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-            if ((currentMillis - gSdCardData.lastFlushMillis > 5000 ||
-                    gSdCardData.totalBytesFlushPending > 4096)) {
-                if (gSdCardData.totalBytesFlushPending > 0) {
-                    if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
-                        gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                        LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
-                    }
-                    gSdCardData.totalBytesFlushPending = 0;
+            xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+            bool needsFlush = (currentMillis - gSdCardData.lastFlushMillis > 5000 ||
+                    gSdCardData.totalBytesFlushPending > 4096) && 
+                    gSdCardData.totalBytesFlushPending > 0;
+            if (needsFlush) {
+                uint16_t pendingBytes = gSdCardData.totalBytesFlushPending;
+                gSdCardData.totalBytesFlushPending = 0;
+                xSemaphoreGive(gSdCardData.wMutex);
+                
+                if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
+                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
+                } else {
                     gSdCardData.lastFlushMillis = currentMillis;
                 }
+            } else {
+                xSemaphoreGive(gSdCardData.wMutex);
             }
 
         }
