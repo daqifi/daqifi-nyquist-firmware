@@ -5,6 +5,10 @@
  * This module provides thread-safe versions of common CircularBuf operations
  * by automatically handling mutex acquisition and release. This reduces code
  * duplication and prevents common mutex-related bugs.
+ * 
+ * Note: All functions use portMAX_DELAY for mutex acquisition to prevent
+ * priority inversion. If finite mutex timeouts are needed, consider adding
+ * timeout parameters to these functions.
  */
 
 #ifndef CIRCULARBUF_SAFE_H
@@ -70,19 +74,31 @@ static inline uint16_t CircularBuf_AddBytes_Safe(CircularBuf_t* buf, SemaphoreHa
  * @param buf Pointer to the circular buffer
  * @param mutex Mutex protecting the buffer
  * @param data Pointer to data to add
- * @param len Number of bytes to add
+ * @param len Number of bytes to add (must be <= 0xFFFF)
  * @param timeoutMs Maximum time to wait in milliseconds (use portMAX_DELAY for no timeout)
  * @param waitIntervalMs Interval between checks in milliseconds
- * @return Number of bytes actually added (0 if timeout)
+ * @return Number of bytes actually added (0 if timeout or len > 0xFFFF)
  */
 static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                                   uint8_t* data, size_t len,
-                                                  unsigned int timeoutMs, 
+                                                  TickType_t timeoutMs, 
                                                   unsigned int waitIntervalMs) {
-    unsigned int waitedMs = 0;
-    uint16_t len16 = (uint16_t)(len > 0xFFFF ? 0xFFFF : len);
+    // Reject requests larger than circular buffer can handle
+    if (len > 0xFFFF) {
+        return 0;
+    }
     
-    while (waitedMs < timeoutMs || timeoutMs == portMAX_DELAY) {
+    uint16_t len16 = (uint16_t)len;
+    TickType_t startTicks = xTaskGetTickCount();
+    TickType_t timeoutTicks = (timeoutMs == portMAX_DELAY) ? portMAX_DELAY : (timeoutMs / portTICK_PERIOD_MS);
+    TickType_t waitTicks = waitIntervalMs / portTICK_PERIOD_MS;
+    
+    // Ensure at least 1 tick wait
+    if (waitTicks == 0) {
+        waitTicks = 1;
+    }
+    
+    while (1) {
         xSemaphoreTake(mutex, portMAX_DELAY);
         if (CircularBuf_NumBytesFree(buf) >= len16) {
             // Space available, add the data
@@ -92,14 +108,17 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
         }
         xSemaphoreGive(mutex);
         
-        // No space, wait a bit
-        vTaskDelay(waitIntervalMs / portTICK_PERIOD_MS);
-        if (timeoutMs != portMAX_DELAY) {
-            waitedMs += waitIntervalMs;
+        // Check timeout
+        if (timeoutTicks != portMAX_DELAY) {
+            TickType_t elapsedTicks = xTaskGetTickCount() - startTicks;
+            if (elapsedTicks >= timeoutTicks) {
+                return 0; // Timeout
+            }
         }
+        
+        // Wait before retry
+        vTaskDelay(waitTicks);
     }
-    
-    return 0; // Timeout
 }
 
 /**
@@ -166,12 +185,17 @@ static inline bool CircularBuf_HasData_Safe(CircularBuf_t* buf, SemaphoreHandle_
  * @param buf Pointer to the circular buffer
  * @param mutex Mutex protecting the buffer
  * @param data Pointer to data to add
- * @param len Number of bytes to add
- * @return Number of bytes added (0 if insufficient space)
+ * @param len Number of bytes to add (must be <= 0xFFFF)
+ * @return Number of bytes added (0 if insufficient space or len > 0xFFFF)
  */
 static inline size_t CircularBuf_AddBytesIfSpace_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                                       uint8_t* data, size_t len) {
-    uint16_t len16 = (uint16_t)(len > 0xFFFF ? 0xFFFF : len);
+    // Reject requests larger than circular buffer can handle
+    if (len > 0xFFFF) {
+        return 0;
+    }
+    
+    uint16_t len16 = (uint16_t)len;
     xSemaphoreTake(mutex, portMAX_DELAY);
     if (CircularBuf_NumBytesFree(buf) < len16) {
         xSemaphoreGive(mutex);
