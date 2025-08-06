@@ -336,7 +336,12 @@ size_t wifi_tcp_server_GetWriteBuffFreeSize() {
         return 0;
     }
 
-    return CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf);
+    // Must protect circular buffer access with mutex
+    xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    size_t freeSize = CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf);
+    xSemaphoreGive(gpServerData->client.wMutex);
+    
+    return freeSize;
 }
 
 size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
@@ -348,14 +353,25 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
 
     if (len == 0)return 0;
 
-    while (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
-        vTaskDelay(10);
+    // Wait for buffer space with mutex protection
+    bool hasSpace = false;
+    while (!hasSpace) {
+        xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+        hasSpace = (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) >= len);
+        xSemaphoreGive(gpServerData->client.wMutex);
+        
+        if (!hasSpace) {
+            vTaskDelay(10);
+        }
     }
 
-    // if the data to write can't fit into the buffer entirely, discard it. 
+    // Final check with mutex protection
+    xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
     if (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
+        xSemaphoreGive(gpServerData->client.wMutex);
         return 0;
     }
+    xSemaphoreGive(gpServerData->client.wMutex);
 
     //Obtain ownership of the mutex object
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
@@ -382,10 +398,12 @@ bool wifi_tcp_server_TransmitBufferedData() {
         return false;
     }
   
-    if (CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf) > 0) {
-        xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    // Check if data available with mutex protection
+    xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    bool hasData = (CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf) > 0);
+    if (hasData) {
         CircularBuf_ProcessBytes(&gpServerData->client.wCirbuf, NULL, WIFI_WBUFFER_SIZE, &ret);
-        xSemaphoreGive(gpServerData->client.wMutex);
     }
+    xSemaphoreGive(gpServerData->client.wMutex);
     return true;
 }

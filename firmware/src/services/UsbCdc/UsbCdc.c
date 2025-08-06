@@ -315,10 +315,13 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         return false;
     }
 
+    // Check if data available with mutex protection
+    xSemaphoreTake(client->wMutex, portMAX_DELAY);
+    bool hasData = (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0);
+    xSemaphoreGive(client->wMutex);
+    
     // make sure there is no write transfer in progress
-    if ((client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)
-            && (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0)) {
-
+    if ((client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) && hasData) {
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
         CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USBCDC_WBUFFER_SIZE, &writeResult);
         xSemaphoreGive(client->wMutex);
@@ -517,7 +520,13 @@ size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client) {
     }
     if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS)
         return 0;
-    return CircularBuf_NumBytesFree(&client->wCirbuf);
+    
+    // Must protect circular buffer access with mutex
+    xSemaphoreTake(client->wMutex, portMAX_DELAY);
+    size_t freeSize = CircularBuf_NumBytesFree(&client->wCirbuf);
+    xSemaphoreGive(client->wMutex);
+    
+    return freeSize;
 }
 
 size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) {
@@ -533,19 +542,23 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     TickType_t startTime = xTaskGetTickCount();
     TickType_t timeoutTicks = 500 / portTICK_PERIOD_MS;
     
-    while (CircularBuf_NumBytesFree(&client->wCirbuf) < len) {
-        if ((xTaskGetTickCount() - startTime) >= timeoutTicks) {
-            break;  // Timeout reached
+    // Wait for buffer space with mutex protection
+    bool hasSpace = false;
+    while (!hasSpace) {
+        xSemaphoreTake(client->wMutex, portMAX_DELAY);
+        hasSpace = (CircularBuf_NumBytesFree(&client->wCirbuf) >= len);
+        size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
+        xSemaphoreGive(client->wMutex);
+        
+        if (!hasSpace) {
+            if ((xTaskGetTickCount() - startTime) >= timeoutTicks) {
+                //commTest.USBOverflow++;
+                LOG_E("USB: Write buffer timeout - needed %d bytes, only %d free", 
+                      len, currentFree);
+                return 0;
+            }
+            vTaskDelay(2 / portTICK_PERIOD_MS);
         }
-        vTaskDelay(2 / portTICK_PERIOD_MS);
-    }
-
-    // if the data to write can't fit into the buffer entirely, discard it. 
-    if (CircularBuf_NumBytesFree(&client->wCirbuf) < len) {
-        //commTest.USBOverflow++;
-        LOG_E("USB: Write buffer timeout - needed %d bytes, only %d free", 
-              len, CircularBuf_NumBytesFree(&client->wCirbuf));
-        return 0;
     }
 
     //Obtain ownership of the mutex object
