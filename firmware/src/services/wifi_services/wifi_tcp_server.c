@@ -365,16 +365,12 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
         }
     }
 
-    // Final check with mutex protection
+    // Check and write with single mutex acquisition
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
     if (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
         xSemaphoreGive(gpServerData->client.wMutex);
         return 0;
     }
-    xSemaphoreGive(gpServerData->client.wMutex);
-
-    //Obtain ownership of the mutex object
-    xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
     bytesAdded = CircularBuf_AddBytes(&gpServerData->client.wCirbuf, (uint8_t*) data, len);
     xSemaphoreGive(gpServerData->client.wMutex);
 

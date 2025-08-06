@@ -59,7 +59,11 @@
       "Bash(git branch:*)",
       "Bash(/tmp/temp.sh:*)",
       "Bash(timeout:*)",
-      "Bash(/tmp/test_sd_optimized.sh:*)"
+      "Bash(/tmp/test_sd_optimized.sh:*)",
+      "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/sd_baseline_benchmark.sh)",
+      "Bash(/tmp/extreme_pro_benchmark.sh:*)",
+      "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/sd_card_benchmark.sh \"SanDisk 256GB Extreme PRO microSD A2\")",
+      "Bash(/tmp/random_pattern_baseline.sh:*)"
     ],
     "deny": []
   }
