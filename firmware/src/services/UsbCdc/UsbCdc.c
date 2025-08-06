@@ -315,15 +315,12 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         return false;
     }
 
-    // Check if data available with mutex protection
-    xSemaphoreTake(client->wMutex, portMAX_DELAY);
-    bool hasData = (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0);
-    xSemaphoreGive(client->wMutex);
-    
     // make sure there is no write transfer in progress
-    if ((client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) && hasData) {
+    if (client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
-        CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USBCDC_WBUFFER_SIZE, &writeResult);
+        if (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0) {
+            CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USBCDC_WBUFFER_SIZE, &writeResult);
+        }
         xSemaphoreGive(client->wMutex);
 
         if (writeResult != USB_DEVICE_CDC_RESULT_OK) {

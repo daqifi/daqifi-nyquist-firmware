@@ -343,15 +343,17 @@ void sd_card_manager_ProcessState() {
                     gSdCardData.totalBytesFlushPending > 4096) && 
                     gSdCardData.totalBytesFlushPending > 0;
             if (needsFlush) {
-                uint16_t pendingBytes = gSdCardData.totalBytesFlushPending;
-                gSdCardData.totalBytesFlushPending = 0;
                 xSemaphoreGive(gSdCardData.wMutex);
                 
                 if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
                     gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
                 } else {
+                    // Only reset counter after successful flush
+                    xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                    gSdCardData.totalBytesFlushPending = 0;
                     gSdCardData.lastFlushMillis = currentMillis;
+                    xSemaphoreGive(gSdCardData.wMutex);
                 }
             } else {
                 xSemaphoreGive(gSdCardData.wMutex);
