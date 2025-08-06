@@ -435,14 +435,13 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     uint32_t waitedMs = 0;
     
     while (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
-        vTaskDelay(SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS / portTICK_PERIOD_MS);
-        waitedMs += SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS;
-        
         if (waitedMs >= SD_CARD_MANAGER_WRITE_TIMEOUT_MS) {
             // Timeout - buffer is not draining fast enough
             LOG_E("SD: WriteToBuffer timeout - buffer full for %u ms\r\n", waitedMs);
             return 0;
         }
+        vTaskDelay(SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS / portTICK_PERIOD_MS);
+        waitedMs += SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS;
     }
     
     // Double-check that we have space (should always be true here)
