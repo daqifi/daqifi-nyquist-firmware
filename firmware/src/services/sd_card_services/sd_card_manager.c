@@ -315,6 +315,10 @@ void sd_card_manager_ProcessState() {
                 // No data available or write already pending, release mutex
                 xSemaphoreGive(gSdCardData.wMutex);
                 
+                // Note: sdCardWritePending check outside mutex is safe here because:
+                // 1. Only this task modifies sdCardWritePending
+                // 2. We're coordinating work within a single task, not between tasks
+                // If this changes in future, this will need mutex protection
                 if (gSdCardData.sdCardWritePending == 1) {
                     writeLen = SDCardWrite();
                     if (writeLen >= gSdCardData.writeBufferLength) {
