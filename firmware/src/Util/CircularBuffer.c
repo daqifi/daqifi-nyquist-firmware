@@ -56,7 +56,10 @@ void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32
  *===========================================================================*/
 uint32_t CircularBuf_NumBytesAvailable(CircularBuf_t* cirbuf)
 {
-
+    // Note: This double-read pattern ensures we get a consistent value even if
+    // totalBytes is modified by an interrupt during the read. On PIC32MZ (32-bit
+    // MIPS), reading a 32-bit value is atomic, but this pattern provides extra
+    // safety and works correctly on both 16-bit and 32-bit architectures.
     uint32_t num1,num2;
     do{
       num1 = cirbuf->totalBytes;

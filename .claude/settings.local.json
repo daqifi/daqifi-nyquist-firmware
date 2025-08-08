@@ -65,7 +65,13 @@
       "Bash(/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/sd_card_benchmark.sh \"SanDisk 256GB Extreme PRO microSD A2\")",
       "Bash(/tmp/random_pattern_baseline.sh:*)",
       "Bash(/tmp/test_mutex_comprehensive.sh:*)",
-      "Bash(/tmp/test_specific_mutex.sh:*)"
+      "Bash(/tmp/test_specific_mutex.sh:*)",
+      "Bash(./sd_card_benchmark.sh:*)",
+      "Bash(/tmp/test_sd_performance.sh:*)",
+      "Bash(/tmp/test_sd_improvements.sh:*)",
+      "Bash(/tmp/debug_sd_test.sh:*)",
+      "Bash(/tmp/test_sd_perf_128kb.sh:*)",
+      "Bash(git cherry-pick:*)"
     ],
     "deny": []
   }
