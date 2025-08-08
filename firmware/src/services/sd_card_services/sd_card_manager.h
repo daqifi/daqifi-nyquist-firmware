@@ -11,10 +11,16 @@
 #include "Util/CircularBuffer.h"
 
 #define SD_CARD_MANAGER_CONF_RBUFFER_SIZE 512
-#define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 5120
+#define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 5120  // Keep at 5KB to fit within uint16_t circular buffer limit
 
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40
+
+// Performance tuning parameters
+#define SD_CARD_MANAGER_WRITE_TIMEOUT_MS 2000    // Timeout for WriteToBuffer operation
+#define SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS 10 // Wait interval when buffer is full
+#define SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE 4   // Max chunks to process per task cycle (4 * 5KB = 20KB)
+#define SD_CARD_MANAGER_TASK_DELAY_MS 1          // Task delay for SD card processing (reduced from 5ms)
 
 
 /* Provide C++ Compatibility */

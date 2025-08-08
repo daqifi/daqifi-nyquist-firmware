@@ -2,7 +2,7 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (SD_CARD_MANAGER_CONF_WBUFFER_SIZE*12)
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (SD_CARD_MANAGER_CONF_WBUFFER_SIZE*12)  // 60KB total
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/Daqifi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
@@ -303,40 +303,64 @@ void sd_card_manager_ProcessState() {
         {
             /* If read was success, try writing to the new file */
             int writeLen = -2;
+            
+            xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
             if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0
                     && gSdCardData.sdCardWritePending != 1) {
-                xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
                 gSdCardData.sdCardWritePending = 1;
                 CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
                 gSdCardData.totalBytesFlushPending += gSdCardData.writeBufferLength;
                 xSemaphoreGive(gSdCardData.wMutex);
-            } else if (gSdCardData.sdCardWritePending == 1) {
-                writeLen = SDCardWrite();
-            }
-            if (writeLen >= gSdCardData.writeBufferLength) {
-                gSdCardData.sdCardWritePending = 0;
-                gSdCardData.writeBufferLength = 0;
-                gSdCardData.sdCardWriteBufferOffset = 0;
-            } else if (writeLen >= 0) {
-                gSdCardData.writeBufferLength -= writeLen;
-                gSdCardData.sdCardWriteBufferOffset = writeLen;
-            } else if (writeLen == -1) {
-                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
-                break;
+            } else {
+                // No data available or write already pending, release mutex
+                xSemaphoreGive(gSdCardData.wMutex);
+                
+                // Note: sdCardWritePending check outside mutex is safe here because:
+                // 1. Only this task modifies sdCardWritePending
+                // 2. We're coordinating work within a single task, not between tasks
+                // If this changes in future, this will need mutex protection
+                if (gSdCardData.sdCardWritePending == 1) {
+                    writeLen = SDCardWrite();
+                    if (writeLen >= gSdCardData.writeBufferLength) {
+                        xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                        gSdCardData.sdCardWritePending = 0;
+                        gSdCardData.writeBufferLength = 0;
+                        gSdCardData.sdCardWriteBufferOffset = 0;
+                        xSemaphoreGive(gSdCardData.wMutex);
+                    } else if (writeLen >= 0) {
+                        xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                        gSdCardData.writeBufferLength -= writeLen;
+                        gSdCardData.sdCardWriteBufferOffset = writeLen;
+                        xSemaphoreGive(gSdCardData.wMutex);
+                        break;  // Partial write, don't process more chunks
+                    } else if (writeLen == -1) {
+                        gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
+                        break;
+                    }
+                }
             }
             uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-            if ((currentMillis - gSdCardData.lastFlushMillis > 5000 ||
-                    gSdCardData.totalBytesFlushPending > 4096)) {
-                if (gSdCardData.totalBytesFlushPending > 0) {
-                    if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
-                        gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                        LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
-                    }
+            xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+            bool needsFlush = (currentMillis - gSdCardData.lastFlushMillis > 5000 ||
+                    gSdCardData.totalBytesFlushPending > 4096) && 
+                    gSdCardData.totalBytesFlushPending > 0;
+            if (needsFlush) {
+                xSemaphoreGive(gSdCardData.wMutex);
+                
+                if (SYS_FS_FileSync(gSdCardData.fileHandle) == -1) {
+                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    LOG_E("[%s:%d]Error flushing to SD Card", __FILE__, __LINE__);
+                } else {
+                    // Only reset counter after successful flush
+                    xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
                     gSdCardData.totalBytesFlushPending = 0;
                     gSdCardData.lastFlushMillis = currentMillis;
+                    xSemaphoreGive(gSdCardData.wMutex);
                 }
+            } else {
+                xSemaphoreGive(gSdCardData.wMutex);
             }
 
         }
@@ -420,13 +444,21 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
         return 0;
     }
-    while (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
-        vTaskDelay(10);
+    
+    // Wait for buffer space with mutex protection
+    bool hasSpace = false;
+    
+    while (!hasSpace) {
+        // Check buffer space with mutex protection
+        xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+        hasSpace = (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) >= len);
+        xSemaphoreGive(gSdCardData.wMutex);
+        
+        if (!hasSpace) {
+            vTaskDelay(10);
+        }
     }
-    // if the data to write can't fit into the buffer entirely, discard it. 
-    if (CircularBuf_NumBytesFree(&gSdCardData.wCirbuf) < len) {
-        return 0;
-    }
+    
     //Obtain ownership of the mutex object
     xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
     bytesAdded = CircularBuf_AddBytes(&gSdCardData.wCirbuf, (uint8_t*) pData, len);
@@ -452,7 +484,13 @@ size_t sd_card_manager_GetWriteBuffFreeSize() {
     if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
         return 0;
     }
-    return CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
+    
+    // Must protect circular buffer access with mutex
+    xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+    size_t freeSize = CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
+    xSemaphoreGive(gSdCardData.wMutex);
+    
+    return freeSize;
 }
 
 

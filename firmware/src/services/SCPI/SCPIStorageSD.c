@@ -330,10 +330,15 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                 break;
         }
         
-        // Write to SD card
+        // Write to SD card (WriteToBuffer has timeout protection)
         size_t written = sd_card_manager_WriteToBuffer((const char*)testBuffer, chunkSize);
         if (written != chunkSize) {
-            context->interface->write(context, "\r\nError: Write failed\r\n", 22);
+            // Write failed - likely buffer timeout
+            char errMsg[80];
+            snprintf(errMsg, sizeof(errMsg), 
+                     "\r\nError: Write failed at %u/%u bytes (buffer timeout?)\r\n", 
+                     bytesWritten, bytesToWrite);
+            context->interface->write(context, errMsg, strlen(errMsg));
             gSDBenchmarkResults.testInProgress = false;
             result = SCPI_RES_ERR;
             goto __exit_point;
