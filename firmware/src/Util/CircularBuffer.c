@@ -33,7 +33,7 @@
 #define BUF_START   cirbuf->buf_ptr
 #define BUF_END    (cirbuf->buf_ptr + cirbuf->buf_size - 1)
 
-void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint16_t), uint16_t size)
+void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32_t size)
 {
     cirbuf->buf_ptr                = OSAL_Malloc(size);
     cirbuf->process_callback       = fp;
@@ -54,10 +54,18 @@ void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint16_t), uint16
  *           while we are reading it, we read until we get the same answer twice in a row.  
  *           This method allows us to get a good reading without turning off interrupts to do it.
  *===========================================================================*/
-uint16_t CircularBuf_NumBytesAvailable(CircularBuf_t* cirbuf)
+uint32_t CircularBuf_NumBytesAvailable(CircularBuf_t* cirbuf)
 {
-
-    uint16_t num1,num2;
+    // Defensive check for null pointer
+    if (cirbuf == NULL) {
+        return 0;
+    }
+    
+    // Note: This double-read pattern ensures we get a consistent value even if
+    // totalBytes is modified by an interrupt during the read. On PIC32MZ (32-bit
+    // MIPS), reading a 32-bit value is atomic, but this pattern provides extra
+    // safety and works correctly on both 16-bit and 32-bit architectures.
+    uint32_t num1,num2;
     do{
       num1 = cirbuf->totalBytes;
       num2 = cirbuf->totalBytes;
@@ -66,16 +74,16 @@ uint16_t CircularBuf_NumBytesAvailable(CircularBuf_t* cirbuf)
     return num1;
 }
 
-uint16_t CircularBuf_NumBytesFree(CircularBuf_t* cirbuf)
+uint32_t CircularBuf_NumBytesFree(CircularBuf_t* cirbuf)
 {
     return (cirbuf->buf_size - CircularBuf_NumBytesAvailable(cirbuf));
 }
 
 
-uint16_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint16_t maxBytes, int* error)
+uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint32_t maxBytes, int* error)
 {
-    uint16_t bytesToSend  = 0;
-    uint16_t bytesRemoved = 0; 
+    uint32_t bytesToSend  = 0;
+    uint32_t bytesRemoved = 0; 
     *error = 0;
    
     bytesToSend = min(CircularBuf_NumBytesAvailable(cirbuf), maxBytes);
@@ -87,8 +95,8 @@ uint16_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
             //start next transfer
             //make sure we don't transfer the out of bound data.
             if((cirbuf->removePtr + bytesToSend) > BUF_END){
-                uint16_t chunk1 = 0;
-                uint16_t chunk2 = 0;
+                uint32_t chunk1 = 0;
+                uint32_t chunk2 = 0;
 
                 // transfer the first part of data
                 chunk1 = (BUF_END - cirbuf->removePtr + 1);
@@ -119,22 +127,32 @@ uint16_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
             //start next transfer
             //make sure we don't transfer the out of bound data.
             if((cirbuf->removePtr + bytesToSend) > BUF_END){
+                uint32_t chunk1 = 0;
+                uint32_t chunk2 = 0;
 
                 // transfer the first part of data
-                bytesToSend = (BUF_END - cirbuf->removePtr + 1);     
-                *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
+                chunk1 = (BUF_END - cirbuf->removePtr + 1);     
+                *error = cirbuf->process_callback(cirbuf->removePtr, chunk1);
 
-                // wrap-around the pointer to the begining of the buffer,
+                // wrap-around the pointer to the beginning of the buffer,
                 // then transfer second part of data. 
                 cirbuf->removePtr = BUF_START;
+                bytesRemoved = chunk1;
+                
+                // Only process second chunk if first chunk succeeded
+                if (*error >= 0) {
+                    chunk2 = bytesToSend - chunk1;
+                    *error = cirbuf->process_callback(cirbuf->removePtr, chunk2);
+                    cirbuf->removePtr += chunk2;
+                    bytesRemoved += chunk2;
+                }
             }
             else{
-
                 *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
                 cirbuf->removePtr += bytesToSend;
+                bytesRemoved = bytesToSend;
             } 
-            cirbuf->totalBytes -= bytesToSend;
-            bytesRemoved  = bytesToSend;
+            cirbuf->totalBytes -= bytesRemoved;
         }
     }
     
@@ -145,7 +163,7 @@ uint16_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
   CircularBuf_AddBytes
   Send out CF UDP Server message. Returns number of bytes sent.
   =====================================================================================*/
-uint16_t CircularBuf_AddBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint16_t bytesToSend)
+uint32_t CircularBuf_AddBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint32_t bytesToSend)
 {
     int numBytesCopied = 0;
     int wMaxPut;

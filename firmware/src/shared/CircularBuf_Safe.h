@@ -25,6 +25,7 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,9 +37,9 @@ extern "C" {
  * @param mutex Mutex protecting the buffer
  * @return Number of free bytes
  */
-static inline uint16_t CircularBuf_GetFreeSize_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex) {
+static inline uint32_t CircularBuf_GetFreeSize_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex) {
     xSemaphoreTake(mutex, portMAX_DELAY);
-    uint16_t freeSize = CircularBuf_NumBytesFree(buf);
+    uint32_t freeSize = CircularBuf_NumBytesFree(buf);
     xSemaphoreGive(mutex);
     return freeSize;
 }
@@ -49,9 +50,9 @@ static inline uint16_t CircularBuf_GetFreeSize_Safe(CircularBuf_t* buf, Semaphor
  * @param mutex Mutex protecting the buffer
  * @return Number of available bytes
  */
-static inline uint16_t CircularBuf_GetAvailableSize_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex) {
+static inline uint32_t CircularBuf_GetAvailableSize_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex) {
     xSemaphoreTake(mutex, portMAX_DELAY);
-    uint16_t availSize = CircularBuf_NumBytesAvailable(buf);
+    uint32_t availSize = CircularBuf_NumBytesAvailable(buf);
     xSemaphoreGive(mutex);
     return availSize;
 }
@@ -64,10 +65,10 @@ static inline uint16_t CircularBuf_GetAvailableSize_Safe(CircularBuf_t* buf, Sem
  * @param len Number of bytes to add
  * @return Number of bytes actually added
  */
-static inline uint16_t CircularBuf_AddBytes_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
-                                               uint8_t* data, uint16_t len) {
+static inline uint32_t CircularBuf_AddBytes_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
+                                               uint8_t* data, uint32_t len) {
     xSemaphoreTake(mutex, portMAX_DELAY);
-    uint16_t bytesAdded = CircularBuf_AddBytes(buf, data, len);
+    uint32_t bytesAdded = CircularBuf_AddBytes(buf, data, len);
     xSemaphoreGive(mutex);
     return bytesAdded;
 }
@@ -81,22 +82,20 @@ static inline uint16_t CircularBuf_AddBytes_Safe(CircularBuf_t* buf, SemaphoreHa
  * @param buf Pointer to the circular buffer
  * @param mutex Mutex protecting the buffer
  * @param data Pointer to data to add
- * @param len Number of bytes to add (must be <= 0xFFFF)
+ * @param len Number of bytes to add
  * @param timeoutMs Maximum time to wait in milliseconds (use portMAX_DELAY for infinite wait)
  * @param waitIntervalMs Interval between checks in milliseconds
- * @return Number of bytes actually added (0 if timeout or len > 0xFFFF)
+ * @return Number of bytes actually added (0 if timeout)
  */
 static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                                   uint8_t* data, size_t len,
                                                   TickType_t timeoutMs, 
                                                   unsigned int waitIntervalMs) {
-    // Reject requests larger than circular buffer can handle (16-bit limit)
-    // This prevents overflow when converting size_t to uint16_t
-    if (len > 0xFFFF) {
+    // Guard against potential size_t to uint32_t truncation
+    if (len > UINT32_MAX) {
         return 0;
     }
-    
-    uint16_t len16 = (uint16_t)len;
+    uint32_t len32 = (uint32_t)len;
     TickType_t startTicks = xTaskGetTickCount();
     TickType_t timeoutTicks = (timeoutMs == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
     TickType_t waitTicks = pdMS_TO_TICKS(waitIntervalMs);
@@ -117,9 +116,9 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
         }
         
         xSemaphoreTake(mutex, portMAX_DELAY);
-        if (CircularBuf_NumBytesFree(buf) >= len16) {
+        if (CircularBuf_NumBytesFree(buf) >= len32) {
             // Space available, add the data
-            uint16_t bytesAdded = CircularBuf_AddBytes(buf, data, len16);
+            uint32_t bytesAdded = CircularBuf_AddBytes(buf, data, len32);
             xSemaphoreGive(mutex);
             return (size_t)bytesAdded;
         }
@@ -146,7 +145,7 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
 static inline bool CircularBuf_ProcessIfAvailable_Safe(CircularBuf_t* buf, 
                                                        SemaphoreHandle_t mutex,
                                                        uint8_t* userData,
-                                                       uint16_t maxBytes,
+                                                       uint32_t maxBytes,
                                                        int* result) {
     xSemaphoreTake(mutex, portMAX_DELAY);
     bool hasData = (CircularBuf_NumBytesAvailable(buf) > 0);
@@ -166,12 +165,8 @@ static inline bool CircularBuf_ProcessIfAvailable_Safe(CircularBuf_t* buf,
  */
 static inline bool CircularBuf_HasSpace_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                              size_t requiredSpace) {
-    // Reject if required space exceeds what buffer can report
-    if (requiredSpace > 0xFFFF) {
-        return false;
-    }
     xSemaphoreTake(mutex, portMAX_DELAY);
-    bool hasSpace = (CircularBuf_NumBytesFree(buf) >= (uint16_t)requiredSpace);
+    bool hasSpace = (CircularBuf_NumBytesFree(buf) >= (uint32_t)requiredSpace);
     xSemaphoreGive(mutex);
     return hasSpace;
 }
@@ -198,24 +193,22 @@ static inline bool CircularBuf_HasData_Safe(CircularBuf_t* buf, SemaphoreHandle_
  * @param buf Pointer to the circular buffer
  * @param mutex Mutex protecting the buffer
  * @param data Pointer to data to add
- * @param len Number of bytes to add (must be <= 0xFFFF)
- * @return Number of bytes added (0 if insufficient space or len > 0xFFFF)
+ * @param len Number of bytes to add
+ * @return Number of bytes added (0 if insufficient space)
  */
 static inline size_t CircularBuf_AddBytesIfSpace_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                                       uint8_t* data, size_t len) {
-    // Reject requests larger than circular buffer can handle (16-bit limit)
-    // This prevents overflow when converting size_t to uint16_t
-    if (len > 0xFFFF) {
+    // Guard against potential size_t to uint32_t truncation
+    if (len > UINT32_MAX) {
         return 0;
     }
-    
-    uint16_t len16 = (uint16_t)len;
+    uint32_t len32 = (uint32_t)len;
     xSemaphoreTake(mutex, portMAX_DELAY);
-    if (CircularBuf_NumBytesFree(buf) < len16) {
+    if (CircularBuf_NumBytesFree(buf) < len32) {
         xSemaphoreGive(mutex);
         return 0;
     }
-    uint16_t bytesAdded = CircularBuf_AddBytes(buf, data, len16);
+    uint32_t bytesAdded = CircularBuf_AddBytes(buf, data, len32);
     xSemaphoreGive(mutex);
     return (size_t)bytesAdded;
 }
@@ -239,7 +232,7 @@ static inline void CircularBuf_Clear_Safe(CircularBuf_t* buf, SemaphoreHandle_t 
  * 
  * @param buf Pointer to the circular buffer
  * @param mutex Mutex protecting the buffer
- * @return Number of free bytes as size_t (still limited to 64KB max)
+ * @return Number of free bytes as size_t
  */
 static inline size_t CircularBuf_GetFreeSize_Safe_SizeT(CircularBuf_t* buf, SemaphoreHandle_t mutex) {
     return (size_t)CircularBuf_GetFreeSize_Safe(buf, mutex);

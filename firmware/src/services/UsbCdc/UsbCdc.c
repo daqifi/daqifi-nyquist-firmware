@@ -291,9 +291,18 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
     }
 }
 
-int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len) {
-
-    memcpy(gRunTimeUsbSttings.writeBuffer, buf, len);
+int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
+    // Validate length against buffer size to prevent overflow
+    if (len > USBCDC_WBUFFER_SIZE) {
+        return -1;  // Buffer too small
+    }
+    
+    // Validate buffer pointer to prevent null dereference
+    if (len > 0 && buf == NULL) {
+        return -1;  // Invalid buffer pointer
+    }
+    
+    memcpy(gRunTimeUsbSttings.writeBuffer, buf, (size_t)len);
     gRunTimeUsbSttings.writeBufferLength = len;
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
             &gRunTimeUsbSttings.writeTransferHandle,
