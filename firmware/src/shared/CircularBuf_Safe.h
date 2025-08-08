@@ -9,6 +9,13 @@
  * Note: All functions use portMAX_DELAY for mutex acquisition to prevent
  * priority inversion. If finite mutex timeouts are needed, consider adding
  * timeout parameters to these functions.
+ * 
+ * Design rationale for portMAX_DELAY:
+ * - These are low-level helpers used in controlled contexts
+ * - The mutexes protect very short critical sections (just buffer operations)
+ * - Using timeouts here would require complex error handling at every call site
+ * - If deadlock is a concern, it should be addressed at the system design level
+ * - Null pointer checks omitted for performance (caller responsibility)
  */
 
 #ifndef CIRCULARBUF_SAFE_H
@@ -83,7 +90,8 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
                                                   uint8_t* data, size_t len,
                                                   TickType_t timeoutMs, 
                                                   unsigned int waitIntervalMs) {
-    // Reject requests larger than circular buffer can handle
+    // Reject requests larger than circular buffer can handle (16-bit limit)
+    // This prevents overflow when converting size_t to uint16_t
     if (len > 0xFFFF) {
         return 0;
     }
@@ -195,7 +203,8 @@ static inline bool CircularBuf_HasData_Safe(CircularBuf_t* buf, SemaphoreHandle_
  */
 static inline size_t CircularBuf_AddBytesIfSpace_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                                       uint8_t* data, size_t len) {
-    // Reject requests larger than circular buffer can handle
+    // Reject requests larger than circular buffer can handle (16-bit limit)
+    // This prevents overflow when converting size_t to uint16_t
     if (len > 0xFFFF) {
         return 0;
     }
