@@ -99,9 +99,9 @@
 #pragma config USERID =     0xffff
 #pragma config FMIIEN =     OFF
 #pragma config FETHIO =     OFF
-#pragma config PGL1WAY =    ON
-#pragma config PMDL1WAY =   ON
-#pragma config IOL1WAY =    ON
+#pragma config PGL1WAY =    OFF//ON
+#pragma config PMDL1WAY =   OFF//ON
+#pragma config IOL1WAY =    OFF//ON
 #pragma config FUSBIDIO =   OFF
 
 /*** BF1SEQ0 ***/
