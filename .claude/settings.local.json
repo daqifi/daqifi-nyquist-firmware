@@ -70,8 +70,7 @@
       "Bash(/tmp/test_sd_performance.sh:*)",
       "Bash(/tmp/test_sd_improvements.sh:*)",
       "Bash(/tmp/debug_sd_test.sh:*)",
-      "Bash(/tmp/test_sd_perf_128kb.sh:*)",
-      "Bash(git cherry-pick:*)"
+      "Bash(/tmp/test_sd_perf_128kb.sh:*)"
     ],
     "deny": []
   }

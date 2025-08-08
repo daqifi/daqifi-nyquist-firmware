@@ -56,6 +56,11 @@ void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32
  *===========================================================================*/
 uint32_t CircularBuf_NumBytesAvailable(CircularBuf_t* cirbuf)
 {
+    // Defensive check for null pointer
+    if (cirbuf == NULL) {
+        return 0;
+    }
+    
     // Note: This double-read pattern ensures we get a consistent value even if
     // totalBytes is modified by an interrupt during the read. On PIC32MZ (32-bit
     // MIPS), reading a 32-bit value is atomic, but this pattern provides extra
@@ -122,22 +127,32 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
             //start next transfer
             //make sure we don't transfer the out of bound data.
             if((cirbuf->removePtr + bytesToSend) > BUF_END){
+                uint32_t chunk1 = 0;
+                uint32_t chunk2 = 0;
 
                 // transfer the first part of data
-                bytesToSend = (BUF_END - cirbuf->removePtr + 1);     
-                *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
+                chunk1 = (BUF_END - cirbuf->removePtr + 1);     
+                *error = cirbuf->process_callback(cirbuf->removePtr, chunk1);
 
-                // wrap-around the pointer to the begining of the buffer,
+                // wrap-around the pointer to the beginning of the buffer,
                 // then transfer second part of data. 
                 cirbuf->removePtr = BUF_START;
+                bytesRemoved = chunk1;
+                
+                // Only process second chunk if first chunk succeeded
+                if (*error >= 0) {
+                    chunk2 = bytesToSend - chunk1;
+                    *error = cirbuf->process_callback(cirbuf->removePtr, chunk2);
+                    cirbuf->removePtr += chunk2;
+                    bytesRemoved += chunk2;
+                }
             }
             else{
-
                 *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
                 cirbuf->removePtr += bytesToSend;
+                bytesRemoved = bytesToSend;
             } 
-            cirbuf->totalBytes -= bytesToSend;
-            bytesRemoved  = bytesToSend;
+            cirbuf->totalBytes -= bytesRemoved;
         }
     }
     
