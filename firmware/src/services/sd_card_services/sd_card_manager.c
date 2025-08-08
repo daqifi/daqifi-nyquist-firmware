@@ -304,39 +304,47 @@ void sd_card_manager_ProcessState() {
             /* If read was success, try writing to the new file */
             int writeLen = -2;
             
-            xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
-            if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0
-                    && gSdCardData.sdCardWritePending != 1) {
-                gSdCardData.sdCardWritePending = 1;
-                CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
-                gSdCardData.totalBytesFlushPending += gSdCardData.writeBufferLength;
-                xSemaphoreGive(gSdCardData.wMutex);
-            } else {
-                // No data available or write already pending, release mutex
-                xSemaphoreGive(gSdCardData.wMutex);
-                
-                // Note: sdCardWritePending check outside mutex is safe here because:
-                // 1. Only this task modifies sdCardWritePending
-                // 2. We're coordinating work within a single task, not between tasks
-                // If this changes in future, this will need mutex protection
-                if (gSdCardData.sdCardWritePending == 1) {
-                    writeLen = SDCardWrite();
-                    if (writeLen >= gSdCardData.writeBufferLength) {
-                        xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
-                        gSdCardData.sdCardWritePending = 0;
-                        gSdCardData.writeBufferLength = 0;
-                        gSdCardData.sdCardWriteBufferOffset = 0;
-                        xSemaphoreGive(gSdCardData.wMutex);
-                    } else if (writeLen >= 0) {
-                        xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
-                        gSdCardData.writeBufferLength -= writeLen;
-                        gSdCardData.sdCardWriteBufferOffset = writeLen;
-                        xSemaphoreGive(gSdCardData.wMutex);
-                        break;  // Partial write, don't process more chunks
-                    } else if (writeLen == -1) {
-                        gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                        LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
-                        break;
+            // Process multiple chunks per cycle for better throughput
+            int chunksProcessed = 0;
+            
+            while (chunksProcessed < SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE) {
+                xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                if (CircularBuf_NumBytesAvailable(&gSdCardData.wCirbuf) > 0
+                        && gSdCardData.sdCardWritePending != 1) {
+                    gSdCardData.sdCardWritePending = 1;
+                    CircularBuf_ProcessBytes(&gSdCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                    gSdCardData.totalBytesFlushPending += gSdCardData.writeBufferLength;
+                    xSemaphoreGive(gSdCardData.wMutex);
+                    chunksProcessed++;
+                } else {
+                    // No data available or write already pending, release mutex
+                    xSemaphoreGive(gSdCardData.wMutex);
+                    
+                    // Note: sdCardWritePending check outside mutex is safe here because:
+                    // 1. Only this task modifies sdCardWritePending
+                    // 2. We're coordinating work within a single task, not between tasks
+                    // If this changes in future, this will need mutex protection
+                    if (gSdCardData.sdCardWritePending == 1) {
+                        writeLen = SDCardWrite();
+                        if (writeLen >= gSdCardData.writeBufferLength) {
+                            xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                            gSdCardData.sdCardWritePending = 0;
+                            gSdCardData.writeBufferLength = 0;
+                            gSdCardData.sdCardWriteBufferOffset = 0;
+                            xSemaphoreGive(gSdCardData.wMutex);
+                        } else if (writeLen >= 0) {
+                            xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                            gSdCardData.writeBufferLength -= writeLen;
+                            gSdCardData.sdCardWriteBufferOffset = writeLen;
+                            xSemaphoreGive(gSdCardData.wMutex);
+                            break;  // Partial write, don't process more chunks
+                        } else if (writeLen == -1) {
+                            gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                            LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
+                            break;
+                        }
+                    } else {
+                        break;  // No more data to process
                     }
                 }
             }
@@ -445,8 +453,10 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         return 0;
     }
     
-    // Wait for buffer space with mutex protection
+    // Wait for buffer space with mutex protection and timeout
     bool hasSpace = false;
+    TickType_t startTime = xTaskGetTickCount();
+    TickType_t timeoutTicks = SD_CARD_MANAGER_WRITE_TIMEOUT_MS / portTICK_PERIOD_MS;
     
     while (!hasSpace) {
         // Check buffer space with mutex protection
@@ -455,7 +465,12 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         xSemaphoreGive(gSdCardData.wMutex);
         
         if (!hasSpace) {
-            vTaskDelay(10);
+            // Check for timeout
+            if ((xTaskGetTickCount() - startTime) >= timeoutTicks) {
+                LOG_E("SD: WriteToBuffer timeout - buffer full for %u ms", SD_CARD_MANAGER_WRITE_TIMEOUT_MS);
+                return 0;
+            }
+            vTaskDelay(SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS / portTICK_PERIOD_MS);
         }
     }
     
