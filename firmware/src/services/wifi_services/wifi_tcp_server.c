@@ -256,7 +256,7 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     return -1;
 }
 
-static int CircularBufferToTcpWrite(uint8_t* buf, uint16_t len) {
+static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
 
     if (len>sizeof (gpServerData->client.writeBuffer))
         return false;

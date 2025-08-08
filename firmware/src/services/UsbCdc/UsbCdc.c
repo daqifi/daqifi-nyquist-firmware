@@ -291,7 +291,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
     }
 }
 
-int UsbCdc_Wrapper_Write(uint8_t* buf, uint16_t len) {
+int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
 
     memcpy(gRunTimeUsbSttings.writeBuffer, buf, len);
     gRunTimeUsbSttings.writeBufferLength = len;
