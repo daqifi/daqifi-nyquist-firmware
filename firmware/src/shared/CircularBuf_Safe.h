@@ -75,7 +75,7 @@ static inline uint16_t CircularBuf_AddBytes_Safe(CircularBuf_t* buf, SemaphoreHa
  * @param mutex Mutex protecting the buffer
  * @param data Pointer to data to add
  * @param len Number of bytes to add (must be <= 0xFFFF)
- * @param timeoutMs Maximum time to wait in milliseconds (use portMAX_DELAY for no timeout)
+ * @param timeoutMs Maximum time to wait in milliseconds (use portMAX_DELAY for infinite wait)
  * @param waitIntervalMs Interval between checks in milliseconds
  * @return Number of bytes actually added (0 if timeout or len > 0xFFFF)
  */
@@ -98,12 +98,13 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
         waitTicks = 1;
     }
     
+    // Main wait loop - continues until space available or timeout
     while (1) {
         // Check timeout first to avoid unnecessary operations
         if (timeoutTicks != portMAX_DELAY) {
             TickType_t elapsedTicks = xTaskGetTickCount() - startTicks;
             if (elapsedTicks >= timeoutTicks) {
-                return 0; // Timeout
+                return 0; // Timeout reached
             }
         }
         
@@ -222,10 +223,14 @@ static inline void CircularBuf_Clear_Safe(CircularBuf_t* buf, SemaphoreHandle_t 
 }
 
 /**
- * @brief Get the number of free bytes (size_t version for compatibility)
+ * @brief Get the number of free bytes (size_t version for API compatibility)
+ * 
+ * This is a convenience wrapper that returns size_t instead of uint16_t,
+ * useful when interfacing with APIs that expect size_t return values.
+ * 
  * @param buf Pointer to the circular buffer
  * @param mutex Mutex protecting the buffer
- * @return Number of free bytes as size_t
+ * @return Number of free bytes as size_t (still limited to 64KB max)
  */
 static inline size_t CircularBuf_GetFreeSize_Safe_SizeT(CircularBuf_t* buf, SemaphoreHandle_t mutex) {
     return (size_t)CircularBuf_GetFreeSize_Safe(buf, mutex);
