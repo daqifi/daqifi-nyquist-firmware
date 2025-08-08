@@ -280,7 +280,7 @@ void sd_card_manager_ProcessState() {
                         (SYS_FS_FILE_OPEN_APPEND_PLUS));
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
                 gSdCardData.totalBytesFlushPending = 0;
-                gSdCardData.lastFlushMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
+                gSdCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
             } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
@@ -348,7 +348,7 @@ void sd_card_manager_ProcessState() {
                     }
                 }
             }
-            uint64_t currentMillis = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            uint64_t currentMillis = pdTICKS_TO_MS(xTaskGetTickCount());
 
             xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
             bool needsFlush = (currentMillis - gSdCardData.lastFlushMillis > 5000 ||
@@ -456,7 +456,7 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     // Wait for buffer space with mutex protection and timeout
     bool hasSpace = false;
     TickType_t startTime = xTaskGetTickCount();
-    TickType_t timeoutTicks = SD_CARD_MANAGER_WRITE_TIMEOUT_MS / portTICK_PERIOD_MS;
+    TickType_t timeoutTicks = pdMS_TO_TICKS(SD_CARD_MANAGER_WRITE_TIMEOUT_MS);
     
     while (!hasSpace) {
         // Check buffer space with mutex protection
@@ -470,7 +470,7 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
                 LOG_E("SD: WriteToBuffer timeout - buffer full for %u ms", SD_CARD_MANAGER_WRITE_TIMEOUT_MS);
                 return 0;
             }
-            vTaskDelay(SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS / portTICK_PERIOD_MS);
+            vTaskDelay(pdMS_TO_TICKS(SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS));
         }
     }
     

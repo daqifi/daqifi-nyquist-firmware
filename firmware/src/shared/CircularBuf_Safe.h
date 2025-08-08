@@ -25,6 +25,7 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,6 +91,10 @@ static inline size_t CircularBuf_TryAddBytes_Safe(CircularBuf_t* buf, SemaphoreH
                                                   uint8_t* data, size_t len,
                                                   TickType_t timeoutMs, 
                                                   unsigned int waitIntervalMs) {
+    // Guard against potential size_t to uint32_t truncation
+    if (len > UINT32_MAX) {
+        return 0;
+    }
     uint32_t len32 = (uint32_t)len;
     TickType_t startTicks = xTaskGetTickCount();
     TickType_t timeoutTicks = (timeoutMs == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
@@ -193,6 +198,10 @@ static inline bool CircularBuf_HasData_Safe(CircularBuf_t* buf, SemaphoreHandle_
  */
 static inline size_t CircularBuf_AddBytesIfSpace_Safe(CircularBuf_t* buf, SemaphoreHandle_t mutex,
                                                       uint8_t* data, size_t len) {
+    // Guard against potential size_t to uint32_t truncation
+    if (len > UINT32_MAX) {
+        return 0;
+    }
     uint32_t len32 = (uint32_t)len;
     xSemaphoreTake(mutex, portMAX_DELAY);
     if (CircularBuf_NumBytesFree(buf) < len32) {
