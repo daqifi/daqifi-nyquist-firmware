@@ -18,7 +18,9 @@
 
 static StackList m_Data;
 static StackList* m_ListPtr = NULL;
+#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
 static void LogMessageICSP(const char* buffer, int len);
+#endif
 
 static void InitList()
 {
@@ -68,6 +70,7 @@ static void InitList()
     }
 }
 
+#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
 static void LogMessageICSP(const char* buffer, int len)
 {
     size_t processedSize = 0;
@@ -96,6 +99,7 @@ static void LogMessageICSP(const char* buffer, int len)
         processedSize++;
     }
 }
+#endif
 
 static int LogMessageImpl(const char* message)
 {
