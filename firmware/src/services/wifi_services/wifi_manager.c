@@ -633,7 +633,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             
             // Simple mode-based logic - let MainState handle initialization
             // Just clean up the current mode if we're switching
-            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP) {
                 // Switching to AP mode - disconnect STA if connected
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                     GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
@@ -655,7 +655,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     break;
                 }
             }
-            else if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP) {
+            else if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
                 // Switching to STA mode - stop AP if running
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
                     LOG_D("Switching from AP to STA mode\r\n");
