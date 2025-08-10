@@ -19,6 +19,7 @@
 static StackList m_Data;
 static StackList* m_ListPtr = NULL;
 #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+static void InitICSPLogging(void);
 static void LogMessageICSP(const char* buffer, int len);
 #endif
 
@@ -32,56 +33,64 @@ static void InitList()
         m_ListPtr = &m_Data;
         
         #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
-        // Initialize U4TX pin for live debug logs through the ICSP pins if enabled
-        // Config bits are automatically set to allow this when ENABLE_ICSP_REALTIME_LOG == 1
-        
-        /* Unlock system for PPS configuration */
-        SYSKEY = 0x00000000U;
-        SYSKEY = 0xAA996655U;
-        SYSKEY = 0x556699AAU;
-
-        CFGCONbits.IOLOCK = 0U;
-        CFGCONbits.PMDLOCK = 0U;
-
-        RPB0R = 2;          // RB0 - U4TX
-        ANSELBbits.ANSB0 = 0;
-        TRISBbits.TRISB0 = 0;
-        PMD5bits.U4MD = 0;
-
-        /* Lock back the system after PPS configuration */
-        CFGCONbits.IOLOCK = 1U;
-        CFGCONbits.PMDLOCK = 1U;
-        SYSKEY = 0x33333333U;
-
-        /* Set up UxMODE bits */
-        /* STSEL  = 0 */
-        /* PDSEL = 0 */
-        /* UEN = 0 */
-
-        U4MODE = 0x8;
-        /* Enable UART4 Transmitter */
-        U4STASET = (_U4STA_UTXEN_MASK | _U4STA_UTXISEL1_MASK );
-
-        /* BAUD Rate: 921600 bps @ 100MHz peripheral clock */
-        /* U4BRG = (PBCLK / (4 * BAUD)) - 1 = (100MHz / (4 * 921600)) - 1 = 26 */
-        U4BRG = 26;
-
-        /* Turn ON UART4 */
-        U4MODESET = _U4MODE_ON_MASK;
-        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+        InitICSPLogging();
+        #endif
     }
 }
 
 #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+
+// Maximum timeout: ~1ms at 200MHz system clock
+// Prevents infinite loop if UART hardware fails or is disconnected
+#define UART_TX_TIMEOUT 200000
+
+/**
+ * Initialize UART4 for ICSP debug logging
+ * Pin 4 of ICSP header (RB0) is configured as U4TX @ 921600bps
+ */
+static void InitICSPLogging(void)
+{
+    // Config bits are automatically set to allow this when ENABLE_ICSP_REALTIME_LOG == 1
+    
+    /* Unlock system for PPS configuration */
+    SYSKEY = 0x00000000U;
+    SYSKEY = 0xAA996655U;
+    SYSKEY = 0x556699AAU;
+
+    CFGCONbits.IOLOCK = 0U;
+    CFGCONbits.PMDLOCK = 0U;
+
+    /* Configure RB0 as UART4 TX */
+    RPB0R = 2;              // RB0 -> U4TX
+    ANSELBbits.ANSB0 = 0;   // Digital mode
+    TRISBbits.TRISB0 = 0;   // Output
+    PMD5bits.U4MD = 0;      // Enable UART4 module
+
+    /* Lock back the system after PPS configuration */
+    CFGCONbits.IOLOCK = 1U;
+    CFGCONbits.PMDLOCK = 1U;
+    SYSKEY = 0x33333333U;
+
+    /* Configure UART4: 8-N-1 */
+    U4MODE = 0x8;           // BRGH = 1 for high-speed mode
+    U4STASET = (_U4STA_UTXEN_MASK | _U4STA_UTXISEL1_MASK);
+
+    /* BAUD Rate: 921600 bps @ 100MHz peripheral clock */
+    /* U4BRG = (PBCLK / (4 * BAUD)) - 1 = (100MHz / (4 * 921600)) - 1 = 26 */
+    U4BRG = 26;
+
+    /* Enable UART4 */
+    U4MODESET = _U4MODE_ON_MASK;
+}
+
+/**
+ * Send log message through ICSP pin using UART4
+ */
 static void LogMessageICSP(const char* buffer, int len)
 {
     size_t processedSize = 0;
     uint8_t* lBuffer = (uint8_t*)buffer;
     uint32_t timeout_counter;
-    
-    // Maximum timeout: ~1ms at 200MHz system clock
-    // Prevents infinite loop if UART hardware fails or is disconnected
-    #define UART_TX_TIMEOUT 200000
     
     while(len > processedSize){
         
@@ -96,12 +105,12 @@ static void LogMessageICSP(const char* buffer, int len)
             break;
         }
 
-        /* 8-bit mode */
+        /* Send byte */
         U4TXREG = *lBuffer++;
         processedSize++;
     }
 }
-#endif
+#endif /* ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG) */
 
 static int LogMessageImpl(const char* message)
 {
