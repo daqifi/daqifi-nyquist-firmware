@@ -299,8 +299,8 @@ scpi_result_t SCPI_LANGatewaySet(scpi_t * context) {
 scpi_result_t SCPI_LANMacGet(scpi_t * context) {
     char buffer[MAX_MAC_ADDR_STR_LEN];
 
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
+    wifi_manager_settings_t * pWifiSettings = (wifi_manager_settings_t*)BoardData_Get(
+            BOARDDATA_WIFI_SETTINGS,0);
     if (MacAddr_ToString(pWifiSettings->macAddr.addr,
             buffer,
             MAX_MAC_ADDR_STR_LEN) < 1) {

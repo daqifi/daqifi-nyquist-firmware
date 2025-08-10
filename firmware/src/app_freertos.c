@@ -160,15 +160,15 @@ void app_SystemInit() {
     DaqifiSettings tmpTopLevelSettings;
     DaqifiSettings tmpSettings;
 
-    gpBoardData = BoardData_Get(
+    gpBoardData = (tBoardData*)BoardData_Get(
             BOARDDATA_ALL_DATA,
             0);
 
-    gpBoardConfig = BoardConfig_Get(
+    gpBoardConfig = (tBoardConfig*)BoardConfig_Get(
             BOARDCONFIG_ALL_CONFIG,
             0);
 
-    gpBoardRuntimeConfig = BoardRunTimeConfig_Get(
+    gpBoardRuntimeConfig = (tBoardRuntimeConfig*)BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_ALL_CONFIG);
 
 
