@@ -33,6 +33,7 @@ static void InitList()
         
         #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
         // Initialize U4TX pin for live debug logs through the ICSP pins if enabled
+        // Config bits are automatically set to allow this when ENABLE_ICSP_REALTIME_LOG == 1
         
         /* Unlock system for PPS configuration */
         SYSKEY = 0x00000000U;

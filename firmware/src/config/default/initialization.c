@@ -99,9 +99,20 @@
 #pragma config USERID =     0xffff
 #pragma config FMIIEN =     OFF
 #pragma config FETHIO =     OFF
-#pragma config PGL1WAY =    OFF//ON
-#pragma config PMDL1WAY =   OFF//ON
-#pragma config IOL1WAY =    OFF//ON
+// One-way configuration lock bits
+// When ICSP logging is enabled, these must be OFF to allow runtime PPS configuration
+// When disabled, these are ON for security to prevent unauthorized reconfiguration
+#include "Util/Logger.h"
+#if ENABLE_ICSP_REALTIME_LOG == 1
+    #pragma config PGL1WAY =    OFF  // Allow multiple Peripheral Pin Select reconfigurations
+    #pragma config PMDL1WAY =   OFF  // Allow multiple Peripheral Module Disable reconfigurations
+    #pragma config IOL1WAY =    OFF  // Allow multiple I/O lock reconfigurations
+    #warning "Config lock bits disabled for ICSP logging - DO NOT RELEASE TO PRODUCTION"
+#else
+    #pragma config PGL1WAY =    ON   // Peripheral Pin Select one-way lock
+    #pragma config PMDL1WAY =   ON   // Peripheral Module Disable one-way lock
+    #pragma config IOL1WAY =    ON   // I/O one-way lock
+#endif
 #pragma config FUSBIDIO =   OFF
 
 /*** BF1SEQ0 ***/
