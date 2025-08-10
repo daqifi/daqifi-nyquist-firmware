@@ -796,10 +796,20 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                 LOG_D("AP restarted with new settings\r\n");
                 
-                // Recreate UDP socket with new IP address
-                // Socket must be recreated because it was bound to the old IP
-                LOG_D("Recreating UDP socket with new IP address\r\n");
+                // Re-register socket callback after AP restart
                 WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
+                
+                // Recreate UDP socket with new IP address
+                // Socket was closed before AP restart, need to create new one
+                if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
+                    LOG_D("Creating new UDP socket after IP change\r\n");
+                    if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
+                        LOG_E("Failed to recreate UDP socket after IP change\r\n");
+                    } else {
+                        SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                        LOG_D("UDP socket recreated successfully\r\n");
+                    }
+                }
             }
             else if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                      GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))
