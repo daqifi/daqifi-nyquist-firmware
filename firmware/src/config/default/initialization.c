@@ -102,8 +102,8 @@
 // One-way configuration lock bits
 // When ICSP logging is enabled, these must be OFF to allow runtime PPS configuration
 // When disabled, these are ON for security to prevent unauthorized reconfiguration
-#include "Util/Logger.h"
-#if ENABLE_ICSP_REALTIME_LOG == 1
+// Note: Define ENABLE_ICSP_REALTIME_LOG=1 in project settings to enable debug logging
+#if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1)
     #pragma config PGL1WAY =    OFF  // Allow multiple Peripheral Pin Select reconfigurations
     #pragma config PMDL1WAY =   OFF  // Allow multiple Peripheral Module Disable reconfigurations
     #pragma config IOL1WAY =    OFF  // Allow multiple I/O lock reconfigurations

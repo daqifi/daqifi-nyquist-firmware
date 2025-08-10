@@ -18,7 +18,7 @@ extern "C" {
     
     
     /////////////////////////////////////////////////////
-    /* Set to 1 to enable, or 0 to disable real-time UART logging via ICSP.
+    /* Set ENABLE_ICSP_REALTIME_LOG=1 in project defines to enable real-time UART logging via ICSP.
      * 
      * This feature outputs live debug logs through the ICSP pins (for in-house debugging only).
      * When enabled, pin 4 of the ICSP header (RB0) is configured as U4TX @ 921600bps (8-N-1).
@@ -26,10 +26,14 @@ extern "C" {
      * WARNING: This interferes with standard ICSP programming functionality.
      * Only works in non-debug builds (when __DEBUG is not defined).
      * Must be disabled (set to 0) before releasing to customers.
+     * 
+     * Define in project settings or makefile: -DENABLE_ICSP_REALTIME_LOG=1
      */
-    #define ENABLE_ICSP_REALTIME_LOG 0
+    #ifndef ENABLE_ICSP_REALTIME_LOG
+        #define ENABLE_ICSP_REALTIME_LOG 0
+    #endif
    
-    #if ENABLE_ICSP_REALTIME_LOG == 1
+    #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1)
     #warning "ENABLE_ICSP_REALTIME_LOG is ENABLED. Set to 0 before release."
     #endif
 

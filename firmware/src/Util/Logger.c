@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 #include "NullLockProvider.h"
 #include "StackList.h"
@@ -18,7 +19,7 @@
 
 static StackList m_Data;
 static StackList* m_ListPtr = NULL;
-#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+#if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
 static void InitICSPLogging(void);
 static void LogMessageICSP(const char* buffer, int len);
 #endif
@@ -32,13 +33,13 @@ static void InitList()
         StackList_Initialize(&m_Data, true, &g_NullLockProvider);
         m_ListPtr = &m_Data;
         
-        #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
         InitICSPLogging();
         #endif
     }
 }
 
-#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+#if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
 
 // Maximum timeout: ~1ms at 200MHz system clock
 // Prevents infinite loop if UART hardware fails or is disconnected
@@ -50,7 +51,15 @@ static void InitList()
  */
 static void InitICSPLogging(void)
 {
+    static bool initialized = false;
+    if (initialized) {
+        return;  // Prevent re-initialization
+    }
+    
     // Config bits are automatically set to allow this when ENABLE_ICSP_REALTIME_LOG == 1
+    
+    /* Enter critical section for SYSKEY operations */
+    uint32_t int_status = __builtin_disable_interrupts();
     
     /* Unlock system for PPS configuration */
     SYSKEY = 0x00000000U;
@@ -70,6 +79,9 @@ static void InitICSPLogging(void)
     CFGCONbits.IOLOCK = 1U;
     CFGCONbits.PMDLOCK = 1U;
     SYSKEY = 0x33333333U;
+    
+    /* Restore interrupt state */
+    __builtin_mtc0(12, 0, int_status);
 
     /* Configure UART4: 8-N-1 */
     U4MODE = 0x8;           // BRGH = 1 for high-speed mode
@@ -81,6 +93,9 @@ static void InitICSPLogging(void)
 
     /* Enable UART4 */
     U4MODESET = _U4MODE_ON_MASK;
+    
+    /* Mark as initialized */
+    initialized = true;
 }
 
 /**
@@ -110,7 +125,7 @@ static void LogMessageICSP(const char* buffer, int len)
         processedSize++;
     }
 }
-#endif /* ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG) */
+#endif /* defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG) */
 
 static int LogMessageImpl(const char* message)
 {
@@ -151,9 +166,9 @@ static int LogMessageImpl(const char* message)
             }
         }
         
-        #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
         LogMessageICSP(buffer, len);
-        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+        #endif
         
         if (StackList_PushBack(m_ListPtr, (const uint8_t*)buffer, (size_t)len))
         {
@@ -163,9 +178,9 @@ static int LogMessageImpl(const char* message)
         // Message too long or empty, use as-is
         int count = min(len, STACK_LIST_NODE_SIZE);
         
-        #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
         LogMessageICSP(message, len);
-        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
+        #endif
 
         if (StackList_PushBack(m_ListPtr, (const uint8_t*)message, (size_t)count))
         {
