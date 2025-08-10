@@ -58,15 +58,16 @@ static void InitList()
         /* UEN = 0 */
 
         U4MODE = 0x8;
-        /* Enable UART1 Receiver and Transmitter */
+        /* Enable UART4 Transmitter */
         U4STASET = (_U4STA_UTXEN_MASK | _U4STA_UTXISEL1_MASK );
 
-        /* BAUD Rate register Setup */
+        /* BAUD Rate: 921600 bps @ 100MHz peripheral clock */
+        /* U4BRG = (PBCLK / (4 * BAUD)) - 1 = (100MHz / (4 * 921600)) - 1 = 26 */
         U4BRG = 26;
 
         /* Turn ON UART4 */
         U4MODESET = _U4MODE_ON_MASK;
-        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(_DEBUG)
+        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
     }
 }
 
@@ -142,7 +143,7 @@ static int LogMessageImpl(const char* message)
         
         #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
         LogMessageICSP(buffer, len);
-        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(_DEBUG)
+        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
         
         if (StackList_PushBack(m_ListPtr, (const uint8_t*)buffer, (size_t)len))
         {
@@ -154,7 +155,7 @@ static int LogMessageImpl(const char* message)
         
         #if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
         LogMessageICSP(message, len);
-        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(_DEBUG)
+        #endif//#if ENABLE_ICSP_REALTIME_LOG == 1 && !defined(__DEBUG)
 
         if (StackList_PushBack(m_ListPtr, (const uint8_t*)message, (size_t)count))
         {
