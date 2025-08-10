@@ -637,17 +637,26 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // Switching to AP mode - disconnect STA if connected
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                     GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
-                    LOG_D("Switching from STA to AP mode\r\n");
+                    LOG_D("Switching from STA to AP mode - performing full module reset\r\n");
                     
                     // Reset reconnect counter when switching modes
                     pInstance->staReconnectAttempts = 0;
                     
+                    // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    vTaskDelay(pdMS_TO_TICKS(500));
+                    
+                    // Perform full module reset for clean transition
+                    WDRV_WINC_Close(pInstance->wdrvHandle);
+                    pInstance->wdrvHandle = DRV_HANDLE_INVALID;
+                    WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                    wifi_manager_FixWincResetState();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+                    
+                    vTaskDelay(pdMS_TO_TICKS(1000));
                     
                     // Transition to MainState for AP initialization
                     returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
@@ -658,7 +667,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             else if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
                 // Switching to STA mode - stop AP if running
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
-                    LOG_D("Switching from AP to STA mode\r\n");
+                    LOG_D("Switching from AP to STA mode - performing full module reset\r\n");
                     
                     // Close sockets before stopping AP
                     CloseUdpSocket(&pInstance->udpServerSocket);
@@ -668,7 +677,15 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
-                    vTaskDelay(pdMS_TO_TICKS(500));
+                    
+                    // Perform full module reset for clean transition
+                    WDRV_WINC_Close(pInstance->wdrvHandle);
+                    pInstance->wdrvHandle = DRV_HANDLE_INVALID;
+                    WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                    wifi_manager_FixWincResetState();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+                    
+                    vTaskDelay(pdMS_TO_TICKS(1000));
                     
                     // Transition to MainState for STA initialization
                     returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
