@@ -496,6 +496,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
+                // Small delay to ensure BSS context is fully processed
+                vTaskDelay(pdMS_TO_TICKS(100));
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -778,6 +780,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 
                 // Restart AP with new settings
+                // Small delay to ensure BSS context is fully processed
+                vTaskDelay(pdMS_TO_TICKS(100));
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, 
                     &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);

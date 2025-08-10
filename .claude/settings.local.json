@@ -72,7 +72,13 @@
       "Bash(/tmp/debug_sd_test.sh:*)",
       "Bash(/tmp/test_sd_perf_128kb.sh:*)",
       "Bash(git checkout:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(/tmp/debug_ssid.sh:*)",
+      "Bash(/tmp/final_test.sh:*)",
+      "Bash(git reset:*)",
+      "Bash(/tmp/test_ssid_timing.sh:*)",
+      "Bash(/tmp/pr83_final_test.sh:*)",
+      "Bash(/tmp/simple_final_test.sh:*)"
     ],
     "deny": []
   }
