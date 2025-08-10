@@ -496,7 +496,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                // Small delay to ensure BSS context is fully processed
+                // Small delay to ensure BSS context is fully processed before starting AP
                 vTaskDelay(pdMS_TO_TICKS(100));
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -652,6 +652,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     
                     // Perform full module reset for clean transition
+                    // WINC1500 driver doesn't properly clean up DHCP server state
+                    // when switching modes, so a full reset is required
                     WDRV_WINC_Close(pInstance->wdrvHandle);
                     pInstance->wdrvHandle = DRV_HANDLE_INVALID;
                     WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
@@ -681,6 +683,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                     
                     // Perform full module reset for clean transition
+                    // WINC1500 driver doesn't properly clean up DHCP server state
+                    // when switching modes, so a full reset is required
                     WDRV_WINC_Close(pInstance->wdrvHandle);
                     pInstance->wdrvHandle = DRV_HANDLE_INVALID;
                     WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
@@ -780,7 +784,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 
                 // Restart AP with new settings
-                // Small delay to ensure BSS context is fully processed
+                // Small delay to ensure BSS context is fully processed before starting AP
                 vTaskDelay(pdMS_TO_TICKS(100));
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, 
                     &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
@@ -791,6 +795,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                 LOG_D("AP restarted with new settings\r\n");
+                
+                // Recreate UDP socket with new IP address
+                // Socket must be recreated because it was bound to the old IP
+                LOG_D("Recreating UDP socket with new IP address\r\n");
+                WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
             }
             else if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                      GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))

@@ -78,7 +78,7 @@ static void LogMessageICSP(const char* buffer, int len)
     uint32_t timeout_counter;
     
     // Maximum timeout: ~1ms at 200MHz system clock
-    // This prevents infinite loop if UART hardware fails
+    // Prevents infinite loop if UART hardware fails or is disconnected
     #define UART_TX_TIMEOUT 200000
     
     while(len > processedSize){
@@ -89,7 +89,7 @@ static void LogMessageICSP(const char* buffer, int len)
             timeout_counter++;
         }
         
-        // If timeout occurred, abort transmission
+        // Abort transmission on timeout to prevent system hang
         if (timeout_counter >= UART_TX_TIMEOUT) {
             break;
         }
