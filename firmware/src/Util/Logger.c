@@ -3,10 +3,11 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 #include "NullLockProvider.h"
 #include "StackList.h"
-
+#include <xc.h>
 #ifndef min
     #define min(x,y) x <= y ? x : y
 #endif // min
@@ -18,6 +19,10 @@
 
 static StackList m_Data;
 static StackList* m_ListPtr = NULL;
+#if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+static void InitICSPLogging(void);
+static void LogMessageICSP(const char* buffer, int len);
+#endif
 
 static void InitList()
 {
@@ -27,8 +32,100 @@ static void InitList()
         // This allows new messages to overwrite old ones when the buffer is full
         StackList_Initialize(&m_Data, true, &g_NullLockProvider);
         m_ListPtr = &m_Data;
+        
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+        InitICSPLogging();
+        #endif
     }
 }
+
+#if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+
+// Maximum timeout: ~1ms at 200MHz system clock
+// Prevents infinite loop if UART hardware fails or is disconnected
+#define UART_TX_TIMEOUT 200000
+
+/**
+ * Initialize UART4 for ICSP debug logging
+ * Pin 4 of ICSP header (RB0) is configured as U4TX @ 921600bps
+ */
+static void InitICSPLogging(void)
+{
+    static bool initialized = false;
+    if (initialized) {
+        return;  // Prevent re-initialization
+    }
+    
+    // Config bits are automatically set to allow this when ENABLE_ICSP_REALTIME_LOG == 1
+    
+    /* Enter critical section for SYSKEY operations */
+    uint32_t int_status = __builtin_disable_interrupts();
+    
+    /* Unlock system for PPS configuration */
+    SYSKEY = 0x00000000U;
+    SYSKEY = 0xAA996655U;
+    SYSKEY = 0x556699AAU;
+
+    CFGCONbits.IOLOCK = 0U;
+    CFGCONbits.PMDLOCK = 0U;
+
+    /* Configure RB0 as UART4 TX */
+    RPB0R = 2;              // RB0 -> U4TX
+    ANSELBbits.ANSB0 = 0;   // Digital mode
+    TRISBbits.TRISB0 = 0;   // Output
+    PMD5bits.U4MD = 0;      // Enable UART4 module
+
+    /* Lock back the system after PPS configuration */
+    CFGCONbits.IOLOCK = 1U;
+    CFGCONbits.PMDLOCK = 1U;
+    SYSKEY = 0x33333333U;
+    
+    /* Restore interrupt state */
+    __builtin_mtc0(12, 0, int_status);
+
+    /* Configure UART4: 8-N-1 */
+    U4MODE = 0x8;           // BRGH = 1 for high-speed mode
+    U4STASET = (_U4STA_UTXEN_MASK | _U4STA_UTXISEL1_MASK);
+
+    /* BAUD Rate: 921600 bps @ 100MHz peripheral clock */
+    /* U4BRG = (PBCLK / (4 * BAUD)) - 1 = (100MHz / (4 * 921600)) - 1 = 26 */
+    U4BRG = 26;
+
+    /* Enable UART4 */
+    U4MODESET = _U4MODE_ON_MASK;
+    
+    /* Mark as initialized */
+    initialized = true;
+}
+
+/**
+ * Send log message through ICSP pin using UART4
+ */
+static void LogMessageICSP(const char* buffer, int len)
+{
+    size_t processedSize = 0;
+    uint8_t* lBuffer = (uint8_t*)buffer;
+    uint32_t timeout_counter;
+    
+    while(len > processedSize){
+        
+        /* Wait while TX buffer is full with timeout */
+        timeout_counter = 0;
+        while ((U4STA & _U4STA_UTXBF_MASK) && (timeout_counter < UART_TX_TIMEOUT)) {
+            timeout_counter++;
+        }
+        
+        // Abort transmission on timeout to prevent system hang
+        if (timeout_counter >= UART_TX_TIMEOUT) {
+            break;
+        }
+
+        /* Send byte */
+        U4TXREG = *lBuffer++;
+        processedSize++;
+    }
+}
+#endif /* defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG) */
 
 static int LogMessageImpl(const char* message)
 {
@@ -69,6 +166,10 @@ static int LogMessageImpl(const char* message)
             }
         }
         
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+        LogMessageICSP(buffer, len);
+        #endif
+        
         if (StackList_PushBack(m_ListPtr, (const uint8_t*)buffer, (size_t)len))
         {
             return len;
@@ -76,6 +177,11 @@ static int LogMessageImpl(const char* message)
     } else {
         // Message too long or empty, use as-is
         int count = min(len, STACK_LIST_NODE_SIZE);
+        
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+        LogMessageICSP(message, len);
+        #endif
+
         if (StackList_PushBack(m_ListPtr, (const uint8_t*)message, (size_t)count))
         {
             return count;

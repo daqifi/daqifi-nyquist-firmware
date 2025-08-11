@@ -496,6 +496,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
+                // Small delay to ensure BSS context is fully processed before starting AP
+                vTaskDelay(pdMS_TO_TICKS(100));
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -637,17 +639,28 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // Switching to AP mode - disconnect STA if connected
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                     GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
-                    LOG_D("Switching from STA to AP mode\r\n");
+                    LOG_D("Switching from STA to AP mode - performing full module reset\r\n");
                     
                     // Reset reconnect counter when switching modes
                     pInstance->staReconnectAttempts = 0;
                     
+                    // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    vTaskDelay(pdMS_TO_TICKS(500));
+                    
+                    // Perform full module reset for clean transition
+                    // WINC1500 driver doesn't properly clean up DHCP server state
+                    // when switching modes, so a full reset is required
+                    WDRV_WINC_Close(pInstance->wdrvHandle);
+                    pInstance->wdrvHandle = DRV_HANDLE_INVALID;
+                    WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                    wifi_manager_FixWincResetState();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+                    
+                    vTaskDelay(pdMS_TO_TICKS(1000));
                     
                     // Transition to MainState for AP initialization
                     returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
@@ -658,7 +671,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             else if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
                 // Switching to STA mode - stop AP if running
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
-                    LOG_D("Switching from AP to STA mode\r\n");
+                    LOG_D("Switching from AP to STA mode - performing full module reset\r\n");
                     
                     // Close sockets before stopping AP
                     CloseUdpSocket(&pInstance->udpServerSocket);
@@ -668,7 +681,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
-                    vTaskDelay(pdMS_TO_TICKS(500));
+                    
+                    // Perform full module reset for clean transition
+                    // WINC1500 driver doesn't properly clean up DHCP server state
+                    // when switching modes, so a full reset is required
+                    WDRV_WINC_Close(pInstance->wdrvHandle);
+                    pInstance->wdrvHandle = DRV_HANDLE_INVALID;
+                    WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                    wifi_manager_FixWincResetState();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+                    
+                    vTaskDelay(pdMS_TO_TICKS(1000));
                     
                     // Transition to MainState for STA initialization
                     returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
@@ -761,6 +784,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 
                 // Restart AP with new settings
+                // Small delay to ensure BSS context is fully processed before starting AP
+                vTaskDelay(pdMS_TO_TICKS(100));
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_APStart(pInstance->wdrvHandle, 
                     &pInstance->bssCtx, &pInstance->authCtx, NULL, &ApEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -770,6 +795,21 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                 LOG_D("AP restarted with new settings\r\n");
+                
+                // Re-register socket callback after AP restart
+                WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
+                
+                // Recreate UDP socket with new IP address
+                // Socket was closed before AP restart, need to create new one
+                if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
+                    LOG_D("Creating new UDP socket after IP change\r\n");
+                    if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
+                        LOG_E("Failed to recreate UDP socket after IP change\r\n");
+                    } else {
+                        SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                        LOG_D("UDP socket recreated successfully\r\n");
+                    }
+                }
             }
             else if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                      GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))
