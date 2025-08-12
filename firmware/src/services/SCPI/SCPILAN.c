@@ -222,8 +222,8 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANAddrGet(scpi_t * context) {
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
+            BOARDDATA_WIFI_SETTINGS, 0);
 
     return SCPI_LANAddrGetImpl(
             context,
