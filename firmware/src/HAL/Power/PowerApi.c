@@ -54,9 +54,10 @@
 //} CLK_SOURCES_SYSTEM;
 #define SYS_CLK_CONFIG_FREQ_ERROR_LIMIT     10
 #define SYS_CLK_CONFIG_PRIMARY_XTAL         24000000ul
-#define BATT_EXH_TH 5.0
-//! 10% or ~3.2V
-#define BATT_LOW_TH 10.0
+//! Battery threshold for turning off external power to conserve energy (15%)
+#define BATT_EXT_DOWN_TH 15.0
+//! Battery threshold for device shutdown - absolute minimum (5%)
+#define BATT_LOW_TH 5.0
 //! Battery must be charged at least this value higher than BATT_LOW_TH
 #define BATT_LOW_HYST 10.0 
 
@@ -401,7 +402,6 @@ static void Power_UpdateState(void) {
             }
             
             // Get battery and power status
-            bool validBatteryReading = (pData->battVoltage > 2.5);  // Li-ion can't be < 2.5V
             bool hasExternalPower = pData->BQ24297Data.status.pgStat;
             
             // Handle user-requested state changes first
@@ -416,10 +416,10 @@ static void Power_UpdateState(void) {
                 pData->powerState = STANDBY;
                 pData->requestedPowerState = NO_CHANGE;
             } 
-            // Automatic transition only when on battery (no external power) and battery is low
-            else if (!hasExternalPower && validBatteryReading && pData->chargePct < BATT_LOW_TH) {
-                // Running on battery only and battery is low - transition to EXT_DOWN
-                LOG_D("Power_UpdateState: Low battery (%.1f%%), transitioning to POWERED_UP_EXT_DOWN", 
+            // Automatic transition only when on battery (no external power) and battery needs conservation
+            else if (!hasExternalPower && pData->chargePct < BATT_EXT_DOWN_TH) {
+                // Running on battery only and battery getting low - turn off external power to conserve
+                LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
                       pData->chargePct);
                 pWriteVariables->EN_5_10V_Val = false;
                 Power_Write();
@@ -442,7 +442,6 @@ static void Power_UpdateState(void) {
             }
             
             // Get battery and power status
-            bool validBatteryReading = (pData->battVoltage > 2.5);
             bool hasExternalPower = pData->BQ24297Data.status.pgStat;
             
             // Handle user power state change requests first
@@ -457,10 +456,10 @@ static void Power_UpdateState(void) {
                 pData->powerState = STANDBY;
                 pData->requestedPowerState = NO_CHANGE;
             }
-            // Automatic transition to STANDBY only when battery exhausted and no external power
-            else if (!hasExternalPower && validBatteryReading && pData->chargePct < BATT_EXH_TH) {
-                // Battery exhausted and no external power - must power down
-                LOG_D("Power_UpdateState: Battery exhausted (%.1f%%), transitioning to STANDBY", 
+            // Automatic transition to STANDBY only when battery critically low and no external power
+            else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
+                // Battery critically low and no external power - must power down to prevent damage
+                LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
                       pData->chargePct);
                 pData->powerDnAllowed = false; // This will turn true after the LED sequence
                 pData->powerState = STANDBY;
