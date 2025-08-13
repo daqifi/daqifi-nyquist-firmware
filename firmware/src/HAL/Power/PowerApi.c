@@ -342,13 +342,32 @@ static void Power_UpdateState(void) {
              * This is the default state if code is running on USB power
              */
             
-            // Check to see if we've finished signaling the user of insufficient power if necessary
-            // But don't power down if user has requested a power up
-            if (pData->powerDnAllowed == true && 
-                pData->requestedPowerState != DO_POWER_UP && 
-                pData->requestedPowerState != DO_POWER_UP_EXT_DOWN) {
+            // Handle user power-up requests first (highest priority)
+            if (pData->requestedPowerState == DO_POWER_UP || 
+                pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
+
+                // Power up if battery > 3.0V OR external power present
+                if (!pData->BQ24297Data.status.vsysStat ||
+                        pData->BQ24297Data.status.pgStat)
+                {
+                    // Power up with or without external power based on request
+                    bool enableExtPower = (pData->requestedPowerState == DO_POWER_UP);
+                    Power_Up(enableExtPower);
+                    // Power_Up() sets the correct state (POWERED_UP or POWERED_UP_EXT_DOWN)
+                    pData->requestedPowerState = NO_CHANGE;
+                    break;  // Exit after handling power-up
+                } else {
+                    // Insufficient power for power-up request
+                    LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
+                    pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
+                    pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state
+                }
+            }
+            
+            // Check if we should power down (only if no user request pending)
+            if (pData->powerDnAllowed == true) {
                 Power_Down();
-                break;  // Exit early if powering down
+                break;  // Exit after powering down
             }
 
             // Update BQ24297 status and external power source detection
@@ -359,28 +378,6 @@ static void Power_UpdateState(void) {
                 lastStandbyUpdate = currentTime;
                 BQ24297_UpdateStatus();
                 Power_Update_Settings();
-            }
-            
-            if (pData->requestedPowerState == DO_POWER_UP || 
-                pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
-
-                // Power up if battery > 3.0V OR external power present
-                      
-                if (!pData->BQ24297Data.status.vsysStat ||
-                        pData->BQ24297Data.status.pgStat)
-                {
-                    // Power up with or without external power based on request
-                    bool enableExtPower = (pData->requestedPowerState == DO_POWER_UP);
-                    Power_Up(enableExtPower);
-                    // Power_Up() sets the correct state (POWERED_UP or POWERED_UP_EXT_DOWN)
-                    pData->requestedPowerState = NO_CHANGE;
-                } else {
-                    // Otherwise insufficient power.  Notify user and power down
-                    LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
-                    pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
-                    // Already in STANDBY state, no need to set it again
-                    pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state
-                }
             }
         }
             break;

@@ -79,7 +79,8 @@
       "Bash(/tmp/test_ssid_timing.sh:*)",
       "Bash(/tmp/pr83_final_test.sh:*)",
       "Bash(/tmp/simple_final_test.sh:*)",
-      "Bash(/tmp/test_all_states.sh:*)"
+      "Bash(/tmp/test_all_states.sh:*)",
+      "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe\" -TPPK4 -P32MZ2048EFM144 -M -F\"firmware/daqifi.X/dist/default/production/daqifi.X.production.hex\" -OL)"
     ],
     "deny": []
   }
