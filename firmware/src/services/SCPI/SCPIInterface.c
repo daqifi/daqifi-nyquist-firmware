@@ -674,9 +674,11 @@ static scpi_result_t SCPI_GetPowerState(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
-    // Simplify to binary: 0=standby/off, 1=powered on
-    int state = (pPowerData->powerState == STANDBY) ? 0 : 1;
-    SCPI_ResultInt32(context, state);
+    // Return actual power state enum value
+    // 0 = STANDBY (CPU on but standby, powers off if disconnected)
+    // 1 = POWERED_UP (fully powered)
+    // 2 = POWERED_UP_EXT_DOWN (partial power, low battery mode)
+    SCPI_ResultInt32(context, (int)pPowerData->powerState);
     return SCPI_RES_OK;
 }
 
@@ -689,7 +691,6 @@ static scpi_result_t SCPI_GetPowerState(scpi_t * context) {
 static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     int param1;
 
-
     tPowerData * pPowerData = BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
@@ -698,19 +699,28 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (param1 != 0) {
-        pPowerData->requestedPowerState = DO_POWER_UP;
-        BoardData_Set(
-                BOARDDATA_POWER_DATA,
-                0,
-                pPowerData);
-    } else {
-        pPowerData->requestedPowerState = DO_POWER_DOWN;
-        BoardData_Set(
-                BOARDDATA_POWER_DATA,
-                0,
-                pPowerData);
+    // Validate input: accept 0 (standby), 1 (powered up), or 2 (powered up ext down)
+    if (param1 < 0 || param1 > 2) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
     }
+
+    switch (param1) {
+        case 0:  // STANDBY
+            pPowerData->requestedPowerState = DO_POWER_DOWN;
+            break;
+        case 1:  // POWERED_UP
+            pPowerData->requestedPowerState = DO_POWER_UP;
+            break;
+        case 2:  // POWERED_UP_EXT_DOWN (power system but not user power)
+            pPowerData->requestedPowerState = DO_POWER_UP_EXT_DOWN;
+            break;
+    }
+    
+    BoardData_Set(
+            BOARDDATA_POWER_DATA,
+            0,
+            pPowerData);
 
     return SCPI_RES_OK;
 }

@@ -204,11 +204,13 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // Validate network mode: 1 = STA, 4 = AP
     switch (param1) {
-        case WIFI_MANAGER_NETWORK_MODE_AP:
-        case WIFI_MANAGER_NETWORK_MODE_STA:
+        case WIFI_MANAGER_NETWORK_MODE_STA:  // 1
+        case WIFI_MANAGER_NETWORK_MODE_AP:   // 4
             break;
         default:
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             return SCPI_RES_ERR;
     }
 
@@ -359,38 +361,29 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // Validate security mode and handle supported/unsupported modes
     switch (param1) {
-        case WIFI_MANAGER_SECURITY_MODE_OPEN: // DAQiFi defines 0 = SECURITY_OPEN
+        case WIFI_MANAGER_SECURITY_MODE_OPEN: // 0 = SECURITY_OPEN
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_OPEN;
             break;
-        case WIFI_MANAGER_SECURITY_MODE_WEP_40: // DAQiFi defines 1 = WEP_40 which is now deprecated
-            return SCPI_RES_ERR;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_WEP_104: // DAQiFi defines 2 = WEP_104 which is now deprecated
-            return SCPI_RES_ERR;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // DAQiFi defines 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
-        case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED: //DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
+        case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
+        case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED: // 4 = WPA_DEPRECATED - keeping for backwards compatibility
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
             break;
-        case WIFI_MANAGER_SECURITY_MODE_802_1X: // DAQiFi defines 5 = WDRV_WINC_AUTH_TYPE_802_1X
-            return SCPI_RES_ERR; // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_802_1X;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2: // DAQiFi defines 6 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
-            return SCPI_RES_ERR; // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_WPS_PUSH_BUTTON: // DAQiFi defines 7 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
+        
+        // Deprecated/unsupported modes
+        case WIFI_MANAGER_SECURITY_MODE_WEP_40: // 1 = WEP_40 (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_WEP_104: // 2 = WEP_104 (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_802_1X: // 5 = 802.1X (not implemented)
+        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2: // 6 = 802.1X_MSCHAPV2 (not implemented)
+        case WIFI_MANAGER_SECURITY_MODE_WPS_PUSH_BUTTON: // 7 = WPS_PUSH_BUTTON (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_SEC_WPS_PIN: // 8 = WPS_PIN (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS: // 9 = 802.1X_TLS (not implemented)
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             return SCPI_RES_ERR;
-        case WIFI_MANAGER_SECURITY_MODE_SEC_WPS_PIN: // DAQiFi defines 8 = SECURITY_WPS_PIN which is now deprecated
-            return SCPI_RES_ERR;
-        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS: // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
-            return SCPI_RES_ERR; // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS;
-            break;
-
+            
         default:
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             return SCPI_RES_ERR;
     }
 
