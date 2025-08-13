@@ -705,6 +705,14 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // Check if already in the requested state - no-op if so
+    if ((param1 == 0 && pPowerData->powerState == STANDBY) ||
+        (param1 == 1 && pPowerData->powerState == POWERED_UP) ||
+        (param1 == 2 && pPowerData->powerState == POWERED_UP_EXT_DOWN)) {
+        // Already in requested state, nothing to do
+        return SCPI_RES_OK;
+    }
+
     switch (param1) {
         case 0:  // STANDBY
             pPowerData->requestedPowerState = DO_POWER_DOWN;

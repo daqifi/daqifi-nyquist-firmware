@@ -214,6 +214,12 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
             return SCPI_RES_ERR;
     }
 
+    // Check if already in the requested mode - no-op if so
+    if (pRunTimeWifiSettings->networkMode == (uint8_t)param1) {
+        // Already in requested mode, nothing to do
+        return SCPI_RES_OK;
+    }
+
     pRunTimeWifiSettings->networkMode = (uint8_t) param1;
     // LOG_D("WiFi mode set to %d\r\n", param1);
     return SCPI_RES_OK;
@@ -364,10 +370,18 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
     // Validate security mode and handle supported/unsupported modes
     switch (param1) {
         case WIFI_MANAGER_SECURITY_MODE_OPEN: // 0 = SECURITY_OPEN
+            // Check if already in OPEN mode
+            if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN) {
+                return SCPI_RES_OK;  // No change needed
+            }
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_OPEN;
             break;
         case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
         case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED: // 4 = WPA_DEPRECATED - keeping for backwards compatibility
+            // Check if already in WPA mode (both 3 and 4 map to mode 3)
+            if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE) {
+                return SCPI_RES_OK;  // No change needed
+            }
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
             break;
         
