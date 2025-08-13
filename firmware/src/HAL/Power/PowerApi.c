@@ -73,8 +73,9 @@ static tPowerWriteVars *pWriteVariables;
 //static void Power_Write( void );
 /*!
  * Function to active power capabilities
+ * @param enableExtPower If true, enable 5V/10V external power. If false, keep external power disabled.
  */
-static void Power_Up(void);
+static void Power_Up(bool enableExtPower);
 /*!
  * Function to turn off power capabilities
  */
@@ -230,7 +231,7 @@ void Power_Write(void) {
 
 }
 
-static void Power_Up(void) {
+static void Power_Up(bool enableExtPower) {
     
     // If the battery management is not enabled, wait for it to become ready
     while (!pData->BQ24297Data.initComplete) {
@@ -246,10 +247,13 @@ static void Power_Up(void) {
     Power_Write();
     
 
-    // 5V Enable
-    if ((pData->BQ24297Data.status.batPresent) ||
-            (pData->BQ24297Data.status.vBusStat == VBUS_CHARGER)) {
+    // 5V Enable - only if requested and power is available
+    if (enableExtPower && 
+        ((pData->BQ24297Data.status.batPresent) ||
+         (pData->BQ24297Data.status.vBusStat == VBUS_CHARGER))) {
         pWriteVariables->EN_5_10V_Val = true;
+    } else {
+        pWriteVariables->EN_5_10V_Val = false;
     }
     Power_Write();
     vTaskDelay(50 / portTICK_PERIOD_MS);
@@ -265,9 +269,13 @@ static void Power_Up(void) {
     Power_Write();
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
-    pData->powerState = POWERED_UP;
+    // Set power state based on whether external power was enabled
+    if (enableExtPower) {
+        pData->powerState = POWERED_UP;
+    } else {
+        pData->powerState = POWERED_UP_EXT_DOWN;
+    }
     // Don't reset requestedPowerState here - let the state machine handle it
-    // This allows transitions like STANDBY -> POWERED_UP -> POWERED_UP_EXT_DOWN
 }
 
 void Power_Down(void) {
@@ -327,7 +335,10 @@ static void Power_UpdateState(void) {
              */
             
             // Check to see if we've finished signaling the user of insufficient power if necessary
-            if (pData->powerDnAllowed == true) {
+            // But don't power down if user has requested a power up
+            if (pData->powerDnAllowed == true && 
+                pData->requestedPowerState != DO_POWER_UP && 
+                pData->requestedPowerState != DO_POWER_UP_EXT_DOWN) {
                 Power_Down();
                 break;  // Exit early if powering down
             }
@@ -350,19 +361,17 @@ static void Power_UpdateState(void) {
                 if (!pData->BQ24297Data.status.vsysStat ||
                         pData->BQ24297Data.status.pgStat)
                 {
-                    Power_Up();
-                    // If requested state is DO_POWER_UP_EXT_DOWN, we'll transition to that state
-                    // once we're in POWERED_UP state (handled in POWERED_UP case)
+                    // Power up with or without external power based on request
+                    bool enableExtPower = (pData->requestedPowerState == DO_POWER_UP);
+                    Power_Up(enableExtPower);
+                    // Power_Up() sets the correct state (POWERED_UP or POWERED_UP_EXT_DOWN)
+                    pData->requestedPowerState = NO_CHANGE;
                 } else {
                     // Otherwise insufficient power.  Notify user and power down
                     LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
                     pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
                     // Already in STANDBY state, no need to set it again
                     pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state
-                }
-                // Don't reset requestedPowerState if DO_POWER_UP_EXT_DOWN - let POWERED_UP state handle it
-                if (pData->requestedPowerState == DO_POWER_UP) {
-                    pData->requestedPowerState = NO_CHANGE;
                 }
             }
         }
@@ -372,16 +381,6 @@ static void Power_UpdateState(void) {
             /* Board fully powered. Monitor for any changes/faults
              * ADC readings are now valid!
              */
-            // Check if we need to immediately transition to POWERED_UP_EXT_DOWN
-            if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
-                // Immediately transition to POWERED_UP_EXT_DOWN state
-                pWriteVariables->EN_5_10V_Val = false;
-                Power_Write();
-                pData->powerState = POWERED_UP_EXT_DOWN;
-                pData->requestedPowerState = NO_CHANGE;
-                break;  // Exit early to avoid the rest of POWERED_UP processing
-            }
-            
             if (pData->requestedPowerState == DO_POWER_UP) pData->requestedPowerState = NO_CHANGE; // We are already powered so just reset the flag
             
             // Rate limit status updates to reduce log spam
