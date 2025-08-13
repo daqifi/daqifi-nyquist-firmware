@@ -107,6 +107,9 @@ Services Layer
    - Entry point: `services/SCPI/SCPIInterface.c`
    - Modules: SCPIADC, SCPIDIO, SCPILAN, SCPIStorageSD
    - Used for device configuration and control
+   - **SCPI Abbreviation Rule**: Commands can be abbreviated based on the capitalization in the full command. The abbreviated command must contain all letters that are in CAPS. For example:
+     - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
+     - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
 
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`
@@ -253,6 +256,32 @@ The project can be built using Microchip tools in WSL/Linux:
    ```
 
 ### Device Testing and SCPI Communication
+
+#### Important Testing Notes
+1. **Picocom Usage**: Never use `2>&1` with picocom commands - it doesn't handle stderr redirection properly
+   ```bash
+   # Good: 
+   (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
+   # Bad:
+   (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -5
+   ```
+
+2. **Power State Required**: Always power up the device before attempting WiFi operations
+   ```bash
+   # Check power state (0=off, 1=MICRO_ON, 2=POWERED_UP)
+   (echo -e "SYST:POW:STAT?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
+   
+   # Power up device for WiFi operations
+   (echo -e "SYST:POW:STAT 2\r"; sleep 1) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
+   ```
+
+3. **Use Exact SCPI Commands**: Don't guess command syntax. Check the actual command table in `SCPIInterface.c`
+   ```bash
+   # Correct commands (from SCPIInterface.c):
+   SYST:COMM:LAN:SSIDSTR?    # Signal strength (not SSID:STR)
+   SYST:COMM:LAN:NETTYPE?     # Network type (not MODE or NETWORK)
+   SYST:COMM:LAN:ADDR?        # IP address (not ADDRESS or IP)
+   ```
 
 #### USB Device Access from WSL
 1. **Initial device attachment** (from Windows PowerShell as admin):
