@@ -249,14 +249,27 @@ static void Power_Up(bool enableExtPower) {
     
 
     // 5V Enable - based on request and power availability
-    // Enable if: requested AND (battery present OR external charger connected)
-    // Disable if: not requested (user wants POWERED_UP_EXT_DOWN state)
+    // Enable if: requested AND (external power present OR battery above conservation threshold)
+    // Disable if: not requested (user wants POWERED_UP_EXT_DOWN state) OR battery too low
     if (enableExtPower) {
-        // User wants external power - enable if we have sufficient power
-        if ((pData->BQ24297Data.status.batPresent) ||
-            (pData->BQ24297Data.status.vBusStat == VBUS_CHARGER)) {
+        // User wants external power - check if we should enable it
+        bool hasExternalPower = pData->BQ24297Data.status.pgStat;
+        
+        if (hasExternalPower) {
+            // External power present - always safe to enable
             pWriteVariables->EN_5_10V_Val = true;
+        } else if (pData->BQ24297Data.status.batPresent) {
+            // On battery only - check charge level before enabling
+            Power_UpdateChgPct();  // Ensure we have current battery percentage
+            if (pData->chargePct >= BATT_EXT_DOWN_TH) {
+                // Battery has sufficient charge
+                pWriteVariables->EN_5_10V_Val = true;
+            } else {
+                // Battery too low - don't enable external power to avoid immediate re-transition
+                pWriteVariables->EN_5_10V_Val = false;
+            }
         } else {
+            // No power source available
             pWriteVariables->EN_5_10V_Val = false;
         }
     } else {
