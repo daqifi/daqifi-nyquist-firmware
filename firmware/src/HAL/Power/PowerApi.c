@@ -266,7 +266,8 @@ static void Power_Up(void) {
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
     pData->powerState = POWERED_UP;
-    pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
+    // Don't reset requestedPowerState here - let the state machine handle it
+    // This allows transitions like STANDBY -> POWERED_UP -> POWERED_UP_EXT_DOWN
 }
 
 void Power_Down(void) {
@@ -393,53 +394,75 @@ static void Power_UpdateState(void) {
                 Power_Update_Settings();  // Check for power source changes
             }
             
-            // Only trust battery percentage if we have a valid voltage reading
+            // Get battery and power status
             bool validBatteryReading = (pData->battVoltage > 2.5);  // Li-ion can't be < 2.5V
-            
-            // Use BQ24297 power detection only - MCU VBUS detection is unreliable
             bool hasExternalPower = pData->BQ24297Data.status.pgStat;
             
-            if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN ||
-                    (validBatteryReading && pData->chargePct < BATT_LOW_TH &&
-                    !hasExternalPower)) {
-                // If battery is low on charge and we are not plugged in, disable external supplies
+            // Handle user-requested state changes first
+            if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
+                // User explicitly wants POWERED_UP_EXT_DOWN
                 pWriteVariables->EN_5_10V_Val = false;
                 Power_Write();
                 pData->powerState = POWERED_UP_EXT_DOWN;
-                // Reset the requested power state after handling request
                 pData->requestedPowerState = NO_CHANGE;
+            } else if (pData->requestedPowerState == DO_POWER_DOWN) {
+                // User wants to power down
+                pData->powerState = STANDBY;
+                pData->requestedPowerState = NO_CHANGE;
+            } 
+            // Automatic transition only when on battery (no external power) and battery is low
+            else if (!hasExternalPower && validBatteryReading && pData->chargePct < BATT_LOW_TH) {
+                // Running on battery only and battery is low - transition to EXT_DOWN
+                LOG_D("Power_UpdateState: Low battery (%.1f%%), transitioning to POWERED_UP_EXT_DOWN", 
+                      pData->chargePct);
+                pWriteVariables->EN_5_10V_Val = false;
+                Power_Write();
+                pData->powerState = POWERED_UP_EXT_DOWN;
             }
+            // Otherwise stay in POWERED_UP state
             break;
 
         case POWERED_UP_EXT_DOWN:
+        {
             /* Board partially powered. Monitor for any changes */
-            Power_UpdateChgPct();
             
-            // Only trust battery percentage if we have a valid voltage reading
-            validBatteryReading = (pData->battVoltage > 2.5);  // Li-ion can't be < 2.5V
-            if (pData->chargePct > (BATT_LOW_TH + BATT_LOW_HYST) ||
-                    (pData->BQ24297Data.status.inLim > 1)) {
-                if (pData->requestedPowerState == DO_POWER_UP) {
-                    // If battery is charged or we are plugged in, enable external supplies
-                    pWriteVariables->EN_5_10V_Val = true;
-                    Power_Write();
-                    pData->powerState = POWERED_UP;
-                    // Reset the requested power state after handling request
-                    pData->requestedPowerState = NO_CHANGE;
-                }
-
-                // Else, remain here because the user didn't want to be fully powered
-            } else if (validBatteryReading && pData->chargePct < BATT_EXH_TH) {
-                // Only shut down if we have a valid battery reading AND it's truly exhausted
-                // Code below is commented out when I2C is disabled
-                // Insufficient power.  Notify user and power down.
-                LOG_D("Power_UpdateState: Battery exhausted (%.1f%% < %.1f%%), transitioning to STANDBY", 
-                      pData->chargePct, BATT_EXH_TH);
-                pData->powerDnAllowed = false; // This will turn true after the LED sequence completes
+            // Rate limit status updates to reduce log spam
+            static TickType_t lastExtDownUpdate = 0;
+            TickType_t currentTimeExtDown = xTaskGetTickCount();
+            if ((currentTimeExtDown - lastExtDownUpdate) >= (1000 / portTICK_PERIOD_MS)) {
+                lastExtDownUpdate = currentTimeExtDown;
+                Power_UpdateChgPct();
+                BQ24297_UpdateStatus();
+            }
+            
+            // Get battery and power status
+            bool validBatteryReading = (pData->battVoltage > 2.5);
+            bool hasExternalPower = pData->BQ24297Data.status.pgStat;
+            
+            // Handle user power state change requests first
+            if (pData->requestedPowerState == DO_POWER_UP) {
+                // User wants full power - enable external supplies
+                pWriteVariables->EN_5_10V_Val = true;
+                Power_Write();
+                pData->powerState = POWERED_UP;
+                pData->requestedPowerState = NO_CHANGE;
+            } else if (pData->requestedPowerState == DO_POWER_DOWN) {
+                // User wants to power down
+                pData->powerState = STANDBY;
+                pData->requestedPowerState = NO_CHANGE;
+            }
+            // Automatic transition to STANDBY only when battery exhausted and no external power
+            else if (!hasExternalPower && validBatteryReading && pData->chargePct < BATT_EXH_TH) {
+                // Battery exhausted and no external power - must power down
+                LOG_D("Power_UpdateState: Battery exhausted (%.1f%%), transitioning to STANDBY", 
+                      pData->chargePct);
+                pData->powerDnAllowed = false; // This will turn true after the LED sequence
                 pData->powerState = STANDBY;
             }
-
+            // If external power present OR battery above exhaustion, stay in POWERED_UP_EXT_DOWN
+            
             break;
+        }
     }
 
 }
