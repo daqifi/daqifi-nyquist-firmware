@@ -115,11 +115,14 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
     }
     
     // Update volatile flags for on-demand queries
+    // Use critical section to prevent race conditions with task context
+    taskENTER_CRITICAL();
     gLastRssiPercentage = (uint8_t)signalStrength;
     if (gRssiUpdatePending) {
         gRssiUpdateComplete = true;
         gRssiUpdatePending = false;
     }
+    taskEXIT_CRITICAL();
 }
 
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
@@ -1156,9 +1159,11 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
         return false;
     }
     
-    // Reset flags
+    // Reset flags with critical section to prevent race conditions
+    taskENTER_CRITICAL();
     gRssiUpdatePending = true;
     gRssiUpdateComplete = false;
+    taskEXIT_CRITICAL();
     
     // Request RSSI from WiFi module
     int8_t rssi;
@@ -1166,10 +1171,12 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
     
     if (status == WDRV_WINC_STATUS_OK) {
         // RSSI was cached, callback was already called
+        taskENTER_CRITICAL();
         if (pRssi != NULL) {
             *pRssi = gLastRssiPercentage;
         }
         gRssiUpdatePending = false;
+        taskEXIT_CRITICAL();
         return true;
     } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
         // Need to wait for callback
@@ -1177,19 +1184,29 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
         uint32_t elapsed = 0;
         
         // Wait for callback or timeout
-        while (!gRssiUpdateComplete && elapsed < timeoutMs) {
+        bool updateComplete = false;
+        while (!updateComplete && elapsed < timeoutMs) {
             vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
+            
+            taskENTER_CRITICAL();
+            updateComplete = gRssiUpdateComplete;
+            taskEXIT_CRITICAL();
+            
             elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
         }
         
-        if (gRssiUpdateComplete) {
+        if (updateComplete) {
+            taskENTER_CRITICAL();
             if (pRssi != NULL) {
                 *pRssi = gLastRssiPercentage;
             }
+            taskEXIT_CRITICAL();
             return true;
         } else {
             // Timeout - return last known value if available
+            taskENTER_CRITICAL();
             gRssiUpdatePending = false;
+            taskEXIT_CRITICAL();
             if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
                 *pRssi = gStateMachineContext.pWifiSettings->rssi_percent;
             }
@@ -1197,7 +1214,9 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
         }
     } else {
         // Error getting RSSI
+        taskENTER_CRITICAL();
         gRssiUpdatePending = false;
+        taskEXIT_CRITICAL();
         if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
             *pRssi = gStateMachineContext.pWifiSettings->rssi_percent; // Return last known value
         }
