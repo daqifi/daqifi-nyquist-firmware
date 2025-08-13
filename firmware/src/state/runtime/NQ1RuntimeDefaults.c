@@ -124,7 +124,7 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .passKeyLength = strlen(DEFAULT_WIFI_WPA_PSK_PASSKEY),  // Safer than sizeof
         .hostName = DEFAULT_NETWORK_HOST_NAME,
         .tcpPort = DEFAULT_TCP_PORT,
-        .ssid_str = 0,                    // Signal strength (not applicable for AP mode)
+        .rssi_percent = 0,                // Signal strength (not applicable for AP mode)
         .macAddr = {{0}},                 // Will be populated from hardware
         .ipAddr = {.Val = 0},            // DHCP/automatic configuration
         .ipMask = {.Val = 0},            // DHCP/automatic configuration  

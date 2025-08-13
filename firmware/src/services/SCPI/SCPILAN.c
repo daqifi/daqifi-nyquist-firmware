@@ -347,7 +347,7 @@ scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
         // Failed to get fresh RSSI, return last known value from BoardData
         wifi_manager_settings_t * pWifiSettings = BoardData_Get(
                 BOARDDATA_WIFI_SETTINGS, 0);
-        SCPI_ResultInt32(context, (int) pWifiSettings->ssid_str);
+        SCPI_ResultInt32(context, (int) pWifiSettings->rssi_percent);
     }
     
     return SCPI_RES_OK;

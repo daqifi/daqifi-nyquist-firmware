@@ -110,7 +110,7 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
     
     // Update the RSSI in BoardData (dynamic runtime state)
     if (gStateMachineContext.pWifiSettings != NULL) {
-        gStateMachineContext.pWifiSettings->ssid_str = (uint8_t)signalStrength;
+        gStateMachineContext.pWifiSettings->rssi_percent = (uint8_t)signalStrength;
         LOG_D("RSSI updated: %d dBm (signal strength: %d%%)\r\n", rssi, signalStrength);
     }
     
@@ -616,7 +616,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             
             // Clear signal strength on disconnect
             if (pInstance->pWifiSettings != NULL) {
-                pInstance->pWifiSettings->ssid_str = 0;
+                pInstance->pWifiSettings->rssi_percent = 0;
             }
             
             // Only increment attempts if we're in STA mode
@@ -1191,7 +1191,7 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
             // Timeout - return last known value if available
             gRssiUpdatePending = false;
             if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
-                *pRssi = gStateMachineContext.pWifiSettings->ssid_str;
+                *pRssi = gStateMachineContext.pWifiSettings->rssi_percent;
             }
             return false;
         }
@@ -1199,7 +1199,7 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
         // Error getting RSSI
         gRssiUpdatePending = false;
         if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
-            *pRssi = gStateMachineContext.pWifiSettings->ssid_str; // Return last known value
+            *pRssi = gStateMachineContext.pWifiSettings->rssi_percent; // Return last known value
         }
         return false;
     }

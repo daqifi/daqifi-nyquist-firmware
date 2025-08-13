@@ -79,9 +79,9 @@ extern "C" {
         char hostName[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN + 1];
 
         /**
-         * The network ssid strength
+         * The network signal strength (RSSI as percentage 0-100)
          */
-        uint8_t ssid_str;
+        uint8_t rssi_percent;
 
         /**
          * One of:
