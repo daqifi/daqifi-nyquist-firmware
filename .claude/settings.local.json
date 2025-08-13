@@ -78,7 +78,9 @@
       "Bash(git reset:*)",
       "Bash(/tmp/test_ssid_timing.sh:*)",
       "Bash(/tmp/pr83_final_test.sh:*)",
-      "Bash(/tmp/simple_final_test.sh:*)"
+      "Bash(/tmp/simple_final_test.sh:*)",
+      "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\" -f nbproject/Makefile-default.mk CONF=default clean build -j4)",
+      "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\" -f nbproject/Makefile-default.mk)"
     ],
     "deny": []
   }

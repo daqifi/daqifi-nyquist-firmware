@@ -337,8 +337,8 @@ scpi_result_t SCPI_LANSsidSet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
+            BOARDDATA_WIFI_SETTINGS, 0);
 
     return SCPI_ResultInt32(context, (int) pWifiSettings->ssid_str);
 }

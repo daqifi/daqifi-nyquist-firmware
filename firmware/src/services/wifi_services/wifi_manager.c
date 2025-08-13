@@ -55,6 +55,7 @@ struct stateMachineInst {
     wifi_manager_stateFlag_t eventFlags;
     wifi_manager_settings_t *pWifiSettings;
     DRV_HANDLE wdrvHandle;
+    WDRV_WINC_ASSOC_HANDLE assocHandle;  // Store association handle for RSSI queries
     SOCKET udpServerSocket;
     wifi_tcp_server_context_t *pTcpServerContext;
     WDRV_WINC_BSS_CONTEXT bssCtx;
@@ -63,6 +64,7 @@ struct stateMachineInst {
     tstrM2mRev wifiFirmwareVersion;
     TaskHandle_t fwUpdateTaskHandle;
     uint8_t staReconnectAttempts;  // Track STA reconnection attempts
+    uint32_t rssiUpdateCounter;  // Counter for periodic RSSI updates
 };
 //===============Private Function Declrations================
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
@@ -87,6 +89,25 @@ static QueueHandle_t gEventQH = NULL;
 static wifi_tcp_server_context_t gTcpServerContext;
 //===========================================================
 //=====================Private Callbacks=====================
+
+static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, int8_t rssi) {
+    // Update the RSSI in BoardData (dynamic runtime state)
+    if (gStateMachineContext.pWifiSettings != NULL) {
+        // Convert RSSI (dBm) to a 0-100 scale for compatibility
+        // RSSI typically ranges from -100 dBm (poor) to -30 dBm (excellent)
+        int signalStrength = 0;
+        if (rssi >= -30) {
+            signalStrength = 100;
+        } else if (rssi <= -100) {
+            signalStrength = 0;
+        } else {
+            // Linear scale from -100 to -30
+            signalStrength = ((rssi + 100) * 100) / 70;
+        }
+        gStateMachineContext.pWifiSettings->ssid_str = (uint8_t)signalStrength;
+        LOG_D("RSSI updated: %d dBm (signal strength: %d%%)\r\n", rssi, signalStrength);
+    }
+}
 
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
@@ -115,9 +136,11 @@ static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandl
 static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
         LOG_D("STA mode: Station connected\r\n");
+        gStateMachineContext.assocHandle = assocHandle;  // Store association handle for RSSI queries
         SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState && errorCode != WDRV_WINC_CONN_ERROR_INPROGRESS) {
         LOG_D("STA mode: Station disconnected\r\n");
+        gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;  // Clear association handle
         SendEvent(WIFI_MANAGER_EVENT_STA_DISCONNECTED);
     }
 }
@@ -334,6 +357,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
+            pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
+            pInstance->rssiUpdateCounter = 0;
             if (pInstance->pWifiSettings->isEnabled) {
                 if (pInstance->pWifiSettings->isOtaModeEnabled)
                     SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
@@ -540,6 +565,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->staReconnectAttempts = 0;
             LOG_D("STA connection successful, reset reconnect counter\r\n");
             
+            // Request initial RSSI after connection
+            if (pInstance->assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
+                int8_t rssi;
+                WDRV_WINC_STATUS status = WDRV_WINC_AssocRSSIGet(pInstance->assocHandle, &rssi, RssiEventCallback);
+                if (status == WDRV_WINC_STATUS_OK) {
+                    // RSSI was cached, update immediately
+                    RssiEventCallback(pInstance->wdrvHandle, pInstance->assocHandle, rssi);
+                }
+                // else if status == WDRV_WINC_STATUS_RETRY_REQUEST, callback will be called later
+            }
+            
             if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                 if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -565,6 +601,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             wifi_tcp_server_CloseSocket();
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+            
+            // Clear signal strength on disconnect
+            if (pInstance->pWifiSettings != NULL) {
+                pInstance->pWifiSettings->ssid_str = 0;
+            }
+            pInstance->rssiUpdateCounter = 0;
             
             // Only increment attempts if we're in STA mode
             if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
@@ -1072,6 +1114,25 @@ void wifi_manager_ProcessState() {
         return;
     }
     wifi_tcp_server_TransmitBufferedData();
+    
+    // Periodically update RSSI when connected as STA
+    if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+        gStateMachineContext.rssiUpdateCounter++;
+        // Update RSSI every ~5 seconds (assuming this function is called at ~100Hz)
+        if (gStateMachineContext.rssiUpdateCounter >= 500) {
+            gStateMachineContext.rssiUpdateCounter = 0;
+            if (gStateMachineContext.assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
+                int8_t rssi;
+                WDRV_WINC_STATUS status = WDRV_WINC_AssocRSSIGet(gStateMachineContext.assocHandle, &rssi, RssiEventCallback);
+                if (status == WDRV_WINC_STATUS_OK) {
+                    // RSSI was cached, update immediately
+                    RssiEventCallback(gStateMachineContext.wdrvHandle, gStateMachineContext.assocHandle, rssi);
+                }
+                // else if status == WDRV_WINC_STATUS_RETRY_REQUEST, callback will be called later
+            }
+        }
+    }
+    
     if (xQueueReceive(gEventQH, &event, 1) != pdPASS) {
         return;
     }
