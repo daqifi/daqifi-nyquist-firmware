@@ -96,9 +96,17 @@ static volatile uint8_t gLastRssiPercentage = 0;
 //=====================Private Callbacks=====================
 
 static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, int8_t rssi) {
+    // In ISR/callback context - keep this minimal
+    // Validate this callback is for our current association
+    taskENTER_CRITICAL();
+    if (assocHandle != gStateMachineContext.assocHandle) {
+        taskEXIT_CRITICAL();
+        return;
+    }
+    
     // Convert RSSI (dBm) to a 0-100 scale for compatibility
     // RSSI typically ranges from -100 dBm (poor) to -30 dBm (excellent)
-    int signalStrength = 0;
+    int signalStrength;
     if (rssi >= -30) {
         signalStrength = 100;
     } else if (rssi <= -100) {
@@ -108,21 +116,17 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
         signalStrength = ((rssi + 100) * 100) / 70;
     }
     
-    // Update the RSSI in BoardData (dynamic runtime state)
+    // Update all shared state atomically within critical section
+    gLastRssiPercentage = (uint8_t)signalStrength;
     if (gStateMachineContext.pWifiSettings != NULL) {
         gStateMachineContext.pWifiSettings->rssi_percent = (uint8_t)signalStrength;
-        LOG_D("RSSI updated: %d dBm (signal strength: %d%%)\r\n", rssi, signalStrength);
     }
-    
-    // Update volatile flags for on-demand queries
-    // Use critical section to prevent race conditions with task context
-    taskENTER_CRITICAL();
-    gLastRssiPercentage = (uint8_t)signalStrength;
     if (gRssiUpdatePending) {
         gRssiUpdateComplete = true;
         gRssiUpdatePending = false;
     }
     taskEXIT_CRITICAL();
+    // No logging in ISR/callback context - keep it minimal
 }
 
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
@@ -1176,6 +1180,7 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
             *pRssi = gLastRssiPercentage;
         }
         gRssiUpdatePending = false;
+        gRssiUpdateComplete = false;  // Clear for next call
         taskEXIT_CRITICAL();
         return true;
     } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
@@ -1195,31 +1200,35 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
             elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
         }
         
+        taskENTER_CRITICAL();
         if (updateComplete) {
-            taskENTER_CRITICAL();
             if (pRssi != NULL) {
                 *pRssi = gLastRssiPercentage;
             }
+            // Clear flags for next call
+            gRssiUpdatePending = false;
+            gRssiUpdateComplete = false;
             taskEXIT_CRITICAL();
             return true;
         } else {
             // Timeout - return last known value if available
-            taskENTER_CRITICAL();
             gRssiUpdatePending = false;
-            taskEXIT_CRITICAL();
+            gRssiUpdateComplete = false;
             if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
                 *pRssi = gStateMachineContext.pWifiSettings->rssi_percent;
             }
+            taskEXIT_CRITICAL();
             return false;
         }
     } else {
         // Error getting RSSI
         taskENTER_CRITICAL();
         gRssiUpdatePending = false;
-        taskEXIT_CRITICAL();
+        gRssiUpdateComplete = false;  // Clear for next call
         if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
             *pRssi = gStateMachineContext.pWifiSettings->rssi_percent; // Return last known value
         }
+        taskEXIT_CRITICAL();
         return false;
     }
 }
