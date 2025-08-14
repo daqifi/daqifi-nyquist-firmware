@@ -489,7 +489,11 @@ static void Power_UpdateState(void) {
             
             // Handle user power state change requests first
             if (pData->requestedPowerState == DO_POWER_UP) {
-                // User wants full power - check if we can enable external supplies
+                // User wants full power - get fresh battery reading before decision
+                // Important if update interval changes from 1s to longer periods
+                Power_UpdateChgPct();
+                
+                // Check if we can enable external supplies
                 // Use hysteresis: require battery to be BATT_HYST above threshold to re-enable
                 if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
                     // Safe to enable: external power present OR battery charged above threshold + hysteresis
