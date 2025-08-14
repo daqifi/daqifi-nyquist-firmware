@@ -160,7 +160,7 @@ void Power_Tasks(void) {
     // Hardware resettable fuses provide protection against shorts/overcurrent
     static TickType_t lastUpdateTime = 0;
     TickType_t currentTime = xTaskGetTickCount();
-    if ((currentTime - lastUpdateTime) >= (1000 / portTICK_PERIOD_MS)) {
+    if ((currentTime - lastUpdateTime) >= pdMS_TO_TICKS(1000)) {
         lastUpdateTime = currentTime;
         Power_UpdateState();
     }
@@ -238,12 +238,12 @@ static void Power_Up(bool enableExtPower) {
     
     // If the battery management is not enabled, wait for it to become ready
     while (!pData->BQ24297Data.initComplete) {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     //Delay after turning up to full speed to allow steady-state
     //before powering system
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     // 3.3V Enable
     pWriteVariables->EN_3_3V_Val = true;
@@ -279,18 +279,18 @@ static void Power_Up(bool enableExtPower) {
         pWriteVariables->EN_5_10V_Val = false;
     }
     Power_Write();
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     // 12V Enable (set low to turn on, set as input (or high if configured
     // as open collector) to turn off)
     pWriteVariables->EN_12V_Val = false;
     Power_Write();
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     // Vref Enable
     pWriteVariables->EN_Vref_Val = true;
     Power_Write();
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     // Set power state based on actual hardware outcome
     // If we requested external power but couldn't enable it due to low battery,
@@ -332,7 +332,7 @@ void Power_Down(void) {
  */
 static bool Power_UpdateStatusIfNeeded(uint32_t updateIntervalMs, TickType_t* lastUpdateTime) {
     TickType_t currentTime = xTaskGetTickCount();
-    if ((currentTime - *lastUpdateTime) >= (updateIntervalMs / portTICK_PERIOD_MS)) {
+    if ((currentTime - *lastUpdateTime) >= pdMS_TO_TICKS(updateIntervalMs)) {
         *lastUpdateTime = currentTime;
         Power_UpdateChgPct();
         BQ24297_UpdateStatus();
@@ -443,11 +443,15 @@ static void Power_HandlePoweredUpExtDownState(void) {
         
         // Check if we can enable external supplies (with hysteresis)
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
+            // Successfully transitioning to POWERED_UP
+            LOG_D("Power_HandlePoweredUpExtDownState: Enabling external power - %s, battery at %.1f%%",
+                  hasExternalPower ? "external power present" : "battery sufficient", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
             pData->powerState = POWERED_UP;
         } else {
-            LOG_D("Power_UpdateState: Cannot enable external power - battery at %.1f%%, needs %.1f%%", 
+            // Cannot enable external power due to low battery
+            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %.1f%%, needs %.1f%%", 
                   pData->chargePct, BATT_EXT_DOWN_TH + BATT_HYST);
         }
         pData->requestedPowerState = NO_CHANGE;
