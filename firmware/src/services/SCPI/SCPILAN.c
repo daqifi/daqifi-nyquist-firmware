@@ -354,7 +354,14 @@ scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
 scpi_result_t SCPI_LANSecurityGet(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    SCPI_ResultInt32(context, pWifiSettings->securityMode);
+    
+    // Normalize mode 4 (deprecated WPA) to mode 3 for consistency
+    int32_t mode = pWifiSettings->securityMode;
+    if (mode == WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED) {
+        mode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
+    }
+    
+    SCPI_ResultInt32(context, mode);
     return SCPI_RES_OK;
 }
 
@@ -378,8 +385,15 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
             break;
         case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
         case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED: // 4 = WPA_DEPRECATED - keeping for backwards compatibility
-            // Check if already in WPA mode (both 3 and 4 map to mode 3)
-            if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE) {
+            // Both modes 3 and 4 normalize to mode 3 (WPA_AUTO_WITH_PASS_PHRASE)
+            // Check if already in WPA mode (stored as mode 3)
+            if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE ||
+                pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED) {
+                // Already in WPA mode (could be stored as 3 or 4 from legacy code)
+                // Normalize to mode 3 if it's currently 4
+                if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED) {
+                    pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
+                }
                 return SCPI_RES_OK;  // No change needed
             }
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
