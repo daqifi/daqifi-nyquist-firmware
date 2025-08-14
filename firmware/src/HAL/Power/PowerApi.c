@@ -58,8 +58,8 @@
 #define BATT_EXT_DOWN_TH 15.0
 //! Battery threshold for device shutdown - absolute minimum (5%)
 #define BATT_LOW_TH 5.0
-//! Battery must be charged at least this value higher than BATT_LOW_TH
-#define BATT_LOW_HYST 10.0 
+//! Hysteresis for battery thresholds - must charge this much above threshold to re-enable (2%)
+#define BATT_HYST 2.0 
 
 //! Pointer to a data structure for storing the configuration data
 static tPowerConfig *pConfig;
@@ -290,10 +290,14 @@ static void Power_Up(bool enableExtPower) {
     Power_Write();
     vTaskDelay(50 / portTICK_PERIOD_MS);
 
-    // Set power state based on whether external power was enabled
-    if (enableExtPower) {
+    // Set power state based on actual hardware outcome
+    // If we requested external power but couldn't enable it due to low battery,
+    // we should be in POWERED_UP_EXT_DOWN state to reflect reality
+    if (enableExtPower && pWriteVariables->EN_5_10V_Val) {
+        // External power was requested AND successfully enabled
         pData->powerState = POWERED_UP;
     } else {
+        // External power was either not requested OR couldn't be enabled
         pData->powerState = POWERED_UP_EXT_DOWN;
     }
     // Don't reset requestedPowerState here - let the state machine handle it
@@ -485,10 +489,18 @@ static void Power_UpdateState(void) {
             
             // Handle user power state change requests first
             if (pData->requestedPowerState == DO_POWER_UP) {
-                // User wants full power - enable external supplies
-                pWriteVariables->EN_5_10V_Val = true;
-                Power_Write();
-                pData->powerState = POWERED_UP;
+                // User wants full power - check if we can enable external supplies
+                // Use hysteresis: require battery to be BATT_HYST above threshold to re-enable
+                if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
+                    // Safe to enable: external power present OR battery charged above threshold + hysteresis
+                    pWriteVariables->EN_5_10V_Val = true;
+                    Power_Write();
+                    pData->powerState = POWERED_UP;
+                } else {
+                    // Battery too low and no external power - stay in POWERED_UP_EXT_DOWN
+                    LOG_D("Power_UpdateState: Cannot enable external power - battery at %.1f%%, needs %.1f%%", 
+                          pData->chargePct, BATT_EXT_DOWN_TH + BATT_HYST);
+                }
                 pData->requestedPowerState = NO_CHANGE;
             } else if (pData->requestedPowerState == DO_POWER_DOWN) {
                 // User wants to power down
