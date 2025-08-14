@@ -186,14 +186,16 @@ void Power_Write(void) {
     // Check to see if we are changing the state of this power pin
     if (EN_3_3V_Val_Current != pWriteVariables->EN_3_3V_Val) {
         
-        // CRITICAL: Set pin direction and value using Harmony macros
+        // CRITICAL: Only drive HIGH or set as INPUT (HiZ) - never drive LOW
+        // There's a pulldown resistor that will drop the line when in HiZ
         if (pWriteVariables->EN_3_3V_Val) {
-            // Set as OUTPUT and drive high
+            // Set as OUTPUT and drive high to enable 3.3V
             PWR_3_3V_EN_OutputEnable();
             PWR_3_3V_EN_Set();
         } else {
-            // Clear the pin (will set as INPUT later in Power_Down())
-            PWR_3_3V_EN_Clear();
+            // Set as INPUT (HiZ) to disable - pulldown will handle the rest
+            // Never actively drive low to avoid conflicts
+            PWR_3_3V_EN_InputEnable();
         }
         
     }
@@ -312,21 +314,11 @@ void Power_Down(void) {
     // Vref Disable
     pWriteVariables->EN_Vref_Val = false;
     
-    // Handle 3.3V based on power source
-    if (pData->BQ24297Data.status.pgStat) {
-        // On USB power - keep 3.3V enabled but clear the output
-        // This allows the MCU to stay on and the button to work
-        pWriteVariables->EN_3_3V_Val = false;
-        Power_Write();
-        // Set as INPUT to allow button control
-        PWR_3_3V_EN_InputEnable();
-    } else {
-        // On battery only - fully disable 3.3V to power off
-        pWriteVariables->EN_3_3V_Val = false;
-        Power_Write();
-        // Set as INPUT to allow complete power down
-        PWR_3_3V_EN_InputEnable();
-    }
+    // Handle 3.3V - always set to false to trigger HiZ in Power_Write()
+    // The HiZ state allows pulldown resistor to disable 3.3V
+    // Also allows button control when needed
+    pWriteVariables->EN_3_3V_Val = false;
+    Power_Write();  // This will set 3.3V_EN to INPUT (HiZ)
 
     pData->powerState = STANDBY; // Set back to default state
     pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
