@@ -301,24 +301,40 @@ static void Power_Up(bool enableExtPower) {
 
 void Power_Down(void) {
     
-    // 3.3V Disable - if powered externally, board will stay on and go to low power state, else off completely
-    pWriteVariables->EN_3_3V_Val = false;
     // 5V Disable
     pWriteVariables->EN_5_10V_Val = false;
     // 12V Disable (set low to turn on, set as input (or high if configured as open collector) to turn off)
     pWriteVariables->EN_12V_Val = true;
     // Vref Disable
     pWriteVariables->EN_Vref_Val = false;
-    Power_Write();
     
-    // CRITICAL: Set 3.3V_EN pin as INPUT for power down
-    PWR_3_3V_EN_InputEnable();
+    // Handle 3.3V based on power source
+    if (pData->BQ24297Data.status.pgStat) {
+        // On USB power - keep 3.3V enabled but clear the output
+        // This allows the MCU to stay on and the button to work
+        pWriteVariables->EN_3_3V_Val = false;
+        Power_Write();
+        // Set as INPUT to allow button control
+        PWR_3_3V_EN_InputEnable();
+    } else {
+        // On battery only - fully disable 3.3V to power off
+        pWriteVariables->EN_3_3V_Val = false;
+        Power_Write();
+        // Set as INPUT to allow complete power down
+        PWR_3_3V_EN_InputEnable();
+    }
 
     pData->powerState = STANDBY; // Set back to default state
     pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
 
-    // Delay 1000ms for power to discharge
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    // Delay for power to discharge - shorter on USB power for button responsiveness
+    if (pData->BQ24297Data.status.pgStat) {
+        // On USB power - short delay for button responsiveness
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    } else {
+        // On battery - longer delay for power to fully discharge
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
 }
 
 static void Power_UpdateState(void) {
@@ -377,17 +393,30 @@ static void Power_UpdateState(void) {
                 }
             }
             
-            // Check if we should power down (only if no user request pending)
+            // Check if we should power down (only once, not continuously)
+            // powerDnAllowed is set when we need to transition to power down state
             if (pData->powerDnAllowed == true) {
                 Power_Down();
-                break;  // Exit after powering down
+                // Clear the flag after calling Power_Down() once
+                // This prevents repeatedly calling Power_Down() which would fight the user button
+                pData->powerDnAllowed = false;
+                
+                // If on battery, exit immediately after power down
+                if (!pData->BQ24297Data.status.pgStat) {
+                    break;  // Exit after powering down on battery
+                }
+                // If on USB, continue to allow button detection
             }
 
             // Update BQ24297 status and external power source detection
             // Rate limit to reduce log spam during STANDBY state
             static TickType_t lastStandbyUpdate = 0;
             TickType_t currentTime = xTaskGetTickCount();
-            if ((currentTime - lastStandbyUpdate) >= (1000 / portTICK_PERIOD_MS)) {
+            // Check more frequently on USB power for button responsiveness
+            TickType_t updateInterval = pData->BQ24297Data.status.pgStat ? 
+                                        (100 / portTICK_PERIOD_MS) :  // 100ms on USB power
+                                        (1000 / portTICK_PERIOD_MS);   // 1s on battery
+            if ((currentTime - lastStandbyUpdate) >= updateInterval) {
                 lastStandbyUpdate = currentTime;
                 BQ24297_UpdateStatus();
                 Power_Update_Settings();
