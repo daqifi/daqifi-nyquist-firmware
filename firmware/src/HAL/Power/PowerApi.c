@@ -341,6 +341,143 @@ void Power_Down(void) {
     }
 }
 
+/*!
+ * Update battery and BQ24297 status with rate limiting
+ * @param updateIntervalMs Update interval in milliseconds
+ * @param lastUpdateTime Pointer to last update timestamp
+ * @return true if update was performed, false if rate limited
+ */
+static bool Power_UpdateStatusIfNeeded(uint32_t updateIntervalMs, TickType_t* lastUpdateTime) {
+    TickType_t currentTime = xTaskGetTickCount();
+    if ((currentTime - *lastUpdateTime) >= (updateIntervalMs / portTICK_PERIOD_MS)) {
+        *lastUpdateTime = currentTime;
+        Power_UpdateChgPct();
+        BQ24297_UpdateStatus();
+        return true;
+    }
+    return false;
+}
+
+/*!
+ * Check if system has sufficient power to operate
+ * @return true if battery > 3.0V OR external power present
+ */
+static bool Power_HasSufficientPower(void) {
+    return (!pData->BQ24297Data.status.vsysStat || pData->BQ24297Data.status.pgStat);
+}
+
+/*!
+ * Handle STANDBY state logic
+ */
+static void Power_HandleStandbyState(void) {
+    // Handle user power-up requests first (highest priority)
+    if (pData->requestedPowerState == DO_POWER_UP || 
+        pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
+        
+        if (Power_HasSufficientPower()) {
+            // Power up with or without external power based on request
+            bool enableExtPower = (pData->requestedPowerState == DO_POWER_UP);
+            Power_Up(enableExtPower);
+            pData->requestedPowerState = NO_CHANGE;
+            return;
+        } else {
+            // Insufficient power for power-up request
+            LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
+            pData->powerDnAllowed = false;
+            pData->requestedPowerState = NO_CHANGE;
+        }
+    }
+    
+    // Check if we should power down (only once, not continuously)
+    if (pData->powerDnAllowed == true) {
+        Power_Down();
+        pData->powerDnAllowed = false;
+        
+        // If on battery, exit immediately after power down
+        if (!pData->BQ24297Data.status.pgStat) {
+            return;
+        }
+    }
+    
+    // Update status with rate limiting
+    static TickType_t lastStandbyUpdate = 0;
+    // Check more frequently on USB power for button responsiveness
+    uint32_t updateInterval = pData->BQ24297Data.status.pgStat ? 100 : 1000;
+    if (Power_UpdateStatusIfNeeded(updateInterval, &lastStandbyUpdate)) {
+        Power_Update_Settings();
+    }
+}
+
+/*!
+ * Handle POWERED_UP state logic
+ */
+static void Power_HandlePoweredUpState(void) {
+    // Clear redundant request
+    if (pData->requestedPowerState == DO_POWER_UP) {
+        pData->requestedPowerState = NO_CHANGE;
+    }
+    
+    // Rate limit status updates
+    static TickType_t lastStatusUpdate = 0;
+    if (Power_UpdateStatusIfNeeded(1000, &lastStatusUpdate)) {
+        Power_Update_Settings();
+    }
+    
+    bool hasExternalPower = pData->BQ24297Data.status.pgStat;
+    
+    // Handle user-requested state changes
+    if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
+        // User explicitly wants POWERED_UP_EXT_DOWN
+        pWriteVariables->EN_5_10V_Val = false;
+        Power_Write();
+        pData->powerState = POWERED_UP_EXT_DOWN;
+        pData->requestedPowerState = NO_CHANGE;
+    }
+    // Automatic transition only when on battery and battery needs conservation
+    else if (!hasExternalPower && pData->chargePct < BATT_EXT_DOWN_TH) {
+        LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
+              pData->chargePct);
+        pWriteVariables->EN_5_10V_Val = false;
+        Power_Write();
+        pData->powerState = POWERED_UP_EXT_DOWN;
+    }
+}
+
+/*!
+ * Handle POWERED_UP_EXT_DOWN state logic
+ */
+static void Power_HandlePoweredUpExtDownState(void) {
+    // Rate limit status updates
+    static TickType_t lastExtDownUpdate = 0;
+    Power_UpdateStatusIfNeeded(1000, &lastExtDownUpdate);
+    
+    bool hasExternalPower = pData->BQ24297Data.status.pgStat;
+    
+    // Handle user power state change requests
+    if (pData->requestedPowerState == DO_POWER_UP) {
+        // Get fresh battery reading before decision
+        Power_UpdateChgPct();
+        
+        // Check if we can enable external supplies (with hysteresis)
+        if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
+            pWriteVariables->EN_5_10V_Val = true;
+            Power_Write();
+            pData->powerState = POWERED_UP;
+        } else {
+            LOG_D("Power_UpdateState: Cannot enable external power - battery at %.1f%%, needs %.1f%%", 
+                  pData->chargePct, BATT_EXT_DOWN_TH + BATT_HYST);
+        }
+        pData->requestedPowerState = NO_CHANGE;
+    }
+    // Automatic transition to STANDBY when battery critically low
+    else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
+        LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
+              pData->chargePct);
+        pData->powerDnAllowed = false;
+        pData->powerState = STANDBY;
+    }
+}
+
 static void Power_UpdateState(void) {
     static POWER_STATE lastLoggedState = -1;
     
@@ -350,7 +487,6 @@ static void Power_UpdateState(void) {
     bool current3v3State = ReadGpioPinStateLatched(pConfig->EN_3_3V_Ch, pConfig->EN_3_3V_Bit);
     
     if (first3v3Check || (current3v3State != last3v3State)) {
-        
         last3v3State = current3v3State;
         first3v3Check = false;
     }
@@ -361,168 +497,31 @@ static void Power_UpdateState(void) {
         lastLoggedState = pData->powerState;
     }
     
-    // Set power state immediately if DO_POWER_DOWN is requested
+    // Handle power down request (common for all states)
     if (pData->requestedPowerState == DO_POWER_DOWN) {
         pData->powerState = STANDBY;
+        pData->requestedPowerState = NO_CHANGE;
+        // Note: actual power down happens in STANDBY state handler
     }
 
+    
+    // Handle state-specific logic
     switch (pData->powerState) {
         case STANDBY:
-        {
-            /* Standby/Off state
-             * - On USB power: MCU stays on (3.3V enabled) 
-             * - On battery: MCU powers off (3.3V disabled)
-             * This is the default state if code is running on USB power
-             */
-            
-            // Handle user power-up requests first (highest priority)
-            if (pData->requestedPowerState == DO_POWER_UP || 
-                pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
-
-                // Power up if battery > 3.0V OR external power present
-                if (!pData->BQ24297Data.status.vsysStat ||
-                        pData->BQ24297Data.status.pgStat)
-                {
-                    // Power up with or without external power based on request
-                    bool enableExtPower = (pData->requestedPowerState == DO_POWER_UP);
-                    Power_Up(enableExtPower);
-                    // Power_Up() sets the correct state (POWERED_UP or POWERED_UP_EXT_DOWN)
-                    pData->requestedPowerState = NO_CHANGE;
-                    break;  // Exit after handling power-up
-                } else {
-                    // Insufficient power for power-up request
-                    LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
-                    pData->powerDnAllowed = false;  // This will turn true after the LED sequence completes
-                    pData->requestedPowerState = NO_CHANGE;    // Reset the requested power state
-                }
-            }
-            
-            // Check if we should power down (only once, not continuously)
-            // powerDnAllowed is set when we need to transition to power down state
-            if (pData->powerDnAllowed == true) {
-                Power_Down();
-                // Clear the flag after calling Power_Down() once
-                // This prevents repeatedly calling Power_Down() which would fight the user button
-                pData->powerDnAllowed = false;
-                
-                // If on battery, exit immediately after power down
-                if (!pData->BQ24297Data.status.pgStat) {
-                    break;  // Exit after powering down on battery
-                }
-                // If on USB, continue to allow button detection
-            }
-
-            // Update BQ24297 status and external power source detection
-            // Rate limit to reduce log spam during STANDBY state
-            static TickType_t lastStandbyUpdate = 0;
-            TickType_t currentTime = xTaskGetTickCount();
-            // Check more frequently on USB power for button responsiveness
-            TickType_t updateInterval = pData->BQ24297Data.status.pgStat ? 
-                                        (100 / portTICK_PERIOD_MS) :  // 100ms on USB power
-                                        (1000 / portTICK_PERIOD_MS);   // 1s on battery
-            if ((currentTime - lastStandbyUpdate) >= updateInterval) {
-                lastStandbyUpdate = currentTime;
-                BQ24297_UpdateStatus();
-                Power_Update_Settings();
-            }
-        }
+            Power_HandleStandbyState();
             break;
-
+            
         case POWERED_UP:
-            /* Board fully powered. Monitor for any changes/faults
-             * ADC readings are now valid!
-             */
-            if (pData->requestedPowerState == DO_POWER_UP) pData->requestedPowerState = NO_CHANGE; // We are already powered so just reset the flag
-            
-            // Rate limit status updates to reduce log spam
-            static TickType_t lastStatusUpdate = 0;
-            TickType_t currentTime = xTaskGetTickCount();
-            if ((currentTime - lastStatusUpdate) >= (1000 / portTICK_PERIOD_MS)) { // Update every 1 second
-                lastStatusUpdate = currentTime;
-                Power_UpdateChgPct();
-                BQ24297_UpdateStatus();
-                Power_Update_Settings();  // Check for power source changes
-            }
-            
-            // Get battery and power status
-            bool hasExternalPower = pData->BQ24297Data.status.pgStat;
-            
-            // Handle user-requested state changes first
-            if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
-                // User explicitly wants POWERED_UP_EXT_DOWN
-                pWriteVariables->EN_5_10V_Val = false;
-                Power_Write();
-                pData->powerState = POWERED_UP_EXT_DOWN;
-                pData->requestedPowerState = NO_CHANGE;
-            } else if (pData->requestedPowerState == DO_POWER_DOWN) {
-                // User wants to power down
-                pData->powerState = STANDBY;
-                pData->requestedPowerState = NO_CHANGE;
-            } 
-            // Automatic transition only when on battery (no external power) and battery needs conservation
-            else if (!hasExternalPower && pData->chargePct < BATT_EXT_DOWN_TH) {
-                // Running on battery only and battery getting low - turn off external power to conserve
-                LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
-                      pData->chargePct);
-                pWriteVariables->EN_5_10V_Val = false;
-                Power_Write();
-                pData->powerState = POWERED_UP_EXT_DOWN;
-            }
-            // Otherwise stay in POWERED_UP state
+            Power_HandlePoweredUpState();
             break;
-
+            
         case POWERED_UP_EXT_DOWN:
-        {
-            /* Board partially powered. Monitor for any changes */
-            
-            // Rate limit status updates to reduce log spam
-            static TickType_t lastExtDownUpdate = 0;
-            TickType_t currentTimeExtDown = xTaskGetTickCount();
-            if ((currentTimeExtDown - lastExtDownUpdate) >= (1000 / portTICK_PERIOD_MS)) {
-                lastExtDownUpdate = currentTimeExtDown;
-                Power_UpdateChgPct();
-                BQ24297_UpdateStatus();
-            }
-            
-            // Get battery and power status
-            bool hasExternalPower = pData->BQ24297Data.status.pgStat;
-            
-            // Handle user power state change requests first
-            if (pData->requestedPowerState == DO_POWER_UP) {
-                // User wants full power - get fresh battery reading before decision
-                // Important if update interval changes from 1s to longer periods
-                Power_UpdateChgPct();
-                
-                // Check if we can enable external supplies
-                // Use hysteresis: require battery to be BATT_HYST above threshold to re-enable
-                if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
-                    // Safe to enable: external power present OR battery charged above threshold + hysteresis
-                    pWriteVariables->EN_5_10V_Val = true;
-                    Power_Write();
-                    pData->powerState = POWERED_UP;
-                } else {
-                    // Battery too low and no external power - stay in POWERED_UP_EXT_DOWN
-                    LOG_D("Power_UpdateState: Cannot enable external power - battery at %.1f%%, needs %.1f%%", 
-                          pData->chargePct, BATT_EXT_DOWN_TH + BATT_HYST);
-                }
-                pData->requestedPowerState = NO_CHANGE;
-            } else if (pData->requestedPowerState == DO_POWER_DOWN) {
-                // User wants to power down
-                pData->powerState = STANDBY;
-                pData->requestedPowerState = NO_CHANGE;
-            }
-            // Automatic transition to STANDBY only when battery critically low and no external power
-            else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
-                // Battery critically low and no external power - must power down to prevent damage
-                LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
-                      pData->chargePct);
-                pData->powerDnAllowed = false; // This will turn true after the LED sequence
-                pData->powerState = STANDBY;
-            }
-            // If external power present OR battery above exhaustion, stay in POWERED_UP_EXT_DOWN
-            
+            Power_HandlePoweredUpExtDownState();
             break;
-        }
+            
+        default:
+            LOG_E("Power_UpdateState: Unknown power state %d", pData->powerState);
+            break;
     }
 
 }
