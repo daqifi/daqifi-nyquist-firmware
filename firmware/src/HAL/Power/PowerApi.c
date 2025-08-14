@@ -322,15 +322,6 @@ void Power_Down(void) {
 
     pData->powerState = STANDBY; // Set back to default state
     pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
-
-    // Delay for power to discharge - shorter on USB power for button responsiveness
-    if (pData->BQ24297Data.status.pgStat) {
-        // On USB power - short delay for button responsiveness
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-    } else {
-        // On battery - longer delay for power to fully discharge
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
 }
 
 /*!
