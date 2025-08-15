@@ -1,4 +1,4 @@
-
+#define LOG_EN  LOG_USB
 #include "UsbCdc.h"
 
 // libraries

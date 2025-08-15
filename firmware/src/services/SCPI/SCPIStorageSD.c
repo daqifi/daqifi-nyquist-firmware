@@ -20,6 +20,7 @@
 /* Section: Included Files                                                    */
 /* ************************************************************************** */
 /* ************************************************************************** */
+#define LOG_EN      LOG_SCPI
 #include "SCPIStorageSD.h"
 #include "../sd_card_services/sd_card_manager.h"
 #include "../../state/runtime/BoardRuntimeConfig.h"
