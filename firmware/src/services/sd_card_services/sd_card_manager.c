@@ -1,3 +1,5 @@
+#define LOG_EN  LOG_SD
+
 #include <string.h>
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
