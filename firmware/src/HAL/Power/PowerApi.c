@@ -242,9 +242,18 @@ void Power_Write(void) {
 
 static void Power_Up(bool enableExtPower) {
     
-    /* Wait for battery management initialization */
-    while (!pData->BQ24297Data.initComplete) {
+    /* Wait for battery management initialization with timeout
+     * Prevents indefinite blocking if BQ24297 fails to initialize
+     * Timeout: 5 seconds (50 x 100ms)
+     */
+    int initTimeout = 50;
+    while (!pData->BQ24297Data.initComplete && initTimeout > 0) {
         vTaskDelay(pdMS_TO_TICKS(100));
+        initTimeout--;
+    }
+    
+    if (initTimeout == 0) {
+        LOG_E("Power_Up: BQ24297 initialization timeout - proceeding anyway");
     }
 
     /* Power sequencing delay - allows voltage regulators to stabilize */
@@ -442,12 +451,17 @@ static void Power_HandlePoweredUpState(void) {
         pData->requestedPowerState = NO_CHANGE;
     }
     /* Automatic transition when battery needs conservation */
-    else if (!hasExternalPower && pData->chargePct < BATT_EXT_DOWN_TH) {
-        LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
-              pData->chargePct);
-        pWriteVariables->EN_5_10V_Val = false;
-        Power_Write();
-        pData->powerState = POWERED_UP_EXT_DOWN;
+    else if (!hasExternalPower) {
+        /* Get fresh battery reading before threshold decision */
+        Power_UpdateChgPct();
+        
+        if (pData->chargePct < BATT_EXT_DOWN_TH) {
+            LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
+                  pData->chargePct);
+            pWriteVariables->EN_5_10V_Val = false;
+            Power_Write();
+            pData->powerState = POWERED_UP_EXT_DOWN;
+        }
     }
 }
 
@@ -491,6 +505,13 @@ static void Power_HandlePoweredUpExtDownState(void) {
     else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
         LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
               pData->chargePct);
+        
+        /* Explicitly disable all external rails before shutdown */
+        pWriteVariables->EN_5_10V_Val = false;
+        pWriteVariables->EN_12V_Val = true;     /* Inverted logic - true = off */
+        pWriteVariables->EN_Vref_Val = false;
+        Power_Write();
+        
         pData->powerDnAllowed = false;
         pData->powerState = STANDBY;
     }
