@@ -54,12 +54,14 @@
 //} CLK_SOURCES_SYSTEM;
 #define SYS_CLK_CONFIG_FREQ_ERROR_LIMIT     10
 #define SYS_CLK_CONFIG_PRIMARY_XTAL         24000000ul
-//! Battery threshold for turning off external power to conserve energy (15%)
-#define BATT_EXT_DOWN_TH 15.0
-//! Battery threshold for device shutdown - absolute minimum (5%)
-#define BATT_LOW_TH 5.0
-//! Hysteresis for battery thresholds - must charge this much above threshold to re-enable (2%)
-#define BATT_HYST 2.0 
+/* Battery Management Thresholds
+ * - BATT_EXT_DOWN_TH (15%): Below this, external power rails disabled to conserve battery
+ * - BATT_LOW_TH (5%): Critical level - device must shut down
+ * - BATT_HYST (2%): Hysteresis prevents oscillation at threshold boundaries
+ */
+#define BATT_EXT_DOWN_TH 15.0  /* External power disabled below this */
+#define BATT_LOW_TH 5.0        /* Critical shutdown threshold */
+#define BATT_HYST 2.0          /* Must charge 2% above threshold to re-enable */ 
 
 //! Pointer to a data structure for storing the configuration data
 static tPowerConfig *pConfig;
@@ -128,12 +130,16 @@ void Power_Init(
 }
 
 void Power_Tasks(void) {
-    // If we haven't initialized the battery management settings, do so now
+    /* Initialize battery management if needed */
     if (pData->BQ24297Data.initComplete == false) {
         BQ24297_Config_Settings();
     }
     
-    // CRITICAL SAFETY CHECKS: Ensure HIZ mode is cleared and BATFET is enabled
+    /* CRITICAL SAFETY CHECKS
+     * These checks prevent power loss during USB disconnect:
+     * 1. HIZ mode (bit 7 of REG00) blocks charging if set
+     * 2. BATFET disabled (bit 5 of REG07) disconnects battery
+     */
     
     // Check REG00 for HIZ mode - if set (1), it blocks charging and can cause power loss
     uint8_t reg00 = BQ24297_Read_I2C(0x00);
@@ -236,23 +242,26 @@ void Power_Write(void) {
 
 static void Power_Up(bool enableExtPower) {
     
-    // If the battery management is not enabled, wait for it to become ready
+    /* Wait for battery management initialization */
     while (!pData->BQ24297Data.initComplete) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    //Delay after turning up to full speed to allow steady-state
-    //before powering system
+    /* Power sequencing delay - allows voltage regulators to stabilize */
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    // 3.3V Enable
+    /* Enable 3.3V rail (critical - MCU power) */
     pWriteVariables->EN_3_3V_Val = true;
     Power_Write();
     
-
-    // 5V Enable - based on request and power availability
-    // Enable if: requested AND (external power present OR battery above conservation threshold)
-    // Disable if: not requested (user wants POWERED_UP_EXT_DOWN state) OR battery too low
+    /* 5V/10V External Power Rail Decision
+     * Enable when:
+     *   - User requested (enableExtPower=true) AND
+     *   - Either external power present OR battery sufficient
+     * Keep disabled when:
+     *   - User wants conservation mode (enableExtPower=false) OR  
+     *   - Battery too low for safe operation
+     */
     if (enableExtPower) {
         // User wants external power - check if we should enable it
         bool hasExternalPower = pData->BQ24297Data.status.pgStat;
@@ -307,28 +316,30 @@ static void Power_Up(bool enableExtPower) {
 
 void Power_Down(void) {
     
-    // 5V Disable
-    pWriteVariables->EN_5_10V_Val = false;
-    // 12V Disable (set low to turn on, set as input (or high if configured as open collector) to turn off)
-    pWriteVariables->EN_12V_Val = true;
-    // Vref Disable
-    pWriteVariables->EN_Vref_Val = false;
+    /* Disable external power rails */
+    pWriteVariables->EN_5_10V_Val = false;   /* 5V/10V off */
+    pWriteVariables->EN_12V_Val = true;      /* 12V off (inverted logic) */
+    pWriteVariables->EN_Vref_Val = false;    /* ADC reference off */
     
-    // Handle 3.3V - always set to false to trigger HiZ in Power_Write()
-    // The HiZ state allows pulldown resistor to disable 3.3V
-    // Also allows button control when needed
+    /* 3.3V rail handling - special case
+     * Setting to false triggers HiZ mode in Power_Write()
+     * This allows pulldown resistor to control the rail
+     * Also enables button-based power control
+     */
     pWriteVariables->EN_3_3V_Val = false;
-    Power_Write();  // This will set 3.3V_EN to INPUT (HiZ)
+    Power_Write();  /* Executes HiZ transition */
 
-    pData->powerState = STANDBY; // Set back to default state
-    pData->requestedPowerState = NO_CHANGE; // Reset the requested power state after handling request
+    pData->powerState = STANDBY;
+    pData->requestedPowerState = NO_CHANGE;
 }
 
-/*!
- * Update battery and BQ24297 status with rate limiting
- * @param updateIntervalMs Update interval in milliseconds
- * @param lastUpdateTime Pointer to last update timestamp
- * @return true if update was performed, false if rate limited
+/*
+ * Rate-limited status update helper
+ * Prevents excessive I2C traffic and ADC reads
+ * 
+ * @param updateIntervalMs Minimum time between updates (ms)
+ * @param lastUpdateTime Pointer to timestamp of last update
+ * @return true if update performed, false if rate-limited
  */
 static bool Power_UpdateStatusIfNeeded(uint32_t updateIntervalMs, TickType_t* lastUpdateTime) {
     TickType_t currentTime = xTaskGetTickCount();
@@ -341,19 +352,27 @@ static bool Power_UpdateStatusIfNeeded(uint32_t updateIntervalMs, TickType_t* la
     return false;
 }
 
-/*!
+/*
  * Check if system has sufficient power to operate
- * @return true if battery > 3.0V OR external power present
+ * Returns true if:
+ *   - Battery voltage > 3.0V (vsysStat = 0) OR
+ *   - External power present (pgStat = 1)
  */
 static bool Power_HasSufficientPower(void) {
     return (!pData->BQ24297Data.status.vsysStat || pData->BQ24297Data.status.pgStat);
 }
 
-/*!
- * Handle STANDBY state logic
+/*
+ * STANDBY State Handler
+ * 
+ * Responsibilities:
+ *   - Process power-up requests from user
+ *   - Execute power-down sequence when needed
+ *   - Monitor battery and external power
+ *   - Update status (faster on USB for button response)
  */
 static void Power_HandleStandbyState(void) {
-    // Handle user power-up requests first (highest priority)
+    /* Priority 1: Handle user power-up requests */
     if (pData->requestedPowerState == DO_POWER_UP || 
         pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
         
@@ -371,31 +390,38 @@ static void Power_HandleStandbyState(void) {
         }
     }
     
-    // Check if we should power down (only once, not continuously)
+    /* Execute power-down sequence (one-shot flag) */
     if (pData->powerDnAllowed == true) {
         Power_Down();
-        pData->powerDnAllowed = false;
+        pData->powerDnAllowed = false;  /* Clear flag to prevent repeated calls */
         
-        // If on battery, exit immediately after power down
+        /* Exit early on battery to conserve power */
         if (!pData->BQ24297Data.status.pgStat) {
             return;
         }
     }
     
-    // Update status with rate limiting
+    /* Status update with adaptive rate
+     * - 100ms on USB: Better button/command responsiveness
+     * - 1000ms on battery: Conserve power
+     */
     static TickType_t lastStandbyUpdate = 0;
-    // Check more frequently on USB power for button responsiveness
     uint32_t updateInterval = pData->BQ24297Data.status.pgStat ? 100 : 1000;
     if (Power_UpdateStatusIfNeeded(updateInterval, &lastStandbyUpdate)) {
         Power_Update_Settings();
     }
 }
 
-/*!
- * Handle POWERED_UP state logic
+/*
+ * POWERED_UP State Handler
+ * 
+ * All power rails enabled, monitoring for:
+ *   - Battery drops below conservation threshold (15%)
+ *   - User requests for state changes
+ *   - Regular status updates
  */
 static void Power_HandlePoweredUpState(void) {
-    // Clear redundant request
+    /* Clear redundant request (already in this state) */
     if (pData->requestedPowerState == DO_POWER_UP) {
         pData->requestedPowerState = NO_CHANGE;
     }
@@ -408,15 +434,14 @@ static void Power_HandlePoweredUpState(void) {
     
     bool hasExternalPower = pData->BQ24297Data.status.pgStat;
     
-    // Handle user-requested state changes
+    /* User-requested transition to conservation mode */
     if (pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
-        // User explicitly wants POWERED_UP_EXT_DOWN
         pWriteVariables->EN_5_10V_Val = false;
         Power_Write();
         pData->powerState = POWERED_UP_EXT_DOWN;
         pData->requestedPowerState = NO_CHANGE;
     }
-    // Automatic transition only when on battery and battery needs conservation
+    /* Automatic transition when battery needs conservation */
     else if (!hasExternalPower && pData->chargePct < BATT_EXT_DOWN_TH) {
         LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
               pData->chargePct);
@@ -426,8 +451,14 @@ static void Power_HandlePoweredUpState(void) {
     }
 }
 
-/*!
- * Handle POWERED_UP_EXT_DOWN state logic
+/*
+ * POWERED_UP_EXT_DOWN State Handler (Conservation Mode)
+ * 
+ * Core system powered, external rails disabled to save battery
+ * Monitoring for:
+ *   - Battery recovery (charge > 17% with hysteresis)
+ *   - External power connection
+ *   - Critical battery level (<5%)
  */
 static void Power_HandlePoweredUpExtDownState(void) {
     // Rate limit status updates
@@ -441,9 +472,9 @@ static void Power_HandlePoweredUpExtDownState(void) {
         // Get fresh battery reading before decision
         Power_UpdateChgPct();
         
-        // Check if we can enable external supplies (with hysteresis)
+        /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
-            // Successfully transitioning to POWERED_UP
+            /* Recovery successful - re-enable external power */
             LOG_D("Power_HandlePoweredUpExtDownState: Enabling external power - %s, battery at %.1f%%",
                   hasExternalPower ? "external power present" : "battery sufficient", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
@@ -456,7 +487,7 @@ static void Power_HandlePoweredUpExtDownState(void) {
         }
         pData->requestedPowerState = NO_CHANGE;
     }
-    // Automatic transition to STANDBY when battery critically low
+    /* Critical battery check - must shut down to prevent damage */
     else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
         LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
               pData->chargePct);
@@ -465,10 +496,20 @@ static void Power_HandlePoweredUpExtDownState(void) {
     }
 }
 
+/*
+ * Main Power State Machine
+ * 
+ * State transitions:
+ *   STANDBY -> POWERED_UP: User request with sufficient power
+ *   POWERED_UP -> POWERED_UP_EXT_DOWN: Battery < 15% or user request
+ *   POWERED_UP_EXT_DOWN -> POWERED_UP: Battery > 17% or external power
+ *   POWERED_UP_EXT_DOWN -> STANDBY: Battery < 5% (critical)
+ *   Any state -> STANDBY: User power-down request
+ */
 static void Power_UpdateState(void) {
     static POWER_STATE lastLoggedState = -1;
     
-    // Monitor 3.3V_EN GPIO state changes
+    /* Monitor 3.3V rail state (debug/diagnostic) */
     static bool last3v3State = false;
     static bool first3v3Check = true;
     bool current3v3State = ReadGpioPinStateLatched(pConfig->EN_3_3V_Ch, pConfig->EN_3_3V_Bit);
@@ -484,15 +525,14 @@ static void Power_UpdateState(void) {
         lastLoggedState = pData->powerState;
     }
     
-    // Handle power down request (common for all states)
+    /* Common handler: Power-down request (works in any state) */
     if (pData->requestedPowerState == DO_POWER_DOWN) {
         pData->powerState = STANDBY;
         pData->requestedPowerState = NO_CHANGE;
-        // Note: actual power down happens in STANDBY state handler
+        /* Note: Actual power-down executed by STANDBY handler */
     }
-
     
-    // Handle state-specific logic
+    /* Delegate to state-specific handlers */
     switch (pData->powerState) {
         case STANDBY:
             Power_HandleStandbyState();
@@ -514,19 +554,23 @@ static void Power_UpdateState(void) {
 }
 
 static void Power_UpdateChgPct(void) {
+    /* Read battery voltage from ADC */
     size_t index = ADC_FindChannelIndex(ADC_CHANNEL_VBATT);
     const AInSample *pAnalogSample = BoardData_Get(
             BOARDDATA_AIN_LATEST,
             index);
     if (NULL != pAnalogSample) {
         float newVoltage = ADC_ConvertToVoltage(pAnalogSample);
-        // Only update if we have a valid reading (not 0V)
+        /* Validate reading (ignore noise near 0V) */
         if (newVoltage > 0.1) {
             pData->battVoltage = newVoltage;
         }
     }
 
-    // Function below is defined from 3.17-3.868.  Must coerce input value to within these bounds.
+    /* Convert voltage to percentage using linear approximation
+     * Valid range: 3.17V (0%) to 3.868V (100%)
+     * Formula: percentage = 142.92 * voltage - 452.93
+     */
     if (pData->battVoltage < 3.17) {
         pData->chargePct = 0;
     } else if (pData->battVoltage > 3.868) {
@@ -537,11 +581,12 @@ static void Power_UpdateChgPct(void) {
 }
 
 static void Power_Update_Settings(void) {
-    // Change charging/other power settings based on current status
+    /* Update charging and power settings based on current status */
 
-    // Check if input detection is in progress (DPM_STAT = 1)
+    /* Skip if input detection in progress (DPM_STAT = 1)
+     * Prevents interference with BQ24297's auto-detection
+     */
     if (pData->BQ24297Data.status.dpmStat) {
-        // Don't make power state changes while input detection is active
         return;
     }
 
