@@ -70,7 +70,7 @@ void Button_Tasks( void )
                 {
                     // User requested power down.  Allow board to turn 
                     // off without LED indication.
-                    gpPowerData->powerDnAllowed = true;   
+                    gpPowerData->shutdownNotified = true;   
                     // Signal board to power off
                     gpPowerData->requestedPowerState = DO_POWER_DOWN;
                     oneShot = true;
@@ -137,7 +137,7 @@ void LED_Tasks(bool streamingFlag)
         currentPattern = 0; 
         // TODO: This should remain false until we've signaled to the user we are going down for any reason
         // other than button power off
-        gpPowerData->powerDnAllowed = true;    
+        gpPowerData->shutdownNotified = true;    
     }
     // If we are directed to power up, turn on LED
     else if(gpPowerData->requestedPowerState == DO_POWER_UP){

@@ -394,15 +394,17 @@ static void Power_HandleStandbyState(void) {
         } else {
             // Insufficient power for power-up request
             LOG_D("Power_UpdateState: Insufficient power - battery < 3.0V and no external power");
-            pData->powerDnAllowed = false;
+            pData->shutdownNotified = false;
             pData->requestedPowerState = NO_CHANGE;
         }
     }
     
-    /* Execute power-down sequence (one-shot flag) */
-    if (pData->powerDnAllowed == true) {
+    /* Execute power-down sequence (one-shot flag)
+     * shutdownNotified is set by UI task after LED warning sequence completes
+     * This ensures user is notified before shutdown */
+    if (pData->shutdownNotified == true) {
         Power_Down();
-        pData->powerDnAllowed = false;  /* Clear flag to prevent repeated calls */
+        pData->shutdownNotified = false;  /* Clear flag to prevent repeated calls */
         
         /* Exit early on battery to conserve power */
         if (!pData->BQ24297Data.status.pgStat) {
@@ -512,7 +514,7 @@ static void Power_HandlePoweredUpExtDownState(void) {
         pWriteVariables->EN_Vref_Val = false;
         Power_Write();
         
-        pData->powerDnAllowed = false;
+        pData->shutdownNotified = false;
         pData->powerState = STANDBY;
     }
 }

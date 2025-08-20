@@ -378,11 +378,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         default: powerState = "Unknown"; break;
     }
     
-    snprintf(buffer, sizeof(buffer), "  State: %s (%d) | Mode: %s | PowerSave: %s\r\n", 
+    snprintf(buffer, sizeof(buffer), "  State: %s (%d) | Mode: %s | Shutdown: %s\r\n", 
         powerState,
         pBoardData->PowerData.powerState,
         pBoardData->PowerData.USBSleep ? "SLEEP" : "ACTIVE",
-        pBoardData->PowerData.powerDnAllowed ? "Allowed" : "Blocked");
+        pBoardData->PowerData.shutdownNotified ? "Ready" : "Pending");
     context->interface->write(context, buffer, strlen(buffer));
     
     snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charge: %s\r\n", 
