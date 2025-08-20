@@ -504,18 +504,23 @@ static void Power_HandlePoweredUpExtDownState(void) {
         pData->requestedPowerState = NO_CHANGE;
     }
     /* Critical battery check - must shut down to prevent damage */
-    else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
-        LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
-              pData->chargePct);
+    else if (!hasExternalPower) {
+        /* Get fresh battery reading for critical safety decision */
+        Power_UpdateChgPct();
         
-        /* Explicitly disable all external rails before shutdown */
-        pWriteVariables->EN_5_10V_Val = false;
-        pWriteVariables->EN_12V_Val = true;     /* Inverted logic - true = off */
-        pWriteVariables->EN_Vref_Val = false;
-        Power_Write();
-        
-        pData->shutdownNotified = false;
-        pData->powerState = STANDBY;
+        if (pData->chargePct < BATT_LOW_TH) {
+            LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
+                  pData->chargePct);
+            
+            /* Explicitly disable all external rails before shutdown */
+            pWriteVariables->EN_5_10V_Val = false;
+            pWriteVariables->EN_12V_Val = true;     /* Inverted logic - true = off */
+            pWriteVariables->EN_Vref_Val = false;
+            Power_Write();
+            
+            pData->shutdownNotified = false;
+            pData->powerState = STANDBY;
+        }
     }
 }
 

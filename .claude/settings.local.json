@@ -83,7 +83,8 @@
       "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe\" -TPPK4 -P32MZ2048EFM144 -M -F\"firmware/daqifi.X/dist/default/production/daqifi.X.production.hex\" -OL)",
       "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe\" -C firmware/daqifi.X -f nbproject/Makefile-default.mk CONF=default build -j4)",
       "Bash(\"/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe\" -TPPK4 -P32MZ2048EFM144 -M -F\"C:\\Users\\User\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\\dist\\default\\production\\daqifi.X.production.hex\" -OL)",
-      "Bash(/tmp/test_idempotency.sh:*)"
+      "Bash(/tmp/test_idempotency.sh:*)",
+      "WebSearch"
     ],
     "deny": []
   }
