@@ -334,7 +334,8 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, buffer, strlen(buffer));
     
     // NETWORK Section
-    context->interface->write(context, "[NETWORK]\r\n", 11);
+    const char* netHeader = "[NETWORK]\r\n";
+    context->interface->write(context, netHeader, strlen(netHeader));
     
     // WiFi status
     if (pWifiSettings && pWifiSettings->isEnabled) {
@@ -359,7 +360,8 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     }
     
     // CONNECTIVITY Section
-    context->interface->write(context, "[CONNECTIVITY]\r\n", 16);
+    const char* connHeader = "[CONNECTIVITY]\r\n";
+    context->interface->write(context, connHeader, strlen(connHeader));
     bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER || 
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
@@ -369,7 +371,8 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, buffer, strlen(buffer));
     
     // POWER Section
-    context->interface->write(context, "[POWER]\r\n", 9);
+    const char* powHeader = "[POWER]\r\n";
+    context->interface->write(context, powHeader, strlen(powHeader));
     const char* powerState = "Unknown";
     switch(pBoardData->PowerData.powerState) {
         case POWERED_UP: powerState = "RUN"; break;
@@ -401,7 +404,8 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, buffer, strlen(buffer));
     
     // STATUS Section
-    context->interface->write(context, "[STATUS]\r\n", 10);
+    const char* statHeader = "[STATUS]\r\n";
+    context->interface->write(context, statHeader, strlen(statHeader));
     
     // Channel status
     int adcEnabled = 0, dioInputs = 0;
@@ -487,12 +491,14 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, buffer, strlen(buffer));
     
     // BATTERY DIAGNOSTICS Section
-    context->interface->write(context, "\r\n[BATTERY DIAGNOSTICS]\r\n", 24);
+    const char* battDiagHeader = "\r\n[BATTERY DIAGNOSTICS]\r\n";
+    context->interface->write(context, battDiagHeader, strlen(battDiagHeader));
     
     // Battery voltage and charge from ADC
     if (pBoardData->PowerData.powerState == STANDBY) {
         // Battery monitoring inactive in STANDBY
-        context->interface->write(context, "  ADC: -- | --\r\n", 17);
+        const char* adcInactive = "  ADC: -- | --\r\n";
+        context->interface->write(context, adcInactive, strlen(adcInactive));
     } else {
         snprintf(buffer, sizeof(buffer), "  ADC: %d%% | %.2fV\r\n",
             pBoardData->PowerData.chargePct,
