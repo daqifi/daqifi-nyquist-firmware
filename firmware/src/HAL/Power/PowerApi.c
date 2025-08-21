@@ -57,11 +57,11 @@
 /* Battery Management Thresholds
  * - BATT_EXT_DOWN_TH (15%): Below this, external power rails disabled to conserve battery
  * - BATT_LOW_TH (5%): Critical level - device must shut down
- * - BATT_HYST (2%): Hysteresis prevents oscillation at threshold boundaries
+ * - BATT_HYST (10%): Hysteresis prevents oscillation at threshold boundaries
  */
 #define BATT_EXT_DOWN_TH 15.0  /* External power disabled below this */
 #define BATT_LOW_TH 5.0        /* Critical shutdown threshold */
-#define BATT_HYST 2.0          /* Must charge 2% above threshold to re-enable */ 
+#define BATT_HYST 10.0         /* Must charge 10% above threshold to re-enable */ 
 
 //! Pointer to a data structure for storing the configuration data
 static tPowerConfig *pConfig;
@@ -112,6 +112,10 @@ void Power_Init(
 
     // NOTE: This is called before the RTOS is running.  
     // Don't call any RTOS functions here!
+    
+    // Initialize auto external power control (enabled by default)
+    pData->autoExtPowerEnabled = true;
+    
     BQ24297_InitHardware(
             &pConfig->BQ24297Config,
             &pWriteVariables->BQ24297WriteVars,
@@ -472,7 +476,7 @@ static void Power_HandlePoweredUpState(void) {
  * 
  * Core system powered, external rails disabled to save battery
  * Monitoring for:
- *   - Battery recovery (charge > 17% with hysteresis)
+ *   - Battery recovery (charge > 25% with hysteresis)
  *   - External power connection
  *   - Critical battery level (<5%)
  */
@@ -483,6 +487,23 @@ static void Power_HandlePoweredUpExtDownState(void) {
     
     bool hasExternalPower = pData->BQ24297Data.status.pgStat;
     
+    // Check for automatic recovery if auto external power control is enabled
+    if (pData->autoExtPowerEnabled) {
+        // Get fresh battery reading
+        Power_UpdateChgPct();
+        
+        /* Check recovery conditions (with hysteresis to prevent oscillation) */
+        if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
+            /* Auto-recovery - re-enable external power */
+            LOG_D("Auto-recovery: Enabling external power - %s, battery at %.1f%%",
+                  hasExternalPower ? "external power present" : "battery recovered", pData->chargePct);
+            pWriteVariables->EN_5_10V_Val = true;
+            Power_Write();
+            pData->powerState = POWERED_UP;
+            return;  // Exit early after state change
+        }
+    }
+    
     // Handle user power state change requests
     if (pData->requestedPowerState == DO_POWER_UP) {
         // Get fresh battery reading before decision
@@ -490,8 +511,8 @@ static void Power_HandlePoweredUpExtDownState(void) {
         
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
-            /* Recovery successful - re-enable external power */
-            LOG_D("Power_HandlePoweredUpExtDownState: Enabling external power - %s, battery at %.1f%%",
+            /* Manual recovery - re-enable external power */
+            LOG_D("Manual recovery: Enabling external power - %s, battery at %.1f%%",
                   hasExternalPower ? "external power present" : "battery sufficient", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
@@ -530,7 +551,7 @@ static void Power_HandlePoweredUpExtDownState(void) {
  * State transitions:
  *   STANDBY -> POWERED_UP: User request with sufficient power
  *   POWERED_UP -> POWERED_UP_EXT_DOWN: Battery < 15% or user request
- *   POWERED_UP_EXT_DOWN -> POWERED_UP: Battery > 17% or external power
+ *   POWERED_UP_EXT_DOWN -> POWERED_UP: Battery > 25% or external power
  *   POWERED_UP_EXT_DOWN -> STANDBY: Battery < 5% (critical)
  *   Any state -> STANDBY: User power-down request
  */

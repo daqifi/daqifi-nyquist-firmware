@@ -371,6 +371,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
         case WIFI_MANAGER_EVENT_INIT:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
 
+            static bool initErrorLogged = false;
+            
             // Check if we're already initialized (mode switch without deinit)
             bool alreadyInitialized = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
             
@@ -381,9 +383,19 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
 
                 if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_READY) {
+                    // Log error only once when entering error state
+                    if (!initErrorLogged) {
+                        LOG_E("WiFi driver not ready, retrying initialization...\r\n");
+                        initErrorLogged = true;
+                    }
                     //wait for initialization to complete
                     SendEvent(WIFI_MANAGER_EVENT_INIT);
                     break;
+                }
+                // Reset error flag on success
+                if (initErrorLogged) {
+                    LOG_D("WiFi driver initialization succeeded\r\n");
+                    initErrorLogged = false;
                 }
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
@@ -930,30 +942,46 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             break;
         case WIFI_MANAGER_EVENT_ERROR:
-            // Implement power-efficient reconnect logic for STA mode
-            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
-                GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+            {
+                static bool errorLogged = false;
+                static int consecutiveErrors = 0;
                 
-                uint32_t delayMs;
-                if (pInstance->staReconnectAttempts < 5) {
-                    // First 5 attempts: 1 second delay
-                    delayMs = 1000;
-                    LOG_D("STA reconnect attempt %d/5 with 1s delay\r\n", pInstance->staReconnectAttempts + 1);
-                } else {
-                    // After 5 attempts: 30 second delay to save power
-                    delayMs = 30000;
-                    LOG_D("STA reconnect attempt %d with 30s delay (power save mode)\r\n", pInstance->staReconnectAttempts + 1);
+                consecutiveErrors++;
+                
+                // Only log error on first occurrence or every 10th error
+                if (!errorLogged || (consecutiveErrors % 10 == 0)) {
+                    LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n", __FILE__, __LINE__, consecutiveErrors);
+                    errorLogged = true;
                 }
                 
-                // Wait before attempting reconnection
-                vTaskDelay(pdMS_TO_TICKS(delayMs));
-                
-                SendEvent(WIFI_MANAGER_EVENT_REINIT);
-            } else {
-                // For AP mode or other errors, reinit immediately
-                SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                // Implement power-efficient reconnect logic for STA mode
+                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
+                    GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                    
+                    uint32_t delayMs;
+                    if (pInstance->staReconnectAttempts < 5) {
+                        // First 5 attempts: 1 second delay
+                        delayMs = 1000;
+                        if (pInstance->staReconnectAttempts == 0) {  // Only log first attempt
+                            LOG_D("STA reconnect attempt %d/5 with 1s delay\r\n", pInstance->staReconnectAttempts + 1);
+                        }
+                    } else {
+                        // After 5 attempts: 30 second delay to save power
+                        delayMs = 30000;
+                        if (pInstance->staReconnectAttempts == 5) {  // Only log when switching to power save
+                            LOG_D("Switching to power save mode - reconnect attempts with 30s delay\r\n");
+                        }
+                    }
+                    
+                    // Wait before attempting reconnection
+                    vTaskDelay(pdMS_TO_TICKS(delayMs));
+                    
+                    SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                } else {
+                    // For AP mode or other errors, reinit immediately
+                    SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                }
             }
-            LOG_E("[%s:%d]Error WiFi", __FILE__, __LINE__);
             break;
         default:
             break;

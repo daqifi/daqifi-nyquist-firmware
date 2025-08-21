@@ -790,6 +790,54 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * SCPI Callback: Get auto external power switching state
+ * Command: SYST:POW:AUTO:EXT?
+ * Returns: 1 if enabled, 0 if disabled
+ */
+static scpi_result_t SCPI_GetAutoExtPower(scpi_t * context) {
+    tPowerData * pPowerData = BoardData_Get(
+            BOARDDATA_POWER_DATA,
+            0);
+    
+    SCPI_ResultInt32(context, pPowerData->autoExtPowerEnabled ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Set auto external power switching state
+ * Command: SYST:POW:AUTO:EXT 0|1
+ * 0 = Disable automatic external power switching (manual control only)
+ * 1 = Enable automatic external power switching based on battery level
+ */
+static scpi_result_t SCPI_SetAutoExtPower(scpi_t * context) {
+    int param1;
+    
+    tPowerData * pPowerData = BoardData_Get(
+            BOARDDATA_POWER_DATA,
+            0);
+    
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    
+    // Validate input: accept 0 or 1
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    
+    pPowerData->autoExtPowerEnabled = (param1 != 0);
+    LOG_D("Auto external power switching %s", 
+          pPowerData->autoExtPowerEnabled ? "enabled" : "disabled");
+    
+    BoardData_Set(
+            BOARDDATA_POWER_DATA,
+            0,
+            pPowerData);
+    
+    return SCPI_RES_OK;
+}
 
 // OTG control functions are disabled - see command table for explanation
 #if 0
@@ -1205,6 +1253,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet,},
     {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState,},
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
+    {.pattern = "SYSTem:POWer:AUTO:EXTernal?", .callback = SCPI_GetAutoExtPower,},
+    {.pattern = "SYSTem:POWer:AUTO:EXTernal", .callback = SCPI_SetAutoExtPower,},
     // OTG commands disabled - OTG mode is managed automatically by the power system
     // When external power is present, OTG is always disabled for safety
     // When on battery power, OTG is controlled by the board configuration
