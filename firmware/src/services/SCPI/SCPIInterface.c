@@ -385,11 +385,19 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.shutdownNotified ? "Ready" : "Pending");
     context->interface->write(context, buffer, strlen(buffer));
     
-    snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charge: %s\r\n", 
-        pBoardData->PowerData.battVoltage, 
-        pBoardData->PowerData.chargePct,
-        pBoardData->PowerData.battLow ? "[LOW]" : "[OK]",
-        (pBoardData->PowerData.BQ24297Data.status.chg && !pBoardData->PowerData.BQ24297Data.status.otg) ? "ON" : "OFF");
+    // Display battery info appropriately based on monitoring state
+    if (pBoardData->PowerData.powerState == STANDBY) {
+        // Battery monitoring inactive in STANDBY
+        snprintf(buffer, sizeof(buffer), "  Battery: -- (--) [--] | Charge: %s\r\n",
+            (pBoardData->PowerData.BQ24297Data.status.chg && !pBoardData->PowerData.BQ24297Data.status.otg) ? "ON" : "OFF");
+    } else {
+        // Battery monitoring active - show actual values
+        snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charge: %s\r\n", 
+            pBoardData->PowerData.battVoltage, 
+            pBoardData->PowerData.chargePct,
+            pBoardData->PowerData.battLow ? "[LOW]" : "[OK]",
+            (pBoardData->PowerData.BQ24297Data.status.chg && !pBoardData->PowerData.BQ24297Data.status.otg) ? "ON" : "OFF");
+    }
     context->interface->write(context, buffer, strlen(buffer));
     
     // STATUS Section
@@ -482,10 +490,15 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, "\r\n[BATTERY DIAGNOSTICS]\r\n", 24);
     
     // Battery voltage and charge from ADC
-    snprintf(buffer, sizeof(buffer), "  ADC: %d%% | %.2fV\r\n",
-        pBoardData->PowerData.chargePct,
-        pBoardData->PowerData.battVoltage);
-    context->interface->write(context, buffer, strlen(buffer));
+    if (pBoardData->PowerData.powerState == STANDBY) {
+        // Battery monitoring inactive in STANDBY
+        context->interface->write(context, "  ADC: -- | --\r\n", 16);
+    } else {
+        snprintf(buffer, sizeof(buffer), "  ADC: %d%% | %.2fV\r\n",
+            pBoardData->PowerData.chargePct,
+            pBoardData->PowerData.battVoltage);
+        context->interface->write(context, buffer, strlen(buffer));
+    }
     
     // BQ24297 status - get fresh data
     tBQ24297Data * pBQ24297Data = &pBoardData->PowerData.BQ24297Data;
