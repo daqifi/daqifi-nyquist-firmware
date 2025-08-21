@@ -26,6 +26,7 @@
 #include "SCPIADC.h"
 #include "SCPIDIO.h"
 #include "SCPILAN.h"
+#include "services/wifi_services/wifi_manager.h"
 #include "SCPIStorageSD.h"
 #include "../streaming.h"
 #include "../../HAL/TimerApi/TimerApi.h"
@@ -338,9 +339,9 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, netHeader, strlen(netHeader));
     
     // WiFi status - check actual driver state
-    bool wifiActive = SCPI_IsWiFiActive();
+    wifi_status_t wifiStatus = wifi_manager_GetWiFiStatus();
     
-    if (wifiActive && pWifiSettings) {
+    if (wifiStatus == WIFI_STATUS_CONNECTED && pWifiSettings) {
         char ipStr[16];
         snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", 
             (uint8_t)(pWifiSettings->ipAddr.Val & 0xFF),
@@ -348,7 +349,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             (uint8_t)((pWifiSettings->ipAddr.Val >> 16) & 0xFF),
             (uint8_t)((pWifiSettings->ipAddr.Val >> 24) & 0xFF));
         
-        snprintf(buffer, sizeof(buffer), "  WiFi: ON | Mode: %s | SSID: %s\r\n", 
+        snprintf(buffer, sizeof(buffer), "  2.4GHz: ON | Mode: %s | SSID: %s\r\n", 
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
             pWifiSettings->ssid);
         context->interface->write(context, buffer, strlen(buffer));
@@ -357,14 +358,14 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
         context->interface->write(context, buffer, strlen(buffer));
-    } else if (pWifiSettings && pWifiSettings->isEnabled) {
-        // WiFi is configured but not active (in STANDBY)
-        snprintf(buffer, sizeof(buffer), "  WiFi: OFF (Configured: %s SSID: %s)\r\n",
+    } else if (wifiStatus == WIFI_STATUS_DISCONNECTED && pWifiSettings) {
+        // WiFi is enabled but not connected
+        snprintf(buffer, sizeof(buffer), "  2.4GHz: ON (Disconnected: %s SSID: %s)\r\n",
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
             pWifiSettings->ssid);
         context->interface->write(context, buffer, strlen(buffer));
     } else {
-        const char* wifiOff = "  WiFi: OFF\r\n";
+        const char* wifiOff = "  2.4GHz: OFF\r\n";
         context->interface->write(context, wifiOff, strlen(wifiOff));
     }
     
@@ -375,7 +376,8 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
         hasUSBPower ? "Connected" : "Disconnected",
-        wifiActive ? "Active" : ((pWifiSettings && pWifiSettings->isEnabled) ? "Configured" : "Disabled"),
+        wifiStatus == WIFI_STATUS_CONNECTED ? "Connected" : 
+        (wifiStatus == WIFI_STATUS_DISCONNECTED ? "Disconnected" : "Disabled"),
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
     context->interface->write(context, buffer, strlen(buffer));
     

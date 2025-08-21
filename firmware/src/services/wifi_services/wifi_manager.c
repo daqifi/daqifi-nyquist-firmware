@@ -6,6 +6,7 @@
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
+#include "driver/winc/include/drv/driver/m2m_wifi.h"
 
 #define UNUSED(x) (void)(x)
 #define WIFI_MANAGER_UDP_LISTEN_PORT         (uint16_t)30303
@@ -1007,6 +1008,40 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     strncpy(pChipInfo->BuildDate, (char*) gStateMachineContext.wifiFirmwareVersion.BuildDate, sizeof (__DATE__));
     strncpy(pChipInfo->BuildTime, (char*) gStateMachineContext.wifiFirmwareVersion.BuildTime, sizeof (__DATE__));
     return true;
+}
+
+wifi_status_t wifi_manager_GetWiFiStatus(void) {
+    // First check if WiFi is enabled in settings
+    if (gStateMachineContext.pWifiSettings == NULL || 
+        !gStateMachineContext.pWifiSettings->isEnabled) {
+        return WIFI_STATUS_DISABLED;
+    }
+    
+    // Check driver state
+    uint8_t wifiState = m2m_wifi_get_state();
+    
+    switch(wifiState) {
+        case WIFI_STATE_START:
+            // WiFi is active, check connection status
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
+                GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+                return WIFI_STATUS_CONNECTED;
+            }
+            return WIFI_STATUS_DISCONNECTED;
+            
+        case WIFI_STATE_INIT:
+            // WiFi is initializing
+            return WIFI_STATUS_DISCONNECTED;
+            
+        case WIFI_STATE_DEINIT:
+        default:
+            // WiFi is not initialized
+            return WIFI_STATUS_DISABLED;
+    }
+}
+
+bool wifi_manager_IsWiFiConnected(void) {
+    return (wifi_manager_GetWiFiStatus() == WIFI_STATUS_CONNECTED);
 }
 
 bool wifi_manager_Deinit() {
