@@ -400,7 +400,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         const char* chargeStatus = "OFF";
         if (pBoardData->PowerData.BQ24297Data.status.otg) {
             chargeStatus = "OTG";
-        } else if (pBoardData->PowerData.BQ24297Data.status.chg) {
+        } else if (pBoardData->PowerData.BQ24297Data.status.chgEn) {
             // Charge enabled, check actual status
             switch(pBoardData->PowerData.BQ24297Data.status.chgStat) {
                 case 0: chargeStatus = "OFF"; break;      // No charge
@@ -416,7 +416,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         const char* chargeStatus = "OFF";
         if (pBoardData->PowerData.BQ24297Data.status.otg) {
             chargeStatus = "OTG";
-        } else if (pBoardData->PowerData.BQ24297Data.status.chg) {
+        } else if (pBoardData->PowerData.BQ24297Data.status.chgEn) {
             // Charge enabled, check actual status
             switch(pBoardData->PowerData.BQ24297Data.status.chgStat) {
                 case 0: chargeStatus = "OFF"; break;      // No charge
