@@ -387,7 +387,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         default: powerState = "Unknown"; break;
     }
     
-    snprintf(buffer, sizeof(buffer), "  State: %s (%d) | Mode: %s | Shutdown: %s\r\n", 
+    snprintf(buffer, sizeof(buffer), "  State: %s (%d) | USB: %s | Shutdown: %s\r\n", 
         powerState,
         pBoardData->PowerData.powerState,
         pBoardData->PowerData.USBSleep ? "SLEEP" : "ACTIVE",
