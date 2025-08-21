@@ -492,7 +492,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     // Battery voltage and charge from ADC
     if (pBoardData->PowerData.powerState == STANDBY) {
         // Battery monitoring inactive in STANDBY
-        context->interface->write(context, "  ADC: -- | --\r\n", 16);
+        context->interface->write(context, "  ADC: -- | --\r\n", 17);
     } else {
         snprintf(buffer, sizeof(buffer), "  ADC: %d%% | %.2fV\r\n",
             pBoardData->PowerData.chargePct,
