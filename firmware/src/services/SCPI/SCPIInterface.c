@@ -28,6 +28,7 @@
 #include "SCPILAN.h"
 #include "SCPIStorageSD.h"
 #include "../streaming.h"
+#include "driver/winc/include/drv/driver/m2m_wifi.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
 
@@ -337,8 +338,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     const char* netHeader = "[NETWORK]\r\n";
     context->interface->write(context, netHeader, strlen(netHeader));
     
-    // WiFi status
-    if (pWifiSettings && pWifiSettings->isEnabled) {
+    // WiFi status - check actual driver state
+    uint8_t wifiState = m2m_wifi_get_state();
+    bool wifiActive = (wifiState == WIFI_STATE_START);
+    
+    if (wifiActive && pWifiSettings) {
         char ipStr[16];
         snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", 
             (uint8_t)(pWifiSettings->ipAddr.Val & 0xFF),
@@ -355,8 +359,15 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
         context->interface->write(context, buffer, strlen(buffer));
+    } else if (pWifiSettings && pWifiSettings->isEnabled) {
+        // WiFi is configured but not active (in STANDBY)
+        snprintf(buffer, sizeof(buffer), "  WiFi: OFF (Configured: %s SSID: %s)\r\n",
+            pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
+            pWifiSettings->ssid);
+        context->interface->write(context, buffer, strlen(buffer));
     } else {
-        context->interface->write(context, "  WiFi: OFF\r\n", 13);
+        const char* wifiOff = "  WiFi: OFF\r\n";
+        context->interface->write(context, wifiOff, strlen(wifiOff));
     }
     
     // CONNECTIVITY Section
@@ -366,7 +377,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
         hasUSBPower ? "Connected" : "Disconnected",
-        (pWifiSettings && pWifiSettings->isEnabled) ? "Enabled" : "Disabled",
+        wifiActive ? "Active" : ((pWifiSettings && pWifiSettings->isEnabled) ? "Configured" : "Disabled"),
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
     context->interface->write(context, buffer, strlen(buffer));
     
