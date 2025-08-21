@@ -341,7 +341,8 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     // WiFi status - check actual driver state
     wifi_status_t wifiStatus = wifi_manager_GetWiFiStatus();
     
-    if (wifiStatus == WIFI_STATUS_CONNECTED && pWifiSettings) {
+    if ((wifiStatus == WIFI_STATUS_CONNECTED || wifiStatus == WIFI_STATUS_DISCONNECTED) && pWifiSettings) {
+        // WiFi is enabled - show configuration regardless of connection status
         char ipStr[16];
         snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", 
             (uint8_t)(pWifiSettings->ipAddr.Val & 0xFF),
@@ -357,12 +358,6 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         snprintf(buffer, sizeof(buffer), "  IP: %s | Port: %d | Security: %s\r\n", 
             ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
-        context->interface->write(context, buffer, strlen(buffer));
-    } else if (wifiStatus == WIFI_STATUS_DISCONNECTED && pWifiSettings) {
-        // WiFi is enabled but not connected
-        snprintf(buffer, sizeof(buffer), "  2.4GHz: ON (Disconnected: %s SSID: %s)\r\n",
-            pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
-            pWifiSettings->ssid);
         context->interface->write(context, buffer, strlen(buffer));
     } else {
         const char* wifiOff = "  2.4GHz: OFF\r\n";
