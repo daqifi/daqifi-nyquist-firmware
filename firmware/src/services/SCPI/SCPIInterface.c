@@ -396,16 +396,41 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     
     // Display battery info appropriately based on monitoring state
     if (pBoardData->PowerData.powerState == STANDBY) {
-        // Battery monitoring inactive in STANDBY
-        snprintf(buffer, sizeof(buffer), "  Battery: -- (--) [--] | Charge: %s\r\n",
-            (pBoardData->PowerData.BQ24297Data.status.chg && !pBoardData->PowerData.BQ24297Data.status.otg) ? "ON" : "OFF");
+        // Battery monitoring inactive in STANDBY - but BQ24297 still reports charge status
+        const char* chargeStatus = "OFF";
+        if (pBoardData->PowerData.BQ24297Data.status.otg) {
+            chargeStatus = "OTG";
+        } else if (pBoardData->PowerData.BQ24297Data.status.chg) {
+            // Charge enabled, check actual status
+            switch(pBoardData->PowerData.BQ24297Data.status.chgStat) {
+                case 0: chargeStatus = "OFF"; break;      // No charge
+                case 1: chargeStatus = "PRE"; break;      // Precharge
+                case 2: chargeStatus = "FAST"; break;     // Fast charge
+                case 3: chargeStatus = "DONE"; break;     // Charge complete
+                default: chargeStatus = "?"; break;
+            }
+        }
+        snprintf(buffer, sizeof(buffer), "  Battery: -- (--) [--] | Charging: %s\r\n", chargeStatus);
     } else {
         // Battery monitoring active - show actual values
-        snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charge: %s\r\n", 
+        const char* chargeStatus = "OFF";
+        if (pBoardData->PowerData.BQ24297Data.status.otg) {
+            chargeStatus = "OTG";
+        } else if (pBoardData->PowerData.BQ24297Data.status.chg) {
+            // Charge enabled, check actual status
+            switch(pBoardData->PowerData.BQ24297Data.status.chgStat) {
+                case 0: chargeStatus = "OFF"; break;      // No charge
+                case 1: chargeStatus = "PRE"; break;      // Precharge
+                case 2: chargeStatus = "FAST"; break;     // Fast charge
+                case 3: chargeStatus = "DONE"; break;     // Charge complete
+                default: chargeStatus = "?"; break;
+            }
+        }
+        snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charging: %s\r\n", 
             pBoardData->PowerData.battVoltage, 
             pBoardData->PowerData.chargePct,
             pBoardData->PowerData.battLow ? "[LOW]" : "[OK]",
-            (pBoardData->PowerData.BQ24297Data.status.chg && !pBoardData->PowerData.BQ24297Data.status.otg) ? "ON" : "OFF");
+            chargeStatus);
     }
     context->interface->write(context, buffer, strlen(buffer));
     
