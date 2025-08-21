@@ -622,9 +622,22 @@ void BQ24297_UpdateBatteryStatus(void) {
 }
 
 void BQ24297_SetPowerMode(bool externalPowerPresent) {
+    static bool lastExternalPowerState = false;
+    static bool initialized = false;
+    
+    // Only log when state actually changes
+    if (!initialized || lastExternalPowerState != externalPowerPresent) {
+        if (externalPowerPresent) {
+            LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
+        } else {
+            LOG_D("BQ24297_SetPowerMode: External power lost, battery power only");
+        }
+        lastExternalPowerState = externalPowerPresent;
+        initialized = true;
+    }
+    
     if (externalPowerPresent) {
         // External power available - disable OTG and enable charging
-        LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
         BQ24297_DisableOTG(true);
         
         // Update battery status which will enable charging if battery is present
