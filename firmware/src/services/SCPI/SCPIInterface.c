@@ -511,10 +511,13 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         }
     }
     
-    // Streaming and sampling
+    // Streaming and sampling - cannot be active in STANDBY
+    bool canStream = (pBoardData->PowerData.powerState != STANDBY);
     snprintf(buffer, sizeof(buffer), "  Streaming: %s | Trigger: %s\r\n",
-        pBoardData->StreamTrigStamp > 0 ? "Active" : "Idle",
-        pBoardData->StreamTrigStamp > 0 ? "Armed" : "Off");
+        (canStream && pBoardData->StreamTrigStamp > 0) ? "Active" : 
+        (!canStream ? "Disabled" : "Idle"),
+        (canStream && pBoardData->StreamTrigStamp > 0) ? "Armed" : 
+        (!canStream ? "N/A" : "Off"));
     context->interface->write(context, buffer, strlen(buffer));
     
     // System uptime - use timestamp as approximation
