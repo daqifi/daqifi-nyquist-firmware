@@ -17,12 +17,37 @@
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
+#include "driver/winc/include/drv/driver/m2m_wifi.h"
 
 #include "Util/Logger.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 
 #define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
+
+/**
+ * Get the current WiFi module status
+ */
+wifi_status_t SCPI_GetWiFiStatus(void) {
+    uint8_t wifiState = m2m_wifi_get_state();
+    
+    switch(wifiState) {
+        case WIFI_STATE_START:
+            return WIFI_STATUS_ACTIVE;
+        case WIFI_STATE_INIT:
+            return WIFI_STATUS_INIT;
+        case WIFI_STATE_DEINIT:
+        default:
+            return WIFI_STATUS_DEINIT;
+    }
+}
+
+/**
+ * Check if WiFi is currently active
+ */
+bool SCPI_IsWiFiActive(void) {
+    return (SCPI_GetWiFiStatus() == WIFI_STATUS_ACTIVE);
+}
 
 /**
  * Encodes the given ip multi-address as a scpi string

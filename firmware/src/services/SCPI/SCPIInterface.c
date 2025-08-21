@@ -28,7 +28,6 @@
 #include "SCPILAN.h"
 #include "SCPIStorageSD.h"
 #include "../streaming.h"
-#include "driver/winc/include/drv/driver/m2m_wifi.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
 
@@ -339,8 +338,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, netHeader, strlen(netHeader));
     
     // WiFi status - check actual driver state
-    uint8_t wifiState = m2m_wifi_get_state();
-    bool wifiActive = (wifiState == WIFI_STATE_START);
+    bool wifiActive = SCPI_IsWiFiActive();
     
     if (wifiActive && pWifiSettings) {
         char ipStr[16];

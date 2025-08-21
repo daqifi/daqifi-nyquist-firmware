@@ -1,10 +1,33 @@
 #pragma once
 
 #include "libraries/scpi/libscpi/inc/scpi/scpi.h"
+#include <stdbool.h>
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
+
+/**
+ * WiFi state enumeration for cleaner status checking
+ */
+typedef enum {
+    WIFI_STATUS_DEINIT = 0,   // WiFi not initialized
+    WIFI_STATUS_INIT,          // WiFi initialized but not started
+    WIFI_STATUS_ACTIVE         // WiFi active and running
+} wifi_status_t;
+
+/**
+ * Get the current WiFi module status
+ * @return wifi_status_t indicating current WiFi state
+ */
+wifi_status_t SCPI_GetWiFiStatus(void);
+
+/**
+ * Check if WiFi is currently active
+ * @return true if WiFi is in ACTIVE state, false otherwise
+ */
+bool SCPI_IsWiFiActive(void);
+
 //TODO(Daqifi): Relocate for proper place
     
 /**
