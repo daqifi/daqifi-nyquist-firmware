@@ -11,7 +11,7 @@
 //
 //// 3rd Party
 //#include "HAL/NVM/DaqifiSettings.h"
-//#include "HAL/Power/PowerApi.h"
+#include "HAL/Power/PowerApi.h"
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
@@ -20,6 +20,7 @@
 #include "state/board/BoardConfig.h"
 #include "services/daqifi_settings.h"
 #include "state/runtime/BoardRuntimeConfig.h"
+#include "state/board/AInConfig.h"  // For MAX_AIN_PUBLIC_CHANNELS
 #include "peripheral/gpio/plib_gpio.h"
 #include "HAL/BQ24297/BQ24297.h"
 #include "HAL/DIO.h"
@@ -334,8 +335,8 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV);
     context->interface->write(context, buffer, strlen(buffer));
     
-    // NETWORK Section
-    const char* netHeader = "[NETWORK]\r\n";
+    // Network Section
+    const char* netHeader = "[Network]\r\n";
     context->interface->write(context, netHeader, strlen(netHeader));
     
     // WiFi status - check actual driver state
@@ -350,7 +351,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             (uint8_t)((pWifiSettings->ipAddr.Val >> 16) & 0xFF),
             (uint8_t)((pWifiSettings->ipAddr.Val >> 24) & 0xFF));
         
-        snprintf(buffer, sizeof(buffer), "  2.4GHz: ON | Mode: %s | SSID: %s\r\n", 
+        snprintf(buffer, sizeof(buffer), "  2.4GHz: On | Mode: %s | SSID: %s\r\n", 
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
             pWifiSettings->ssid);
         context->interface->write(context, buffer, strlen(buffer));
@@ -360,132 +361,137 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
         context->interface->write(context, buffer, strlen(buffer));
     } else {
-        const char* wifiOff = "  2.4GHz: OFF\r\n";
+        const char* wifiOff = "  2.4GHz: Off\r\n";
         context->interface->write(context, wifiOff, strlen(wifiOff));
     }
     
-    // CONNECTIVITY Section
-    const char* connHeader = "[CONNECTIVITY]\r\n";
+    // Connectivity Section
+    const char* connHeader = "[Connectivity]\r\n";
     context->interface->write(context, connHeader, strlen(connHeader));
     bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER || 
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
-    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext Power: %s\r\n",
+    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext power: %s\r\n",
         hasUSBPower ? "Connected" : "Disconnected",
         wifiStatus == WIFI_STATUS_CONNECTED ? "Connected" : 
         (wifiStatus == WIFI_STATUS_DISCONNECTED ? "Disconnected" : "Disabled"),
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
     context->interface->write(context, buffer, strlen(buffer));
     
-    // POWER Section
-    const char* powHeader = "[POWER]\r\n";
+    // Power Section
+    const char* powHeader = "[Power]\r\n";
     context->interface->write(context, powHeader, strlen(powHeader));
     const char* powerState = "Unknown";
     switch(pBoardData->PowerData.powerState) {
-        case POWERED_UP: powerState = "RUN"; break;
-        case POWERED_UP_EXT_DOWN: powerState = "PARTIAL"; break;
-        case STANDBY: powerState = "STANDBY"; break;
+        case POWERED_UP: powerState = "Run"; break;
+        case POWERED_UP_EXT_DOWN: powerState = "Partial"; break;
+        case STANDBY: powerState = "Standby"; break;
         default: powerState = "Unknown"; break;
     }
     
-    snprintf(buffer, sizeof(buffer), "  State: %s (%d) | USB: %s | Shutdown: %s\r\n", 
+    // Only show shutdown status if a shutdown is actually requested
+    const char* shutdownStatus = "";
+    if (pBoardData->PowerData.requestedPowerState == DO_POWER_DOWN) {
+        shutdownStatus = pBoardData->PowerData.shutdownNotified ? " | Shutdown: Ready" : " | Shutdown: Pending";
+    }
+    
+    snprintf(buffer, sizeof(buffer), "  State: %s (%d) | USB: %s%s\r\n", 
         powerState,
         pBoardData->PowerData.powerState,
-        pBoardData->PowerData.USBSleep ? "SLEEP" : "ACTIVE",
-        pBoardData->PowerData.shutdownNotified ? "Ready" : "Pending");
+        pBoardData->PowerData.USBSleep ? "Sleep" : "Active",
+        shutdownStatus);
     context->interface->write(context, buffer, strlen(buffer));
     
     // Display battery info appropriately based on monitoring state
     if (pBoardData->PowerData.powerState == STANDBY) {
         // Battery monitoring inactive in STANDBY - but BQ24297 still reports charge status
-        const char* chargeStatus = "OFF";
+        const char* chargeStatus = "Off";
         if (pBoardData->PowerData.BQ24297Data.status.otg) {
             chargeStatus = "OTG";
         } else if (pBoardData->PowerData.BQ24297Data.status.chgEn) {
             // Charge enabled, check actual status
             switch(pBoardData->PowerData.BQ24297Data.status.chgStat) {
-                case 0: chargeStatus = "OFF"; break;      // No charge
-                case 1: chargeStatus = "PRE"; break;      // Precharge
-                case 2: chargeStatus = "FAST"; break;     // Fast charge
-                case 3: chargeStatus = "DONE"; break;     // Charge complete
+                case 0: chargeStatus = "Off"; break;      // No charge
+                case 1: chargeStatus = "Pre"; break;      // Precharge
+                case 2: chargeStatus = "Fast"; break;     // Fast charge
+                case 3: chargeStatus = "Done"; break;     // Charge complete
                 default: chargeStatus = "?"; break;
             }
         }
         snprintf(buffer, sizeof(buffer), "  Battery: -- (--) [--] | Charging: %s\r\n", chargeStatus);
     } else {
         // Battery monitoring active - show actual values
-        const char* chargeStatus = "OFF";
+        const char* chargeStatus = "Off";
         if (pBoardData->PowerData.BQ24297Data.status.otg) {
             chargeStatus = "OTG";
         } else if (pBoardData->PowerData.BQ24297Data.status.chgEn) {
             // Charge enabled, check actual status
             switch(pBoardData->PowerData.BQ24297Data.status.chgStat) {
-                case 0: chargeStatus = "OFF"; break;      // No charge
-                case 1: chargeStatus = "PRE"; break;      // Precharge
-                case 2: chargeStatus = "FAST"; break;     // Fast charge
-                case 3: chargeStatus = "DONE"; break;     // Charge complete
+                case 0: chargeStatus = "Off"; break;      // No charge
+                case 1: chargeStatus = "Pre"; break;      // Precharge
+                case 2: chargeStatus = "Fast"; break;     // Fast charge
+                case 3: chargeStatus = "Done"; break;     // Charge complete
                 default: chargeStatus = "?"; break;
             }
         }
         snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charging: %s\r\n", 
             pBoardData->PowerData.battVoltage, 
             pBoardData->PowerData.chargePct,
-            pBoardData->PowerData.battLow ? "[LOW]" : "[OK]",
+            pBoardData->PowerData.battLow ? "[Low]" : "[Ok]",
             chargeStatus);
     }
     context->interface->write(context, buffer, strlen(buffer));
     
-    // STATUS Section
-    const char* statHeader = "[STATUS]\r\n";
+    // Status Section
+    const char* statHeader = "[Status]\r\n";
     context->interface->write(context, statHeader, strlen(statHeader));
     
-    // Channel status
-    int adcEnabled = 0, dioInputs = 0;
-    uint32_t adcEnabledMask = 0;
+    // Channel status - separate user and internal ADCs
+    int userAdcEnabled = 0, internalAdcEnabled = 0, dioInputs = 0;
+    int userAdcTotal = 0, internalAdcTotal = 0;
+    
     if (pAInConfig) {
-        for (int i = 0; i < pAInConfig->Size && i < 32; i++) {
+        // Count user ADCs (first 16 channels max are considered user channels)
+        for (int i = 0; i < pAInConfig->Size && i < MAX_AIN_PUBLIC_CHANNELS; i++) {
+            userAdcTotal++;
             if (pAInConfig->Data[i].IsEnabled) {
-                adcEnabled++;
-                adcEnabledMask |= (1 << i);
+                userAdcEnabled++;
+            }
+        }
+        // Count internal ADCs (channels 16 and above)
+        for (int i = MAX_AIN_PUBLIC_CHANNELS; i < pAInConfig->Size; i++) {
+            internalAdcTotal++;
+            if (pAInConfig->Data[i].IsEnabled) {
+                internalAdcEnabled++;
             }
         }
     }
+    
     if (pDIOConfig) {
         for (int i = 0; i < pDIOConfig->Size; i++) {
             if (pDIOConfig->Data[i].IsInput) dioInputs++;
         }
     }
-    snprintf(buffer, sizeof(buffer), "  Channels: ADC %d/%d enabled | DIO %d/%d inputs\r\n", 
-        adcEnabled, pAInConfig ? pAInConfig->Size : 0,
+    
+    // Display separated ADC counts
+    snprintf(buffer, sizeof(buffer), "  User ADC: %d/%d | Internal ADC: %d/%d | DIO: %d/%d inputs\r\n", 
+        userAdcEnabled, userAdcTotal,
+        internalAdcEnabled, internalAdcTotal,
         dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
     context->interface->write(context, buffer, strlen(buffer));
     
-    // Show which user ADC channels (U0-U7) are enabled
-    if (adcEnabled > 0 && pAInConfig) {
-        uint8_t userChannelsEnabled = 0;
-        int userChannelCount = 0;
-        
-        // Check channels 8-15 which correspond to U0-U7
-        for (int i = 8; i < 16 && i < pAInConfig->Size; i++) {
+    // Show which specific user ADC channels are enabled
+    if (userAdcEnabled > 0 && pAInConfig) {
+        context->interface->write(context, "  Enabled user ch: ", 19);
+        bool first = true;
+        for (int i = 0; i < userAdcTotal && i < MAX_AIN_PUBLIC_CHANNELS; i++) {
             if (pAInConfig->Data[i].IsEnabled) {
-                userChannelsEnabled |= (1 << (i - 8));
-                userChannelCount++;
+                if (!first) context->interface->write(context, ",", 1);
+                snprintf(buffer, sizeof(buffer), "%d", i);
+                context->interface->write(context, buffer, strlen(buffer));
+                first = false;
             }
         }
-        
-        if (userChannelCount > 0) {
-            snprintf(buffer, sizeof(buffer), "  User ADC: %d channels (", userChannelCount);
-            context->interface->write(context, buffer, strlen(buffer));
-            bool first = true;
-            for (int i = 0; i < 8; i++) {
-                if (userChannelsEnabled & (1 << i)) {
-                    if (!first) context->interface->write(context, ",", 1);
-                    snprintf(buffer, sizeof(buffer), "U%d", i);
-                    context->interface->write(context, buffer, strlen(buffer));
-                    first = false;
-                }
-            }
-            context->interface->write(context, ")\r\n", 3);
-        }
+        context->interface->write(context, "\r\n", 2);
     }
     
     // DIO pin states
@@ -496,10 +502,10 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         
         if (DIO_ReadSampleByMask(&sample, channelMask)) {
             // Debug: show raw value
-            snprintf(buffer, sizeof(buffer), "  DIO Raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
+            snprintf(buffer, sizeof(buffer), "  DIO raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
             context->interface->write(context, buffer, strlen(buffer));
             
-            context->interface->write(context, "  DIO State: ", 13);
+            context->interface->write(context, "  DIO state: ", 13);
             // Display the state of each pin
             for (int i = 0; i < pDIOConfig->Size && i < 16; i++) {
                 if (i == 8) {
@@ -511,21 +517,19 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         }
     }
     
+    // Get streaming configuration
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    
     // Streaming and sampling - cannot be active in STANDBY
     bool canStream = (pBoardData->PowerData.powerState != STANDBY);
-    snprintf(buffer, sizeof(buffer), "  Streaming: %s | Trigger: %s\r\n",
-        (canStream && pBoardData->StreamTrigStamp > 0) ? "Active" : 
-        (!canStream ? "Disabled" : "Idle"),
-        (canStream && pBoardData->StreamTrigStamp > 0) ? "Armed" : 
-        (!canStream ? "N/A" : "Off"));
+    snprintf(buffer, sizeof(buffer), "  Streaming: %s\r\n",
+        (canStream && pRunTimeStreamConfig && pRunTimeStreamConfig->IsEnabled) ? "Active" : 
+        (!canStream ? "Disabled" : "Idle"));
     context->interface->write(context, buffer, strlen(buffer));
     
-    // System uptime - use timestamp as approximation
-    snprintf(buffer, sizeof(buffer), "  Timestamp: %u\r\n", pBoardData->StreamTrigStamp);
-    context->interface->write(context, buffer, strlen(buffer));
-    
-    // BATTERY DIAGNOSTICS Section
-    const char* battDiagHeader = "\r\n[BATTERY DIAGNOSTICS]\r\n";
+    // Battery Diagnostics Section
+    const char* battDiagHeader = "\r\n[Battery Diagnostics]\r\n";
     context->interface->write(context, battDiagHeader, strlen(battDiagHeader));
     
     // Battery voltage and charge from ADC
@@ -553,25 +557,25 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         context->interface->write(context, buffer, strlen(buffer));
         
         // Power conditions with clear explanations
-        snprintf(buffer, sizeof(buffer), "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext Power: %s)\r\n",
+        snprintf(buffer, sizeof(buffer), "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext power: %s)\r\n",
             pBQ24297Data->status.vsysStat,
-            pBQ24297Data->status.vsysStat ? "NO" : "YES",
+            pBQ24297Data->status.vsysStat ? "No" : "Yes",
             pBQ24297Data->status.pgStat,
-            pBQ24297Data->status.pgStat ? "YES" : "NO");
+            pBQ24297Data->status.pgStat ? "Yes" : "No");
         context->interface->write(context, buffer, strlen(buffer));
         
         // NTC and current limit
-        const char* ntcStr[] = {"OK", "Hot", "Cold (Battery disconnected?)", "Hot/Cold"};
+        const char* ntcStr[] = {"Ok", "Hot", "Cold (Battery disconnected?)", "Hot/Cold"};
         const char* iLimStr[] = {"100mA", "150mA", "500mA", "900mA", "1A", "1.5A", "2A", "3A"};
         
         // Read OTG GPIO pin state for debugging
         bool otgGpioState = BATT_MAN_OTG_Get();
         
-        snprintf(buffer, sizeof(buffer), "  NTC: %s | Current Limit: %s | OTG: %s (GPIO: %s)\r\n",
+        snprintf(buffer, sizeof(buffer), "  NTC: %s | Current limit: %s | OTG: %s (GPIO: %s)\r\n",
             (pBQ24297Data->status.ntcFault < 4) ? ntcStr[pBQ24297Data->status.ntcFault] : "Fault",
             (pBQ24297Data->status.inLim < 8) ? iLimStr[pBQ24297Data->status.inLim] : "Unknown",
-            pBQ24297Data->status.otg ? "ON" : "OFF",
-            otgGpioState ? "HIGH" : "LOW");
+            pBQ24297Data->status.otg ? "On" : "Off",
+            otgGpioState ? "High" : "Low");
         context->interface->write(context, buffer, strlen(buffer));
         
         // Read REG01 and REG07 for detailed status
@@ -583,7 +587,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         
         // REG01 breakdown: [7:6]=watchdog, [5]=OTG, [4]=CHG_CONFIG, [3:1]=SYS_MIN, [0]=reserved
         snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: 0x%02X (OTG=%d, CHG=%d) | REG07: 0x%02X\r\n",
-            batfetEnabled ? "Enabled" : "DISABLED!",
+            batfetEnabled ? "Enabled" : "Disabled!",
             reg01,
             (reg01 >> 5) & 1,  // OTG bit
             (reg01 >> 4) & 1,  // Charge enable bit
@@ -592,9 +596,9 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         
         // Power-up readiness - the key diagnostic info
         bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
-        snprintf(buffer, sizeof(buffer), "  >>> Power-up Ready: %s %s\r\n",
-            canPowerUp ? "YES" : "NO",
-            canPowerUp ? "" : "(Battery <3.0V AND no external power)");
+        snprintf(buffer, sizeof(buffer), "  >>> Power-up ready: %s %s\r\n",
+            canPowerUp ? "Yes" : "No",
+            canPowerUp ? "" : "(Battery <3.0V and no external power)");
         context->interface->write(context, buffer, strlen(buffer));
     } else {
         context->interface->write(context, "  BQ24297: Not initialized\r\n", 28);
@@ -787,11 +791,19 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
 }
 
 
+// OTG control functions are disabled - see command table for explanation
+#if 0
 /**
  * SCPI Callback: Control OTG mode
  * Command: SYST:POW:OTG 0|1
  * 0 = Disable OTG
  * 1 = Enable OTG
+ * 
+ * NOTE: This command is currently disabled because:
+ * - When external power is present, OTG is automatically disabled every second for safety
+ * - Manual OTG control only works on battery power
+ * - The power management system (Power_Tasks) overrides manual settings
+ * To enable manual control, would need to modify BQ24297_SetPowerMode() behavior
  */
 static scpi_result_t SCPI_SetOTGMode(scpi_t * context) {
     int param;
@@ -826,6 +838,7 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
     SCPI_ResultInt32(context, otg_enabled ? 1 : 0);
     return SCPI_RES_OK;
 }
+#endif
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     //memset(commTest.stats,0, sizeof(commTest.stats));
@@ -1192,8 +1205,12 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:BAT:LEVel?", .callback = SCPI_BatteryLevelGet,},
     {.pattern = "SYSTem:POWer:STATe?", .callback = SCPI_GetPowerState,},
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
-    {.pattern = "SYSTem:POWer:OTG?", .callback = SCPI_GetOTGMode,},
-    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_SetOTGMode,},
+    // OTG commands disabled - OTG mode is managed automatically by the power system
+    // When external power is present, OTG is always disabled for safety
+    // When on battery power, OTG is controlled by the board configuration
+    // Manual control could be enabled in future if needed for testing
+    // {.pattern = "SYSTem:POWer:OTG?", .callback = SCPI_GetOTGMode,},
+    // {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_SetOTGMode,},
     {.pattern = "SYSTem:FORce5V5POWer:STATe", .callback = SCPI_Force5v5PowerStateSet},
 
     // DIO
