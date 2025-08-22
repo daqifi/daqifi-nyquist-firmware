@@ -101,7 +101,7 @@ typedef struct
     enum eILimit inLim;
     //! From power-on configuration 0x01
     bool otg;
-    bool chg;
+    bool chgEn;  // Charge enable bit (not charging status)
     //! From charger current control register 0x02
     uint8_t ichg;
     // From operation control register 0x07

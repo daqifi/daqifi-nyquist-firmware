@@ -6,6 +6,7 @@
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
+#include "driver/winc/include/drv/driver/m2m_wifi.h"
 
 #define UNUSED(x) (void)(x)
 #define WIFI_MANAGER_UDP_LISTEN_PORT         (uint16_t)30303
@@ -276,8 +277,6 @@ static void wifi_manager_FixWincResetState(void) {
     // Assert chip enable and deassert reset to take module out of reset state
     WDRV_WINC_GPIOChipEnableAssert();
     WDRV_WINC_GPIOResetDeassert();
-    
-    LOG_D("WINC module taken out of reset state\r\n");
 }
 
 static void __attribute__((unused)) ResetAllEventFlags(wifi_manager_stateFlag_t *pEventFlagState) {
@@ -372,25 +371,47 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
         case WIFI_MANAGER_EVENT_INIT:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
 
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
-                sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
-            }
+            static bool initErrorLogged = false;
+            
+            // Check if we're already initialized (mode switch without deinit)
+            bool alreadyInitialized = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+            
+            if (!alreadyInitialized) {
+                if (sysObj.drvWifiWinc == SYS_MODULE_OBJ_INVALID || 
+                    WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_UNINITIALIZED) {
+                    sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
+                }
 
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_READY) {
-                //wait for initialization to complete 
-                SendEvent(WIFI_MANAGER_EVENT_INIT);
-                break;
+                if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_READY) {
+                    // Log error only once when entering error state
+                    if (!initErrorLogged) {
+                        LOG_E("WiFi driver not ready, retrying initialization...\r\n");
+                        initErrorLogged = true;
+                    }
+                    //wait for initialization to complete
+                    SendEvent(WIFI_MANAGER_EVENT_INIT);
+                    break;
+                }
+                // Reset error flag on success
+                if (initErrorLogged) {
+                    LOG_D("WiFi driver initialization succeeded\r\n");
+                    initErrorLogged = false;
+                }
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
             if (m2m_wifi_get_firmware_version(&pInstance->wifiFirmwareVersion) != M2M_SUCCESS) {
                 memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
             }
-            pInstance->wdrvHandle = WDRV_WINC_Open(0, 0);
-            WDRV_WINC_EthernetAddressGet(pInstance->wdrvHandle, pInstance->pWifiSettings->macAddr.addr);
+            
+            // Only open driver handle if not already open
             if (pInstance->wdrvHandle == DRV_HANDLE_INVALID) {
-                SendEvent(WIFI_MANAGER_EVENT_ERROR);
-                LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
-                break;
+                pInstance->wdrvHandle = WDRV_WINC_Open(0, 0);
+                WDRV_WINC_EthernetAddressGet(pInstance->wdrvHandle, pInstance->pWifiSettings->macAddr.addr);
+                if (pInstance->wdrvHandle == DRV_HANDLE_INVALID) {
+                    SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                    LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
+                    break;
+                }
             }
             if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&pInstance->bssCtx)) {
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -639,7 +660,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // Switching to AP mode - disconnect STA if connected
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                     GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
-                    LOG_D("Switching from STA to AP mode - performing full module reset\r\n");
+                    LOG_D("Switching from STA to AP mode\r\n");
                     
                     // Reset reconnect counter when switching modes
                     pInstance->staReconnectAttempts = 0;
@@ -651,27 +672,20 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     
-                    // Perform full module reset for clean transition
-                    // WINC1500 driver doesn't properly clean up DHCP server state
-                    // when switching modes, so a full reset is required
-                    WDRV_WINC_Close(pInstance->wdrvHandle);
-                    pInstance->wdrvHandle = DRV_HANDLE_INVALID;
-                    WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
-                    wifi_manager_FixWincResetState();
-                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+                    // Don't deinitialize - the driver gets into a bad state after deinit
+                    // Instead, just wait for STA to disconnect and then configure for AP mode
+                    vTaskDelay(pdMS_TO_TICKS(500));  // Let STA fully disconnect
                     
-                    vTaskDelay(pdMS_TO_TICKS(1000));
-                    
-                    // Transition to MainState for AP initialization
-                    returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
-                    pInstance->nextState = MainState;
+                    // Now configure for AP mode using the existing driver handle
+                    // The INIT event will reconfigure for AP without reinitializing
+                    SendEvent(WIFI_MANAGER_EVENT_INIT);
                     break;
                 }
             }
             else if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
                 // Switching to STA mode - stop AP if running
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
-                    LOG_D("Switching from AP to STA mode - performing full module reset\r\n");
+                    LOG_D("Switching from AP to STA mode\r\n");
                     
                     // Close sockets before stopping AP
                     CloseUdpSocket(&pInstance->udpServerSocket);
@@ -682,20 +696,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                     
-                    // Perform full module reset for clean transition
-                    // WINC1500 driver doesn't properly clean up DHCP server state
-                    // when switching modes, so a full reset is required
-                    WDRV_WINC_Close(pInstance->wdrvHandle);
-                    pInstance->wdrvHandle = DRV_HANDLE_INVALID;
-                    WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
-                    wifi_manager_FixWincResetState();
-                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+                    // Don't deinitialize - the driver gets into a bad state (-1) after deinit
+                    // Instead, just wait for AP to stop and then configure for STA mode
+                    vTaskDelay(pdMS_TO_TICKS(500));  // Let AP fully stop
                     
-                    vTaskDelay(pdMS_TO_TICKS(1000));
-                    
-                    // Transition to MainState for STA initialization
-                    returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
-                    pInstance->nextState = MainState;
+                    // Now configure for STA mode using the existing driver handle
+                    // The INIT event will reconfigure for STA without reinitializing
+                    SendEvent(WIFI_MANAGER_EVENT_INIT);
                     break;
                 }
             }
@@ -916,7 +923,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 wifi_tcp_server_CloseSocket();
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
                 WDRV_WINC_Close(pInstance->wdrvHandle);
+                pInstance->wdrvHandle = DRV_HANDLE_INVALID;
                 WDRV_WINC_Deinitialize(sysObj.drvWifiWinc);
+                sysObj.drvWifiWinc = SYS_MODULE_OBJ_INVALID;  // Reset system object for clean reinit
                 
                 // Fix the WINC reset state after deinit
                 wifi_manager_FixWincResetState();
@@ -933,30 +942,46 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             break;
         case WIFI_MANAGER_EVENT_ERROR:
-            // Implement power-efficient reconnect logic for STA mode
-            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
-                GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+            {
+                static bool errorLogged = false;
+                static int consecutiveErrors = 0;
                 
-                uint32_t delayMs;
-                if (pInstance->staReconnectAttempts < 5) {
-                    // First 5 attempts: 1 second delay
-                    delayMs = 1000;
-                    LOG_D("STA reconnect attempt %d/5 with 1s delay\r\n", pInstance->staReconnectAttempts + 1);
-                } else {
-                    // After 5 attempts: 30 second delay to save power
-                    delayMs = 30000;
-                    LOG_D("STA reconnect attempt %d with 30s delay (power save mode)\r\n", pInstance->staReconnectAttempts + 1);
+                consecutiveErrors++;
+                
+                // Only log error on first occurrence or every 10th error
+                if (!errorLogged || (consecutiveErrors % 10 == 0)) {
+                    LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n", __FILE__, __LINE__, consecutiveErrors);
+                    errorLogged = true;
                 }
                 
-                // Wait before attempting reconnection
-                vTaskDelay(pdMS_TO_TICKS(delayMs));
-                
-                SendEvent(WIFI_MANAGER_EVENT_REINIT);
-            } else {
-                // For AP mode or other errors, reinit immediately
-                SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                // Implement power-efficient reconnect logic for STA mode
+                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
+                    GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                    
+                    uint32_t delayMs;
+                    if (pInstance->staReconnectAttempts < 5) {
+                        // First 5 attempts: 1 second delay
+                        delayMs = 1000;
+                        if (pInstance->staReconnectAttempts == 0) {  // Only log first attempt
+                            LOG_D("STA reconnect attempt %d/5 with 1s delay\r\n", pInstance->staReconnectAttempts + 1);
+                        }
+                    } else {
+                        // After 5 attempts: 30 second delay to save power
+                        delayMs = 30000;
+                        if (pInstance->staReconnectAttempts == 5) {  // Only log when switching to power save
+                            LOG_D("Switching to power save mode - reconnect attempts with 30s delay\r\n");
+                        }
+                    }
+                    
+                    // Wait before attempting reconnection
+                    vTaskDelay(pdMS_TO_TICKS(delayMs));
+                    
+                    SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                } else {
+                    // For AP mode or other errors, reinit immediately
+                    SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                }
             }
-            LOG_E("[%s:%d]Error WiFi", __FILE__, __LINE__);
             break;
         default:
             break;
@@ -1009,6 +1034,53 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     return true;
 }
 
+wifi_status_t wifi_manager_GetWiFiStatus(void) {
+    // First check if WiFi is enabled in settings
+    if (gStateMachineContext.pWifiSettings == NULL || 
+        !gStateMachineContext.pWifiSettings->isEnabled) {
+        return WIFI_STATUS_DISABLED;
+    }
+    
+    // Check the actual WiFi driver state
+    uint8_t wifiState = m2m_wifi_get_state();
+    
+    switch(wifiState) {
+        case WIFI_STATE_START:
+            // WiFi is active, check connection status
+            
+            // For STA mode: connected means connected to a router
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                return WIFI_STATUS_CONNECTED;
+            }
+            
+            // For AP mode: check if any clients are connected
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+                // Check if we have an active TCP client connection
+                if (gStateMachineContext.pTcpServerContext && 
+                    gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
+                    return WIFI_STATUS_CONNECTED;  // Client connected to our AP
+                }
+                // AP is running but no clients connected
+                return WIFI_STATUS_DISCONNECTED;
+            }
+            
+            return WIFI_STATUS_DISCONNECTED;
+            
+        case WIFI_STATE_INIT:
+            // WiFi is initializing
+            return WIFI_STATUS_DISCONNECTED;
+            
+        case WIFI_STATE_DEINIT:
+        default:
+            // WiFi is not initialized
+            return WIFI_STATUS_DISABLED;
+    }
+}
+
+bool wifi_manager_IsWiFiConnected(void) {
+    return (wifi_manager_GetWiFiStatus() == WIFI_STATUS_CONNECTED);
+}
+
 bool wifi_manager_Deinit() {
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     SendEvent(WIFI_MANAGER_EVENT_DEINIT);
@@ -1021,9 +1093,6 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
     // This allows configuration while the device is off or WiFi is disabled
     
     if (pSettings != NULL && gStateMachineContext.pWifiSettings != NULL) {
-        // Log the update request (commented out to avoid interfering with SCPI responses)
-        // LOG_D("WiFi settings update: enabled=%d, mode=%d, ssid=%s\r\n", 
-        //       pSettings->isEnabled, pSettings->networkMode, pSettings->ssid);
         
         // Preserve the MAC address before copying new settings
         WDRV_WINC_MAC_ADDR savedMacAddr;

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "libraries/scpi/libscpi/inc/scpi/scpi.h"
+#include <stdbool.h>
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
+
 //TODO(Daqifi): Relocate for proper place
     
 /**

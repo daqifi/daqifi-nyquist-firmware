@@ -98,9 +98,10 @@ typedef struct sPowerData{
     // Variables below are meant to be updated externally
     bool USBSleep;
     bool battLow;
-    bool powerDnAllowed;
+    bool shutdownNotified;  /* Set by UI task after LED warning shown */
     double battVoltage;
     bool pONBattPresent;
+    bool autoExtPowerEnabled;  /* Auto-manage external power based on battery level (default: true) */
 
     tBQ24297Data BQ24297Data;
 

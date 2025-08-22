@@ -135,6 +135,33 @@ extern "C" {
         char BuildDate[sizeof (__DATE__)];
         char BuildTime[sizeof (__TIME__)];
     } wifi_manager_chipInfo_t;
+
+    /**
+     * WiFi module status enumeration
+     */
+    typedef enum {
+        WIFI_STATUS_DISABLED = 0,   // WiFi disabled/not initialized
+        WIFI_STATUS_DISCONNECTED,    // WiFi enabled but not connected
+        WIFI_STATUS_CONNECTED        // WiFi connected and active
+    } wifi_status_t;
+
+    /**
+     * @brief Get the current WiFi module status
+     * 
+     * Returns the current state of the WiFi module including whether it's
+     * disabled, disconnected, or connected.
+     * 
+     * @return wifi_status_t indicating current WiFi state
+     */
+    wifi_status_t wifi_manager_GetWiFiStatus(void);
+
+    /**
+     * @brief Check if WiFi is currently connected
+     * 
+     * @return true if WiFi is in CONNECTED state, false otherwise
+     */
+    bool wifi_manager_IsWiFiConnected(void);
+
     /**
      * @brief Initializes the WiFi manager and its state machine.
      * 
