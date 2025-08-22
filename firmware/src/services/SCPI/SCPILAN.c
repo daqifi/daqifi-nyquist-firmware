@@ -348,10 +348,25 @@ scpi_result_t SCPI_LANSsidSet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
-
-    return SCPI_ResultInt32(context, (int) pWifiSettings->ssid_str);
+    uint8_t rssiPercentage = 0;
+    
+    // Try to get fresh RSSI with 1 second timeout
+    if (wifi_manager_GetRSSI(&rssiPercentage, 1000)) {
+        // Successfully got fresh RSSI
+        SCPI_ResultInt32(context, (int) rssiPercentage);
+    } else {
+        // Failed to get fresh RSSI, return last known value from BoardData
+        wifi_manager_settings_t * pWifiSettings = BoardData_Get(
+                BOARDDATA_WIFI_SETTINGS, 0);
+        if (pWifiSettings != NULL) {
+            SCPI_ResultInt32(context, (int) pWifiSettings->rssi_percent);
+        } else {
+            // No valid settings, return 0
+            SCPI_ResultInt32(context, 0);
+        }
+    }
+    
+    return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANSecurityGet(scpi_t * context) {
