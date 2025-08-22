@@ -106,7 +106,7 @@ size_t LogMessagePop(uint8_t* buffer, size_t maxSize);
 // Helper macro to get the log level for the current module
 // Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)
 #ifndef LOG_LVL
-    #define LOG_LVL LOG_LEVEL_DEBUG  // Default to debug if not specified
+    #define LOG_LVL LOG_LEVEL_ERROR  // Default to error debug if not specified
 #endif
 
 #if defined(LOG_EN) && (LOG_EN == LOG_ENABLE)
