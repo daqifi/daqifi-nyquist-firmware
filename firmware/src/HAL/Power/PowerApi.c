@@ -277,6 +277,8 @@ static void Power_Up(bool enableExtPower) {
      */
     if (enableExtPower) {
         // User wants external power - check if we should enable it
+        // Refresh charger/power-good status before making decisions
+        BQ24297_UpdateStatusSafe();
         bool hasExternalPower = pData->BQ24297Data.status.pgStat;
         
         if (hasExternalPower) {
@@ -389,6 +391,9 @@ static void Power_HandleStandbyState(void) {
     if (pData->requestedPowerState == DO_POWER_UP || 
         pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
         
+        /* Refresh charger/power-good status before power-up decision */
+        BQ24297_UpdateStatusSafe();
+        
         if (Power_HasSufficientPower()) {
             // Power up with or without external power based on request
             bool enableExtPower = (pData->requestedPowerState == DO_POWER_UP);
@@ -458,6 +463,8 @@ static void Power_HandlePoweredUpState(void) {
     }
     /* Automatic transition when battery needs conservation */
     else if (!hasExternalPower) {
+        /* Refresh charger/power-good status before threshold decision */
+        BQ24297_UpdateStatusSafe();
         /* Get fresh battery reading before threshold decision */
         Power_UpdateChgPct();
         
@@ -489,6 +496,8 @@ static void Power_HandlePoweredUpExtDownState(void) {
     
     // Check for automatic recovery if auto external power control is enabled
     if (pData->autoExtPowerEnabled) {
+        // Refresh charger/power-good status before making decisions
+        BQ24297_UpdateStatusSafe();
         // Get fresh battery reading
         Power_UpdateChgPct();
         
@@ -506,6 +515,8 @@ static void Power_HandlePoweredUpExtDownState(void) {
     
     // Handle user power state change requests
     if (pData->requestedPowerState == DO_POWER_UP) {
+        // Refresh charger/power-good status before making decisions
+        BQ24297_UpdateStatusSafe();
         // Get fresh battery reading before decision
         Power_UpdateChgPct();
         
@@ -526,6 +537,8 @@ static void Power_HandlePoweredUpExtDownState(void) {
     }
     /* Critical battery check - must shut down to prevent damage */
     else if (!hasExternalPower) {
+        /* Refresh charger/power-good status before critical decision */
+        BQ24297_UpdateStatusSafe();
         /* Get fresh battery reading for critical safety decision */
         Power_UpdateChgPct();
         
