@@ -1,4 +1,5 @@
 #define LOG_EN  LOG_WIFI
+#define LOG_LVL LOG_LEVEL_WIFI
 #include "wifi_manager.h"
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"

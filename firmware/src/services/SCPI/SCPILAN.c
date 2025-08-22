@@ -1,3 +1,6 @@
+#define LOG_EN  LOG_SCPI
+#define LOG_LVL LOG_LEVEL_SCPI
+
 #include "SCPILAN.h"
 
 // General
@@ -17,8 +20,6 @@
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
-
-#include "Util/Logger.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 
