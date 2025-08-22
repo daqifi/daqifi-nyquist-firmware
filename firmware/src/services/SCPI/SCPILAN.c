@@ -24,6 +24,8 @@
 
 #define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
 
+// WiFi status functions have been moved to wifi_manager
+
 /**
  * Encodes the given ip multi-address as a scpi string
  * @param context The scpi context
@@ -204,12 +206,20 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // Validate network mode: 1 = STA, 4 = AP
     switch (param1) {
-        case WIFI_MANAGER_NETWORK_MODE_AP:
-        case WIFI_MANAGER_NETWORK_MODE_STA:
+        case WIFI_MANAGER_NETWORK_MODE_STA:  // 1
+        case WIFI_MANAGER_NETWORK_MODE_AP:   // 4
             break;
         default:
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             return SCPI_RES_ERR;
+    }
+
+    // Check if already in the requested mode - no-op if so
+    if (pRunTimeWifiSettings->networkMode == (uint8_t)param1) {
+        // Already in requested mode, nothing to do
+        return SCPI_RES_OK;
     }
 
     pRunTimeWifiSettings->networkMode = (uint8_t) param1;
@@ -346,7 +356,14 @@ scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
 scpi_result_t SCPI_LANSecurityGet(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    SCPI_ResultInt32(context, pWifiSettings->securityMode);
+    
+    // Normalize mode 4 (deprecated WPA) to mode 3 for consistency
+    int32_t mode = pWifiSettings->securityMode;
+    if (mode == WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED) {
+        mode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
+    }
+    
+    SCPI_ResultInt32(context, mode);
     return SCPI_RES_OK;
 }
 
@@ -359,38 +376,44 @@ scpi_result_t SCPI_LANSecuritySet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // Validate security mode and handle supported/unsupported modes
     switch (param1) {
-        case WIFI_MANAGER_SECURITY_MODE_OPEN: // DAQiFi defines 0 = SECURITY_OPEN
+        case WIFI_MANAGER_SECURITY_MODE_OPEN: // 0 = SECURITY_OPEN
+            // Check if already in OPEN mode
+            if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN) {
+                return SCPI_RES_OK;  // No change needed
+            }
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_OPEN;
             break;
-        case WIFI_MANAGER_SECURITY_MODE_WEP_40: // DAQiFi defines 1 = WEP_40 which is now deprecated
-            return SCPI_RES_ERR;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_WEP_104: // DAQiFi defines 2 = WEP_104 which is now deprecated
-            return SCPI_RES_ERR;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // DAQiFi defines 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
-        case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED: //DAQiFi defines 4 = WIFI_API_SEC_WPA_DEPRECATED - keeping for backwards compatibility
+        case WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE: // 3 = SECURITY_WPA_AUTO_WITH_PASS_PHRASE
+        case WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED: // 4 = WPA_DEPRECATED - keeping for backwards compatibility
+            // Both modes 3 and 4 normalize to mode 3 (WPA_AUTO_WITH_PASS_PHRASE)
+            // Check if already in WPA mode (stored as mode 3)
+            if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE ||
+                pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED) {
+                // Already in WPA mode (could be stored as 3 or 4 from legacy code)
+                // Normalize to mode 3 if it's currently 4
+                if (pRunTimeWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_WPA_DEPRECATED) {
+                    pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
+                }
+                return SCPI_RES_OK;  // No change needed
+            }
             pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_WPA_AUTO_WITH_PASS_PHRASE;
             break;
-        case WIFI_MANAGER_SECURITY_MODE_802_1X: // DAQiFi defines 5 = WDRV_WINC_AUTH_TYPE_802_1X
-            return SCPI_RES_ERR; // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_802_1X;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2: // DAQiFi defines 6 = WDRV_WINC_AUTH_TYPE_802_1X_MSCHAPV2
-            return SCPI_RES_ERR; // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2;
-            break;
-        case WIFI_MANAGER_SECURITY_MODE_WPS_PUSH_BUTTON: // DAQiFi defines 7 = SECURITY_WPS_PUSH_BUTTON which is now deprecated
+        
+        // Deprecated/unsupported modes
+        case WIFI_MANAGER_SECURITY_MODE_WEP_40: // 1 = WEP_40 (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_WEP_104: // 2 = WEP_104 (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_802_1X: // 5 = 802.1X (not implemented)
+        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_MSCHAPV2: // 6 = 802.1X_MSCHAPV2 (not implemented)
+        case WIFI_MANAGER_SECURITY_MODE_WPS_PUSH_BUTTON: // 7 = WPS_PUSH_BUTTON (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_SEC_WPS_PIN: // 8 = WPS_PIN (deprecated)
+        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS: // 9 = 802.1X_TLS (not implemented)
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             return SCPI_RES_ERR;
-        case WIFI_MANAGER_SECURITY_MODE_SEC_WPS_PIN: // DAQiFi defines 8 = SECURITY_WPS_PIN which is now deprecated
-            return SCPI_RES_ERR;
-        case WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS: // DAQiFi defines 9 = WDRV_WINC_AUTH_TYPE_802_1X_TLS
-            return SCPI_RES_ERR; // Not currently implemented
-            pRunTimeWifiSettings->securityMode = WIFI_MANAGER_SECURITY_MODE_SEC_802_1X_TLS;
-            break;
-
+            
         default:
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             return SCPI_RES_ERR;
     }
 
