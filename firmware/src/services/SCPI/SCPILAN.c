@@ -21,8 +21,6 @@
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
 
-#define LOG_LEVEL_LOCAL 'D'
-
 #define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
 
 // WiFi status functions have been moved to wifi_manager
