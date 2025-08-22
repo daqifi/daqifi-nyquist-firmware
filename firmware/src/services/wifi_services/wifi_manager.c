@@ -56,6 +56,7 @@ struct stateMachineInst {
     wifi_manager_stateFlag_t eventFlags;
     wifi_manager_settings_t *pWifiSettings;
     DRV_HANDLE wdrvHandle;
+    WDRV_WINC_ASSOC_HANDLE assocHandle;  // Store association handle for RSSI queries
     SOCKET udpServerSocket;
     wifi_tcp_server_context_t *pTcpServerContext;
     WDRV_WINC_BSS_CONTEXT bssCtx;
@@ -86,8 +87,48 @@ static stateMachineInst_t gStateMachineContext;
 static QueueHandle_t gEventQH = NULL;
 //(TODO(Daqifi):Remove from here
 static wifi_tcp_server_context_t gTcpServerContext;
+
+// Volatile flags for on-demand RSSI queries
+static volatile bool gRssiUpdatePending = false;
+static volatile bool gRssiUpdateComplete = false;
+static volatile uint8_t gLastRssiPercentage = 0;
+
 //===========================================================
 //=====================Private Callbacks=====================
+
+static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, int8_t rssi) {
+    // In ISR/callback context - keep this minimal
+    // Validate this callback is for our current association
+    taskENTER_CRITICAL();
+    if (assocHandle != gStateMachineContext.assocHandle) {
+        taskEXIT_CRITICAL();
+        return;
+    }
+    
+    // Convert RSSI (dBm) to a 0-100 scale for compatibility
+    // RSSI typically ranges from -100 dBm (poor) to -30 dBm (excellent)
+    int signalStrength;
+    if (rssi >= -30) {
+        signalStrength = 100;
+    } else if (rssi <= -100) {
+        signalStrength = 0;
+    } else {
+        // Linear scale from -100 to -30
+        signalStrength = ((rssi + 100) * 100) / 70;
+    }
+    
+    // Update all shared state atomically within critical section
+    gLastRssiPercentage = (uint8_t)signalStrength;
+    if (gStateMachineContext.pWifiSettings != NULL) {
+        gStateMachineContext.pWifiSettings->rssi_percent = (uint8_t)signalStrength;
+    }
+    if (gRssiUpdatePending) {
+        gRssiUpdateComplete = true;
+        gRssiUpdatePending = false;
+    }
+    taskEXIT_CRITICAL();
+    // No logging in ISR/callback context - keep it minimal
+}
 
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
@@ -116,9 +157,11 @@ static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandl
 static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
         LOG_D("STA mode: Station connected\r\n");
+        gStateMachineContext.assocHandle = assocHandle;  // Store association handle for RSSI queries
         SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState && errorCode != WDRV_WINC_CONN_ERROR_INPROGRESS) {
         LOG_D("STA mode: Station disconnected\r\n");
+        gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;  // Clear association handle
         SendEvent(WIFI_MANAGER_EVENT_STA_DISCONNECTED);
     }
 }
@@ -333,6 +376,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
+            pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
             if (pInstance->pWifiSettings->isEnabled) {
                 if (pInstance->pWifiSettings->isOtaModeEnabled)
                     SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
@@ -561,6 +605,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->staReconnectAttempts = 0;
             LOG_D("STA connection successful, reset reconnect counter\r\n");
             
+            // Request initial RSSI after connection
+            if (pInstance->assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
+                int8_t rssi;
+                WDRV_WINC_STATUS status = WDRV_WINC_AssocRSSIGet(pInstance->assocHandle, &rssi, RssiEventCallback);
+                if (status == WDRV_WINC_STATUS_OK) {
+                    // RSSI was cached, update immediately
+                    RssiEventCallback(pInstance->wdrvHandle, pInstance->assocHandle, rssi);
+                }
+                // else if status == WDRV_WINC_STATUS_RETRY_REQUEST, callback will be called later
+            }
+            
             if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                 if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -586,6 +641,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             wifi_tcp_server_CloseSocket();
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+            
+            // Clear signal strength on disconnect
+            if (pInstance->pWifiSettings != NULL) {
+                pInstance->pWifiSettings->rssi_percent = 0;
+            }
             
             // Only increment attempts if we're in STA mode
             if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
@@ -1141,6 +1201,7 @@ void wifi_manager_ProcessState() {
         return;
     }
     wifi_tcp_server_TransmitBufferedData();
+    
     if (xQueueReceive(gEventQH, &event, 1) != pdPASS) {
         return;
     }
@@ -1158,4 +1219,85 @@ void wifi_manager_ProcessState() {
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
+}
+
+bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
+    // Check if we're connected as STA
+    if (!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED) ||
+        gStateMachineContext.assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
+        // Not connected, return 0
+        if (pRssi != NULL) {
+            *pRssi = 0;
+        }
+        return false;
+    }
+    
+    // Reset flags with critical section to prevent race conditions
+    taskENTER_CRITICAL();
+    gRssiUpdatePending = true;
+    gRssiUpdateComplete = false;
+    taskEXIT_CRITICAL();
+    
+    // Request RSSI from WiFi module
+    int8_t rssi;
+    WDRV_WINC_STATUS status = WDRV_WINC_AssocRSSIGet(gStateMachineContext.assocHandle, &rssi, RssiEventCallback);
+    
+    if (status == WDRV_WINC_STATUS_OK) {
+        // RSSI was cached, callback was already called
+        taskENTER_CRITICAL();
+        if (pRssi != NULL) {
+            *pRssi = gLastRssiPercentage;
+        }
+        gRssiUpdatePending = false;
+        gRssiUpdateComplete = false;  // Clear for next call
+        taskEXIT_CRITICAL();
+        return true;
+    } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
+        // Need to wait for callback
+        uint32_t startTime = SYS_TIME_CounterGet();
+        uint32_t elapsed = 0;
+        
+        // Wait for callback or timeout
+        bool updateComplete = false;
+        while (!updateComplete && elapsed < timeoutMs) {
+            vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
+            
+            taskENTER_CRITICAL();
+            updateComplete = gRssiUpdateComplete;
+            taskEXIT_CRITICAL();
+            
+            elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
+        }
+        
+        taskENTER_CRITICAL();
+        if (updateComplete) {
+            if (pRssi != NULL) {
+                *pRssi = gLastRssiPercentage;
+            }
+            // Clear flags for next call
+            gRssiUpdatePending = false;
+            gRssiUpdateComplete = false;
+            taskEXIT_CRITICAL();
+            return true;
+        } else {
+            // Timeout - return last known value if available
+            gRssiUpdatePending = false;
+            gRssiUpdateComplete = false;
+            if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
+                *pRssi = gStateMachineContext.pWifiSettings->rssi_percent;
+            }
+            taskEXIT_CRITICAL();
+            return false;
+        }
+    } else {
+        // Error getting RSSI
+        taskENTER_CRITICAL();
+        gRssiUpdatePending = false;
+        gRssiUpdateComplete = false;  // Clear for next call
+        if (pRssi != NULL && gStateMachineContext.pWifiSettings != NULL) {
+            *pRssi = gStateMachineContext.pWifiSettings->rssi_percent; // Return last known value
+        }
+        taskEXIT_CRITICAL();
+        return false;
+    }
 }
