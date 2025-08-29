@@ -186,15 +186,13 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
         wifi_locked = true;
         
         pRunTimeWifiSettings->isEnabled = true;
-        
-        // Release mutex immediately after successful enable - don't hold it forever
-        SPI0_Mutex_Unlock(SPI0_CLIENT_WIFI);
-        wifi_locked = false;
+        // Keep mutex held while WiFi is enabled (safe mutual exclusion)
     } else {
         pRunTimeWifiSettings->isEnabled = false;
         
         // Release SPI0 bus when disabling WiFi
         SPI0_Mutex_Unlock(SPI0_CLIENT_WIFI);
+        wifi_locked = false;
     }
     // LOG_D("WiFi enabled set to %d in runtime config\r\n", param1);
     
