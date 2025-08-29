@@ -26,6 +26,9 @@ typedef enum {
     SPI0_CLIENT_MAX
 } spi0_client_t;
 
+// Timeout sentinel value for using default timeouts
+#define SPI0_MUTEX_USE_DEFAULT ((TickType_t)~(TickType_t)0)
+
 // SPI0 mutex functions
 bool SPI0_Mutex_Initialize(void);
 bool SPI0_Mutex_Lock(spi0_client_t client, TickType_t timeout);

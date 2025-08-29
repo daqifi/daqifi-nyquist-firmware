@@ -31,6 +31,7 @@ extern bool SPI0_Mutex_Lock(int client, unsigned int timeout);
 extern void SPI0_Mutex_Unlock(int client);
 #define SPI0_CLIENT_SD_CARD 0
 #define SPI0_CLIENT_WIFI 1
+#define SPI0_MUTEX_USE_DEFAULT ((unsigned int)~(unsigned int)0)
 #include <string.h>
 
 /* ************************************************************************** */
@@ -71,8 +72,8 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         goto __exit_point;
     }
     if (param1 != 0) {
-        // Try to acquire SPI0 bus for SD card (with priority)
-        if (!SPI0_Mutex_Lock(SPI0_CLIENT_SD_CARD, 0)) {
+        // Try to acquire SPI0 bus for SD card (with default timeout)  
+        if (!SPI0_Mutex_Lock(SPI0_CLIENT_SD_CARD, SPI0_MUTEX_USE_DEFAULT)) {
             context->interface->write(context, "\r\nError: SPI0 bus busy, cannot enable SD card\r\n", 47);
             result = SCPI_RES_ERR;
             goto __exit_point;
