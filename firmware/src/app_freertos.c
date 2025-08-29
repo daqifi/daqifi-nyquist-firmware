@@ -17,6 +17,9 @@ typedef enum {
     SPI0_CLIENT_MAX
 } spi0_client_t;
 
+// Timeout sentinel value for using default timeouts
+#define SPI0_MUTEX_USE_DEFAULT ((TickType_t)~(TickType_t)0)
+
 // Static variables for SPI0 mutex
 static SemaphoreHandle_t spi0_mutex = NULL;
 static spi0_client_t current_owner = SPI0_CLIENT_MAX;
@@ -283,11 +286,12 @@ void app_SystemInit() {
 bool SPI0_Mutex_Initialize(void)
 {
     if (spi0_mutex == NULL) {
-        spi0_mutex = xSemaphoreCreateBinary();
+        // Use proper mutex with priority inheritance (not binary semaphore)
+        spi0_mutex = xSemaphoreCreateMutex();
         if (spi0_mutex == NULL) {
             return false;
         }
-        xSemaphoreGive(spi0_mutex);
+        // Mutex starts in unlocked state by default
         current_owner = SPI0_CLIENT_MAX;
         owner_task = NULL;
     }
@@ -301,7 +305,7 @@ bool SPI0_Mutex_Lock(spi0_client_t client, TickType_t timeout)
     }
     
     TickType_t wait_time = timeout;
-    if (timeout == 0) {
+    if (timeout == SPI0_MUTEX_USE_DEFAULT) {
         wait_time = (client == SPI0_CLIENT_SD_CARD) ? 
                     pdMS_TO_TICKS(SPI0_SD_TIMEOUT_MS) : 
                     pdMS_TO_TICKS(SPI0_WIFI_TIMEOUT_MS);
@@ -322,10 +326,11 @@ void SPI0_Mutex_Unlock(spi0_client_t client)
         return;
     }
     
+    // For proper mutex, only the owner can unlock (FreeRTOS enforces this)
     if (current_owner == client && owner_task == xTaskGetCurrentTaskHandle()) {
         current_owner = SPI0_CLIENT_MAX;
         owner_task = NULL;
-        xSemaphoreGive(spi0_mutex);
+        xSemaphoreGive(spi0_mutex);  // FreeRTOS mutex handles priority inheritance
     }
 }
 
