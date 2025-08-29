@@ -171,6 +171,7 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
             BOARDRUNTIME_WIFI_SETTINGS);
     scpi_result_t result;
     int param1;
+    bool wifi_locked = false;
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -182,8 +183,10 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        wifi_locked = true;
         
         pRunTimeWifiSettings->isEnabled = true;
+        // If any subsequent failure occurs, mutex will be released in __exit_point
     } else {
         pRunTimeWifiSettings->isEnabled = false;
         
@@ -194,6 +197,10 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
     
     result = SCPI_RES_OK;
 __exit_point:
+    // Prevent mutex leak on error paths
+    if (wifi_locked && result == SCPI_RES_ERR) {
+        SPI0_Mutex_Unlock(SPI0_CLIENT_WIFI);
+    }
     return result;
 }
 

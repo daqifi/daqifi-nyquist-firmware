@@ -65,7 +65,8 @@ extern void SPI0_Mutex_Unlock(int client);
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);    
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    bool sd_locked = false;
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         result = SCPI_RES_ERR;
@@ -78,11 +79,13 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        sd_locked = true;
         
         // Don't check for SD card presence here - let the SD card manager task handle it
         // This prevents blocking the SCPI handler if no card is present
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
         pSdCardRuntimeConfig->enable = true;
+        // If any subsequent failure occurs, mutex will be released in __exit_point
     } else {
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
         pSdCardRuntimeConfig->enable = false;
@@ -94,6 +97,10 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     result = SCPI_RES_OK;  
 __exit_point:
+    // Prevent mutex leak on error paths
+    if (sd_locked && result == SCPI_RES_ERR) {
+        SPI0_Mutex_Unlock(SPI0_CLIENT_SD_CARD);
+    }
     return result;
 }
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
