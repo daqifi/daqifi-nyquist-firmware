@@ -85,7 +85,10 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         // This prevents blocking the SCPI handler if no card is present
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
         pSdCardRuntimeConfig->enable = true;
-        // If any subsequent failure occurs, mutex will be released in __exit_point
+        
+        // Release mutex immediately after successful enable - don't hold it forever  
+        SPI0_Mutex_Unlock(SPI0_CLIENT_SD_CARD);
+        sd_locked = false;
     } else {
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
         pSdCardRuntimeConfig->enable = false;
