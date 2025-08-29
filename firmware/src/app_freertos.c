@@ -8,6 +8,26 @@
 #include "services/wifi_services/wifi_manager.h"
 #include "services/sd_card_services/sd_card_manager.h"
 #include "HAL/DIO.h"
+
+// SPI0 Bus Mutex Implementation (inline)
+// SPI0 bus clients
+typedef enum {
+    SPI0_CLIENT_SD_CARD = 0,    // Higher priority
+    SPI0_CLIENT_WIFI = 1,       // Lower priority
+    SPI0_CLIENT_MAX
+} spi0_client_t;
+
+// Static variables for SPI0 mutex
+static SemaphoreHandle_t spi0_mutex = NULL;
+static spi0_client_t current_owner = SPI0_CLIENT_MAX;
+static TaskHandle_t owner_task = NULL;
+
+#define SPI0_SD_TIMEOUT_MS     5000    // SD card can wait 5 seconds
+#define SPI0_WIFI_TIMEOUT_MS   100     // WiFi gets shorter timeout
+
+bool SPI0_Mutex_Initialize(void);
+bool SPI0_Mutex_Lock(spi0_client_t client, TickType_t timeout);
+void SPI0_Mutex_Unlock(spi0_client_t client);
 #include "HAL/ADC.h"
 #include "services/streaming.h"
 #include "HAL/UI/UI.h"
@@ -157,6 +177,12 @@ void app_PowerAndUITask(void) {
 }
 
 void app_SystemInit() {
+    // Initialize SPI0 bus mutex for WiFi/SD card coordination
+    if (!SPI0_Mutex_Initialize()) {
+        // Handle initialization failure - could log error here
+        // For now, continue without mutex (fallback to original mutual exclusion)
+    }
+    
     DaqifiSettings tmpTopLevelSettings;
     DaqifiSettings tmpSettings;
 
@@ -251,6 +277,56 @@ void app_SystemInit() {
             gpBoardRuntimeConfig,
             gpBoardData);
     EVIC_SourceEnable(INT_SOURCE_CHANGE_NOTICE_A);
+}
+
+// SPI0 Mutex Implementation Functions
+bool SPI0_Mutex_Initialize(void)
+{
+    if (spi0_mutex == NULL) {
+        spi0_mutex = xSemaphoreCreateBinary();
+        if (spi0_mutex == NULL) {
+            return false;
+        }
+        xSemaphoreGive(spi0_mutex);
+        current_owner = SPI0_CLIENT_MAX;
+        owner_task = NULL;
+    }
+    return true;
+}
+
+bool SPI0_Mutex_Lock(spi0_client_t client, TickType_t timeout)
+{
+    if (spi0_mutex == NULL || client >= SPI0_CLIENT_MAX) {
+        return false;
+    }
+    
+    TickType_t wait_time = timeout;
+    if (timeout == 0) {
+        wait_time = (client == SPI0_CLIENT_SD_CARD) ? 
+                    pdMS_TO_TICKS(SPI0_SD_TIMEOUT_MS) : 
+                    pdMS_TO_TICKS(SPI0_WIFI_TIMEOUT_MS);
+    }
+    
+    if (xSemaphoreTake(spi0_mutex, wait_time) == pdTRUE) {
+        current_owner = client;
+        owner_task = xTaskGetCurrentTaskHandle();
+        return true;
+    }
+    
+    return false;
+}
+
+void SPI0_Mutex_Unlock(spi0_client_t client)
+{
+    if (spi0_mutex == NULL || client >= SPI0_CLIENT_MAX) {
+        return;
+    }
+    
+    if (current_owner == client && owner_task == xTaskGetCurrentTaskHandle()) {
+        current_owner = SPI0_CLIENT_MAX;
+        owner_task = NULL;
+        xSemaphoreGive(spi0_mutex);
+    }
 }
 
 static void app_TasksCreate() {

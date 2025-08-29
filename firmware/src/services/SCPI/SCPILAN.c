@@ -17,6 +17,11 @@
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
+// SPI0 mutex functions declared in app_freertos.c
+extern bool SPI0_Mutex_Lock(int client, unsigned int timeout);
+extern void SPI0_Mutex_Unlock(int client);
+#define SPI0_CLIENT_SD_CARD 0
+#define SPI0_CLIENT_WIFI 1
 
 #include "Util/Logger.h"
 
@@ -164,19 +169,26 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     scpi_result_t result;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     int param1;
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    if (param1 != 0 && pSdCardRuntimeConfig->enable == 1) {
-        context->interface->write(context, SD_CARD_ACTIVE_ERROR_MSG, strlen(SD_CARD_ACTIVE_ERROR_MSG));
-        result = SCPI_RES_ERR;
-        goto __exit_point;
+    if (param1 != 0) {
+        // Try to acquire SPI0 bus for WiFi (lower priority than SD card)
+        if (!SPI0_Mutex_Lock(SPI0_CLIENT_WIFI, 0)) {
+            context->interface->write(context, "\r\nError: SPI0 bus busy (SD card has priority)\r\n", 50);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+        
+        pRunTimeWifiSettings->isEnabled = true;
+    } else {
+        pRunTimeWifiSettings->isEnabled = false;
+        
+        // Release SPI0 bus when disabling WiFi
+        SPI0_Mutex_Unlock(SPI0_CLIENT_WIFI);
     }
-
-    pRunTimeWifiSettings->isEnabled = (bool) param1;
     // LOG_D("WiFi enabled set to %d in runtime config\r\n", param1);
     
     result = SCPI_RES_OK;

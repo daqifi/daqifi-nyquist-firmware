@@ -134,7 +134,7 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
     //.serverData = {0},
     .sdCardConfig={
         .enable=false,
-        .directory="Daqifi",
+        .directory="DAQiFi",
         .file="default.bin",
         .mode=SD_CARD_MANAGER_MODE_NONE,
     },    
