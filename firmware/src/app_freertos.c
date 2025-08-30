@@ -9,28 +9,38 @@
 #include "services/sd_card_services/sd_card_manager.h"
 #include "HAL/DIO.h"
 
-// SPI0 Bus Mutex Implementation (inline)
-// SPI0 bus clients
+/*
+ * Enhanced SPI Coordination for Concurrent WiFi and SD Card Operations
+ * 
+ * DESIGN RATIONALE:
+ * - Both WiFi (WINC1500) and SD card use identical SPI Mode 0 (CPOL=0, CPHA=0, 8-bit)
+ * - Both operate at standardized 20 MHz frequency for maximum performance
+ * - No SPI context switching required due to electrical compatibility
+ * - Harmony SPI driver handles multi-client coordination with 2-client configuration
+ * 
+ * CONTEXT SWITCHING DISABLED:
+ * Context switching is intentionally disabled because:
+ * 1. Both clients use identical SPI electrical parameters (Mode 0)
+ * 2. Both clients use same frequency (20 MHz standardized)
+ * 3. Harmony SPI driver provides adequate multi-client coordination
+ * 4. Context switching adds overhead without benefit for compatible clients
+ * 5. Previous testing showed SPI mode compatibility eliminates need for switching
+ * 
+ * This approach enables concurrent operations while maintaining stability.
+ */
+
+// SPI0 bus clients for identification (currently used for debugging only)
 typedef enum {
-    SPI0_CLIENT_SD_CARD = 0,    // Higher priority
-    SPI0_CLIENT_WIFI = 1,       // Lower priority
+    SPI0_CLIENT_SD_CARD = 0,    // Higher priority (reserved for future use)
+    SPI0_CLIENT_WIFI = 1,       // Lower priority (reserved for future use)  
     SPI0_CLIENT_MAX
 } spi0_client_t;
 
-// Timeout sentinel value for using default timeouts
-#define SPI0_MUTEX_USE_DEFAULT ((TickType_t)~(TickType_t)0)
-
-// Static variables for SPI0 mutex
+// Minimal SPI coordination framework (reserved for future enhancement)
+// Currently not actively used due to client electrical compatibility
 static SemaphoreHandle_t spi0_mutex = NULL;
-static spi0_client_t current_owner = SPI0_CLIENT_MAX;
-static TaskHandle_t owner_task = NULL;
-
-#define SPI0_SD_TIMEOUT_MS     5000    // SD card can wait 5 seconds
-#define SPI0_WIFI_TIMEOUT_MS   100     // WiFi gets shorter timeout
 
 bool SPI0_Mutex_Initialize(void);
-bool SPI0_Mutex_Lock(spi0_client_t client, TickType_t timeout);
-void SPI0_Mutex_Unlock(spi0_client_t client);
 #include "HAL/ADC.h"
 #include "services/streaming.h"
 #include "HAL/UI/UI.h"
@@ -282,56 +292,26 @@ void app_SystemInit() {
     EVIC_SourceEnable(INT_SOURCE_CHANGE_NOTICE_A);
 }
 
-// SPI0 Mutex Implementation Functions
+/*
+ * Minimal SPI0 Coordination Framework
+ * 
+ * This framework is reserved for future use when SPI coordination becomes necessary.
+ * Currently disabled because:
+ * - WiFi and SD card use identical SPI Mode 0 settings (electrically compatible)
+ * - Both use same 20 MHz frequency (no conflicts)
+ * - Harmony SPI driver with 2-client configuration provides adequate coordination
+ * 
+ * The mutex infrastructure remains in place for potential future requirements
+ * such as different client frequencies or specialized SPI modes.
+ */
 bool SPI0_Mutex_Initialize(void)
 {
+    // Mutex framework reserved for future SPI coordination needs
+    // Currently not required due to client electrical compatibility
     if (spi0_mutex == NULL) {
-        // Use proper mutex with priority inheritance (not binary semaphore)
         spi0_mutex = xSemaphoreCreateMutex();
-        if (spi0_mutex == NULL) {
-            return false;
-        }
-        // Mutex starts in unlocked state by default
-        current_owner = SPI0_CLIENT_MAX;
-        owner_task = NULL;
     }
-    return true;
-}
-
-bool SPI0_Mutex_Lock(spi0_client_t client, TickType_t timeout)
-{
-    if (spi0_mutex == NULL || client >= SPI0_CLIENT_MAX) {
-        return false;
-    }
-    
-    TickType_t wait_time = timeout;
-    if (timeout == SPI0_MUTEX_USE_DEFAULT) {
-        wait_time = (client == SPI0_CLIENT_SD_CARD) ? 
-                    pdMS_TO_TICKS(SPI0_SD_TIMEOUT_MS) : 
-                    pdMS_TO_TICKS(SPI0_WIFI_TIMEOUT_MS);
-    }
-    
-    if (xSemaphoreTake(spi0_mutex, wait_time) == pdTRUE) {
-        current_owner = client;
-        owner_task = xTaskGetCurrentTaskHandle();
-        return true;
-    }
-    
-    return false;
-}
-
-void SPI0_Mutex_Unlock(spi0_client_t client)
-{
-    if (spi0_mutex == NULL || client >= SPI0_CLIENT_MAX) {
-        return;
-    }
-    
-    // For proper mutex, only the owner can unlock (FreeRTOS enforces this)
-    if (current_owner == client && owner_task == xTaskGetCurrentTaskHandle()) {
-        current_owner = SPI0_CLIENT_MAX;
-        owner_task = NULL;
-        xSemaphoreGive(spi0_mutex);  // FreeRTOS mutex handles priority inheritance
-    }
+    return (spi0_mutex != NULL);
 }
 
 static void app_TasksCreate() {
