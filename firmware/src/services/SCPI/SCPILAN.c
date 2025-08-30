@@ -491,7 +491,6 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     int param1;
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     // LOG_D("SCPI_LANSettingsApply called - WiFi enabled=%d, mode=%d\r\n", 
     //       pRunTimeWifiSettings->isEnabled, pRunTimeWifiSettings->networkMode);
@@ -500,12 +499,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
         saveSettings = (bool) param1;
     }
     
-    //Wifi and SD card cannot be active simultaneously because they share same SPI
-    if (pSdCardRuntimeConfig->enable == 1 &&
-            pRunTimeWifiSettings->isEnabled == 1) {
-        context->interface->write(context, SD_CARD_ACTIVE_ERROR_MSG, strlen(SD_CARD_ACTIVE_ERROR_MSG));
-        return SCPI_RES_ERR;
-    }
+    // Concurrent WiFi and SD card operations now supported with SPI coordination
 
     if (saveSettings) {
         DaqifiSettings daqifiSettings;

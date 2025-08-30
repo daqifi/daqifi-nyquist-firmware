@@ -160,7 +160,13 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
         gStateMachineContext.assocHandle = assocHandle;  // Store association handle for RSSI queries
         SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState && errorCode != WDRV_WINC_CONN_ERROR_INPROGRESS) {
-        LOG_D("STA mode: Station disconnected\r\n");
+        LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ms, Reason: %s\r\n", 
+              errorCode, (unsigned int)xTaskGetTickCount(),
+              (errorCode == WDRV_WINC_CONN_ERROR_AUTH) ? "Auth Failed" :
+              (errorCode == WDRV_WINC_CONN_ERROR_ASSOC) ? "Association Failed" :
+              (errorCode == WDRV_WINC_CONN_ERROR_SCAN) ? "Scan Failed" :
+              (errorCode == WDRV_WINC_CONN_ERROR_NOCRED) ? "No Credentials" :
+              "Unknown");
         gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;  // Clear association handle
         SendEvent(WIFI_MANAGER_EVENT_STA_DISCONNECTED);
     }
@@ -635,6 +641,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
             break;
         case WIFI_MANAGER_EVENT_STA_DISCONNECTED:
+            // Essential disconnect logging only (not high-frequency)
+            LOG_E("WiFi Disconnected at %u ms\r\n", (unsigned int)xTaskGetTickCount());
+            
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
             CloseUdpSocket(&pInstance->udpServerSocket);
