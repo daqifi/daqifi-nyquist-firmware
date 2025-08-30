@@ -10,37 +10,58 @@
 #include "HAL/DIO.h"
 
 /*
- * Enhanced SPI Coordination for Concurrent WiFi and SD Card Operations
+ * SPI Coordination Framework for Future Extensibility
  * 
- * DESIGN RATIONALE:
+ * CURRENT STATE - COORDINATION DISABLED:
+ * SPI coordination is currently disabled because:
  * - Both WiFi (WINC1500) and SD card use identical SPI Mode 0 (CPOL=0, CPHA=0, 8-bit)
- * - Both operate at standardized 20 MHz frequency for maximum performance
- * - No SPI context switching required due to electrical compatibility
- * - Harmony SPI driver handles multi-client coordination with 2-client configuration
+ * - Both operate at standardized 20 MHz frequency (no conflicts)
+ * - Harmony SPI driver with 2-client configuration provides adequate coordination
+ * - Testing shows electrical compatibility eliminates coordination overhead
  * 
- * CONTEXT SWITCHING DISABLED:
- * Context switching is intentionally disabled because:
- * 1. Both clients use identical SPI electrical parameters (Mode 0)
- * 2. Both clients use same frequency (20 MHz standardized)
- * 3. Harmony SPI driver provides adequate multi-client coordination
- * 4. Context switching adds overhead without benefit for compatible clients
- * 5. Previous testing showed SPI mode compatibility eliminates need for switching
+ * FUTURE USE CASES - WHEN TO ENABLE:
+ * Enable SPI coordination when:
+ * - Different client frequencies required (speed optimization per client)
+ * - Different SPI modes needed (clock polarity/phase differences)
+ * - Advanced timing requirements (priority-based preemption)
+ * - Enhanced error recovery (per-client fault isolation)
+ * - Real-time guarantees needed (deterministic access patterns)
  * 
- * This approach enables concurrent operations while maintaining stability.
+ * IMPLEMENTATION READY:
+ * Complete mutex infrastructure preserved for quick activation when needed.
  */
 
-// SPI0 bus clients for identification (currently used for debugging only)
+// Configuration: Enable/disable SPI coordination
+#define SPI0_COORDINATION_ENABLED 0  // Set to 1 to enable mutex coordination
+
+// SPI0 bus clients for identification and future coordination
 typedef enum {
-    SPI0_CLIENT_SD_CARD = 0,    // Higher priority (reserved for future use)
-    SPI0_CLIENT_WIFI = 1,       // Lower priority (reserved for future use)  
+    SPI0_CLIENT_SD_CARD = 0,    // Higher priority
+    SPI0_CLIENT_WIFI = 1,       // Lower priority  
     SPI0_CLIENT_MAX
 } spi0_client_t;
 
-// Minimal SPI coordination framework (reserved for future enhancement)
-// Currently not actively used due to client electrical compatibility
-static SemaphoreHandle_t spi0_mutex = NULL;
+#if SPI0_COORDINATION_ENABLED
+// SPI coordination infrastructure (disabled but ready for activation)
+// Timeout values for different operation types
+#define SPI0_WIFI_SCPI_TIMEOUT_MS    5     // WiFi SCPI commands (fast response)
+#define SPI0_WIFI_DATA_TIMEOUT_MS    20    // WiFi data operations
+#define SPI0_SD_TIMEOUT_MS           100   // SD card operations (can wait)
+#define SPI0_MUTEX_USE_DEFAULT ((TickType_t)~(TickType_t)0)
 
+// Static variables for SPI coordination
+static SemaphoreHandle_t spi0_mutex = NULL;
+static spi0_client_t current_owner = SPI0_CLIENT_MAX;
+static TaskHandle_t owner_task = NULL;
+
+// Function declarations
 bool SPI0_Mutex_Initialize(void);
+bool SPI0_Operation_Lock(spi0_client_t client, TickType_t timeout);
+void SPI0_Operation_Unlock(spi0_client_t client);
+#else
+// Minimal framework for future expansion (no static variables when disabled)
+bool SPI0_Mutex_Initialize(void);
+#endif
 #include "HAL/ADC.h"
 #include "services/streaming.h"
 #include "HAL/UI/UI.h"
@@ -292,27 +313,73 @@ void app_SystemInit() {
     EVIC_SourceEnable(INT_SOURCE_CHANGE_NOTICE_A);
 }
 
-/*
- * Minimal SPI0 Coordination Framework
- * 
- * This framework is reserved for future use when SPI coordination becomes necessary.
- * Currently disabled because:
- * - WiFi and SD card use identical SPI Mode 0 settings (electrically compatible)
- * - Both use same 20 MHz frequency (no conflicts)
- * - Harmony SPI driver with 2-client configuration provides adequate coordination
- * 
- * The mutex infrastructure remains in place for potential future requirements
- * such as different client frequencies or specialized SPI modes.
+#if SPI0_COORDINATION_ENABLED
+/* 
+ * Full SPI Coordination Implementation (Currently Disabled)
+ * Ready for activation when client-specific requirements emerge
  */
 bool SPI0_Mutex_Initialize(void)
 {
-    // Mutex framework reserved for future SPI coordination needs
-    // Currently not required due to client electrical compatibility
     if (spi0_mutex == NULL) {
         spi0_mutex = xSemaphoreCreateMutex();
+        if (spi0_mutex == NULL) {
+            return false;
+        }
+        current_owner = SPI0_CLIENT_MAX;
+        owner_task = NULL;
     }
-    return (spi0_mutex != NULL);
+    return true;
 }
+
+bool SPI0_Operation_Lock(spi0_client_t client, TickType_t timeout)
+{
+    if (spi0_mutex == NULL || client >= SPI0_CLIENT_MAX) {
+        return false;
+    }
+    
+    TickType_t wait_time = (timeout == SPI0_MUTEX_USE_DEFAULT) ? 
+                          pdMS_TO_TICKS(20) : timeout;
+    
+    if (xSemaphoreTake(spi0_mutex, wait_time) == pdTRUE) {
+        current_owner = client;
+        owner_task = xTaskGetCurrentTaskHandle();
+        return true;
+    }
+    
+    return false;
+}
+
+void SPI0_Operation_Unlock(spi0_client_t client)
+{
+    if (spi0_mutex == NULL || client >= SPI0_CLIENT_MAX) {
+        return;
+    }
+    
+    if (current_owner == client && owner_task == xTaskGetCurrentTaskHandle()) {
+        current_owner = SPI0_CLIENT_MAX;
+        owner_task = NULL;
+        xSemaphoreGive(spi0_mutex);
+    }
+}
+
+#else
+/*
+ * Minimal SPI Framework (Currently Active)
+ * 
+ * SPI coordination disabled due to electrical compatibility:
+ * - Both clients use SPI Mode 0 (CPOL=0, CPHA=0, 8-bit)
+ * - Both use 20 MHz frequency (standardized)
+ * - Harmony driver handles multi-client coordination adequately
+ * 
+ * To enable full coordination: Set SPI0_COORDINATION_ENABLED to 1
+ */
+bool SPI0_Mutex_Initialize(void)
+{
+    // Placeholder initialization for future coordination needs
+    // Currently no-op due to electrical compatibility of SPI clients
+    return true;
+}
+#endif
 
 static void app_TasksCreate() {
     BaseType_t errStatus;
