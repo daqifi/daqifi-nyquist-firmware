@@ -160,8 +160,8 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
         gStateMachineContext.assocHandle = assocHandle;  // Store association handle for RSSI queries
         SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState && errorCode != WDRV_WINC_CONN_ERROR_INPROGRESS) {
-        LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ms, Reason: %s\r\n", 
-              errorCode, (unsigned int)xTaskGetTickCount(),
+        LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n", 
+              errorCode, (unsigned int)xTaskGetTickCountFromISR(),
               (errorCode == WDRV_WINC_CONN_ERROR_AUTH) ? "Auth Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_ASSOC) ? "Association Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_SCAN) ? "Scan Failed" :

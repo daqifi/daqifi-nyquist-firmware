@@ -23,6 +23,16 @@
 // Configuration: Enable/disable protected wrapper functionality
 #define SPI0_PROTECTED_WRAPPER_ENABLED 0  // Set to 1 to enable mutex-protected wrappers
 
+// Compile-time consistency check - prevent configuration mistakes
+#if (SPI0_PROTECTED_WRAPPER_ENABLED == 1) && !defined(SPI0_COORDINATION_ENABLED)
+#error "SPI protected wrapper requires coordination framework! Include app_freertos.c coordination definitions or disable SPI0_PROTECTED_WRAPPER_ENABLED."
+#endif
+
+// Additional check when both are defined
+#if defined(SPI0_COORDINATION_ENABLED) && (SPI0_PROTECTED_WRAPPER_ENABLED == 1) && (SPI0_COORDINATION_ENABLED == 0)
+#error "Configuration mismatch! SPI protected wrapper enabled but coordination disabled. Either enable both or disable both for consistency."
+#endif
+
 #if SPI0_PROTECTED_WRAPPER_ENABLED
 
 #include "FreeRTOS.h"
