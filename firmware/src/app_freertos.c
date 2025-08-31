@@ -34,6 +34,20 @@
 // Configuration: Enable/disable SPI coordination
 #define SPI0_COORDINATION_ENABLED 0  // Set to 1 to enable mutex coordination
 
+// SPI frequency validation - prevents configuration mistakes
+#include "config/default/configuration.h"
+#define SPI0_STANDARDIZED_FREQUENCY_HZ  20000000  // Both clients must use this frequency
+
+// Compile-time check for SPI frequency synchronization
+#if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_STANDARDIZED_FREQUENCY_HZ) && (SPI0_COORDINATION_ENABLED == 0)
+#error "SPI frequency mismatch detected! When SPI coordination is disabled, both WiFi and SD card must use the same frequency. Either: (1) Set DRV_SDSPI_SPEED_HZ_IDX0 to SPI0_STANDARDIZED_FREQUENCY_HZ, or (2) Enable SPI coordination (SPI0_COORDINATION_ENABLED=1) to handle different frequencies."
+#endif
+
+// Future validation: Add WiFi frequency check when configurable
+// #if defined(DRV_WIFI_SPI_SPEED_HZ) && (DRV_WIFI_SPI_SPEED_HZ != SPI0_STANDARDIZED_FREQUENCY_HZ) && (SPI0_COORDINATION_ENABLED == 0)
+// #error "WiFi SPI frequency mismatch! Enable SPI coordination or standardize frequencies."
+// #endif
+
 // SPI0 bus clients for identification and future coordination
 typedef enum {
     SPI0_CLIENT_SD_CARD = 0,    // Higher priority
