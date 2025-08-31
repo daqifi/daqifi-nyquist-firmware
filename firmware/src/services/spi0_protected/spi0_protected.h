@@ -20,8 +20,8 @@
 #include <stdbool.h>
 #include "driver/spi/drv_spi.h"
 
-// Configuration: Enable/disable protected wrapper functionality
-#define SPI0_PROTECTED_WRAPPER_ENABLED 0  // Set to 1 to enable mutex-protected wrappers
+// Configuration: Enable/disable protected wrapper functionality  
+#define SPI0_PROTECTED_WRAPPER_ENABLED 1  // Enabled for client-specific frequency management
 
 // Compile-time consistency check - prevent configuration mistakes
 #if (SPI0_PROTECTED_WRAPPER_ENABLED == 1) && !defined(SPI0_COORDINATION_ENABLED)

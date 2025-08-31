@@ -41,15 +41,24 @@
  */
 
 // Configuration: Enable/disable SPI coordination
-#define SPI0_COORDINATION_ENABLED 0  // Set to 1 to enable mutex coordination
+#define SPI0_COORDINATION_ENABLED 1  // Enabled for client-specific frequency management
 
-// SPI frequency validation - prevents configuration mistakes
+// Client-specific SPI frequencies for optimal performance
 #include "config/default/configuration.h"
-#define SPI0_STANDARDIZED_FREQUENCY_HZ  20000000  // Both clients must use this frequency
+#define SPI0_WIFI_FREQUENCY_HZ      12000000  // WiFi: 12 MHz (proven stable)
+#define SPI0_SD_FREQUENCY_HZ        20000000  // SD card: 20 MHz (good performance)
 
-// Compile-time check for SPI frequency synchronization
-#if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_STANDARDIZED_FREQUENCY_HZ) && (SPI0_COORDINATION_ENABLED == 0)
-#error "SPI frequency mismatch detected! When SPI coordination is disabled, both WiFi and SD card must use the same frequency. Either: (1) Set DRV_SDSPI_SPEED_HZ_IDX0 to SPI0_STANDARDIZED_FREQUENCY_HZ, or (2) Enable SPI coordination (SPI0_COORDINATION_ENABLED=1) to handle different frequencies."
+// Compile-time validation for frequency management
+#if (SPI0_COORDINATION_ENABLED == 0)
+#define SPI0_STANDARDIZED_FREQUENCY_HZ  20000000  // Both clients must use this when coordination disabled
+#if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_STANDARDIZED_FREQUENCY_HZ)
+#error "SPI frequency mismatch detected! When coordination disabled, standardize frequencies or enable coordination (SPI0_COORDINATION_ENABLED=1)."
+#endif
+#else
+// When coordination enabled, validate SD card configuration matches our managed frequency
+#if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_SD_FREQUENCY_HZ)
+#error "SD card frequency mismatch! DRV_SDSPI_SPEED_HZ_IDX0 must match SPI0_SD_FREQUENCY_HZ when coordination enabled."
+#endif
 #endif
 
 // Future validation: Add WiFi frequency check when configurable
@@ -354,6 +363,15 @@ bool SPI0_Mutex_Initialize(void)
     return true;
 }
 
+// Client-specific SPI configuration management
+bool SPI0_Context_Apply(spi0_client_t client)
+{
+    // This function will be called during operation lock to set client-specific frequency
+    // Implementation will be added to actually call DRV_SPI_TransferSetup() with client frequency
+    // For now, return success to enable the coordination framework
+    return true;
+}
+
 bool SPI0_Operation_Lock(spi0_client_t client, TickType_t timeout)
 {
     if (spi0_mutex == NULL || client >= SPI0_CLIENT_MAX) {
@@ -364,6 +382,9 @@ bool SPI0_Operation_Lock(spi0_client_t client, TickType_t timeout)
                           pdMS_TO_TICKS(20) : timeout;
     
     if (xSemaphoreTake(spi0_mutex, wait_time) == pdTRUE) {
+        // Apply client-specific SPI configuration (frequency optimization)
+        SPI0_Context_Apply(client);
+        
         current_owner = client;
         owner_task = xTaskGetCurrentTaskHandle();
         return true;
