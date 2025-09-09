@@ -603,8 +603,57 @@
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
                    projectFiles="true">
+      <logicalFolder name="daqifi_default"
+                     displayName="daqifi_default"
+                     projectFiles="true">
+        <logicalFolder name="components" displayName="components" projectFiles="true">
+          <itemPath>daqifi_default/components/tmr6.yml</itemPath>
+          <itemPath>daqifi_default/components/power.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_spi_0.yml</itemPath>
+          <itemPath>daqifi_default/components/HarmonyCore.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp1.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_spi.yml</itemPath>
+          <itemPath>daqifi_default/components/i2c5.yml</itemPath>
+          <itemPath>daqifi_default/components/sys_time.yml</itemPath>
+          <itemPath>daqifi_default/components/spi4.yml</itemPath>
+          <itemPath>daqifi_default/components/drvWifiWinc.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_sdspi.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr5.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp4.yml</itemPath>
+          <itemPath>daqifi_default/components/adchs.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_i2c.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_sdspi_0.yml</itemPath>
+          <itemPath>daqifi_default/components/sys_fs.yml</itemPath>
+          <itemPath>daqifi_default/components/core_timer.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_usbhs_v1.yml</itemPath>
+          <itemPath>daqifi_default/components/usb_device.yml</itemPath>
+          <itemPath>daqifi_default/components/FreeRTOS.yml</itemPath>
+          <itemPath>daqifi_default/components/lib_zlib.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp3.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr4.yml</itemPath>
+          <itemPath>daqifi_default/components/lib_crypto.yml</itemPath>
+          <itemPath>daqifi_default/components/lib_wolfcrypt.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr3.yml</itemPath>
+          <itemPath>daqifi_default/components/nvm.yml</itemPath>
+          <itemPath>daqifi_default/components/usb_device_cdc.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp8.yml</itemPath>
+          <itemPath>daqifi_default/components/core.yml</itemPath>
+          <itemPath>daqifi_default/components/dfp.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_i2c_0.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr7.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp6.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr2.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp7.yml</itemPath>
+          <itemPath>daqifi_default/components/usb_device_cdc_0.yml</itemPath>
+          <itemPath>daqifi_default/components/rcon.yml</itemPath>
+        </logicalFolder>
+        <itemPath>daqifi_default/mcc-config.mc4</itemPath>
+      </logicalFolder>
       <itemPath>Makefile</itemPath>
-      <itemPath>daqifi.mc3</itemPath>
+    </logicalFolder>
+    <logicalFolder name="LibraryFiles"
+                   displayName="LibraryFiles"
+                   projectFiles="true">
     </logicalFolder>
     <logicalFolder name="LinkerScript"
                    displayName="Linker Files"
