@@ -177,12 +177,12 @@ extern "C" {
 #define WDRV_WINC_DEVICE_SCAN_SSID_LIST
 #define WDRV_WINC_DEBUG_LEVEL               WDRV_WINC_DEBUG_TYPE_NONE
 /*** WiFi WINC Driver RTOS Configuration ***/
-#define DRV_WIFI_WINC_RTOS_STACK_SIZE           3000 //Daqifi: Modified Manually
+#define DRV_WIFI_WINC_RTOS_STACK_SIZE           3000
 #define DRV_WIFI_WINC_RTOS_TASK_PRIORITY        2
 
 /* SPI Driver Instance 0 Configuration Options */
 #define DRV_SPI_INDEX_0                       0
-#define DRV_SPI_CLIENTS_NUMBER_IDX0           2
+#define DRV_SPI_CLIENTS_NUMBER_IDX0           2  // WiFi + SD clients on shared SPI0 bus
 #define DRV_SPI_DMA_MODE
 #define DRV_SPI_XMIT_DMA_CH_IDX0              SYS_DMA_CHANNEL_0
 #define DRV_SPI_RCV_DMA_CH_IDX0               SYS_DMA_CHANNEL_1
@@ -216,29 +216,6 @@ extern "C" {
    write. Applicable to all instances of the
    function driver */
 #define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
-
-/*** USB Driver Configuration ***/
-
-/* Maximum USB driver instances */
-#define DRV_USBHS_INSTANCES_NUMBER                        1U
-
-/* Interrupt mode enabled */
-#define DRV_USBHS_INTERRUPT_MODE                          true
-
-
-/* Enables Device Support */
-#define DRV_USBHS_DEVICE_SUPPORT                          true
-
-/* Disable Host Support */
-#define DRV_USBHS_HOST_SUPPORT                            false
-
-
-
-
-
-/* Alignment for buffers that are submitted to USB Driver*/ 
-#define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
-
 
 
 /*** wolfCrypt Library Configuration ***/
@@ -290,8 +267,32 @@ extern "C" {
 #define SINGLE_THREADED
 #define NO_SIG_WRAPPER
 #define NO_ERROR_STRINGS
+#define WOLFSSL_MAX_ERROR_SZ 38 // Fix Mandatory Misra 21.18 caused by removing error strings with defining NO_ERROR_STRINGS
 #define NO_WOLFSSL_MEMORY
 // ---------- FUNCTIONAL CONFIGURATION END ----------
+
+/*** USB Driver Configuration ***/
+
+/* Maximum USB driver instances */
+#define DRV_USBHS_INSTANCES_NUMBER                        1U
+
+/* Interrupt mode enabled */
+#define DRV_USBHS_INTERRUPT_MODE                          true
+
+
+/* Enables Device Support */
+#define DRV_USBHS_DEVICE_SUPPORT                          true
+
+/* Disable Host Support */
+#define DRV_USBHS_HOST_SUPPORT                            false
+
+
+
+
+
+/* Alignment for buffers that are submitted to USB Driver*/ 
+#define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
+
 
 
 
