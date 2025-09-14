@@ -666,8 +666,6 @@ void SYS_Initialize ( void* data )
 
     OCMP3_Initialize();
 
-    NVM_Initialize();
-
     TMR6_Initialize();
 
     CORETIMER_Initialize();

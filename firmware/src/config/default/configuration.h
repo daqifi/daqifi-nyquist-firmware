@@ -230,29 +230,6 @@ extern "C" {
    function driver */
 #define USB_DEVICE_CDC_QUEUE_DEPTH_COMBINED                 3U
 
-/*** USB Driver Configuration ***/
-
-/* Maximum USB driver instances */
-#define DRV_USBHS_INSTANCES_NUMBER                        1U
-
-/* Interrupt mode enabled */
-#define DRV_USBHS_INTERRUPT_MODE                          true
-
-
-/* Enables Device Support */
-#define DRV_USBHS_DEVICE_SUPPORT                          true
-
-/* Disable Host Support */
-#define DRV_USBHS_HOST_SUPPORT                            false
-
-
-
-
-
-/* Alignment for buffers that are submitted to USB Driver*/ 
-#define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
-
-
 
 /*** wolfCrypt Library Configuration ***/
 #define MICROCHIP_PIC32
@@ -306,6 +283,29 @@ extern "C" {
 #define WOLFSSL_MAX_ERROR_SZ 38 // Fix Mandatory Misra 21.18 caused by removing error strings with defining NO_ERROR_STRINGS
 #define NO_WOLFSSL_MEMORY
 // ---------- FUNCTIONAL CONFIGURATION END ----------
+
+/*** USB Driver Configuration ***/
+
+/* Maximum USB driver instances */
+#define DRV_USBHS_INSTANCES_NUMBER                        1U
+
+/* Interrupt mode enabled */
+#define DRV_USBHS_INTERRUPT_MODE                          true
+
+
+/* Enables Device Support */
+#define DRV_USBHS_DEVICE_SUPPORT                          true
+
+/* Disable Host Support */
+#define DRV_USBHS_HOST_SUPPORT                            false
+
+
+
+
+
+/* Alignment for buffers that are submitted to USB Driver*/ 
+#define USB_ALIGN  CACHE_ALIGN  __ALIGNED(16)
+
 
 
 
