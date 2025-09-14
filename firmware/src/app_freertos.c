@@ -40,13 +40,15 @@
  * Complete mutex infrastructure preserved for quick activation when needed.
  */
 
-// Configuration: Enable/disable SPI coordination
-#define SPI0_COORDINATION_ENABLED 1  // Enabled for client-specific frequency management
+// Configuration: SPI frequency coordination framework
+// 0 = Disabled (current) - both clients use standardized frequency, no runtime overhead
+// 1 = Enabled (testing) - client-specific frequencies with mutex coordination
+#define SPI0_COORDINATION_ENABLED 0  // Disabled for production - enable for frequency benchmarking
 
-// Client-specific SPI frequencies for optimal performance
+// SPI frequency definitions (reserved for coordination framework)
 #include "config/default/configuration.h"
-#define SPI0_WIFI_FREQUENCY_HZ      12000000  // WiFi: 12 MHz (proven stable)
-#define SPI0_SD_FREQUENCY_HZ        20000000  // SD card: 20 MHz (good performance)
+#define SPI0_WIFI_FREQUENCY_HZ      20000000  // Reserved: WiFi target frequency for benchmarking
+#define SPI0_SD_FREQUENCY_HZ        20000000  // Reserved: SD target frequency for benchmarking
 
 // Compile-time validation for frequency management
 #if (SPI0_COORDINATION_ENABLED == 0)
@@ -74,7 +76,7 @@ typedef enum {
 } spi0_client_t;
 
 #if SPI0_COORDINATION_ENABLED
-// SPI coordination infrastructure (disabled but ready for activation)
+// SPI coordination infrastructure (ENABLED SECTION - compiled when coordination active)
 // Timeout values for different operation types
 #define SPI0_WIFI_SCPI_TIMEOUT_MS    5     // WiFi SCPI commands (fast response)
 #define SPI0_WIFI_DATA_TIMEOUT_MS    20    // WiFi data operations
@@ -91,8 +93,10 @@ bool SPI0_Mutex_Initialize(void);
 bool SPI0_Operation_Lock(spi0_client_t client, TickType_t timeout);
 void SPI0_Operation_Unlock(spi0_client_t client);
 #else
-// Minimal framework for future expansion (no static variables when disabled)
-bool SPI0_Mutex_Initialize(void);
+// SPI coordination infrastructure (DISABLED SECTION - current production mode)
+// Mutual exclusion approach used instead: SD operations suspended during WiFi streaming
+// Placeholder functions compiled as no-ops for minimal overhead
+bool SPI0_Mutex_Initialize(void);  // No-op function when coordination disabled
 #endif
 #include "HAL/ADC.h"
 #include "services/streaming.h"
@@ -264,10 +268,11 @@ void app_PowerAndUITask(void) {
 }
 
 void app_SystemInit() {
-    // Initialize SPI0 bus mutex for WiFi/SD card coordination
+    // Initialize SPI coordination framework (currently disabled)
+    // Note: Coordination disabled (SPI0_COORDINATION_ENABLED=0) - no runtime overhead
+    // To enable frequency benchmarking: Set SPI0_COORDINATION_ENABLED=1 and rebuild
     if (!SPI0_Mutex_Initialize()) {
-        // Handle initialization failure - could log error here
-        // For now, continue without mutex (fallback to original mutual exclusion)
+        // No-op when coordination disabled - always returns true
     }
     
     DaqifiSettings tmpTopLevelSettings;
@@ -387,10 +392,35 @@ bool SPI0_Mutex_Initialize(void)
 // Client-specific SPI configuration management
 bool SPI0_Context_Apply(spi0_client_t client)
 {
-    // This function will be called during operation lock to set client-specific frequency
-    // Implementation will be added to actually call DRV_SPI_TransferSetup() with client frequency
-    // For now, return success to enable the coordination framework
-    return true;
+    // Get client-specific frequency
+    uint32_t frequency = (client == SPI0_CLIENT_WIFI) ? 
+                        SPI0_WIFI_FREQUENCY_HZ : SPI0_SD_FREQUENCY_HZ;
+    
+    // Optimization: Skip setup if frequencies are identical (no switching needed)
+    if (SPI0_WIFI_FREQUENCY_HZ == SPI0_SD_FREQUENCY_HZ) {
+        return true;  // No frequency change needed
+    }
+    
+    // Open temporary handle to SPI0 driver for frequency configuration
+    DRV_HANDLE tempHandle = DRV_SPI_Open(DRV_SPI_INDEX_0, DRV_IO_INTENT_READWRITE);
+    if (tempHandle == DRV_HANDLE_INVALID) {
+        return false;
+    }
+    
+    DRV_SPI_TRANSFER_SETUP setup = {
+        .baudRateInHz = frequency,
+        .chipSelect = SYS_PORT_PIN_NONE,  // Both clients manage their own CS
+        .clockPhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE,
+        .clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_LOW,
+        .dataBits = DRV_SPI_DATA_BITS_8
+    };
+    
+    bool result = DRV_SPI_TransferSetup(tempHandle, &setup);
+    
+    // Close temporary handle
+    DRV_SPI_Close(tempHandle);
+    
+    return result;
 }
 
 bool SPI0_Operation_Lock(spi0_client_t client, TickType_t timeout)

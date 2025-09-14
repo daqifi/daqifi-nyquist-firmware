@@ -20,20 +20,24 @@
 #include <stdbool.h>
 #include "driver/spi/drv_spi.h"
 
-// Configuration: Enable/disable protected wrapper functionality  
-#define SPI0_PROTECTED_WRAPPER_ENABLED 1  // Enabled for client-specific frequency management
+// Configuration: SPI frequency coordination wrapper functions
+// NOTE: "Protection" refers to frequency coordination only - does NOT provide sufficient
+// SPI bus isolation for WiFi streaming stability (requires mutual exclusion approach)
+// 0 = Disabled (current) - wrapper functions not compiled, zero runtime overhead
+// 1 = Enabled (testing) - wrapper functions compiled for frequency benchmarking experiments
+#define SPI0_FREQUENCY_WRAPPER_ENABLED 0  // Disabled for production - enable for frequency testing
 
 // Compile-time consistency check - prevent configuration mistakes
-#if (SPI0_PROTECTED_WRAPPER_ENABLED == 1) && !defined(SPI0_COORDINATION_ENABLED)
-#error "SPI protected wrapper requires coordination framework! Include app_freertos.c coordination definitions or disable SPI0_PROTECTED_WRAPPER_ENABLED."
+#if (SPI0_FREQUENCY_WRAPPER_ENABLED == 1) && !defined(SPI0_COORDINATION_ENABLED)
+#error "SPI frequency wrapper requires coordination framework! Include app_freertos.c coordination definitions or disable SPI0_FREQUENCY_WRAPPER_ENABLED."
 #endif
 
 // Additional check when both are defined
-#if defined(SPI0_COORDINATION_ENABLED) && (SPI0_PROTECTED_WRAPPER_ENABLED == 1) && (SPI0_COORDINATION_ENABLED == 0)
-#error "Configuration mismatch! SPI protected wrapper enabled but coordination disabled. Either enable both or disable both for consistency."
+#if defined(SPI0_COORDINATION_ENABLED) && (SPI0_FREQUENCY_WRAPPER_ENABLED == 1) && (SPI0_COORDINATION_ENABLED == 0)
+#error "Configuration mismatch! SPI frequency wrapper enabled but coordination disabled. Either enable both or disable both for consistency."
 #endif
 
-#if SPI0_PROTECTED_WRAPPER_ENABLED
+#if SPI0_FREQUENCY_WRAPPER_ENABLED
 
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -48,7 +52,8 @@ typedef enum {
 // Timeout sentinel value for using default timeouts
 #define SPI0_MUTEX_USE_DEFAULT ((TickType_t)~(TickType_t)0)
 
-// Protected SPI0 wrapper functions (disabled but preserved for future use)
+// SPI0 frequency coordination wrapper functions (disabled - infrastructure preserved)
+// NOTE: Function names retain "Protected" for compatibility - refers to frequency coordination only
 DRV_SPI_TRANSFER_HANDLE DRV_SPI0_WriteRead_Protected(
     spi0_client_t client,
     DRV_HANDLE handle,
@@ -105,6 +110,6 @@ typedef enum {
 // Minimal initialization for framework consistency
 static inline bool SPI0_Protected_Initialize(void) { return true; }
 
-#endif // SPI0_PROTECTED_WRAPPER_ENABLED
+#endif // SPI0_FREQUENCY_WRAPPER_ENABLED
 
 #endif // SPI0_PROTECTED_H

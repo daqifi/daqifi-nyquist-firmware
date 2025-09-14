@@ -15,7 +15,7 @@
 
 #include "spi0_protected.h"
 
-#if SPI0_PROTECTED_WRAPPER_ENABLED
+#if SPI0_FREQUENCY_WRAPPER_ENABLED
 
 // Include coordination functions from app_freertos.c
 extern bool SPI0_Operation_Lock(spi0_client_t client, TickType_t timeout);
@@ -62,7 +62,7 @@ DRV_SPI_TRANSFER_HANDLE DRV_SPI0_WriteRead_Protected(
 {
     DRV_SPI_TRANSFER_HANDLE result = DRV_SPI_TRANSFER_HANDLE_INVALID;
     
-    // Acquire SPI0 bus with client-appropriate timeout
+    // Acquire SPI0 bus with client-appropriate timeout and frequency setup
     if (!SPI0_Operation_Lock(client, get_client_timeout(client))) {
         return DRV_SPI_TRANSFER_HANDLE_INVALID;
     }
@@ -161,4 +161,4 @@ bool SPI0_Protected_Initialize(void)
     return true;
 }
 
-#endif // SPI0_PROTECTED_WRAPPER_ENABLED
+#endif // SPI0_FREQUENCY_WRAPPER_ENABLED
