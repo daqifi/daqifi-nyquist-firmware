@@ -99,10 +99,14 @@
 #pragma config USERID =     0xffff
 #pragma config FMIIEN =     OFF
 #pragma config FETHIO =     OFF
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// WARNING: DO NOT ALLOW MCC TO OVERWRITE - Custom configuration lock logic
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // One-way configuration lock bits
 // When ICSP logging is enabled, these must be OFF to allow runtime PPS configuration
 // When disabled, these are ON for security to prevent unauthorized reconfiguration
 // Note: Define ENABLE_ICSP_REALTIME_LOG=1 in project settings to enable debug logging
+// REJECT MCC MERGE ATTEMPTS TO REPLACE THIS CONDITIONAL LOGIC!
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1)
     #pragma config PGL1WAY =    OFF  // Allow multiple Peripheral Pin Select reconfigurations
     #pragma config PMDL1WAY =   OFF  // Allow multiple Peripheral Module Disable reconfigurations
@@ -489,6 +493,7 @@ void SYS_Initialize ( void* data )
 
 	GPIO_Initialize();
 
+
     OCMP8_Initialize();
 
     OCMP6_Initialize();
@@ -505,9 +510,9 @@ void SYS_Initialize ( void* data )
 
     OCMP3_Initialize();
 
-    CORETIMER_Initialize();
     TMR6_Initialize();
 
+    CORETIMER_Initialize();
 
     ADCHS_Initialize();
 
@@ -521,7 +526,6 @@ void SYS_Initialize ( void* data )
     DMAC_Initialize();
 
     I2C5_Initialize();
-
 
 
     /* MISRAC 2012 deviation block start */

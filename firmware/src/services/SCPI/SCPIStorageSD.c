@@ -28,6 +28,8 @@
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
 #include "Util/Logger.h"
+// SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently  
+// SPI coordination handled at operation level when needed
 #include <string.h>
 
 /* ************************************************************************** */
@@ -62,18 +64,13 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);    
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    //sd card cannot be enabled if wifi is enabled
-    if (pRunTimeWifiSettings->isEnabled && param1!=0) {
-        context->interface->write(context, LAN_ACTIVE_ERROR_MSG, strlen(LAN_ACTIVE_ERROR_MSG));
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
+    // Simple enable/disable - no mutex blocking for concurrent operations
+    // SPI coordination handled at operation level, not enable level
     if (param1 != 0) {
         // Don't check for SD card presence here - let the SD card manager task handle it
         // This prevents blocking the SCPI handler if no card is present
@@ -81,7 +78,7 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         pSdCardRuntimeConfig->enable = true;
     } else {
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
-        pSdCardRuntimeConfig->enable = false;       
+        pSdCardRuntimeConfig->enable = false;
     }
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);

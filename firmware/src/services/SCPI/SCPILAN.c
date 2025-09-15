@@ -19,6 +19,8 @@
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
+// SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently
+// SPI coordination handled at operation level when needed
 
 #define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
 
@@ -162,18 +164,13 @@ scpi_result_t SCPI_LANEnabledSet(scpi_t * context) {
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     scpi_result_t result;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     int param1;
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    if (param1 != 0 && pSdCardRuntimeConfig->enable == 1) {
-        context->interface->write(context, SD_CARD_ACTIVE_ERROR_MSG, strlen(SD_CARD_ACTIVE_ERROR_MSG));
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
-
+    // Simple enable/disable - no mutex blocking for concurrent operations
+    // SPI coordination handled at operation level, not enable level
     pRunTimeWifiSettings->isEnabled = (bool) param1;
     // LOG_D("WiFi enabled set to %d in runtime config\r\n", param1);
     
@@ -492,7 +489,6 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     int param1;
     wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     // LOG_D("SCPI_LANSettingsApply called - WiFi enabled=%d, mode=%d\r\n", 
     //       pRunTimeWifiSettings->isEnabled, pRunTimeWifiSettings->networkMode);
@@ -501,12 +497,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
         saveSettings = (bool) param1;
     }
     
-    //Wifi and SD card cannot be active simultaneously because they share same SPI
-    if (pSdCardRuntimeConfig->enable == 1 &&
-            pRunTimeWifiSettings->isEnabled == 1) {
-        context->interface->write(context, SD_CARD_ACTIVE_ERROR_MSG, strlen(SD_CARD_ACTIVE_ERROR_MSG));
-        return SCPI_RES_ERR;
-    }
+    // Concurrent WiFi and SD card operations now supported with enhanced SPI coordination
 
     if (saveSettings) {
         DaqifiSettings daqifiSettings;

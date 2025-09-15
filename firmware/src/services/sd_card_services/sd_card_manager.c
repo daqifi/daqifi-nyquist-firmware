@@ -6,7 +6,7 @@
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (128 * 1024)  // 128KB buffer
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
-#define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/Daqifi"
+#define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
 
 typedef enum {
