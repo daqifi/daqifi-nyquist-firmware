@@ -9,6 +9,7 @@
  *     
  */
 #include "NQ1BoardConfig.h"
+#include "NQ3BoardConfig.h"
 #include "BoardConfig.h"
 
 static tBoardConfig boardConfig;
@@ -21,18 +22,9 @@ void InitBoardConfig(TopLevelSettings* pTopLevelSettings) {
     // Initialize variable to known state
     memset(&boardConfig, 0, sizeof (boardConfig));
 
-    switch (pTopLevelSettings->boardVariant) {
-        case 3:
-            //memcpy(&boardConfig, NQ3BoardConfig_Get(), sizeof(tBoardConfig));
-            break;
-        case 2:
-            //memcpy(&boardConfig, NQ2BoardConfig_Get(), sizeof(tBoardConfig));
-            break;
-        case 1: // Everything else is an NQ1
-        default:
-            memcpy(&boardConfig, NQ1BoardConfig_Get(), sizeof (tBoardConfig));
-            break;
-    }
+    // Use unified board configuration function
+    // For NQ3 testing, this will return NQ3 configuration regardless of variant
+    memcpy(&boardConfig, NqBoardConfig_Get(), sizeof(tBoardConfig));
 
     // Set board version information from settings memory
     boardConfig.BoardVariant = pTopLevelSettings->boardVariant;

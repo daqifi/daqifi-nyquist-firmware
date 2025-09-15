@@ -917,16 +917,28 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     //int i;
     uint16_t activeType1ChannelCount = 0;
+    bool hasActiveAD7609Channels __attribute__((unused)) = false;
     int i;
+    
+    // Count active channels and detect AD7609 usage
     for (i = 0; i < pBoardConfigADC->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
+            if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
+                hasActiveAD7609Channels = true;
+            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC && 
+                       pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
                 activeType1ChannelCount++;
             }
         }
     }
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {
+        // NQ3 Smart Frequency Management:
+        // When external AD7609 channels are active, force internal ADC to 1Hz
+        if (hasActiveAD7609Channels && freq > 1) {
+            freq = 1; // Override to 1Hz for internal monitoring when external ADC active
+        }
+        
         // Maximum frequency limited to 15kHz pending optimization
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/58
         if (freq >= 1 && freq <= 15000)
@@ -943,6 +955,14 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
                 freq = 15000 / activeType1ChannelCount;
             }
+            
+            // Prevent divide by zero exception
+            if (freq == 0) {
+                freq = 1000; // Default to 1kHz if frequency is 0
+            }
+            
+            // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
+            
             pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;

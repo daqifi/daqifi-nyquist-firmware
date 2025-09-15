@@ -15,25 +15,8 @@ void InitBoardRuntimeConfig(int boardVariant)
     // Initialize variable to known state
     memset(&pBoardRuntimeConfig, 0, sizeof(pBoardRuntimeConfig));
     
-    switch (boardVariant)
-    {
-    case 3:
-        memcpy(         &pBoardRuntimeConfig,                               
-                        &g_NQ3BoardRuntimeConfig,                           
-                        sizeof(tBoardRuntimeConfig));
-        break;
-    case 2:
-        memcpy(         &pBoardRuntimeConfig,                               
-                        &g_NQ2BoardRuntimeConfig,                           
-                        sizeof(tBoardRuntimeConfig));
-        break;
-    case 1: // Everything else is an NQ1
-    default:
-        memcpy(         &pBoardRuntimeConfig,                               
-                        &g_NQ1BoardRuntimeConfig,                           
-                        sizeof(tBoardRuntimeConfig));
-        break;
-    }
+    // For NQ3 testing, use NQ3 configuration for all variants
+    memcpy(&pBoardRuntimeConfig, &g_NQ3BoardRuntimeConfig, sizeof(tBoardRuntimeConfig));
 }
 
 /*! This function is used for getting a board configuration in run time         

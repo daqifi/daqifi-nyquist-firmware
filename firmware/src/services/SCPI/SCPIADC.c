@@ -98,49 +98,109 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         if (channelIndex > pBoardConfigAInChannels->Size) {
             return SCPI_RES_ERR;
         }
-        if (module->Type == AIn_MC12bADC) // If the current module is the internal ADC then check to see if the channel is public
-        {
-            if (channel->Config.MC12b.IsPublic) {
-                channelRuntimeConfig->IsEnabled = (param2 > 0); // If public, allow allow configuration.
-            } else {
-                return SCPI_RES_ERR; //  If private, return error
-            }
-        } else {
-            channelRuntimeConfig->IsEnabled = (param2 > 0); // If not the internal ADC, allow configuration.
+        
+        // Board variant-aware channel enable logic
+        uint8_t boardVariant = pBoardConfig->BoardVariant;
+        uint8_t channelId = (uint8_t) param1;
+        
+        switch (boardVariant) {
+            case 1: // NQ1: User channels 0-15 (MC12bADC), monitoring channels always on
+                if (channelId <= 15) {
+                    if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
+                        channelRuntimeConfig->IsEnabled = (param2 > 0);
+                    } else {
+                        return SCPI_RES_ERR; // Private or wrong type
+                    }
+                } else {
+                    return SCPI_RES_ERR; // Monitoring channels not user-controllable
+                }
+                break;
+                
+            case 3: // NQ3: User channels 0-7 (AD7609), monitoring channels always on
+                if (channelId <= 7) {
+                    if (module->Type == AIn_AD7609) {
+                        channelRuntimeConfig->IsEnabled = (param2 > 0);
+                    } else {
+                        return SCPI_RES_ERR; // Wrong type for NQ3 user channels
+                    }
+                } else {
+                    return SCPI_RES_ERR; // Monitoring channels not user-controllable
+                }
+                break;
+                
+            default: // NQ2 or unknown variants
+                // Legacy behavior for compatibility
+                if (module->Type == AIn_MC12bADC) {
+                    if (channel->Config.MC12b.IsPublic) {
+                        channelRuntimeConfig->IsEnabled = (param2 > 0);
+                    } else {
+                        return SCPI_RES_ERR;
+                    }
+                } else {
+                    channelRuntimeConfig->IsEnabled = (param2 > 0);
+                }
+                break;
         }
     } else {
-        // Channel mask
-        size_t index = 0;
-        for (index = 0; index < pBoardConfigAInChannels->Size; ++index) {
+        // Channel mask - board variant-aware bulk enable
+        uint8_t boardVariant = pBoardConfig->BoardVariant;
+        uint8_t maxUserChannel = (boardVariant == 3) ? 7 : 15; // NQ3: 0-7, others: 0-15
+        
+        for (size_t index = 0; index <= maxUserChannel; ++index) {
             size_t channelIndex = ADC_FindChannelIndex((uint8_t) index);
-            AInRuntimeConfig* channelRuntimeConfig =
-                    &pRuntimeAInChannels->Data[channelIndex];
-            AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
-            const AInModule* module = ADC_FindModule(channel->Type);
-            bool value = (bool) ((param1 & (1 << index)) > 0);
+            if (channelIndex < pBoardConfigAInChannels->Size) {
+                AInRuntimeConfig* channelRuntimeConfig =
+                        &pRuntimeAInChannels->Data[channelIndex];
+                AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
+                const AInModule* module = ADC_FindModule(channel->Type);
+                bool value = (bool) ((param1 & (1 << index)) > 0);
 
-            // TODO: Perhaps add some sort of feedback if the user is attempting to edit a value beyond their  - this is fairly tricky to implement however
-            if (module->Type == AIn_MC12bADC) // If the current module is the internal ADC then check to see if the channel is public
-            {
-                if (channel->Config.MC12b.IsPublic) {
-                    channelRuntimeConfig->IsEnabled = value; // If public, allow allow configuration.
+                switch (boardVariant) {
+                    case 1: // NQ1: MC12bADC user channels 0-15
+                        if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
+                            channelRuntimeConfig->IsEnabled = value;
+                        }
+                        break;
+                        
+                    case 3: // NQ3: AD7609 user channels 0-7
+                        if (module->Type == AIn_AD7609) {
+                            channelRuntimeConfig->IsEnabled = value;
+                        }
+                        break;
+                        
+                    default: // NQ2 or legacy
+                        if (module->Type == AIn_MC12bADC) {
+                            if (channel->Config.MC12b.IsPublic) {
+                                channelRuntimeConfig->IsEnabled = value;
+                            }
+                        } else {
+                            channelRuntimeConfig->IsEnabled = value;
+                        }
+                        break;
                 }
-            } else {
-                channelRuntimeConfig->IsEnabled = value; // If not the internal ADC, allow configuration.
             }
         }
+        // Note: Monitoring channels (>maxUserChannel) are always enabled and not user-controllable
     }
     uint16_t activeType1ChannelCount = 0;
+    bool hasActiveAD7609Channels __attribute__((unused)) = false;
     uint64_t freq = pRunTimeStreamConfig->Frequency;
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
     int i;
+    
+    // Count active channels and detect AD7609 usage
     for (i = 0; i < pBoardConfigAInChannels->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            if (pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
+            if (pBoardConfigAInChannels->Data[i].Type == AIn_AD7609) {
+                hasActiveAD7609Channels = true;
+            } else if (pBoardConfigAInChannels->Data[i].Type == AIn_MC12bADC && 
+                       pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
                 activeType1ChannelCount++;
             }
         }
     }
+    
+    // Note: Internal monitoring channels are configured with fixed 1Hz in NQ3 runtime config
     /**
      * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
      * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
@@ -153,6 +213,12 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
         freq = 15000 / activeType1ChannelCount;
     }
+    
+    // Prevent divide by zero exception
+    if (freq == 0) {
+        freq = 1000; // Default to 1kHz if frequency is 0
+    }
+    
     pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
     pRunTimeStreamConfig->Frequency = freq;
     pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;

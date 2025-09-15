@@ -5,7 +5,7 @@
 
 #include "ADC.h"
 
-//#include "ADC/AD7609.h"
+#include "ADC/AD7609.h"
 //#include "ADC/AD7173.h"
 #include "ADC/MC12bADC.h"
 #include "DIO.h"
@@ -120,7 +120,10 @@ bool ADC_WriteChannelStateAll(void) {
                 result &= MC12b_WriteStateAll(
                         &moduleChannels,
                         &moduleChannelRuntime);
-
+                break;
+            case AIn_AD7609:
+                // result &= AD7609_WriteStateAll(&moduleChannels, &moduleChannelRuntime);
+                result &= true; // Temporary: return success without driver call
                 break;
             default:
                 // Not implemented yet
@@ -156,6 +159,10 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
     switch (module->Type) {
         case AIn_MC12bADC:
             result &= MC12b_TriggerConversion(&gpBoardRuntimeConfig->AInChannels, &gpBoardConfig->AInChannels, adcChannelType);
+            break;
+        case AIn_AD7609:
+            // result &= AD7609_TriggerConversion(&module->Config.AD7609);
+            result &= true; // Temporary: return success without driver call
             break;
         default:
             // Not implemented yet
@@ -283,6 +290,9 @@ double ADC_ConvertToVoltage(const AInSample* sample) {
                     &channelConfig->Config.MC12b,
                     pRuntimeConfig,
                     sample);
+        case AIn_AD7609:
+            // return AD7609_ConvertToVoltage(pRuntimeConfig, sample);
+            return 0.0; // Temporary: return 0V without driver call
         default:
             return 0.0;
     }
@@ -337,6 +347,10 @@ bool ADC_WriteModuleState(size_t moduleId, POWER_STATE powerState) {
         case AIn_MC12bADC:
             result &= MC12b_WriteModuleState();
             break;
+        case AIn_AD7609:
+            // result &= AD7609_WriteModuleState(powerState == POWERED_UP || powerState == POWERED_UP_EXT_DOWN);
+            result &= true; // Temporary: return success without driver call
+            break;
         default:
             // Not implemented yet
             break;
@@ -354,6 +368,10 @@ static bool ADC_InitHardware(
             result = MC12b_InitHardware(
                     &pBoardAInModule->Config.MC12b,
                     &gpBoardRuntimeConfig->AInModules.Data[pBoardAInModule->Type]);
+            break;
+        case AIn_AD7609:
+            // result = AD7609_InitHardware(&pBoardAInModule->Config.AD7609);
+            result = true; // Temporary: return success without hardware init
             break;
         default:
             // Not implemented yet
