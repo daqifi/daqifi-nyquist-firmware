@@ -39,35 +39,37 @@ extern "C" {
 
     
     
-    /**
-     * @brief Library-level logging control macros and logging API
-     * Provides compile-time logging enable/disable control at a per-library/module level.
-     * -------------------------------
-     * HOW TO USE LOG ENABLE/DISABLE:
-     * -------------------------------
-     * 1. Each library/module can define its own LOG_xxx flag
-     *    (e.g., LOG_WIFI, LOG_SD) as either LOG_ENABLE or LOG_DISABLE.
-     * 2. At the first line in the library/module source file(.c), define a local alias:
-     *        #define LOG_EN LOG_WIFI
-     *    This links the module's logging to its specific enable flag.
-     * 3. When LOG_EN == LOG_ENABLE:
-     *        - LOG_D(), LOG_I(), and LOG_E() macros will call LogMessage()
-     *          and produce output.
-     *    When LOG_EN == LOG_DISABLE:
-     *        - LOG_D(), LOG_I(), and LOG_E() macros compile to nothing
-     *          (zero runtime cost).
-     * 4. Change the master switches below to enable/disable logs per module:
-     *        #define LOG_WIFI    LOG_DISABLE   // Turn off WiFi logs
-     *        #define LOG_SD      LOG_ENABLE    // Keep SD logs on
-     *
-     * Example in wifi_manager.c:
-     *    #define LOG_EN LOG_WIFI
-     *    LOG_D("WiFi connected, IP=%s\n", ipAddress);
-     */
+/**
+ * @brief Library-level logging control macros and logging API
+ * Provides compile-time logging control at a per-library/module level using log levels.
+ *
+ * -------------------------------
+ * HOW TO USE LOG LEVELS:
+ * -------------------------------
+ * 1. Each library/module can define its own log level macro
+ *    (e.g., LOG_LEVEL_WIFI, LOG_LEVEL_SD) to one of:
+ *        LOG_LEVEL_NONE, LOG_LEVEL_ERROR, LOG_LEVEL_INFO, LOG_LEVEL_DEBUG
+ *
+ * 2. At the first line in the library/module source file (.c), define a local alias:
+ *        #define LOG_LVL LOG_LEVEL_WIFI
+ *    This links the module’s logging to its specific log level setting.
+ *
+ * 3. Depending on the selected LOG_LVL:
+ *        - LOG_E() is enabled when LOG_LVL >= LOG_LEVEL_ERROR
+ *        - LOG_I() is enabled when LOG_LVL >= LOG_LEVEL_INFO
+ *        - LOG_D() is enabled when LOG_LVL >= LOG_LEVEL_DEBUG
+ *    If LOG_LVL == LOG_LEVEL_NONE, all logging macros compile to nothing
+ *    (zero runtime cost).
+ *
+ * 4. Change the per-module log level definitions below to control verbosity:
+ *        #define LOG_LEVEL_WIFI    LOG_LEVEL_NONE    // Disable WiFi logs
+ *        #define LOG_LEVEL_SD      LOG_LEVEL_DEBUG   // Enable detailed SD logs
+ *
+ * Example in wifi_manager.c:
+ *    #define LOG_LVL LOG_LEVEL_WIFI
+ *    LOG_I("WiFi connected, IP=%s\n", ipAddress);
+ */
     
-    //Log enable definitions
-    #define LOG_DISABLE         0
-    #define LOG_ENABLE          1
     
     //Log level definitions (when enabled)
     #define LOG_LEVEL_NONE      0  // No logging
@@ -75,44 +77,25 @@ extern "C" {
     #define LOG_LEVEL_INFO      2  // Errors + Info
     #define LOG_LEVEL_DEBUG     3  // Errors + Info + Debug (all)
 
-    //The master switches to enable/disable logs per module: 
-    #ifndef LOG_POWER
-        #define LOG_POWER           LOG_ENABLE
-    #endif
-    #ifndef LOG_WIFI
-        #define LOG_WIFI            LOG_ENABLE
-    #endif
-    #ifndef LOG_BQ24297
-        #define LOG_BQ24297         LOG_ENABLE
-    #endif
-    #ifndef LOG_SD
-        #define LOG_SD              LOG_ENABLE
-    #endif
-    #ifndef LOG_USB
-        #define LOG_USB             LOG_ENABLE
-    #endif
-    #ifndef LOG_SCPI
-        #define LOG_SCPI            LOG_ENABLE
-    #endif
     
-    //Per-module logging level control (only applies when module is enabled)
+    //Per-module logging level control
     #ifndef LOG_LEVEL_POWER
-        #define LOG_LEVEL_POWER     LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_POWER     LOG_LEVEL_NONE
     #endif
     #ifndef LOG_LEVEL_WIFI
-        #define LOG_LEVEL_WIFI      LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_WIFI      LOG_LEVEL_NONE
     #endif
     #ifndef LOG_LEVEL_BQ24297
-        #define LOG_LEVEL_BQ24297   LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_BQ24297   LOG_LEVEL_NONE
     #endif
     #ifndef LOG_LEVEL_SD
-        #define LOG_LEVEL_SD        LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_SD        LOG_LEVEL_NONE
     #endif
     #ifndef LOG_LEVEL_USB
-        #define LOG_LEVEL_USB       LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_USB       LOG_LEVEL_NONE
     #endif
     #ifndef LOG_LEVEL_SCPI
-        #define LOG_LEVEL_SCPI      LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_SCPI      LOG_LEVEL_NONE
     #endif
 
 /**
@@ -130,35 +113,31 @@ size_t LogMessagePop(uint8_t* buffer, size_t maxSize);
 // Helper macro to get the log level for the current module
 // Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)
 #ifndef LOG_LVL
-    #define LOG_LVL LOG_LEVEL_ERROR  // Default to error debug if not specified
+    #define LOG_LVL LOG_LEVEL_NONE  // Default to NONE if not specified
 #endif
 
-#if defined(LOG_EN) && (LOG_EN == LOG_ENABLE)
-    // LOG_E is enabled at ERROR level and above
-    #if (LOG_LVL >= LOG_LEVEL_ERROR)
-        #define LOG_E(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
-    #else
-        #define LOG_E(fmt,...) do { } while(0)
-    #endif
-    
-    // LOG_I is enabled at INFO level and above
-    #if (LOG_LVL >= LOG_LEVEL_INFO)
-        #define LOG_I(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
-    #else
-        #define LOG_I(fmt,...) do { } while(0)
-    #endif
-    
-    // LOG_D is enabled at DEBUG level
-    #if (LOG_LVL >= LOG_LEVEL_DEBUG)
-        #define LOG_D(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
-    #else
-        #define LOG_D(fmt,...) do { } while(0)
-    #endif
+
+// LOG_E is enabled at ERROR level and above
+#if (LOG_LVL >= LOG_LEVEL_ERROR)
+    #define LOG_E(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
+#else
+    #define LOG_E(fmt,...) do { } while(0)
+#endif
+
+// LOG_I is enabled at INFO level and above
+#if (LOG_LVL >= LOG_LEVEL_INFO)
+    #define LOG_I(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
+#else
+    #define LOG_I(fmt,...) do { } while(0)
+#endif
+
+// LOG_D is enabled at DEBUG level
+#if (LOG_LVL >= LOG_LEVEL_DEBUG)
+    #define LOG_D(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
     #define LOG_D(fmt,...) do { } while(0)
-    #define LOG_E(fmt,...) do { } while(0)
-    #define LOG_I(fmt,...) do { } while(0)
-#endif  // LOG_EN == LOG_ENABLE
+#endif
+
 
 #ifdef	__cplusplus
 }

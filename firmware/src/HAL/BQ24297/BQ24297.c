@@ -2,7 +2,6 @@
  * @file   BQ24297.c
  * @brief This file manages the BQ24297 module
  */
-#define LOG_EN  LOG_BQ24297
 #define LOG_LVL LOG_LEVEL_BQ24297
 
 #include "BQ24297.h"

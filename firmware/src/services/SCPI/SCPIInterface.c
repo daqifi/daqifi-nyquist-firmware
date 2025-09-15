@@ -1,4 +1,3 @@
-#define LOG_EN  LOG_SCPI
 #define LOG_LVL LOG_LEVEL_SCPI
 
 #include "SCPIInterface.h"

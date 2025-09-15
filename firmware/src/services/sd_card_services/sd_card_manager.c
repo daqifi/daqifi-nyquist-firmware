@@ -1,4 +1,3 @@
-#define LOG_EN  LOG_SD
 #define LOG_LVL LOG_LEVEL_SD
 
 #include <string.h>
