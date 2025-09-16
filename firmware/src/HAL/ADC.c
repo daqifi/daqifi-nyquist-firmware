@@ -9,6 +9,7 @@
 //#include "ADC/AD7173.h"
 #include "ADC/MC12bADC.h"
 #include "DIO.h"
+#include "Util/Logger.h"
 
 #define UNUSED(x) (void)(x)
 
@@ -69,7 +70,8 @@ void ADC_EosInterruptTask(void) {
         
         //Read only the private ADC's as the public ADC's has their own interrupts
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-            if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic != 1
+            if (gpBoardConfig->AInChannels.Data[i].Type == AIn_MC12bADC && 
+                gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic != 1
                     && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
                 if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
                     continue;
@@ -77,6 +79,64 @@ void ADC_EosInterruptTask(void) {
                 sample.Timestamp = *valueTMR;
                 sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
                 sample.Value = adcval;
+                BoardData_Set(
+                        BOARDDATA_AIN_LATEST,
+                        i,
+                        &sample);
+            }
+            // Read AD7609 samples for enabled channels  
+            else if (gpBoardConfig->AInChannels.Data[i].Type == AIn_AD7609 && 
+                     gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
+                
+                // AD7609 requires reading ALL channels at once after conversion
+                // Only do this once per conversion cycle (for channel 0)
+                static uint16_t ad7609_data[8] = {0}; // Cache for all 8 channels
+                static bool data_fresh = false;
+                
+                if (gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId == 0) {
+                    // First channel - read all AD7609 data via SPI
+                    bool conversionReady = !GPIO_PinRead(GPIO_PIN_RB3); // BSY pin low = ready
+                    
+                    if (conversionReady) {
+                        GPIO_PinWrite(GPIO_PIN_RH2, false); // CS low
+                        
+                        uint8_t txData[16] = {0}; // 8 channels × 2 bytes
+                        uint8_t rxData[16] = {0};
+                        
+                        if (SPI6_WriteRead(txData, 16, rxData, 16)) {
+                            // Parse 8 channels from SPI data
+                            for (int ch = 0; ch < 8; ch++) {
+                                ad7609_data[ch] = (rxData[ch*2] << 8) | rxData[ch*2 + 1];
+                            }
+                            data_fresh = true;
+                            
+                            // Debug: Log SPI data to see what we're actually receiving
+                            static int debug_count = 0;
+                            if (debug_count < 3) { // Only log first few times
+                                LOG_D("AD7609 SPI: BSY=%d, Data[0-3]=%02X %02X %02X %02X, Ch0=0x%04X", 
+                                      GPIO_PinRead(GPIO_PIN_RB3), rxData[0], rxData[1], rxData[2], rxData[3], ad7609_data[0]);
+                                debug_count++;
+                            }
+                        } else {
+                            LOG_E("AD7609 SPI communication failed");
+                            // SPI failed - clear all data
+                            for (int ch = 0; ch < 8; ch++) ad7609_data[ch] = 0;
+                            data_fresh = false;
+                        }
+                        
+                        GPIO_PinWrite(GPIO_PIN_RH2, true); // CS high
+                    } else {
+                        data_fresh = false; // Conversion not ready
+                    }
+                }
+                
+                // Use cached data for this channel
+                uint8_t channelNum = gpBoardConfig->AInChannels.Data[i].Config.AD7609.ChannelNumber;
+                uint16_t rawValue = (data_fresh && channelNum < 8) ? ad7609_data[channelNum] : 0;
+                
+                sample.Timestamp = *valueTMR;
+                sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+                sample.Value = rawValue;
                 BoardData_Set(
                         BOARDDATA_AIN_LATEST,
                         i,
@@ -99,6 +159,8 @@ void ADC_Init(
     xTaskCreate((TaskFunction_t) ADC_EosInterruptTask,
             "ADC Interrupt",
             2048, NULL, 8, &gADCInterruptHandle);
+            
+    // Note: AD7609 initialization happens later when 10V rail is powered up
 }
 
 bool ADC_WriteChannelStateAll(void) {
@@ -122,8 +184,7 @@ bool ADC_WriteChannelStateAll(void) {
                         &moduleChannelRuntime);
                 break;
             case AIn_AD7609:
-                // result &= AD7609_WriteStateAll(&moduleChannels, &moduleChannelRuntime);
-                result &= true; // Temporary: return success without driver call
+                result &= AD7609_WriteStateAll(&moduleChannels, &moduleChannelRuntime);
                 break;
             default:
                 // Not implemented yet
@@ -161,8 +222,7 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
             result &= MC12b_TriggerConversion(&gpBoardRuntimeConfig->AInChannels, &gpBoardConfig->AInChannels, adcChannelType);
             break;
         case AIn_AD7609:
-            // result &= AD7609_TriggerConversion(&module->Config.AD7609);
-            result &= true; // Temporary: return success without driver call
+            result &= AD7609_TriggerConversion(&module->Config.AD7609);
             break;
         default:
             // Not implemented yet
@@ -209,15 +269,18 @@ void ADC_Tasks(void) {
     for (moduleIndex = 0;
             moduleIndex < gpBoardRuntimeConfig->AInModules.Size;
             ++moduleIndex) {
+        // Update module pointer for current iteration
+        module = &gpBoardConfig->AInModules.Data[moduleIndex];
+        moduleRuntime = &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
+        
         // Get channels associated with the current module
-
         GetModuleChannelRuntimeData(
                 &moduleChannels,
                 &moduleChannelRuntime,
                 moduleIndex);
 
         // Check if the module is enabled - if not, skip it
-        bool isEnabled = (module->Type == AIn_MC12bADC || isPowered) &&
+        bool isEnabled = (module->Type == AIn_MC12bADC || module->Type == AIn_AD7609 || isPowered) &&
                 moduleRuntime->IsEnabled;
         if (!isEnabled) {
             gpBoardData->AInState.Data[moduleIndex].AInTaskState =
@@ -227,9 +290,16 @@ void ADC_Tasks(void) {
 
         if (gpBoardData->AInState.Data[moduleIndex].AInTaskState ==
                 AINTASK_INITIALIZING) {
-            canInit = (module->Type == AIn_MC12bADC || isPowered);
+            canInit = (module->Type == AIn_MC12bADC || module->Type == AIn_AD7609 || isPowered);
             initialized = false;
+            
+            if (module->Type == AIn_AD7609) {
+                LOG_D("ADC_UpdateModules: AD7609 Module %d - TaskState=%d, canInit=%d, isPowered=%d", 
+                      moduleIndex, gpBoardData->AInState.Data[moduleIndex].AInTaskState, canInit, isPowered);
+            }
+                  
             if (canInit) {
+                LOG_D("ADC_UpdateModules: Calling ADC_InitHardware for module %d", moduleIndex);
                 if (ADC_InitHardware(module, &moduleChannels)) {
                     if (module->Type == AIn_MC12bADC) {
                         MC12b_WriteStateAll(
@@ -291,8 +361,7 @@ double ADC_ConvertToVoltage(const AInSample* sample) {
                     pRuntimeConfig,
                     sample);
         case AIn_AD7609:
-            // return AD7609_ConvertToVoltage(pRuntimeConfig, sample);
-            return 0.0; // Temporary: return 0V without driver call
+            return AD7609_ConvertToVoltage(pRuntimeConfig, sample);
         default:
             return 0.0;
     }
@@ -348,8 +417,7 @@ bool ADC_WriteModuleState(size_t moduleId, POWER_STATE powerState) {
             result &= MC12b_WriteModuleState();
             break;
         case AIn_AD7609:
-            // result &= AD7609_WriteModuleState(powerState == POWERED_UP || powerState == POWERED_UP_EXT_DOWN);
-            result &= true; // Temporary: return success without driver call
+            result &= AD7609_WriteModuleState(powerState == POWERED_UP || powerState == POWERED_UP_EXT_DOWN);
             break;
         default:
             // Not implemented yet
@@ -370,8 +438,7 @@ static bool ADC_InitHardware(
                     &gpBoardRuntimeConfig->AInModules.Data[pBoardAInModule->Type]);
             break;
         case AIn_AD7609:
-            // result = AD7609_InitHardware(&pBoardAInModule->Config.AD7609);
-            result = true; // Temporary: return success without hardware init
+            result = AD7609_InitHardware(&pBoardAInModule->Config.AD7609);
             break;
         default:
             // Not implemented yet

@@ -69,24 +69,25 @@ void GPIO_Initialize ( void )
     ODCASET = 0xcU; /* Open Drain Enable */
     LATA = 0x0U; /* Initial Latch Value */
     TRISACLR = 0x20U; /* Direction Control */
-    TRISASET = 0x1U; /* Direction Control */
     ANSELACLR = 0x20U; /* Digital Mode Enable */
-    ANSELASET = 0x1U; /* Analog Mode Enable */
     CNPUASET = 0x1cU; /* Pull-Up Enable */
 
+    /* Change Notice Enable */
+    CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK;
+    IEC3SET = _IEC3_CNAIE_MASK;
     /* PORTB Initialization */
     LATB = 0x0U; /* Initial Latch Value */
-    TRISBCLR = 0x4000U; /* Direction Control */
-    TRISBSET = 0x2000U; /* Direction Control */
-    ANSELBCLR = 0x4000U; /* Digital Mode Enable */
-    ANSELBSET = 0x2000U; /* Analog Mode Enable */
+    TRISBCLR = 0x4200U; /* Direction Control */
+    TRISBSET = 0x8U; /* RB3 (AD7609 BSY) as input */
+    ANSELBCLR = 0x4208U; /* Digital Mode Enable */
     /* PORTC Initialization */
-    LATC = 0x0U; /* Initial Latch Value */
-    TRISCCLR = 0x8U; /* Direction Control */
+    LATC = 0x8000U; /* Initial Latch Value */
+    TRISCCLR = 0x8008U; /* Direction Control */
     ANSELCCLR = 0xeU; /* Digital Mode Enable */
     /* PORTD Initialization */
     LATD = 0x0U; /* Initial Latch Value */
     TRISDCLR = 0x2285U; /* Direction Control */
+    ANSELDCLR = 0x8000U; /* Digital Mode Enable */
     CNPUDSET = 0x800U; /* Pull-Up Enable */
 
     /* Change Notice Enable */
@@ -105,15 +106,15 @@ void GPIO_Initialize ( void )
     ANSELGCLR = 0x8000U; /* Digital Mode Enable */
     /* PORTH Initialization */
     ODCHSET = 0x8000U; /* Open Drain Enable */
-    LATH = 0xa110U; /* Initial Latch Value */
-    TRISHCLR = 0xa110U; /* Direction Control */
+    LATH = 0xa11cU; /* Initial Latch Value */
+    TRISHCLR = 0xa19cU; /* Direction Control */
     ANSELHCLR = 0x10U; /* Digital Mode Enable */
     /* PORTJ Initialization */
     LATJ = 0x0U; /* Initial Latch Value */
     TRISJCLR = 0x94b5U; /* Direction Control */
     /* PORTK Initialization */
-    LATK = 0x30U; /* Initial Latch Value */
-    TRISKCLR = 0xb0U; /* Direction Control */
+    LATK = 0x32U; /* Initial Latch Value */
+    TRISKCLR = 0xbaU; /* Direction Control */
 
     /* Unlock system for PPS configuration */
     SYSKEY = 0x00000000U;
@@ -124,6 +125,7 @@ void GPIO_Initialize ( void )
 
     /* PPS Input Remapping */
     SDI4R = 13;
+    SDI6R = 11;
 
     /* PPS Output Remapping */
     RPC13R = 8;
@@ -133,6 +135,7 @@ void GPIO_Initialize ( void )
     RPG1R = 11;
     RPG0R = 12;
     RPD1R = 12;
+    RPF8R = 10;
 
         /* Lock back the system after PPS configuration */
     CFGCONbits.IOLOCK = 1U;
