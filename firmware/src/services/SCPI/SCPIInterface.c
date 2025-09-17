@@ -25,6 +25,7 @@
 #include "HAL/BQ24297/BQ24297.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
+#include "SCPIDAC.h" 
 #include "SCPIDIO.h"
 #include "SCPILAN.h"
 #include "services/wifi_services/wifi_manager.h"
@@ -1342,7 +1343,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet,},
     {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet,},
     {.pattern = "ENAble:VOLTage:DC?", .callback = SCPI_ADCChanEnableGet,},
-    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:ADC:SINGleend", .callback = SCPI_ADCChanSingleEndSet,},
     {.pattern = "CONFigure:ADC:SINGleend?", .callback = SCPI_ADCChanSingleEndGet,},
     {.pattern = "CONFigure:ADC:RANGe", .callback = SCPI_ADCChanRangeSet,},
@@ -1359,6 +1359,25 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad,},
     {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet,},
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
+    //
+    // DAC
+    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},
+    {.pattern = "SOURce:VOLTage:LEVel?", .callback = SCPI_DACVoltageGet,},
+    {.pattern = "ENAble:SOURce:DC", .callback = SCPI_DACChanEnableSet,},
+    {.pattern = "ENAble:SOURce:DC?", .callback = SCPI_DACChanEnableGet,},
+    {.pattern = "CONFigure:DAC:RANGe", .callback = SCPI_DACChanRangeSet,},
+    {.pattern = "CONFigure:DAC:RANGe?", .callback = SCPI_DACChanRangeGet,},
+    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_DACChanCalmSet,},
+    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_DACChanCalbSet,},
+    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_DACChanCalmGet,},
+    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_DACChanCalbGet,},
+    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_DACCalSave,},
+    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_DACCalFSave,},
+    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_DACCalLoad,},
+    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_DACCalFLoad,},
+    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
+    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
+    {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
     //    
     //    // SPI
     //    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },

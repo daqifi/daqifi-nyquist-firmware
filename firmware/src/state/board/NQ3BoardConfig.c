@@ -50,6 +50,10 @@
 #define LED_BLUE_PORT GPIO_PORT_B
 #define BUTTON_PORT GPIO_PORT_J
 
+// DAC7718 control pins
+#define DAC7718_CS_PORT GPIO_PORT_K
+#define DAC7718_RST_PORT GPIO_PORT_J
+
 // Pin definitions corresponding to plib_gpio.h GPIO_PIN_* constants
 #define DIO_0_PIN                  GPIO_PIN_RD1
 #define DIO_1_PIN                  GPIO_PIN_RJ3
@@ -92,11 +96,15 @@
 #define USB_DP_MON_PIN             GPIO_PIN_RH9
 #define USB_DN_MON_PIN             GPIO_PIN_RH10
 #define BATT_MAN_INT_PIN           GPIO_PIN_RA4
-#define BATT_MAN_OTG_PIN           GPIO_PIN_RK5
+//#define BATT_MAN_OTG_PIN           GPIO_PIN_RK5
 #define BATT_MAN_STAT_PIN          GPIO_PIN_RH11
 #define LED_WHITE_PIN              GPIO_PIN_RC3
 #define LED_BLUE_PIN               GPIO_PIN_RB14
 #define BUTTON_PIN                 GPIO_PIN_RJ14
+
+// DAC7718 pin definitions
+#define DAC7718_CS_PIN             GPIO_PIN_RK0    // CS on RK0
+#define DAC7718_RST_PIN            GPIO_PIN_RJ13   // CLR/RST on RJ13
 
 typedef enum {
     OUTPUT_PIN_RPA14 = 0,
@@ -313,6 +321,81 @@ const tBoardConfig NQ3BoardConfig = {
             },
         },
         .Size = 16
+    },
+    .AOutModules =
+    {
+        .Data =
+        {
+            {
+                .Type = AOut_DAC7718,
+                .Config = {
+                    .DAC7718 = {
+                        .SPI = {
+                            .spiID = 2,          // SPI2 as specified
+                            .baud = 10000000,    // 10 MHz SPI clock
+                            .clock = 1,          
+                            .busClk_id = 2,      
+                            .clockPolarity = 0,  // CPOL = 0 for DAC7718
+                            .busWidth = 8,       // 8-bit transfers
+                            .inSamplePhase = 1,  // CPHA = 1 for DAC7718
+                            .outDataPhase = 0,   
+                        },
+                        .CS_Pin = DAC7718_CS_PIN,     // CS on RK0
+                        .RST_Pin = DAC7718_RST_PIN,   // CLR/RST on RJ13
+                        .DAC_Range = 0,               // Default range setting
+                        .Resolution = 4096,           // 12-bit DAC (4096 levels)
+                    }
+                },
+                .Size = 8  // DAC7718 has 8 channels
+            },
+        },
+        .Size = 1
+    },
+    .AOutChannels = {
+        .Data = {
+            // DAC7718 channels (0-7)
+            {
+                .DaqifiDacChannelId = 0,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 0}}
+            },
+            {
+                .DaqifiDacChannelId = 1,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 1}}
+            },
+            {
+                .DaqifiDacChannelId = 2,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 2}}
+            },
+            {
+                .DaqifiDacChannelId = 3,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 3}}
+            },
+            {
+                .DaqifiDacChannelId = 4,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 4}}
+            },
+            {
+                .DaqifiDacChannelId = 5,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 5}}
+            },
+            {
+                .DaqifiDacChannelId = 6,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 6}}
+            },
+            {
+                .DaqifiDacChannelId = 7,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 7}}
+            },
+        },
+        .Size = 8
     },
     .PowerConfig =
     {

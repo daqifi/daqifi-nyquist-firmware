@@ -7,63 +7,16 @@
 #ifndef DAC7718_H
 #define	DAC7718_H
 
-#include "system_config.h"
-#include "system_definitions.h"
-#include <peripheral/peripheral.h>
+#include "configuration.h"
+#include "definitions.h"
+#include "state/board/AOutConfig.h"
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
     
-/*! @struct sDAC7718Config
- * @brief Data structure for a single SPI Port configuration
- * @typedef tDAC7718Config
- * @brief Data type associated to the structure sDAC7718Config
- */
-typedef struct sSPIConfig
-{
-    //! SPI module ID
-    SPI_MODULE_ID spiID;
-    //! Baudrate
-    uint32_t baud;
-    //! Selects the type of clock is used by the Baud Rate Generator.
-    SPI_BAUD_RATE_CLOCK clock;  
-    //! Bus clock id
-    CLK_BUSES_PERIPHERAL busClk_id;
-    //! Enables clock polarity.
-    SPI_CLOCK_POLARITY clockPolarity;
-    //! Selects the data width for the SPI communication.
-    SPI_COMMUNICATION_WIDTH busWidth;                   
-    //! Selects the SPI data input sample phase.
-    SPI_INPUT_SAMPLING_PHASE inSamplePhase;        
-    //! Selects serial output data change.
-    SPI_OUTPUT_DATA_PHASE outDataPhase; 
-
-} tDAC7718_SPIConfig;
-    
-/*! @struct sDAC7718Config
- * @brief Data structure for a single DAC7718 configuration
- * @typedef tDAC7718Config
- * @brief Data type associated to the structure sDAC7718Config
- */
-typedef struct sDAC7718Config
-{
-    //! Configuration ID
-    uint8_t id;
-    //! Reset port
-    PORTS_CHANNEL RST_Ch;
-    //! Reset bit possition
-    PORTS_BIT_POS RST_Bit;
-    //! CS port
-    PORTS_CHANNEL CS_Ch;
-    //! CS bit possition
-    PORTS_BIT_POS CS_Bit;
-    //! DAC range
-    uint8_t DAC_Range;
-    //! SPI configuration
-    tDAC7718_SPIConfig SPI;
-
-} tDAC7718Config;
+// Forward declaration - using board configuration structure from AOutConfig.h
+typedef DAC7718ModuleConfig tDAC7718Config;
 
 /*!
  * Initializes the internal GPIO data structures
@@ -71,14 +24,12 @@ typedef struct sDAC7718Config
 void DAC7718_InitGlobal( void );
     
 /*!
- * Creates a new configuration for the specified set of inputs and 
+ * Creates a new configuration for the specified DAC7718 module and 
  * returns the id
- * @param channel
- * @param pin
- * @param mode
- * @return 
+ * @param newDAC7718Config Pointer to DAC7718 configuration structure
+ * @return Configuration ID
  */
-uint8_t DAC7718_NewConfig(tDAC7718Config *newDAC7718Config);
+uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config);
     
 /*!
  * Gets a handle to the config object with the specified id

@@ -69,6 +69,13 @@ void *BoardConfig_Get(
             return NULL;
         case BOARDCONFIG_AIN_CHANNELS:
             return &boardConfig.AInChannels;
+        case BOARDCONFIG_AOUT_MODULE:
+            if (index < boardConfig.AOutModules.Size) {
+                return &boardConfig.AOutModules.Data[ index ];
+            }
+            return NULL;
+        case BOARDCONFIG_AOUT_CHANNELS:
+            return &boardConfig.AOutChannels;
             //        case BOARDCONFIG_POWER_CONFIG:
             //            return &boardConfig.PowerConfig;
             //        case BOARDCONFIG_UI_CONFIG:
@@ -127,6 +134,14 @@ void BoardConfig_Set(
                         &boardConfig.AInModules.Data[ index ],
                         pSetValue,
                         sizeof ( AInModule));
+            }
+            break;
+        case BOARDCONFIG_AOUT_MODULE:
+            if (index < boardConfig.AOutModules.Size) {
+                memcpy(
+                        &boardConfig.AOutModules.Data[ index ],
+                        pSetValue,
+                        sizeof ( AOutModule));
             }
             break;
             //        case BOARDCONFIG_POWER_CONFIG:
