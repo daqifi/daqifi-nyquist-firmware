@@ -125,8 +125,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             return SCPI_RES_ERR;
         }
 
-        // Convert voltage to DAC counts and write to channel
-        int32_t counts = (int32_t)((voltage / 10.0) * 4096.0);
+        // Convert voltage to DAC counts with rounding for accuracy
+        int32_t counts = (int32_t)((voltage / 10.0) * 4096.0 + 0.5);
         if (counts < 0) counts = 0;
         if (counts > 4095) counts = 4095;
         
