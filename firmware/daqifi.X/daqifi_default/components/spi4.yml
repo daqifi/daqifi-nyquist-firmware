@@ -1,0 +1,133 @@
+configVersion: 1.0.0
+componentName: spi4
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: spi4
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: csp
+  type: package
+  version: v3.23.0
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments:
+    children:
+    - children:
+      - attributes:
+          id: SPI4_SPI
+        children:
+        - children:
+          - attributes:
+              id: targetComponentID
+            children:
+            - type: Value
+              value: drv_spi_0
+            type: String
+          - attributes:
+              id: targetAttachmentID
+            children:
+            - type: Value
+              value: drv_spi_SPI_dependency
+            type: String
+          type: Attributes
+        type: DirectCapability
+      type: Attachments
+    type: spi4
+  elementPosition:
+    attributes:
+      id: __ROOTVIEW
+    children:
+    - children:
+      - attributes:
+          id: spi4
+          x: '919'
+          y: '168'
+        type: ElementPosition
+      type: ElementPositions
+    type: ComponentGraph
+  symbols:
+    SPIS_SLAVE_SELECT_ENABLE:
+      attributes:
+        id: SPIS_SLAVE_SELECT_ENABLE
+      children:
+      - children:
+        - attributes:
+            id: spi4
+            value: 'true'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    SPI_BAUD_RATE:
+      attributes:
+        id: SPI_BAUD_RATE
+      children:
+      - children:
+        - attributes:
+            value: '20000000'
+          type: User
+        type: Values
+      type: Integer
+    SPI_BRG_VALUE:
+      attributes:
+        id: SPI_BRG_VALUE
+      children:
+      - children:
+        - attributes:
+            id: spi4
+            value: '2'
+          type: Dynamic
+        type: Values
+      type: Integer
+    SPI_INTERRUPT_MODE:
+      attributes:
+        id: SPI_INTERRUPT_MODE
+      children:
+      - children:
+        - attributes:
+            id: readOnly
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            id: spi4
+            value: 'true'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    SPI_MSTR_MODE_EN:
+      attributes:
+        id: SPI_MSTR_MODE_EN
+      children:
+      - children:
+        - attributes:
+            id: readOnly
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            id: spi4
+            value: '0'
+          type: Dynamic
+        type: Values
+      type: KeyValueSet
+    SPI_SPICON_MSSEN:
+      attributes:
+        id: SPI_SPICON_MSSEN
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
+  userData: {}

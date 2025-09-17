@@ -1,0 +1,53 @@
+configVersion: 1.0.0
+componentName: drv_i2c_0
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: drv_i2c_0
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: core
+  type: package
+  version: v3.15.5
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments:
+    children:
+    - children:
+      - attributes:
+          id: drv_i2c_I2C_dependency
+        children:
+        - children:
+          - attributes:
+              id: targetComponentID
+            children:
+            - type: Value
+              value: i2c5
+            type: String
+          - attributes:
+              id: targetAttachmentID
+            children:
+            - type: Value
+              value: I2C5_I2C
+            type: String
+          type: Attributes
+        type: DirectDependency
+      type: Attachments
+    type: drv_i2c_0
+  elementPosition: {}
+  symbols:
+    DRV_I2C_PLIB:
+      attributes:
+        id: DRV_I2C_PLIB
+      children:
+      - children:
+        - attributes:
+            id: drv_i2c_0
+            value: I2C5
+          type: Dynamic
+        type: Values
+      type: String
+  userData: {}

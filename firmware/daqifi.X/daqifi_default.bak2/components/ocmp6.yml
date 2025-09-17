@@ -1,0 +1,82 @@
+configVersion: 1.0.0
+componentName: ocmp6
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: ocmp6
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: csp
+  type: package
+  version: v3.23.0
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments: {}
+  elementPosition:
+    attributes:
+      id: __ROOTVIEW
+    children:
+    - children:
+      - attributes:
+          id: ocmp6
+          x: '121'
+          y: '600'
+        type: ElementPosition
+      type: ElementPositions
+    type: ComponentGraph
+  symbols:
+    OCMP_INTERRUPT_ENABLE:
+      attributes:
+        id: OCMP_INTERRUPT_ENABLE
+      children:
+      - children:
+        - attributes:
+            value: 'false'
+          type: User
+        type: Values
+      type: Boolean
+    OCMP_OCxCON_OCM:
+      attributes:
+        id: OCMP_OCxCON_OCM
+      children:
+      - children:
+        - attributes:
+            value: '6'
+          type: User
+        type: Values
+      type: KeyValueSet
+    OCMP_OCxCON_OCTSEL:
+      attributes:
+        id: OCMP_OCxCON_OCTSEL
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
+    OCMP_OCxR:
+      attributes:
+        id: OCMP_OCxR
+      children:
+      - children:
+        - attributes:
+            value: '0'
+          type: User
+        type: Values
+      type: Long
+    OCxCON_VALUE:
+      attributes:
+        id: OCxCON_VALUE
+      children:
+      - children:
+        - attributes:
+            id: ocmp6
+            value: '14'
+          type: Dynamic
+        type: Values
+      type: Hex
+  userData: {}

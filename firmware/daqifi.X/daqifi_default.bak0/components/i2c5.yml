@@ -1,0 +1,105 @@
+configVersion: 1.0.0
+componentName: i2c5
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: i2c5
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: csp
+  type: package
+  version: v3.22.2
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments:
+    children:
+    - children:
+      - attributes:
+          id: I2C5_I2C
+        children:
+        - children:
+          - attributes:
+              id: targetComponentID
+            children:
+            - type: Value
+              value: drv_i2c_0
+            type: String
+          - attributes:
+              id: targetAttachmentID
+            children:
+            - type: Value
+              value: drv_i2c_I2C_dependency
+            type: String
+          type: Attributes
+        type: DirectCapability
+      type: Attachments
+    type: i2c5
+  elementPosition:
+    attributes:
+      id: __ROOTVIEW
+    children:
+    - children:
+      - attributes:
+          id: i2c5
+          x: '289'
+          y: '330'
+        type: ElementPosition
+      type: ElementPositions
+    type: ComponentGraph
+  symbols:
+    BRG_VALUE:
+      attributes:
+        id: BRG_VALUE
+      children:
+      - children:
+        - attributes:
+            id: i2c5
+            value: '992'
+          type: Dynamic
+        type: Values
+      type: Integer
+    I2CS_RISE_TIME_CORE_TIMER_CNTS:
+      attributes:
+        id: I2CS_RISE_TIME_CORE_TIMER_CNTS
+      children:
+      - children:
+        - attributes:
+            id: i2c5
+            value: '30'
+          type: Dynamic
+        type: Values
+      type: Integer
+    I2CS_SETUP_TIME_CORE_TIMER_CNTS:
+      attributes:
+        id: I2CS_SETUP_TIME_CORE_TIMER_CNTS
+      children:
+      - children:
+        - attributes:
+            id: i2c5
+            value: '10'
+          type: Dynamic
+        type: Values
+      type: Integer
+    I2C_OPERATING_MODE:
+      attributes:
+        id: I2C_OPERATING_MODE
+      children:
+      - children:
+        - attributes:
+            id: readOnly
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            id: i2c5
+            value: Master
+          type: Dynamic
+        type: Values
+      type: Combo
+  userData: {}

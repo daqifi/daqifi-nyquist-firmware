@@ -1,0 +1,89 @@
+configVersion: 1.0.0
+componentName: sys_fs
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: sys_fs
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: core
+  type: package
+  version: v3.15.1
+- dependencyPackage: ''
+  name: littlefs
+  type: package
+  version: v2.11.1
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments:
+    children:
+    - children:
+      - attributes:
+          id: sys_fs_DRV_MEDIA_dependency
+        children:
+        - children:
+          - attributes:
+              targetAttachmentID: drv_media
+              targetComponentID: drv_sdspi_0
+            type: TargetAttachment
+          type: TargetAttachments
+        type: MultiCapability
+      type: Attachments
+    type: sys_fs
+  elementPosition:
+    attributes:
+      id: __ROOTVIEW
+    children:
+    - children:
+      - attributes:
+          id: sys_fs
+          x: '1569'
+          y: '395'
+        type: ElementPosition
+      type: ElementPositions
+    type: ComponentGraph
+  symbols:
+    SYS_FS_ALIGNED_BUFFER_ENABLE:
+      attributes:
+        id: SYS_FS_ALIGNED_BUFFER_ENABLE
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    SYS_FS_ALIGNED_BUFFER_LEN:
+      attributes:
+        id: SYS_FS_ALIGNED_BUFFER_LEN
+      children:
+      - children:
+        - attributes:
+            value: '2048'
+          type: User
+        type: Values
+      type: Integer
+    SYS_FS_MAX_FILES:
+      attributes:
+        id: SYS_FS_MAX_FILES
+      children:
+      - children:
+        - attributes:
+            value: '10'
+          type: User
+        type: Values
+      type: Integer
+    SYS_FS_RTOS_TASK_PRIORITY:
+      attributes:
+        id: SYS_FS_RTOS_TASK_PRIORITY
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: Integer
+  userData: {}

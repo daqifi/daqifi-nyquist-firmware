@@ -1,0 +1,120 @@
+configVersion: 1.0.0
+componentName: lib_wolfcrypt
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: lib_wolfcrypt
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: crypto
+  type: package
+  version: v3.8.2
+- dependencyPackage: ''
+  name: wolfssl
+  type: package
+  version: v5.4.0
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments:
+    children:
+    - children:
+      - attributes:
+          id: LIB_WOLFCRYPT_ZLIB_Dependency
+        children:
+        - children:
+          - attributes:
+              id: targetComponentID
+            children:
+            - type: Value
+              value: lib_zlib
+            type: String
+          - attributes:
+              id: targetAttachmentID
+            children:
+            - type: Value
+              value: lib_zlib
+            type: String
+          type: Attributes
+        type: DirectDependency
+      type: Attachments
+    type: lib_wolfcrypt
+  elementPosition:
+    attributes:
+      id: __ROOTVIEW
+    children:
+    - children:
+      - attributes:
+          id: lib_wolfcrypt
+          x: '161'
+          y: '442'
+        type: ElementPosition
+      type: ElementPositions
+    type: ComponentGraph
+  symbols:
+    cryptoCrya_03710:
+      attributes:
+        id: cryptoCrya_03710
+      children:
+      - children:
+        - attributes:
+            id: lib_wolfcrypt
+            value: 'false'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    cryptoCrya_U2803:
+      attributes:
+        id: cryptoCrya_U2803
+      children:
+      - children:
+        - attributes:
+            id: lib_wolfcrypt
+            value: 'false'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    cryptoCrya_U2805:
+      attributes:
+        id: cryptoCrya_U2805
+      children:
+      - children:
+        - attributes:
+            id: lib_wolfcrypt
+            value: 'false'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    wolfcrypt_havezlib:
+      attributes:
+        id: wolfcrypt_havezlib
+      children:
+      - children:
+        - attributes:
+            id: lib_wolfcrypt
+            value: 'true'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    wolfcrypt_random:
+      attributes:
+        id: wolfcrypt_random
+      children:
+      - children:
+        - attributes:
+            id: readOnly
+          children:
+          - type: Value
+            value: 'false'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            id: lib_wolfcrypt
+            value: 'true'
+          type: Dynamic
+        type: Values
+      type: Boolean
+  userData: {}

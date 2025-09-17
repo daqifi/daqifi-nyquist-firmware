@@ -20,6 +20,7 @@
               <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_local.h</itemPath>
               <itemPath>../src/config/default/driver/sdspi/drv_sdspi.h</itemPath>
               <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_file_system.h</itemPath>
+              <itemPath>../src/config/default/driver/sdspi/src/drv_sdspi_driver_interface.h</itemPath>
             </logicalFolder>
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <itemPath>../src/config/default/driver/spi/src/drv_spi_local.h</itemPath>
@@ -164,6 +165,7 @@
                 <itemPath>../src/config/default/peripheral/i2c/master/plib_i2c5_master.h</itemPath>
                 <itemPath>../src/config/default/peripheral/i2c/master/plib_i2c_master_common.h</itemPath>
               </logicalFolder>
+              <itemPath>../src/config/default/peripheral/i2c/plib_i2c_smbus_common.h</itemPath>
             </logicalFolder>
             <logicalFolder name="nvm" displayName="nvm" projectFiles="true">
               <itemPath>../src/config/default/peripheral/nvm/plib_nvm.h</itemPath>
@@ -187,6 +189,8 @@
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi_master_common.h</itemPath>
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi4_master.h</itemPath>
+                <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi6_master.h</itemPath>
+                <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi2_master.h</itemPath>
               </logicalFolder>
             </logicalFolder>
             <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
@@ -293,6 +297,7 @@
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/croutine.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/task.h</itemPath>
             <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/FreeRTOS.h</itemPath>
+            <itemPath>../src/third_party/rtos/FreeRTOS/Source/include/mpu_syscall_numbers.h</itemPath>
           </logicalFolder>
           <logicalFolder name="portable" displayName="portable" projectFiles="true">
             <logicalFolder name="MPLAB" displayName="MPLAB" projectFiles="true">
@@ -603,8 +608,63 @@
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
                    projectFiles="true">
+      <logicalFolder name="daqifi_default"
+                     displayName="daqifi_default"
+                     projectFiles="true">
+        <logicalFolder name="components" displayName="components" projectFiles="true">
+          <itemPath>daqifi_default/components/tmr6.yml</itemPath>
+          <itemPath>daqifi_default/components/power.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_spi_0.yml</itemPath>
+          <itemPath>daqifi_default/components/HarmonyCore.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp1.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_spi.yml</itemPath>
+          <itemPath>daqifi_default/components/i2c5.yml</itemPath>
+          <itemPath>daqifi_default/components/sys_time.yml</itemPath>
+          <itemPath>daqifi_default/components/spi4.yml</itemPath>
+          <itemPath>daqifi_default/components/drvWifiWinc.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_sdspi.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr5.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp4.yml</itemPath>
+          <itemPath>daqifi_default/components/adchs.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_i2c.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_sdspi_0.yml</itemPath>
+          <itemPath>daqifi_default/components/sys_fs.yml</itemPath>
+          <itemPath>daqifi_default/components/core_timer.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_usbhs_v1.yml</itemPath>
+          <itemPath>daqifi_default/components/usb_device.yml</itemPath>
+          <itemPath>daqifi_default/components/FreeRTOS.yml</itemPath>
+          <itemPath>daqifi_default/components/lib_zlib.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp3.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr4.yml</itemPath>
+          <itemPath>daqifi_default/components/lib_crypto.yml</itemPath>
+          <itemPath>daqifi_default/components/lib_wolfcrypt.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr3.yml</itemPath>
+          <itemPath>daqifi_default/components/nvm.yml</itemPath>
+          <itemPath>daqifi_default/components/usb_device_cdc.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_spi_2.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp8.yml</itemPath>
+          <itemPath>daqifi_default/components/core.yml</itemPath>
+          <itemPath>daqifi_default/components/dfp.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_i2c_0.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr7.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp6.yml</itemPath>
+          <itemPath>daqifi_default/components/tmr2.yml</itemPath>
+          <itemPath>daqifi_default/components/ocmp7.yml</itemPath>
+          <itemPath>daqifi_default/components/spi6.yml</itemPath>
+          <itemPath>daqifi_default/components/usb_device_cdc_0.yml</itemPath>
+          <itemPath>daqifi_default/components/drv_spi_1.yml</itemPath>
+          <itemPath>daqifi_default/components/spi2.yml</itemPath>
+          <itemPath>daqifi_default/components/rcon.yml</itemPath>
+        </logicalFolder>
+        <itemPath>daqifi_default/mcc-config.mc4</itemPath>
+      </logicalFolder>
+      <logicalFolder name="wolfcrypt" displayName="wolfcrypt" projectFiles="true">
+      </logicalFolder>
       <itemPath>Makefile</itemPath>
-      <itemPath>daqifi.mc3</itemPath>
+    </logicalFolder>
+    <logicalFolder name="LibraryFiles"
+                   displayName="LibraryFiles"
+                   projectFiles="true">
     </logicalFolder>
     <logicalFolder name="LinkerScript"
                    displayName="Linker Files"
@@ -731,6 +791,7 @@
               <logicalFolder name="master" displayName="master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/i2c/master/plib_i2c5_master.c</itemPath>
               </logicalFolder>
+              <itemPath>../src/config/default/peripheral/i2c/plib_i2c_smbus_common.c</itemPath>
             </logicalFolder>
             <logicalFolder name="nvm" displayName="nvm" projectFiles="true">
               <itemPath>../src/config/default/peripheral/nvm/plib_nvm.c</itemPath>
@@ -752,6 +813,8 @@
             <logicalFolder name="spi" displayName="spi" projectFiles="true">
               <logicalFolder name="spi_master" displayName="spi_master" projectFiles="true">
                 <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi4_master.c</itemPath>
+                <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi6_master.c</itemPath>
+                <itemPath>../src/config/default/peripheral/spi/spi_master/plib_spi2_master.c</itemPath>
               </logicalFolder>
             </logicalFolder>
             <logicalFolder name="tmr" displayName="tmr" projectFiles="true">
@@ -900,6 +963,7 @@
           <itemPath>../src/services/SCPI/SCPIInterface.c</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.c</itemPath>
           <itemPath>../src/services/SCPI/SCPIStorageSD.c</itemPath>
+          <itemPath>../src/services/SCPI/SCPIDAC.c</itemPath>
         </logicalFolder>
         <logicalFolder name="SDcard" displayName="sd_card_services" projectFiles="true">
           <itemPath>../src/services/sd_card_services/sd_card_manager.c</itemPath>
@@ -1147,7 +1211,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/AD7609.c" ex="true" overriding="false">
+      <item path="../src/HAL/ADC/AD7609.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1211,7 +1275,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/DAC7718/DAC7718.c" ex="true" overriding="false">
+      <item path="../src/HAL/DAC7718/DAC7718.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1660,7 +1724,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/old_hv2_bootld.ld"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -2032,7 +2096,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ1BoardConfig.c" ex="false" overriding="false">
+      <item path="../src/state/board/NQ1BoardConfig.c" ex="true" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2080,7 +2144,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ3BoardConfig.c" ex="true" overriding="false">
+      <item path="../src/state/board/NQ3BoardConfig.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2265,7 +2329,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ1RuntimeDefaults.c"
-            ex="false"
+            ex="true"
             overriding="false">
         <C32>
         </C32>
@@ -2283,7 +2347,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ2RuntimeDefaults.c"
-            ex="false"
+            ex="true"
             overriding="false">
         <C32>
         </C32>
@@ -2339,6 +2403,7 @@
       <C32>
         <property key="additional-warnings" value="true"/>
         <property key="addresss-attribute-use" value="false"/>
+        <property key="appendMe" value=""/>
         <property key="cast-align" value="false"/>
         <property key="code-model" value="default"/>
         <property key="const-model" value="default"/>
@@ -2373,7 +2438,7 @@
         <property key="post-instruction-scheduling" value="default"/>
         <property key="pre-instruction-scheduling" value="default"/>
         <property key="preprocessor-macros"
-                  value="HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN;FORCE_BOOTLOADER_FLAG_ADDR=&quot;0x80000000+0x80000-0x10&quot;;FORCE_BOOTLOADER_FLAG_VALUE=&quot;0xF4CEB007&quot;"/>
+                  value="FORCE_BOOTLOADER_FLAG_ADDR=&quot;0x80000000+0x80000-0x10&quot;;FORCE_BOOTLOADER_FLAG_VALUE=&quot;0xF4CEB007&quot;;HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN"/>
         <property key="scalar-model" value="default"/>
         <property key="strict-ansi" value="false"/>
         <property key="support-ansi" value="false"/>
@@ -2388,6 +2453,7 @@
         <property key="additional-options-chop-files" value="false"/>
       </C32-AR>
       <C32-AS>
+        <property key="appendMe" value=""/>
         <property key="assembler-symbols" value=""/>
         <property key="enable-symbols" value="true"/>
         <property key="exclude-floating-point-library" value="false"/>
@@ -2420,6 +2486,7 @@
         <property key="additional-options-use-response-files" value="false"/>
         <property key="additional-options-write-sla" value="false"/>
         <property key="allocate-dinit" value="false"/>
+        <property key="appendMe" value="-defsym=_ebase_address=0x9d010000"/>
         <property key="code-dinit" value="false"/>
         <property key="ebase-addr" value=""/>
         <property key="enable-check-sections" value="false"/>
@@ -2438,7 +2505,7 @@
         <property key="generate-16-bit-code" value="false"/>
         <property key="generate-cross-reference-file" value="false"/>
         <property key="generate-micro-compressed-code" value="false"/>
-        <property key="heap-size" value="0"/>
+        <property key="heap-size" value="1024"/>
         <property key="input-libraries" value=""/>
         <property key="kseg-length" value=""/>
         <property key="kseg-origin" value=""/>
@@ -2466,6 +2533,7 @@
       <C32CPP>
         <property key="additional-warnings" value="false"/>
         <property key="addresss-attribute-use" value="false"/>
+        <property key="appendMe" value=""/>
         <property key="check-new" value="false"/>
         <property key="eh-specs" value="true"/>
         <property key="enable-app-io" value="false"/>
@@ -3692,6 +3760,8 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
+        <property key="programmerToGoFilePath"
+                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
