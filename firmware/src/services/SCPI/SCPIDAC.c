@@ -130,8 +130,9 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         if (counts < 0) counts = 0;
         if (counts > 4095) counts = 4095;
         
-        // Use driver functions to set DAC output
-        uint8_t dacRegister = 8 + (uint8_t)channel;
+        // Get hardware channel number from board configuration
+        uint8_t hwChannel = pBoardConfigAOutChannels->Data[index].Config.DAC7718.ChannelNumber;
+        uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
         DAC7718_ReadWriteReg(0, 0, dacRegister, (uint32_t)counts);
         DAC7718_UpdateLatch(0);
         

@@ -353,46 +353,46 @@ const tBoardConfig NQ3BoardConfig = {
     },
     .AOutChannels = {
         .Data = {
-            // DAC7718 channels (0-7)
+            // DAC7718 channel mapping: User 0-7 → DAC 3,2,1,0,7,6,5,4
             {
                 .DaqifiDacChannelId = 0,
-                .Type = AOut_DAC7718,
-                .Config = {.DAC7718 = {.ChannelNumber = 0}}
-            },
-            {
-                .DaqifiDacChannelId = 1,
-                .Type = AOut_DAC7718,
-                .Config = {.DAC7718 = {.ChannelNumber = 1}}
-            },
-            {
-                .DaqifiDacChannelId = 2,
-                .Type = AOut_DAC7718,
-                .Config = {.DAC7718 = {.ChannelNumber = 2}}
-            },
-            {
-                .DaqifiDacChannelId = 3,
                 .Type = AOut_DAC7718,
                 .Config = {.DAC7718 = {.ChannelNumber = 3}}
             },
             {
+                .DaqifiDacChannelId = 1,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 2}}
+            },
+            {
+                .DaqifiDacChannelId = 2,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 1}}
+            },
+            {
+                .DaqifiDacChannelId = 3,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 0}}
+            },
+            {
                 .DaqifiDacChannelId = 4,
                 .Type = AOut_DAC7718,
-                .Config = {.DAC7718 = {.ChannelNumber = 4}}
+                .Config = {.DAC7718 = {.ChannelNumber = 7}}
             },
             {
                 .DaqifiDacChannelId = 5,
                 .Type = AOut_DAC7718,
-                .Config = {.DAC7718 = {.ChannelNumber = 5}}
+                .Config = {.DAC7718 = {.ChannelNumber = 6}}
             },
             {
                 .DaqifiDacChannelId = 6,
                 .Type = AOut_DAC7718,
-                .Config = {.DAC7718 = {.ChannelNumber = 6}}
+                .Config = {.DAC7718 = {.ChannelNumber = 5}}
             },
             {
                 .DaqifiDacChannelId = 7,
                 .Type = AOut_DAC7718,
-                .Config = {.DAC7718 = {.ChannelNumber = 7}}
+                .Config = {.DAC7718 = {.ChannelNumber = 4}}
             },
         },
         .Size = 8
