@@ -284,8 +284,6 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
         return false;
     }
     
-    LOG_D("AD7609_TriggerConversion: Starting conversion sequence");
-    
     // AD7609 Conversion Sequence per datasheet:
     // 1. Force CONVST pin low first  
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);
@@ -297,7 +295,12 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
     // 3. Brief delay - conversion will start and BSY will go high
     AD7609_Delay_ms(1);
     
-    LOG_D("AD7609_TriggerConversion: Conversion triggered");
+    // Reduced logging spam - only log first few triggers
+    static int trigger_debug_count = 0;
+    if (trigger_debug_count < 3) {
+        LOG_D("AD7609_TriggerConversion: Conversion triggered (%d)", trigger_debug_count);
+        trigger_debug_count++;
+    }
     return true;
 }
 
