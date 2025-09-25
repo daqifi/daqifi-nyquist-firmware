@@ -152,7 +152,7 @@ extern "C" {
 
 
 /* SPI Driver Common Configuration Options */
-#define DRV_SPI_INSTANCES_NUMBER              (1U)
+#define DRV_SPI_INSTANCES_NUMBER              (3U)
 
 /*** WiFi WINC Driver Configuration ***/
 #define WDRV_WINC_GPIO_SOURCE
@@ -187,6 +187,19 @@ extern "C" {
 #define DRV_SPI_XMIT_DMA_CH_IDX0              SYS_DMA_CHANNEL_0
 #define DRV_SPI_RCV_DMA_CH_IDX0               SYS_DMA_CHANNEL_1
 #define DRV_SPI_QUEUE_SIZE_IDX0               64
+
+/* SPI Driver Instance 1 Configuration Options */
+#define DRV_SPI_INDEX_1                       1
+#define DRV_SPI_CLIENTS_NUMBER_IDX1           1
+#define DRV_SPI_DMA_MODE
+#define DRV_SPI_XMIT_DMA_CH_IDX1              SYS_DMA_CHANNEL_2
+#define DRV_SPI_RCV_DMA_CH_IDX1               SYS_DMA_CHANNEL_3
+#define DRV_SPI_QUEUE_SIZE_IDX1               4
+
+/* SPI Driver Instance 2 Configuration Options */
+#define DRV_SPI_INDEX_2                       2
+#define DRV_SPI_CLIENTS_NUMBER_IDX2           1
+#define DRV_SPI_QUEUE_SIZE_IDX2               4
 
 
 

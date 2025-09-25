@@ -84,11 +84,17 @@ void DRV_USBHS_InterruptHandler( void );
 void DRV_USBHS_DMAInterruptHandler( void );
 void DMA0_InterruptHandler( void );
 void DMA1_InterruptHandler( void );
+void DMA2_InterruptHandler( void );
+void DMA3_InterruptHandler( void );
+void SPI2_RX_InterruptHandler( void );
+void SPI2_TX_InterruptHandler( void );
 void SPI4_RX_InterruptHandler( void );
 void SPI4_TX_InterruptHandler( void );
 void NVM_InterruptHandler( void );
 void I2C5_BUS_InterruptHandler( void );
 void I2C5_MASTER_InterruptHandler( void );
+void SPI6_RX_InterruptHandler( void );
+void SPI6_TX_InterruptHandler( void );
 void ADC_EOS_InterruptHandler( void );
 
 

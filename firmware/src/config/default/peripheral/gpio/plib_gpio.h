@@ -162,6 +162,31 @@
 #define LED_WHITE_GetLatch()          ((LATC >> 3) & 0x1U)
 #define LED_WHITE_PIN                  GPIO_PIN_RC3
 
+/*** Macros for SCK2 pin ***/
+#define SCK2_Get()               ((PORTG >> 6) & 0x1U)
+#define SCK2_GetLatch()          ((LATG >> 6) & 0x1U)
+#define SCK2_PIN                  GPIO_PIN_RG6
+
+/*** Macros for SDI2 pin ***/
+#define SDI2_Get()               ((PORTG >> 7) & 0x1U)
+#define SDI2_GetLatch()          ((LATG >> 7) & 0x1U)
+#define SDI2_PIN                  GPIO_PIN_RG7
+
+/*** Macros for SDO2 pin ***/
+#define SDO2_Get()               ((PORTG >> 8) & 0x1U)
+#define SDO2_GetLatch()          ((LATG >> 8) & 0x1U)
+#define SDO2_PIN                  GPIO_PIN_RG8
+
+/*** Macros for DAC7718_CS pin ***/
+#define DAC7718_CS_Set()               (LATKSET = (1U<<0))
+#define DAC7718_CS_Clear()             (LATKCLR = (1U<<0))
+#define DAC7718_CS_Toggle()            (LATKINV= (1U<<0))
+#define DAC7718_CS_OutputEnable()      (TRISKCLR = (1U<<0))
+#define DAC7718_CS_InputEnable()       (TRISKSET = (1U<<0))
+#define DAC7718_CS_Get()               ((PORTK >> 0) & 0x1U)
+#define DAC7718_CS_GetLatch()          ((LATK >> 0) & 0x1U)
+#define DAC7718_CS_PIN                  GPIO_PIN_RK0
+
 /*** Macros for AIN_0 pin ***/
 #define AIN_0_Get()               ((PORTG >> 9) & 0x1U)
 #define AIN_0_GetLatch()          ((LATG >> 9) & 0x1U)
@@ -192,6 +217,16 @@
 #define AIN_4_GetLatch()          ((LATB >> 4) & 0x1U)
 #define AIN_4_PIN                  GPIO_PIN_RB4
 
+/*** Macros for DAC7718_RST pin ***/
+#define DAC7718_RST_Set()               (LATJSET = (1U<<13))
+#define DAC7718_RST_Clear()             (LATJCLR = (1U<<13))
+#define DAC7718_RST_Toggle()            (LATJINV= (1U<<13))
+#define DAC7718_RST_OutputEnable()      (TRISJCLR = (1U<<13))
+#define DAC7718_RST_InputEnable()       (TRISJSET = (1U<<13))
+#define DAC7718_RST_Get()               ((PORTJ >> 13) & 0x1U)
+#define DAC7718_RST_GetLatch()          ((LATJ >> 13) & 0x1U)
+#define DAC7718_RST_PIN                  GPIO_PIN_RJ13
+
 /*** Macros for BUTTON pin ***/
 #define BUTTON_Set()               (LATJSET = (1U<<14))
 #define BUTTON_Clear()             (LATJCLR = (1U<<14))
@@ -211,6 +246,16 @@
 #define PWR_VREF_EN_Get()               ((PORTJ >> 15) & 0x1U)
 #define PWR_VREF_EN_GetLatch()          ((LATJ >> 15) & 0x1U)
 #define PWR_VREF_EN_PIN                  GPIO_PIN_RJ15
+
+/*** Macros for AD7609_BSY pin ***/
+#define AD7609_BSY_Set()               (LATBSET = (1U<<3))
+#define AD7609_BSY_Clear()             (LATBCLR = (1U<<3))
+#define AD7609_BSY_Toggle()            (LATBINV= (1U<<3))
+#define AD7609_BSY_OutputEnable()      (TRISBCLR = (1U<<3))
+#define AD7609_BSY_InputEnable()       (TRISBSET = (1U<<3))
+#define AD7609_BSY_Get()               ((PORTB >> 3) & 0x1U)
+#define AD7609_BSY_GetLatch()          ((LATB >> 3) & 0x1U)
+#define AD7609_BSY_PIN                  GPIO_PIN_RB3
 
 /*** Macros for AIN_10 pin ***/
 #define AIN_10_Get()               ((PORTB >> 6) & 0x1U)
@@ -237,10 +282,40 @@
 #define AN_5_GetLatch()          ((LATH >> 1) & 0x1U)
 #define AN_5_PIN                  GPIO_PIN_RH1
 
+/*** Macros for AD7609_CS pin ***/
+#define AD7609_CS_Set()               (LATHSET = (1U<<2))
+#define AD7609_CS_Clear()             (LATHCLR = (1U<<2))
+#define AD7609_CS_Toggle()            (LATHINV= (1U<<2))
+#define AD7609_CS_OutputEnable()      (TRISHCLR = (1U<<2))
+#define AD7609_CS_InputEnable()       (TRISHSET = (1U<<2))
+#define AD7609_CS_Get()               ((PORTH >> 2) & 0x1U)
+#define AD7609_CS_GetLatch()          ((LATH >> 2) & 0x1U)
+#define AD7609_CS_PIN                  GPIO_PIN_RH2
+
+/*** Macros for AD7609_RST pin ***/
+#define AD7609_RST_Set()               (LATHSET = (1U<<3))
+#define AD7609_RST_Clear()             (LATHCLR = (1U<<3))
+#define AD7609_RST_Toggle()            (LATHINV= (1U<<3))
+#define AD7609_RST_OutputEnable()      (TRISHCLR = (1U<<3))
+#define AD7609_RST_InputEnable()       (TRISHSET = (1U<<3))
+#define AD7609_RST_Get()               ((PORTH >> 3) & 0x1U)
+#define AD7609_RST_GetLatch()          ((LATH >> 3) & 0x1U)
+#define AD7609_RST_PIN                  GPIO_PIN_RH3
+
 /*** Macros for AIN_14 pin ***/
 #define AIN_14_Get()               ((PORTB >> 8) & 0x1U)
 #define AIN_14_GetLatch()          ((LATB >> 8) & 0x1U)
 #define AIN_14_PIN                  GPIO_PIN_RB8
+
+/*** Macros for AD7609_CNV pin ***/
+#define AD7609_CNV_Set()               (LATBSET = (1U<<9))
+#define AD7609_CNV_Clear()             (LATBCLR = (1U<<9))
+#define AD7609_CNV_Toggle()            (LATBINV= (1U<<9))
+#define AD7609_CNV_OutputEnable()      (TRISBCLR = (1U<<9))
+#define AD7609_CNV_InputEnable()       (TRISBSET = (1U<<9))
+#define AD7609_CNV_Get()               ((PORTB >> 9) & 0x1U)
+#define AD7609_CNV_GetLatch()          ((LATB >> 9) & 0x1U)
+#define AD7609_CNV_PIN                  GPIO_PIN_RB9
 
 /*** Macros for AIN_9 pin ***/
 #define AIN_9_Get()               ((PORTB >> 10) & 0x1U)
@@ -251,6 +326,26 @@
 #define AIN_11_Get()               ((PORTB >> 11) & 0x1U)
 #define AIN_11_GetLatch()          ((LATB >> 11) & 0x1U)
 #define AIN_11_PIN                  GPIO_PIN_RB11
+
+/*** Macros for AD7609_RNG pin ***/
+#define AD7609_RNG_Set()               (LATKSET = (1U<<1))
+#define AD7609_RNG_Clear()             (LATKCLR = (1U<<1))
+#define AD7609_RNG_Toggle()            (LATKINV= (1U<<1))
+#define AD7609_RNG_OutputEnable()      (TRISKCLR = (1U<<1))
+#define AD7609_RNG_InputEnable()       (TRISKSET = (1U<<1))
+#define AD7609_RNG_Get()               ((PORTK >> 1) & 0x1U)
+#define AD7609_RNG_GetLatch()          ((LATK >> 1) & 0x1U)
+#define AD7609_RNG_PIN                  GPIO_PIN_RK1
+
+/*** Macros for AD7609_OS1 pin ***/
+#define AD7609_OS1_Set()               (LATKSET = (1U<<3))
+#define AD7609_OS1_Clear()             (LATKCLR = (1U<<3))
+#define AD7609_OS1_Toggle()            (LATKINV= (1U<<3))
+#define AD7609_OS1_OutputEnable()      (TRISKCLR = (1U<<3))
+#define AD7609_OS1_InputEnable()       (TRISKSET = (1U<<3))
+#define AD7609_OS1_Get()               ((PORTK >> 3) & 0x1U)
+#define AD7609_OS1_GetLatch()          ((LATK >> 3) & 0x1U)
+#define AD7609_OS1_PIN                  GPIO_PIN_RK3
 
 /*** Macros for PWR_5VREF_MON pin ***/
 #define PWR_5VREF_MON_Get()               ((PORTA >> 1) & 0x1U)
@@ -302,10 +397,45 @@
 #define PWER_5_5V_PROT_MON_GetLatch()          ((LATH >> 6) & 0x1U)
 #define PWER_5_5V_PROT_MON_PIN                  GPIO_PIN_RH6
 
+/*** Macros for AD7609_OS0 pin ***/
+#define AD7609_OS0_Set()               (LATHSET = (1U<<7))
+#define AD7609_OS0_Clear()             (LATHCLR = (1U<<7))
+#define AD7609_OS0_Toggle()            (LATHINV= (1U<<7))
+#define AD7609_OS0_OutputEnable()      (TRISHCLR = (1U<<7))
+#define AD7609_OS0_InputEnable()       (TRISHSET = (1U<<7))
+#define AD7609_OS0_Get()               ((PORTH >> 7) & 0x1U)
+#define AD7609_OS0_GetLatch()          ((LATH >> 7) & 0x1U)
+#define AD7609_OS0_PIN                  GPIO_PIN_RH7
+
 /*** Macros for PWR_10V_MON pin ***/
 #define PWR_10V_MON_Get()               ((PORTD >> 14) & 0x1U)
 #define PWR_10V_MON_GetLatch()          ((LATD >> 14) & 0x1U)
 #define PWR_10V_MON_PIN                  GPIO_PIN_RD14
+
+/*** Macros for SCK6 pin ***/
+#define SCK6_Get()               ((PORTD >> 15) & 0x1U)
+#define SCK6_GetLatch()          ((LATD >> 15) & 0x1U)
+#define SCK6_PIN                  GPIO_PIN_RD15
+
+/*** Macros for MAX6629_CS pin ***/
+#define MAX6629_CS_Set()               (LATCSET = (1U<<15))
+#define MAX6629_CS_Clear()             (LATCCLR = (1U<<15))
+#define MAX6629_CS_Toggle()            (LATCINV= (1U<<15))
+#define MAX6629_CS_OutputEnable()      (TRISCCLR = (1U<<15))
+#define MAX6629_CS_InputEnable()       (TRISCSET = (1U<<15))
+#define MAX6629_CS_Get()               ((PORTC >> 15) & 0x1U)
+#define MAX6629_CS_GetLatch()          ((LATC >> 15) & 0x1U)
+#define MAX6629_CS_PIN                  GPIO_PIN_RC15
+
+/*** Macros for SDI6 pin ***/
+#define SDI6_Get()               ((PORTF >> 2) & 0x1U)
+#define SDI6_GetLatch()          ((LATF >> 2) & 0x1U)
+#define SDI6_PIN                  GPIO_PIN_RF2
+
+/*** Macros for SDO6 pin ***/
+#define SDO6_Get()               ((PORTF >> 8) & 0x1U)
+#define SDO6_GetLatch()          ((LATF >> 8) & 0x1U)
+#define SDO6_PIN                  GPIO_PIN_RF8
 
 /*** Macros for WDRV_WINC_RESETN pin ***/
 #define WDRV_WINC_RESETN_Set()               (LATHSET = (1U<<8))
@@ -370,19 +500,14 @@
 #define BATT_MAN_INT_InterruptDisable()  (CNENACLR = (1U<<4))
 
 /*** Macros for BATT_MAN_OTG pin ***/
-/* BQ24297 OTG enable pin - controls boost converter for battery operation
- * Hardware: RK5 (Port K, bit 5) per schematic
- * Note: Previous implementation incorrectly used RF5 (I2C SCL pin)
- * Testing indicates OTG must be enabled for device to remain powered on battery
- */
-#define BATT_MAN_OTG_Set()               (LATKSET = (1U<<5))
-#define BATT_MAN_OTG_Clear()             (LATKCLR = (1U<<5))
-#define BATT_MAN_OTG_Toggle()            (LATKINV= (1U<<5))
-#define BATT_MAN_OTG_OutputEnable()      (TRISKCLR = (1U<<5))
-#define BATT_MAN_OTG_InputEnable()       (TRISKSET = (1U<<5))
-#define BATT_MAN_OTG_Get()               ((PORTK >> 5) & 0x1U)
-#define BATT_MAN_OTG_GetLatch()          ((LATK >> 5) & 0x1U)
-#define BATT_MAN_OTG_PIN                  GPIO_PIN_RK5
+#define BATT_MAN_OTG_Set()               (LATFSET = (1U<<5))
+#define BATT_MAN_OTG_Clear()             (LATFCLR = (1U<<5))
+#define BATT_MAN_OTG_Toggle()            (LATFINV= (1U<<5))
+#define BATT_MAN_OTG_OutputEnable()      (TRISFCLR = (1U<<5))
+#define BATT_MAN_OTG_InputEnable()       (TRISFSET = (1U<<5))
+#define BATT_MAN_OTG_Get()               ((PORTF >> 5) & 0x1U)
+#define BATT_MAN_OTG_GetLatch()          ((LATF >> 5) & 0x1U)
+#define BATT_MAN_OTG_PIN                  GPIO_PIN_RF5
 
 /*** Macros for WDRV_WINC_SS pin ***/
 #define WDRV_WINC_SS_Set()               (LATKSET = (1U<<4))

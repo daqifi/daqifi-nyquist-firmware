@@ -94,39 +94,52 @@ void ADC_EosInterruptTask(void) {
                 static bool data_fresh = false;
                 
                 if (gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId == 0) {
-                    // First channel - read all AD7609 data via SPI
-                    bool conversionReady = !GPIO_PinRead(GPIO_PIN_RB3); // BSY pin low = ready
+                    // First channel - trigger conversion then read all AD7609 data via SPI
                     
-                    if (conversionReady) {
-                        GPIO_PinWrite(GPIO_PIN_RH2, false); // CS low
-                        
-                        uint8_t txData[16] = {0}; // 8 channels × 2 bytes
-                        uint8_t rxData[16] = {0};
-                        
-                        if (SPI6_WriteRead(txData, 16, rxData, 16)) {
-                            // Parse 8 channels from SPI data
-                            for (int ch = 0; ch < 8; ch++) {
-                                ad7609_data[ch] = (rxData[ch*2] << 8) | rxData[ch*2 + 1];
-                            }
-                            data_fresh = true;
+                    // CRITICAL FIX: Trigger a new conversion first (was missing!)
+                    // Find the AD7609 module configuration
+                    for (int modIdx = 0; modIdx < gpBoardConfig->AInModules.Size; modIdx++) {
+                        if (gpBoardConfig->AInModules.Data[modIdx].Type == AIn_AD7609) {
+                            // Trigger conversion using the proper AD7609 driver
+                            AD7609_TriggerConversion(&gpBoardConfig->AInModules.Data[modIdx].Config.AD7609);
                             
-                            // Debug: Log SPI data to see what we're actually receiving
-                            static int debug_count = 0;
-                            if (debug_count < 3) { // Only log first few times
-                                LOG_D("AD7609 SPI: BSY=%d, Data[0-3]=%02X %02X %02X %02X, Ch0=0x%04X", 
-                                      GPIO_PinRead(GPIO_PIN_RB3), rxData[0], rxData[1], rxData[2], rxData[3], ad7609_data[0]);
-                                debug_count++;
-                            }
-                        } else {
-                            LOG_E("AD7609 SPI communication failed");
-                            // SPI failed - clear all data
-                            for (int ch = 0; ch < 8; ch++) ad7609_data[ch] = 0;
-                            data_fresh = false;
+                            // Wait for conversion to complete (typical 2.5μs, use 1ms for safety)
+                            vTaskDelay(pdMS_TO_TICKS(1));
+                            break;
+                        }
+                    }
+                    
+                    // Use the proper AD7609 driver to read all channels
+                    AInSampleArray samples;
+                    samples.Size = 8;
+                    
+                    // Call the corrected AD7609 driver
+                    if (AD7609_ReadSamples(&samples, &gpBoardConfig->AInChannels, 
+                                          &gpBoardRuntimeConfig->AInChannels, *valueTMR)) {
+                        // Extract data from samples into cache
+                        for (int ch = 0; ch < 8; ch++) {
+                            ad7609_data[ch] = 0; // Default
                         }
                         
-                        GPIO_PinWrite(GPIO_PIN_RH2, true); // CS high
+                        for (size_t s = 0; s < samples.Size; s++) {
+                            if (samples.Data[s].Channel < 8) {
+                                ad7609_data[samples.Data[s].Channel] = samples.Data[s].Value;
+                            }
+                        }
+                        data_fresh = true;
+                        
+                        // Debug: Log SPI data to see what we're actually receiving
+                        static int debug_count = 0;
+                        if (debug_count < 3) { // Only log first few times
+                            LOG_D("AD7609 Samples: Count=%d, Ch0=0x%04X, Ch1=0x%04X", 
+                                  samples.Size, ad7609_data[0], ad7609_data[1]);
+                            debug_count++;
+                        }
                     } else {
-                        data_fresh = false; // Conversion not ready
+                        LOG_E("AD7609_ReadSamples failed");
+                        // Clear all data on failure
+                        for (int ch = 0; ch < 8; ch++) ad7609_data[ch] = 0;
+                        data_fresh = false;
                     }
                 }
                 

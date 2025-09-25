@@ -574,6 +574,78 @@ IntVectorDMA1_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorDMA1_Handler
+    .extern  DMA2_Handler
+
+    .section   .vector_136,code, keep
+    .equ     __vector_dispatch_136, IntVectorDMA2_Handler
+    .global  __vector_dispatch_136
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorDMA2_Handler
+
+IntVectorDMA2_Handler:
+    portSAVE_CONTEXT
+    la    s6,  DMA2_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorDMA2_Handler
+    .extern  DMA3_Handler
+
+    .section   .vector_137,code, keep
+    .equ     __vector_dispatch_137, IntVectorDMA3_Handler
+    .global  __vector_dispatch_137
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorDMA3_Handler
+
+IntVectorDMA3_Handler:
+    portSAVE_CONTEXT
+    la    s6,  DMA3_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorDMA3_Handler
+    .extern  SPI2_RX_Handler
+
+    .section   .vector_143,code, keep
+    .equ     __vector_dispatch_143, IntVectorSPI2_RX_Handler
+    .global  __vector_dispatch_143
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorSPI2_RX_Handler
+
+IntVectorSPI2_RX_Handler:
+    portSAVE_CONTEXT
+    la    s6,  SPI2_RX_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorSPI2_RX_Handler
+    .extern  SPI2_TX_Handler
+
+    .section   .vector_144,code, keep
+    .equ     __vector_dispatch_144, IntVectorSPI2_TX_Handler
+    .global  __vector_dispatch_144
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorSPI2_TX_Handler
+
+IntVectorSPI2_TX_Handler:
+    portSAVE_CONTEXT
+    la    s6,  SPI2_TX_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorSPI2_TX_Handler
     .extern  SPI4_RX_Handler
 
     .section   .vector_164,code, keep
@@ -664,6 +736,42 @@ IntVectorI2C5_MASTER_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorI2C5_MASTER_Handler
+    .extern  SPI6_RX_Handler
+
+    .section   .vector_186,code, keep
+    .equ     __vector_dispatch_186, IntVectorSPI6_RX_Handler
+    .global  __vector_dispatch_186
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorSPI6_RX_Handler
+
+IntVectorSPI6_RX_Handler:
+    portSAVE_CONTEXT
+    la    s6,  SPI6_RX_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorSPI6_RX_Handler
+    .extern  SPI6_TX_Handler
+
+    .section   .vector_187,code, keep
+    .equ     __vector_dispatch_187, IntVectorSPI6_TX_Handler
+    .global  __vector_dispatch_187
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorSPI6_TX_Handler
+
+IntVectorSPI6_TX_Handler:
+    portSAVE_CONTEXT
+    la    s6,  SPI6_TX_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorSPI6_TX_Handler
     .extern  ADC_EOS_Handler
 
     .section   .vector_192,code, keep

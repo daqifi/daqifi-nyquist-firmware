@@ -78,7 +78,6 @@ void GPIO_Initialize ( void )
     /* PORTB Initialization */
     LATB = 0x0U; /* Initial Latch Value */
     TRISBCLR = 0x4200U; /* Direction Control */
-    TRISBSET = 0x8U; /* RB3 (AD7609 BSY) as input */
     ANSELBCLR = 0x4208U; /* Digital Mode Enable */
     /* PORTC Initialization */
     LATC = 0x8000U; /* Initial Latch Value */
@@ -103,7 +102,7 @@ void GPIO_Initialize ( void )
     /* PORTG Initialization */
     LATG = 0x0U; /* Initial Latch Value */
     TRISGCLR = 0x8000U; /* Direction Control */
-    ANSELGCLR = 0x8000U; /* Digital Mode Enable */
+    ANSELGCLR = 0x81c0U; /* Digital Mode Enable */
     /* PORTH Initialization */
     ODCHSET = 0x8000U; /* Open Drain Enable */
     LATH = 0xa11cU; /* Initial Latch Value */
@@ -111,10 +110,10 @@ void GPIO_Initialize ( void )
     ANSELHCLR = 0x10U; /* Digital Mode Enable */
     /* PORTJ Initialization */
     LATJ = 0x0U; /* Initial Latch Value */
-    TRISJCLR = 0x94b5U; /* Direction Control */
+    TRISJCLR = 0xb4b5U; /* Direction Control */
     /* PORTK Initialization */
-    LATK = 0x32U; /* Initial Latch Value */
-    TRISKCLR = 0xbaU; /* Direction Control */
+    LATK = 0x33U; /* Initial Latch Value */
+    TRISKCLR = 0xbbU; /* Direction Control */
 
     /* Unlock system for PPS configuration */
     SYSKEY = 0x00000000U;
@@ -126,6 +125,7 @@ void GPIO_Initialize ( void )
     /* PPS Input Remapping */
     SDI4R = 13;
     SDI6R = 11;
+    SDI2R = 1;
 
     /* PPS Output Remapping */
     RPC13R = 8;
@@ -136,6 +136,7 @@ void GPIO_Initialize ( void )
     RPG0R = 12;
     RPD1R = 12;
     RPF8R = 10;
+    RPG8R = 6;
 
         /* Lock back the system after PPS configuration */
     CFGCONbits.IOLOCK = 1U;

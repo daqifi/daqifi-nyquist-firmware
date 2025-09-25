@@ -8,6 +8,8 @@
 #include "services/wifi_services/wifi_manager.h"
 #include "services/sd_card_services/sd_card_manager.h"
 #include "HAL/DIO.h"
+#include "HAL/DAC7718/DAC7718.h"
+#include "Util/Logger.h"
 
 /*
  * SPI Coordination Framework for Future Extensibility
@@ -368,6 +370,14 @@ void app_SystemInit() {
             gpBoardConfig,
             gpBoardRuntimeConfig,
             gpBoardData);
+    
+    // Initialize DAC7718 global structures (NQ3 only)
+    if (gpBoardConfig->BoardVariant == 3) {
+        DAC7718_InitGlobal();
+        LOG_D("DAC7718 global structures initialized - hardware init deferred until power up");
+        LOG_D("Board config AOut modules: Size=%d", gpBoardConfig->AOutModules.Size);
+    }
+    
     EVIC_SourceEnable(INT_SOURCE_CHANGE_NOTICE_A);
 }
 

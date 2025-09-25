@@ -169,45 +169,81 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
                         AInRuntimeArray* channelRuntimeConfigList,
                         uint32_t triggerTimeStamp)
 {
+    uint8_t x = 0;
+    uint8_t SPIData = 0;
+    uint16_t Data16[9]; // 9 channels like original working implementation
     
     if (pModuleConfigAD7609 == NULL) {
         return false;
     }
     
-    LOG_D("AD7609_ReadSamples: Reading AD7609 samples via SPI6");
+    // Apply SPI configuration (like original)
+    AD7609_Apply_SPI_Config();
     
-    // Check if conversion is ready by reading BSY pin
-    bool conversionReady = !GPIO_PinRead(pModuleConfigAD7609->BSY_Pin);
-    if (!conversionReady) {
-        LOG_D("AD7609_ReadSamples: Conversion not ready (BSY high)");
+    // Check if conversion is ready by reading BSY pin (BSY low = ready)
+    if (GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
         return false;
     }
     
     // Set CS low to start SPI communication
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
     
-    // Read 8 channels worth of data (16 bytes = 8 channels * 2 bytes each)
-    uint8_t rxData[16];
-    uint8_t txData[16] = {0}; // Dummy data for SPI read
+    // Wait for board to settle (like original)
+    AD7609_Delay_ms(5);
     
-    bool spiSuccess = SPI6_WriteRead(txData, 16, rxData, 16);
+    // Read 9 channels using byte-by-byte SPI (matches original working implementation)
+    static int debug_count = 0;
+    bool verbose_debug = (debug_count < 3); // Only log first few transactions
+    
+    if (verbose_debug) {
+        LOG_D("AD7609_ReadSamples: Starting 9-channel SPI read sequence");
+    }
+    
+    for (x = 0; x < 9; x++) {
+        // Read high byte first
+        uint8_t txByte = 0x00;
+        while (SPI6_IsBusy()) { /* Wait */ }
+        bool success1 = SPI6_WriteRead(&txByte, 1, &SPIData, 1);
+        while (SPI6_IsBusy()) { /* Wait */ }
+        if (!success1) {
+            LOG_E("AD7609_ReadSamples: SPI failed on channel %d high byte", x);
+            GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
+            return false;
+        }
+        uint8_t highByte = SPIData;
+        
+        // Read low byte  
+        AD7609_Delay_ms(1); // Small delay between SPI transactions
+        while (SPI6_IsBusy()) { /* Wait */ }
+        bool success2 = SPI6_WriteRead(&txByte, 1, &SPIData, 1);
+        while (SPI6_IsBusy()) { /* Wait */ }
+        if (!success2) {
+            LOG_E("AD7609_ReadSamples: SPI failed on channel %d low byte", x);
+            GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
+            return false;
+        }
+        uint8_t lowByte = SPIData;
+        
+        // Combine high and low bytes
+        Data16[x] = (highByte << 8) | lowByte;
+        
+        if (verbose_debug) {
+            LOG_D("AD7609_ReadSamples: Ch%d = 0x%02X%02X", x, highByte, lowByte);
+        }
+    }
+    
+    if (verbose_debug) {
+        LOG_D("AD7609_ReadSamples: Completed 18-byte SPI read sequence");
+        debug_count++;
+    }
     
     // Set CS high to end communication
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
     
-    if (!spiSuccess) {
-        LOG_E("AD7609_ReadSamples: SPI6 communication failed");
-        return false;
-    }
-    
-    // Process the received data (18-bit values, 2's complement)
-    LOG_D("AD7609_ReadSamples: Successfully read 16 bytes from AD7609");
-    
     // Convert raw bytes to samples and populate the samples array
     size_t sampleCount = 0;
-    for (int channel = 0; channel < 8; channel++) {
-        // Each channel is 18-bit (3 bytes), but we're reading 2 bytes per channel for now
-        uint16_t rawData = (rxData[channel * 2] << 8) | rxData[channel * 2 + 1];
+    for (int channel = 0; channel < 8; channel++) { // Only use first 8 channels for DAQiFi
+        uint16_t rawData = Data16[channel];
         
         // Find this AD7609 channel in the configuration
         for (size_t i = 0; i < channelConfigList->Size; i++) {
@@ -221,8 +257,6 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
                     samples->Data[sampleCount].Value = rawData;
                     samples->Data[sampleCount].Timestamp = triggerTimeStamp;
                     sampleCount++;
-                    
-                    LOG_D("AD7609_ReadSamples: Ch%d Raw=0x%04X", channel, rawData);
                 }
                 break;
             }
@@ -239,22 +273,31 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
     UNUSED(moduleConfig);
     
     if (pModuleConfigAD7609 == NULL) {
+        LOG_E("AD7609_TriggerConversion: pModuleConfigAD7609 is NULL");
         return false;
     }
     
+    // Check if the AD7609 is busy
+    bool busy = GPIO_PinRead(pModuleConfigAD7609->BSY_Pin);
+    if (busy) {
+        LOG_D("AD7609_TriggerConversion: BSY pin high, skipping conversion");
+        return false;
+    }
+    
+    LOG_D("AD7609_TriggerConversion: Starting conversion sequence");
+    
     // AD7609 Conversion Sequence per datasheet:
-    // 1. CONVST rising edge starts conversion
-    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);
-    
-    // 2. Hold CONVST high for minimum 25ns (using 1ms for safety)
-    AD7609_Delay_ms(1);
-    
-    // 3. CONVST falling edge - conversion continues for ~2.5μs
+    // 1. Force CONVST pin low first  
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);
     
-    // 4. BSY pin will go high during conversion, then low when complete
-    // Note: BSY checking happens in the sample reading function
+    // 2. Brief delay then pull CONVST pin high to start conversion
+    AD7609_Delay_ms(1); // Small delay for signal stability
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);
     
+    // 3. Brief delay - conversion will start and BSY will go high
+    AD7609_Delay_ms(1);
+    
+    LOG_D("AD7609_TriggerConversion: Conversion triggered");
     return true;
 }
 
@@ -264,8 +307,8 @@ double AD7609_ConvertToVoltage(
 {
     UNUSED(runtimeConfig);
     
-    LOG_D("AD7609_ConvertToVoltage: Called for channel with sample value 0x%X", 
-          sample ? sample->Value : 0);
+    // LOG_D("AD7609_ConvertToVoltage: Called for channel with sample value 0x%X", 
+    //       sample ? sample->Value : 0);
     
     if (sample == NULL) {
         LOG_E("AD7609_ConvertToVoltage: NULL sample");
@@ -284,8 +327,8 @@ double AD7609_ConvertToVoltage(
         }
         
         double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
-        LOG_D("AD7609_ConvertToVoltage: Using default config - Raw=0x%X, Voltage=%.3fV", 
-              sample->Value, voltage);
+        // LOG_D("AD7609_ConvertToVoltage: Using default config - Raw=0x%X, Voltage=%.3fV", 
+        //       sample->Value, voltage);
         return voltage;
     }
     
@@ -307,8 +350,8 @@ double AD7609_ConvertToVoltage(
     // Convert to voltage: raw / maxCode * fullScale
     double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
     
-    LOG_D("AD7609_ConvertToVoltage: Raw=0x%X (%d), Voltage=%.3fV", 
-          sample->Value, rawValue, voltage);
+    // LOG_D("AD7609_ConvertToVoltage: Raw=0x%X (%d), Voltage=%.3fV", 
+    //       sample->Value, rawValue, voltage);
     
     return voltage;
 }

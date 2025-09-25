@@ -55,22 +55,24 @@
 #include "peripheral/spi/spi_master/plib_spi4_master.h"
 #include "usb/usb_chapter_9.h"
 #include "usb/usb_device.h"
+#include "peripheral/spi/spi_master/plib_spi6_master.h"
 #include "peripheral/ocmp/plib_ocmp1.h"
 #include "peripheral/ocmp/plib_ocmp4.h"
 #include "peripheral/rcon/plib_rcon.h"
 #include "driver/sdspi/drv_sdspi.h"
-#include "system/time/sys_time.h"
-#include "peripheral/ocmp/plib_ocmp3.h"
 #include "driver/i2c/drv_i2c.h"
+#include "peripheral/ocmp/plib_ocmp3.h"
+#include "system/time/sys_time.h"
 #include "peripheral/nvm/plib_nvm.h"
-#include "peripheral/coretimer/plib_coretimer.h"
-#include "peripheral/tmr/plib_tmr6.h"
 #include "usb/usb_device_cdc.h"
 #include "usb/usb_cdc.h"
+#include "peripheral/tmr/plib_tmr6.h"
+#include "peripheral/coretimer/plib_coretimer.h"
 #include "peripheral/adchs/plib_adchs.h"
 #include "peripheral/tmr/plib_tmr4.h"
 #include "peripheral/tmr/plib_tmr2.h"
 #include "peripheral/tmr/plib_tmr3.h"
+#include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "driver/spi/drv_spi.h"
 #include "system/int/sys_int.h"
 #include "system/ports/sys_ports.h"
@@ -84,16 +86,16 @@
 #include "peripheral/cache/plib_cache.h"
 #include "peripheral/evic/plib_evic.h"
 #include "peripheral/dmac/plib_dmac.h"
-#include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
 #include "driver/usb/usbhs/drv_usbhs.h"
 #include "peripheral/power/plib_power.h"
-#include "peripheral/i2c/master/plib_i2c5_master.h"
+#include "wolfssl/wolfcrypt/port/pic32/crypt_wolfcryptcb.h"
 #include "system/fs/sys_fs.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs_fat_interface.h"
 #include "system/fs/fat_fs/file_system/ff.h"
 #include "system/fs/fat_fs/file_system/ffconf.h"
 #include "system/fs/fat_fs/hardware_access/diskio.h"
+#include "peripheral/i2c/master/plib_i2c5_master.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "app_freertos.h"
@@ -241,6 +243,12 @@ typedef struct
     SYS_MODULE_OBJ drvSPI0;
 
     SYS_MODULE_OBJ  drvUSBHSObject;
+
+    /* SPI1 Driver Object */
+    SYS_MODULE_OBJ drvSPI1;
+
+    /* SPI2 Driver Object */
+    SYS_MODULE_OBJ drvSPI2;
 
 
 } SYSTEM_OBJECTS;

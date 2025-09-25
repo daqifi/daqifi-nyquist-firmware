@@ -157,7 +157,7 @@ Each variant has specific:
 2. **Board Config**: `firmware/src/state/board/BoardConfig.c` - Hardware definitions
 3. **Streaming Engine**: `firmware/src/services/streaming.c` - Data flow control
 4. **SCPI Interface**: `firmware/src/services/SCPI/SCPIInterface.c` - Command processing
-5. **HAL Drivers**: `firmware/src/HAL/ADC.c`, `DIO.c` - Hardware interfaces
+5. **HAL Drivers**: `firmware/src/HAL/ADC.c`, `DIO.c`, `DAC7718/DAC7718.c` - Hardware interfaces
 
 ### Development Considerations
 
@@ -166,6 +166,58 @@ Each variant has specific:
 - Use FreeRTOS primitives for synchronization
 - Respect board variant differences in runtime checks
 - Protocol buffer definitions in `services/DaqifiPB/DaqifiOutMessage.proto`
+
+### DAC7718 Integration (NQ3 Board)
+
+The NQ3 board variant includes a DAC7718 8-channel 12-bit DAC for analog output functionality:
+
+#### Hardware Configuration
+- **SPI Interface**: SPI2 at 10 MHz (configurable)
+- **Control Pins**: 
+  - CS (Chip Select): RK0 (GPIO_PIN_RK0)
+  - CLR/RST (Reset): RJ13 (GPIO_PIN_RJ13) 
+  - LDAC: Tied to 3.3V (no GPIO control)
+- **Power Requirements**: Requires 10V rail (available in POWERED_UP state)
+- **Channels**: 8 analog output channels (0-7)
+- **Resolution**: 12-bit (4096 levels)
+
+#### SCPI Commands for DAC Control
+```bash
+# Set DAC channel voltage
+SOURce:VOLTage:LEVel 0,5.0        # Set channel 0 to 5.0V
+SOURce:VOLTage:LEVel 5.0          # Set all channels to 5.0V
+
+# Read DAC channel voltage  
+SOURce:VOLTage:LEVel? 0           # Read channel 0 voltage
+SOURce:VOLTage:LEVel?             # Read all channel voltages
+
+# Channel enable/disable
+ENAble:SOURce:DC 0,1              # Enable channel 0
+ENAble:SOURce:DC? 0               # Get channel 0 enable status
+
+# Configuration commands
+CONFigure:DAC:RANGe 0,1           # Set channel 0 range
+CONFigure:DAC:UPDATE              # Update all DAC outputs
+
+# Calibration commands
+CONFigure:DAC:chanCALM 0,1.0      # Set channel 0 calibration slope
+CONFigure:DAC:chanCALB 0,0.0      # Set channel 0 calibration offset
+CONFigure:DAC:SAVEcal             # Save user calibration values
+CONFigure:DAC:LOADcal             # Load user calibration values
+```
+
+#### Integration Points
+- **Board Configuration**: `state/board/AOutConfig.h` - Analog output configuration structure
+- **SCPI Module**: `services/SCPI/SCPIDAC.c` - DAC command implementation  
+- **HAL Driver**: `HAL/DAC7718/DAC7718.c` - Hardware abstraction layer
+- **Runtime Config**: `state/runtime/AOutRuntimeConfig.h` - Runtime channel states
+
+#### Power-Safe Initialization
+The DAC7718 uses lazy initialization that:
+1. Initializes global structures at startup (power-independent)
+2. Defers hardware initialization until first DAC command when power is sufficient
+3. Checks for POWERED_UP state (provides 10V rail) before hardware access
+4. Gracefully handles power state transitions
 
 ## Firmware Analysis Report
 
@@ -266,13 +318,13 @@ The project can be built using Microchip tools in WSL/Linux:
    (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -5
    ```
 
-2. **Power State Required**: Always power up the device before attempting WiFi operations
+2. **Power State Required**: Always power up the device before attempting WiFi or DAC operations
    ```bash
-   # Check power state (0=off, 1=MICRO_ON, 2=POWERED_UP)
+   # Check power state (0=STANDBY, 1=POWERED_UP, 2=POWERED_UP_EXT_DOWN)
    (echo -e "SYST:POW:STAT?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
    
-   # Power up device for WiFi operations
-   (echo -e "SYST:POW:STAT 2\r"; sleep 1) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
+   # Power up device for full functionality (enables 10V rail needed for DAC7718)
+   (echo -e "SYST:POW:STAT 1\r"; sleep 1) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail-5
    ```
 
 3. **Use Exact SCPI Commands**: Don't guess command syntax. Check the actual command table in `SCPIInterface.c`
@@ -592,4 +644,5 @@ voltage, NTC status, and power-up readiness.
 3. **Permission Prompts**: Even with wildcards, complex commands may prompt
    - Keep commands simple
    - Use script files instead of complex one-liners
-   - Batch related commands together
+   - Batch related commands together
+- pic32 tris convention is 1=input and 0=output

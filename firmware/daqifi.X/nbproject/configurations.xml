@@ -390,6 +390,7 @@
           <itemPath>../src/services/SCPI/SCPIInterface.h</itemPath>
           <itemPath>../src/services/SCPI/SCPILAN.h</itemPath>
           <itemPath>../src/services/SCPI/SCPIStorageSD.h</itemPath>
+          <itemPath>../src/services/SCPI/SCPIDAC.h</itemPath>
         </logicalFolder>
         <logicalFolder name="SDcard" displayName="sd_card_services" projectFiles="true">
           <itemPath>../src/services/sd_card_services/sd_card_manager.h</itemPath>
@@ -1227,7 +1228,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/AD7609.h" ex="true" overriding="false">
+      <item path="../src/HAL/ADC/AD7609.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1291,7 +1292,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/DAC7718/DAC7718.h" ex="true" overriding="false">
+      <item path="../src/HAL/DAC7718/DAC7718.h" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -1724,7 +1725,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/old_hv2_bootld.ld"
-            ex="false"
+            ex="true"
             overriding="false">
         <C32>
         </C32>
@@ -3760,8 +3761,6 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
-        <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>

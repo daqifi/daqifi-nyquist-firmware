@@ -77,7 +77,7 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 // Section: Free RTOS Task Stack Sizes
 // *****************************************************************************
 // *****************************************************************************
-#define  USBDEVICETASK_SIZE                             3072u  // Further increased to prevent stack overflow
+#define  USBDEVICETASK_SIZE                             3072u  // Original size - malloc fails with 4096u
 
 // *****************************************************************************
 // *****************************************************************************

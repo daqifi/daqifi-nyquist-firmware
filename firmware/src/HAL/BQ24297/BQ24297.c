@@ -7,6 +7,9 @@
 #include "services/UsbCdc/UsbCdc.h"
 #include "peripheral/gpio/plib_gpio.h"
 
+// Demo board configuration - must match PowerApi.c
+// #define DEMO_BOARD_NO_BQ24297 1
+
 //! Pointer to the BQ24297 device configuration data structure
 static tBQ24297Config *pConfigBQ24;
 //! Pointer to the BQ24297 device "Write Variables" data structure
