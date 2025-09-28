@@ -3096,7 +3096,7 @@ data:
       children:
       - children:
         - attributes:
-            value: ''
+            value: GPIO
           type: User
         type: Values
       type: String
@@ -3606,7 +3606,7 @@ data:
       children:
       - children:
         - attributes:
-            value: ''
+            value: GPIO
           type: User
         type: Values
       type: String
@@ -9744,7 +9744,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '16904'
+            value: '16908'
           type: Dynamic
         type: Values
       type: Hex
@@ -10117,7 +10117,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '187'
+            value: '191'
           type: Dynamic
         type: Values
       type: Hex
@@ -12897,6 +12897,46 @@ data:
       - children:
         - attributes:
             value: SDO2
+          type: User
+        type: Values
+      type: String
+    BSP_PIN_34_FUNCTION_NAME:
+      attributes:
+        id: BSP_PIN_34_FUNCTION_NAME
+      children:
+      - children:
+        - attributes:
+            value: AD7609_FDATA
+          type: User
+        type: Values
+      type: String
+    BSP_PIN_34_MODE:
+      attributes:
+        id: BSP_PIN_34_MODE
+      children:
+      - children:
+        - attributes:
+            value: DIGITAL
+          type: User
+        type: Values
+      type: String
+    BSP_PIN_52_FUNCTION_NAME:
+      attributes:
+        id: BSP_PIN_52_FUNCTION_NAME
+      children:
+      - children:
+        - attributes:
+            value: AD7609_STBY
+          type: User
+        type: Values
+      type: String
+    BSP_PIN_52_DIR:
+      attributes:
+        id: BSP_PIN_52_DIR
+      children:
+      - children:
+        - attributes:
+            value: Out
           type: User
         type: Values
       type: String

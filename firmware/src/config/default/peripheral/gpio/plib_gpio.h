@@ -257,6 +257,16 @@
 #define AD7609_BSY_GetLatch()          ((LATB >> 3) & 0x1U)
 #define AD7609_BSY_PIN                  GPIO_PIN_RB3
 
+/*** Macros for AD7609_FDATA pin ***/
+#define AD7609_FDATA_Set()               (LATBSET = (1U<<2))
+#define AD7609_FDATA_Clear()             (LATBCLR = (1U<<2))
+#define AD7609_FDATA_Toggle()            (LATBINV= (1U<<2))
+#define AD7609_FDATA_OutputEnable()      (TRISBCLR = (1U<<2))
+#define AD7609_FDATA_InputEnable()       (TRISBSET = (1U<<2))
+#define AD7609_FDATA_Get()               ((PORTB >> 2) & 0x1U)
+#define AD7609_FDATA_GetLatch()          ((LATB >> 2) & 0x1U)
+#define AD7609_FDATA_PIN                  GPIO_PIN_RB2
+
 /*** Macros for AIN_10 pin ***/
 #define AIN_10_Get()               ((PORTB >> 6) & 0x1U)
 #define AIN_10_GetLatch()          ((LATB >> 6) & 0x1U)
@@ -336,6 +346,16 @@
 #define AD7609_RNG_Get()               ((PORTK >> 1) & 0x1U)
 #define AD7609_RNG_GetLatch()          ((LATK >> 1) & 0x1U)
 #define AD7609_RNG_PIN                  GPIO_PIN_RK1
+
+/*** Macros for AD7609_STBY pin ***/
+#define AD7609_STBY_Set()               (LATKSET = (1U<<2))
+#define AD7609_STBY_Clear()             (LATKCLR = (1U<<2))
+#define AD7609_STBY_Toggle()            (LATKINV= (1U<<2))
+#define AD7609_STBY_OutputEnable()      (TRISKCLR = (1U<<2))
+#define AD7609_STBY_InputEnable()       (TRISKSET = (1U<<2))
+#define AD7609_STBY_Get()               ((PORTK >> 2) & 0x1U)
+#define AD7609_STBY_GetLatch()          ((LATK >> 2) & 0x1U)
+#define AD7609_STBY_PIN                  GPIO_PIN_RK2
 
 /*** Macros for AD7609_OS1 pin ***/
 #define AD7609_OS1_Set()               (LATKSET = (1U<<3))

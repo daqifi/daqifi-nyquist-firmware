@@ -66,6 +66,7 @@ extern "C" {
         GPIO_PIN OS0_Pin;
         GPIO_PIN OS1_Pin;
         GPIO_PIN CONVST_Pin;
+        GPIO_PIN STBY_Pin;
         // Configuration settings
         bool Range10V;
         uint32_t OSMode;

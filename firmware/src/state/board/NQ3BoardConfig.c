@@ -204,6 +204,7 @@ const tBoardConfig NQ3BoardConfig = {
                         .CS_Pin = GPIO_PIN_RH2,
                         .BSY_Pin = GPIO_PIN_RB3,
                         .RST_Pin = GPIO_PIN_RH3,
+                        .STBY_Pin = GPIO_PIN_RK2,
                         .Range_Pin = GPIO_PIN_RK1,
                         .OS0_Pin = GPIO_PIN_RH7,
                         .OS1_Pin = GPIO_PIN_RK3,

@@ -59,12 +59,12 @@ __attribute__((unused)) static void AD7609_Reset( void )
     // 1. Set CS high (inactive) 
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
     
-    // 2. Set RST low (active reset)
-    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, false);
+    // 2. Set RST high (active reset)
+    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, true);
     AD7609_Delay_ms(1); // Hold reset for 1ms
     
-    // 3. Set RST high (release reset)
-    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, true);
+    // 3. Set RST low (release reset)
+    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, false);
     
     // 4. Wait for chip to initialize (datasheet: >500ns)
     AD7609_Delay_ms(10); // 10ms for safety
@@ -91,11 +91,13 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
     GPIO_PinWrite(pModuleConfigAD7609->OS0_Pin, pModuleConfigAD7609->OSMode & 0b01); // OS0 setting
     GPIO_PinWrite(pModuleConfigAD7609->OS1_Pin, (pModuleConfigAD7609->OSMode & 0b10) >> 1); // OS1 setting
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false); // CONVST low (ready for trigger)
+    GPIO_PinWrite(pModuleConfigAD7609->STBY_Pin, true); // STBY high
     
     // Override MCC GPIO configuration for SPI bus management
     // Ensure proper pin directions and states for AD7609 operation
     GPIO_PinOutputEnable(pModuleConfigAD7609->CS_Pin);     // CS as output
-    GPIO_PinOutputEnable(pModuleConfigAD7609->CONVST_Pin); // CONVST as output  
+    GPIO_PinOutputEnable(pModuleConfigAD7609->CONVST_Pin); // CONVST as output 
+    GPIO_PinOutputEnable(pModuleConfigAD7609->STBY_Pin);
     GPIO_PinOutputEnable(pModuleConfigAD7609->Range_Pin);  // Range as output
     GPIO_PinInputEnable(pModuleConfigAD7609->BSY_Pin);     // BSY as input
     

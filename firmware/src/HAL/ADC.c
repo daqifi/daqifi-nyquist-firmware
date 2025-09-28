@@ -303,7 +303,8 @@ void ADC_Tasks(void) {
 
         if (gpBoardData->AInState.Data[moduleIndex].AInTaskState ==
                 AINTASK_INITIALIZING) {
-            canInit = (module->Type == AIn_MC12bADC || module->Type == AIn_AD7609 || isPowered);
+            // MC12bADC can init anytime, AD7609 requires isPowered (needs 10V rail)
+            canInit = (module->Type == AIn_MC12bADC) || (module->Type == AIn_AD7609 && isPowered);
             initialized = false;
             
             if (module->Type == AIn_AD7609) {

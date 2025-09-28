@@ -671,8 +671,8 @@ void SYS_Initialize ( void* data )
     TMR6_Initialize();
 
     CORETIMER_Initialize();
-
     ADCHS_Initialize();
+
 
     TMR4_Initialize();
 
