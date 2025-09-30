@@ -209,7 +209,7 @@ const tBoardConfig NQ3BoardConfig = {
                         .OS0_Pin = GPIO_PIN_RH7,
                         .OS1_Pin = GPIO_PIN_RK3,
                         .CONVST_Pin = GPIO_PIN_RB9,
-                        .Range10V = false,
+                        .Range10V = true,  // Default ±10V range (runtime configurable via SCPI)
                         .OSMode = 0,
                         .Resolution = 262144,
                     }

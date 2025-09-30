@@ -10,6 +10,7 @@
 #include "peripheral/spi/spi_master/plib_spi6_master.h"
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "state/board/BoardConfig.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/Logger.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -316,42 +317,32 @@ double AD7609_ConvertToVoltage(
                         const AInSample* sample)
 {
     UNUSED(runtimeConfig);
-    
+
     if (sample == NULL) {
         LOG_E("AD7609_ConvertToVoltage: NULL sample");
         return 0.0;
     }
-    
-    if (pModuleConfigAD7609 == NULL) {
-        LOG_E("AD7609_ConvertToVoltage: NULL config - AD7609 not initialized");
-        // Use default configuration for conversion
-        double fullScaleVoltage = 10.0; // Default ±10V range
-        int32_t maxCode = (1 << 17) - 1; // 18-bit: 131071
-        int32_t rawValue = (int32_t)sample->Value;
-        
-        if (rawValue > maxCode) {
-            rawValue = rawValue - (1 << 18);
-        }
-        
-        double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
-        return voltage;
+
+    // Get runtime range from module configuration using BoardRunTimeConfig_Get
+    AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
+    double fullScaleVoltage = 10.0; // Default ±10V range
+
+    if (pRuntimeModules != NULL && pRuntimeModules->Size > AIn_AD7609) {
+        // AD7609 module index is AIn_AD7609 (1)
+        fullScaleVoltage = pRuntimeModules->Data[AIn_AD7609].Range;
     }
-    
-    // Note: sample->Value == 0 means 0V input (center of ±10V range)
-    
+
     // AD7609 is 18-bit, 2's complement
-    // Full scale range: ±10V (when Range10V = true) or ±5V (when Range10V = false)
-    double fullScaleVoltage = pModuleConfigAD7609->Range10V ? 10.0 : 5.0;
     int32_t maxCode = (1 << 17) - 1; // 18-bit: 131071 (half scale since 2's complement)
-    
+
     // Convert raw ADC value to signed integer
     int32_t rawValue = (int32_t)sample->Value;
-    
+
     // Handle 18-bit 2's complement conversion
     if (rawValue > maxCode) {
         rawValue = rawValue - (1 << 18); // Convert to negative
     }
-    
+
     // Convert to voltage: raw / maxCode * fullScale
     double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
     return voltage;

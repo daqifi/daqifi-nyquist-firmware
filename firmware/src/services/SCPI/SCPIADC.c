@@ -373,14 +373,62 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
-    int param1;
-    if (SCPI_ParamInt32(context, &param1, FALSE));
+    int32_t rangeParam;
+
+    // Get range parameter (0=±5V, 1=±10V)
+    if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
+        return SCPI_RES_ERR;
+    }
+
+    // Validate range value
+    if (rangeParam != 0 && rangeParam != 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    // Find the AD7609 module
+    const AInModule* module = ADC_FindModule(AIn_AD7609);
+    if (module == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // AD7609 is module index 1 in NQ3 board
+    AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
+    uint8_t moduleIndex = AIn_AD7609;  // Use module type as index
+
+    // Convert parameter to voltage range and store
+    double rangeVoltage = (rangeParam == 1) ? 10.0 : 5.0;
+    pRuntimeModules->Data[moduleIndex].Range = rangeVoltage;
+
+    // Update hardware pin (Range_Pin: LOW=±10V, HIGH=±5V)
+    bool range10V = (rangeParam == 1);
+    GPIO_PinWrite(module->Config.AD7609.Range_Pin, !range10V);
+
+    LOG_I("AD7609 module range set to ±%.1fV", rangeVoltage);
+
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_ADCChanRangeGet(scpi_t * context) {
-    int param1;
-    if (SCPI_ParamInt32(context, &param1, FALSE));
+    // Find the AD7609 module
+    const AInModule* module = ADC_FindModule(AIn_AD7609);
+    if (module == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // AD7609 is module index 1 in NQ3 board
+    AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
+    uint8_t moduleIndex = AIn_AD7609;  // Use module type as index
+
+    // Get range and convert to 0/1 format
+    double rangeVoltage = pRuntimeModules->Data[moduleIndex].Range;
+    int32_t rangeParam = (rangeVoltage >= 9.0) ? 1 : 0;  // >=9V means 10V range
+
+    SCPI_ResultInt32(context, rangeParam);
+
     return SCPI_RES_OK;
 }
 
