@@ -53,6 +53,7 @@
 #include "configuration.h"
 #include "definitions.h"
 #include "sys_tasks.h"
+#include "HAL/ADC/AD7609.h"
 
 
 // *****************************************************************************
@@ -198,6 +199,22 @@ void SYS_Tasks ( void )
         DRV_WIFI_WINC_RTOS_TASK_PRIORITY,
         (TaskHandle_t*)NULL
     );
+
+    /* Create AD7609 deferred interrupt task for BSY pin handling */
+    TaskHandle_t* pAD7609TaskHandle = (TaskHandle_t*)AD7609_GetTaskHandle();
+    BaseType_t ad7609Result = xTaskCreate(
+        (TaskFunction_t) AD7609_DeferredInterruptTask,
+        "AD7609 BSY",
+        512,
+        NULL,
+        8,  // Priority 8 (max-1) for real-time response
+        pAD7609TaskHandle
+    );
+
+    if (ad7609Result != pdPASS) {
+        // Task creation failed - system will continue but AD7609 interrupts won't work
+        *pAD7609TaskHandle = NULL;
+    }
 
 
 

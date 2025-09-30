@@ -11,6 +11,8 @@
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "state/board/BoardConfig.h"
 #include "Util/Logger.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 // Simple delay function using core timer
 static void AD7609_Delay_ms(uint32_t milliseconds) {
@@ -27,12 +29,44 @@ static void AD7609_Delay_ms(uint32_t milliseconds) {
 //! Pointer to the module configuration data structure to be set in initialization
 static const AD7609ModuleConfig* pModuleConfigAD7609; 
 //! Pointer to the module configuration data structure in runtime
-static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609 __attribute__((unused)); 
+static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609 __attribute__((unused));
+
+// AD7609 BSY interrupt handling
+static TaskHandle_t gAD7609_TaskHandle = NULL;
+
+// Accessor function for task handle (used by tasks.c)
+void* AD7609_GetTaskHandle(void) {
+    return &gAD7609_TaskHandle;
+}
+
+// AD7609 BSY pin interrupt callback (called from GPIO ISR)
+void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context) {
+    // Verify this is the BSY pin (RB3)
+    if (pin == GPIO_PIN_RB3 && gAD7609_TaskHandle != NULL) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        // Notify deferred task that conversion is complete
+        vTaskNotifyGiveFromISR(gAD7609_TaskHandle, &xHigherPriorityTaskWoken);
+        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+    }
+}
+
+// AD7609 deferred interrupt task (handles SPI read after BSY interrupt)
+void AD7609_DeferredInterruptTask(void) {
+    const TickType_t xBlockTime = portMAX_DELAY;
+    
+    while (1) {
+        // Wait for BSY pin interrupt to signal conversion complete
+        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        
+        // TODO: Read AD7609 SPI data here
+        // This will be called when BSY goes low (conversion complete)
+    }
+} 
 
 /*! 
  * Function to configure SPI related to ADC - Updated for Harmony 3
  */
-__attribute__((unused)) static void AD7609_Apply_SPI_Config( void )
+static void AD7609_Apply_SPI_Config( void )
 {
     // For Harmony 3, SPI configuration is handled by SPI6_Initialize() during startup
     SPI_TRANSFER_SETUP spiSetup;
@@ -51,11 +85,11 @@ __attribute__((unused)) static void AD7609_Apply_SPI_Config( void )
 /*!
  *  Reset the module - Updated for Harmony 3 GPIO API
  */
-__attribute__((unused)) static void AD7609_Reset( void )
+static void AD7609_Reset( void )
 {
-    LOG_D("AD7609_Reset: Resetting AD7609 module");
+    AD7609_Delay_ms(100); // Delay reset for 100ms to ensure power on is completed properly 
     
-    // Proper AD7609 reset sequence:
+    // Proper AD7609 reset sequence (from working commit):
     // 1. Set CS high (inactive) 
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
     
@@ -67,58 +101,51 @@ __attribute__((unused)) static void AD7609_Reset( void )
     GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, false);
     
     // 4. Wait for chip to initialize (datasheet: >500ns)
-    AD7609_Delay_ms(10); // 10ms for safety
-    
-    // 5. Keep CS high (inactive) until SPI transactions
-    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
+    AD7609_Delay_ms(1); // 10ms for safety
 }
 
 bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
 {
-    LOG_D("AD7609_InitHardware: *** CALLED *** - Initializing AD7609 hardware");
+    // Initialize AD7609 hardware after power-up
     
     pModuleConfigAD7609 = pBoardConfigInit;
     
     // Configure SPI6 for AD7609 communication
     AD7609_Apply_SPI_Config();
-    
-    // Reset the AD7609 first before configuration
-    AD7609_Reset();
-    
+      
     // Initialize GPIO pins for AD7609 control after reset
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);      // CS high (inactive)  
     GPIO_PinWrite(pModuleConfigAD7609->Range_Pin, pModuleConfigAD7609->Range10V);  // Range setting
     GPIO_PinWrite(pModuleConfigAD7609->OS0_Pin, pModuleConfigAD7609->OSMode & 0b01); // OS0 setting
     GPIO_PinWrite(pModuleConfigAD7609->OS1_Pin, (pModuleConfigAD7609->OSMode & 0b10) >> 1); // OS1 setting
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false); // CONVST low (ready for trigger)
-    GPIO_PinWrite(pModuleConfigAD7609->STBY_Pin, true); // STBY high
+    GPIO_PinWrite(pModuleConfigAD7609->STBY_Pin, true); // STBY high (normal operation, active low)
+    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, true); // RST low
     
     // Override MCC GPIO configuration for SPI bus management
     // Ensure proper pin directions and states for AD7609 operation
-    GPIO_PinOutputEnable(pModuleConfigAD7609->CS_Pin);     // CS as output
-    GPIO_PinOutputEnable(pModuleConfigAD7609->CONVST_Pin); // CONVST as output 
-    GPIO_PinOutputEnable(pModuleConfigAD7609->STBY_Pin);
-    GPIO_PinOutputEnable(pModuleConfigAD7609->Range_Pin);  // Range as output
-    GPIO_PinInputEnable(pModuleConfigAD7609->BSY_Pin);     // BSY as input
+    GPIO_PinOutputEnable(pModuleConfigAD7609->CS_Pin);      // CS as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->Range_Pin);   // Range as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->OS0_Pin);   // OS0 as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->OS1_Pin);   // OS1 as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->CONVST_Pin);  // CONVST as output 
+    GPIO_PinOutputEnable(pModuleConfigAD7609->STBY_Pin);    // STBY as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->RST_Pin);    // RST as output
+    
+    GPIO_PinInputEnable(pModuleConfigAD7609->BSY_Pin);      // BSY as input
     
     // If RC15 is another SPI device CS, ensure it's inactive
     GPIO_PinOutputEnable(GPIO_PIN_RC15);
     GPIO_PinWrite(GPIO_PIN_RC15, true); // Keep inactive
     
-    LOG_D("AD7609_InitHardware: Pin directions configured for AD7609 operation");
-    
-    // Debug: Check actual pin states after configuration
-    LOG_D("AD7609 Pin States: CS=%d, RST=%d, Range=%d, OS0=%d, OS1=%d, CONVST=%d, BSY=%d",
-          GPIO_PinRead(pModuleConfigAD7609->CS_Pin),
-          GPIO_PinRead(pModuleConfigAD7609->RST_Pin), 
-          GPIO_PinRead(pModuleConfigAD7609->Range_Pin),
-          GPIO_PinRead(pModuleConfigAD7609->OS0_Pin),
-          GPIO_PinRead(pModuleConfigAD7609->OS1_Pin),
-          GPIO_PinRead(pModuleConfigAD7609->CONVST_Pin),
-          GPIO_PinRead(pModuleConfigAD7609->BSY_Pin));
-    
-    LOG_D("AD7609_InitHardware: Hardware initialization complete");
-    
+    // Reset the AD7609
+    AD7609_Reset();
+
+    // Register BSY pin interrupt callback (falling edge on conversion complete)
+    // Note: Task creation is handled in config/default/tasks.c
+    GPIO_PinInterruptCallbackRegister(GPIO_PIN_RB3, AD7609_BSY_InterruptCallback, 0);
+    GPIO_PinInterruptEnable(GPIO_PIN_RB3);
+
     return true;
 }
 
@@ -183,23 +210,14 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     AD7609_Apply_SPI_Config();
     
     // Check if conversion is ready by reading BSY pin (BSY low = ready)
-    if (GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
-        return false;
-    }
+    // Note: BSY check bypassed - using interrupt-driven approach instead
     
     // Set CS low to start SPI communication
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
     
-    // Wait for board to settle (like original)
-    AD7609_Delay_ms(5);
+    // No delay needed - datasheet doesn't require settling time
     
     // Read 9 channels using byte-by-byte SPI (matches original working implementation)
-    static int debug_count = 0;
-    bool verbose_debug = (debug_count < 3); // Only log first few transactions
-    
-    if (verbose_debug) {
-        LOG_D("AD7609_ReadSamples: Starting 9-channel SPI read sequence");
-    }
     
     for (x = 0; x < 9; x++) {
         // Read high byte first
@@ -214,8 +232,7 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         }
         uint8_t highByte = SPIData;
         
-        // Read low byte  
-        AD7609_Delay_ms(1); // Small delay between SPI transactions
+        // Read low byte (no delay needed - hardware handles timing)
         while (SPI6_IsBusy()) { /* Wait */ }
         bool success2 = SPI6_WriteRead(&txByte, 1, &SPIData, 1);
         while (SPI6_IsBusy()) { /* Wait */ }
@@ -228,15 +245,6 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         
         // Combine high and low bytes
         Data16[x] = (highByte << 8) | lowByte;
-        
-        if (verbose_debug) {
-            LOG_D("AD7609_ReadSamples: Ch%d = 0x%02X%02X", x, highByte, lowByte);
-        }
-    }
-    
-    if (verbose_debug) {
-        LOG_D("AD7609_ReadSamples: Completed 18-byte SPI read sequence");
-        debug_count++;
     }
     
     // Set CS high to end communication
@@ -282,27 +290,19 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
     // Check if the AD7609 is busy
     bool busy = GPIO_PinRead(pModuleConfigAD7609->BSY_Pin);
     if (busy) {
-        LOG_D("AD7609_TriggerConversion: BSY pin high, skipping conversion");
-        return false;
+        return false; // Skip conversion if still busy
     }
     
-    // AD7609 Conversion Sequence per datasheet:
-    // 1. Force CONVST pin low first  
-    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);
-    
-    // 2. Brief delay then pull CONVST pin high to start conversion
-    AD7609_Delay_ms(1); // Small delay for signal stability
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);
     
-    // 3. Brief delay - conversion will start and BSY will go high
-    AD7609_Delay_ms(1);
-    
-    // Reduced logging spam - only log first few triggers
-    static int trigger_debug_count = 0;
-    if (trigger_debug_count < 3) {
-        LOG_D("AD7609_TriggerConversion: Conversion triggered (%d)", trigger_debug_count);
-        trigger_debug_count++;
-    }
+    // PIC32MZ2048 nop is ~56ns at full 200MHz.  AD7609 requires 25ns pulse, so 10x should be goodish
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+    asm("nop");
+
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);
     return true;
 }
 
@@ -311,9 +311,6 @@ double AD7609_ConvertToVoltage(
                         const AInSample* sample)
 {
     UNUSED(runtimeConfig);
-    
-    // LOG_D("AD7609_ConvertToVoltage: Called for channel with sample value 0x%X", 
-    //       sample ? sample->Value : 0);
     
     if (sample == NULL) {
         LOG_E("AD7609_ConvertToVoltage: NULL sample");
@@ -332,8 +329,6 @@ double AD7609_ConvertToVoltage(
         }
         
         double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
-        // LOG_D("AD7609_ConvertToVoltage: Using default config - Raw=0x%X, Voltage=%.3fV", 
-        //       sample->Value, voltage);
         return voltage;
     }
     
@@ -354,9 +349,5 @@ double AD7609_ConvertToVoltage(
     
     // Convert to voltage: raw / maxCode * fullScale
     double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
-    
-    // LOG_D("AD7609_ConvertToVoltage: Raw=0x%X (%d), Voltage=%.3fV", 
-    //       sample->Value, rawValue, voltage);
-    
     return voltage;
 }

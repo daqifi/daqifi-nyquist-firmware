@@ -52,6 +52,11 @@
 #include "interrupts.h"
 #include "definitions.h"
 
+// Wrapper for assembly interrupt vector compatibility  
+void CHANGE_NOTICE_B_Handler(void) {
+    CHANGE_NOTICE_B_InterruptHandler();
+}
+
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
 
@@ -363,7 +368,6 @@ void __attribute__((used)) SPI6_TX_Handler (void)
 
 void __attribute__((used)) ADC_EOS_Handler (void)
 {
-    ADC_EOSInterruptCB();
     ADC_EOS_InterruptHandler();
 }
 

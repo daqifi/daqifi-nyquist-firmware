@@ -75,7 +75,26 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig);
 double AD7609_ConvertToVoltage(                                             \
                         const AInRuntimeConfig* runtimeConfig,              \
                         const AInSample* sample);
-    
+
+/*!
+ * AD7609 deferred interrupt task (handles SPI read after BSY interrupt)
+ * This function is called by FreeRTOS task scheduler
+ */
+void AD7609_DeferredInterruptTask(void);
+
+/*!
+ * AD7609 BSY pin interrupt callback (called from GPIO ISR)
+ * @param[in] pin The GPIO pin that triggered the interrupt
+ * @param[in] context User context (unused)
+ */
+void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context);
+
+/*!
+ * Returns the task handle for the AD7609 deferred interrupt task
+ * @return Task handle pointer
+ */
+void* AD7609_GetTaskHandle(void);
+
 #ifdef	__cplusplus
 }
 #endif

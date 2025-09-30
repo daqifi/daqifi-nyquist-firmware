@@ -58,7 +58,8 @@ static void GetModuleChannelRuntimeData(
         AInRuntimeArray* moduleChannelRuntime,
         uint8_t moduleId);
 
-void ADC_EosInterruptTask(void) {
+// Internal PIC32 ADC End-of-Scan interrupt task (MC12bADC only)
+void MC12bADC_EosInterruptTask(void) {
     const TickType_t xBlockTime = portMAX_DELAY;
 
     while (1) {
@@ -68,7 +69,8 @@ void ADC_EosInterruptTask(void) {
         uint32_t adcval;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
         
-        //Read only the private ADC's as the public ADC's has their own interrupts
+        // Read only the private internal ADC channels (MC12bADC)
+        // Public ADC channels have their own interrupts
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
             if (gpBoardConfig->AInChannels.Data[i].Type == AIn_MC12bADC && 
                 gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic != 1
@@ -84,36 +86,21 @@ void ADC_EosInterruptTask(void) {
                         i,
                         &sample);
             }
-            // Read AD7609 samples for enabled channels  
+            // Handle AD7609 channel data updates (reading triggered conversions)
             else if (gpBoardConfig->AInChannels.Data[i].Type == AIn_AD7609 && 
                      gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
                 
-                // AD7609 requires reading ALL channels at once after conversion
-                // Only do this once per conversion cycle (for channel 0)
+                // AD7609 conversions are triggered by ADC_TriggerConversion()
+                // This task reads the completed conversion data
                 static uint16_t ad7609_data[8] = {0}; // Cache for all 8 channels
                 static bool data_fresh = false;
                 
                 if (gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId == 0) {
-                    // First channel - trigger conversion then read all AD7609 data via SPI
-                    
-                    // CRITICAL FIX: Trigger a new conversion first (was missing!)
-                    // Find the AD7609 module configuration
-                    for (int modIdx = 0; modIdx < gpBoardConfig->AInModules.Size; modIdx++) {
-                        if (gpBoardConfig->AInModules.Data[modIdx].Type == AIn_AD7609) {
-                            // Trigger conversion using the proper AD7609 driver
-                            AD7609_TriggerConversion(&gpBoardConfig->AInModules.Data[modIdx].Config.AD7609);
-                            
-                            // Wait for conversion to complete (typical 2.5μs, use 1ms for safety)
-                            vTaskDelay(pdMS_TO_TICKS(1));
-                            break;
-                        }
-                    }
-                    
-                    // Use the proper AD7609 driver to read all channels
+                    // First channel - read all AD7609 data if conversion is complete
                     AInSampleArray samples;
                     samples.Size = 8;
                     
-                    // Call the corrected AD7609 driver
+                    // Try to read AD7609 data (will check BSY internally)
                     if (AD7609_ReadSamples(&samples, &gpBoardConfig->AInChannels, 
                                           &gpBoardRuntimeConfig->AInChannels, *valueTMR)) {
                         // Extract data from samples into cache
@@ -127,18 +114,7 @@ void ADC_EosInterruptTask(void) {
                             }
                         }
                         data_fresh = true;
-                        
-                        // Debug: Log SPI data to see what we're actually receiving
-                        static int debug_count = 0;
-                        if (debug_count < 3) { // Only log first few times
-                            LOG_D("AD7609 Samples: Count=%d, Ch0=0x%04X, Ch1=0x%04X", 
-                                  samples.Size, ad7609_data[0], ad7609_data[1]);
-                            debug_count++;
-                        }
                     } else {
-                        LOG_E("AD7609_ReadSamples failed");
-                        // Clear all data on failure
-                        for (int ch = 0; ch < 8; ch++) ad7609_data[ch] = 0;
                         data_fresh = false;
                     }
                 }
@@ -156,9 +132,12 @@ void ADC_EosInterruptTask(void) {
                         &sample);
             }
         }
-
-
     }
+}
+
+// Legacy wrapper for backward compatibility
+void ADC_EosInterruptTask(void) {
+    MC12bADC_EosInterruptTask();
 }
 
 void ADC_Init(
@@ -169,10 +148,13 @@ void ADC_Init(
     gpBoardRuntimeConfig =
             (tBoardRuntimeConfig *) pBoardRuntimeConfigADCInit;
     gpBoardData = (tBoardData *) pBoardDataADCInit;
-    xTaskCreate((TaskFunction_t) ADC_EosInterruptTask,
-            "ADC Interrupt",
-            2048, NULL, 8, &gADCInterruptHandle);
-            
+    xTaskCreate((TaskFunction_t) MC12bADC_EosInterruptTask,
+            "MC12bADC EOS",
+            2048, NULL, 8, &gADCInterruptHandle); // Priority 8 for real-time ADC response
+
+    // Register ADC EOS interrupt callback using Harmony's callback mechanism
+    ADCHS_EOSCallbackRegister(ADC_EOSInterruptCB, 0);
+
     // Note: AD7609 initialization happens later when 10V rail is powered up
 }
 
@@ -208,7 +190,8 @@ bool ADC_WriteChannelStateAll(void) {
     return result;
 }
 
-bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelType) {
+// Generic ADC trigger dispatcher - delegates to specific ADC drivers
+bool ADC_TriggerConversion_Generic(const AInModule* module, MC12b_adcType_t adcChannelType) {
     AInTaskState_t state;
     uint8_t moduleId = ADC_FindModuleIndex(module);
     POWER_STATE powerState = gpBoardData->PowerData.powerState;
@@ -249,6 +232,20 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
             &state);
 
     return result;
+}
+
+// Legacy wrapper for backward compatibility
+bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelType) {
+    return ADC_TriggerConversion_Generic(module, adcChannelType);
+}
+
+// Specific trigger functions for clarity
+bool MC12bADC_TriggerConversion_Deferred(const AInModule* module) {
+    return ADC_TriggerConversion_Generic(module, MC12B_ADC_TYPE_ALL);
+}
+
+bool AD7609_TriggerConversion_Deferred(const AInModule* module) {
+    return ADC_TriggerConversion_Generic(module, MC12B_ADC_TYPE_ALL); // adcChannelType not used for AD7609
 }
 
 const AInModule* ADC_FindModule(AInType moduleType) {
@@ -481,7 +478,8 @@ static void GetModuleChannelRuntimeData(
     }
 }
 
-void ADC_EOSInterruptCB(void) {
+void ADC_EOSInterruptCB(uintptr_t context) {
+    (void)context; // Unused
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     vTaskNotifyGiveFromISR(gADCInterruptHandle, &xHigherPriorityTaskWoken);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
