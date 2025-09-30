@@ -251,24 +251,29 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
     
     // Convert raw bytes to samples and populate the samples array
+    // Use channel mapping from configuration (ChannelNumber → hardware channel)
     size_t sampleCount = 0;
-    for (int channel = 0; channel < 8; channel++) { // Only use first 8 channels for DAQiFi
-        uint16_t rawData = Data16[channel];
-        
-        // Find this AD7609 channel in the configuration
-        for (size_t i = 0; i < channelConfigList->Size; i++) {
-            if (channelConfigList->Data[i].Type == AIn_AD7609 && 
-                channelConfigList->Data[i].DaqifiAdcChannelId == channel &&
-                channelRuntimeConfigList->Data[i].IsEnabled) {
-                
-                // Create sample entry
-                if (sampleCount < samples->Size) {
-                    samples->Data[sampleCount].Channel = channel;
-                    samples->Data[sampleCount].Value = rawData;
-                    samples->Data[sampleCount].Timestamp = triggerTimeStamp;
-                    sampleCount++;
-                }
-                break;
+    for (size_t i = 0; i < channelConfigList->Size; i++) {
+        if (channelConfigList->Data[i].Type == AIn_AD7609 &&
+            channelRuntimeConfigList->Data[i].IsEnabled) {
+
+            // Get the hardware channel number from config
+            uint8_t hwChannel = channelConfigList->Data[i].Config.AD7609.ChannelNumber;
+
+            // Validate hardware channel is in range
+            if (hwChannel >= 8) {
+                continue; // Skip invalid channels
+            }
+
+            // Get raw data from the hardware channel
+            uint16_t rawData = Data16[hwChannel];
+
+            // Create sample entry with DAQiFi channel ID
+            if (sampleCount < samples->Size) {
+                samples->Data[sampleCount].Channel = channelConfigList->Data[i].DaqifiAdcChannelId;
+                samples->Data[sampleCount].Value = rawData;
+                samples->Data[sampleCount].Timestamp = triggerTimeStamp;
+                sampleCount++;
             }
         }
     }

@@ -209,7 +209,7 @@ const tBoardConfig NQ3BoardConfig = {
                         .OS0_Pin = GPIO_PIN_RH7,
                         .OS1_Pin = GPIO_PIN_RK3,
                         .CONVST_Pin = GPIO_PIN_RB9,
-                        .Range10V = true,
+                        .Range10V = false,
                         .OSMode = 0,
                         .Resolution = 262144,
                     }
@@ -222,45 +222,46 @@ const tBoardConfig NQ3BoardConfig = {
     .AInChannels = {
         .Data = {
             // User-accessible AD7609 channels (0-7) - NQ3's main feature
+            // Channel mapping: User 0-7 → AD7609 4,5,6,7,0,1,2,3 (hardware layout)
             {
                 .DaqifiAdcChannelId = 0,
-                .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 0}}
-            },
-            {
-                .DaqifiAdcChannelId = 1,
-                .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 1}}
-            },
-            {
-                .DaqifiAdcChannelId = 2,
-                .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 2}}
-            },
-            {
-                .DaqifiAdcChannelId = 3,
-                .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 3}}
-            },
-            {
-                .DaqifiAdcChannelId = 4,
                 .Type = AIn_AD7609,
                 .Config = {.AD7609 = {.ChannelNumber = 4}}
             },
             {
-                .DaqifiAdcChannelId = 5,
+                .DaqifiAdcChannelId = 1,
                 .Type = AIn_AD7609,
                 .Config = {.AD7609 = {.ChannelNumber = 5}}
             },
             {
-                .DaqifiAdcChannelId = 6,
+                .DaqifiAdcChannelId = 2,
                 .Type = AIn_AD7609,
                 .Config = {.AD7609 = {.ChannelNumber = 6}}
             },
             {
-                .DaqifiAdcChannelId = 7,
+                .DaqifiAdcChannelId = 3,
                 .Type = AIn_AD7609,
                 .Config = {.AD7609 = {.ChannelNumber = 7}}
+            },
+            {
+                .DaqifiAdcChannelId = 4,
+                .Type = AIn_AD7609,
+                .Config = {.AD7609 = {.ChannelNumber = 0}}
+            },
+            {
+                .DaqifiAdcChannelId = 5,
+                .Type = AIn_AD7609,
+                .Config = {.AD7609 = {.ChannelNumber = 1}}
+            },
+            {
+                .DaqifiAdcChannelId = 6,
+                .Type = AIn_AD7609,
+                .Config = {.AD7609 = {.ChannelNumber = 2}}
+            },
+            {
+                .DaqifiAdcChannelId = 7,
+                .Type = AIn_AD7609,
+                .Config = {.AD7609 = {.ChannelNumber = 3}}
             },
 
             // Internal monitoring channels - exact copy from working NQ1 configuration
