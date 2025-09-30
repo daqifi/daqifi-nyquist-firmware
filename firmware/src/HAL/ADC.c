@@ -119,9 +119,9 @@ void MC12bADC_EosInterruptTask(void) {
                     }
                 }
                 
-                // Use cached data for this channel
-                uint8_t channelNum = gpBoardConfig->AInChannels.Data[i].Config.AD7609.ChannelNumber;
-                uint16_t rawValue = (data_fresh && channelNum < 8) ? ad7609_data[channelNum] : 0;
+                // Use cached data for this channel (indexed by DaqifiAdcChannelId)
+                uint8_t daqifiChanId = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+                uint16_t rawValue = (data_fresh && daqifiChanId < 8) ? ad7609_data[daqifiChanId] : 0;
                 
                 sample.Timestamp = *valueTMR;
                 sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
