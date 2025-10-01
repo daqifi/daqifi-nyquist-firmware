@@ -1,7 +1,18 @@
-/*! @file AD7609.c 
- * 
- * This file implements the functions to manage the module ADC AD7609.
- * Minimal implementation for NQ3 testing - to be fully implemented later.
+/*! @file AD7609.c
+ *
+ * @brief AD7609 8-Channel, 18-bit ADC Driver
+ *
+ * This file implements the hardware abstraction layer for the Analog Devices AD7609
+ * simultaneous sampling, 18-bit ADC. The driver supports serial data interface mode
+ * with manual chip select control via Harmony DRV_SPI.
+ *
+ * Key Features:
+ * - 8 differential input channels
+ * - 18-bit resolution with 2's complement output
+ * - Configurable ±5V or ±10V input range per module
+ * - SPI interface at 10 MHz
+ * - Manual conversion triggering via CONVST pin
+ * - Busy signal monitoring for conversion complete
  */
 
 #include "AD7609.h"
@@ -143,13 +154,11 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
 bool AD7609_WriteModuleState(bool isPowered)
 {
     UNUSED(isPowered);
-    LOG_D("AD7609_WriteModuleState: isPowered=%d", isPowered);
-    
+
     if (pModuleConfigAD7609 == NULL) {
         return false;
     }
-    
-    // Minimal implementation - just log for now
+
     return true;
 }
 
@@ -161,8 +170,7 @@ bool AD7609_WriteStateSingle(
     UNUSED(moduleRuntimeConfig);
     UNUSED(channelConfig);
     UNUSED(channelRuntimeConfig);
-    
-    LOG_D("AD7609_WriteStateSingle: Configuring AD7609 channel");
+
     return true;
 }
 
@@ -172,15 +180,12 @@ bool AD7609_WriteStateAll(
 {
     UNUSED(channelConfig);
     UNUSED(channelRuntimeConfig);
-    
-    LOG_D("AD7609_WriteStateAll: Configuring all AD7609 channels");
-    
-    // AD7609 should be initialized during system startup now
+
     if (pModuleConfigAD7609 == NULL) {
-        LOG_E("AD7609_WriteStateAll: AD7609 still not initialized - startup issue");
+        LOG_E("AD7609_WriteStateAll: AD7609 not initialized");
         return false;
     }
-    
+
     return true;
 }
 

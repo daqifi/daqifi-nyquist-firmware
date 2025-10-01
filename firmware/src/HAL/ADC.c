@@ -303,14 +303,8 @@ void ADC_Tasks(void) {
             // MC12bADC can init anytime, AD7609 requires isPowered (needs 10V rail)
             canInit = (module->Type == AIn_MC12bADC) || (module->Type == AIn_AD7609 && isPowered);
             initialized = false;
-            
-            if (module->Type == AIn_AD7609) {
-                LOG_D("ADC_UpdateModules: AD7609 Module %d - TaskState=%d, canInit=%d, isPowered=%d", 
-                      moduleIndex, gpBoardData->AInState.Data[moduleIndex].AInTaskState, canInit, isPowered);
-            }
-                  
+
             if (canInit) {
-                LOG_D("ADC_UpdateModules: Calling ADC_InitHardware for module %d", moduleIndex);
                 if (ADC_InitHardware(module, &moduleChannels)) {
                     if (module->Type == AIn_MC12bADC) {
                         MC12b_WriteStateAll(

@@ -44,7 +44,9 @@ extern "C" {
         // Note: LDAC is tied to 3.3V so no GPIO control needed
         // Configuration settings
         uint8_t DAC_Range;      // DAC output range setting
-        double Resolution;      // DAC resolution (bits)
+        uint16_t Resolution;    // DAC resolution in counts (4096 for 12-bit)
+        double MinVoltage;      // Minimum output voltage
+        double MaxVoltage;      // Maximum output voltage
     } DAC7718ModuleConfig;
 
     /**

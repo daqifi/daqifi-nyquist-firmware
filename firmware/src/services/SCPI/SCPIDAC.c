@@ -40,7 +40,6 @@ static bool DAC_EnsureHardwareInitialized(void) {
     
     // POWERED_UP (1) has 10V rail, POWERED_UP_EXT_DOWN (2) does not have 10V rail
     if (pPowerState->powerState != POWERED_UP) {
-        LOG_D("DAC_EnsureHardwareInitialized: Power insufficient for DAC");
         return false;
     }
     
@@ -57,10 +56,8 @@ static bool DAC_EnsureHardwareInitialized(void) {
     // Test config creation + basic init (no hardware operations)
     uint8_t dacId = DAC7718_NewConfig(&dacConfig);
     DAC7718_Init(dacId, 0); // Hardware init with operations bypassed
-    
+
     dacHardwareInitialized = true;
-    
-    // LOG_I("DAC7718 hardware initialized successfully with ID %d", dacId);
     return true;
 }
 
@@ -81,33 +78,39 @@ static size_t DAC_FindChannelIndex(uint8_t channelId) {
 }
 
 // Helper function to convert voltage to DAC counts
-// static uint32_t DAC_VoltageTocounts(double voltage, double range) {
-//     // Assuming 12-bit DAC (4096 counts) and bipolar range
-//     // For example: ±10V range means 20V total span
-//     double voltsPerCount = range / 2048.0; // 4096/2 for bipolar
-//     int32_t counts = (int32_t)((voltage / voltsPerCount) + 2048); // Offset for bipolar
-//     
-//     // Clamp to valid range
-//     if (counts < 0) counts = 0;
-//     if (counts > 4095) counts = 4095;
-//     
-//     return (uint32_t)counts;
-// }
+// Uses configuration values for voltage range and resolution
+static uint32_t DAC_VoltageToCounts(double voltage, const DAC7718ModuleConfig* config) {
+    // Unipolar conversion: 0V = 0 counts, MaxV = (Resolution-1) counts
+    if (voltage < config->MinVoltage) voltage = config->MinVoltage;
+    if (voltage > config->MaxVoltage) voltage = config->MaxVoltage;
 
-// Helper function to convert DAC counts to voltage  
-// static double DAC_CountsToVoltage(uint32_t counts, double range) {
-//     // Assuming 12-bit DAC (4096 counts) and bipolar range
-//     double voltsPerCount = range / 2048.0; // 4096/2 for bipolar
-//     return ((double)(counts - 2048)) * voltsPerCount;
-// }
+    double voltageSpan = config->MaxVoltage - config->MinVoltage;
+    double normalizedVoltage = (voltage - config->MinVoltage) / voltageSpan;
+    uint32_t counts = (uint32_t)(normalizedVoltage * (config->Resolution - 1) + 0.5);
+
+    return counts;
+}
+
+// Helper function to convert DAC counts to voltage
+// Uses configuration values for voltage range and resolution
+// Note: Currently unused but reserved for future DAC readback implementation
+static double DAC_CountsToVoltage(uint32_t counts, const DAC7718ModuleConfig* config) __attribute__((unused));
+static double DAC_CountsToVoltage(uint32_t counts, const DAC7718ModuleConfig* config) {
+    // Unipolar conversion
+    if (counts >= config->Resolution) counts = config->Resolution - 1;
+
+    double voltageSpan = config->MaxVoltage - config->MinVoltage;
+    double normalizedCounts = (double)counts / (double)(config->Resolution - 1);
+    return config->MinVoltage + (normalizedCounts * voltageSpan);
+}
 
 scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     int channel;
     double voltage;
     AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-    // AOutRuntimeArray* pRuntimeAOutChannels = NULL; // TODO: Get from runtime config when added
-    
-    if (pBoardConfigAOutChannels == NULL) {
+    AOutModArray* pBoardConfigAOutModules = BoardConfig_Get(BOARDCONFIG_AOUT_MODULE, 0);
+
+    if (pBoardConfigAOutChannels == NULL || pBoardConfigAOutModules == NULL) {
         LOG_E("SCPI_DACVoltageSet: No DAC channels configured");
         return SCPI_RES_ERR;
     }
@@ -118,37 +121,37 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // Get DAC7718 module configuration for voltage conversion
+    const DAC7718ModuleConfig* dacConfig = &pBoardConfigAOutModules->Data[AOut_DAC7718].Config.DAC7718;
+
     if (SCPI_ParamInt32(context, &channel, FALSE) && SCPI_ParamDouble(context, &voltage, TRUE)) {
-        // Validate channel exists
+        // Set single channel
         size_t index = DAC_FindChannelIndex((uint8_t)channel);
         if (index >= pBoardConfigAOutChannels->Size) {
             return SCPI_RES_ERR;
         }
 
-        // Convert voltage to DAC counts with rounding for accuracy
-        int32_t counts = (int32_t)((voltage / 10.0) * 4096.0 + 0.5);
-        if (counts < 0) counts = 0;
-        if (counts > 4095) counts = 4095;
-        
+        // Convert voltage to DAC counts using configuration
+        uint32_t counts = DAC_VoltageToCounts(voltage, dacConfig);
+
         // Get hardware channel number from board configuration
         uint8_t hwChannel = pBoardConfigAOutChannels->Data[index].Config.DAC7718.ChannelNumber;
         uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
-        DAC7718_ReadWriteReg(0, 0, dacRegister, (uint32_t)counts);
+        DAC7718_ReadWriteReg(0, 0, dacRegister, counts);
         DAC7718_UpdateLatch(0);
-        
+
     } else if (SCPI_ParamDouble(context, &voltage, TRUE)) {
-        // BYPASS: Set all enabled channels to the same voltage
-        // for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
-        //     uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
-        //     uint32_t dacValue = DAC_VoltageTocounts(voltage, 20.0);
-        //     
-        //     DAC7718_ReadWriteReg(0, 0, channelId, dacValue);
-        // }
-        // 
-        // // Update all DAC latches
-        // DAC7718_UpdateLatch(0);
-        
-        LOG_D("SCPI_DACVoltageSet: All channels set to %.3fV", voltage);
+        // Set all channels to the same voltage
+        uint32_t counts = DAC_VoltageToCounts(voltage, dacConfig);
+
+        for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
+            uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;
+            uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
+            DAC7718_ReadWriteReg(0, 0, dacRegister, counts);
+        }
+
+        // Update all DAC latches
+        DAC7718_UpdateLatch(0);
     } else {
         return SCPI_RES_ERR;
     }
@@ -208,15 +211,14 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
 
 scpi_result_t SCPI_DACChanEnableSet(scpi_t * context) {
     int channel, enabled;
-    
+
     if (!SCPI_ParamInt32(context, &channel, TRUE) || !SCPI_ParamInt32(context, &enabled, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Implement channel enable/disable functionality
     // This would typically be stored in runtime configuration
-    LOG_D("SCPI_DACChanEnableSet: Channel %d enable set to %d", channel, enabled);
-    
+
     return SCPI_RES_OK;
 }
 
@@ -244,14 +246,13 @@ scpi_result_t SCPI_DACChanEnableGet(scpi_t * context) {
 
 scpi_result_t SCPI_DACChanRangeSet(scpi_t * context) {
     int channel, range;
-    
+
     if (!SCPI_ParamInt32(context, &channel, TRUE) || !SCPI_ParamInt32(context, &range, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Implement range setting functionality
-    LOG_D("SCPI_DACChanRangeSet: Channel %d range set to %d", channel, range);
-    
+
     return SCPI_RES_OK;
 }
 
@@ -279,28 +280,26 @@ scpi_result_t SCPI_DACChanRangeGet(scpi_t * context) {
 scpi_result_t SCPI_DACChanCalmSet(scpi_t * context) {
     int channel;
     double calM;
-    
+
     if (!SCPI_ParamInt32(context, &channel, TRUE) || !SCPI_ParamDouble(context, &calM, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Implement calibration M setting
-    LOG_D("SCPI_DACChanCalmSet: Channel %d calibration M set to %.6f", channel, calM);
-    
+
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_DACChanCalbSet(scpi_t * context) {
     int channel;
     double calB;
-    
+
     if (!SCPI_ParamInt32(context, &channel, TRUE) || !SCPI_ParamDouble(context, &calB, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Implement calibration B setting
-    LOG_D("SCPI_DACChanCalbSet: Channel %d calibration B set to %.6f", channel, calB);
-    
+
     return SCPI_RES_OK;
 }
 
@@ -332,38 +331,33 @@ scpi_result_t SCPI_DACChanCalbGet(scpi_t * context) {
 
 scpi_result_t SCPI_DACCalSave(scpi_t * context) {
     // TODO: Implement calibration save to NVM
-    LOG_D("SCPI_DACCalSave: Saving user calibration values");
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_DACCalFSave(scpi_t * context) {
     // TODO: Implement factory calibration save to NVM
-    LOG_D("SCPI_DACCalFSave: Saving factory calibration values");
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_DACCalLoad(scpi_t * context) {
     // TODO: Implement calibration load from NVM
-    LOG_D("SCPI_DACCalLoad: Loading user calibration values");
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_DACCalFLoad(scpi_t * context) {
     // TODO: Implement factory calibration load from NVM
-    LOG_D("SCPI_DACCalFLoad: Loading factory calibration values");
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_DACUseCalSet(scpi_t * context) {
     int useCal;
-    
+
     if (!SCPI_ParamInt32(context, &useCal, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Implement calibration preference setting
-    LOG_D("SCPI_DACUseCalSet: Use calibration set to %d", useCal);
-    
+
     return SCPI_RES_OK;
 }
 
@@ -376,6 +370,5 @@ scpi_result_t SCPI_DACUseCalGet(scpi_t * context) {
 scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // Update all DAC latches to reflect current values
     DAC7718_UpdateLatch(0);
-    LOG_D("SCPI_DACUpdate: All DAC outputs updated");
     return SCPI_RES_OK;
 }

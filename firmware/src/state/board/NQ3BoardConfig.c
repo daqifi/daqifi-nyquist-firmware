@@ -346,6 +346,8 @@ const tBoardConfig NQ3BoardConfig = {
                         .RST_Pin = DAC7718_RST_PIN,   // CLR/RST on RJ13
                         .DAC_Range = 0,               // Default range setting
                         .Resolution = 4096,           // 12-bit DAC (4096 levels)
+                        .MinVoltage = 0.0,            // Unipolar: 0V minimum
+                        .MaxVoltage = 10.0,           // 10V maximum (0-10V range)
                     }
                 },
                 .Size = 8  // DAC7718 has 8 channels

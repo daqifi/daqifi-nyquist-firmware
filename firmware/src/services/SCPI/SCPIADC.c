@@ -40,27 +40,15 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
             SCPI_ResultDouble(context, 0.0);
             return SCPI_RES_OK;
         }
-        
-        // Debug: Check channel type and configuration
-        AInChannel* channelConfig = &pBoardConfigAInChannels->Data[index];
-        if (channelConfig->Type == AIn_AD7609) {
-            LOG_D("SCPI_ADCVoltageGet: Channel %d is AD7609 type", channel);
-        } else {
-            LOG_D("SCPI_ADCVoltageGet: Channel %d is MC12bADC type", channel);
-        }
-        
+
         pAInLatest = BoardData_Get(
                 BOARDDATA_AIN_LATEST,
                 index);
 
         if (pAInLatest == NULL) {
-            LOG_E("SCPI_ADCVoltageGet: No sample data available for channel %d", channel);
             SCPI_ResultDouble(context, 0.0);
             return SCPI_RES_OK;
         }
-        
-        LOG_D("SCPI_ADCVoltageGet: Sample data - Value=0x%X, Timestamp=%u", 
-              pAInLatest->Value, pAInLatest->Timestamp);
 
         val = ADC_ConvertToVoltage(pAInLatest);
         SCPI_ResultDouble(context, val);
