@@ -1363,10 +1363,6 @@ static const scpi_command_t scpi_commands[] = {
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},
     {.pattern = "SOURce:VOLTage:LEVel?", .callback = SCPI_DACVoltageGet,},
-    {.pattern = "ENAble:SOURce:DC", .callback = SCPI_DACChanEnableSet,},
-    {.pattern = "ENAble:SOURce:DC?", .callback = SCPI_DACChanEnableGet,},
-    {.pattern = "CONFigure:DAC:RANGe", .callback = SCPI_DACChanRangeSet,},
-    {.pattern = "CONFigure:DAC:RANGe?", .callback = SCPI_DACChanRangeGet,},
     {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_DACChanCalmSet,},
     {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_DACChanCalbSet,},
     {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_DACChanCalmGet,},

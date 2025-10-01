@@ -49,13 +49,13 @@ static bool DAC_EnsureHardwareInitialized(void) {
         return false;
     }
     
-    // Test minimal operations to isolate TLB exception
-    dacConfig.CS_Pin = GPIO_PIN_RK0;     // CS on RK0  
+    // Initialize DAC7718 hardware configuration
+    dacConfig.CS_Pin = GPIO_PIN_RK0;     // CS on RK0
     dacConfig.RST_Pin = GPIO_PIN_RJ13;   // CLR/RST on RJ13
-    
-    // Test config creation + basic init (no hardware operations)
+
+    // Create DAC configuration and initialize hardware
     uint8_t dacId = DAC7718_NewConfig(&dacConfig);
-    DAC7718_Init(dacId, 0); // Hardware init with operations bypassed
+    DAC7718_Init(dacId, 0);
 
     dacHardwareInitialized = true;
     return true;
@@ -124,8 +124,18 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     // Get DAC7718 module configuration for voltage conversion
     const DAC7718ModuleConfig* dacConfig = &pBoardConfigAOutModules->Data[AOut_DAC7718].Config.DAC7718;
 
-    if (SCPI_ParamInt32(context, &channel, FALSE) && SCPI_ParamDouble(context, &voltage, TRUE)) {
-        // Set single channel
+    // Try to parse first parameter as double (works for both int and double)
+    if (!SCPI_ParamDouble(context, &voltage, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    // Try to parse second parameter as double (voltage)
+    double voltage2;
+    if (SCPI_ParamDouble(context, &voltage2, FALSE)) {
+        // Two parameters: first is channel (convert to int), second is voltage
+        channel = (int)voltage;
+        voltage = voltage2;
+
         size_t index = DAC_FindChannelIndex((uint8_t)channel);
         if (index >= pBoardConfigAOutChannels->Size) {
             return SCPI_RES_ERR;
@@ -140,20 +150,27 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         DAC7718_ReadWriteReg(0, 0, dacRegister, counts);
         DAC7718_UpdateLatch(0);
 
-    } else if (SCPI_ParamDouble(context, &voltage, TRUE)) {
-        // Set all channels to the same voltage
+        // Store commanded voltage in BoardData for readback
+        AOutSample sample = {.Channel = (uint8_t)channel, .Voltage = voltage};
+        BoardData_Set(BOARDDATA_AOUT_LATEST, index, &sample);
+
+    } else {
+        // One parameter: voltage for all channels
         uint32_t counts = DAC_VoltageToCounts(voltage, dacConfig);
 
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
             uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;
             uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
             DAC7718_ReadWriteReg(0, 0, dacRegister, counts);
+
+            // Store commanded voltage in BoardData for readback
+            uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
+            AOutSample sample = {.Channel = channelId, .Voltage = voltage};
+            BoardData_Set(BOARDDATA_AOUT_LATEST, i, &sample);
         }
 
         // Update all DAC latches
         DAC7718_UpdateLatch(0);
-    } else {
-        return SCPI_RES_ERR;
     }
 
     return SCPI_RES_OK;
@@ -162,29 +179,14 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
     int channel;
     AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-    
+
     if (pBoardConfigAOutChannels == NULL) {
         LOG_E("SCPI_DACVoltageGet: No DAC channels configured");
         return SCPI_RES_ERR;
     }
 
-    // Ensure DAC hardware is initialized (lazy initialization when power is up)
-    if (!DAC_EnsureHardwareInitialized()) {
-        LOG_D("SCPI_DACVoltageGet: DAC7718 hardware not ready - returning 0.0V");
-        // Return 0.0V for all channels when DAC is not ready
-        if (SCPI_ParamInt32(context, &channel, FALSE)) {
-            SCPI_ResultDouble(context, 0.0);
-        } else {
-            AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-            if (pBoardConfigAOutChannels != NULL) {
-                for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
-                    SCPI_ResultDouble(context, 0.0);
-                }
-            }
-        }
-        return SCPI_RES_OK;
-    }
-
+    // Note: DAC7718 does not support hardware readback
+    // Return last commanded voltage from BoardData
     if (SCPI_ParamInt32(context, &channel, FALSE)) {
         // Get single channel
         size_t index = DAC_FindChannelIndex((uint8_t)channel);
@@ -193,84 +195,22 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
             return SCPI_RES_ERR;
         }
 
-        // For now, return 0.0V since DAC read functionality needs proper initialization
-        // TODO: Implement proper DAC readback once initialization is complete
-        SCPI_ResultDouble(context, 0.0);
-        LOG_D("SCPI_DACVoltageGet: Channel %d read (returning 0.0V - DAC read not fully implemented)", channel);
+        // Read last commanded voltage from BoardData
+        AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, index);
+        if (pSample != NULL) {
+            SCPI_ResultDouble(context, pSample->Voltage);
+        } else {
+            SCPI_ResultDouble(context, 0.0);
+        }
     } else {
         // Get all channels
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
-            // For now, return 0.0V for all channels
-            SCPI_ResultDouble(context, 0.0);
-        }
-        LOG_D("SCPI_DACVoltageGet: All channels read (returning 0.0V - DAC read not fully implemented)");
-    }
-
-    return SCPI_RES_OK;
-}
-
-scpi_result_t SCPI_DACChanEnableSet(scpi_t * context) {
-    int channel, enabled;
-
-    if (!SCPI_ParamInt32(context, &channel, TRUE) || !SCPI_ParamInt32(context, &enabled, TRUE)) {
-        return SCPI_RES_ERR;
-    }
-
-    // TODO: Implement channel enable/disable functionality
-    // This would typically be stored in runtime configuration
-
-    return SCPI_RES_OK;
-}
-
-scpi_result_t SCPI_DACChanEnableGet(scpi_t * context) {
-    int channel;
-    AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-    
-    if (pBoardConfigAOutChannels == NULL) {
-        return SCPI_RES_ERR;
-    }
-
-    if (SCPI_ParamInt32(context, &channel, FALSE)) {
-        // Get single channel enable status
-        // TODO: Get from runtime configuration when implemented
-        SCPI_ResultInt32(context, 1); // Default to enabled
-    } else {
-        // Get all channels enable status
-        for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
-            SCPI_ResultInt32(context, 1); // Default to enabled
-        }
-    }
-
-    return SCPI_RES_OK;
-}
-
-scpi_result_t SCPI_DACChanRangeSet(scpi_t * context) {
-    int channel, range;
-
-    if (!SCPI_ParamInt32(context, &channel, TRUE) || !SCPI_ParamInt32(context, &range, TRUE)) {
-        return SCPI_RES_ERR;
-    }
-
-    // TODO: Implement range setting functionality
-
-    return SCPI_RES_OK;
-}
-
-scpi_result_t SCPI_DACChanRangeGet(scpi_t * context) {
-    int channel;
-    AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-    
-    if (pBoardConfigAOutChannels == NULL) {
-        return SCPI_RES_ERR;
-    }
-
-    if (SCPI_ParamInt32(context, &channel, FALSE)) {
-        // Get single channel range
-        SCPI_ResultInt32(context, 0); // Default range
-    } else {
-        // Get all channels range
-        for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
-            SCPI_ResultInt32(context, 0); // Default range
+            AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, i);
+            if (pSample != NULL) {
+                SCPI_ResultDouble(context, pSample->Voltage);
+            } else {
+                SCPI_ResultDouble(context, 0.0);
+            }
         }
     }
 

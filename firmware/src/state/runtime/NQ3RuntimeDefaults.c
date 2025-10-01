@@ -37,6 +37,22 @@ const tBoardRuntimeConfig g_NQ3BoardRuntimeConfig = {
         },
         .Size = 16,
     },
+    .AOutChannels =
+    {
+        .Data =
+        {
+            // DAC7718 channels 0-7 (user-accessible analog outputs, fixed 0-10V range)
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+            {.IsEnabled = true, .OutputVoltage = 0.0, .CalibrationM = 1.0, .CalibrationB = 0.0, .FactoryCalibrationM = 1.0, .FactoryCalibrationB = 0.0, .UseUserCalibration = false},
+        },
+        .Size = 8,
+    },
     .PowerWriteVars = {
        .EN_3_3V_Val = true,     // 3.3V rail on
        .EN_5_10V_Val = false,   // 5V rail off initially

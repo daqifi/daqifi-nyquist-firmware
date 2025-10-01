@@ -27,40 +27,6 @@ extern "C" {
     scpi_result_t SCPI_DACVoltageGet(scpi_t * context);
 
     /**
-     * Sets the enabled flag on one or more DAC channels
-     *   ENAble:SOURce:DC ${CH} (0|1) - Sets the enabled flag on a channel to either true (1) or false (0)
-     * @param context
-     * @return 
-     */
-    scpi_result_t SCPI_DACChanEnableSet(scpi_t * context);
-    
-    /**
-     * Gets the enabled flag on one or more DAC channels
-     *   ENAble:SOURce:DC? ${CH} - Gets the enabled flag on a channel
-     *   ENAble:SOURce:DC? - Gets the enabled flag on all channels
-     * @param context
-     * @return 
-     */
-    scpi_result_t SCPI_DACChanEnableGet(scpi_t * context);
-    
-    /**
-     * Sets the range on a single DAC channel
-     *   CONFigure:DAC:RANGe ${CH} ${Enum} - Sets the range on a channel
-     * @param context
-     * @return 
-     */
-    scpi_result_t SCPI_DACChanRangeSet(scpi_t * context);
-    
-    /**
-     * Gets the range on one or more DAC channels
-     *   CONFigure:DAC:RANGe? ${CH} - Gets the range on a channel
-     *   CONFigure:DAC:RANGe? - Gets the range on all channels
-     * @param context
-     * @return 
-     */
-    scpi_result_t SCPI_DACChanRangeGet(scpi_t * context);
-    
-    /**
      * Sets the m calibration value on a single DAC channel
      *   CONFigure:DAC:chanCALM ${CH} ${Double} - Sets the m (slope) calibration value on a channel
      * @param context

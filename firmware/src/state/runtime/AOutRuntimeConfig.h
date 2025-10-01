@@ -17,17 +17,12 @@ extern "C" {
          * Indicates whether this channel is enabled for output
          */
         bool IsEnabled;
-        
+
         /**
          * Current output voltage set for this channel
          */
         double OutputVoltage;
-        
-        /**
-         * Current range setting for this channel
-         */
-        uint8_t Range;
-        
+
         /**
          * User calibration slope (m) for this channel
          */
