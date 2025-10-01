@@ -68,7 +68,7 @@ data:
       - children:
         - attributes:
             id: spi2
-            value: '4'
+            value: '5'
           type: Dynamic
         type: Values
       type: Integer
@@ -146,7 +146,7 @@ data:
       children:
       - children:
         - attributes:
-            value: '10000000'
+            value: '8000000'
           type: User
         type: Values
       type: Integer

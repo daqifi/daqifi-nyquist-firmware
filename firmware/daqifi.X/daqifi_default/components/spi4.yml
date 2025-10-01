@@ -130,4 +130,14 @@ data:
           type: User
         type: Values
       type: KeyValueSet
+    SPI_MASTER_CLOCK:
+      attributes:
+        id: SPI_MASTER_CLOCK
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
   userData: {}

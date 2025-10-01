@@ -70,13 +70,13 @@ data:
             id: visible
           children:
           - type: Value
-            value: 'true'
+            value: 'false'
           type: Boolean
         type: Attributes
       - children:
         - attributes:
             id: drv_spi_1
-            value: '3'
+            value: '-1'
           type: Dynamic
         type: Values
       type: Integer
@@ -89,13 +89,13 @@ data:
             id: visible
           children:
           - type: Value
-            value: 'true'
+            value: 'false'
           type: Boolean
         type: Attributes
       - children:
         - attributes:
             id: drv_spi_1
-            value: '2'
+            value: '-1'
           type: Dynamic
         type: Values
       type: Integer
@@ -113,7 +113,7 @@ data:
         type: Attributes
       - children:
         - attributes:
-            value: 'true'
+            value: 'false'
           type: User
         type: Values
       type: Boolean
@@ -124,8 +124,26 @@ data:
       - children:
         - attributes:
             id: drv_spi_1
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
+    DRV_SPI_QUEUE_SIZE:
+      attributes:
+        id: DRV_SPI_QUEUE_SIZE
+      children:
+      - children:
+        - attributes:
+            id: visible
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            value: '18'
+          type: User
+        type: Values
+      type: Integer
   userData: {}

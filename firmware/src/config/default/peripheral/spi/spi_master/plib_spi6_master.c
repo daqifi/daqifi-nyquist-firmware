@@ -52,12 +52,12 @@
 static volatile SPI_OBJECT spi6Obj;
 
 #define SPI6_CON_MSTEN                      (1UL << _SPI6CON_MSTEN_POSITION)
-#define SPI6_CON_CKP                        (0UL << _SPI6CON_CKP_POSITION)
+#define SPI6_CON_CKP                        (1UL << _SPI6CON_CKP_POSITION)
 #define SPI6_CON_CKE                        (1UL << _SPI6CON_CKE_POSITION)
 #define SPI6_CON_MODE_32_MODE_16            (0UL << _SPI6CON_MODE16_POSITION)
 #define SPI6_CON_ENHBUF                     (1UL << _SPI6CON_ENHBUF_POSITION)
 #define SPI6_CON_MCLKSEL                    (0UL << _SPI6CON_MCLKSEL_POSITION)
-#define SPI6_CON_MSSEN                      (1UL << _SPI6CON_MSSEN_POSITION)
+#define SPI6_CON_MSSEN                      (0UL << _SPI6CON_MSSEN_POSITION)
 #define SPI6_CON_SMP                        (0UL << _SPI6CON_SMP_POSITION)
 
 void SPI6_Initialize ( void )
@@ -82,18 +82,18 @@ void SPI6_Initialize ( void )
     IFS5CLR = 0x8000000;
 
     /* BAUD Rate register Setup */
-    SPI6BRG = 49;
+    SPI6BRG = 4;
 
     /* CLear the Overflow */
     SPI6STATCLR = _SPI6STAT_SPIROV_MASK;
 
     /*
     MSTEN = 1
-    CKP = 0
+    CKP = 1
     CKE = 1
     MODE<32,16> = 0
     ENHBUF = 1
-    MSSEN = 1
+    MSSEN = 0
     MCLKSEL = 0
     */
     SPI6CONSET = (SPI6_CON_MSSEN | SPI6_CON_MCLKSEL | SPI6_CON_ENHBUF | SPI6_CON_MODE_32_MODE_16 | SPI6_CON_CKE | SPI6_CON_CKP | SPI6_CON_MSTEN | SPI6_CON_SMP);

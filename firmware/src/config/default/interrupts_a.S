@@ -484,6 +484,24 @@ IntVectorCHANGE_NOTICE_A_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorCHANGE_NOTICE_A_Handler
+    .extern  CHANGE_NOTICE_B_Handler
+
+    .section   .vector_119,code, keep
+    .equ     __vector_dispatch_119, IntVectorCHANGE_NOTICE_B_Handler
+    .global  __vector_dispatch_119
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorCHANGE_NOTICE_B_Handler
+
+IntVectorCHANGE_NOTICE_B_Handler:
+    portSAVE_CONTEXT
+    la    s6,  CHANGE_NOTICE_B_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorCHANGE_NOTICE_B_Handler
     .extern  CHANGE_NOTICE_D_Handler
 
     .section   .vector_121,code, keep
@@ -574,42 +592,6 @@ IntVectorDMA1_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorDMA1_Handler
-    .extern  DMA2_Handler
-
-    .section   .vector_136,code, keep
-    .equ     __vector_dispatch_136, IntVectorDMA2_Handler
-    .global  __vector_dispatch_136
-    .set     nomicromips
-    .set     noreorder
-    .set     nomips16
-    .set     noat
-    .ent  IntVectorDMA2_Handler
-
-IntVectorDMA2_Handler:
-    portSAVE_CONTEXT
-    la    s6,  DMA2_Handler
-    jalr  s6
-    nop
-    portRESTORE_CONTEXT
-    .end   IntVectorDMA2_Handler
-    .extern  DMA3_Handler
-
-    .section   .vector_137,code, keep
-    .equ     __vector_dispatch_137, IntVectorDMA3_Handler
-    .global  __vector_dispatch_137
-    .set     nomicromips
-    .set     noreorder
-    .set     nomips16
-    .set     noat
-    .ent  IntVectorDMA3_Handler
-
-IntVectorDMA3_Handler:
-    portSAVE_CONTEXT
-    la    s6,  DMA3_Handler
-    jalr  s6
-    nop
-    portRESTORE_CONTEXT
-    .end   IntVectorDMA3_Handler
     .extern  SPI2_RX_Handler
 
     .section   .vector_143,code, keep

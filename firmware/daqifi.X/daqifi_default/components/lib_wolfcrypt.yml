@@ -15,7 +15,7 @@ dependency:
 - dependencyPackage: ''
   name: wolfssl
   type: package
-  version: v5.4.0
+  version: v5.7.0
 customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments:

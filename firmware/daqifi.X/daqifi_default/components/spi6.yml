@@ -68,7 +68,7 @@ data:
       - children:
         - attributes:
             id: spi6
-            value: '49'
+            value: '4'
           type: Dynamic
         type: Values
       type: Integer
@@ -108,6 +108,46 @@ data:
             id: spi6
             value: '0'
           type: Dynamic
+        type: Values
+      type: KeyValueSet
+    SPI_SPICON_MSSEN:
+      attributes:
+        id: SPI_SPICON_MSSEN
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
+    SPI_SPICON_CLK_POL:
+      attributes:
+        id: SPI_SPICON_CLK_POL
+      children:
+      - children:
+        - attributes:
+            value: '0'
+          type: User
+        type: Values
+      type: KeyValueSet
+    SPI_BAUD_RATE:
+      attributes:
+        id: SPI_BAUD_RATE
+      children:
+      - children:
+        - attributes:
+            value: '10000000'
+          type: User
+        type: Values
+      type: Integer
+    SPI_MASTER_CLOCK:
+      attributes:
+        id: SPI_MASTER_CLOCK
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
         type: Values
       type: KeyValueSet
   userData: {}

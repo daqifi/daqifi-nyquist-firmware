@@ -76,7 +76,7 @@ data:
       - children:
         - attributes:
             id: drv_spi
-            value: '2'
+            value: '1'
           type: Dynamic
         type: Values
       type: Integer

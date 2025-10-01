@@ -256,6 +256,8 @@
 #define AD7609_BSY_Get()               ((PORTB >> 3) & 0x1U)
 #define AD7609_BSY_GetLatch()          ((LATB >> 3) & 0x1U)
 #define AD7609_BSY_PIN                  GPIO_PIN_RB3
+#define AD7609_BSY_InterruptEnable()   (CNENBSET = (1U<<3))
+#define AD7609_BSY_InterruptDisable()  (CNENBCLR = (1U<<3))
 
 /*** Macros for AD7609_FDATA pin ***/
 #define AD7609_FDATA_Set()               (LATBSET = (1U<<2))

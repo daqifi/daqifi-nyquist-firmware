@@ -104,6 +104,20 @@ void CLK_Initialize( void )
     CFGCONbits.PMDLOCK = 1;
 
 
+    /* Set up Reference Clock 1 */
+    /* REFO1CON register */
+    /* ROSEL =  SYSCLK */
+    /* DIVSWEN = 1 */
+    /* RODIV = 6 */
+    REFO1CON = 0x60200;
+
+    /* REFO1TRIM register */
+    /* ROTRIM = 341 */
+    REFO1TRIM = 0xaa800000;
+
+    /* Enable oscillator (ON bit) */
+    REFO1CONSET = 0x00008000;
+
       
 
     /* Lock system since done with clock configuration */

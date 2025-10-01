@@ -52,14 +52,9 @@
 #include "interrupts.h"
 #include "definitions.h"
 
-// Wrapper for assembly interrupt vector compatibility  
-void CHANGE_NOTICE_B_Handler(void) {
-    CHANGE_NOTICE_B_InterruptHandler();
-}
 
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
-
 
 // *****************************************************************************
 // *****************************************************************************
@@ -98,13 +93,12 @@ void ADC_DATA27_Handler (void);
 void ADC_DATA38_Handler (void); 
 void ADC_DATA39_Handler (void); 
 void CHANGE_NOTICE_A_Handler (void);
+void CHANGE_NOTICE_B_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
 void USB_DMA_Handler (void);
 void DMA0_Handler (void);
 void DMA1_Handler (void);
-void DMA2_Handler (void);
-void DMA3_Handler (void);
 void SPI2_RX_Handler (void);
 void SPI2_TX_Handler (void);
 void SPI4_RX_Handler (void);
@@ -286,6 +280,11 @@ void __attribute__((used)) CHANGE_NOTICE_A_Handler (void)
     CHANGE_NOTICE_A_InterruptHandler();
 }
 
+void __attribute__((used)) CHANGE_NOTICE_B_Handler (void)
+{
+    CHANGE_NOTICE_B_InterruptHandler();
+}
+
 void __attribute__((used)) CHANGE_NOTICE_D_Handler (void)
 {
     CHANGE_NOTICE_D_InterruptHandler();
@@ -309,16 +308,6 @@ void __attribute__((used)) DMA0_Handler (void)
 void __attribute__((used)) DMA1_Handler (void)
 {
     DMA1_InterruptHandler();
-}
-
-void __attribute__((used)) DMA2_Handler (void)
-{
-    DMA2_InterruptHandler();
-}
-
-void __attribute__((used)) DMA3_Handler (void)
-{
-    DMA3_InterruptHandler();
 }
 
 void __attribute__((used)) SPI2_RX_Handler (void)

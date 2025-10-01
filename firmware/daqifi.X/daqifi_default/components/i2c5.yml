@@ -102,4 +102,15 @@ data:
           type: Dynamic
         type: Values
       type: Combo
+    I2C_CLOCK_FREQ:
+      attributes:
+        id: I2C_CLOCK_FREQ
+      children:
+      - children:
+        - attributes:
+            id: i2c5
+            value: '100000000'
+          type: Dynamic
+        type: Values
+      type: Integer
   userData: {}

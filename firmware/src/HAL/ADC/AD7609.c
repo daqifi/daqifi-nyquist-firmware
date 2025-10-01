@@ -7,7 +7,7 @@
 #include "AD7609.h"
 #include "configuration.h"
 #include "definitions.h"
-#include "peripheral/spi/spi_master/plib_spi6_master.h"
+#include "driver/spi/drv_spi.h"
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
@@ -28,9 +28,12 @@ static void AD7609_Delay_ms(uint32_t milliseconds) {
 #define UNUSED(x) (void)(x)
 
 //! Pointer to the module configuration data structure to be set in initialization
-static const AD7609ModuleConfig* pModuleConfigAD7609; 
+static const AD7609ModuleConfig* pModuleConfigAD7609;
 //! Pointer to the module configuration data structure in runtime
 static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609 __attribute__((unused));
+
+// DRV_SPI handle for AD7609 communication
+static DRV_HANDLE spi_handle = DRV_HANDLE_INVALID;
 
 // AD7609 BSY interrupt handling
 static TaskHandle_t gAD7609_TaskHandle = NULL;
@@ -64,25 +67,6 @@ void AD7609_DeferredInterruptTask(void) {
     }
 } 
 
-/*! 
- * Function to configure SPI related to ADC - Updated for Harmony 3
- */
-static void AD7609_Apply_SPI_Config( void )
-{
-    // For Harmony 3, SPI configuration is handled by SPI6_Initialize() during startup
-    SPI_TRANSFER_SETUP spiSetup;
-    
-    spiSetup.clockFrequency = pModuleConfigAD7609->SPI.baud;
-    spiSetup.clockPolarity = (pModuleConfigAD7609->SPI.clockPolarity == 1) ? 
-                            SPI_CLOCK_POLARITY_IDLE_HIGH : SPI_CLOCK_POLARITY_IDLE_LOW;
-    spiSetup.clockPhase = (pModuleConfigAD7609->SPI.inSamplePhase == 1) ?
-                         SPI_CLOCK_PHASE_TRAILING_EDGE : SPI_CLOCK_PHASE_LEADING_EDGE;
-    spiSetup.dataBits = SPI_DATA_BITS_8;
-    
-    // Apply the setup to SPI6
-    SPI6_TransferSetup(&spiSetup, 80000000); // 80MHz peripheral clock
-}
-
 /*!
  *  Reset the module - Updated for Harmony 3 GPIO API
  */
@@ -108,15 +92,21 @@ static void AD7609_Reset( void )
 bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
 {
     // Initialize AD7609 hardware after power-up
-    
+
     pModuleConfigAD7609 = pBoardConfigInit;
-    
-    // Configure SPI6 for AD7609 communication
-    AD7609_Apply_SPI_Config();
-      
+
+    // Open DRV_SPI driver for SPI6 (DRV_SPI_INDEX_1 maps to SPI6)
+    spi_handle = DRV_SPI_Open(DRV_SPI_INDEX_1, DRV_IO_INTENT_READWRITE);
+    if (spi_handle == DRV_HANDLE_INVALID) {
+        LOG_E("AD7609_InitHardware: Failed to open SPI driver");
+        return false;
+    }
+
     // Initialize GPIO pins for AD7609 control after reset
-    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);      // CS high (inactive)  
-    GPIO_PinWrite(pModuleConfigAD7609->Range_Pin, pModuleConfigAD7609->Range10V);  // Range setting
+    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);      // CS high (inactive)
+    // Per datasheet: Range pin HIGH=±20V, LOW=±10V
+    // But hardware may be wired differently - use inverted logic to match SCPI implementation
+    GPIO_PinWrite(pModuleConfigAD7609->Range_Pin, !pModuleConfigAD7609->Range10V);  // Range setting
     GPIO_PinWrite(pModuleConfigAD7609->OS0_Pin, pModuleConfigAD7609->OSMode & 0b01); // OS0 setting
     GPIO_PinWrite(pModuleConfigAD7609->OS1_Pin, (pModuleConfigAD7609->OSMode & 0b10) >> 1); // OS1 setting
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false); // CONVST low (ready for trigger)
@@ -199,60 +189,50 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
                         AInRuntimeArray* channelRuntimeConfigList,
                         uint32_t triggerTimeStamp)
 {
-    uint8_t x = 0;
-    uint8_t SPIData = 0;
-    uint16_t Data16[9]; // 9 channels like original working implementation
-    
-    if (pModuleConfigAD7609 == NULL) {
+    if (pModuleConfigAD7609 == NULL || spi_handle == DRV_HANDLE_INVALID) {
         return false;
     }
-    
-    // Apply SPI configuration (like original)
-    AD7609_Apply_SPI_Config();
-    
+
     // Check if conversion is ready by reading BSY pin (BSY low = ready)
-    // Note: BSY check bypassed - using interrupt-driven approach instead
-    
-    // Set CS low to start SPI communication
-    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
-    
-    // No delay needed - datasheet doesn't require settling time
-    
-    // Read 9 channels using byte-by-byte SPI (matches original working implementation)
-    
-    for (x = 0; x < 9; x++) {
-        // Read high byte first
-        uint8_t txByte = 0x00;
-        while (SPI6_IsBusy()) { /* Wait */ }
-        bool success1 = SPI6_WriteRead(&txByte, 1, &SPIData, 1);
-        while (SPI6_IsBusy()) { /* Wait */ }
-        if (!success1) {
-            LOG_E("AD7609_ReadSamples: SPI failed on channel %d high byte", x);
-            GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
-            return false;
-        }
-        uint8_t highByte = SPIData;
-        
-        // Read low byte (no delay needed - hardware handles timing)
-        while (SPI6_IsBusy()) { /* Wait */ }
-        bool success2 = SPI6_WriteRead(&txByte, 1, &SPIData, 1);
-        while (SPI6_IsBusy()) { /* Wait */ }
-        if (!success2) {
-            LOG_E("AD7609_ReadSamples: SPI failed on channel %d low byte", x);
-            GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
-            return false;
-        }
-        uint8_t lowByte = SPIData;
-        
-        // Combine high and low bytes
-        Data16[x] = (highByte << 8) | lowByte;
+    if (GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+        return false; // Chip not ready
     }
-    
-    // Set CS high to end communication
+
+    // Prepare buffers for SPI transfer (18 bytes = 9 words × 2 bytes)
+    uint8_t txBuffer[18] = {0};  // Dummy data to clock out
+    uint8_t rxBuffer[18] = {0};  // Received data
+
+    // Assert CS (active low)
+    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
+
+    // Use DRV_SPI async API (driver is in async mode for WiFi compatibility)
+    DRV_SPI_TRANSFER_HANDLE transferHandle;
+    DRV_SPI_WriteReadTransferAdd(spi_handle, txBuffer, 18, rxBuffer, 18, &transferHandle);
+
+    if (transferHandle == DRV_SPI_TRANSFER_HANDLE_INVALID) {
+        LOG_E("AD7609_ReadSamples: Failed to queue SPI transfer");
+        GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);  // Deassert CS
+        return false;
+    }
+
+    // Poll for completion (blocking wait)
+    DRV_SPI_TRANSFER_EVENT event;
+    do {
+        event = DRV_SPI_TransferStatusGet(transferHandle);
+    } while (event == DRV_SPI_TRANSFER_EVENT_PENDING);
+
+    // Deassert CS (inactive high)
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
-    
-    // Convert raw bytes to samples and populate the samples array
-    // Use channel mapping from configuration (ChannelNumber → hardware channel)
+
+    if (event != DRV_SPI_TRANSFER_EVENT_COMPLETE) {
+        LOG_E("AD7609_ReadSamples: SPI transfer failed with event %d", event);
+        return false;
+    }
+
+    // AD7609 sends data in serial mode: 18 bits per channel, 8 channels sequentially
+    // Total: 144 bits (18 bytes) in continuous stream, MSB first per channel
+    // We need to extract each 18-bit value from the bit stream
+
     size_t sampleCount = 0;
     for (size_t i = 0; i < channelConfigList->Size; i++) {
         if (channelConfigList->Data[i].Type == AIn_AD7609 &&
@@ -266,19 +246,50 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
                 continue; // Skip invalid channels
             }
 
-            // Get raw data from the hardware channel
-            uint16_t rawData = Data16[hwChannel];
+            // Calculate bit position in the 144-bit stream
+            uint16_t bitPosition = hwChannel * 18;  // Each channel is 18 bits
+            uint8_t byteIndex = bitPosition / 8;     // Starting byte
+            uint8_t bitOffset = bitPosition % 8;     // Bit offset within byte
+
+            // Extract 18-bit value spanning up to 3 bytes
+            uint32_t tmpData;
+
+            if (bitOffset == 0) {
+                // Aligned on byte boundary (bits 0-17 from 3 bytes)
+                tmpData = ((uint32_t)rxBuffer[byteIndex] << 10) |
+                          ((uint32_t)rxBuffer[byteIndex + 1] << 2) |
+                          ((uint32_t)rxBuffer[byteIndex + 2] >> 6);
+            } else if (bitOffset <= 6) {
+                // Spans 3 bytes
+                tmpData = ((uint32_t)(rxBuffer[byteIndex] & (0xFF >> bitOffset)) << (10 + bitOffset)) |
+                          ((uint32_t)rxBuffer[byteIndex + 1] << (2 + bitOffset)) |
+                          ((uint32_t)rxBuffer[byteIndex + 2] >> (6 - bitOffset));
+            } else {
+                // bitOffset = 7, spans 3 bytes
+                tmpData = ((uint32_t)(rxBuffer[byteIndex] & 0x01) << 17) |
+                          ((uint32_t)rxBuffer[byteIndex + 1] << 9) |
+                          ((uint32_t)rxBuffer[byteIndex + 2] << 1) |
+                          ((uint32_t)rxBuffer[byteIndex + 3] >> 7);
+            }
+
+            // Mask to 18 bits
+            tmpData &= 0x3FFFF;
+
+            // Convert from 18-bit 2's complement to signed 32-bit
+            if (tmpData & 0x20000) {  // Check bit 17 (sign bit)
+                tmpData |= 0xFFFC0000;  // Sign extend
+            }
 
             // Create sample entry with DAQiFi channel ID
             if (sampleCount < samples->Size) {
                 samples->Data[sampleCount].Channel = channelConfigList->Data[i].DaqifiAdcChannelId;
-                samples->Data[sampleCount].Value = rawData;
+                samples->Data[sampleCount].Value = tmpData;
                 samples->Data[sampleCount].Timestamp = triggerTimeStamp;
                 sampleCount++;
             }
         }
     }
-    
+
     samples->Size = sampleCount;
     
     return (sampleCount > 0); // Return true if we got any samples

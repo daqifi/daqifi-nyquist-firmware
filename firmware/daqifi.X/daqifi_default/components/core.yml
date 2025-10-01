@@ -5123,7 +5123,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -5134,7 +5134,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -5145,7 +5145,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: CHANGE_NOTICE_B_Handler
+            value: CHANGE_NOTICE_B_InterruptHandler
           type: Dynamic
         type: Values
       type: String
@@ -5156,7 +5156,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -5501,7 +5501,11 @@ data:
       children:
       - children:
         - attributes:
-            value: '0'
+            id: core
+            value: '200000000'
+          type: Dynamic
+        - attributes:
+            value: '15001464'
           type: User
         type: Values
       type: String
@@ -5850,7 +5854,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '4'
+            value: '2'
           type: Dynamic
         type: Values
       type: Integer
@@ -6180,7 +6184,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -6191,7 +6195,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -6202,7 +6206,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: CHANGE_NOTICE_B_Handler
+            value: CHANGE_NOTICE_B_InterruptHandler
           type: Dynamic
         type: Values
       type: String
@@ -9755,7 +9759,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '8'
           type: Dynamic
         type: Values
       type: Hex
@@ -9777,7 +9781,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '8'
           type: Dynamic
         type: Values
       type: Hex
@@ -9788,7 +9792,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -10051,7 +10055,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '41244'
+            value: '41236'
           type: Dynamic
         type: Values
       type: Hex
@@ -10106,7 +10110,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '51'
+            value: '55'
           type: Dynamic
         type: Values
       type: Hex
@@ -11376,7 +11380,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11387,7 +11391,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11398,7 +11402,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '47888'
+            value: '0'
           type: Dynamic
         type: Values
       type: Hex
@@ -11409,7 +11413,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '1'
+            value: '0'
           type: Dynamic
         type: Values
       type: Integer
@@ -11420,7 +11424,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '187'
+            value: '0'
           type: Dynamic
         type: Values
       type: Integer
@@ -11442,7 +11446,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11453,7 +11457,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11464,7 +11468,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11475,7 +11479,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11486,7 +11490,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11497,7 +11501,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA2_InterruptHandler
+            value: DMA2_Handler
           type: Dynamic
         type: Values
       type: String
@@ -11508,7 +11512,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA2_InterruptHandler
+            value: DMA2_Handler
           type: Dynamic
         type: Values
       type: String
@@ -11519,7 +11523,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11530,7 +11534,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: SPI6_TX
+            value: Software Trigger
           type: Dynamic
         type: Values
       type: Combo
@@ -11541,7 +11545,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11552,7 +11556,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '2'
+            value: '-1'
           type: Dynamic
         type: Values
       type: Integer
@@ -11574,7 +11578,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11585,7 +11589,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11596,7 +11600,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11607,7 +11611,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11618,7 +11622,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11629,7 +11633,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA3_InterruptHandler
+            value: DMA3_Handler
           type: Dynamic
         type: Values
       type: String
@@ -11640,7 +11644,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA3_InterruptHandler
+            value: DMA3_Handler
           type: Dynamic
         type: Values
       type: String
@@ -11651,7 +11655,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '47632'
+            value: '0'
           type: Dynamic
         type: Values
       type: Hex
@@ -11662,7 +11666,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '1'
+            value: '0'
           type: Dynamic
         type: Values
       type: Integer
@@ -11673,7 +11677,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '186'
+            value: '0'
           type: Dynamic
         type: Values
       type: Integer
@@ -11684,7 +11688,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11695,7 +11699,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: SPI6_RX
+            value: Software Trigger
           type: Dynamic
         type: Values
       type: Combo
@@ -11706,7 +11710,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11717,7 +11721,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '3'
+            value: '-1'
           type: Dynamic
         type: Values
       type: Integer
@@ -11990,7 +11994,7 @@ data:
       children:
       - children:
         - attributes:
-            value: High
+            value: ''
           type: User
         type: Values
       type: String
@@ -12940,6 +12944,157 @@ data:
           type: User
         type: Values
       type: String
+    BSP_PIN_52_LAT:
+      attributes:
+        id: BSP_PIN_52_LAT
+      children:
+      - children:
+        - attributes:
+            value: High
+          type: User
+        type: Values
+      type: String
+    BSP_PIN_31_CN:
+      attributes:
+        id: BSP_PIN_31_CN
+      children:
+      - children:
+        - attributes:
+            value: 'True'
+          type: User
+        type: Values
+      type: String
+    BSP_PIN_31_PU:
+      attributes:
+        id: BSP_PIN_31_PU
+      children:
+      - children:
+        - attributes:
+            value: 'True'
+          type: User
+        type: Values
+      type: String
+    DCH2_CON_CHPRI_VALUE:
+      attributes:
+        id: DCH2_CON_CHPRI_VALUE
+      children:
+      - children:
+        - attributes:
+            id: core
+            value: '0'
+          type: Dynamic
+        type: Values
+      type: String
+    DCH3_CON_CHPRI_VALUE:
+      attributes:
+        id: DCH3_CON_CHPRI_VALUE
+      children:
+      - children:
+        - attributes:
+            id: core
+            value: '0'
+          type: Dynamic
+        type: Values
+      type: String
+    PB2DIV_VALUE:
+      attributes:
+        id: PB2DIV_VALUE
+      children:
+      - children:
+        - attributes:
+            id: core
+            value: '0x8001'
+          type: Dynamic
+        type: Values
+      type: String
+    CONFIG_SYS_CLK_PBDIV2:
+      attributes:
+        id: CONFIG_SYS_CLK_PBDIV2
+      children:
+      - children:
+        - attributes:
+            value: '2'
+          type: User
+        type: Values
+      type: Integer
+    CONFIG_SYS_CLK_PBCLK2_ENABLE:
+      attributes:
+        id: CONFIG_SYS_CLK_PBCLK2_ENABLE
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    REFOCON1_VALUE:
+      attributes:
+        id: REFOCON1_VALUE
+      children:
+      - children:
+        - attributes:
+            id: core
+            value: '0x60200'
+          type: Dynamic
+        type: Values
+      type: String
+    REFO1TRIM_VALUE:
+      attributes:
+        id: REFO1TRIM_VALUE
+      children:
+      - children:
+        - attributes:
+            id: core
+            value: '0xaa800000'
+          type: Dynamic
+        type: Values
+      type: String
+    CONFIG_SYS_CLK_REFCLK1_ENABLE:
+      attributes:
+        id: CONFIG_SYS_CLK_REFCLK1_ENABLE
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    CONFIG_SYS_CLK_RODIV1:
+      attributes:
+        id: CONFIG_SYS_CLK_RODIV1
+      children:
+      - children:
+        - attributes:
+            id: visible
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            value: '6'
+          type: User
+        type: Values
+      type: Integer
+    CONFIG_SYS_CLK_ROTRIM1:
+      attributes:
+        id: CONFIG_SYS_CLK_ROTRIM1
+      children:
+      - children:
+        - attributes:
+            id: visible
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            value: '341'
+          type: User
+        type: Values
+      type: Integer
   userData:
     children:
     - attributes:

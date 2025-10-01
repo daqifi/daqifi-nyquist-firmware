@@ -2,21 +2,6 @@
 <project-private xmlns="http://www.netbeans.org/ns/project-private/1">
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
-        <group>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/main.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/services/UsbCdc/UsbCdc.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/config/default/peripheral/coretimer/plib_coretimer.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ/port_asm.S</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/config/default/freertos_hooks.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/config/default/exceptions.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/services/SCPI/SCPIDAC.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/HAL/DAC7718/DAC7718.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/config/default/peripheral/gpio/plib_gpio.h</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/HAL/DAC7718/DAC7718.h</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/HAL/ADC/AD7609.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/services/SCPI/SCPIADC.c</file>
-            <file>file:/C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/src/libraries/scpi/libscpi/src/parser.c</file>
-        </group>
+        <group/>
     </open-files>
 </project-private>
