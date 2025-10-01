@@ -53,6 +53,7 @@ MPLABXLog.xml
 *.user
 
 # Claude/AI assistant files
+.claude/settings.local.json
 .claude/COM3
 bq24297.*
 *.ps1
