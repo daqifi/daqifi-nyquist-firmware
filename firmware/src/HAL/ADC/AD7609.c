@@ -50,6 +50,10 @@ static DRV_HANDLE spi_handle = DRV_HANDLE_INVALID;
 // AD7609 BSY interrupt handling
 static TaskHandle_t gAD7609_TaskHandle = NULL;
 
+// DMA-coherent SPI buffers (must be global for cache coherency)
+static __attribute__((coherent)) uint8_t gAD7609_txBuffer[18];
+static __attribute__((coherent)) uint8_t gAD7609_rxBuffer[18];
+
 // Accessor function for task handle (used by tasks.c)
 void* AD7609_GetTaskHandle(void) {
     return &gAD7609_TaskHandle;
@@ -205,16 +209,16 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         return false; // Chip not ready
     }
 
-    // Prepare buffers for SPI transfer (18 bytes = 9 words × 2 bytes)
-    uint8_t txBuffer[18] = {0};  // Dummy data to clock out
-    uint8_t rxBuffer[18] = {0};  // Received data
+    // Clear DMA buffers (global, coherent for DMA access)
+    memset(gAD7609_txBuffer, 0, sizeof(gAD7609_txBuffer));
+    memset(gAD7609_rxBuffer, 0, sizeof(gAD7609_rxBuffer));
 
     // Assert CS (active low)
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
 
     // Use DRV_SPI async API (driver is in async mode for WiFi compatibility)
     DRV_SPI_TRANSFER_HANDLE transferHandle;
-    DRV_SPI_WriteReadTransferAdd(spi_handle, txBuffer, 18, rxBuffer, 18, &transferHandle);
+    DRV_SPI_WriteReadTransferAdd(spi_handle, gAD7609_txBuffer, 18, gAD7609_rxBuffer, 18, &transferHandle);
 
     if (transferHandle == DRV_SPI_TRANSFER_HANDLE_INVALID) {
         LOG_E("AD7609_ReadSamples: Failed to queue SPI transfer");
@@ -263,20 +267,20 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
 
             if (bitOffset == 0) {
                 // Aligned on byte boundary (bits 0-17 from 3 bytes)
-                tmpData = ((uint32_t)rxBuffer[byteIndex] << 10) |
-                          ((uint32_t)rxBuffer[byteIndex + 1] << 2) |
-                          ((uint32_t)rxBuffer[byteIndex + 2] >> 6);
+                tmpData = ((uint32_t)gAD7609_rxBuffer[byteIndex] << 10) |
+                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 1] << 2) |
+                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 2] >> 6);
             } else if (bitOffset <= 6) {
                 // Spans 3 bytes
-                tmpData = ((uint32_t)(rxBuffer[byteIndex] & (0xFF >> bitOffset)) << (10 + bitOffset)) |
-                          ((uint32_t)rxBuffer[byteIndex + 1] << (2 + bitOffset)) |
-                          ((uint32_t)rxBuffer[byteIndex + 2] >> (6 - bitOffset));
+                tmpData = ((uint32_t)(gAD7609_rxBuffer[byteIndex] & (0xFF >> bitOffset)) << (10 + bitOffset)) |
+                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 1] << (2 + bitOffset)) |
+                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 2] >> (6 - bitOffset));
             } else {
                 // bitOffset = 7, spans 3 bytes
-                tmpData = ((uint32_t)(rxBuffer[byteIndex] & 0x01) << 17) |
-                          ((uint32_t)rxBuffer[byteIndex + 1] << 9) |
-                          ((uint32_t)rxBuffer[byteIndex + 2] << 1) |
-                          ((uint32_t)rxBuffer[byteIndex + 3] >> 7);
+                tmpData = ((uint32_t)(gAD7609_rxBuffer[byteIndex] & 0x01) << 17) |
+                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 1] << 9) |
+                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 2] << 1) |
+                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 3] >> 7);
             }
 
             // Mask to 18 bits

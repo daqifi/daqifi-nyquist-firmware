@@ -191,6 +191,9 @@ extern "C" {
 /* SPI Driver Instance 1 Configuration Options */
 #define DRV_SPI_INDEX_1                       1
 #define DRV_SPI_CLIENTS_NUMBER_IDX1           1
+#define DRV_SPI_DMA_MODE
+#define DRV_SPI_XMIT_DMA_CH_IDX1              SYS_DMA_CHANNEL_2
+#define DRV_SPI_RCV_DMA_CH_IDX1               SYS_DMA_CHANNEL_3
 #define DRV_SPI_QUEUE_SIZE_IDX1               18
 
 /* SPI Driver Instance 2 Configuration Options */

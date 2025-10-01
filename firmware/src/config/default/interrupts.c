@@ -99,6 +99,8 @@ void USB_Handler (void);
 void USB_DMA_Handler (void);
 void DMA0_Handler (void);
 void DMA1_Handler (void);
+void DMA2_Handler (void);
+void DMA3_Handler (void);
 void SPI2_RX_Handler (void);
 void SPI2_TX_Handler (void);
 void SPI4_RX_Handler (void);
@@ -308,6 +310,16 @@ void __attribute__((used)) DMA0_Handler (void)
 void __attribute__((used)) DMA1_Handler (void)
 {
     DMA1_InterruptHandler();
+}
+
+void __attribute__((used)) DMA2_Handler (void)
+{
+    DMA2_InterruptHandler();
+}
+
+void __attribute__((used)) DMA3_Handler (void)
+{
+    DMA3_InterruptHandler();
 }
 
 void __attribute__((used)) SPI2_RX_Handler (void)

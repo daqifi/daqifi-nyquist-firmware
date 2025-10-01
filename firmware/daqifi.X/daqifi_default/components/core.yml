@@ -5854,7 +5854,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '2'
+            value: '4'
           type: Dynamic
         type: Values
       type: Integer
@@ -11380,7 +11380,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11391,7 +11391,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11402,7 +11402,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '47888'
           type: Dynamic
         type: Values
       type: Hex
@@ -11413,7 +11413,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '1'
           type: Dynamic
         type: Values
       type: Integer
@@ -11424,7 +11424,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '187'
           type: Dynamic
         type: Values
       type: Integer
@@ -11446,7 +11446,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11457,7 +11457,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11468,7 +11468,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11479,7 +11479,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11490,7 +11490,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11501,7 +11501,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA2_Handler
+            value: DMA2_InterruptHandler
           type: Dynamic
         type: Values
       type: String
@@ -11512,7 +11512,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA2_Handler
+            value: DMA2_InterruptHandler
           type: Dynamic
         type: Values
       type: String
@@ -11523,7 +11523,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11534,7 +11534,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: Software Trigger
+            value: SPI6_TX
           type: Dynamic
         type: Values
       type: Combo
@@ -11545,7 +11545,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11556,7 +11556,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '-1'
+            value: '2'
           type: Dynamic
         type: Values
       type: Integer
@@ -11578,7 +11578,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'true'
+            value: 'false'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11589,7 +11589,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11600,7 +11600,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11611,7 +11611,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11622,7 +11622,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11633,7 +11633,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA3_Handler
+            value: DMA3_InterruptHandler
           type: Dynamic
         type: Values
       type: String
@@ -11644,7 +11644,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: DMA3_Handler
+            value: DMA3_InterruptHandler
           type: Dynamic
         type: Values
       type: String
@@ -11655,7 +11655,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '47632'
           type: Dynamic
         type: Values
       type: Hex
@@ -11666,7 +11666,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '1'
           type: Dynamic
         type: Values
       type: Integer
@@ -11677,7 +11677,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0'
+            value: '186'
           type: Dynamic
         type: Values
       type: Integer
@@ -11688,7 +11688,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11699,7 +11699,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: Software Trigger
+            value: SPI6_RX
           type: Dynamic
         type: Values
       type: Combo
@@ -11710,7 +11710,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: 'false'
+            value: 'true'
           type: Dynamic
         type: Values
       type: Boolean
@@ -11721,7 +11721,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '-1'
+            value: '3'
           type: Dynamic
         type: Values
       type: Integer
