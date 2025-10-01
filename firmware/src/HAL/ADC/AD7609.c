@@ -22,6 +22,7 @@
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
+#include "HAL/ADC.h"
 #include "Util/Logger.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -68,13 +69,14 @@ void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context) {
 // AD7609 deferred interrupt task (handles SPI read after BSY interrupt)
 void AD7609_DeferredInterruptTask(void) {
     const TickType_t xBlockTime = portMAX_DELAY;
-    
+
     while (1) {
         // Wait for BSY pin interrupt to signal conversion complete
         ulTaskNotifyTake(pdFALSE, xBlockTime);
-        
-        // TODO: Read AD7609 SPI data here
-        // This will be called when BSY goes low (conversion complete)
+
+        // Call ADC layer to handle data acquisition and storage
+        // This separates hardware driver from data management
+        ADC_HandleAD7609Interrupt();
     }
 } 
 

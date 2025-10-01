@@ -79,7 +79,13 @@ bool ADC_ReadADCSampleFromISR(uint32_t value,uint8_t bufferIndex);
 
 /*! Function to be called from the ISR for deferring the ADC interrupt */
 void ADC_EOSInterruptCB(uintptr_t context);
-    
+
+/*!
+ * Handles AD7609 data acquisition from deferred interrupt task
+ * Called when BSY pin interrupt signals conversion complete
+ */
+void ADC_HandleAD7609Interrupt(void);
+
 #ifdef	__cplusplus
 }
 #endif

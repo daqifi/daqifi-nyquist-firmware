@@ -58,6 +58,40 @@ static void GetModuleChannelRuntimeData(
         AInRuntimeArray* moduleChannelRuntime,
         uint8_t moduleId);
 
+/*!
+ * Handles AD7609 data acquisition from deferred interrupt task
+ * Called when BSY pin interrupt signals conversion complete
+ */
+void ADC_HandleAD7609Interrupt(void) {
+    AInSample sample;
+    AInSampleArray samples;
+    uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+
+    samples.Size = 8;
+
+    // Read all AD7609 channels (polls BSY internally for safety)
+    if (AD7609_ReadSamples(&samples, &gpBoardConfig->AInChannels,
+                          &gpBoardRuntimeConfig->AInChannels, *valueTMR)) {
+
+        // Store each sample to BoardData at its array index
+        for (size_t s = 0; s < samples.Size; s++) {
+            // Find the array index for this channel
+            uint8_t channelId = samples.Data[s].Channel;
+            for (size_t i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
+                if (gpBoardConfig->AInChannels.Data[i].Type == AIn_AD7609 &&
+                    gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId == channelId) {
+
+                    sample.Timestamp = samples.Data[s].Timestamp;
+                    sample.Channel = channelId;
+                    sample.Value = samples.Data[s].Value;
+                    BoardData_Set(BOARDDATA_AIN_LATEST, i, &sample);
+                    break;
+                }
+            }
+        }
+    }
+}
+
 // Internal PIC32 ADC End-of-Scan interrupt task (MC12bADC only)
 void MC12bADC_EosInterruptTask(void) {
     const TickType_t xBlockTime = portMAX_DELAY;
@@ -68,11 +102,11 @@ void MC12bADC_EosInterruptTask(void) {
         int i = 0;
         uint32_t adcval;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-        
+
         // Read only the private internal ADC channels (MC12bADC)
-        // Public ADC channels have their own interrupts
+        // Note: AD7609 now uses interrupt-based reading via its own deferred task
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-            if (gpBoardConfig->AInChannels.Data[i].Type == AIn_MC12bADC && 
+            if (gpBoardConfig->AInChannels.Data[i].Type == AIn_MC12bADC &&
                 gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic != 1
                     && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
                 if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
@@ -81,51 +115,6 @@ void MC12bADC_EosInterruptTask(void) {
                 sample.Timestamp = *valueTMR;
                 sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
                 sample.Value = adcval;
-                BoardData_Set(
-                        BOARDDATA_AIN_LATEST,
-                        i,
-                        &sample);
-            }
-            // Handle AD7609 channel data updates (reading triggered conversions)
-            else if (gpBoardConfig->AInChannels.Data[i].Type == AIn_AD7609 && 
-                     gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
-                
-                // AD7609 conversions are triggered by ADC_TriggerConversion()
-                // This task reads the completed conversion data
-                static uint16_t ad7609_data[8] = {0}; // Cache for all 8 channels
-                static bool data_fresh = false;
-                
-                if (gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId == 0) {
-                    // First channel - read all AD7609 data if conversion is complete
-                    AInSampleArray samples;
-                    samples.Size = 8;
-                    
-                    // Try to read AD7609 data (will check BSY internally)
-                    if (AD7609_ReadSamples(&samples, &gpBoardConfig->AInChannels, 
-                                          &gpBoardRuntimeConfig->AInChannels, *valueTMR)) {
-                        // Extract data from samples into cache
-                        for (int ch = 0; ch < 8; ch++) {
-                            ad7609_data[ch] = 0; // Default
-                        }
-                        
-                        for (size_t s = 0; s < samples.Size; s++) {
-                            if (samples.Data[s].Channel < 8) {
-                                ad7609_data[samples.Data[s].Channel] = samples.Data[s].Value;
-                            }
-                        }
-                        data_fresh = true;
-                    } else {
-                        data_fresh = false;
-                    }
-                }
-                
-                // Use cached data for this channel (indexed by DaqifiAdcChannelId)
-                uint8_t daqifiChanId = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
-                uint16_t rawValue = (data_fresh && daqifiChanId < 8) ? ad7609_data[daqifiChanId] : 0;
-                
-                sample.Timestamp = *valueTMR;
-                sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
-                sample.Value = rawValue;
                 BoardData_Set(
                         BOARDDATA_AIN_LATEST,
                         i,
