@@ -38,7 +38,7 @@
 #define UNUSED(x) (void)(x)
 //
 #define SCPI_IDN1 "DAQiFi"
-#define SCPI_IDN2 "Nq1"
+// SCPI_IDN2 (model) is constructed dynamically from BoardConfig.BoardVariant
 #define SCPI_IDN3 NULL
 #define SCPI_IDN4 "01-02"
 
@@ -1452,6 +1452,11 @@ scpi_result_t SCPI_Help(scpi_t* context) {
 }
 
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
+    // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
+    static char modelString[8];
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    snprintf(modelString, sizeof(modelString), "Nq%d", pBoardConfig->BoardVariant);
+
     // Create a context
     scpi_t daqifiScpiContext;
     // Init context
@@ -1459,7 +1464,7 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
             scpi_commands,
             interface,
             scpi_units_def,
-            SCPI_IDN1, SCPI_IDN2, SCPI_IDN3, SCPI_IDN4,
+            SCPI_IDN1, modelString, SCPI_IDN3, SCPI_IDN4,
             scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
             scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
 

@@ -35,7 +35,7 @@ extern "C" {
     //! Enumeration with the board configuration parameters.
 
     enum eBoardParameter {
-        //! Board config 
+        //! Board config
         BOARDCONFIG_ALL_CONFIG,
         //! Board variant element
         BOARDCONFIG_VARIANT,
@@ -71,7 +71,7 @@ extern "C" {
      * @brief Data type associated to the structure sBoardConfig
      */
     typedef struct sBoardConfig {
-        //! The board variant we are configured to run
+        //! The board variant we are configured to run (1=NQ1, 2=NQ2, 3=NQ3)
         uint8_t BoardVariant;
         //! The board hardware revision
         char boardHardwareRev[ BOARDCONFIG_HARDWARE_REVISION_SIZE ];
