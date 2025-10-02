@@ -108,9 +108,9 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     int channel;
     double voltage;
     AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-    AOutModArray* pBoardConfigAOutModules = BoardConfig_Get(BOARDCONFIG_AOUT_MODULE, 0);
+    AOutModule* pDACModule = BoardConfig_Get(BOARDCONFIG_AOUT_MODULE, 0);
 
-    if (pBoardConfigAOutChannels == NULL || pBoardConfigAOutModules == NULL) {
+    if (pBoardConfigAOutChannels == NULL || pDACModule == NULL) {
         LOG_E("SCPI_DACVoltageSet: No DAC channels configured");
         return SCPI_RES_ERR;
     }
@@ -122,7 +122,7 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     }
 
     // Get DAC7718 module configuration for voltage conversion
-    const DAC7718ModuleConfig* dacConfig = &pBoardConfigAOutModules->Data[AOut_DAC7718].Config.DAC7718;
+    const DAC7718ModuleConfig* dacConfig = &pDACModule->Config.DAC7718;
 
     // Try to parse first parameter as double (works for both int and double)
     if (!SCPI_ParamDouble(context, &voltage, TRUE)) {
