@@ -74,3 +74,10 @@ const tBoardRuntimeConfig g_NQ3BoardRuntimeConfig = {
         .TSClockPeriod = 0xFFFFFFFF,   // maximum
     },
 };
+
+/*! This function is used for getting the board runtime configuration defaults
+ * @return Pointer to Board Runtime Configuration structure
+ */
+const tBoardRuntimeConfig* NqBoardRuntimeConfig_GetDefaults(void) {
+    return &g_NQ3BoardRuntimeConfig;
+}

@@ -494,11 +494,9 @@ const tBoardConfig NQ3BoardConfig = {
 };
 
 /*! This function is used for getting a board configuration parameter
- * @return Pointer to Board Configuration structure based on BOARD_VARIANT
+ * @return Pointer to Board Configuration structure
  */
 const void *NqBoardConfig_Get( void )
 {
-    // For now, return NQ3 configuration since that's what we're testing
-    // This function can be extended to check BOARD_VARIANT and return appropriate config
-    return &NQ3BoardConfig; 
+    return &NQ3BoardConfig;
 }

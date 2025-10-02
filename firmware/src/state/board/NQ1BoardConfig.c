@@ -419,9 +419,9 @@ const tBoardConfig NQ1BoardConfig = {
     }
 };
 
-/*! This function is used for getting a board version 1 configuration parameter
+/*! This function is used for getting a board configuration parameter
  * @return Pointer to Board Configuration structure
  */
-const void *NQ1BoardConfig_Get(void) {
+const void *NqBoardConfig_Get(void) {
     return &NQ1BoardConfig;
 }

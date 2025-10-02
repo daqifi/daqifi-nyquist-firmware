@@ -4,19 +4,23 @@
 
 #include "BoardRuntimeConfig.h"
 
+// External function to get default runtime config for current board variant
+extern const tBoardRuntimeConfig* NqBoardRuntimeConfig_GetDefaults(void);
+
 tBoardRuntimeConfig __attribute__((coherent)) pBoardRuntimeConfig;
 
 /*!
  * Initializes the boardRuntimeConfig structure for the current board
- * @param[in] boardVariant Board version, it could NQ1, NQ2 or NQ3. 
+ * @param[in] boardVariant Board version, it could NQ1, NQ2 or NQ3.
  */
 void InitBoardRuntimeConfig(int boardVariant)
 {
     // Initialize variable to known state
     memset(&pBoardRuntimeConfig, 0, sizeof(pBoardRuntimeConfig));
-    
-    // For NQ3 testing, use NQ3 configuration for all variants
-    memcpy(&pBoardRuntimeConfig, &g_NQ3BoardRuntimeConfig, sizeof(tBoardRuntimeConfig));
+
+    // Load default configuration for current board variant
+    // Which variant is loaded depends on MPLAB X configuration (NQ1 vs NQ3)
+    memcpy(&pBoardRuntimeConfig, NqBoardRuntimeConfig_GetDefaults(), sizeof(tBoardRuntimeConfig));
 }
 
 /*! This function is used for getting a board configuration in run time         

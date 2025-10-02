@@ -144,6 +144,35 @@ Each variant has specific:
 - Power management settings
 - UI configurations
 
+#### Switching Between Board Variants
+
+The firmware supports building for different board variants using MPLAB X configurations:
+
+1. **In MPLAB X IDE**:
+   - Right-click project → Set Configuration → Select "Nq1" or "Nq3"
+   - Build the project
+
+2. **From Command Line**:
+   ```bash
+   # Build NQ1 firmware
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe" \
+     -f nbproject/Makefile-Nq1.mk CONF=Nq1 build -j4
+
+   # Build NQ3 firmware
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe" \
+     -f nbproject/Makefile-Nq3.mk CONF=Nq3 build -j4
+   ```
+
+3. **How It Works**:
+   - Each configuration includes/excludes variant-specific files
+   - `NqBoardConfig_Get()` returns the appropriate board configuration
+   - `NqBoardRuntimeConfig_GetDefaults()` returns the appropriate runtime defaults
+   - No code changes needed - just switch configuration and rebuild
+
+4. **Variant-Specific Files**:
+   - **NQ1**: `NQ1BoardConfig.c`, `NQ1RuntimeDefaults.c`
+   - **NQ3**: `NQ3BoardConfig.c`, `NQ3RuntimeDefaults.c`
+
 ### Memory Considerations
 
 - FreeRTOS heap configuration critical for stability

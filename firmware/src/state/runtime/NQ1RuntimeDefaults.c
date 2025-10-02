@@ -137,6 +137,13 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .directory="DAQiFi",
         .file="default.bin",
         .mode=SD_CARD_MANAGER_MODE_NONE,
-    },    
-    
+    },
+
 };
+
+/*! This function is used for getting the board runtime configuration defaults
+ * @return Pointer to Board Runtime Configuration structure
+ */
+const tBoardRuntimeConfig* NqBoardRuntimeConfig_GetDefaults(void) {
+    return &g_NQ1BoardRuntimeConfig;
+}
