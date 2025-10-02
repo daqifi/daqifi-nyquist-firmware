@@ -347,7 +347,8 @@ const tBoardConfig NQ3BoardConfig = {
                         .DAC_Range = 0,               // Default range setting
                         .Resolution = 4096,           // 12-bit DAC (4096 levels)
                         .MinVoltage = 0.0,            // Unipolar: 0V minimum
-                        .MaxVoltage = 10.0,           // 10V maximum (0-10V range)
+                        .MaxVoltage = 10.0,            // Maximum output voltage (software clamp)
+                        .HardwareFullScale = 10.0,    // 10V full scale (4x gain configuration)
                     }
                 },
                 .Size = 8  // DAC7718 has 8 channels

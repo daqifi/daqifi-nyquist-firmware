@@ -78,30 +78,24 @@ static size_t DAC_FindChannelIndex(uint8_t channelId) {
 }
 
 // Helper function to convert voltage to DAC counts
-// Uses configuration values for voltage range and resolution
-static uint32_t DAC_VoltageToCounts(double voltage, const DAC7718ModuleConfig* config) {
-    // Unipolar conversion: 0V = 0 counts, MaxV = (Resolution-1) counts
-    if (voltage < config->MinVoltage) voltage = config->MinVoltage;
-    if (voltage > config->MaxVoltage) voltage = config->MaxVoltage;
+// MaxVoltage is a software limit for clamping, HardwareFullScale determines actual output
+static uint32_t DAC_VoltageToCounts(double voltage, const AOutModule* module) {
+    // Access config directly to avoid struct alignment issues
+    double minVoltage = module->Config.DAC7718.MinVoltage;
+    double maxVoltage = module->Config.DAC7718.MaxVoltage;
+    double hardwareFullScale = module->Config.DAC7718.HardwareFullScale;
+    uint16_t resolution = module->Config.DAC7718.Resolution;
 
-    double voltageSpan = config->MaxVoltage - config->MinVoltage;
-    double normalizedVoltage = (voltage - config->MinVoltage) / voltageSpan;
-    uint32_t counts = (uint32_t)(normalizedVoltage * (config->Resolution - 1) + 0.5);
+    // Clamp to software-configured limits
+    if (voltage < minVoltage) voltage = minVoltage;
+    if (voltage > maxVoltage) voltage = maxVoltage;
+
+    // Convert using hardware full-scale voltage from config
+    // This ensures correct output: 4V command -> 1638 counts -> 4V output
+    double normalizedVoltage = (voltage - minVoltage) / hardwareFullScale;
+    uint32_t counts = (uint32_t)(normalizedVoltage * (resolution - 1) + 0.5);
 
     return counts;
-}
-
-// Helper function to convert DAC counts to voltage
-// Uses configuration values for voltage range and resolution
-// Note: Currently unused but reserved for future DAC readback implementation
-static double DAC_CountsToVoltage(uint32_t counts, const DAC7718ModuleConfig* config) __attribute__((unused));
-static double DAC_CountsToVoltage(uint32_t counts, const DAC7718ModuleConfig* config) {
-    // Unipolar conversion
-    if (counts >= config->Resolution) counts = config->Resolution - 1;
-
-    double voltageSpan = config->MaxVoltage - config->MinVoltage;
-    double normalizedCounts = (double)counts / (double)(config->Resolution - 1);
-    return config->MinVoltage + (normalizedCounts * voltageSpan);
 }
 
 scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
@@ -121,9 +115,6 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // Get DAC7718 module configuration for voltage conversion
-    const DAC7718ModuleConfig* dacConfig = &pDACModule->Config.DAC7718;
-
     // Try to parse first parameter as double (works for both int and double)
     if (!SCPI_ParamDouble(context, &voltage, TRUE)) {
         return SCPI_RES_ERR;
@@ -142,7 +133,7 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         }
 
         // Convert voltage to DAC counts using configuration
-        uint32_t counts = DAC_VoltageToCounts(voltage, dacConfig);
+        uint32_t counts = DAC_VoltageToCounts(voltage, pDACModule);
 
         // Get hardware channel number from board configuration
         uint8_t hwChannel = pBoardConfigAOutChannels->Data[index].Config.DAC7718.ChannelNumber;
@@ -156,7 +147,7 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 
     } else {
         // One parameter: voltage for all channels
-        uint32_t counts = DAC_VoltageToCounts(voltage, dacConfig);
+        uint32_t counts = DAC_VoltageToCounts(voltage, pDACModule);
 
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
             uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;

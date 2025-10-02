@@ -45,8 +45,9 @@ extern "C" {
         // Configuration settings
         uint8_t DAC_Range;      // DAC output range setting
         uint16_t Resolution;    // DAC resolution in counts (4096 for 12-bit)
-        double MinVoltage;      // Minimum output voltage
-        double MaxVoltage;      // Maximum output voltage
+        double MinVoltage;      // Minimum output voltage (software clamp limit)
+        double MaxVoltage;      // Maximum output voltage (software clamp limit)
+        double HardwareFullScale; // Hardware full-scale voltage (determined by gain setting)
     } DAC7718ModuleConfig;
 
     /**
