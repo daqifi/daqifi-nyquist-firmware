@@ -136,6 +136,27 @@ extern "C" {
          * Calculated by 1/((Range/Vref)*(R2/(R1+R2)))
          */
         double InternalScale;
+
+        /**
+         * Temperature sensor parameters (only used if this channel measures temperature)
+         * Set IsTemperatureSensor = true to enable temperature conversion
+         */
+        bool IsTemperatureSensor;
+
+        /**
+         * Voltage at reference temperature (e.g., 0.5V for PIC32MZ internal sensor)
+         */
+        double TempOffsetVoltage;
+
+        /**
+         * Temperature sensitivity in V/°C (e.g., 0.005 for 5mV/°C)
+         */
+        double TempSensitivity;
+
+        /**
+         * Reference temperature in °C at offset voltage (e.g., -40°C for PIC32MZ)
+         */
+        double TempReferenceC;
     } MC12bChannelConfig;
 
     /**

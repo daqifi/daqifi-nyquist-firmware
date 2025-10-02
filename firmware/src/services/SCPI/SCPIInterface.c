@@ -23,6 +23,7 @@
 #include "state/board/AInConfig.h"  // For MAX_AIN_PUBLIC_CHANNELS
 #include "peripheral/gpio/plib_gpio.h"
 #include "HAL/BQ24297/BQ24297.h"
+#include "HAL/ADC.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
 #include "SCPIDAC.h" 
@@ -447,23 +448,34 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     const char* statHeader = "[Status]\r\n";
     context->interface->write(context, statHeader, strlen(statHeader));
     
-    // Channel status - separate user and internal ADCs
+    // Channel status - separate user and internal ADCs by channel ID
+    // User channels have IDs 0-15, internal monitoring channels have IDs >= 248
     int userAdcEnabled = 0, internalAdcEnabled = 0, dioInputs = 0;
     int userAdcTotal = 0, internalAdcTotal = 0;
-    
-    if (pAInConfig) {
-        // Count user ADCs (first 16 channels max are considered user channels)
-        for (int i = 0; i < pAInConfig->Size && i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-            userAdcTotal++;
-            if (pAInConfig->Data[i].IsEnabled) {
-                userAdcEnabled++;
-            }
-        }
-        // Count internal ADCs (channels 16 and above)
-        for (int i = MAX_AIN_PUBLIC_CHANNELS; i < pAInConfig->Size; i++) {
-            internalAdcTotal++;
-            if (pAInConfig->Data[i].IsEnabled) {
-                internalAdcEnabled++;
+
+    const tBoardConfig* pBoardConfigForAdc = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    const AInArray* pBoardConfigAInChannels = pBoardConfigForAdc ? &pBoardConfigForAdc->AInChannels : NULL;
+
+    if (pAInConfig && pBoardConfigAInChannels) {
+        for (int i = 0; i < pAInConfig->Size; i++) {
+            // Check channel ID from board config
+            uint8_t channelId = pBoardConfigAInChannels->Data[i].DaqifiAdcChannelId;
+
+            if (channelId >= ADC_CHANNEL_3_3V) {
+                // Internal monitoring channel (ID >= 248)
+                // Exclude temperature sensor (doesn't work per silicon errata)
+                if (channelId != ADC_CHANNEL_TEMP) {
+                    internalAdcTotal++;
+                    if (pAInConfig->Data[i].IsEnabled) {
+                        internalAdcEnabled++;
+                    }
+                }
+            } else {
+                // User ADC channel (ID 0-15 for NQ1, 0-7 for NQ3)
+                userAdcTotal++;
+                if (pAInConfig->Data[i].IsEnabled) {
+                    userAdcEnabled++;
+                }
             }
         }
     }
@@ -482,13 +494,15 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled
-    if (userAdcEnabled > 0 && pAInConfig) {
+    if (userAdcEnabled > 0 && pAInConfig && pBoardConfigAInChannels) {
         context->interface->write(context, "  Enabled user ch: ", 19);
         bool first = true;
-        for (int i = 0; i < userAdcTotal && i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-            if (pAInConfig->Data[i].IsEnabled) {
+        for (int i = 0; i < pAInConfig->Size; i++) {
+            uint8_t channelId = pBoardConfigAInChannels->Data[i].DaqifiAdcChannelId;
+            // Only show user channels (ID < 248, not internal monitoring)
+            if (channelId < ADC_CHANNEL_3_3V && pAInConfig->Data[i].IsEnabled) {
                 if (!first) context->interface->write(context, ",", 1);
-                snprintf(buffer, sizeof(buffer), "%d", i);
+                snprintf(buffer, sizeof(buffer), "%d", channelId);
                 context->interface->write(context, buffer, strlen(buffer));
                 first = false;
             }
@@ -605,7 +619,123 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     } else {
         context->interface->write(context, "  BQ24297: Not initialized\r\n", 28);
     }
-    
+
+    // Voltage Rail Monitoring Section - only when powered up
+    if (pBoardData->PowerData.powerState != STANDBY) {
+        const char* voltHeader = "\r\n[Voltage Rails]\r\n";
+        context->interface->write(context, voltHeader, strlen(voltHeader));
+
+        // Read latest ADC samples for internal monitoring channels
+        // Use ADC_ConvertToVoltage for proper conversion based on channel type and config
+        // NOTE: PIC32MZ internal temperature sensor (ADC_CHANNEL_TEMP) is not functional
+        //       due to silicon errata. Temperature monitoring is not available on this device.
+        AInRuntimeArray* pAInRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+
+        if (pAInRuntimeConfig && pBoardConfigAInChannels) {
+            double volt3_3 = 0, volt5 = 0, volt10 = 0, voltSys = 0, vBatt = 0, v2_5Ref = 0, v5Ref = 0;
+            bool found3_3 = false, found5 = false, found10 = false, foundSys = false;
+            bool foundBatt = false, found2_5Ref = false, found5Ref = false;
+
+            // Iterate through runtime config to find internal monitoring channels
+            for (int i = 0; i < pAInRuntimeConfig->Size; i++) {
+                // Get the sample for this runtime config index
+                AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
+                if (!sample || !ADC_IsDataValid(sample)) continue;
+
+                // Convert raw ADC value to voltage using ADC layer function
+                double voltage = ADC_ConvertToVoltage(sample);
+                uint8_t sampleChannelId = sample->Channel;
+
+                // Store voltage for the appropriate rail
+                if (sampleChannelId == ADC_CHANNEL_3_3V) {
+                    volt3_3 = voltage;
+                    found3_3 = true;
+                } else if (sampleChannelId == ADC_CHANNEL_5V) {
+                    volt5 = voltage;
+                    found5 = true;
+                } else if (sampleChannelId == ADC_CHANNEL_10V) {
+                    volt10 = voltage;
+                    found10 = true;
+                } else if (sampleChannelId == ADC_CHANNEL_VSYS) {
+                    voltSys = voltage;
+                    foundSys = true;
+                } else if (sampleChannelId == ADC_CHANNEL_VBATT) {
+                    vBatt = voltage;
+                    foundBatt = true;
+                } else if (sampleChannelId == ADC_CHANNEL_2_5VREF) {
+                    v2_5Ref = voltage;
+                    found2_5Ref = true;
+                } else if (sampleChannelId == ADC_CHANNEL_5VREF) {
+                    v5Ref = voltage;
+                    found5Ref = true;
+                }
+                // ADC_CHANNEL_TEMP intentionally not processed - PIC32MZ temperature sensor
+                // does not function per silicon errata
+            }
+
+            // Display voltage rails with proper string formatting
+            char str3_3[20], str5[20], str10[20], strSys[20], strBatt[20], str2_5Ref[20], str5Ref[20];
+
+            if (found3_3) {
+                snprintf(str3_3, sizeof(str3_3), "%.2fV", volt3_3);
+            } else {
+                strcpy(str3_3, "--");
+            }
+
+            if (found5) {
+                snprintf(str5, sizeof(str5), "%.2fV", volt5);
+            } else {
+                strcpy(str5, "--");
+            }
+
+            if (found10) {
+                snprintf(str10, sizeof(str10), "%.2fV", volt10);
+            } else {
+                strcpy(str10, "--");
+            }
+
+            if (foundSys) {
+                snprintf(strSys, sizeof(strSys), "%.2fV", voltSys);
+            } else {
+                strcpy(strSys, "--");
+            }
+
+            if (foundBatt) {
+                snprintf(strBatt, sizeof(strBatt), "%.2fV", vBatt);
+            } else {
+                strcpy(strBatt, "--");
+            }
+
+            if (found2_5Ref) {
+                snprintf(str2_5Ref, sizeof(str2_5Ref), "%.2fV", v2_5Ref);
+            } else {
+                strcpy(str2_5Ref, "--");
+            }
+
+            if (found5Ref) {
+                snprintf(str5Ref, sizeof(str5Ref), "%.2fV", v5Ref);
+            } else {
+                strcpy(str5Ref, "--");
+            }
+
+            // Display power rails
+            snprintf(buffer, sizeof(buffer), "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
+                str3_3, str5, str10);
+            context->interface->write(context, buffer, strlen(buffer));
+
+            snprintf(buffer, sizeof(buffer), "  VSYS: %s | VBATT: %s\r\n",
+                strSys, strBatt);
+            context->interface->write(context, buffer, strlen(buffer));
+
+            // Display reference voltages
+            snprintf(buffer, sizeof(buffer), "  2.5V Ref: %s | 5V Ref: %s\r\n",
+                str2_5Ref, str5Ref);
+            context->interface->write(context, buffer, strlen(buffer));
+        } else {
+            context->interface->write(context, "  Voltage monitoring unavailable\r\n", 34);
+        }
+    }
+
     return SCPI_RES_OK;
 }
 

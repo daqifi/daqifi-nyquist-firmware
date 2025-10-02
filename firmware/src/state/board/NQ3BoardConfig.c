@@ -305,7 +305,21 @@ const tBoardConfig NQ3BoardConfig = {
                 .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {false, ADCHS_CH44, ADCHS_MODULE7_MASK, 2, false, 1}} // On board temperature sensor 5mV/degC 0->5V=-40degC
+                    {
+                        .AllowDifferential = false,
+                        .ChannelId = ADCHS_CH44,
+                        .ModuleId = ADCHS_MODULE7_MASK,
+                        .ChannelType = 2,
+                        .IsPublic = false,
+                        .InternalScale = 1,
+                        .IsTemperatureSensor = true,
+                        .TempOffsetVoltage = 0.5,     // PIC32MZ: 0.5V at -40°C
+                        .TempSensitivity = 0.005,     // PIC32MZ: 5mV/°C
+                        .TempReferenceC = -40.0       // PIC32MZ: Reference temp
+                    }
+                }
+                // NOTE: PIC32MZ internal temperature sensor does not function per silicon errata.
+                // Configuration kept for reference and potential future external sensor use.
             },
             {
                 .DaqifiAdcChannelId = ADC_CHANNEL_5VREF,
