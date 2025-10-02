@@ -320,20 +320,21 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
  */
 static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     char buffer[256];
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
     AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     DIORuntimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     // Check for NULL pointers to prevent crashes
-    if (!pBoardData) {
+    if (!pBoardData || !pBoardConfig) {
         context->interface->write(context, "ERROR: BoardData not available\r\n", 32);
         return SCPI_RES_ERR;
     }
-    
+
     // Header with device identification
-    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n", 
-        BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV);
+    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n",
+        pBoardConfig->BoardVariant, pBoardConfig->boardHardwareRev, pBoardConfig->boardFirmwareRev);
     context->interface->write(context, buffer, strlen(buffer));
     
     // Network Section
