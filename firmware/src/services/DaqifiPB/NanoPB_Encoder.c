@@ -545,11 +545,7 @@ size_t Nanopb_Encode(tBoardData* state,
                 }
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
-                        if (pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-                            message.analog_in_port_num++;
-                        }
-                    } else {
+                    if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         message.analog_in_port_num++;
                     }
                 }
@@ -575,10 +571,8 @@ size_t Nanopb_Encode(tBoardData* state,
                 }
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
-                        if (!pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-                            message.analog_in_port_num_priv++;
-                        }
+                    if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
+                        message.analog_in_port_num_priv++;
                     }
                 }
 
@@ -641,7 +635,7 @@ size_t Nanopb_Encode(tBoardData* state,
                  * @brief Encodes the available range settings for analog input modules.
                  *
                  * This tag stores the supported voltage ranges for each analog input module,
-                 * indicating the possible ranges a module can operate within (e.g., 0-5V, ±10V).
+                 * indicating the possible ranges a module can operate within (e.g., 0-5V, ï¿½10V).
                  */
                 message.analog_in_port_av_range[0] =
                         pRuntimeAInModules->Data[AIn_MC12bADC].Range;
@@ -666,14 +660,13 @@ size_t Nanopb_Encode(tBoardData* state,
                 const uint32_t max_range_count = sizeof (message.analog_in_port_range) / sizeof (message.analog_in_port_range[0]);
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC &&
-                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-
-                        if (chan < max_range_count) {
+                    if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x]) && chan < max_range_count) {
+                        // Get range from appropriate module
+                        if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
                             message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                        } else if (pBoardConfig->AInChannels.Data[x].Type == AIn_AD7609) {
+                            message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[AIn_AD7609].Range;
                         }
-                    } else if (chan < max_range_count) {
-                        message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
                     }
                 }
 
@@ -693,10 +686,12 @@ size_t Nanopb_Encode(tBoardData* state,
                 const uint32_t max_range_count = sizeof (message.analog_in_port_range_priv) / sizeof (message.analog_in_port_range_priv[0]);
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC &&
-                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-                        if (chan < max_range_count) {
+                    if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x]) && chan < max_range_count) {
+                        // Get range from appropriate module
+                        if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
                             message.analog_in_port_range_priv[chan++] = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                        } else if (pBoardConfig->AInChannels.Data[x].Type == AIn_AD7609) {
+                            message.analog_in_port_range_priv[chan++] = pRuntimeAInModules->Data[AIn_AD7609].Range;
                         }
                     }
                 }
@@ -756,8 +751,9 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.analog_in_int_scale_m_count = 0;
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
-                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+                    // InternalScale is MC12b-specific, only encode for public MC12b channels
+                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC &&
+                            AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
 
                         if (message.analog_in_int_scale_m_count < sizeof (message.analog_in_int_scale_m) / sizeof (message.analog_in_int_scale_m[0])) {
                             message.analog_in_int_scale_m[message.analog_in_int_scale_m_count++] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale;
@@ -779,8 +775,9 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.analog_in_int_scale_m_priv_count = 0;
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
-                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
+                    // InternalScale is MC12b-specific, only encode for private MC12b channels
+                    if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC &&
+                            !AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
 
                         if (message.analog_in_int_scale_m_priv_count < sizeof (message.analog_in_int_scale_m_priv) / sizeof (message.analog_in_int_scale_m_priv[0])) {
                             message.analog_in_int_scale_m_priv[message.analog_in_int_scale_m_priv_count++] = pBoardConfig->AInChannels.Data[x].Config.MC12b.InternalScale;
@@ -802,13 +799,8 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.analog_in_cal_m_count = 0;
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
-                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-
-                        if (message.analog_in_cal_m_count < sizeof (message.analog_in_cal_m) / sizeof (message.analog_in_cal_m[0])) {
-                            message.analog_in_cal_m[message.analog_in_cal_m_count++] = pRuntimeAInChannels->Data[x].CalM;
-                        }
-                    } else {
+                    // CalM applies to all public channels regardless of type
+                    if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_m_count < sizeof (message.analog_in_cal_m) / sizeof (message.analog_in_cal_m[0])) {
                             message.analog_in_cal_m[message.analog_in_cal_m_count++] = pRuntimeAInChannels->Data[x].CalM;
                         }
@@ -828,13 +820,8 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.analog_in_cal_b_count = 0;
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
-                            pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-
-                        if (message.analog_in_cal_b_count < sizeof (message.analog_in_cal_b) / sizeof (message.analog_in_cal_b[0])) {
-                            message.analog_in_cal_b[message.analog_in_cal_b_count++] = pRuntimeAInChannels->Data[x].CalB;
-                        }
-                    } else {
+                    // CalB applies to all public channels regardless of type
+                    if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_b_count < sizeof (message.analog_in_cal_b) / sizeof (message.analog_in_cal_b[0])) {
                             message.analog_in_cal_b[message.analog_in_cal_b_count++] = pRuntimeAInChannels->Data[x].CalB;
                         }
@@ -854,9 +841,8 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.analog_in_cal_m_priv_count = 0;
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
-                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-
+                    // CalM applies to all private channels regardless of type
+                    if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_m_priv_count < sizeof (message.analog_in_cal_m_priv) / sizeof (message.analog_in_cal_m_priv[0])) {
                             message.analog_in_cal_m_priv[message.analog_in_cal_m_priv_count++] = pRuntimeAInChannels->Data[x].CalM;
                         }
@@ -876,9 +862,8 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.analog_in_cal_b_priv_count = 0;
 
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
-                    if (pBoardConfig->AInModules.Data[pBoardConfig->AInChannels.Data[x].Type].Type == AIn_MC12bADC &&
-                            !pBoardConfig->AInChannels.Data[x].Config.MC12b.IsPublic) {
-
+                    // CalB applies to all private channels regardless of type
+                    if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_b_priv_count < sizeof (message.analog_in_cal_b_priv) / sizeof (message.analog_in_cal_b_priv[0])) {
                             message.analog_in_cal_b_priv[message.analog_in_cal_b_priv_count++] = pRuntimeAInChannels->Data[x].CalB;
                         }
