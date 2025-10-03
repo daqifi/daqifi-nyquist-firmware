@@ -167,6 +167,12 @@ extern "C" {
          * The channel number on the AD7609 chip (0-7)
          */
         uint8_t ChannelNumber;
+
+        /**
+         * Indicates whether this channel is publicly available (to the user) or private
+         * For consistency with MC12bChannelConfig
+         */
+        bool IsPublic;
     } AD7609ChannelConfig;
 
     /**
@@ -192,6 +198,15 @@ extern "C" {
         } Config;
 
     } AInChannel;
+
+    /**
+     * Helper macro to check if an AInChannel is public
+     * Handles all ADC types consistently
+     */
+    #define AInChannel_IsPublic(channel) ( \
+        ((channel)->Type == AIn_MC12bADC && (channel)->Config.MC12b.IsPublic) || \
+        ((channel)->Type == AIn_AD7609 && (channel)->Config.AD7609.IsPublic) \
+    )
 
     // Define a storage class for analog input modules
 #define MAX_AIN_MOD 2

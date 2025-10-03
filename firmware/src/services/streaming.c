@@ -87,13 +87,12 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
                 if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
-                        && pBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic == 1) {
+                        && AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
                     pPublicSampleList->sampleElement[i].Channel=pAiSample->Channel;
                     pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
                     pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
                     pPublicSampleList->isSampleValid[i]=1;
-                   
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q

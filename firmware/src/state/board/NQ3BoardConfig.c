@@ -226,42 +226,42 @@ const tBoardConfig NQ3BoardConfig = {
             {
                 .DaqifiAdcChannelId = 0,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 0}}
+                .Config = {.AD7609 = {.ChannelNumber = 0, .IsPublic = true}}
             },
             {
                 .DaqifiAdcChannelId = 1,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 1}}
+                .Config = {.AD7609 = {.ChannelNumber = 1, .IsPublic = true}}
             },
             {
                 .DaqifiAdcChannelId = 2,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 2}}
+                .Config = {.AD7609 = {.ChannelNumber = 2, .IsPublic = true}}
             },
             {
                 .DaqifiAdcChannelId = 3,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 3}}
+                .Config = {.AD7609 = {.ChannelNumber = 3, .IsPublic = true}}
             },
             {
                 .DaqifiAdcChannelId = 4,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 4}}
+                .Config = {.AD7609 = {.ChannelNumber = 4, .IsPublic = true}}
             },
             {
                 .DaqifiAdcChannelId = 5,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 5}}
+                .Config = {.AD7609 = {.ChannelNumber = 5, .IsPublic = true}}
             },
             {
                 .DaqifiAdcChannelId = 6,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 6}}
+                .Config = {.AD7609 = {.ChannelNumber = 6, .IsPublic = true}}
             },
             {
                 .DaqifiAdcChannelId = 7,
                 .Type = AIn_AD7609,
-                .Config = {.AD7609 = {.ChannelNumber = 7}}
+                .Config = {.AD7609 = {.ChannelNumber = 7, .IsPublic = true}}
             },
 
             // Internal monitoring channels - exact copy from working NQ1 configuration
