@@ -146,10 +146,63 @@ Each variant has specific:
 
 ### Memory Considerations
 
-- FreeRTOS heap configuration critical for stability
+#### Heap Configuration
+- **Total FreeRTOS Heap**: 284KB (`configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
+- **Heap Implementation**: heap_4 (best-fit with coalescence)
+- **Critical**: Heap must accommodate circular buffers, task stacks, and streaming sample queue
+
+#### Major Heap Allocations
+
+**Circular Buffers** (allocated at runtime via `CircularBuf_Init`):
+- **SD Card Write Buffer**: 64KB (`SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE` in `sd_card_manager.c`)
+  - ⚠️ **LARGEST ALLOCATION** - Reduced from 128KB to address heap pressure
+  - Location: `firmware/src/services/sd_card_services/sd_card_manager.c`
+  - **TODO**: Should be dynamically sized based on enabled features (see GitHub issue)
+- **WiFi TCP Write Buffer**: 5.6KB (`WIFI_CIRCULAR_BUFF_SIZE` = 1400 × 4)
+  - Location: `firmware/src/services/wifi_services/wifi_tcp_server.c`
+- **USB CDC Write Buffer**: 2.8KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 700 × 4)
+  - Location: `firmware/src/services/UsbCdc/UsbCdc.c`
+
+**FreeRTOS Task Stacks** (~33KB total):
+- `app_SdCardTask`: 5240 bytes
+- `app_PowerAndUITask`: 4096 bytes
+- `streaming_Task`: 4096 bytes
+- `_Streaming_Deferred_Interrupt_Task`: 4096 bytes
+- `app_USBDeviceTask`: 3072 bytes (note: malloc fails with 4096)
+- `app_WifiTask`: 3000 bytes
+- `lWDRV_WINC_Tasks`: 3000 bytes (WiFi driver)
+- `MC12bADC_EosInterruptTask`: 2048 bytes
+- `lAPP_FREERTOS_Tasks`: 1500 bytes
+- `F_USB_DEVICE_Tasks`: 1024 bytes
+- `F_DRV_USBHS_Tasks`: 1024 bytes
+- `AD7609_DeferredInterruptTask`: 512 bytes
+
+**Streaming Sample Queue**:
+- **Queue Depth**: 20 samples (`MAX_AIN_SAMPLE_COUNT`)
+- **Sample Size**: ~208 bytes (`AInPublicSampleList_t` = 16 channels × 12 bytes + 16 bools)
+- **Max Queue Memory**: ~4KB (20 × 208 bytes)
+- **Allocation**: Dynamic (`pvPortCalloc` in streaming interrupt task)
+- **Critical**: Old samples must be freed before starting new streaming session
+  - Cleared automatically in `Streaming_Start()` since 2025-01-XX
+
+#### Heap Usage Summary
+Typical allocations at steady state:
+- Circular buffers: **72.4KB** (SD: 64KB, WiFi: 5.6KB, USB: 2.8KB)
+- Task stacks: **~33KB**
+- Streaming queue: **Up to 4KB** (dynamically allocated)
+- **Total**: ~109KB used, ~175KB free (under normal conditions)
+
+#### Memory Pressure Indicators
+If heap allocation fails (`xPortGetFreeHeapSize()` returns low values):
+1. **Check streaming sample queue**: `AInSampleList_Size()` - should be <20
+2. **Further reduce SD buffer**: 64KB → 32KB saves additional 32KB if SD logging unused
+3. **Monitor with debugger**: Set breakpoint in `pvPortMalloc` failure path
+
+#### Other Memory Constraints
 - DMA buffers must be cache-aligned
 - Bootloader reserves memory at 0x9D000000
 - Application starts at 0x9D000480 (after bootloader)
+- Sample buffers use coherent attribute for DMA safety
 
 ### Key Files for Understanding the System
 

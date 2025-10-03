@@ -54,6 +54,7 @@
 #include "definitions.h"
 #include "sys_tasks.h"
 #include "HAL/ADC/AD7609.h"
+#include "Util/Logger.h"
 
 
 // *****************************************************************************
@@ -192,13 +193,16 @@ void SYS_Tasks ( void )
 //        (TaskHandle_t*)NULL
 //    );
 
-    xTaskCreate( lWDRV_WINC_Tasks,
+    BaseType_t wifiResult = xTaskCreate( lWDRV_WINC_Tasks,
         "WDRV_WINC_Tasks",
         DRV_WIFI_WINC_RTOS_STACK_SIZE,
         (void*)NULL,
         DRV_WIFI_WINC_RTOS_TASK_PRIORITY,
         (TaskHandle_t*)NULL
     );
+    if (wifiResult != pdPASS) {
+        LOG_E("FATAL: Failed to create WDRV_WINC_Tasks (%d bytes)\r\n", DRV_WIFI_WINC_RTOS_STACK_SIZE);
+    }
 
     /* Create AD7609 deferred interrupt task for BSY pin handling */
     TaskHandle_t* pAD7609TaskHandle = (TaskHandle_t*)AD7609_GetTaskHandle();
@@ -213,6 +217,7 @@ void SYS_Tasks ( void )
 
     if (ad7609Result != pdPASS) {
         // Task creation failed - system will continue but AD7609 interrupts won't work
+        LOG_E("Failed to create AD7609_DeferredInterruptTask (512 bytes)\r\n");
         *pAD7609TaskHandle = NULL;
     }
 
@@ -221,35 +226,44 @@ void SYS_Tasks ( void )
 
     /* Maintain Middleware & Other Libraries */
         /* Create OS Thread for USB_DEVICE_Tasks. */
-    (void) xTaskCreate( F_USB_DEVICE_Tasks,
+    BaseType_t usbDeviceResult = xTaskCreate( F_USB_DEVICE_Tasks,
         "USB_DEVICE_TASKS",
         1024,
         (void*)NULL,
         6,
         (TaskHandle_t*)NULL
     );
+    if (usbDeviceResult != pdPASS) {
+        LOG_E("FATAL: Failed to create F_USB_DEVICE_Tasks (1024 bytes)\r\n");
+    }
 
     /* Create OS Thread for USB Driver Tasks. */
-    (void) xTaskCreate( F_DRV_USBHS_Tasks,
+    BaseType_t usbDriverResult = xTaskCreate( F_DRV_USBHS_Tasks,
         "DRV_USBHS_TASKS",
         1024,
         (void*)NULL,
         1,
         (TaskHandle_t*)NULL
     );
+    if (usbDriverResult != pdPASS) {
+        LOG_E("FATAL: Failed to create F_DRV_USBHS_Tasks (1024 bytes)\r\n");
+    }
 
 
 
     /* Maintain the application's state machine. */
-    
+
         /* Create OS Thread for APP_FREERTOS_Tasks. */
-    (void) xTaskCreate(
+    BaseType_t appResult = xTaskCreate(
            (TaskFunction_t) lAPP_FREERTOS_Tasks,
                 "APP_FREERTOS_Tasks",
                 1500,
                 NULL,
            1U ,
                 &xAPP_FREERTOS_Tasks);
+    if (appResult != pdPASS) {
+        LOG_E("FATAL: Failed to create lAPP_FREERTOS_Tasks (1500 bytes)\r\n");
+    }
 
 
 
