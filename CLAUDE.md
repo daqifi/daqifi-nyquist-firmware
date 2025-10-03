@@ -728,3 +728,4 @@ voltage, NTC status, and power-up readiness.
    - Use script files instead of complex one-liners
    - Batch related commands together
 - pic32 tris convention is 1=input and 0=output
+- when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
