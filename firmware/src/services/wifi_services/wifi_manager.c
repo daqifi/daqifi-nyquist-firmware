@@ -1073,7 +1073,11 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     if (pSettings != NULL)
         gStateMachineContext.pWifiSettings = pSettings;
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
-        xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
+        BaseType_t result = xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
+        if (result != pdPASS) {
+            LOG_E("Failed to create fwUpdateTask (1024 bytes)\r\n");
+            gStateMachineContext.fwUpdateTaskHandle = NULL;
+        }
     }
     gStateMachineContext.pWifiSettings->isOtaModeEnabled = false;
     gStateMachineContext.active = MainState;

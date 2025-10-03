@@ -74,13 +74,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
 
 #if  !defined(TEST_STREAMING)
-        if (pRunTimeStreamConf->IsEnabled) {       
+        if (pRunTimeStreamConf->IsEnabled) {
             if((sizeof(AInPublicSampleList_t)+200)>xPortGetFreeHeapSize()){
+                LOG_E("Streaming: Insufficient heap for sample allocation (free=%u, need=%u)\r\n",
+                      xPortGetFreeHeapSize(), sizeof(AInPublicSampleList_t)+200);
                 continue;
             }
             pPublicSampleList=pvPortCalloc(1,sizeof(AInPublicSampleList_t));
-            if(pPublicSampleList==NULL)
+            if(pPublicSampleList==NULL) {
+                LOG_E("Streaming: Sample allocation failed (pvPortCalloc returned NULL)\r\n");
                 continue;
+            }
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
                 if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
                         && pBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic == 1) {
@@ -160,6 +164,14 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
+        // Clear any stale samples from previous streaming session to free heap
+        AInPublicSampleList_t* pStale;
+        while (AInSampleList_PopFront(&pStale)) {
+            if (pStale != NULL) {
+                vPortFree(pStale);
+            }
+        }
+
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
@@ -298,18 +310,24 @@ void streaming_Task(void) {
 
 void TimestampTimer_Init(void) {
     //     Initialize and start timestamp timer
-    //     This is a free running timer used for reference - 
+    //     This is a free running timer used for reference -
     //     this doesn't interrupt or callback
-    
+
     if (gStreamingTaskHandle == NULL) {
-        xTaskCreate((TaskFunction_t) streaming_Task,
+        BaseType_t result = xTaskCreate((TaskFunction_t) streaming_Task,
                 "Stream task",
                 4096, NULL, 2, &gStreamingTaskHandle);
+        if (result != pdPASS) {
+            LOG_E("FATAL: Failed to create streaming_Task (4096 bytes)\r\n");
+        }
     }
     if (gStreamingInterruptHandle == NULL) {
-        xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
+        BaseType_t result = xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
                 "Stream Interrupt",
                 4096, NULL, 8, &gStreamingInterruptHandle);
+        if (result != pdPASS) {
+            LOG_E("FATAL: Failed to create _Streaming_Deferred_Interrupt_Task (4096 bytes)\r\n");
+        }
     }
     
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
