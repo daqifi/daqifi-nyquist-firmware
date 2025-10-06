@@ -161,7 +161,8 @@ class WiFiFirmwareUpdater:
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5 minute timeout
-                cwd=tool_dir  # Run from tool's directory so it finds the files
+                cwd=tool_dir,  # Run from tool's directory so it finds the files
+                shell=True  # Required for .cmd files on Windows
             )
 
             # Display output
