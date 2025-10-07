@@ -383,11 +383,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
-            if (pInstance->pWifiSettings->isEnabled) {
-                if (pInstance->pWifiSettings->isOtaModeEnabled)
-                    SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
-                else
-                    SendEvent(WIFI_MANAGER_EVENT_INIT);
+            if (pInstance->pWifiSettings->isOtaModeEnabled) {
+                SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
+            }
+            else if (pInstance->pWifiSettings->isEnabled) {
+                SendEvent(WIFI_MANAGER_EVENT_INIT);
             }
             pInstance->pWifiSettings->isOtaModeEnabled=0;
             break;
@@ -775,7 +775,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             
             // Now handle reconfiguration within the same mode
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED) &&
-                pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP)
+                pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP &&
+                !pInstance->pWifiSettings->isOtaModeEnabled)
             {
                 LOG_D("Restarting Soft AP mode with new settings...\r\n");
                 
@@ -888,7 +889,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                      GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))
             {
                 // Currently in STA mode and need to update STA settings
-                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
+                    !pInstance->pWifiSettings->isOtaModeEnabled) {
                     LOG_D("Restarting STA mode with new settings...\r\n");
                     
                     // Disconnect if connected
@@ -1225,6 +1227,10 @@ void wifi_manager_ProcessState() {
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
+}
+
+bool wifi_manager_IsOtaModeActive(void) {
+    return GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
 }
 
 bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {

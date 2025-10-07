@@ -123,36 +123,29 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
 
         }
         else if(cirbuf->process_callback!= NULL){
-                 
+
             //start next transfer
             //make sure we don't transfer the out of bound data.
             if((cirbuf->removePtr + bytesToSend) > BUF_END){
-                uint32_t chunk1 = 0;
-                uint32_t chunk2 = 0;
 
-                // transfer the first part of data
-                chunk1 = (BUF_END - cirbuf->removePtr + 1);     
-                *error = cirbuf->process_callback(cirbuf->removePtr, chunk1);
+                // IMPORTANT: Only process first chunk when using callbacks
+                // Calling callback twice in succession causes data corruption in
+                // UsbCdc_Wrapper_Write which uses a shared buffer. The second chunk
+                // will be processed on the next CircularBuf_ProcessBytes call.
+                bytesToSend = (BUF_END - cirbuf->removePtr + 1);
+                *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
 
                 // wrap-around the pointer to the beginning of the buffer,
-                // then transfer second part of data. 
+                // second chunk remains for next call
                 cirbuf->removePtr = BUF_START;
-                bytesRemoved = chunk1;
-                
-                // Only process second chunk if first chunk succeeded
-                if (*error >= 0) {
-                    chunk2 = bytesToSend - chunk1;
-                    *error = cirbuf->process_callback(cirbuf->removePtr, chunk2);
-                    cirbuf->removePtr += chunk2;
-                    bytesRemoved += chunk2;
-                }
             }
             else{
+
                 *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
                 cirbuf->removePtr += bytesToSend;
-                bytesRemoved = bytesToSend;
-            } 
-            cirbuf->totalBytes -= bytesRemoved;
+            }
+            cirbuf->totalBytes -= bytesToSend;
+            bytesRemoved  = bytesToSend;
         }
     }
     

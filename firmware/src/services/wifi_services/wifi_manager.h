@@ -260,14 +260,21 @@ extern "C" {
     void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen);
 
     /**
+     * @brief Check if WiFi OTA firmware update mode is currently active.
+     *
+     * @return true if OTA mode is active, false otherwise.
+     */
+    bool wifi_manager_IsOtaModeActive(void);
+
+    /**
      * @brief Queries the current RSSI value on-demand with timeout.
-     * 
+     *
      * Attempts to get the current RSSI value from the WiFi module. Will wait up to
      * the specified timeout for a fresh value if the cached value is stale.
-     * 
+     *
      * @param[out] pRssi Pointer to store the RSSI value (in percentage 0-100).
      * @param[in] timeoutMs Maximum time to wait for fresh RSSI in milliseconds.
-     * 
+     *
      * @return true if RSSI was successfully retrieved, false otherwise.
      */
     bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs);

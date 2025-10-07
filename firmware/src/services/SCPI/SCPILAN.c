@@ -512,8 +512,9 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
         return SCPI_RES_ERR;
     }
-    //once fw update mode is enabled it should be cleared to disable automatic fw update mode
-    pRunTimeWifiSettings->isOtaModeEnabled = false;
+    // Note: isOtaModeEnabled is intentionally NOT cleared here anymore.
+    // The WiFi manager will handle OTA mode entry and will clear the flag
+    // after OTA operations complete or when exiting OTA mode.
     return SCPI_RES_OK;
 }
 
