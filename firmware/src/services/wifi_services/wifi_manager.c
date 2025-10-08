@@ -134,7 +134,12 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[20];
     UNUSED(s);
-    
+
+    // Validate we have an active association before processing DHCP
+    if (gStateMachineContext.assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
+        return;
+    }
+
     if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
         // In AP mode, this callback is triggered when DHCP assigns an IP to a client
         LOG_D("AP Mode: DHCP assigned IP %s to a client\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
@@ -146,6 +151,14 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
 }
 
 static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
+    // Validate this callback is for a valid association and we're in AP mode
+    if (assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
+        return;
+    }
+    if (!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+        return;  // Ignore callbacks when not in AP mode (e.g., during mode switching)
+    }
+
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
         LOG_D("AP mode: Station connected\r\n");
         SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
@@ -157,11 +170,20 @@ static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandl
 
 static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
+        // Validate we're in STA mode before accepting connection
+        if (!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+            return;  // Ignore callbacks when not in STA mode (e.g., during mode switching)
+        }
         LOG_D("STA mode: Station connected\r\n");
         gStateMachineContext.assocHandle = assocHandle;  // Store association handle for RSSI queries
         SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState && errorCode != WDRV_WINC_CONN_ERROR_INPROGRESS) {
-        LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n", 
+        // Only process disconnect for our current connection or if already invalid
+        if (assocHandle != gStateMachineContext.assocHandle &&
+            gStateMachineContext.assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
+            return;  // Stale disconnect callback from previous connection
+        }
+        LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n",
               errorCode, (unsigned int)xTaskGetTickCount(),
               (errorCode == WDRV_WINC_CONN_ERROR_AUTH) ? "Auth Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_ASSOC) ? "Association Failed" :
