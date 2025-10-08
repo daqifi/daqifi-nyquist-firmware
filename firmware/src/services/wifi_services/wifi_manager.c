@@ -11,6 +11,11 @@
 #define UNUSED(x) (void)(x)
 #define WIFI_MANAGER_UDP_LISTEN_PORT         (uint16_t)30303
 
+// Standard IPv4 address string length (xxx.xxx.xxx.xxx + null = 16)
+#ifndef INET_ADDRSTRLEN
+#define INET_ADDRSTRLEN 16
+#endif
+
 typedef enum {
     WIFI_MANAGER_EVENT_ENTRY,
     WIFI_MANAGER_EVENT_EXIT,
@@ -132,7 +137,7 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
 }
 
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
-    char s[20];
+    char s[INET_ADDRSTRLEN] = {0};
     UNUSED(s);
 
     // Validate we have an active association before processing DHCP
