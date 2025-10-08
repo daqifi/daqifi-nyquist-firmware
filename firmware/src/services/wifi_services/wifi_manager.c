@@ -700,6 +700,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
                 wifi_serial_bridge_interface_DeInit();
+
+                // Use DEINIT event for proper cleanup instead of manual reset
+                // DEINIT will Close handle, Deinitialize driver, fix reset state, then transition to MainState
+                SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+                break;
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
                 vTaskDelay(pdMS_TO_TICKS(50)); // Add a small delay to prevent busy-looping
@@ -1006,6 +1011,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             else
             {
                 // If not currently connected, transition to MainState for fresh init
+                // Reset driver object to force complete reinitialization
+                // This is especially important after OTA mode exit
+                sysObj.drvWifiWinc = SYS_MODULE_OBJ_INVALID;
                 returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
                 pInstance->nextState = MainState;
             }
