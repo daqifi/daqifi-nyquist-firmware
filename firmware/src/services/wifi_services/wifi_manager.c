@@ -403,7 +403,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             wifi_tcp_server_Initialize(pInstance->pTcpServerContext);
             memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
 
-            // Check and save OTA mode request status BEFORE clearing all flags
+            // Preserve OTA mode request flag across state reset
             bool otaModeRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
 
             ResetAllEventFlags(&pInstance->eventFlags);
@@ -411,8 +411,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
 
-            // Check saved OTA mode request status
             if (otaModeRequested) {
+                SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
                 SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
             }
             else if (pInstance->pWifiSettings->isEnabled) {
