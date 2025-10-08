@@ -512,17 +512,15 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
         return SCPI_RES_ERR;
     }
-    // Note: isOtaModeEnabled is intentionally NOT cleared here anymore.
-    // The WiFi manager will handle OTA mode entry and will clear the flag
-    // after OTA operations complete or when exiting OTA mode.
+    // Note: OTA mode request (if set via FWUPDATE) is handled by the WiFi state machine.
+    // The REQUESTED flag will be checked and cleared in ENTRY event handler.
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANFwUpdate(scpi_t * context) {
-    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
-
-    pRunTimeWifiSettings->isOtaModeEnabled = true;
+    // Request OTA mode via state machine flag
+    // On next APPLY, state machine will transition to OTA mode instead of reconfiguring WiFi
+    wifi_manager_RequestOtaMode();
     return SCPI_RES_OK;
 }
 

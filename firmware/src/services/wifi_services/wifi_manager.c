@@ -36,7 +36,8 @@ typedef struct {
         WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN = 1 << 5,
         WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED = 1 << 6,
         WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_CONNECTED = 1 << 7,
-        WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY = 1 << 8,
+        WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED = 1 << 8,  // OTA requested but not yet initialized
+        WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY = 1 << 9,      // OTA initialized and active
     } flag;
     uint16_t value;
 } wifi_manager_stateFlag_t;
@@ -376,20 +377,25 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
     switch (event) {
         case WIFI_MANAGER_EVENT_ENTRY:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
-            pInstance->pTcpServerContext = &gTcpServerContext; 
+            pInstance->pTcpServerContext = &gTcpServerContext;
             wifi_tcp_server_Initialize(pInstance->pTcpServerContext);
             memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
+
+            // Check and save OTA mode request status BEFORE clearing all flags
+            bool otaModeRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
+
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
-            if (pInstance->pWifiSettings->isOtaModeEnabled) {
+
+            // Check saved OTA mode request status
+            if (otaModeRequested) {
                 SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
             }
             else if (pInstance->pWifiSettings->isEnabled) {
                 SendEvent(WIFI_MANAGER_EVENT_INIT);
             }
-            pInstance->pWifiSettings->isOtaModeEnabled=0;
             break;
         case WIFI_MANAGER_EVENT_OTA_MODE_INIT:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
@@ -665,7 +671,6 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
                 //If ota is running and again initialized, then deinit OTA
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
-                pInstance->pWifiSettings->isOtaModeEnabled = 0;
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
@@ -673,7 +678,15 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 break;
             }
-            
+
+            // If OTA mode requested, transition to MainState which will route to OTA_MODE_INIT
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED)) {
+                LOG_D("OTA mode requested - transitioning to MainState\r\n");
+                returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
+                pInstance->nextState = MainState;
+                break;
+            }
+
             // IMPORTANT: Do NOT use WDRV_WINC_Deinitialize for runtime reconfiguration!
             // The Microchip driver has a bug where it asserts reset but never deasserts it,
             // leaving the WINC1500 in a permanent reset state. Instead, we perform a soft
@@ -775,8 +788,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             
             // Now handle reconfiguration within the same mode
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED) &&
-                pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP &&
-                !pInstance->pWifiSettings->isOtaModeEnabled)
+                pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP)
             {
                 LOG_D("Restarting Soft AP mode with new settings...\r\n");
                 
@@ -889,8 +901,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                      GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))
             {
                 // Currently in STA mode and need to update STA settings
-                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
-                    !pInstance->pWifiSettings->isOtaModeEnabled) {
+                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
                     LOG_D("Restarting STA mode with new settings...\r\n");
                     
                     // Disconnect if connected
@@ -976,7 +987,6 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
                 //If ota is running and again initialized, then deinit OTA
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
-                pInstance->pWifiSettings->isOtaModeEnabled = 0;
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
@@ -1077,7 +1087,6 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
         xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
     }
-    gStateMachineContext.pWifiSettings->isOtaModeEnabled = false;
     gStateMachineContext.active = MainState;
     gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
     gStateMachineContext.nextState = NULL;
@@ -1182,8 +1191,11 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
                          (pPowerState->powerState == POWERED_UP || 
                           pPowerState->powerState == POWERED_UP_EXT_DOWN));
         
-        if (pSettings->isEnabled && isPowered) {
-            // WiFi is enabled and board is powered, apply changes immediately
+        // Trigger REINIT if WiFi is enabled OR if OTA mode is requested
+        bool otaRequested = GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
+
+        if ((pSettings->isEnabled || otaRequested) && isPowered) {
+            // WiFi is enabled or OTA requested, and board is powered - apply changes immediately
             SendEvent(WIFI_MANAGER_EVENT_REINIT);
         } else {
             // Settings saved but not applied - they'll be applied when WiFi is enabled
@@ -1227,6 +1239,10 @@ void wifi_manager_ProcessState() {
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
+}
+
+void wifi_manager_RequestOtaMode(void) {
+    SetEventFlag(&gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
 }
 
 bool wifi_manager_IsOtaModeActive(void) {

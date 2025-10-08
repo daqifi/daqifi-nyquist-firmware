@@ -58,7 +58,9 @@ extern "C" {
          */
         bool isEnabled;
         /**
-         * this is true is ota mode is enabled
+         * DEPRECATED: No longer used. OTA mode is now managed via state machine flags.
+         * Use wifi_manager_RequestOtaMode() to request OTA and wifi_manager_IsOtaModeActive() to check status.
+         * Kept for NVM compatibility - do not remove.
          */
         bool isOtaModeEnabled;
         /**
@@ -258,6 +260,14 @@ extern "C" {
      *                           will contain the length of the formatted announcement packet.
      */
     void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen);
+
+    /**
+     * @brief Request WiFi OTA firmware update mode.
+     *
+     * Sets the OTA_MODE_REQUESTED flag in the state machine. On next UpdateNetworkSettings,
+     * the state machine will transition to OTA mode instead of reconfiguring WiFi.
+     */
+    void wifi_manager_RequestOtaMode(void);
 
     /**
      * @brief Check if WiFi OTA firmware update mode is currently active.
