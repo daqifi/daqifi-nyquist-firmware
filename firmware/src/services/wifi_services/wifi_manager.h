@@ -58,9 +58,11 @@ extern "C" {
          */
         bool isEnabled;
         /**
-         * this is true is ota mode is enabled
+         * DEPRECATED: No longer used. WiFi firmware update mode is now managed via state machine flags.
+         * Use wifi_manager_RequestWifiFirmwareUpdate() to request update and wifi_manager_IsWifiFirmwareUpdateActive() to check status.
+         * Kept for NVM compatibility - do not remove.
          */
-        bool isOtaModeEnabled;
+        bool isWifiFirmwareUpdateModeEnabled;
         /**
          * One of:
          *  WIFI_MANAGER_NETWORK_MODE_STA = 1,
@@ -211,8 +213,8 @@ extern "C" {
     /**
      * @brief Processes the current state of the WiFi manager.
      * 
-     * Handles queued events and processes the WiFi state machine, including TCP and UDP operations, 
-     * and serial bridge communication if OTA mode is active.
+     * Handles queued events and processes the WiFi state machine, including TCP and UDP operations,
+     * and serial bridge communication if WiFi firmware update mode is active.
      */
     void wifi_manager_ProcessState();
 
@@ -260,14 +262,29 @@ extern "C" {
     void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen);
 
     /**
+     * @brief Request WiFi firmware update mode.
+     *
+     * Sets the WIFI_FW_UPDATE_REQUESTED flag in the state machine. On next UpdateNetworkSettings,
+     * the state machine will transition to WiFi firmware update mode instead of reconfiguring WiFi.
+     */
+    void wifi_manager_RequestWifiFirmwareUpdate(void);
+
+    /**
+     * @brief Check if WiFi firmware update mode is currently active.
+     *
+     * @return true if WiFi firmware update mode is active, false otherwise.
+     */
+    bool wifi_manager_IsWifiFirmwareUpdateActive(void);
+
+    /**
      * @brief Queries the current RSSI value on-demand with timeout.
-     * 
+     *
      * Attempts to get the current RSSI value from the WiFi module. Will wait up to
      * the specified timeout for a fresh value if the cached value is stale.
-     * 
+     *
      * @param[out] pRssi Pointer to store the RSSI value (in percentage 0-100).
      * @param[in] timeoutMs Maximum time to wait for fresh RSSI in milliseconds.
-     * 
+     *
      * @return true if RSSI was successfully retrieved, false otherwise.
      */
     bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs);
