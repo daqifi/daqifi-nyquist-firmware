@@ -307,15 +307,23 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
         return -1;  // USB not configured/ready
     }
 
+    // Begin atomic section to prevent race conditions with concurrent writes
+    taskENTER_CRITICAL();
+
     // Check if previous write is still pending to prevent buffer corruption
     if (gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        taskEXIT_CRITICAL();
         return -1;  // Previous write still in progress
     }
 
+    // Prepare buffer while in atomic section to prevent another task from corrupting it
     memcpy(gRunTimeUsbSttings.writeBuffer, buf, (size_t)len);
     gRunTimeUsbSttings.writeBufferLength = len;
-
     gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+
+    taskEXIT_CRITICAL();
+
+    // Call USB driver outside critical section (may block/take time)
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
             &gRunTimeUsbSttings.writeTransferHandle,
             gRunTimeUsbSttings.writeBuffer,
@@ -324,9 +332,11 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
 
     if ((writeResult != USB_DEVICE_CDC_RESULT_OK) ||
         (gRunTimeUsbSttings.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)) {
-        // Ensure handle is invalid on failure
+        // Ensure handle is invalid on failure (atomic update)
+        taskENTER_CRITICAL();
         gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
         gRunTimeUsbSttings.writeBufferLength = 0;
+        taskEXIT_CRITICAL();
         return -1;
     }
 
