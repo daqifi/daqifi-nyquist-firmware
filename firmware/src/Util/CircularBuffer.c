@@ -133,14 +133,18 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
                 // UsbCdc_Wrapper_Write which uses a shared buffer. The second chunk
                 // will be processed on the next CircularBuf_ProcessBytes call.
                 uint32_t chunk1_size = (BUF_END - cirbuf->removePtr + 1);
-                *error = cirbuf->process_callback(cirbuf->removePtr, chunk1_size);
+                uint32_t bytesThisCall = (bytesToSend < chunk1_size) ? bytesToSend : chunk1_size;
+                *error = cirbuf->process_callback(cirbuf->removePtr, bytesThisCall);
 
                 if (*error >= 0) {
-                    // wrap-around the pointer to the beginning of the buffer,
-                    // second chunk remains for next call
-                    cirbuf->removePtr = BUF_START;
-                    cirbuf->totalBytes -= chunk1_size;
-                    bytesRemoved = chunk1_size;
+                    // Wrap-around only if we processed to end of buffer
+                    if (bytesThisCall == chunk1_size) {
+                        cirbuf->removePtr = BUF_START;
+                    } else {
+                        cirbuf->removePtr += bytesThisCall;
+                    }
+                    cirbuf->totalBytes -= bytesThisCall;
+                    bytesRemoved = bytesThisCall;
                 } else {
                     bytesRemoved = 0;
                 }
