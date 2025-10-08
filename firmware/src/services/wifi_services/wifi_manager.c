@@ -104,9 +104,10 @@ static volatile uint8_t gLastRssiPercentage = 0;
 
 static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, int8_t rssi) {
     // In ISR/callback context - keep this minimal
-    // Validate this callback is for our current association
+    // Validate association handle is valid and matches our current association
     taskENTER_CRITICAL();
-    if (assocHandle != gStateMachineContext.assocHandle) {
+    if (assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID ||
+        assocHandle != gStateMachineContext.assocHandle) {
         taskEXIT_CRITICAL();
         return;
     }

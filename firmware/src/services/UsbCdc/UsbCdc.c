@@ -296,12 +296,22 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     if (len > USBCDC_WBUFFER_SIZE) {
         return -1;  // Buffer too small
     }
-    
+
     // Validate buffer pointer to prevent null dereference
     if (len > 0 && buf == NULL) {
         return -1;  // Invalid buffer pointer
     }
-    
+
+    // Ensure device is configured before attempting write
+    if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) {
+        return -1;  // USB not configured/ready
+    }
+
+    // Check if previous write is still pending to prevent buffer corruption
+    if (gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        return -1;  // Previous write still in progress
+    }
+
     memcpy(gRunTimeUsbSttings.writeBuffer, buf, (size_t)len);
     gRunTimeUsbSttings.writeBufferLength = len;
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
