@@ -310,7 +310,9 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
             len,
             USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
 
-    return writeResult;
+    // Return number of bytes written on success, negative on error
+    // Circular buffer expects this API: return >= 0 (bytes written) or < 0 (error)
+    return (writeResult == USB_DEVICE_CDC_RESULT_OK) ? (int)len : -1;
 }
 
 /**
