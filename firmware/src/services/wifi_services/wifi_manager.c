@@ -20,8 +20,8 @@ typedef enum {
     WIFI_MANAGER_EVENT_ENTRY,
     WIFI_MANAGER_EVENT_EXIT,
     WIFI_MANAGER_EVENT_INIT,
-    WIFI_MANAGER_EVENT_OTA_MODE_INIT,
-    WIFI_MANAGER_EVENT_OTA_MODE_READY,
+    WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT,
+    WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY,
     WIFI_MANAGER_EVENT_REINIT,
     WIFI_MANAGER_EVENT_DEINIT,
     WIFI_MANAGER_EVENT_STA_CONNECTED,
@@ -41,8 +41,8 @@ typedef struct {
         WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN = 1 << 5,
         WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED = 1 << 6,
         WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_CONNECTED = 1 << 7,
-        WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED = 1 << 8,  // OTA requested but not yet initialized
-        WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY = 1 << 9,      // OTA initialized and active
+        WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED = 1 << 8,  // WiFi firmware update requested but not yet initialized
+        WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY = 1 << 9,      // WiFi firmware update initialized and active
     } flag;
     uint16_t value;
 } wifi_manager_stateFlag_t;
@@ -409,36 +409,36 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             wifi_tcp_server_Initialize(pInstance->pTcpServerContext);
             memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
 
-            // Preserve OTA mode request flag across state reset
-            bool otaModeRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
+            // Preserve WiFi firmware update mode request flag across state reset
+            bool wifiFwUpdateRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
             ResetAllEventFlags(&pInstance->eventFlags);
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
 
-            if (otaModeRequested) {
-                SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
-                SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
+            if (wifiFwUpdateRequested) {
+                SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
             }
             else if (pInstance->pWifiSettings->isEnabled) {
                 SendEvent(WIFI_MANAGER_EVENT_INIT);
             }
             break;
-        case WIFI_MANAGER_EVENT_OTA_MODE_INIT:
+        case WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
-                SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
                 break;
             }
             sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
-            SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_READY);
+            SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
             break;
-        case WIFI_MANAGER_EVENT_OTA_MODE_READY:
+        case WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY:
         {
             SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
             if (wincStatus == SYS_STATUS_BUSY) {
-                SendEvent(WIFI_MANAGER_EVENT_OTA_MODE_INIT);
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
                 break;
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
@@ -448,7 +448,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
             }
             wifi_serial_bridge_Init(&pInstance->serialBridgeContext);
-            SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
+            SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
             vTaskResume(pInstance->fwUpdateTaskHandle);
         }
             break;
@@ -696,10 +696,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             SendEvent(WIFI_MANAGER_EVENT_ERROR);
             break;
         case WIFI_MANAGER_EVENT_REINIT:
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
-                //If ota is running and again initialized, then deinit OTA
-                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
-                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY)) {
+                //If WiFi firmware update is running and again initialized, then deinit WiFi firmware update
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
                 wifi_serial_bridge_interface_DeInit();
 
                 // Use DEINIT event for proper cleanup instead of manual reset
@@ -713,9 +713,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 break;
             }
 
-            // If OTA mode requested, transition to MainState which will route to OTA_MODE_INIT
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED)) {
-                LOG_D("OTA mode requested - transitioning to MainState\r\n");
+            // If WiFi firmware update requested, transition to MainState which will route to WIFI_FW_UPDATE_INIT
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED)) {
+                LOG_D("WiFi firmware update mode requested - transitioning to MainState\r\n");
                 returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
                 pInstance->nextState = MainState;
                 break;
@@ -1013,7 +1013,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             {
                 // If not currently connected, transition to MainState for fresh init
                 // Reset driver object to force complete reinitialization
-                // This is especially important after OTA mode exit
+                // This is especially important after WiFi firmware update mode exit
                 sysObj.drvWifiWinc = SYS_MODULE_OBJ_INVALID;
                 returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
                 pInstance->nextState = MainState;
@@ -1021,9 +1021,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
             break;
         case WIFI_MANAGER_EVENT_DEINIT:
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
-                //If ota is running and again initialized, then deinit OTA
-                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY)) {
+                //If WiFi firmware update is running and again initialized, then deinit WiFi firmware update
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
@@ -1106,7 +1106,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
 void fwUpdateTask(void *pvParameters) {
     while (1) {
-        if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY))
+        if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY))
             wifi_serial_bridge_Process(&gStateMachineContext.serialBridgeContext);
         else {
             vTaskSuspend(NULL);
@@ -1228,11 +1228,11 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
                          (pPowerState->powerState == POWERED_UP || 
                           pPowerState->powerState == POWERED_UP_EXT_DOWN));
         
-        // Trigger REINIT if WiFi is enabled OR if OTA mode is requested
-        bool otaRequested = GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
+        // Trigger REINIT if WiFi is enabled OR if WiFi firmware update mode is requested
+        bool wifiFwUpdateRequested = GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
-        if ((pSettings->isEnabled || otaRequested) && isPowered) {
-            // WiFi is enabled or OTA requested, and board is powered - apply changes immediately
+        if ((pSettings->isEnabled || wifiFwUpdateRequested) && isPowered) {
+            // WiFi is enabled or WiFi firmware update requested, and board is powered - apply changes immediately
             SendEvent(WIFI_MANAGER_EVENT_REINIT);
         } else {
             // Settings saved but not applied - they'll be applied when WiFi is enabled
@@ -1278,12 +1278,12 @@ wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
 }
 
-void wifi_manager_RequestOtaMode(void) {
-    SetEventFlag(&gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
+void wifi_manager_RequestWifiFirmwareUpdate(void) {
+    SetEventFlag(&gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 }
 
-bool wifi_manager_IsOtaModeActive(void) {
-    return GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
+bool wifi_manager_IsWifiFirmwareUpdateActive(void) {
+    return GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
 }
 
 bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {

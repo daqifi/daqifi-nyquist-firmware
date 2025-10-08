@@ -116,7 +116,7 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
     },
     .wifiSettings = {
         .isEnabled = true,
-        .isOtaModeEnabled = false,
+        .isWifiFirmwareUpdateModeEnabled = false,
         .networkMode = DEFAULT_WIFI_NETWORK_MODE,
         .securityMode = DEFAULT_WIFI_AP_SECURITY_MODE,
         .ssid = DEFAULT_WIFI_AP_SSID,

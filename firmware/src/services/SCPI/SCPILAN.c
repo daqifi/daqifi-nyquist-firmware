@@ -512,15 +512,15 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
         return SCPI_RES_ERR;
     }
-    // Note: OTA mode request (if set via FWUPDATE) is handled by the WiFi state machine.
+    // Note: WiFi firmware update mode request (if set via FWUPDATE) is handled by the WiFi state machine.
     // The REQUESTED flag will be checked and cleared in ENTRY event handler.
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANFwUpdate(scpi_t * context) {
-    // Request OTA mode via state machine flag
-    // On next APPLY, state machine will transition to OTA mode instead of reconfiguring WiFi
-    wifi_manager_RequestOtaMode();
+    // Request WiFi firmware update mode via state machine flag
+    // On next APPLY, state machine will transition to WiFi firmware update mode instead of reconfiguring WiFi
+    wifi_manager_RequestWifiFirmwareUpdate();
     return SCPI_RES_OK;
 }
 
