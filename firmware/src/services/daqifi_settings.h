@@ -34,6 +34,10 @@
 #define DEFAULT_TCP_PORT 9760 //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_HOST_NAME   "NYQUIST1"  //TODO(Daqifi): Relocate in proper place
 
+
+#define BOARD_HARDWARE_REV  "2.0.0" //TODO(Daqifi) : Relocate to proper location
+#define BOARD_FIRMWARE_REV "3.1.0b1"  //TODO(Daqifi) : Relocate to proper location
+#define BOARD_VARIANT       1       //TODO(Daqifi) : Relocate to proper location
 #define MAX_AV_NETWORK_SSID 8
 
 

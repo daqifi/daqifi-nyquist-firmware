@@ -257,12 +257,21 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
 }
 
 static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
+    // Validate context pointer to prevent null dereference
+    if (gpServerData == NULL) {
+        return -1;  // Not initialized
+    }
+
     // Validate length against buffer size to prevent overflow
     if (len > sizeof(gpServerData->client.writeBuffer))
-        return false;
+        return -1;  // Error
     memcpy(gpServerData->client.writeBuffer, buf, len);
     gpServerData->client.writeBufferLength = len;
-    return TcpServerFlush(&gpServerData->client);
+
+    // Return number of bytes written on success, negative on error
+    // Circular buffer expects this API: return >= 0 (bytes written) or < 0 (error)
+    bool flushResult = TcpServerFlush(&gpServerData->client);
+    return flushResult ? (int)len : -1;
 }
 //==========================External Apis==========================
 

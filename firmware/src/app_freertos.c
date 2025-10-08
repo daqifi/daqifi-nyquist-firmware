@@ -234,22 +234,23 @@ static void app_WifiTask(void* p_arg) {
  */
 static void app_SdCardTask(void* p_arg) {
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
-    while (1) {       
-        // Critical fix: Prevent SPI bus contention between WiFi streaming and SD operations
+    while (1) {
+        // Critical fix: Prevent SPI bus contention between WiFi streaming/firmware update and SD operations
         // Background: SD operations every 1ms were causing WiFi streaming failures at ~590 seconds
-        // Solution: Suspend SD operations during WiFi streaming for exclusive SPI access
+        // Solution: Suspend SD operations during WiFi streaming AND firmware update mode for exclusive SPI access
         StreamingRuntimeConfig* pStreamConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
         bool isStreaming = (pStreamConfig != NULL) && pStreamConfig->IsEnabled;
+        bool isWifiFirmwareUpdateMode = wifi_manager_IsWifiFirmwareUpdateActive();
 
-        if (isStreaming) {
-            // WiFi streaming active - suspend SD operations to avoid SPI bus contention
-            // This prevents the ~590 second streaming failure caused by competing SPI transactions
-            vTaskDelay(100 / portTICK_PERIOD_MS); // Reduced frequency check when streaming
+        if (isStreaming || isWifiFirmwareUpdateMode) {
+            // WiFi streaming or firmware update mode active - suspend SD operations to avoid SPI bus contention
+            // This prevents the ~590 second streaming failure and WiFi flash erase failures
+            vTaskDelay(100 / portTICK_PERIOD_MS); // Reduced frequency check when SPI in use
         } else {
             // WiFi not streaming - safe to run full SD operations
             // Normal SD card maintenance: driver tasks, state processing, file system
             DRV_SDSPI_Tasks(sysObj.drvSDSPI0);      // Harmony SD driver background processing
-            sd_card_manager_ProcessState();         // SD card state management 
+            sd_card_manager_ProcessState();         // SD card state management
             SYS_FS_Tasks();                         // File system maintenance
             vTaskDelay(SD_CARD_MANAGER_TASK_DELAY_MS / portTICK_PERIOD_MS); // 1ms normal rate
         }
@@ -322,7 +323,7 @@ void app_SystemInit() {
         daqifi_settings_SaveToNvm(&tmpSettings);
     }
     // Move temp variable to global variables
-    tmpSettings.settings.wifi.isOtaModeEnabled = false;
+    tmpSettings.settings.wifi.isWifiFirmwareUpdateModeEnabled = false;
     memcpy(&gpBoardRuntimeConfig->wifiSettings,
             &tmpSettings.settings.wifi,
             sizeof (wifi_manager_settings_t));
