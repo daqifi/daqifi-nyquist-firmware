@@ -698,6 +698,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY)) {
                 //If ota is running and again initialized, then deinit OTA
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_READY);
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_OTA_MODE_REQUESTED);
                 wifi_serial_bridge_interface_DeInit();
             }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
