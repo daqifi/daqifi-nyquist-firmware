@@ -134,30 +134,46 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
                 // will be processed on the next CircularBuf_ProcessBytes call.
                 uint32_t chunk1_size = (BUF_END - cirbuf->removePtr + 1);
                 uint32_t bytesThisCall = (bytesToSend < chunk1_size) ? bytesToSend : chunk1_size;
-                *error = cirbuf->process_callback(cirbuf->removePtr, bytesThisCall);
+                int cbRet = cirbuf->process_callback(cirbuf->removePtr, bytesThisCall);
 
-                if (*error >= 0) {
+                if (cbRet >= 0) {
+                    // Callback returns number of bytes actually processed
+                    uint32_t actuallyRemoved = (uint32_t)cbRet;
+                    // Clamp to requested size to avoid pointer overrun on buggy callbacks
+                    if (actuallyRemoved > bytesThisCall) {
+                        actuallyRemoved = bytesThisCall;
+                    }
                     // Wrap-around only if we processed to end of buffer
-                    if (bytesThisCall == chunk1_size) {
+                    if (actuallyRemoved == chunk1_size) {
                         cirbuf->removePtr = BUF_START;
                     } else {
-                        cirbuf->removePtr += bytesThisCall;
+                        cirbuf->removePtr += actuallyRemoved;
                     }
-                    cirbuf->totalBytes -= bytesThisCall;
-                    bytesRemoved = bytesThisCall;
+                    cirbuf->totalBytes -= actuallyRemoved;
+                    bytesRemoved = actuallyRemoved;
+                    *error = cbRet;
                 } else {
                     bytesRemoved = 0;
+                    *error = cbRet;
                 }
             }
             else{
 
-                *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
-                if (*error >= 0) {
-                    cirbuf->removePtr += bytesToSend;
-                    cirbuf->totalBytes -= bytesToSend;
-                    bytesRemoved = bytesToSend;
+                int cbRet = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
+                if (cbRet >= 0) {
+                    // Callback returns number of bytes actually processed
+                    uint32_t actuallyRemoved = (uint32_t)cbRet;
+                    // Clamp to requested size to avoid pointer overrun on buggy callbacks
+                    if (actuallyRemoved > bytesToSend) {
+                        actuallyRemoved = bytesToSend;
+                    }
+                    cirbuf->removePtr += actuallyRemoved;
+                    cirbuf->totalBytes -= actuallyRemoved;
+                    bytesRemoved = actuallyRemoved;
+                    *error = cbRet;
                 } else {
                     bytesRemoved = 0;
+                    *error = cbRet;
                 }
             }
         }
