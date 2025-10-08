@@ -293,12 +293,12 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
 int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     // Validate length against buffer size to prevent overflow
-    if (len > USBCDC_WBUFFER_SIZE) {
-        return -1;  // Buffer too small
+    if (len == 0 || len > USBCDC_WBUFFER_SIZE) {
+        return -1;  // Invalid length
     }
 
     // Validate buffer pointer to prevent null dereference
-    if (len > 0 && buf == NULL) {
+    if (buf == NULL) {
         return -1;  // Invalid buffer pointer
     }
 
@@ -314,15 +314,24 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
 
     memcpy(gRunTimeUsbSttings.writeBuffer, buf, (size_t)len);
     gRunTimeUsbSttings.writeBufferLength = len;
+
+    gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
             &gRunTimeUsbSttings.writeTransferHandle,
             gRunTimeUsbSttings.writeBuffer,
             len,
             USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
 
-    // Return number of bytes written on success, negative on error
-    // Circular buffer expects this API: return >= 0 (bytes written) or < 0 (error)
-    return (writeResult == USB_DEVICE_CDC_RESULT_OK) ? (int)len : -1;
+    if ((writeResult != USB_DEVICE_CDC_RESULT_OK) ||
+        (gRunTimeUsbSttings.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)) {
+        // Ensure handle is invalid on failure
+        gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+        gRunTimeUsbSttings.writeBufferLength = 0;
+        return -1;
+    }
+
+    // Success: report bytes accepted for transfer
+    return (int)len;
 }
 
 /**
