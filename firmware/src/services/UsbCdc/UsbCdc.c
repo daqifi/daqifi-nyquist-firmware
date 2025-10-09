@@ -363,32 +363,36 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         }
         xSemaphoreGive(client->wMutex);
 
-        if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
-            //while(1);
+        // CircularBuffer callback now returns bytes written (>= 0) on success, < 0 on error
+        if (writeResult < 0) {
+            // Error occurred during write
         }
 
-        switch (writeResult) {
-            case USB_DEVICE_CDC_RESULT_OK:
-                // Normal operation
-                break;
+        // Only process error codes if we actually got an error
+        if (writeResult < 0) {
+            switch (writeResult) {
+                case USB_DEVICE_CDC_RESULT_OK:
+                    // Normal operation
+                    break;
 
-            case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_NOT_CONFIGURED:
-            case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_INVALID:
-            case USB_DEVICE_CDC_RESULT_ERROR_PARAMETER_INVALID:
-            case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
-            case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
-                // Reset the interface
-                gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
-                return false;
+                case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_NOT_CONFIGURED:
+                case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_INVALID:
+                case USB_DEVICE_CDC_RESULT_ERROR_PARAMETER_INVALID:
+                case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
+                case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
+                    // Reset the interface
+                    gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
+                    return false;
 
-            case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
-                SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Bad USB write size");
-                return false;
-            case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_QUEUE_FULL: // Too many pending requests. Just wait.
-            case USB_DEVICE_CDC_RESULT_ERROR: // Concurrency issue. Just wait. 
-            default:
-                // No action
-                return false;
+                case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
+                    SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Bad USB write size");
+                    return false;
+                case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_QUEUE_FULL: // Too many pending requests. Just wait.
+                case USB_DEVICE_CDC_RESULT_ERROR: // Concurrency issue. Just wait.
+                default:
+                    // No action
+                    return false;
+            }
         }
 
         if (gRunTimeUsbSttings.writeTransferHandle ==
