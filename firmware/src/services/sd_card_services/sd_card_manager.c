@@ -73,7 +73,7 @@ __exit:
 
 static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
     if (len>sizeof (gSdCardData.writeBuffer))
-        return false;
+        return -1;  // Error: buffer overflow
     memcpy(gSdCardData.writeBuffer, buf, len);
     gSdCardData.writeBufferLength = len;
     gSdCardData.sdCardWriteBufferOffset = 0;
