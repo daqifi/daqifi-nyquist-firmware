@@ -330,9 +330,8 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
             len,
             USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
 
-    if ((writeResult != USB_DEVICE_CDC_RESULT_OK) ||
-        (gRunTimeUsbSttings.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)) {
-        // Ensure handle is invalid on failure (atomic update)
+    if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
+        // Write failed - ensure handle is invalid (atomic update)
         taskENTER_CRITICAL();
         gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
         gRunTimeUsbSttings.writeBufferLength = 0;
@@ -341,6 +340,8 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     }
 
     // Success: report bytes accepted for transfer
+    // Note: Don't check if handle is still valid here - the write complete interrupt
+    // can fire so fast that UsbCdc_FinalizeWrite already reset it to INVALID
     return (int)len;
 }
 
@@ -360,45 +361,42 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
         if (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0) {
             CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USBCDC_WBUFFER_SIZE, &writeResult);
+        } else {
+            // No data to write, return true (success - nothing to do)
+            xSemaphoreGive(client->wMutex);
+            return true;
         }
         xSemaphoreGive(client->wMutex);
 
-        if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
-            //while(1);
+        // CircularBuffer callback now returns bytes written (>= 0) on success, < 0 on error
+        // Handle errors
+        if (writeResult < 0) {
+            switch (writeResult) {
+                case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_NOT_CONFIGURED:
+                case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_INVALID:
+                case USB_DEVICE_CDC_RESULT_ERROR_PARAMETER_INVALID:
+                case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
+                case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
+                    // Reset the interface
+                    gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
+                    return false;
+
+                case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
+                    SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Bad USB write size");
+                    return false;
+                case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_QUEUE_FULL: // Too many pending requests. Just wait.
+                case USB_DEVICE_CDC_RESULT_ERROR: // Concurrency issue. Just wait.
+                default:
+                    // No action
+                    return false;
+            }
         }
 
-        switch (writeResult) {
-            case USB_DEVICE_CDC_RESULT_OK:
-                // Normal operation
-                break;
-
-            case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_NOT_CONFIGURED:
-            case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_INVALID:
-            case USB_DEVICE_CDC_RESULT_ERROR_PARAMETER_INVALID:
-            case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
-            case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
-                // Reset the interface
-                gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
-                return false;
-
-            case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
-                SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Bad USB write size");
-                return false;
-            case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_QUEUE_FULL: // Too many pending requests. Just wait.
-            case USB_DEVICE_CDC_RESULT_ERROR: // Concurrency issue. Just wait. 
-            default:
-                // No action
-                return false;
-        }
-
-        if (gRunTimeUsbSttings.writeTransferHandle ==
-                USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-            // SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Non-error w/ invalid transfer handle"); // Means USB write could not be scheduled
-            return false;
-        }
+        // Success: callback returned bytes written (>= 0)
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 /**
