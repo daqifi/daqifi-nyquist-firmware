@@ -363,14 +363,19 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         }
         xSemaphoreGive(client->wMutex);
 
-        if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
-            //while(1);
+        // CircularBuffer callback now returns bytes written (>= 0) on success, < 0 on error
+        if (writeResult < 0) {
+            // Error occurred during write
         }
 
-        switch (writeResult) {
-            case USB_DEVICE_CDC_RESULT_OK:
-                // Normal operation
-                break;
+        // Only process error codes if we actually got an error
+        if (writeResult < 0) {
+            switch (writeResult) {
+                // Note: These USB error codes are negative, but the old code
+                // treated them as positive. Keeping for compatibility.
+                case USB_DEVICE_CDC_RESULT_OK:
+                    // Normal operation
+                    break;
 
             case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_NOT_CONFIGURED:
             case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_INVALID:
@@ -389,6 +394,7 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
             default:
                 // No action
                 return false;
+            }
         }
 
         if (gRunTimeUsbSttings.writeTransferHandle ==
