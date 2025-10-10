@@ -88,12 +88,23 @@ static size_t DAC_FindChannelIndex(uint8_t channelId) {
 
 // Helper function to convert voltage to DAC counts
 // MaxVoltage is a software limit for clamping, HardwareFullScale determines actual output
+// Resolution from board config supports different DAC variants (12-bit=4096, 14-bit=16384, 16-bit=65536)
 static uint32_t DAC_VoltageToCounts(double voltage, const AOutModule* module) {
     // Access config directly to avoid struct alignment issues
-    double minVoltage = module->Config.DAC7718.MinVoltage;
-    double maxVoltage = module->Config.DAC7718.MaxVoltage;
-    double hardwareFullScale = module->Config.DAC7718.HardwareFullScale;
-    uint16_t resolution = module->Config.DAC7718.Resolution;
+    const double minVoltage = module->Config.DAC7718.MinVoltage;
+    const double maxVoltage = module->Config.DAC7718.MaxVoltage;
+    const double hardwareFullScale = module->Config.DAC7718.HardwareFullScale;
+    const uint16_t resolution = module->Config.DAC7718.Resolution;
+
+    // Validate configuration - prevent division by zero and invalid resolution
+    if (hardwareFullScale <= 0.0) {
+        LOG_E("DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0", hardwareFullScale);
+        return 0;
+    }
+    if (resolution == 0) {
+        LOG_E("DAC_VoltageToCounts: Invalid resolution (0), returning 0");
+        return 0;
+    }
 
     // Clamp to software-configured limits
     if (voltage < minVoltage) voltage = minVoltage;
@@ -102,7 +113,20 @@ static uint32_t DAC_VoltageToCounts(double voltage, const AOutModule* module) {
     // Convert using hardware full-scale voltage from config
     // This ensures correct output: 4V command -> 1638 counts -> 4V output
     double normalizedVoltage = (voltage - minVoltage) / hardwareFullScale;
-    uint32_t counts = (uint32_t)(normalizedVoltage * (resolution - 1) + 0.5);
+    double rawCounts = normalizedVoltage * (double)(resolution - 1);
+
+    // Clamp to valid DAC range [0, resolution-1] to prevent overflow
+    // This guards against edge cases and ensures compatibility with different DAC resolutions
+    const uint32_t maxCounts = (uint32_t)(resolution - 1);
+    if (rawCounts < 0.0) {
+        rawCounts = 0.0;
+    }
+    if (rawCounts > (double)maxCounts) {
+        rawCounts = (double)maxCounts;
+    }
+
+    // Round to nearest integer
+    uint32_t counts = (uint32_t)(rawCounts + 0.5);
 
     return counts;
 }
