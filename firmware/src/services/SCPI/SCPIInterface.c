@@ -1066,8 +1066,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {
         // NQ3 Smart Frequency Management:
-        // When external AD7609 channels are active, force internal ADC to 1Hz
-        if (hasActiveAD7609Channels && freq > 1) {
+        // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
+        // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
+        if (hasActiveAD7609Channels && activeType1ChannelCount == 0 && freq > 1) {
             freq = 1; // Override to 1Hz for internal monitoring when external ADC active
         }
         

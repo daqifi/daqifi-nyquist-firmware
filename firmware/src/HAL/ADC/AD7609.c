@@ -27,13 +27,15 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-// Simple delay function using core timer
+// Simple delay function using core timer (wrap-around safe)
 static void AD7609_Delay_ms(uint32_t milliseconds) {
     uint32_t startCount = CORETIMER_CounterGet();
-    uint32_t targetCount = startCount + (milliseconds * (CORETIMER_FrequencyGet() / 1000));
-    
-    while (CORETIMER_CounterGet() < targetCount) {
-        // Wait for timer to reach target
+    uint32_t ticks = (milliseconds * (CORETIMER_FrequencyGet() / 1000U));
+
+    // Use modular arithmetic to handle 32-bit timer wrap-around correctly
+    // Subtraction of unsigned values wraps correctly
+    while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticks) {
+        // Wait for elapsed ticks
     }
 }
 
@@ -151,8 +153,9 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
 
     // Register BSY pin interrupt callback (falling edge on conversion complete)
     // Note: Task creation is handled in config/default/tasks.c
+    // AD7609 BSY goes LOW (falling edge) when conversion is complete
     GPIO_PinInterruptCallbackRegister(GPIO_PIN_RB3, AD7609_BSY_InterruptCallback, 0);
-    GPIO_PinInterruptEnable(GPIO_PIN_RB3);
+    GPIO_PinIntEnable(GPIO_PIN_RB3, GPIO_INTERRUPT_ON_FALLING_EDGE);
 
     return true;
 }
@@ -355,14 +358,15 @@ double AD7609_ConvertToVoltage(
     }
 
     // AD7609 is 18-bit, 2's complement
-    int32_t maxCode = (1 << 17) - 1; // 18-bit: 131071 (half scale since 2's complement)
+    const int32_t maxCode = (1 << 17) - 1; // 131071 (half scale for signed 18-bit)
 
     // Convert raw ADC value to signed integer
     int32_t rawValue = (int32_t)sample->Value;
 
-    // Handle 18-bit 2's complement conversion
-    if (rawValue > maxCode) {
-        rawValue = rawValue - (1 << 18); // Convert to negative
+    // Handle 18-bit 2's complement conversion by checking sign bit
+    // If bit 17 is set, the value is negative and needs sign extension
+    if (rawValue & (1 << 17)) {  // Check sign bit (bit 17)
+        rawValue |= ~((1 << 18) - 1);  // Sign extend from 18 bits to 32 bits
     }
 
     // Convert to voltage: raw / maxCode * fullScale

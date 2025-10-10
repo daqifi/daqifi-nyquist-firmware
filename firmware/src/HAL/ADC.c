@@ -466,7 +466,12 @@ static void GetModuleChannelRuntimeData(
 
 void ADC_EOSInterruptCB(uintptr_t context) {
     (void)context; // Unused
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR(gADCInterruptHandle, &xHigherPriorityTaskWoken);
-    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+
+    // Guard against NULL task handle (if task creation failed during init)
+    if (gADCInterruptHandle != NULL) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        vTaskNotifyGiveFromISR(gADCInterruptHandle, &xHigherPriorityTaskWoken);
+        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+    }
+    // If task creation failed, interrupt still clears but no notification sent
 }

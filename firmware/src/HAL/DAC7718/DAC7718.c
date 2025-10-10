@@ -7,6 +7,18 @@
 #include "DAC7718.h"
 #include "peripheral/gpio/plib_gpio.h"
 #include "peripheral/spi/spi_master/plib_spi2_master.h"
+#include "peripheral/coretimer/plib_coretimer.h"
+
+// Simple delay function using core timer (wrap-around safe)
+static void DAC7718_Delay_us(uint32_t microseconds) {
+    uint32_t startCount = CORETIMER_CounterGet();
+    uint32_t ticks = (microseconds * (CORETIMER_FrequencyGet() / 1000000U));
+
+    // Use modular arithmetic to handle 32-bit timer wrap-around correctly
+    while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticks) {
+        // Wait for elapsed ticks
+    }
+}
 
 //! Max number of configuration to DAC7718 module
 #define MAX_DAC7718_CONFIG 1
@@ -69,10 +81,10 @@ void DAC7718_Init(uint8_t id, uint8_t range)
     GPIO_PinOutputEnable(config->RST_Pin);
 
 	// Hardware reset sequence: RST low pulse, then high
-	GPIO_PinWrite(config->RST_Pin, false);  // Reset pulse
-	asm("nop"); asm("nop"); asm("nop"); asm("nop"); asm("nop");
-	asm("nop"); asm("nop"); asm("nop"); asm("nop"); asm("nop");
-	GPIO_PinWrite(config->RST_Pin, true);   // End reset
+	// DAC7718 datasheet requires minimum 100ns reset pulse
+	GPIO_PinWrite(config->RST_Pin, false);  // Assert reset
+	DAC7718_Delay_us(1);  // 1us delay (10x minimum spec, guaranteed safe)
+	GPIO_PinWrite(config->RST_Pin, true);   // De-assert reset
 	
 	// Configure DAC: GAIN-A=1, GAIN-B=1 for 4x gain (10V full scale)
 	DAC7718_ReadWriteReg(id, 0, 0, 0b100000011000);
@@ -112,16 +124,22 @@ uint32_t DAC7718_ReadWriteReg(                                              \
 	for(x=0; x<3; x++){
         // Wait for transmit buffer empty
         while ((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0);
-        
+
         // Send byte using original working method
 		SPI2BUF = (Com & 0x00FF0000) >> 16;
 		Com = Com << 8;
-		
+
 		// Wait for receive complete and clear buffer
 		while ((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0);
 		(void)SPI2BUF;
 	}
-    
+
+    // Wait for shift register to complete before deasserting CS
+    // This ensures the last byte is fully transmitted
+    while (SPI2STATbits.SPIBUSY == 1) {
+        // Busy-wait for completion
+    }
+
     // Deassert CS
 	GPIO_PinWrite(config->CS_Pin, true);
 
