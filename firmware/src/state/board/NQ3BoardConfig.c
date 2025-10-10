@@ -1,5 +1,6 @@
 #include "BoardConfig.h"
 #include "../../config/default/peripheral/gpio/plib_gpio.h"
+#include "../../config/default/peripheral/gpio/pin_definitions.h"
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
@@ -169,10 +170,10 @@ const tBoardConfig NQ3BoardConfig = {
         .Data =
         {
             // Minimal DIO config - only first 4 channels to test
-            { DIO_0_PORT, DIO_0_PIN & 15, DIO_EN_0_PORT, DIO_EN_0_PIN & 15, false, false, 0xFF},
-            { DIO_1_PORT, DIO_1_PIN & 15, DIO_EN_1_PORT, DIO_EN_1_PIN & 15, true, false, 0xFF},
-            { DIO_2_PORT, DIO_2_PIN & 15, DIO_EN_2_PORT, DIO_EN_2_PIN & 15, true, false, 0xFF},
-            { DIO_3_PORT, DIO_3_PIN & 15, DIO_EN_3_PORT, DIO_EN_3_PIN & 15, false, false, 0xFF},
+            { DIO_0_PORT, PORTS_BIT_POS_1, DIO_EN_0_PORT, PORTS_BIT_POS_2, false, false, 0xFF},
+            { DIO_1_PORT, PORTS_BIT_POS_3, DIO_EN_1_PORT, PORTS_BIT_POS_2, true, false, 0xFF},
+            { DIO_2_PORT, PORTS_BIT_POS_3, DIO_EN_2_PORT, PORTS_BIT_POS_13, true, false, 0xFF},
+            { DIO_3_PORT, PORTS_BIT_POS_12, DIO_EN_3_PORT, PORTS_BIT_POS_0, false, false, 0xFF},
         },
         .Size = 4,
     },
@@ -419,23 +420,23 @@ const tBoardConfig NQ3BoardConfig = {
     .PowerConfig =
     {
         .EN_Vref_Ch = PWR_VREF_EN_PORT,
-        .EN_Vref_Bit = PWR_VREF_EN_PIN & 15,
+        .EN_Vref_Bit = PORTS_BIT_POS_15,       // RJ15
         .EN_3_3V_Ch = PWR_3_3V_EN_PORT,
-        .EN_3_3V_Bit = PWR_3_3V_EN_PIN & 15,
-        .EN_5_10V_Ch = PWR_5V_EN_PORT, 
-        .EN_5_10V_Bit = PWR_5V_EN_PIN & 15,
+        .EN_3_3V_Bit = PORTS_BIT_POS_12,       // RH12
+        .EN_5_10V_Ch = PWR_5V_EN_PORT,
+        .EN_5_10V_Bit = PORTS_BIT_POS_0,       // RD0
         .EN_12V_Ch = PWR_12V_EN_PORT,
-        .EN_12V_Bit = PWR_12V_EN_PIN  & 15,
+        .EN_12V_Bit = PORTS_BIT_POS_15,        // RH15
         .USB_Dp_Ch = USB_DP_MON_PORT,
-        .USB_Dp_Bit = USB_DP_MON_PIN & 15,
+        .USB_Dp_Bit = PORTS_BIT_POS_9,         // RH9
         .USB_Dn_Ch = USB_DN_MON_PORT,
-        .USB_Dn_Bit = USB_DN_MON_PIN & 15,
+        .USB_Dn_Bit = PORTS_BIT_POS_10,        // RH10
         .BQ24297Config.INT_Ch = BATT_MAN_INT_PORT,
-        .BQ24297Config.INT_Bit = BATT_MAN_INT_PIN & 15,
+        .BQ24297Config.INT_Bit = PORTS_BIT_POS_4,   // RA4
         .BQ24297Config.OTG_Ch = BATT_MAN_OTG_PORT,
-        .BQ24297Config.OTG_Bit = BATT_MAN_OTG_PIN & 15,
+        .BQ24297Config.OTG_Bit = PORTS_BIT_POS_5,   // RK5
         .BQ24297Config.STAT_Ch = BATT_MAN_STAT_PORT,
-        .BQ24297Config.STAT_Bit = BATT_MAN_STAT_PIN & 15,
+        .BQ24297Config.STAT_Bit = PORTS_BIT_POS_11, // RH11
         .BQ24297Config.I2C_Index = DRV_I2C_INDEX_0,
         .BQ24297Config.I2C_Address = 0xD6>>1, // Microchip libraries use an 8 bit address with 0 appended to the end of the 7 bit I2C address
     },

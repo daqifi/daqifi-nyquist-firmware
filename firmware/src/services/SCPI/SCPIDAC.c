@@ -22,6 +22,9 @@
 // Flag to track if DAC hardware has been initialized
 static bool dacHardwareInitialized = false;
 
+// Static DAC instance ID (returned from DAC7718_NewConfig)
+static uint8_t dacInstanceId = 0xFF; // 0xFF = uninitialized
+
 // Static DAC configuration to avoid stack usage
 static tDAC7718Config dacConfig;
 
@@ -53,9 +56,15 @@ static bool DAC_EnsureHardwareInitialized(void) {
     dacConfig.CS_Pin = GPIO_PIN_RK0;     // CS on RK0
     dacConfig.RST_Pin = GPIO_PIN_RJ13;   // CLR/RST on RJ13
 
-    // Create DAC configuration and initialize hardware
-    uint8_t dacId = DAC7718_NewConfig(&dacConfig);
-    DAC7718_Init(dacId, 0);
+    // Create DAC configuration and get instance ID
+    dacInstanceId = DAC7718_NewConfig(&dacConfig);
+    if (dacInstanceId == 0xFF) {
+        LOG_E("DAC_EnsureHardwareInitialized: Failed to allocate DAC configuration");
+        return false;
+    }
+
+    // Initialize DAC hardware with the instance ID
+    DAC7718_Init(dacInstanceId, 0);
 
     dacHardwareInitialized = true;
     return true;
@@ -138,8 +147,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // Get hardware channel number from board configuration
         uint8_t hwChannel = pBoardConfigAOutChannels->Data[index].Config.DAC7718.ChannelNumber;
         uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
-        DAC7718_ReadWriteReg(0, 0, dacRegister, counts);
-        DAC7718_UpdateLatch(0);
+        DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts);
+        DAC7718_UpdateLatch(dacInstanceId);
 
         // Store commanded voltage in BoardData for readback
         AOutSample sample = {.Channel = (uint8_t)channel, .Voltage = voltage};
@@ -152,7 +161,7 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
             uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;
             uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
-            DAC7718_ReadWriteReg(0, 0, dacRegister, counts);
+            DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts);
 
             // Store commanded voltage in BoardData for readback
             uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
@@ -161,7 +170,7 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         }
 
         // Update all DAC latches
-        DAC7718_UpdateLatch(0);
+        DAC7718_UpdateLatch(dacInstanceId);
     }
 
     return SCPI_RES_OK;
@@ -300,6 +309,6 @@ scpi_result_t SCPI_DACUseCalGet(scpi_t * context) {
 
 scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // Update all DAC latches to reflect current values
-    DAC7718_UpdateLatch(0);
+    DAC7718_UpdateLatch(dacInstanceId);
     return SCPI_RES_OK;
 }

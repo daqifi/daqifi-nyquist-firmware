@@ -38,7 +38,7 @@ bool DIO_InitHardware(const tBoardConfig *pInitBoardConfiguration,
         const tBoardRuntimeConfig *pInitBoardRuntimeConfig) {
     bool enableInverted;
     GPIO_PORT enableChannel;
-    GPIO_PIN enablePin;
+    uint8_t enableBitPos;
     size_t channelsSize;
     uint8_t i = 0;
 
@@ -52,16 +52,16 @@ bool DIO_InitHardware(const tBoardConfig *pInitBoardConfiguration,
     for (i = 0; i < channelsSize; ++i) {
         enableInverted = gpBoardConfig->DIOChannels.Data[ i ].EnableInverted;
         enableChannel = gpBoardConfig->DIOChannels.Data[ i ]. EnableChannel;
-        enablePin = gpBoardConfig->DIOChannels.Data[ i ].EnablePin;
+        enableBitPos = gpBoardConfig->DIOChannels.Data[ i ].EnableBitPos;
 
-        // Disable all channels by default        
+        // Disable all channels by default
         if (enableInverted) {
-            WriteGpioPin(enableChannel, enablePin,1);
+            WriteGpioPin(enableChannel, enableBitPos,1);
         } else {
-            WriteGpioPin(enableChannel, enablePin,0);
+            WriteGpioPin(enableChannel, enableBitPos,0);
         }
 
-        SetGpioDir(enableChannel, enablePin,0);
+        SetGpioDir(enableChannel, enableBitPos,0);
     }
     return true;
 }
@@ -81,10 +81,10 @@ bool DIO_WriteStateAll(void) {
 bool DIO_WriteStateSingle(uint8_t dataIndex) {
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
     GPIO_PORT enableChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ]. EnableChannel;
-    GPIO_PIN enablePin = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnablePin;
+    uint8_t enableBitPos = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableBitPos;
 
     GPIO_PORT dataChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataChannel;
-    GPIO_PIN dataPin = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataPin;
+    uint8_t dataBitPos = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataBitPos;
 
     bool value = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].Value;
     bool isPwmRunning = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].IsPwmActive;
@@ -92,19 +92,19 @@ bool DIO_WriteStateSingle(uint8_t dataIndex) {
         return 1;
     }
     if (gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].IsInput) {
-        // Set driver disabled - this value will be the value of 
+        // Set driver disabled - this value will be the value of
         // EnableInverted config parameter
-        WriteGpioPin(enableChannel, enablePin, enableInverted);
+        WriteGpioPin(enableChannel, enableBitPos, enableInverted);
         // Set data pin direction as input
-        SetGpioDir(dataChannel, dataPin,1);
+        SetGpioDir(dataChannel, dataBitPos,1);
     } else {
-        // Set driver enabled - this value will be the inverse of 
+        // Set driver enabled - this value will be the inverse of
         // EnableInverted config parameter
-        WriteGpioPin(enableChannel, enablePin, !enableInverted);
+        WriteGpioPin(enableChannel, enableBitPos, !enableInverted);
         // Set driver value
-        WriteGpioPin(dataChannel, dataPin, value);
+        WriteGpioPin(dataChannel, dataBitPos, value);
         // Set data pin direction as output
-        SetGpioDir(dataChannel, dataPin,0);
+        SetGpioDir(dataChannel, dataBitPos,0);
     }
 
     return true;
@@ -119,10 +119,10 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
     size_t dataIndex = 0;
     for (dataIndex = 0; dataIndex < gpRuntimeBoardConfig->DIOChannels.Size; ++dataIndex) {
         GPIO_PORT dataChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataChannel;
-        GPIO_PIN dataPin = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataPin;
+        uint8_t dataBitPos = gpBoardConfig->DIOChannels.Data[ dataIndex ].DataBitPos;
         if (mask & (1 << dataIndex)) {
             uint8_t val;
-            if (GPIO_PortRead(dataChannel)& (1 << dataPin)) {
+            if (GPIO_PortRead(dataChannel) & (1 << dataBitPos)) {
                 val = 1;
             } else {
                 val = 0;
@@ -137,7 +137,7 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
 bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
     GPIO_PORT enableChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ]. EnableChannel;
-    GPIO_PIN enablePin = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnablePin;
+    uint8_t enableBitPos = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableBitPos;
 
     bool isPwmSupported = gpBoardConfig->DIOChannels.Data[ dataIndex ].IsPwmCapable;
     uint16_t pwmPPSPinNo = gpBoardConfig->DIOChannels.Data[ dataIndex ].PwmRemapPin;
@@ -149,10 +149,10 @@ bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
     }
     if (pwmState) {
         OcmpApi_Enable(pwmModId, pwmPPSPinNo);
-        WriteGpioPin(enableChannel, enablePin, !enableInverted);
+        WriteGpioPin(enableChannel, enableBitPos, !enableInverted);
     } else {
         OcmpApi_Disable(pwmModId, pwmPPSPinNo);
-        WriteGpioPin(enableChannel, enablePin, enableInverted);
+        WriteGpioPin(enableChannel, enableBitPos, enableInverted);
     }
     return true;
 }
