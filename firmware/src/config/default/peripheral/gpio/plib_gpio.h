@@ -521,16 +521,6 @@
 #define BATT_MAN_INT_InterruptEnable()   (CNENASET = (1U<<4))
 #define BATT_MAN_INT_InterruptDisable()  (CNENACLR = (1U<<4))
 
-/*** Macros for BATT_MAN_OTG pin ***/
-#define BATT_MAN_OTG_Set()               (LATFSET = (1U<<5))
-#define BATT_MAN_OTG_Clear()             (LATFCLR = (1U<<5))
-#define BATT_MAN_OTG_Toggle()            (LATFINV= (1U<<5))
-#define BATT_MAN_OTG_OutputEnable()      (TRISFCLR = (1U<<5))
-#define BATT_MAN_OTG_InputEnable()       (TRISFSET = (1U<<5))
-#define BATT_MAN_OTG_Get()               ((PORTF >> 5) & 0x1U)
-#define BATT_MAN_OTG_GetLatch()          ((LATF >> 5) & 0x1U)
-#define BATT_MAN_OTG_PIN                  GPIO_PIN_RF5
-
 /*** Macros for WDRV_WINC_SS pin ***/
 #define WDRV_WINC_SS_Set()               (LATKSET = (1U<<4))
 #define WDRV_WINC_SS_Clear()             (LATKCLR = (1U<<4))
@@ -541,15 +531,15 @@
 #define WDRV_WINC_SS_GetLatch()          ((LATK >> 4) & 0x1U)
 #define WDRV_WINC_SS_PIN                  GPIO_PIN_RK4
 
-/*** Macros for GPIO_RK5 pin ***/
-#define GPIO_RK5_Set()               (LATKSET = (1U<<5))
-#define GPIO_RK5_Clear()             (LATKCLR = (1U<<5))
-#define GPIO_RK5_Toggle()            (LATKINV= (1U<<5))
-#define GPIO_RK5_OutputEnable()      (TRISKCLR = (1U<<5))
-#define GPIO_RK5_InputEnable()       (TRISKSET = (1U<<5))
-#define GPIO_RK5_Get()               ((PORTK >> 5) & 0x1U)
-#define GPIO_RK5_GetLatch()          ((LATK >> 5) & 0x1U)
-#define GPIO_RK5_PIN                  GPIO_PIN_RK5
+/*** Macros for BATT_MAN_OTG pin ***/
+#define BATT_MAN_OTG_Set()               (LATKSET = (1U<<5))
+#define BATT_MAN_OTG_Clear()             (LATKCLR = (1U<<5))
+#define BATT_MAN_OTG_Toggle()            (LATKINV= (1U<<5))
+#define BATT_MAN_OTG_OutputEnable()      (TRISKCLR = (1U<<5))
+#define BATT_MAN_OTG_InputEnable()       (TRISKSET = (1U<<5))
+#define BATT_MAN_OTG_Get()               ((PORTK >> 5) & 0x1U)
+#define BATT_MAN_OTG_GetLatch()          ((LATK >> 5) & 0x1U)
+#define BATT_MAN_OTG_PIN                  GPIO_PIN_RK5
 
 /*** Macros for SDI4 pin ***/
 #define SDI4_Get()               ((PORTA >> 15) & 0x1U)

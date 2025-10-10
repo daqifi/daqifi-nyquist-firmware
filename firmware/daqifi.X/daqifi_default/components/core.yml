@@ -4686,7 +4686,7 @@ data:
       children:
       - children:
         - attributes:
-            value: BATT_MAN_OTG
+            value: ''
           type: User
         type: Values
       type: String
@@ -4696,7 +4696,7 @@ data:
       children:
       - children:
         - attributes:
-            value: GPIO
+            value: SCL5
           type: User
         type: Values
       type: String
@@ -4786,7 +4786,7 @@ data:
       children:
       - children:
         - attributes:
-            value: GPIO_RK5
+            value: BATT_MAN_OTG
           type: User
         type: Values
       type: String
