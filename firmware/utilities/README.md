@@ -5,22 +5,102 @@ This directory contains automated testing, validation, and maintenance tools for
 ## Requirements
 
 - Python 3.x
-- pyserial library: `pip install pyserial`
+- Required packages: `pip install pyserial colorama`
+
+---
+
+## test_suite.py (⭐ START HERE)
+
+**Unified test suite** that combines all testing utilities into one interface with interactive menu and CLI options.
+
+### Quick Start
+
+```bash
+# Interactive menu - easiest way to run tests
+python test_suite.py COM3
+
+# Run all automated tests
+python test_suite.py COM3 --all
+
+# Run specific test groups
+python test_suite.py COM3 --firmware
+python test_suite.py COM3 --usb-cdc
+python test_suite.py COM3 --wifi-update
+```
+
+### Test Groups
+
+1. **Firmware Validation** (`--firmware`)
+   - Comprehensive validation of all firmware features
+   - Auto-detects NQ1/NQ3 board variant
+   - Tests power, DAC, ADC, DIO, streaming, WiFi
+   - 8 automated tests
+
+2. **USB CDC Tests** (`--usb-cdc`)
+   - Tests circular buffer race condition fixes (PR #129)
+   - Validates duplicate prompt fix
+   - Rapid command stress testing
+   - 8 USB-specific tests
+
+3. **WiFi Firmware Update** (`--wifi-update`)
+   - Updates WINC1500 WiFi module to firmware 19.7.7
+   - Fully automated update process
+   - Requires winc_flash_tool.cmd
+
+### Usage Examples
+
+```bash
+# Interactive menu (recommended for first-time users)
+python test_suite.py COM3
+
+# Quick validation before release
+python test_suite.py COM3 --all
+
+# Detailed testing with reports
+python test_suite.py COM3 --all --save-reports
+
+# Run specific tests
+python test_suite.py COM3 --firmware --usb-cdc
+
+# Quiet mode (minimal output)
+python test_suite.py COM3 --all --quiet
+```
+
+### Interactive Menu
+
+When run without test selection flags, displays an interactive menu:
+
+```
+Available Test Suites:
+  1. Firmware Validation (comprehensive)
+  2. USB CDC Tests (circular buffer race conditions)
+  3. WiFi Firmware Update
+  4. Run All Tests
+  0. Exit
+```
 
 ---
 
 ## validate.py
+
+**Note:** This script can be run standalone, but **test_suite.py is recommended** for most users.
 
 Comprehensive automated test script for validating firmware functionality on NQ1 and NQ3 hardware.
 
 ### Usage
 
 ```bash
-# Quick test (no report files saved)
+# Quick test (shows SCPI commands by default)
 python validate.py COM3
+
+# Quiet mode (hide SCPI commands, only show test results)
+python validate.py COM3 --quiet
 
 # Full test with report files saved
 python validate.py COM3 --save-reports
+
+# Quiet mode with reports
+python validate.py COM3 --quiet --save-reports
 ```
 
 ### Features
@@ -29,6 +109,7 @@ python validate.py COM3 --save-reports
 - Tests power management, DAC, ADC (public/private), DIO, streaming
 - Displays real-time device information (HW/FW versions, channel counts)
 - Shows all ADC readings (public channels + internal monitoring/voltage rails)
+- **Shows SCPI commands by default** - See device communication in real-time (use `--quiet` to hide)
 - Optional report generation with SCPI logs and hex dumps
 
 ### Test Coverage
@@ -50,7 +131,27 @@ python validate.py COM3 --save-reports
 
 ---
 
+## test_circular_buffer_fix.py
+
+**Note:** This script can be run standalone, but **test_suite.py is recommended** for most users.
+
+Tests USB CDC circular buffer race condition fixes from PR #129. Validates the duplicate prompt bug fix and buffer handling.
+
+### Usage
+
+```bash
+# USB-only tests
+python test_circular_buffer_fix.py --port COM3
+
+# USB + WiFi tests (requires WiFi connection)
+python test_circular_buffer_fix.py --port COM3 --wifi-ip 192.168.1.1
+```
+
+---
+
 ## update_wifi_firmware.py
+
+**Note:** This script can be run standalone, but **test_suite.py is recommended** for most users.
 
 Automated WiFi module firmware updater for the WINC1500 chip (firmware version 19.7.7).
 

@@ -13,18 +13,20 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-# Force UTF-8 output for Windows console
+# Force UTF-8 output for Windows console (only if not already wrapped)
 if sys.platform == 'win32':
     import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+    if hasattr(sys.stdout, 'buffer'):
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 class DAQiFiTester:
-    def __init__(self, port='COM3', baudrate=115200, timeout=2, save_reports=False):
+    def __init__(self, port='COM3', baudrate=115200, timeout=2, save_reports=False, verbose=True):
         """Initialize serial connection and logging"""
         self.port = port
         self.baudrate = baudrate
         self.save_reports = save_reports
+        self.verbose = verbose
         self.scpi_log = []  # List of (timestamp, command, response) tuples
         self.test_results = []  # List of (test_name, passed, evidence) tuples
         self.device_info = {}
@@ -47,7 +49,7 @@ class DAQiFiTester:
         print(message)
         sys.stdout.flush()  # Force immediate output
 
-    def send_command(self, cmd, delay=0.3):
+    def send_command(self, cmd, delay=0.3, suppress_verbose=False):
         """Send SCPI command, log conversation, return response"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
@@ -60,7 +62,49 @@ class DAQiFiTester:
         # Log the conversation
         self.scpi_log.append((timestamp, cmd, response))
 
+        # Commands to suppress in verbose mode (we're already displaying their parsed output)
+        suppress_commands = [
+            'SYST:INFO?',           # Already parsed and displayed in DEVICE INFORMATION section
+            'MEAS:VOLT:DC?',        # Already displayed as "CH0: 2.7759V" format
+            'SYST:COMM:LAN:GETChipInfo?'  # Already displayed as "Chip Info: {...}"
+        ]
+        should_suppress = suppress_verbose or any(cmd.startswith(sc) for sc in suppress_commands)
+
+        # Print conversation if verbose mode (compact format)
+        if self.verbose and not should_suppress:
+            # Parse response - remove command echo and prompt
+            response_clean = self._clean_response_for_display(response, cmd)
+
+            # Show on one line if response is short, multi-line if long
+            if '\n' in response_clean or len(response_clean) > 80:
+                self.log(f"    {cmd} →")
+                for line in response_clean.split('\n'):
+                    if line.strip():
+                        self.log(f"      {line.strip()}")
+            else:
+                self.log(f"    {cmd} → {response_clean}")
+
         return response
+
+    def _clean_response_for_display(self, response, cmd):
+        """Remove command echo and prompt from response for cleaner display"""
+        # Detect binary data (protobuf streaming) - suppress if mostly non-printable
+        if len(response) > 50:
+            printable_count = sum(1 for c in response if 32 <= ord(c) < 127 or c in '\r\n\t')
+            if printable_count / len(response) < 0.7:  # Less than 70% printable = binary
+                return f"(binary data, {len(response)} bytes)"
+
+        lines = []
+        for line in response.split('\n'):
+            line = line.strip()
+            # Skip command echo
+            if line == cmd or line.startswith(cmd):
+                continue
+            # Skip prompt
+            if line == "DAQIFI>" or not line:
+                continue
+            lines.append(line)
+        return '\n'.join(lines) if lines else '(no response)'
 
     def capture_streaming_data(self, duration=5.0, max_bytes=50000):
         """Capture raw streaming data for specified duration"""
@@ -275,16 +319,25 @@ class DAQiFiTester:
 
         # Set each channel to voltage = channel number + 1
         self.log("  Configuring DAC channels (ch0=1V, ch1=2V, ..., ch7=8V)...")
+        old_verbose = self.verbose
+        self.verbose = False  # Suppress repetitive commands
         for ch in range(8):
             voltage = ch + 1.0
             self.send_command(f"SOUR:VOLT:LEV {ch},{voltage}", delay=0.2)
+        self.verbose = old_verbose
+        if self.verbose:
+            self.log(f"    SOUR:VOLT:LEV 0-7,<voltage> → (set 8 channels)")
 
         # Read back values
-        self.log("Reading back DAC values...")
+        self.log("  Reading back DAC values...")
+        self.verbose = False  # Suppress repetitive readback
         readback_values = []
         for ch in range(8):
             response = self.send_command(f"SOUR:VOLT:LEV? {ch}", delay=0.2)
             readback_values.append((ch, response))
+        self.verbose = old_verbose
+        if self.verbose:
+            self.log(f"    SOUR:VOLT:LEV? 0-7 → (read 8 channels)")
 
         # Apply DAC update
         self.send_command("CONFigure:DAC:UPDATE", delay=0.3)
@@ -322,9 +375,14 @@ class DAQiFiTester:
             self.log("  Unknown variant - cannot configure ADC")
             return False
 
-        # Enable ADC channels
+        # Enable ADC channels (suppress verbose for repetitive commands)
+        old_verbose = self.verbose
+        self.verbose = False  # Temporarily disable verbose for channel loop
         for ch in range(max_channel + 1):
             self.send_command(f"CONF:ADC:CHAN {ch},1", delay=0.2)
+        self.verbose = old_verbose
+        if self.verbose:
+            self.log(f"    CONF:ADC:CHAN 0-{max_channel},1 → (enabled {max_channel + 1} channels)")
 
         # Query channel configuration
         chan_config = self.send_command("CONF:ADC:CHAN?", delay=0.5)
@@ -367,7 +425,11 @@ class DAQiFiTester:
         # Read all public channels
         self.log("\nPublic ADC Channels:")
         num_channels = self.user_adc_channels
-        ch0_voltage = None
+        successful_readings = 0
+
+        # Suppress verbose for ADC readings (we display parsed values anyway)
+        old_verbose = self.verbose
+        self.verbose = False
 
         if num_channels > 0:
             for ch in range(num_channels):
@@ -375,12 +437,13 @@ class DAQiFiTester:
                 voltage = self._parse_voltage(reading)
                 if voltage is not None:
                     self.log(f"  CH{ch}: {voltage:.4f}V")
-                    if ch == 0:
-                        ch0_voltage = voltage
+                    successful_readings += 1
                 else:
                     self.log(f"  CH{ch}: {reading.strip()}")
         else:
             self.log("  No user ADC channels available")
+
+        self.verbose = old_verbose
 
         # Read private/internal monitoring channels
         self.log("\nPrivate/Internal Monitoring Channels (Voltage Rails):")
@@ -417,19 +480,18 @@ class DAQiFiTester:
 
         self.log("=" * 60 + "\n")
 
-        # Validate ch0 reading is reasonable
-        voltage_reasonable = ch0_voltage is not None and 0.0 <= ch0_voltage <= 10.0
-        passed = voltage_reasonable
+        # Validate that we got readings for all expected channels
+        passed = successful_readings == num_channels and num_channels > 0
 
         evidence = {
             'scpi_conversation': self.format_scpi_conversation(start_log_idx),
-            'ch0_voltage': ch0_voltage,
+            'successful_readings': f"{successful_readings}/{num_channels}",
             'voltage_rails': voltage_rails,
-            'verification': f"CH0 voltage: {ch0_voltage}V (range check: 0-10V)"
+            'verification': f"Successfully read {successful_readings}/{num_channels} ADC channels"
         }
 
         self.test_results.append(("ADC Value Reading", passed, evidence))
-        self.log(f"{'✓ PASS' if passed else '✗ FAIL'}: ADC readings (ch0={ch0_voltage}V)")
+        self.log(f"{'✓ PASS' if passed else '✗ FAIL'}: ADC readings ({successful_readings}/{num_channels} channels)")
 
         return passed
 
@@ -791,7 +853,8 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  python validate.py COM3                    # Quick test, no files saved
+  python validate.py COM3                    # Show SCPI commands (default)
+  python validate.py COM3 --quiet            # Hide SCPI commands
   python validate.py COM3 --save-reports     # Full test with report files
   python validate.py /dev/ttyACM0 --save-reports
         '''
@@ -800,10 +863,12 @@ Examples:
                         help='Serial port (default: COM3)')
     parser.add_argument('--save-reports', action='store_true',
                         help='Save test reports, SCPI logs, and streaming data to test_results/')
+    parser.add_argument('--quiet', '-q', action='store_true',
+                        help='Hide SCPI commands and device responses (only show test results)')
 
     args = parser.parse_args()
 
-    tester = DAQiFiTester(port=args.port, save_reports=args.save_reports)
+    tester = DAQiFiTester(port=args.port, save_reports=args.save_reports, verbose=not args.quiet)
     try:
         success = tester.run_all_tests()
         sys.exit(0 if success else 1)

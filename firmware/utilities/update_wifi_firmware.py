@@ -18,11 +18,12 @@ import subprocess
 import argparse
 from pathlib import Path
 
-# Force UTF-8 output for Windows console
+# Force UTF-8 output for Windows console (only if not already wrapped)
 if sys.platform == 'win32':
     import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+    if hasattr(sys.stdout, 'buffer'):
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 class WiFiFirmwareUpdater:
     def __init__(self, port, firmware_version='19.7.7', tool_path=None):
