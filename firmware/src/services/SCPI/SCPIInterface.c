@@ -636,9 +636,12 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             bool found3_3 = false, found5 = false, found10 = false, foundSys = false;
             bool foundBatt = false, found2_5Ref = false, found5Ref = false;
 
-            // Iterate through runtime config to find internal monitoring channels
-            for (int i = 0; i < pAInRuntimeConfig->Size; i++) {
-                // Get the sample for this runtime config index
+            // Get the actual count of available samples (not runtime config size)
+            size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
+            size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
+
+            // Iterate through available samples and use channel ID for identification
+            for (size_t i = 0; i < sampleCount; i++) {
                 AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
                 if (!sample || !ADC_IsDataValid(sample)) continue;
 
