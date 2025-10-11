@@ -8,6 +8,7 @@
 #include "peripheral/gpio/plib_gpio.h"
 #include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "peripheral/coretimer/plib_coretimer.h"
+#include "Util/Logger.h"
 
 // Simple delay function using core timer (wrap-around safe)
 static void DAC7718_Delay_us(uint32_t microseconds) {
@@ -22,6 +23,9 @@ static void DAC7718_Delay_us(uint32_t microseconds) {
 
 //! Max number of configuration to DAC7718 module
 #define MAX_DAC7718_CONFIG 1
+
+//! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
+#define DAC7718_SPI_TIMEOUT 100000
 
 //! Buffer with DAC7718 configurations
 static tDAC7718Config m_DAC7718Config[MAX_DAC7718_CONFIG];
@@ -120,24 +124,44 @@ uint32_t DAC7718_ReadWriteReg(                                              \
 	Com = Com | (Data & 0b111111111111);
 	Com = Com << 4;
 	
-	// Transmit 24-bit command (MSB first)
+	// Transmit 24-bit command (MSB first) with timeout protection
 	for(x=0; x<3; x++){
+        uint32_t timeout;
+
         // Wait for transmit buffer empty
-        while ((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0);
+        timeout = DAC7718_SPI_TIMEOUT;
+        while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0) && (--timeout > 0));
+        if (timeout == 0) {
+            LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %d", x);
+            GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+            return 0;
+        }
 
         // Send byte using original working method
 		SPI2BUF = (Com & 0x00FF0000) >> 16;
 		Com = Com << 8;
 
 		// Wait for receive complete and clear buffer
-		while ((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0);
+        timeout = DAC7718_SPI_TIMEOUT;
+		while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0) && (--timeout > 0));
+        if (timeout == 0) {
+            LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %d", x);
+            GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+            return 0;
+        }
 		(void)SPI2BUF;
 	}
 
     // Wait for shift register to complete before deasserting CS
     // This ensures the last byte is fully transmitted
-    while (SPI2STATbits.SPIBUSY == 1) {
+    uint32_t timeout = DAC7718_SPI_TIMEOUT;
+    while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0)) {
         // Busy-wait for completion
+    }
+    if (timeout == 0) {
+        LOG_E("DAC7718_ReadWriteReg: SPI busy timeout");
+        GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+        return 0;
     }
 
     // Deassert CS
@@ -156,18 +180,35 @@ uint32_t DAC7718_ReadWriteReg(                                              \
         // Assert CS
 		GPIO_PinWrite(config->CS_Pin, false);
         
-        // Send NOP and receive data using direct register access
+        // Send NOP and receive data using direct register access with timeout protection
         for (int i = 0; i < 3; i++) {
+            uint32_t timeout;
+
             // Wait for transmit buffer to be ready
-            while ((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0);
+            timeout = DAC7718_SPI_TIMEOUT;
+            while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0) && (--timeout > 0));
+            if (timeout == 0) {
+                LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %d", i);
+                GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+                return 0;
+            }
+
             // Send byte
             SPI2BUF = spi_txData[i];
+
             // Wait for receive buffer to have data
-            while ((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0);
+            timeout = DAC7718_SPI_TIMEOUT;
+            while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0) && (--timeout > 0));
+            if (timeout == 0) {
+                LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %d", i);
+                GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+                return 0;
+            }
+
             // Read response byte
             spi_rxData[i] = SPI2BUF;
         }
-        
+
         // Deassert CS
 		GPIO_PinWrite(config->CS_Pin, true);
         
