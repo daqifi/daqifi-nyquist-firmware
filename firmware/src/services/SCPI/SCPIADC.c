@@ -382,9 +382,24 @@ scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // AD7609 is module index 1 in NQ3 board
+    // Get runtime modules configuration
     AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
     uint8_t moduleIndex = AIn_AD7609;  // Use module type as index
+
+    // Validate runtime configuration and module index
+    if (pRuntimeModules == NULL || moduleIndex >= pRuntimeModules->Size) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Prevent changing range while streaming is active
+    // Changing range during streaming can corrupt ADC data
+    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pStreamCfg && pStreamCfg->Running) {
+        LOG_E("SCPI_ADCChanRangeSet: Rejecting range change during active streaming");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Convert parameter to voltage range and store
     double rangeVoltage = (rangeParam == 1) ? 10.0 : 5.0;

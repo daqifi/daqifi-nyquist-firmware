@@ -1590,7 +1590,12 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
     static char modelString[8];
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    snprintf(modelString, sizeof(modelString), "Nq%d", pBoardConfig->BoardVariant);
+    if (pBoardConfig) {
+        snprintf(modelString, sizeof(modelString), "Nq%d", pBoardConfig->BoardVariant);
+    } else {
+        strncpy(modelString, "Nq?", sizeof(modelString));
+        modelString[sizeof(modelString) - 1] = '\0';  // Ensure null termination
+    }
 
     // Create a context
     scpi_t daqifiScpiContext;

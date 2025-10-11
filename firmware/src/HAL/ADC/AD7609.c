@@ -41,6 +41,9 @@ static void AD7609_Delay_ms(uint32_t milliseconds) {
 
 #define UNUSED(x) (void)(x)
 
+//! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
+#define AD7609_SPI_TIMEOUT 100000
+
 //! Pointer to the module configuration data structure to be set in initialization
 static const AD7609ModuleConfig* pModuleConfigAD7609;
 //! Pointer to the module configuration data structure in runtime
@@ -229,14 +232,23 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         return false;
     }
 
-    // Poll for completion (blocking wait)
+    // Poll for completion with timeout protection
     DRV_SPI_TRANSFER_EVENT event;
+    uint32_t timeout = AD7609_SPI_TIMEOUT;
     do {
         event = DRV_SPI_TransferStatusGet(transferHandle);
-    } while (event == DRV_SPI_TRANSFER_EVENT_PENDING);
+        if (event != DRV_SPI_TRANSFER_EVENT_PENDING) {
+            break;  // Transfer complete or failed
+        }
+    } while (--timeout > 0);
 
     // Deassert CS (inactive high)
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
+
+    if (timeout == 0) {
+        LOG_E("AD7609_ReadSamples: SPI transfer timeout");
+        return false;
+    }
 
     if (event != DRV_SPI_TRANSFER_EVENT_COMPLETE) {
         LOG_E("AD7609_ReadSamples: SPI transfer failed with event %d", event);
