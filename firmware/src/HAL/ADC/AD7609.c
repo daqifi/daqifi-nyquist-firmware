@@ -312,26 +312,30 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
 bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
 {
     UNUSED(moduleConfig);
-    
+
     if (pModuleConfigAD7609 == NULL) {
         LOG_E("AD7609_TriggerConversion: pModuleConfigAD7609 is NULL");
         return false;
     }
-    
+
     // Check if the AD7609 is busy
     bool busy = GPIO_PinRead(pModuleConfigAD7609->BSY_Pin);
     if (busy) {
         return false; // Skip conversion if still busy
     }
-    
+
+    // Generate deterministic CONVST pulse using core timer
+    // AD7609 requires minimum 25ns pulse, use 200ns for safety margin
+    const uint32_t coreTimerFreq = CORETIMER_FrequencyGet();
+    const uint32_t ticksForPulse = (coreTimerFreq + 4999999U) / 5000000U; // 200ns = 1/(5MHz)
+
+    uint32_t startCount = CORETIMER_CounterGet();
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);
-    
-    // PIC32MZ2048 nop is ~56ns at full 200MHz.  AD7609 requires 25ns pulse, so 10x should be goodish
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
-    asm("nop");
+
+    // Wait for pulse duration using wrap-safe arithmetic
+    while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticksForPulse) {
+        // Busy-wait for 200ns pulse width
+    }
 
     GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);
     return true;
