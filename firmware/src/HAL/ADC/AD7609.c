@@ -73,7 +73,8 @@ volatile void* AD7609_GetTaskHandle(void) {
 // AD7609 BSY pin interrupt callback (called from GPIO ISR)
 void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context)
 {
-    if (pin != GPIO_PIN_RB3 || gAD7609_TaskHandle == NULL) {
+    // Use configured BSY pin for robust multi-board support
+    if (pModuleConfigAD7609 == NULL || pin != pModuleConfigAD7609->BSY_Pin || gAD7609_TaskHandle == NULL) {
         return;
     }
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -173,8 +174,8 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
     // Register BSY pin interrupt callback (falling edge on conversion complete)
     // Note: Task creation is handled in config/default/tasks.c
     // AD7609 BSY goes LOW (falling edge) when conversion is complete
-    GPIO_PinInterruptCallbackRegister(GPIO_PIN_RB3, AD7609_BSY_InterruptCallback, 0);
-    GPIO_PinIntEnable(GPIO_PIN_RB3, GPIO_INTERRUPT_ON_FALLING_EDGE);
+    GPIO_PinInterruptCallbackRegister(pModuleConfigAD7609->BSY_Pin, AD7609_BSY_InterruptCallback, 0);
+    GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
 
     return true;
 }
