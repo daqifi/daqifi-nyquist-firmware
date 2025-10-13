@@ -67,14 +67,15 @@ volatile void* AD7609_GetTaskHandle(void) {
 }
 
 // AD7609 BSY pin interrupt callback (called from GPIO ISR)
-void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context) {
-    // Verify this is the BSY pin (RB3)
-    if (pin == GPIO_PIN_RB3 && gAD7609_TaskHandle != NULL) {
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        // Notify deferred task that conversion is complete
-        vTaskNotifyGiveFromISR(gAD7609_TaskHandle, &xHigherPriorityTaskWoken);
-        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context)
+{
+    if (pin != GPIO_PIN_RB3 || gAD7609_TaskHandle == NULL) {
+        return;
     }
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // Minimal ISR: signal task and exit; any timing/logging should be done in task context
+    vTaskNotifyGiveFromISR(gAD7609_TaskHandle, &xHigherPriorityTaskWoken);
+    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
 
 // AD7609 deferred interrupt task (handles SPI read after BSY interrupt)
