@@ -26,6 +26,7 @@
 #include "Util/Logger.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "semphr.h"
 
 // Simple delay function using core timer (wrap-around safe, overflow-safe)
 static void AD7609_Delay_ms(uint32_t milliseconds) {
@@ -56,6 +57,9 @@ static DRV_HANDLE spi_handle = DRV_HANDLE_INVALID;
 // AD7609 BSY interrupt handling
 // Volatile ensures ISR sees updates from task context without caching
 static volatile TaskHandle_t gAD7609_TaskHandle = NULL;
+
+// SPI mutex to serialize access to shared SPI bus and DMA buffers
+static SemaphoreHandle_t gAD7609_SpiMutex = NULL;
 
 // DMA-coherent SPI buffers (must be global for cache coherency)
 static __attribute__((coherent)) uint8_t gAD7609_txBuffer[18];
@@ -119,6 +123,15 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
     // Initialize AD7609 hardware after power-up
 
     pModuleConfigAD7609 = pBoardConfigInit;
+
+    // Create SPI mutex for serializing shared SPI bus access
+    if (gAD7609_SpiMutex == NULL) {
+        gAD7609_SpiMutex = xSemaphoreCreateMutex();
+        if (gAD7609_SpiMutex == NULL) {
+            LOG_E("AD7609_InitHardware: Failed to create SPI mutex");
+            return false;
+        }
+    }
 
     // Open DRV_SPI driver for SPI6 (DRV_SPI_INDEX_1 maps to SPI6)
     spi_handle = DRV_SPI_Open(DRV_SPI_INDEX_1, DRV_IO_INTENT_READWRITE);
@@ -218,6 +231,13 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         return false; // Chip not ready
     }
 
+    // Acquire SPI lock before using shared SPI and buffers
+    if (xSemaphoreTake(gAD7609_SpiMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        LOG_E("AD7609_ReadSamples: Failed to acquire SPI mutex");
+        return false;
+    }
+    bool success = false;
+
     // Clear DMA buffers (global, coherent for DMA access)
     memset(gAD7609_txBuffer, 0, sizeof(gAD7609_txBuffer));
     memset(gAD7609_rxBuffer, 0, sizeof(gAD7609_rxBuffer));
@@ -226,13 +246,12 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
 
     // Use DRV_SPI async API (driver is in async mode for WiFi compatibility)
-    DRV_SPI_TRANSFER_HANDLE transferHandle;
+    DRV_SPI_TRANSFER_HANDLE transferHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
     DRV_SPI_WriteReadTransferAdd(spi_handle, gAD7609_txBuffer, 18, gAD7609_rxBuffer, 18, &transferHandle);
 
     if (transferHandle == DRV_SPI_TRANSFER_HANDLE_INVALID) {
         LOG_E("AD7609_ReadSamples: Failed to queue SPI transfer");
-        GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);  // Deassert CS
-        return false;
+        goto read_cleanup;
     }
 
     // Poll for completion with timeout protection
@@ -241,9 +260,14 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     do {
         event = DRV_SPI_TransferStatusGet(transferHandle);
         if (event != DRV_SPI_TRANSFER_EVENT_PENDING) {
-            break;  // Transfer complete or failed
+            break;
         }
     } while (--timeout > 0);
+
+    if (timeout == 0 || event != DRV_SPI_TRANSFER_EVENT_COMPLETE) {
+        LOG_E("AD7609_ReadSamples: SPI transfer %s", (timeout == 0) ? "timeout" : "failed");
+        goto read_cleanup;
+    }
 
     // Ensure DMA completion and cache coherency before accessing buffers
     // Small delay allows final DMA byte to settle and caches to sync
@@ -251,16 +275,15 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     __asm__ __volatile__("nop"); __asm__ __volatile__("nop");
     __asm__ __volatile__("nop"); __asm__ __volatile__("nop");
 
-    // Deassert CS (inactive high)
+    success = true;
+    // Fall through to cleanup
+
+read_cleanup:
+    // Deassert CS (inactive high) on all paths
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
+    xSemaphoreGive(gAD7609_SpiMutex);
 
-    if (timeout == 0) {
-        LOG_E("AD7609_ReadSamples: SPI transfer timeout");
-        return false;
-    }
-
-    if (event != DRV_SPI_TRANSFER_EVENT_COMPLETE) {
-        LOG_E("AD7609_ReadSamples: SPI transfer failed with event %d", event);
+    if (!success) {
         return false;
     }
 
