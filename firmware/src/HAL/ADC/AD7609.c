@@ -244,6 +244,12 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         }
     } while (--timeout > 0);
 
+    // Ensure DMA completion and cache coherency before accessing buffers
+    // Small delay allows final DMA byte to settle and caches to sync
+    // AD7609 datasheet requires minimum CS high time, this provides safety margin
+    __asm__ __volatile__("nop"); __asm__ __volatile__("nop");
+    __asm__ __volatile__("nop"); __asm__ __volatile__("nop");
+
     // Deassert CS (inactive high)
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
 

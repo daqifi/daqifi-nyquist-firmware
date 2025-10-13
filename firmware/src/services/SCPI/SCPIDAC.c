@@ -51,6 +51,13 @@ static bool DAC_EnsureHardwareInitialized(void) {
     if (pBoardConfig == NULL || pBoardConfig->AOutModules.Size == 0) {
         return false;
     }
+
+    // DAC7718 is only available on NQ3 variant
+    if (pBoardConfig->BoardVariant != 3) {
+        LOG_E("DAC_EnsureHardwareInitialized: DAC7718 only available on NQ3 (current: NQ%d)",
+              pBoardConfig->BoardVariant);
+        return false;
+    }
     
     // Initialize DAC7718 hardware configuration
     dacConfig.CS_Pin = GPIO_PIN_RK0;     // CS on RK0

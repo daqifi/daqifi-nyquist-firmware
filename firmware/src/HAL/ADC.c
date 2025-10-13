@@ -69,9 +69,12 @@ void ADC_HandleAD7609Interrupt(void) {
 
     samples.Size = 8;
 
+    // Ensure timestamp pointer is valid; use 0 as safe fallback
+    uint32_t timestamp = (valueTMR != NULL) ? *valueTMR : 0;
+
     // Read all AD7609 channels (polls BSY internally for safety)
     if (AD7609_ReadSamples(&samples, &gpBoardConfig->AInChannels,
-                          &gpBoardRuntimeConfig->AInChannels, *valueTMR)) {
+                          &gpBoardRuntimeConfig->AInChannels, timestamp)) {
 
         // Store each sample to BoardData at its array index
         for (size_t s = 0; s < samples.Size; s++) {
@@ -103,6 +106,9 @@ void MC12bADC_EosInterruptTask(void) {
         uint32_t adcval;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
 
+        // Ensure timestamp pointer is valid; use 0 as safe fallback
+        uint32_t timestamp = (valueTMR != NULL) ? *valueTMR : 0;
+
         // Read only the private internal ADC channels (MC12bADC)
         // Note: AD7609 now uses interrupt-based reading via its own deferred task
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
@@ -112,7 +118,7 @@ void MC12bADC_EosInterruptTask(void) {
                 if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
                     continue;
                 }
-                sample.Timestamp = *valueTMR;
+                sample.Timestamp = timestamp;
                 sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
                 sample.Value = adcval;
                 BoardData_Set(
