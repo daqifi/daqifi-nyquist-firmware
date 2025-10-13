@@ -209,6 +209,18 @@ uint32_t DAC7718_ReadWriteReg(                                              \
             spi_rxData[i] = SPI2BUF;
         }
 
+        // Wait for shift register to complete before deasserting CS
+        // This ensures the last byte is fully received
+        timeout = DAC7718_SPI_TIMEOUT;
+        while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0)) {
+            // Busy-wait for completion
+        }
+        if (timeout == 0) {
+            LOG_E("DAC7718_ReadWriteReg: NOP SPI busy timeout");
+            GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+            return 0;
+        }
+
         // Deassert CS
 		GPIO_PinWrite(config->CS_Pin, true);
         

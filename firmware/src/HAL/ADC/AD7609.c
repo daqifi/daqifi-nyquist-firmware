@@ -53,14 +53,15 @@ static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609 __attribute__((unused)
 static DRV_HANDLE spi_handle = DRV_HANDLE_INVALID;
 
 // AD7609 BSY interrupt handling
-static TaskHandle_t gAD7609_TaskHandle = NULL;
+// Volatile ensures ISR sees updates from task context without caching
+static volatile TaskHandle_t gAD7609_TaskHandle = NULL;
 
 // DMA-coherent SPI buffers (must be global for cache coherency)
 static __attribute__((coherent)) uint8_t gAD7609_txBuffer[18];
 static __attribute__((coherent)) uint8_t gAD7609_rxBuffer[18];
 
 // Accessor function for task handle (used by tasks.c)
-void* AD7609_GetTaskHandle(void) {
+volatile void* AD7609_GetTaskHandle(void) {
     return &gAD7609_TaskHandle;
 }
 

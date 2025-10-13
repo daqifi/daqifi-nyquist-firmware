@@ -205,14 +205,14 @@ void SYS_Tasks ( void )
     }
 
     /* Create AD7609 deferred interrupt task for BSY pin handling */
-    TaskHandle_t* pAD7609TaskHandle = (TaskHandle_t*)AD7609_GetTaskHandle();
+    volatile TaskHandle_t* pAD7609TaskHandle = (volatile TaskHandle_t*)AD7609_GetTaskHandle();
     BaseType_t ad7609Result = xTaskCreate(
         (TaskFunction_t) AD7609_DeferredInterruptTask,
         "AD7609 BSY",
         512,
         NULL,
         8,  // Priority 8 (max-1) for real-time response
-        pAD7609TaskHandle
+        (TaskHandle_t*)pAD7609TaskHandle  // Cast away volatile for API compatibility
     );
 
     if (ad7609Result != pdPASS) {

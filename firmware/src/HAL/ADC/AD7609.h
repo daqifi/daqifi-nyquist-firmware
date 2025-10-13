@@ -91,9 +91,9 @@ void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context);
 
 /*!
  * Returns the task handle for the AD7609 deferred interrupt task
- * @return Task handle pointer
+ * @return Task handle pointer (volatile to ensure ISR/task synchronization)
  */
-void* AD7609_GetTaskHandle(void);
+volatile void* AD7609_GetTaskHandle(void);
 
 #ifdef	__cplusplus
 }

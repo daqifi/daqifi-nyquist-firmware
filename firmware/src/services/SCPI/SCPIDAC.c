@@ -110,10 +110,10 @@ static uint32_t DAC_VoltageToCounts(double voltage, const AOutModule* module) {
     if (voltage < minVoltage) voltage = minVoltage;
     if (voltage > maxVoltage) voltage = maxVoltage;
 
-    // Convert using hardware full-scale voltage from config
-    // This ensures correct output: 4V command -> 1638 counts -> 4V output
-    double normalizedVoltage = (voltage - minVoltage) / hardwareFullScale;
-    double rawCounts = normalizedVoltage * (double)(resolution - 1);
+    // Map voltage directly to DAC counts using hardware full scale
+    // DAC outputs absolute voltage, not relative to minVoltage
+    // Example: 4V command with 10V full scale -> 1638 counts -> 4V output
+    double rawCounts = (voltage / hardwareFullScale) * (double)(resolution - 1);
 
     // Clamp to valid DAC range [0, resolution-1] to prevent overflow
     // This guards against edge cases and ensures compatibility with different DAC resolutions
