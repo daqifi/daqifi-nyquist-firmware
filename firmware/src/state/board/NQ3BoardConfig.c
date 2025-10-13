@@ -1,6 +1,7 @@
 #include "BoardConfig.h"
 #include "../../config/default/peripheral/gpio/plib_gpio.h"
 #include "../../config/default/peripheral/gpio/pin_definitions.h"
+#include "../../HAL/TimerApi/TimerApi.h"
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
@@ -489,8 +490,8 @@ const tBoardConfig NQ3BoardConfig = {
     },
     .StreamingConfig =
     {
-        .TimerIndex = 4,
-        .TSTimerIndex = 6,
+        .TimerIndex = TMR_INDEX_4,
+        .TSTimerIndex = TMR_INDEX_6,
     }
 };
 

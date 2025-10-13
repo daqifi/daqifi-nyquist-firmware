@@ -1,6 +1,7 @@
 #include "BoardConfig.h"
 #include "../../config/default/peripheral/gpio/plib_gpio.h"
 #include "../../config/default/peripheral/gpio/pin_definitions.h"
+#include "../../HAL/TimerApi/TimerApi.h"
 
 
 // The board configuration
@@ -415,8 +416,8 @@ const tBoardConfig NQ1BoardConfig = {
     },
     .StreamingConfig =
     {
-        .TimerIndex = 4,
-        .TSTimerIndex = 6,
+        .TimerIndex = TMR_INDEX_4,
+        .TSTimerIndex = TMR_INDEX_6,
     }
 };
 
