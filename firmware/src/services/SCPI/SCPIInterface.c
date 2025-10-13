@@ -329,7 +329,9 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
 
     // Check for NULL pointers to prevent crashes
     if (!pBoardData || !pBoardConfig) {
-        context->interface->write(context, "ERROR: BoardData not available\r\n", 32);
+        const char* err = !pBoardData ? "ERROR: BoardData not available\r\n"
+                                      : "ERROR: BoardConfig not available\r\n";
+        context->interface->write(context, err, strlen(err));
         return SCPI_RES_ERR;
     }
 
