@@ -50,15 +50,11 @@ void DAC7718_Init(uint8_t id, uint8_t range);
 * Reads/Writes to a register in the DAC7718.
 * @param id Driver instance ID
 * @param RW Read/Write Bit (W=0, R=1)
-* @param reg Register to read/write to DAC7718
-* @param data to write to DAC7718
-* @return
+* @param Reg Register to read/write to DAC7718
+* @param Data Data to write to DAC7718 (12-bit value)
+* @return Read data on success, UINT32_MAX on error
 */
-uint32_t DAC7718_ReadWriteReg(                                              \
-                        uint8_t id,                                         \
-                        uint8_t RW,                                         \
-                        uint8_t Reg,                                        \
-                        uint32_t Data); 
+uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data); 
 
 /*!
 * Updates latches with values written to the DAC7718.

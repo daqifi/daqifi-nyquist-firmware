@@ -98,140 +98,114 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 	DAC7718_UpdateLatch(id);
 }
 
-uint32_t DAC7718_ReadWriteReg(                                              \
-                        uint8_t id,                                         \
-                        uint8_t RW,                                         \
-                        uint8_t Reg,                                        \
-                        uint32_t Data)
+uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
 {
-	uint32_t Com=0;
-	uint8_t x = 0;
+    uint32_t Com;
+    uint32_t rdData = 0;
+    uint8_t x;
 
-	if(RW>1) return(0);		// Return 0 if improper R/W mode selected
-	if(Reg>31) return(0);		// Return 0 if improper channel selected
-	// Remove 4095 limit for configuration registers (they can be > 4095)
-	// if(Data>4095) return(0);
-
-    tDAC7718Config* config = DAC7718_GetConfig(id);
-    
-    // Assert CS (active low)
-    GPIO_PinWrite(config->CS_Pin, false);
-
-	// Build 24 bit command using original working logic
-	Com = (RW & 0b1);
-	Com = Com << 7;
-	Com = Com | (Reg & 0b11111);
-	Com = Com << 12;
-	Com = Com | (Data & 0b111111111111);
-	Com = Com << 4;
-	
-	// Transmit 24-bit command (MSB first) with timeout protection
-	for(x=0; x<3; x++){
-        uint32_t timeout;
-
-        // Wait for transmit buffer empty
-        timeout = DAC7718_SPI_TIMEOUT;
-        while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0) && (--timeout > 0));
-        if (timeout == 0) {
-            LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %d", x);
-            GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-            return UINT32_MAX;
-        }
-
-        // Send byte using original working method
-		SPI2BUF = (Com & 0x00FF0000) >> 16;
-		Com = Com << 8;
-
-		// Wait for receive complete and clear buffer
-        timeout = DAC7718_SPI_TIMEOUT;
-		while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0) && (--timeout > 0));
-        if (timeout == 0) {
-            LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %d", x);
-            GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-            return UINT32_MAX;
-        }
-		(void)SPI2BUF;
-	}
-
-    // Wait for shift register to complete before deasserting CS
-    // This ensures the last byte is fully transmitted
-    uint32_t timeout = DAC7718_SPI_TIMEOUT;
-    while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0)) {
-        // Busy-wait for completion
+    // Validate inputs
+    if (RW > 1U) {
+        return UINT32_MAX;
     }
-    if (timeout == 0) {
-        LOG_E("DAC7718_ReadWriteReg: SPI busy timeout");
-        GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+    if (Reg > 31U) {
         return UINT32_MAX;
     }
 
-    // Deassert CS
-	GPIO_PinWrite(config->CS_Pin, true);
+    tDAC7718Config* config = DAC7718_GetConfig(id);
+    if (config == NULL) {
+        LOG_E("DAC7718_ReadWriteReg: invalid config id=%u", id);
+        return UINT32_MAX;
+    }
 
-	// Read data if user has signaled to do so with RW bit (MSB first)
-	if (RW==1){
-        // Send NOP command to get data out without changing any settings
-		Com=0b000000001000000110100000;
-        
-        // Prepare NOP command bytes using static buffers
-        spi_txData[0] = (Com >> 16) & 0xFF;
-        spi_txData[1] = (Com >> 8) & 0xFF;
-        spi_txData[2] = Com & 0xFF;
-        
-        // Assert CS
-		GPIO_PinWrite(config->CS_Pin, false);
-        
-        // Send NOP and receive data using direct register access with timeout protection
-        for (int i = 0; i < 3; i++) {
-            uint32_t timeout;
+    // Assert CS (active low)
+    GPIO_PinWrite(config->CS_Pin, false);
 
-            // Wait for transmit buffer to be ready
-            timeout = DAC7718_SPI_TIMEOUT;
-            while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0) && (--timeout > 0));
-            if (timeout == 0) {
-                LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %d", i);
-                GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-                return UINT32_MAX;
-            }
+    // Build 24-bit command
+    Com  = (uint32_t)(RW & 0x1U);
+    Com <<= 7;
+    Com |=  (uint32_t)(Reg & 0x1FU);
+    Com <<= 12;
+    Com |=  (uint32_t)(Data & 0x0FFFU);
+    Com <<= 4;
 
-            // Send byte
-            SPI2BUF = spi_txData[i];
-
-            // Wait for receive buffer to have data
-            timeout = DAC7718_SPI_TIMEOUT;
-            while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0) && (--timeout > 0));
-            if (timeout == 0) {
-                LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %d", i);
-                GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-                return UINT32_MAX;
-            }
-
-            // Read response byte
-            spi_rxData[i] = SPI2BUF;
-        }
-
-        // Wait for shift register to complete before deasserting CS
-        // This ensures the last byte is fully received
-        timeout = DAC7718_SPI_TIMEOUT;
-        while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0)) {
-            // Busy-wait for completion
-        }
-        if (timeout == 0) {
-            LOG_E("DAC7718_ReadWriteReg: NOP SPI busy timeout");
-            GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
+    // Transmit 24-bit command (MSB first) with timeout protection
+    for (x = 0U; x < 3U; x++) {
+        uint32_t timeout = DAC7718_SPI_TIMEOUT;
+        while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--timeout > 0U)) { }
+        if (timeout == 0U) {
+            LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %u", x);
+            GPIO_PinWrite(config->CS_Pin, true);
             return UINT32_MAX;
         }
+        SPI2BUF = (uint8_t)((Com & 0x00FF0000UL) >> 16);
+        Com <<= 8;
 
-        // Deassert CS
-		GPIO_PinWrite(config->CS_Pin, true);
-        
+        timeout = DAC7718_SPI_TIMEOUT;
+        while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--timeout > 0U)) { }
+        if (timeout == 0U) {
+            LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %u", x);
+            GPIO_PinWrite(config->CS_Pin, true);
+            return UINT32_MAX;
+        }
+        (void)SPI2BUF; // clear
+    }
+
+    // Wait for shift register to complete
+    uint32_t timeout = DAC7718_SPI_TIMEOUT;
+    while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0U)) { }
+    if (timeout == 0U) {
+        LOG_E("DAC7718_ReadWriteReg: SPI busy timeout");
+        GPIO_PinWrite(config->CS_Pin, true);
+        return UINT32_MAX;
+    }
+    GPIO_PinWrite(config->CS_Pin, true);
+
+    // Readback if requested
+    if (RW == 1U) {
+        Com = 0b000000001000000110100000U; // NOP to clock out data
+
+        spi_txData[0] = (uint8_t)((Com >> 16) & 0xFFU);
+        spi_txData[1] = (uint8_t)((Com >> 8)  & 0xFFU);
+        spi_txData[2] = (uint8_t)( Com        & 0xFFU);
+
+        GPIO_PinWrite(config->CS_Pin, false);
+        for (uint8_t i = 0U; i < 3U; i++) {
+            uint32_t to = DAC7718_SPI_TIMEOUT;
+            while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--to > 0U)) { }
+            if (to == 0U) {
+                LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %u", i);
+                GPIO_PinWrite(config->CS_Pin, true);
+                return UINT32_MAX;
+            }
+            SPI2BUF = spi_txData[i];
+
+            to = DAC7718_SPI_TIMEOUT;
+            while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--to > 0U)) { }
+            if (to == 0U) {
+                LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %u", i);
+                GPIO_PinWrite(config->CS_Pin, true);
+                return UINT32_MAX;
+            }
+            spi_rxData[i] = (uint8_t)SPI2BUF;
+        }
+
+        timeout = DAC7718_SPI_TIMEOUT;
+        while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0U)) { }
+        if (timeout == 0U) {
+            LOG_E("DAC7718_ReadWriteReg: NOP SPI busy timeout");
+            GPIO_PinWrite(config->CS_Pin, true);
+            return UINT32_MAX;
+        }
+        GPIO_PinWrite(config->CS_Pin, true);
+
         // Reconstruct received data
-        Data = (spi_rxData[0] << 16) | (spi_rxData[1] << 8) | spi_rxData[2];
-	}
-    
+        rdData = (spi_rxData[0] << 16) | (spi_rxData[1] << 8) | spi_rxData[2];
+    }
+
     // Only keep data bits (12-bit data is in bits 15:4)
-	Data=(Data&0b000000001111111111110000)>>4;	
-	return (Data);
+    rdData = (rdData & 0b000000001111111111110000U) >> 4;
+    return rdData;
 }
 
 void DAC7718_UpdateLatch(uint8_t id)
