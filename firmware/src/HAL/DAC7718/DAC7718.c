@@ -10,10 +10,11 @@
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "Util/Logger.h"
 
-// Simple delay function using core timer (wrap-around safe)
+// Simple delay function using core timer (wrap-around safe, overflow-safe)
 static void DAC7718_Delay_us(uint32_t microseconds) {
     uint32_t startCount = CORETIMER_CounterGet();
-    uint32_t ticks = (microseconds * (CORETIMER_FrequencyGet() / 1000000U));
+    // Use 64-bit arithmetic to prevent overflow for large microsecond values
+    uint32_t ticks = (uint32_t)(((uint64_t)microseconds * CORETIMER_FrequencyGet()) / 1000000U);
 
     // Use modular arithmetic to handle 32-bit timer wrap-around correctly
     while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticks) {

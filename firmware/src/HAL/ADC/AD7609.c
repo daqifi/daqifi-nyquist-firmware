@@ -27,10 +27,11 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-// Simple delay function using core timer (wrap-around safe)
+// Simple delay function using core timer (wrap-around safe, overflow-safe)
 static void AD7609_Delay_ms(uint32_t milliseconds) {
     uint32_t startCount = CORETIMER_CounterGet();
-    uint32_t ticks = (milliseconds * (CORETIMER_FrequencyGet() / 1000U));
+    // Use 64-bit arithmetic to prevent overflow for large millisecond values
+    uint32_t ticks = (uint32_t)(((uint64_t)milliseconds * CORETIMER_FrequencyGet()) / 1000U);
 
     // Use modular arithmetic to handle 32-bit timer wrap-around correctly
     // Subtraction of unsigned values wraps correctly

@@ -219,6 +219,9 @@ void SYS_Tasks ( void )
         // Task creation failed - system will continue but AD7609 interrupts won't work
         LOG_E("Failed to create AD7609_DeferredInterruptTask (512 bytes)\r\n");
         *pAD7609TaskHandle = NULL;
+    } else if (*pAD7609TaskHandle == NULL) {
+        // Task handle wasn't populated - this should never happen but guard against it
+        LOG_E("AD7609 task created but handle is NULL - interrupt notifications will fail\r\n");
     }
 
 
