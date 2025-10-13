@@ -135,7 +135,7 @@ uint32_t DAC7718_ReadWriteReg(                                              \
         if (timeout == 0) {
             LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %d", x);
             GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-            return 0;
+            return UINT32_MAX;
         }
 
         // Send byte using original working method
@@ -148,7 +148,7 @@ uint32_t DAC7718_ReadWriteReg(                                              \
         if (timeout == 0) {
             LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %d", x);
             GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-            return 0;
+            return UINT32_MAX;
         }
 		(void)SPI2BUF;
 	}
@@ -162,7 +162,7 @@ uint32_t DAC7718_ReadWriteReg(                                              \
     if (timeout == 0) {
         LOG_E("DAC7718_ReadWriteReg: SPI busy timeout");
         GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-        return 0;
+        return UINT32_MAX;
     }
 
     // Deassert CS
@@ -191,7 +191,7 @@ uint32_t DAC7718_ReadWriteReg(                                              \
             if (timeout == 0) {
                 LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %d", i);
                 GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-                return 0;
+                return UINT32_MAX;
             }
 
             // Send byte
@@ -203,7 +203,7 @@ uint32_t DAC7718_ReadWriteReg(                                              \
             if (timeout == 0) {
                 LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %d", i);
                 GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-                return 0;
+                return UINT32_MAX;
             }
 
             // Read response byte
@@ -219,7 +219,7 @@ uint32_t DAC7718_ReadWriteReg(                                              \
         if (timeout == 0) {
             LOG_E("DAC7718_ReadWriteReg: NOP SPI busy timeout");
             GPIO_PinWrite(config->CS_Pin, true);  // Deassert CS on error
-            return 0;
+            return UINT32_MAX;
         }
 
         // Deassert CS
