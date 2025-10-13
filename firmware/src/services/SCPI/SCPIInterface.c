@@ -677,7 +677,9 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             }
 
             // Display voltage rails with proper string formatting
-            char str3_3[20], str5[20], str10[20], strSys[20], strBatt[20], str2_5Ref[20], str5Ref[20];
+            // Initialize strings to empty to ensure well-defined behavior
+            char str3_3[20] = {0}, str5[20] = {0}, str10[20] = {0};
+            char strSys[20] = {0}, strBatt[20] = {0}, str2_5Ref[20] = {0}, str5Ref[20] = {0};
 
             if (found3_3) {
                 snprintf(str3_3, sizeof(str3_3), "%.2fV", volt3_3);
@@ -1588,7 +1590,7 @@ scpi_result_t SCPI_Help(scpi_t* context) {
 
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
-    static char modelString[8];
+    static char modelString[8] = {0};  // Initialize to prevent garbage data
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     if (pBoardConfig) {
         snprintf(modelString, sizeof(modelString), "Nq%d", pBoardConfig->BoardVariant);

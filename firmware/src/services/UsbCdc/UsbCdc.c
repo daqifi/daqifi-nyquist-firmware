@@ -191,8 +191,15 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             /* This means that the data write got completed. We can schedule
              * the next write. */
             USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE val = *(USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE*) (pData);
-            if (val.handle == pUsbCdcDataObject->writeTransferHandle && val.length == pUsbCdcDataObject->writeBufferLength)
+            if (val.handle == pUsbCdcDataObject->writeTransferHandle) {
+                // Log warning if actual transferred length differs from requested
+                if (val.length != pUsbCdcDataObject->writeBufferLength) {
+                    LOG_E("USB write length mismatch: expected %u, got %u",
+                          (unsigned)pUsbCdcDataObject->writeBufferLength, (unsigned)val.length);
+                }
+                // Always finalize to prevent stuck state, even on partial write
                 UsbCdc_FinalizeWrite(pUsbCdcDataObject);
+            }
             break;
         }
         default:
