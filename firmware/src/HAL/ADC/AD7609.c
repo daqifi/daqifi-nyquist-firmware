@@ -24,6 +24,7 @@
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/ADC.h"
 #include "Util/Logger.h"
+#include "system/cache/sys_cache.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -243,6 +244,11 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     memset(gAD7609_txBuffer, 0, sizeof(gAD7609_txBuffer));
     memset(gAD7609_rxBuffer, 0, sizeof(gAD7609_rxBuffer));
 
+    // Ensure TX buffer is written back to memory before DMA reads it
+    SYS_CACHE_CleanDCache_by_Addr((void*)gAD7609_txBuffer, sizeof(gAD7609_txBuffer));
+    // Invalidate RX buffer so CPU reads post-DMA contents (not stale cache)
+    SYS_CACHE_InvalidateDCache_by_Addr((void*)gAD7609_rxBuffer, sizeof(gAD7609_rxBuffer));
+
     // Assert CS (active low)
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
 
@@ -270,11 +276,9 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         goto read_cleanup;
     }
 
-    // Ensure DMA completion and cache coherency before accessing buffers
-    // Small delay allows final DMA byte to settle and caches to sync
-    // AD7609 datasheet requires minimum CS high time, this provides safety margin
-    __asm__ __volatile__("nop"); __asm__ __volatile__("nop");
-    __asm__ __volatile__("nop"); __asm__ __volatile__("nop");
+    // Invalidate RX buffer cache again to ensure CPU reads DMA-transferred data
+    // This guarantees we're not reading stale cached values
+    SYS_CACHE_InvalidateDCache_by_Addr((void*)gAD7609_rxBuffer, sizeof(gAD7609_rxBuffer));
 
     success = true;
     // Fall through to cleanup
