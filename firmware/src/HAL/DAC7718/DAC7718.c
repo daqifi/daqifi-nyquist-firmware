@@ -128,6 +128,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     uint32_t rdData = 0;
     uint8_t x;
     bool mutexAcquired = false;
+    bool csAsserted = false;
+    tDAC7718Config* config = NULL;
 
     // Validate inputs
     if (RW > 1U) {
@@ -139,7 +141,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         goto cleanup;
     }
 
-    tDAC7718Config* config = DAC7718_GetConfig(id);
+    config = DAC7718_GetConfig(id);
     if (config == NULL) {
         LOG_E("DAC7718_ReadWriteReg: invalid config id=%u", id);
         rdData = UINT32_MAX;
@@ -157,6 +159,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
 
     // Assert CS (active low)
     GPIO_PinWrite(config->CS_Pin, false);
+    csAsserted = true;
 
     // Build 24-bit command
     Com  = (uint32_t)(RW & 0x1U);
@@ -172,7 +175,6 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--timeout > 0U)) { }
         if (timeout == 0U) {
             LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %u", x);
-            GPIO_PinWrite(config->CS_Pin, true);
             rdData = UINT32_MAX;
             goto cleanup;
         }
@@ -183,7 +185,6 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--timeout > 0U)) { }
         if (timeout == 0U) {
             LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %u", x);
-            GPIO_PinWrite(config->CS_Pin, true);
             rdData = UINT32_MAX;
             goto cleanup;
         }
@@ -195,11 +196,12 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0U)) { }
     if (timeout == 0U) {
         LOG_E("DAC7718_ReadWriteReg: SPI busy timeout");
-        GPIO_PinWrite(config->CS_Pin, true);
         rdData = UINT32_MAX;
         goto cleanup;
     }
+    // De-assert CS after first transaction
     GPIO_PinWrite(config->CS_Pin, true);
+    csAsserted = false;
 
     // Readback if requested
     if (RW == 1U) {
@@ -209,13 +211,15 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         spi_txData[1] = (uint8_t)((Com >> 8)  & 0xFFU);
         spi_txData[2] = (uint8_t)( Com        & 0xFFU);
 
+        // Assert CS for readback transaction
         GPIO_PinWrite(config->CS_Pin, false);
+        csAsserted = true;
+
         for (uint8_t i = 0U; i < 3U; i++) {
             uint32_t to = DAC7718_SPI_TIMEOUT;
             while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--to > 0U)) { }
             if (to == 0U) {
                 LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %u", i);
-                GPIO_PinWrite(config->CS_Pin, true);
                 rdData = UINT32_MAX;
                 goto cleanup;
             }
@@ -225,7 +229,6 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
             while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--to > 0U)) { }
             if (to == 0U) {
                 LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %u", i);
-                GPIO_PinWrite(config->CS_Pin, true);
                 rdData = UINT32_MAX;
                 goto cleanup;
             }
@@ -236,11 +239,12 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0U)) { }
         if (timeout == 0U) {
             LOG_E("DAC7718_ReadWriteReg: NOP SPI busy timeout");
-            GPIO_PinWrite(config->CS_Pin, true);
             rdData = UINT32_MAX;
             goto cleanup;
         }
+        // De-assert CS after readback transaction
         GPIO_PinWrite(config->CS_Pin, true);
+        csAsserted = false;
 
         // Reconstruct received data
         rdData = (spi_rxData[0] << 16) | (spi_rxData[1] << 8) | spi_rxData[2];
@@ -250,6 +254,11 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     rdData = (rdData & 0b000000001111111111110000U) >> 4;
 
 cleanup:
+    // De-assert CS if still asserted
+    if (csAsserted && (config != NULL)) {
+        GPIO_PinWrite(config->CS_Pin, true);
+    }
+
     // Release mutex
     if (mutexAcquired) {
         xSemaphoreGive(gDAC7718_Mutex);
