@@ -110,8 +110,8 @@ extern "C" {
      * Updates all DAC output latches to reflect the current values
      *   CONFigure:DAC:UPDATE - Updates all DAC channel outputs with their current values
      * @param context
-     * @return 
-     */        
+     * @return
+     */
     scpi_result_t SCPI_DACUpdate(scpi_t * context);
 
 #ifdef	__cplusplus

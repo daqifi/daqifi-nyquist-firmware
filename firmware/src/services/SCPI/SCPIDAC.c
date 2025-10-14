@@ -70,8 +70,8 @@ static bool DAC_EnsureHardwareInitialized(void) {
         return false;
     }
 
-    // Initialize DAC hardware with the instance ID
-    DAC7718_Init(dacInstanceId, 0);
+    // Initialize DAC hardware with fixed 10V range (range parameter reserved for future use)
+    DAC7718_Init(dacInstanceId, 1);
 
     dacHardwareInitialized = true;
     return true;

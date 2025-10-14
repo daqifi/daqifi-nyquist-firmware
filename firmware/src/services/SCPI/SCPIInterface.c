@@ -1513,7 +1513,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
     {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
     {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
-    //    
+    //
     //    // SPI
     //    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },
     //    

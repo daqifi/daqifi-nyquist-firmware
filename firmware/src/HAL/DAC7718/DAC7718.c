@@ -9,6 +9,7 @@
 #include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "Util/Logger.h"
+#include "semphr.h"
 
 // Simple delay function using core timer (wrap-around safe, overflow-safe)
 static void DAC7718_Delay_us(uint32_t microseconds) {
@@ -30,12 +31,15 @@ static void DAC7718_Delay_us(uint32_t microseconds) {
 
 //! Buffer with DAC7718 configurations
 static tDAC7718Config m_DAC7718Config[MAX_DAC7718_CONFIG];
-//! Number of configuration 
+//! Number of configuration
 static uint8_t m_DAC7718ConfigCount;
 
 //! Static SPI buffers to avoid stack/cache issues
 static uint8_t spi_txData[3] __attribute__((coherent, aligned(4)));
 static uint8_t spi_rxData[3] __attribute__((coherent, aligned(4)));
+
+//! Mutex to protect DAC7718 initialization and SPI access
+static SemaphoreHandle_t gDAC7718_Mutex = NULL;
 
 /*!
 * Resets the DAC7718.  Must be called after DAC7718_Init
@@ -69,18 +73,33 @@ tDAC7718Config* DAC7718_GetConfig(uint8_t id)
 void DAC7718_Init(uint8_t id, uint8_t range)
 {
     tDAC7718Config* config = DAC7718_GetConfig(id);
-    
+
     if (config == NULL) {
-        // Error - should not happen if NewConfig was called
+        LOG_E("DAC7718_Init: invalid config id=%u", id);
         return;
     }
-    
+
+    // Create mutex on first use (thread-safe in FreeRTOS context)
+    if (gDAC7718_Mutex == NULL) {
+        gDAC7718_Mutex = xSemaphoreCreateMutex();
+        if (gDAC7718_Mutex == NULL) {
+            LOG_E("DAC7718_Init: Failed to create mutex");
+            return;
+        }
+    }
+
+    // Acquire mutex to protect initialization sequence
+    if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        LOG_E("DAC7718_Init: Failed to acquire mutex");
+        return;
+    }
+
     // SPI2 is already initialized by MCC
-    
+
 	// Initialize GPIO pins - CS high, RST high for normal operation
     GPIO_PinWrite(config->CS_Pin, true);
     GPIO_PinWrite(config->RST_Pin, true);
-    
+
 	// Set GPIO pins as outputs
     GPIO_PinOutputEnable(config->CS_Pin);
     GPIO_PinOutputEnable(config->RST_Pin);
@@ -90,12 +109,26 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 	GPIO_PinWrite(config->RST_Pin, false);  // Assert reset
 	DAC7718_Delay_us(1);  // 1us delay (10x minimum spec, guaranteed safe)
 	GPIO_PinWrite(config->RST_Pin, true);   // De-assert reset
-	
-	// Configure DAC: GAIN-A=1, GAIN-B=1 for 4x gain (10V full scale)
-	DAC7718_ReadWriteReg(id, 0, 0, 0b100000011000);
-	
+
+	// Configure DAC gain based on range parameter
+	// Range 0: 0-5V  (GAIN-A=0, GAIN-B=0 for 2x gain)
+	// Range 1: 0-10V (GAIN-A=1, GAIN-B=1 for 4x gain)
+	// Currently fixed to 10V range, but infrastructure available for future use
+	(void)range;  // Parameter reserved for future use
+	uint16_t configReg = 0b100000011000;  // GAIN-A=1, GAIN-B=1 for 4x gain (10V)
+
+	uint32_t result = DAC7718_ReadWriteReg(id, 0, 0, configReg);
+	if (result == UINT32_MAX) {
+	    LOG_E("DAC7718_Init: Failed to write configuration register");
+	    xSemaphoreGive(gDAC7718_Mutex);
+	    return;
+	}
+
 	// Update latch to apply configuration
 	DAC7718_UpdateLatch(id);
+
+	// Release mutex
+	xSemaphoreGive(gDAC7718_Mutex);
 }
 
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
