@@ -88,12 +88,6 @@ void DAC7718_Init(uint8_t id, uint8_t range)
         }
     }
 
-    // Acquire mutex to protect initialization sequence
-    if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-        LOG_E("DAC7718_Init: Failed to acquire mutex");
-        return;
-    }
-
     // SPI2 is already initialized by MCC
 
 	// Initialize GPIO pins - CS high, RST high for normal operation
@@ -117,18 +111,15 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 	(void)range;  // Parameter reserved for future use
 	uint16_t configReg = 0b100000011000;  // GAIN-A=1, GAIN-B=1 for 4x gain (10V)
 
+	// Note: DAC7718_ReadWriteReg handles mutex locking internally
 	uint32_t result = DAC7718_ReadWriteReg(id, 0, 0, configReg);
 	if (result == UINT32_MAX) {
 	    LOG_E("DAC7718_Init: Failed to write configuration register");
-	    xSemaphoreGive(gDAC7718_Mutex);
 	    return;
 	}
 
 	// Update latch to apply configuration
 	DAC7718_UpdateLatch(id);
-
-	// Release mutex
-	xSemaphoreGive(gDAC7718_Mutex);
 }
 
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
@@ -136,19 +127,32 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     uint32_t Com;
     uint32_t rdData = 0;
     uint8_t x;
+    bool mutexAcquired = false;
 
     // Validate inputs
     if (RW > 1U) {
-        return UINT32_MAX;
+        rdData = UINT32_MAX;
+        goto cleanup;
     }
     if (Reg > 31U) {
-        return UINT32_MAX;
+        rdData = UINT32_MAX;
+        goto cleanup;
     }
 
     tDAC7718Config* config = DAC7718_GetConfig(id);
     if (config == NULL) {
         LOG_E("DAC7718_ReadWriteReg: invalid config id=%u", id);
-        return UINT32_MAX;
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
+
+    // Acquire mutex to serialize SPI writes
+    if (gDAC7718_Mutex != NULL) {
+        if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            LOG_E("DAC7718_ReadWriteReg: Failed to acquire mutex");
+            return UINT32_MAX;
+        }
+        mutexAcquired = true;
     }
 
     // Assert CS (active low)
@@ -169,7 +173,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         if (timeout == 0U) {
             LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %u", x);
             GPIO_PinWrite(config->CS_Pin, true);
-            return UINT32_MAX;
+            rdData = UINT32_MAX;
+            goto cleanup;
         }
         SPI2BUF = (uint8_t)((Com & 0x00FF0000UL) >> 16);
         Com <<= 8;
@@ -179,7 +184,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         if (timeout == 0U) {
             LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %u", x);
             GPIO_PinWrite(config->CS_Pin, true);
-            return UINT32_MAX;
+            rdData = UINT32_MAX;
+            goto cleanup;
         }
         (void)SPI2BUF; // clear
     }
@@ -190,7 +196,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     if (timeout == 0U) {
         LOG_E("DAC7718_ReadWriteReg: SPI busy timeout");
         GPIO_PinWrite(config->CS_Pin, true);
-        return UINT32_MAX;
+        rdData = UINT32_MAX;
+        goto cleanup;
     }
     GPIO_PinWrite(config->CS_Pin, true);
 
@@ -209,7 +216,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
             if (to == 0U) {
                 LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %u", i);
                 GPIO_PinWrite(config->CS_Pin, true);
-                return UINT32_MAX;
+                rdData = UINT32_MAX;
+                goto cleanup;
             }
             SPI2BUF = spi_txData[i];
 
@@ -218,7 +226,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
             if (to == 0U) {
                 LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %u", i);
                 GPIO_PinWrite(config->CS_Pin, true);
-                return UINT32_MAX;
+                rdData = UINT32_MAX;
+                goto cleanup;
             }
             spi_rxData[i] = (uint8_t)SPI2BUF;
         }
@@ -228,7 +237,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         if (timeout == 0U) {
             LOG_E("DAC7718_ReadWriteReg: NOP SPI busy timeout");
             GPIO_PinWrite(config->CS_Pin, true);
-            return UINT32_MAX;
+            rdData = UINT32_MAX;
+            goto cleanup;
         }
         GPIO_PinWrite(config->CS_Pin, true);
 
@@ -238,13 +248,31 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
 
     // Only keep data bits (12-bit data is in bits 15:4)
     rdData = (rdData & 0b000000001111111111110000U) >> 4;
+
+cleanup:
+    // Release mutex
+    if (mutexAcquired) {
+        xSemaphoreGive(gDAC7718_Mutex);
+    }
+
     return rdData;
 }
 
 void DAC7718_UpdateLatch(uint8_t id)
 {
+	// Validate ID
+	if (id >= MAX_DAC7718_CONFIG) {
+		LOG_E("DAC7718_UpdateLatch: invalid id=%u", id);
+		return;
+	}
+
 	// Write to configuration register with LD bit set to update all DAC outputs
-	DAC7718_ReadWriteReg(id, 0, 0, 0b110000011000);
+	// Note: DAC7718_ReadWriteReg handles mutex locking internally
+	uint32_t result = DAC7718_ReadWriteReg(id, 0, 0, 0b110000011000);
+
+	if (result == UINT32_MAX) {
+		LOG_E("DAC7718_UpdateLatch: Failed to update latch");
+	}
 }
 
 // SPI2 configuration is handled by MCC-generated initialization
