@@ -18,6 +18,10 @@
 #include "../daqifi_settings.h"
 #include "HAL/TimerApi/TimerApi.h"
 
+// FreeRTOS
+#include "FreeRTOS.h"
+#include "task.h"
+
 scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
     int channel;
     AInSample *pAInLatest;
@@ -401,13 +405,19 @@ scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // Convert parameter to voltage range and store
+    // Convert parameter to voltage range
     double rangeVoltage = (rangeParam == 1) ? 10.0 : 5.0;
-    pRuntimeModules->Data[moduleIndex].Range = rangeVoltage;
+    bool range10V = (rangeParam == 1);
 
     // Update hardware pin (Range_Pin: LOW=±10V, HIGH=±5V)
-    bool range10V = (rangeParam == 1);
     GPIO_PinWrite(module->Config.AD7609.Range_Pin, !range10V);
+
+    // Wait for AD7609 analog circuitry to settle after range change
+    // Datasheet specifies settling time; conservative 1ms delay ensures stability
+    vTaskDelay(pdMS_TO_TICKS(1));
+
+    // Store range value after hardware has settled
+    pRuntimeModules->Data[moduleIndex].Range = rangeVoltage;
 
     LOG_I("AD7609 module range set to ±%.1fV", rangeVoltage);
 
