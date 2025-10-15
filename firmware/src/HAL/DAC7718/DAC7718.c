@@ -13,9 +13,15 @@
 
 // Simple delay function using core timer (wrap-around safe, overflow-safe)
 static void DAC7718_Delay_us(uint32_t microseconds) {
+    // Cache frequency on first call to avoid repeated function calls
+    static uint32_t freq = 0U;
+    if (freq == 0U) {
+        freq = CORETIMER_FrequencyGet();
+    }
+
     uint32_t startCount = CORETIMER_CounterGet();
     // Use 64-bit arithmetic to prevent overflow for large microsecond values
-    uint32_t ticks = (uint32_t)(((uint64_t)microseconds * CORETIMER_FrequencyGet()) / 1000000U);
+    uint32_t ticks = (uint32_t)(((uint64_t)microseconds * freq) / 1000000U);
 
     // Use modular arithmetic to handle 32-bit timer wrap-around correctly
     while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticks) {
