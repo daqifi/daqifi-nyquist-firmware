@@ -74,11 +74,28 @@ volatile void* AD7609_GetTaskHandle(void) {
 // AD7609 BSY pin interrupt callback (called from GPIO ISR)
 void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context)
 {
+    UNUSED(context);
+
     // Use configured BSY pin for robust multi-board support
     if (pModuleConfigAD7609 == NULL || pin != pModuleConfigAD7609->BSY_Pin || gAD7609_TaskHandle == NULL) {
         return;
     }
+
+    // Disable further BSY interrupts until handled in task context
+    // Note: Edge-triggered interrupts shouldn't cause storms, but this provides
+    // defense against noise/ringing and ensures only one interrupt per task cycle
+    GPIO_PinIntDisable(pModuleConfigAD7609->BSY_Pin);
+
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // Check if previous interrupt was already handled (notification count should be 0)
+    // If not, we're getting interrupts faster than we can process them
+    uint32_t prevCount = ulTaskNotifyValueClear(gAD7609_TaskHandle, 0x00);
+    if (prevCount != 0U) {
+        // Log error in ISR context - previous conversion not yet handled
+        // This shouldn't happen with proper timing but log if it does
+        __builtin_software_breakpoint(); // Catch in debugger if attached
+    }
+
     // Minimal ISR: signal task and exit; any timing/logging should be done in task context
     vTaskNotifyGiveFromISR(gAD7609_TaskHandle, &xHigherPriorityTaskWoken);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
@@ -95,6 +112,12 @@ void AD7609_DeferredInterruptTask(void) {
         // Call ADC layer to handle data acquisition and storage
         // This separates hardware driver from data management
         ADC_HandleAD7609Interrupt();
+
+        // Re-enable BSY interrupt after handling the event
+        // This prevents interrupt storms while processing
+        if (pModuleConfigAD7609 != NULL) {
+            GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
+        }
     }
 } 
 
