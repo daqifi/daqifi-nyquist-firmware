@@ -465,10 +465,9 @@ Use picocom for reliable serial communication:
 ```
 
 Power states:
-- 0: POWERED_DOWN
-- 1: MICRO_ON (USB powered, minimal functionality)
-- 2: POWERED_UP (Full power, all modules active)
-- 3: POWERED_UP_EXT_DOWN (Partial power)
+- 0: STANDBY (MCU on if USB powered, off if battery powered)
+- 1: POWERED_UP (Board fully powered, all modules active)
+- 2: POWERED_UP_EXT_DOWN (Partial power, external power disabled - low battery mode)
 
 #### Windows Network Access
 Check WiFi networks from WSL using Windows netsh:
@@ -517,7 +516,7 @@ fi
 - APPLY command needed to activate runtime settings
 - SAVE command needed to persist to NVM
 - Device may load saved NVM settings on power up, not runtime settings
-- Power states: 0=off, 1=on for setting; 1=MICRO_ON, 2=POWERED_UP for reading
+- Power states: 0=STANDBY, 1=POWERED_UP, 2=POWERED_UP_EXT_DOWN
 
 ### Shell Script Wrapper for Device Commands
 
@@ -680,7 +679,7 @@ voltage, NTC status, and power-up readiness.
    *IDN?  # Should return DAQiFi info
    
    # Check power state
-   SYST:POW:STAT?  # 1=MICRO_ON, 2=POWERED_UP
+   SYST:POW:STAT?  # 0=STANDBY, 1=POWERED_UP, 2=POWERED_UP_EXT_DOWN
    
    # Check errors
    SYST:ERR?  # Should be "No error"
