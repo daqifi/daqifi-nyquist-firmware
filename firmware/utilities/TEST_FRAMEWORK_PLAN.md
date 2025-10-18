@@ -1,0 +1,8 @@
+# DAQiFi Nyquist Automated Test Framework
+
+## Overview
+Comprehensive, modular test framework for DAQiFi Nyquist family devices (NQ1, NQ2, NQ3) with automatic feature detection, configurable test execution, and support for production testing.
+
+## Architecture
+
+###Human: actually, maybe this is something we can start fresh with in a new repo.  it's own project. but maybe just keep it in the doc folder for now.  you can start with just implementing new tests to cover the changes we made.  we might make it more usable as we go and maybe keep it in a seperate repo and pull into the utilities folder when built.  lets just write a python library that loads from the serial port and automates testing. keep the tests separate but in a lib that can be imported.  to make it future proof though let's use composition and make classes for each.  we want it to be clean and modular enough to be able to test things that don't exist yet -- like when we have a new adc or something, we should be able to easily define the new test to check that new adc rather than add to an if statement, etc.  we should be able to easily configure the device with scpi commands, check configuration, check functionality, etc. we may also want to in the future be able to send streams to the device to check output while simultaneously reading and using another nyquist to check the dio and dac outputs.  so, having clean structure and being able to do something like do scpi checks for specific channels as well as load and test streaming functionality, will be important.  maybe start by defining a plan for this library.
