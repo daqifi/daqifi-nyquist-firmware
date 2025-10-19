@@ -211,6 +211,11 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
 
     // Readback if requested
     if (RW == 1U) {
+        // Inter-frame delay: DAC7718 requires minimum CS high time between transactions
+        // Datasheet specifies minimum 50ns, use 2us for safety margin and to ensure
+        // proper settling time between write and readback operations
+        DAC7718_Delay_us(2);
+
         Com = 0b000000001000000110100000U; // NOP to clock out data
 
         spi_txData[0] = (uint8_t)((Com >> 16) & 0xFFU);
