@@ -1072,22 +1072,25 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {
+        // Frequency = 0 is valid and means "disable streaming"
+        // (In future may support per-channel frequency where 0 disables that channel)
+        if (freq == 0) {
+            pRunTimeStreamConfig->IsEnabled = false;
+            Streaming_UpdateState();
+            return SCPI_RES_OK;
+        }
+
         // NQ3 Smart Frequency Management:
         // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
         // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
         if (hasActiveAD7609Channels && activeType1ChannelCount == 0 && freq > 1) {
             freq = 1; // Override to 1Hz for internal monitoring when external ADC active
         }
-        
+
         // Maximum frequency limited to 15kHz pending optimization
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/58
         if (freq >= 1 && freq <= 15000)
         {
-            // Prevent divide by zero - clamp before any division operations
-            if (freq == 0) {
-                freq = 1000; // Default to 1kHz if frequency is 0
-            }
-
             /**
              * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
              * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
@@ -1100,14 +1103,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
                 freq = 15000 / activeType1ChannelCount;
 
-                // Re-check after division in case result is 0
+                // Prevent divide-by-zero: if too many channels active, return error
                 if (freq == 0) {
-                    freq = 1000; // Fallback to 1kHz if division resulted in 0
+                    SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+                    return SCPI_RES_ERR;
                 }
             }
-            
+
             // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
-            
+
             pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
