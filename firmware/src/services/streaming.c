@@ -251,6 +251,13 @@ void streaming_Task(void) {
         hasWifi = (wifiSize > BUFFER_SIZE);
         hasSD = (sdSize > BUFFER_SIZE);
 
+        // Debug logging - only log first packet to avoid flooding
+        static bool logged = false;
+        if (!logged) {
+            LOG_D("SD: sdSize=%u, BUFFER_SIZE=%u, hasSD=%d", sdSize, BUFFER_SIZE, hasSD);
+            logged = true;
+        }
+
         maxSize = BUFFER_SIZE;
         if (hasUsb) maxSize = min(maxSize, usbSize);
         if (hasWifi) maxSize = min(maxSize, wifiSize);
@@ -290,14 +297,25 @@ void streaming_Task(void) {
         }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
-            if (hasUsb) {                
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);               
+            if (hasUsb) {
+                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
             }
-            if (hasWifi) {               
-                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);                
+            if (hasWifi) {
+                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
-            if (hasSD && (pRunTimeStreamConf->Encoding == Streaming_Csv || pRunTimeStreamConf->Encoding == Streaming_Json)) {
-                sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
+            if (hasSD) {
+                size_t written = sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
+                static bool sd_logged = false;
+                if (!sd_logged) {
+                    LOG_D("SD: Write called, packetSize=%u, written=%u", packetSize, written);
+                    sd_logged = true;
+                }
+            } else {
+                static bool no_sd_logged = false;
+                if (!no_sd_logged) {
+                    LOG_D("SD: Write skipped - hasSD is false");
+                    no_sd_logged = true;
+                }
             }
         }
         DIO_TIMING_TEST_WRITE_STATE(0);

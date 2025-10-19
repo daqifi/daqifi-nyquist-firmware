@@ -496,15 +496,26 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {
+    static bool logged = false;
+    if (!logged) {
+        LOG_D("SD_MGR: GetWriteBuffFreeSize: enable=%d, mode=%d (WRITE=%d)",
+              gpSdCardSettings->enable, gpSdCardSettings->mode, SD_CARD_MANAGER_MODE_WRITE);
+        logged = true;
+    }
+
     if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
         return 0;
     }
-    
+
     // Must protect circular buffer access with mutex
     xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
     size_t freeSize = CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
     xSemaphoreGive(gSdCardData.wMutex);
-    
+
+    if (!logged) {
+        LOG_D("SD_MGR: Returning freeSize=%u", freeSize);
+    }
+
     return freeSize;
 }
 

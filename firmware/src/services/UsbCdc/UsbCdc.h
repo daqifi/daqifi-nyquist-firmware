@@ -24,8 +24,8 @@ extern "C" {
 #include "libraries/scpi/libscpi/inc/scpi/scpi.h"
 #include "Util/CircularBuffer.h"
 
-#define USBCDC_WBUFFER_SIZE 700
-#define USBCDC_RBUFFER_SIZE 512 
+#define USBCDC_WBUFFER_SIZE 2048
+#define USBCDC_RBUFFER_SIZE 512
 #define USBCDC_CIRCULAR_BUFF_SIZE USBCDC_WBUFFER_SIZE*4
 
 // Command history for debugging

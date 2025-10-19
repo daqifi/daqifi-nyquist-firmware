@@ -111,6 +111,43 @@ Services Layer
      - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
      - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
 
+#### SCPI Command Verification Protocol
+
+**⚠️ CRITICAL: NEVER guess SCPI command syntax. ALWAYS verify first.**
+
+**Mandatory Process Before Using ANY SCPI Command:**
+
+1. **Search for the exact pattern** in `SCPIInterface.c`:
+   ```bash
+   grep -n "pattern.*<keyword>" firmware/src/services/SCPI/SCPIInterface.c
+   ```
+
+2. **Use the EXACT command** from the pattern definition - do not abbreviate unless testing abbreviations
+
+3. **Verify parameter syntax** by reading the callback function implementation
+
+**Common Mistakes to Avoid:**
+- ❌ `SYST:STAR 5000` (guessed)
+- ✅ `SYST:StartStreamData 5000` (verified from SCPIInterface.c:1521)
+
+- ❌ `SYST:STOP` (guessed)
+- ✅ `SYST:StopStreamData` (verified from SCPIInterface.c:1522)
+
+- ❌ `SYST:STOR:SD:GET DAQiFi/file.csv` (unquoted path)
+- ✅ `SYST:STOR:SD:GET "file.csv"` (quoted, verified from SCPIStorageSD.c)
+
+**Verification Example:**
+```bash
+# Step 1: Search for streaming commands
+grep -n "pattern.*Stream" firmware/src/services/SCPI/SCPIInterface.c
+# Result: Line 1521: {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
+
+# Step 2: Use exact command
+device._comm.send_command("SYST:StartStreamData 5000")  # Correct!
+```
+
+**If you use a SCPI command without verifying it first, STOP immediately and verify the syntax.**
+
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`
    - Handles command processing and data streaming
@@ -728,3 +765,4 @@ voltage, NTC status, and power-up readiness.
    - Batch related commands together
 - pic32 tris convention is 1=input and 0=output
 - when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
+- always verify scpi command syntax - don't guess.
