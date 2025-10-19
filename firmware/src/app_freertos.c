@@ -54,13 +54,14 @@
 
 // Compile-time validation for frequency management
 #if (SPI0_COORDINATION_ENABLED == 0)
-#define SPI0_STANDARDIZED_FREQUENCY_HZ  20000000
+#define SPI0_STANDARDIZED_FREQUENCY_HZ  20000000  // Both clients must use this when coordination disabled
 #if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_STANDARDIZED_FREQUENCY_HZ)
-#warning "SPI frequency mismatch detected! Prefer standardizing frequencies or enable coordination (SPI0_COORDINATION_ENABLED=1)."
+#error "SPI frequency mismatch detected! When coordination disabled, standardize frequencies or enable coordination (SPI0_COORDINATION_ENABLED=1)."
 #endif
 #else
+// When coordination enabled, validate SD card configuration matches our managed frequency
 #if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_SD_FREQUENCY_HZ)
-#warning "SD card frequency mismatch! DRV_SDSPI_SPEED_HZ_IDX0 should match SPI0_SD_FREQUENCY_HZ when coordination enabled."
+#error "SD card frequency mismatch! DRV_SDSPI_SPEED_HZ_IDX0 must match SPI0_SD_FREQUENCY_HZ when coordination enabled."
 #endif
 #endif
 
