@@ -87,33 +87,41 @@ void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context)
     GPIO_PinIntDisable(pModuleConfigAD7609->BSY_Pin);
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // Check if previous interrupt was already handled (notification count should be 0)
-    // If not, we're getting interrupts faster than we can process them
-    uint32_t prevCount = ulTaskNotifyValueClear(gAD7609_TaskHandle, 0x00);
-    if (prevCount != 0U) {
-        // Log error in ISR context - previous conversion not yet handled
-        // This shouldn't happen with proper timing but log if it does
-        __builtin_software_breakpoint(); // Catch in debugger if attached
-    }
 
     // Minimal ISR: signal task and exit; any timing/logging should be done in task context
+    // Note: Task notification counter is cleared in task context via ulTaskNotifyTake(),
+    // not here in ISR. Clearing in ISR creates race condition if notification arrives
+    // between clear and give operations.
     vTaskNotifyGiveFromISR(gAD7609_TaskHandle, &xHigherPriorityTaskWoken);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
 
 // AD7609 deferred interrupt task (handles SPI read after BSY interrupt)
 void AD7609_DeferredInterruptTask(void) {
-    const TickType_t xBlockTime = portMAX_DELAY;
+    // Use 100ms timeout to prevent deadlock if interrupt is missed or spurious
+    const TickType_t xBlockTime = pdMS_TO_TICKS(100);
 
     while (1) {
         // Wait for BSY pin interrupt to signal conversion complete
-        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        // ulTaskNotifyTake() returns notification count and clears it atomically
+        uint32_t notificationValue = ulTaskNotifyTake(pdFALSE, xBlockTime);
 
-        // Call ADC layer to handle data acquisition and storage
-        // This separates hardware driver from data management
-        ADC_HandleAD7609Interrupt();
+        if (notificationValue > 0) {
+            // Received valid notification from ISR
+            // Call ADC layer to handle data acquisition and storage
+            // This separates hardware driver from data management
+            ADC_HandleAD7609Interrupt();
+        } else {
+            // Timeout occurred - no notification received within 100ms
+            // This could indicate missed interrupt or spurious wake
+            // Re-enable interrupt to recover from potential deadlock
+            if (pModuleConfigAD7609 != NULL) {
+                GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
+            }
+            continue;
+        }
 
-        // Re-enable BSY interrupt after handling the event
+        // Re-enable BSY interrupt after successful handling
         // This prevents interrupt storms while processing
         if (pModuleConfigAD7609 != NULL) {
             GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
@@ -262,6 +270,23 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
         return false;
     }
     bool success = false;
+
+    // Configure SPI mode for AD7609 before transfer
+    // AD7609 requires SPI Mode 2: CPOL=1 (idle high), CPHA=0 (sample on leading edge)
+    // This ensures correct configuration even if SPI bus is shared with other devices
+    DRV_SPI_TRANSFER_SETUP spiSetup;
+    spiSetup.baudRateInHz = 10000000;  // 10 MHz (AD7609 supports up to 24 MHz)
+    spiSetup.clockPhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE;  // CPHA=0
+    spiSetup.clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_HIGH;     // CPOL=1
+    spiSetup.dataBits = DRV_SPI_DATA_BITS_8;
+    spiSetup.chipSelect = SYS_PORT_PIN_NONE;  // Manual CS control via GPIO
+    spiSetup.csPolarity = DRV_SPI_CS_POLARITY_ACTIVE_LOW;
+
+    if (!DRV_SPI_TransferSetup(spi_handle, &spiSetup)) {
+        LOG_E("AD7609_ReadSamples: Failed to configure SPI mode");
+        xSemaphoreGive(gAD7609_SpiMutex);
+        return false;
+    }
 
     // Clear DMA buffers (global, coherent for DMA access)
     memset(gAD7609_txBuffer, 0, sizeof(gAD7609_txBuffer));
