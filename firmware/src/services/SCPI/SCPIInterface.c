@@ -1083,22 +1083,27 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/58
         if (freq >= 1 && freq <= 15000)
         {
+            // Prevent divide by zero - clamp before any division operations
+            if (freq == 0) {
+                freq = 1000; // Default to 1kHz if frequency is 0
+            }
+
             /**
              * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
              * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
-             * 
-             * The maximum triggering frequency of non type 1 channel is 1000 hz, 
-             * which is obtained by dividing Frequency with ChannelScanFreqDiv. 
+             *
+             * The maximum triggering frequency of non type 1 channel is 1000 hz,
+             * which is obtained by dividing Frequency with ChannelScanFreqDiv.
              * Non-Type 1 channels are setup for channel scanning
-             * 
+             *
              */
             if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
                 freq = 15000 / activeType1ChannelCount;
-            }
-            
-            // Prevent divide by zero exception
-            if (freq == 0) {
-                freq = 1000; // Default to 1kHz if frequency is 0
+
+                // Re-check after division in case result is 0
+                if (freq == 0) {
+                    freq = 1000; // Fallback to 1kHz if division resulted in 0
+                }
             }
             
             // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
