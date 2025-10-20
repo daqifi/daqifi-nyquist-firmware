@@ -409,12 +409,15 @@ scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
     double rangeVoltage = (rangeParam == 1) ? 10.0 : 5.0;
     bool range10V = (rangeParam == 1);
 
+    // Ensure Range_Pin is configured as output before writing
+    GPIO_PinOutputEnable(module->Config.AD7609.Range_Pin);
+
     // Update hardware pin (Range_Pin: LOW=±10V, HIGH=±5V)
     GPIO_PinWrite(module->Config.AD7609.Range_Pin, !range10V);
 
     // Wait for AD7609 analog circuitry to settle after range change
-    // Datasheet specifies settling time; conservative 1ms delay ensures stability
-    vTaskDelay(pdMS_TO_TICKS(1));
+    // Datasheet specifies settling time; conservative 2ms delay ensures stability
+    vTaskDelay(pdMS_TO_TICKS(2));
 
     // Store range value after hardware has settled
     pRuntimeModules->Data[moduleIndex].Range = rangeVoltage;
