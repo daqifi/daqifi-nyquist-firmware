@@ -2,7 +2,7 @@
 
 manifest_file_version: 1.0.0
 project: daqifi
-creation_date: 2025-10-09T23:26:04.151-06:00[America/Denver]
+creation_date: 2025-10-19T23:01:30.633-06:00[America/Denver]
 operating_system: Windows 11
 mcc_mode: IDE
 mcc_mode_version: v6.25
@@ -25,4 +25,5 @@ modules:
 - {name: usb, type: HARMONY, version: v3.16.0}
 - {name: FreeRTOS-Kernel, type: HARMONY, version: V11.2.0}
 - {name: littlefs, type: HARMONY, version: v2.11.2}
+- {name: wolfssl, type: HARMONY, version: v5.4.0}
 - {name: crypto, type: HARMONY, version: v3.8.2}

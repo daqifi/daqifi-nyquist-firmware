@@ -45,7 +45,7 @@ data:
       - attributes:
           id: spi6
           x: '918'
-          y: '256'
+          y: '259'
         type: ElementPosition
       type: ElementPositions
     type: ComponentGraph
@@ -68,7 +68,7 @@ data:
       - children:
         - attributes:
             id: spi6
-            value: '4'
+            value: '3'
           type: Dynamic
         type: Values
       type: Integer
@@ -136,7 +136,7 @@ data:
       children:
       - children:
         - attributes:
-            value: '10000000'
+            value: '12000000'
           type: User
         type: Values
       type: Integer
@@ -147,6 +147,16 @@ data:
       - children:
         - attributes:
             value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
+    SPI_SPICON_CLK_PH:
+      attributes:
+        id: SPI_SPICON_CLK_PH
+      children:
+      - children:
+        - attributes:
+            value: '0'
           type: User
         type: Values
       type: KeyValueSet

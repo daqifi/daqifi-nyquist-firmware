@@ -47,6 +47,11 @@ static void AD7609_Delay_ms(uint32_t milliseconds) {
 //! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
 #define AD7609_SPI_TIMEOUT 100000
 
+//! BSY pin settling timeout
+//! Datasheet: BSY deasserts typically <10us after conversion/read complete
+//! Timeout: 10x datasheet spec = 100us for safety margin
+#define AD7609_BSY_SETTLE_TIMEOUT_US 100
+
 //! Pointer to the module configuration data structure to be set in initialization
 static const AD7609ModuleConfig* pModuleConfigAD7609;
 //! Pointer to the module configuration data structure in runtime
@@ -76,22 +81,15 @@ void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context)
 {
     UNUSED(context);
 
-    // Use configured BSY pin for robust multi-board support
     if (pModuleConfigAD7609 == NULL || pin != pModuleConfigAD7609->BSY_Pin || gAD7609_TaskHandle == NULL) {
         return;
     }
 
-    // Disable further BSY interrupts until handled in task context
-    // Note: Edge-triggered interrupts shouldn't cause storms, but this provides
-    // defense against noise/ringing and ensures only one interrupt per task cycle
+    // Disable further BSY interrupts until next sample trigger
+    // (interrupt status already cleared by GPIO PLIB handler before callback)
     GPIO_PinIntDisable(pModuleConfigAD7609->BSY_Pin);
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    // Minimal ISR: signal task and exit; any timing/logging should be done in task context
-    // Note: Task notification counter is cleared in task context via ulTaskNotifyTake(),
-    // not here in ISR. Clearing in ISR creates race condition if notification arrives
-    // between clear and give operations.
     vTaskNotifyGiveFromISR(gAD7609_TaskHandle, &xHigherPriorityTaskWoken);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
@@ -111,20 +109,22 @@ void AD7609_DeferredInterruptTask(void) {
             // Call ADC layer to handle data acquisition and storage
             // This separates hardware driver from data management
             ADC_HandleAD7609Interrupt();
+
+            if (pModuleConfigAD7609 != NULL) {
+                // BSY should be idle-high by now (SPI read complete)
+                // If still low, indicates hardware fault - log error but don't block
+                if (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+                    LOG_E("AD7609: BSY pin stuck low after SPI read - possible hardware fault");
+                }
+                // Re-enable interrupt for next conversion
+                GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
+            }
         } else {
             // Timeout occurred - no notification received within 100ms
-            // This could indicate missed interrupt or spurious wake
-            // Re-enable interrupt to recover from potential deadlock
+            // Timeout recovery: re-enable interrupt for next attempt
             if (pModuleConfigAD7609 != NULL) {
                 GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
             }
-            continue;
-        }
-
-        // Re-enable BSY interrupt after successful handling
-        // This prevents interrupt storms while processing
-        if (pModuleConfigAD7609 != NULL) {
-            GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
         }
     }
 } 
@@ -180,7 +180,7 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
     GPIO_PinWrite(pModuleConfigAD7609->Range_Pin, !pModuleConfigAD7609->Range10V);  // Range setting
     GPIO_PinWrite(pModuleConfigAD7609->OS0_Pin, pModuleConfigAD7609->OSMode & 0b01); // OS0 setting
     GPIO_PinWrite(pModuleConfigAD7609->OS1_Pin, (pModuleConfigAD7609->OSMode & 0b10) >> 1); // OS1 setting
-    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false); // CONVST low (ready for trigger)
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true); // CONVST high (idle state per datasheet)
     GPIO_PinWrite(pModuleConfigAD7609->STBY_Pin, true); // STBY high (normal operation, active low)
     GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, true); // RST low
     
@@ -207,6 +207,27 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
     // Note: Task creation is handled in config/default/tasks.c
     // AD7609 BSY goes LOW (falling edge) when conversion is complete
     GPIO_PinInterruptCallbackRegister(pModuleConfigAD7609->BSY_Pin, AD7609_BSY_InterruptCallback, 0);
+
+    // Wait for BSY to reach idle-high after reset before enabling interrupt
+    // Datasheet: BSY deasserts typically <10us after reset completes
+    // Timeout: 10x spec = 100us, Tick: continuous polling
+    if (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+        const uint32_t coreTimerFreq = CORETIMER_FrequencyGet();
+        const uint32_t timeoutTicks = (coreTimerFreq * AD7609_BSY_SETTLE_TIMEOUT_US) / 1000000;
+        uint32_t startCount = CORETIMER_CounterGet();
+
+        while (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin) &&
+               ((uint32_t)(CORETIMER_CounterGet() - startCount) < timeoutTicks)) {
+            // Continuous polling (wrap-safe arithmetic)
+        }
+
+        // If still low after timeout, log hardware fault
+        if (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+            LOG_E("AD7609_InitHardware: BSY pin stuck low after reset - possible hardware fault");
+        }
+    }
+
+    // Enable falling-edge interrupt for conversion complete detection
     GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
 
     return true;
@@ -272,14 +293,15 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     bool success = false;
 
     // Configure SPI mode for AD7609 before transfer
-    // AD7609 requires SPI Mode 2: CPOL=1 (idle high), CPHA=0 (sample on leading edge)
+    // AD7609 requires SPI Mode 2: CPOL=1 (idle high), CPHA=0 (sample on first edge)
+    // Harmony enum: LEADING_EDGE = sample on first edge = CPHA=0, maps to CKE=1 for Mode 2
     // This ensures correct configuration even if SPI bus is shared with other devices
     DRV_SPI_TRANSFER_SETUP spiSetup;
     spiSetup.baudRateInHz = 10000000;  // 10 MHz (AD7609 supports up to 24 MHz)
-    spiSetup.clockPhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE;  // CPHA=0
     spiSetup.clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_HIGH;     // CPOL=1
+    spiSetup.clockPhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE;  // CPHA=0 (first edge, CKE=1)
     spiSetup.dataBits = DRV_SPI_DATA_BITS_8;
-    spiSetup.chipSelect = SYS_PORT_PIN_NONE;  // Manual CS control via GPIO
+    spiSetup.chipSelect = SYS_PORT_PIN_NONE;  // Manual CS control
     spiSetup.csPolarity = DRV_SPI_CS_POLARITY_ACTIVE_LOW;
 
     if (!DRV_SPI_TransferSetup(spi_handle, &spiSetup)) {
@@ -421,20 +443,24 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
         return false; // Skip conversion if still busy
     }
 
-    // Generate deterministic CONVST pulse using core timer
-    // AD7609 requires minimum 25ns pulse, use 200ns for safety margin
+    // Ensure CONVST is at idle HIGH before pulsing (defensive check)
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);
+
+    // Generate deterministic CONVST LOW pulse using core timer
+    // AD7609 datasheet requires LOW-going pulse: idle HIGH → pulse LOW → return HIGH
+    // Minimum pulse width: 25ns, using 200ns for safety margin
     const uint32_t coreTimerFreq = CORETIMER_FrequencyGet();
     const uint32_t ticksForPulse = (coreTimerFreq + 4999999U) / 5000000U; // 200ns = 1/(5MHz)
 
     uint32_t startCount = CORETIMER_CounterGet();
-    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);  // Pulse LOW to trigger conversion
 
     // Wait for pulse duration using wrap-safe arithmetic
     while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticksForPulse) {
         // Busy-wait for 200ns pulse width
     }
 
-    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);   // Return to idle HIGH
     return true;
 }
 

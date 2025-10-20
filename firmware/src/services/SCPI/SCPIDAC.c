@@ -339,6 +339,12 @@ scpi_result_t SCPI_DACUseCalGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_DACUpdate(scpi_t * context) {
+    // Ensure DAC hardware is initialized and instance ID is valid
+    if (!DAC_EnsureHardwareInitialized() || dacInstanceId == 0xFF) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     // Update all DAC latches to reflect current values
     DAC7718_UpdateLatch(dacInstanceId);
     return SCPI_RES_OK;

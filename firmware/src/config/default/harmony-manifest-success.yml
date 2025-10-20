@@ -4,7 +4,7 @@
 
 
 project: daqifi
-creation_date: 2025-10-09T23:26:03.960-06:00[America/Denver]    # ISO 8601 format: https://www.w3.org/TR/NOTE-datetime
+creation_date: 2025-10-19T23:01:30.483-06:00[America/Denver]    # ISO 8601 format: https://www.w3.org/TR/NOTE-datetime
 operating_system: Windows 11
 mcc_mode: IDE            # [IDE|Standalone|Headless]
 mcc_version: v5.6.2
@@ -21,6 +21,7 @@ modules:
     - {name: "usb", version: "v3.16.0"}
     - {name: "FreeRTOS-Kernel", version: "V11.2.0"}
     - {name: "littlefs", version: "v2.11.2"}
+    - {name: "wolfssl", version: "v5.4.0"}
     - {name: "crypto", version: "v3.8.2"}
 
 packs:

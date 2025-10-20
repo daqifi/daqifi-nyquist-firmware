@@ -158,7 +158,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     if (gDAC7718_Mutex != NULL) {
         if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
             LOG_E("DAC7718_ReadWriteReg: Failed to acquire mutex");
-            return UINT32_MAX;
+            rdData = UINT32_MAX;
+            goto cleanup;
         }
         mutexAcquired = true;
     }
@@ -197,11 +198,11 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         (void)SPI2BUF; // clear
     }
 
-    // Wait for shift register to complete
+    // Wait for shift register to empty (transmission complete)
     uint32_t timeout = DAC7718_SPI_TIMEOUT;
-    while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0U)) { }
+    while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
     if (timeout == 0U) {
-        LOG_E("DAC7718_ReadWriteReg: SPI busy timeout");
+        LOG_E("DAC7718_ReadWriteReg: Shift register timeout");
         rdData = UINT32_MAX;
         goto cleanup;
     }
@@ -249,10 +250,11 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
             spi_rxData[i] = (uint8_t)SPI2BUF;
         }
 
+        // Wait for shift register to empty (readback transmission complete)
         timeout = DAC7718_SPI_TIMEOUT;
-        while ((SPI2STATbits.SPIBUSY == 1) && (--timeout > 0U)) { }
+        while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
         if (timeout == 0U) {
-            LOG_E("DAC7718_ReadWriteReg: NOP SPI busy timeout");
+            LOG_E("DAC7718_ReadWriteReg: NOP shift register timeout");
             rdData = UINT32_MAX;
             goto cleanup;
         }

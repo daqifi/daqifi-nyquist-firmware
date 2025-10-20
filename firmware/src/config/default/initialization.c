@@ -664,9 +664,9 @@ void SYS_Initialize ( void* data )
 
     OCMP4_Initialize();
 
-    NVM_Initialize();
-
     OCMP3_Initialize();
+
+    NVM_Initialize();
 
     TMR6_Initialize();
 

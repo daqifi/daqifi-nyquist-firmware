@@ -1100,13 +1100,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
              * Non-Type 1 channels are setup for channel scanning
              *
              */
-            if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
-                freq = 15000 / activeType1ChannelCount;
+            if (activeType1ChannelCount > 0) {
+                // Avoid overflow: compare without multiplying freq * activeType1ChannelCount
+                // Instead of: (freq * activeType1ChannelCount) > 15000
+                // Use: freq > (15000 / activeType1ChannelCount)
+                if (freq > (15000 / activeType1ChannelCount)) {
+                    freq = 15000 / activeType1ChannelCount;
 
-                // Prevent divide-by-zero: if too many channels active, return error
-                if (freq == 0) {
-                    SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
-                    return SCPI_RES_ERR;
+                    // Prevent divide-by-zero: if too many channels active, return error
+                    if (freq == 0) {
+                        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+                        return SCPI_RES_ERR;
+                    }
                 }
             }
 
