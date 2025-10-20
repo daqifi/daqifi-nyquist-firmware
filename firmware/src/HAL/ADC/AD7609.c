@@ -180,9 +180,9 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
     GPIO_PinWrite(pModuleConfigAD7609->Range_Pin, !pModuleConfigAD7609->Range10V);  // Range setting
     GPIO_PinWrite(pModuleConfigAD7609->OS0_Pin, pModuleConfigAD7609->OSMode & 0b01); // OS0 setting
     GPIO_PinWrite(pModuleConfigAD7609->OS1_Pin, (pModuleConfigAD7609->OSMode & 0b10) >> 1); // OS1 setting
-    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true); // CONVST high (idle state per datasheet)
-    GPIO_PinWrite(pModuleConfigAD7609->STBY_Pin, true); // STBY high (normal operation, active low)
-    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, true); // RST low
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);  // CONVST high (idle state per datasheet)
+    GPIO_PinWrite(pModuleConfigAD7609->STBY_Pin, true);    // STBY high (normal operation, active low)
+    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, false);    // RST low (idle, not in reset)
     
     // Override MCC GPIO configuration for SPI bus management
     // Ensure proper pin directions and states for AD7609 operation
@@ -362,9 +362,36 @@ read_cleanup:
         return false;
     }
 
+    // Helper function: Extract 18-bit value from big-endian bitstream with bounds checking
+    // Prevents out-of-bounds access by validating buffer boundaries
+    auto bool extract18Bit(const uint8_t* buf, size_t bufLen, uint16_t bitPos, uint32_t* out) {
+        // Calculate which bytes we need (may span up to 4 bytes for unaligned positions)
+        size_t byteIndex = bitPos >> 3;  // bitPos / 8
+
+        // Ensure we have enough bytes remaining in buffer
+        if (byteIndex + 3 >= bufLen) {
+            return false;  // Prevent OOB when bit window extends past buffer
+        }
+
+        // Read 32-bit window from buffer (big-endian, MSB first)
+        uint32_t window = ((uint32_t)buf[byteIndex]     << 24) |
+                          ((uint32_t)buf[byteIndex + 1] << 16) |
+                          ((uint32_t)buf[byteIndex + 2] << 8)  |
+                          ((uint32_t)buf[byteIndex + 3]);
+
+        // Calculate bit offset within the byte
+        uint8_t bitInByte = bitPos & 0x7;  // bitPos % 8
+
+        // Shift to align 18-bit field at top of window, then shift down
+        uint32_t val = (window << bitInByte) >> (32 - 18);
+
+        // Mask to 18 bits and return
+        *out = val & 0x3FFFF;
+        return true;
+    };
+
     // AD7609 sends data in serial mode: 18 bits per channel, 8 channels sequentially
     // Total: 144 bits (18 bytes) in continuous stream, MSB first per channel
-    // We need to extract each 18-bit value from the bit stream
 
     size_t sampleCount = 0;
     for (size_t i = 0; i < channelConfigList->Size; i++) {
@@ -381,32 +408,13 @@ read_cleanup:
 
             // Calculate bit position in the 144-bit stream
             uint16_t bitPosition = hwChannel * 18;  // Each channel is 18 bits
-            uint8_t byteIndex = bitPosition / 8;     // Starting byte
-            uint8_t bitOffset = bitPosition % 8;     // Bit offset within byte
 
-            // Extract 18-bit value spanning up to 3 bytes
+            // Extract 18-bit value using bounds-checked helper function
             uint32_t tmpData;
-
-            if (bitOffset == 0) {
-                // Aligned on byte boundary (bits 0-17 from 3 bytes)
-                tmpData = ((uint32_t)gAD7609_rxBuffer[byteIndex] << 10) |
-                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 1] << 2) |
-                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 2] >> 6);
-            } else if (bitOffset <= 6) {
-                // Spans 3 bytes
-                tmpData = ((uint32_t)(gAD7609_rxBuffer[byteIndex] & (0xFF >> bitOffset)) << (10 + bitOffset)) |
-                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 1] << (2 + bitOffset)) |
-                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 2] >> (6 - bitOffset));
-            } else {
-                // bitOffset = 7, spans 3 bytes
-                tmpData = ((uint32_t)(gAD7609_rxBuffer[byteIndex] & 0x01) << 17) |
-                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 1] << 9) |
-                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 2] << 1) |
-                          ((uint32_t)gAD7609_rxBuffer[byteIndex + 3] >> 7);
+            if (!extract18Bit(gAD7609_rxBuffer, sizeof(gAD7609_rxBuffer), bitPosition, &tmpData)) {
+                LOG_E("AD7609_ExtractSamples: OOB access for channel %u at bit %u", hwChannel, bitPosition);
+                continue;  // Skip this channel on error
             }
-
-            // Mask to 18 bits
-            tmpData &= 0x3FFFF;
 
             // Convert from 18-bit 2's complement to signed 32-bit
             if (tmpData & 0x20000) {  // Check bit 17 (sign bit)

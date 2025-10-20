@@ -96,19 +96,19 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 
     // SPI2 is already initialized by MCC
 
-	// Initialize GPIO pins - CS high, RST high for normal operation
-    GPIO_PinWrite(config->CS_Pin, true);
-    GPIO_PinWrite(config->RST_Pin, true);
-
-	// Set GPIO pins as outputs
+	// Configure GPIO pins as outputs before setting values (prevents glitches)
     GPIO_PinOutputEnable(config->CS_Pin);
     GPIO_PinOutputEnable(config->RST_Pin);
 
+	// Initialize GPIO pins - CS high (inactive), RST high for normal operation
+    GPIO_PinWrite(config->CS_Pin, true);
+    GPIO_PinWrite(config->RST_Pin, true);
+
 	// Hardware reset sequence: RST low pulse, then high
 	// DAC7718 datasheet requires minimum 100ns reset pulse
-	GPIO_PinWrite(config->RST_Pin, false);  // Assert reset
+	GPIO_PinWrite(config->RST_Pin, false);  // Assert reset (active low)
 	DAC7718_Delay_us(1);  // 1us delay (10x minimum spec, guaranteed safe)
-	GPIO_PinWrite(config->RST_Pin, true);   // De-assert reset
+	GPIO_PinWrite(config->RST_Pin, true);   // De-assert reset (return to idle high)
 
 	// Configure DAC gain based on range parameter
 	// Range 0: 0-5V  (GAIN-A=0, GAIN-B=0 for 2x gain)
