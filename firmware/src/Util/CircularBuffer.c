@@ -25,6 +25,7 @@
 #include "string.h"
 #include <stdlib.h>
 #include "osal/osal.h"
+#include "Logger.h"
 
 #define	max(a,b)	(((a) > (b)) ? (a) : (b))
 #define	min(a,b)	(((a) < (b)) ? (a) : (b))
@@ -36,6 +37,9 @@
 void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32_t size)
 {
     cirbuf->buf_ptr                = OSAL_Malloc(size);
+    if (cirbuf->buf_ptr == NULL) {
+        LOG_E("CircularBuf_Init: Failed to allocate %u bytes (OSAL_Malloc returned NULL)\r\n", size);
+    }
     cirbuf->process_callback       = fp;
     cirbuf->buf_size               = size;
     cirbuf->insertPtr              = cirbuf->removePtr = cirbuf->buf_ptr;

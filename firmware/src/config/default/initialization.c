@@ -320,6 +320,162 @@ static const DRV_SPI_INIT drvSPI0InitData =
     .interruptSources = &drvSPI0InterruptSources,
 };
 // </editor-fold>
+// <editor-fold defaultstate="collapsed" desc="DRV_SPI Instance 1 Initialization Data">
+
+/* SPI Client Objects Pool */
+static DRV_SPI_CLIENT_OBJ drvSPI1ClientObjPool[DRV_SPI_CLIENTS_NUMBER_IDX1];
+
+/* SPI Transfer Objects Pool */
+static DRV_SPI_TRANSFER_OBJ drvSPI1TransferObjPool[DRV_SPI_QUEUE_SIZE_IDX1];
+
+/* SPI PLIB Interface Initialization */
+static const DRV_SPI_PLIB_INTERFACE drvSPI1PlibAPI = {
+
+    /* SPI PLIB Setup */
+    .setup = (DRV_SPI_PLIB_SETUP)SPI6_TransferSetup,
+
+    /* SPI PLIB WriteRead function */
+    .writeRead = (DRV_SPI_PLIB_WRITE_READ)SPI6_WriteRead,
+
+    /* SPI PLIB Transfer Status function */
+    .isTransmitterBusy = (DRV_SPI_PLIB_TRANSMITTER_IS_BUSY)SPI6_IsTransmitterBusy,
+
+    /* SPI PLIB Callback Register */
+    .callbackRegister = (DRV_SPI_PLIB_CALLBACK_REGISTER)SPI6_CallbackRegister,
+};
+
+static const uint32_t drvSPI1remapDataBits[]= { 0x00000000, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0x00000400, 0x00000800 };
+static const uint32_t drvSPI1remapClockPolarity[] = { 0x00000000, 0x00000040 };
+static const uint32_t drvSPI1remapClockPhase[] = { 0x00000000, 0x00000100 };
+
+static const DRV_SPI_INTERRUPT_SOURCES drvSPI1InterruptSources =
+{
+    /* Peripheral has more than one interrupt vectors */
+    .isSingleIntSrc                        = false,
+
+    /* Peripheral interrupt lines */
+    .intSources.multi.spiTxReadyInt      = -1,
+    .intSources.multi.spiTxCompleteInt   = (int32_t)_SPI6_TX_VECTOR,
+    .intSources.multi.spiRxInt           = (int32_t)_SPI6_RX_VECTOR,
+    /* DMA Tx interrupt line */
+    .intSources.multi.dmaTxChannelInt      = (int32_t)_DMA2_VECTOR,
+    /* DMA Rx interrupt line */
+    .intSources.multi.dmaRxChannelInt      = (int32_t)_DMA3_VECTOR,
+};
+
+/* SPI Driver Initialization Data */
+static const DRV_SPI_INIT drvSPI1InitData =
+{
+    /* SPI PLIB API */
+    .spiPlib = &drvSPI1PlibAPI,
+
+    .remapDataBits = drvSPI1remapDataBits,
+
+    .remapClockPolarity = drvSPI1remapClockPolarity,
+
+    .remapClockPhase = drvSPI1remapClockPhase,
+
+    /* SPI Number of clients */
+    .numClients = DRV_SPI_CLIENTS_NUMBER_IDX1,
+
+    /* SPI Client Objects Pool */
+    .clientObjPool = (uintptr_t)&drvSPI1ClientObjPool[0],
+
+    /* DMA Channel for Transmit */
+    .dmaChannelTransmit = DRV_SPI_XMIT_DMA_CH_IDX1,
+
+    /* DMA Channel for Receive */
+    .dmaChannelReceive  = DRV_SPI_RCV_DMA_CH_IDX1,
+
+    /* SPI Transmit Register */
+    .spiTransmitAddress =  (void *)&(SPI6BUF),
+
+    /* SPI Receive Register */
+    .spiReceiveAddress  = (void *)&(SPI6BUF),
+
+    /* SPI Queue Size */
+    .transferObjPoolSize = DRV_SPI_QUEUE_SIZE_IDX1,
+
+    /* SPI Transfer Objects Pool */
+    .transferObjPool = (uintptr_t)&drvSPI1TransferObjPool[0],
+
+    /* SPI interrupt sources (SPI peripheral and DMA) */
+    .interruptSources = &drvSPI1InterruptSources,
+};
+// </editor-fold>
+// <editor-fold defaultstate="collapsed" desc="DRV_SPI Instance 2 Initialization Data">
+
+/* SPI Client Objects Pool */
+static DRV_SPI_CLIENT_OBJ drvSPI2ClientObjPool[DRV_SPI_CLIENTS_NUMBER_IDX2];
+
+/* SPI Transfer Objects Pool */
+static DRV_SPI_TRANSFER_OBJ drvSPI2TransferObjPool[DRV_SPI_QUEUE_SIZE_IDX2];
+
+/* SPI PLIB Interface Initialization */
+static const DRV_SPI_PLIB_INTERFACE drvSPI2PlibAPI = {
+
+    /* SPI PLIB Setup */
+    .setup = (DRV_SPI_PLIB_SETUP)SPI2_TransferSetup,
+
+    /* SPI PLIB WriteRead function */
+    .writeRead = (DRV_SPI_PLIB_WRITE_READ)SPI2_WriteRead,
+
+    /* SPI PLIB Transfer Status function */
+    .isTransmitterBusy = (DRV_SPI_PLIB_TRANSMITTER_IS_BUSY)SPI2_IsTransmitterBusy,
+
+    /* SPI PLIB Callback Register */
+    .callbackRegister = (DRV_SPI_PLIB_CALLBACK_REGISTER)SPI2_CallbackRegister,
+};
+
+static const uint32_t drvSPI2remapDataBits[]= { 0x00000000, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0x00000400, 0x00000800 };
+static const uint32_t drvSPI2remapClockPolarity[] = { 0x00000000, 0x00000040 };
+static const uint32_t drvSPI2remapClockPhase[] = { 0x00000000, 0x00000100 };
+
+static const DRV_SPI_INTERRUPT_SOURCES drvSPI2InterruptSources =
+{
+    /* Peripheral has more than one interrupt vectors */
+    .isSingleIntSrc                        = false,
+
+    /* Peripheral interrupt lines */
+    .intSources.multi.spiTxReadyInt      = -1,
+    .intSources.multi.spiTxCompleteInt   = (int32_t)_SPI2_TX_VECTOR,
+    .intSources.multi.spiRxInt           = (int32_t)_SPI2_RX_VECTOR,
+};
+
+/* SPI Driver Initialization Data */
+static const DRV_SPI_INIT drvSPI2InitData =
+{
+    /* SPI PLIB API */
+    .spiPlib = &drvSPI2PlibAPI,
+
+    .remapDataBits = drvSPI2remapDataBits,
+
+    .remapClockPolarity = drvSPI2remapClockPolarity,
+
+    .remapClockPhase = drvSPI2remapClockPhase,
+
+    /* SPI Number of clients */
+    .numClients = DRV_SPI_CLIENTS_NUMBER_IDX2,
+
+    /* SPI Client Objects Pool */
+    .clientObjPool = (uintptr_t)&drvSPI2ClientObjPool[0],
+
+    /* DMA Channel for Transmit */
+    .dmaChannelTransmit = SYS_DMA_CHANNEL_NONE,
+
+    /* DMA Channel for Receive */
+    .dmaChannelReceive  = SYS_DMA_CHANNEL_NONE,
+
+    /* SPI Queue Size */
+    .transferObjPoolSize = DRV_SPI_QUEUE_SIZE_IDX2,
+
+    /* SPI Transfer Objects Pool */
+    .transferObjPool = (uintptr_t)&drvSPI2TransferObjPool[0],
+
+    /* SPI interrupt sources (SPI peripheral and DMA) */
+    .interruptSources = &drvSPI2InterruptSources,
+};
+// </editor-fold>
 
 
 
@@ -502,13 +658,15 @@ void SYS_Initialize ( void* data )
 
 	SPI4_Initialize();
 
+	SPI6_Initialize();
+
     OCMP1_Initialize();
 
     OCMP4_Initialize();
 
-    NVM_Initialize();
-
     OCMP3_Initialize();
+
+    NVM_Initialize();
 
     TMR6_Initialize();
 
@@ -522,6 +680,8 @@ void SYS_Initialize ( void* data )
     TMR2_Initialize();
 
     TMR3_Initialize();
+
+	SPI2_Initialize();
 
     DMAC_Initialize();
 
@@ -539,11 +699,17 @@ void SYS_Initialize ( void* data )
     /* Initialize I2C0 Driver Instance */
     sysObj.drvI2C0 = DRV_I2C_Initialize(DRV_I2C_INDEX_0, (SYS_MODULE_INIT *)&drvI2C0InitData);
 
+    /* Initialize SPI0 Driver Instance (must be before WINC, as WINC depends on SPI0) */
+    sysObj.drvSPI0 = DRV_SPI_Initialize(DRV_SPI_INDEX_0, (SYS_MODULE_INIT *)&drvSPI0InitData);
+
     /* Initialize the WINC Driver */
     sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, (SYS_MODULE_INIT*)&wdrvWincInitData);
 
-    /* Initialize SPI0 Driver Instance */
-    sysObj.drvSPI0 = DRV_SPI_Initialize(DRV_SPI_INDEX_0, (SYS_MODULE_INIT *)&drvSPI0InitData);
+    /* Initialize SPI1 Driver Instance */
+    sysObj.drvSPI1 = DRV_SPI_Initialize(DRV_SPI_INDEX_1, (SYS_MODULE_INIT *)&drvSPI1InitData);
+
+    /* Initialize SPI2 Driver Instance */
+    sysObj.drvSPI2 = DRV_SPI_Initialize(DRV_SPI_INDEX_2, (SYS_MODULE_INIT *)&drvSPI2InitData);
 
 
     /* MISRA C-2012 Rule 11.3, 11.8 deviated below. Deviation record ID -  

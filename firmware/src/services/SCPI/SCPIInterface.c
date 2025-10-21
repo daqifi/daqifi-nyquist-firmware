@@ -23,8 +23,10 @@
 #include "state/board/AInConfig.h"  // For MAX_AIN_PUBLIC_CHANNELS
 #include "peripheral/gpio/plib_gpio.h"
 #include "HAL/BQ24297/BQ24297.h"
+#include "HAL/ADC.h"
 #include "HAL/DIO.h"
 #include "SCPIADC.h"
+#include "SCPIDAC.h" 
 #include "SCPIDIO.h"
 #include "SCPILAN.h"
 #include "services/wifi_services/wifi_manager.h"
@@ -37,7 +39,7 @@
 #define UNUSED(x) (void)(x)
 //
 #define SCPI_IDN1 "DAQiFi"
-#define SCPI_IDN2 "Nq1"
+// SCPI_IDN2 (model) is constructed dynamically from BoardConfig.BoardVariant
 #define SCPI_IDN3 NULL
 #define SCPI_IDN4 "01-02"
 
@@ -245,6 +247,25 @@ static microrl_t* SCPI_GetMicroRLClient(scpi_t* context) {
 }
 
 /**
+ * Helper function to detect which interface initiated a SCPI command
+ * Used for single-interface streaming to prevent bandwidth overload
+ */
+static StreamingInterface SCPI_GetInterface(scpi_t* context) {
+    UsbCdcData_t * pRunTimeUsbSettings = UsbCdc_GetSettings();
+    wifi_tcp_server_context_t * pRunTimeServerData = wifi_manager_GetTcpServerContext();
+
+    if (&pRunTimeUsbSettings->scpiContext == context) {
+        return StreamingInterface_USB;
+    } else if (&pRunTimeServerData->client.scpiContext == context) {
+        return StreamingInterface_WiFi;
+    }
+
+    // Default to USB if interface cannot be determined
+    // Multi-interface streaming (All) is available but not used by default
+    return StreamingInterface_USB;
+}
+
+/**
  * Triggers a board reset 
  */
 static scpi_result_t SCPI_Reset(scpi_t * context) {
@@ -319,20 +340,23 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
  */
 static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     char buffer[256];
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
     AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     DIORuntimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     // Check for NULL pointers to prevent crashes
-    if (!pBoardData) {
-        context->interface->write(context, "ERROR: BoardData not available\r\n", 32);
+    if (!pBoardData || !pBoardConfig) {
+        const char* err = !pBoardData ? "ERROR: BoardData not available\r\n"
+                                      : "ERROR: BoardConfig not available\r\n";
+        context->interface->write(context, err, strlen(err));
         return SCPI_RES_ERR;
     }
-    
+
     // Header with device identification
-    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n", 
-        BOARD_VARIANT, BOARD_HARDWARE_REV, BOARD_FIRMWARE_REV);
+    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n",
+        pBoardConfig->BoardVariant, pBoardConfig->boardHardwareRev, pBoardConfig->boardFirmwareRev);
     context->interface->write(context, buffer, strlen(buffer));
     
     // Network Section
@@ -445,23 +469,34 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     const char* statHeader = "[Status]\r\n";
     context->interface->write(context, statHeader, strlen(statHeader));
     
-    // Channel status - separate user and internal ADCs
+    // Channel status - separate user and internal ADCs by channel ID
+    // User channels have IDs 0-15, internal monitoring channels have IDs >= 248
     int userAdcEnabled = 0, internalAdcEnabled = 0, dioInputs = 0;
     int userAdcTotal = 0, internalAdcTotal = 0;
-    
-    if (pAInConfig) {
-        // Count user ADCs (first 16 channels max are considered user channels)
-        for (int i = 0; i < pAInConfig->Size && i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-            userAdcTotal++;
-            if (pAInConfig->Data[i].IsEnabled) {
-                userAdcEnabled++;
-            }
-        }
-        // Count internal ADCs (channels 16 and above)
-        for (int i = MAX_AIN_PUBLIC_CHANNELS; i < pAInConfig->Size; i++) {
-            internalAdcTotal++;
-            if (pAInConfig->Data[i].IsEnabled) {
-                internalAdcEnabled++;
+
+    const tBoardConfig* pBoardConfigForAdc = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    const AInArray* pBoardConfigAInChannels = pBoardConfigForAdc ? &pBoardConfigForAdc->AInChannels : NULL;
+
+    if (pAInConfig && pBoardConfigAInChannels) {
+        for (int i = 0; i < pAInConfig->Size; i++) {
+            // Check channel ID from board config
+            uint8_t channelId = pBoardConfigAInChannels->Data[i].DaqifiAdcChannelId;
+
+            if (channelId >= ADC_CHANNEL_3_3V) {
+                // Internal monitoring channel (ID >= 248)
+                // Exclude temperature sensor (doesn't work per silicon errata)
+                if (channelId != ADC_CHANNEL_TEMP) {
+                    internalAdcTotal++;
+                    if (pAInConfig->Data[i].IsEnabled) {
+                        internalAdcEnabled++;
+                    }
+                }
+            } else {
+                // User ADC channel (ID 0-15 for NQ1, 0-7 for NQ3)
+                userAdcTotal++;
+                if (pAInConfig->Data[i].IsEnabled) {
+                    userAdcEnabled++;
+                }
             }
         }
     }
@@ -480,13 +515,15 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     context->interface->write(context, buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled
-    if (userAdcEnabled > 0 && pAInConfig) {
+    if (userAdcEnabled > 0 && pAInConfig && pBoardConfigAInChannels) {
         context->interface->write(context, "  Enabled user ch: ", 19);
         bool first = true;
-        for (int i = 0; i < userAdcTotal && i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-            if (pAInConfig->Data[i].IsEnabled) {
+        for (int i = 0; i < pAInConfig->Size; i++) {
+            uint8_t channelId = pBoardConfigAInChannels->Data[i].DaqifiAdcChannelId;
+            // Only show user channels (ID < 248, not internal monitoring)
+            if (channelId < ADC_CHANNEL_3_3V && pAInConfig->Data[i].IsEnabled) {
                 if (!first) context->interface->write(context, ",", 1);
-                snprintf(buffer, sizeof(buffer), "%d", i);
+                snprintf(buffer, sizeof(buffer), "%d", channelId);
                 context->interface->write(context, buffer, strlen(buffer));
                 first = false;
             }
@@ -603,7 +640,128 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     } else {
         context->interface->write(context, "  BQ24297: Not initialized\r\n", 28);
     }
-    
+
+    // Voltage Rail Monitoring Section - only when powered up
+    if (pBoardData->PowerData.powerState != STANDBY) {
+        const char* voltHeader = "\r\n[Voltage Rails]\r\n";
+        context->interface->write(context, voltHeader, strlen(voltHeader));
+
+        // Read latest ADC samples for internal monitoring channels
+        // Use ADC_ConvertToVoltage for proper conversion based on channel type and config
+        // NOTE: PIC32MZ internal temperature sensor (ADC_CHANNEL_TEMP) is not functional
+        //       due to silicon errata. Temperature monitoring is not available on this device.
+        AInRuntimeArray* pAInRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+
+        if (pAInRuntimeConfig && pBoardConfigAInChannels) {
+            double volt3_3 = 0, volt5 = 0, volt10 = 0, voltSys = 0, vBatt = 0, v2_5Ref = 0, v5Ref = 0;
+            bool found3_3 = false, found5 = false, found10 = false, foundSys = false;
+            bool foundBatt = false, found2_5Ref = false, found5Ref = false;
+
+            // Get the actual count of available samples (not runtime config size)
+            size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
+            size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
+
+            // Iterate through available samples and use channel ID for identification
+            for (size_t i = 0; i < sampleCount; i++) {
+                AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
+                if (!sample || !ADC_IsDataValid(sample)) continue;
+
+                // Convert raw ADC value to voltage using ADC layer function
+                double voltage = ADC_ConvertToVoltage(sample);
+                uint8_t sampleChannelId = sample->Channel;
+
+                // Store voltage for the appropriate rail
+                if (sampleChannelId == ADC_CHANNEL_3_3V) {
+                    volt3_3 = voltage;
+                    found3_3 = true;
+                } else if (sampleChannelId == ADC_CHANNEL_5V) {
+                    volt5 = voltage;
+                    found5 = true;
+                } else if (sampleChannelId == ADC_CHANNEL_10V) {
+                    volt10 = voltage;
+                    found10 = true;
+                } else if (sampleChannelId == ADC_CHANNEL_VSYS) {
+                    voltSys = voltage;
+                    foundSys = true;
+                } else if (sampleChannelId == ADC_CHANNEL_VBATT) {
+                    vBatt = voltage;
+                    foundBatt = true;
+                } else if (sampleChannelId == ADC_CHANNEL_2_5VREF) {
+                    v2_5Ref = voltage;
+                    found2_5Ref = true;
+                } else if (sampleChannelId == ADC_CHANNEL_5VREF) {
+                    v5Ref = voltage;
+                    found5Ref = true;
+                }
+                // ADC_CHANNEL_TEMP intentionally not processed - PIC32MZ temperature sensor
+                // does not function per silicon errata
+            }
+
+            // Display voltage rails with proper string formatting
+            // Initialize strings to empty to ensure well-defined behavior
+            char str3_3[20] = {0}, str5[20] = {0}, str10[20] = {0};
+            char strSys[20] = {0}, strBatt[20] = {0}, str2_5Ref[20] = {0}, str5Ref[20] = {0};
+
+            if (found3_3) {
+                snprintf(str3_3, sizeof(str3_3), "%.2fV", volt3_3);
+            } else {
+                strcpy(str3_3, "--");
+            }
+
+            if (found5) {
+                snprintf(str5, sizeof(str5), "%.2fV", volt5);
+            } else {
+                strcpy(str5, "--");
+            }
+
+            if (found10) {
+                snprintf(str10, sizeof(str10), "%.2fV", volt10);
+            } else {
+                strcpy(str10, "--");
+            }
+
+            if (foundSys) {
+                snprintf(strSys, sizeof(strSys), "%.2fV", voltSys);
+            } else {
+                strcpy(strSys, "--");
+            }
+
+            if (foundBatt) {
+                snprintf(strBatt, sizeof(strBatt), "%.2fV", vBatt);
+            } else {
+                strcpy(strBatt, "--");
+            }
+
+            if (found2_5Ref) {
+                snprintf(str2_5Ref, sizeof(str2_5Ref), "%.2fV", v2_5Ref);
+            } else {
+                strcpy(str2_5Ref, "--");
+            }
+
+            if (found5Ref) {
+                snprintf(str5Ref, sizeof(str5Ref), "%.2fV", v5Ref);
+            } else {
+                strcpy(str5Ref, "--");
+            }
+
+            // Display power rails
+            snprintf(buffer, sizeof(buffer), "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
+                str3_3, str5, str10);
+            context->interface->write(context, buffer, strlen(buffer));
+
+            snprintf(buffer, sizeof(buffer), "  VSYS: %s | VBATT: %s\r\n",
+                strSys, strBatt);
+            context->interface->write(context, buffer, strlen(buffer));
+
+            // Display reference voltages
+            snprintf(buffer, sizeof(buffer), "  2.5V Ref: %s | 5V Ref: %s\r\n",
+                str2_5Ref, str5Ref);
+            context->interface->write(context, buffer, strlen(buffer));
+        } else {
+            context->interface->write(context, "  Voltage monitoring unavailable\r\n", 34);
+        }
+    }
+
     return SCPI_RES_OK;
 }
 
@@ -917,16 +1075,37 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     //int i;
     uint16_t activeType1ChannelCount = 0;
+    bool hasActiveAD7609Channels __attribute__((unused)) = false;
     int i;
+    
+    // Count active channels and detect AD7609 usage
     for (i = 0; i < pBoardConfigADC->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
+            if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
+                hasActiveAD7609Channels = true;
+            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC && 
+                       pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
                 activeType1ChannelCount++;
             }
         }
     }
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {
+        // Frequency = 0 is valid and means "disable streaming"
+        // (In future may support per-channel frequency where 0 disables that channel)
+        if (freq == 0) {
+            pRunTimeStreamConfig->IsEnabled = false;
+            Streaming_UpdateState();
+            return SCPI_RES_OK;
+        }
+
+        // NQ3 Smart Frequency Management:
+        // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
+        // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
+        if (hasActiveAD7609Channels && activeType1ChannelCount == 0 && freq > 1) {
+            freq = 1; // Override to 1Hz for internal monitoring when external ADC active
+        }
+
         // Maximum frequency limited to 15kHz pending optimization
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/58
         if (freq >= 1 && freq <= 15000)
@@ -934,15 +1113,29 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             /**
              * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
              * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
-             * 
-             * The maximum triggering frequency of non type 1 channel is 1000 hz, 
-             * which is obtained by dividing Frequency with ChannelScanFreqDiv. 
+             *
+             * The maximum triggering frequency of non type 1 channel is 1000 hz,
+             * which is obtained by dividing Frequency with ChannelScanFreqDiv.
              * Non-Type 1 channels are setup for channel scanning
-             * 
+             *
              */
-            if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
-                freq = 15000 / activeType1ChannelCount;
+            if (activeType1ChannelCount > 0) {
+                // Avoid overflow: compare without multiplying freq * activeType1ChannelCount
+                // Instead of: (freq * activeType1ChannelCount) > 15000
+                // Use: freq > (15000 / activeType1ChannelCount)
+                if (freq > (15000 / activeType1ChannelCount)) {
+                    freq = 15000 / activeType1ChannelCount;
+
+                    // Prevent divide-by-zero: if too many channels active, return error
+                    if (freq == 0) {
+                        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+                        return SCPI_RES_ERR;
+                    }
+                }
             }
+
+            // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
+
             pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
@@ -957,6 +1150,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     } else {
         //No freq given just stream with the current value
     }
+
+    // Detect which interface initiated streaming for single-interface mode
+    // This prevents bandwidth overload at high sample rates (e.g., 1000 Hz × 16 channels)
+    pRunTimeStreamConfig->ActiveInterface = SCPI_GetInterface(context);
 
     Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;
@@ -1322,7 +1519,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet,},
     {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet,},
     {.pattern = "ENAble:VOLTage:DC?", .callback = SCPI_ADCChanEnableGet,},
-    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:ADC:SINGleend", .callback = SCPI_ADCChanSingleEndSet,},
     {.pattern = "CONFigure:ADC:SINGleend?", .callback = SCPI_ADCChanSingleEndGet,},
     {.pattern = "CONFigure:ADC:RANGe", .callback = SCPI_ADCChanRangeSet,},
@@ -1339,7 +1535,22 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad,},
     {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet,},
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
-    //    
+    //
+    // DAC
+    {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},
+    {.pattern = "SOURce:VOLTage:LEVel?", .callback = SCPI_DACVoltageGet,},
+    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_DACChanCalmSet,},
+    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_DACChanCalbSet,},
+    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_DACChanCalmGet,},
+    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_DACChanCalbGet,},
+    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_DACCalSave,},
+    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_DACCalFSave,},
+    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_DACCalLoad,},
+    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_DACCalFLoad,},
+    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
+    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
+    {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
+    //
     //    // SPI
     //    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },
     //    
@@ -1417,6 +1628,16 @@ scpi_result_t SCPI_Help(scpi_t* context) {
 }
 
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
+    // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
+    static char modelString[8] = {0};  // Initialize to prevent garbage data
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    if (pBoardConfig) {
+        snprintf(modelString, sizeof(modelString), "Nq%d", pBoardConfig->BoardVariant);
+    } else {
+        strncpy(modelString, "Nq?", sizeof(modelString));
+        modelString[sizeof(modelString) - 1] = '\0';  // Ensure null termination
+    }
+
     // Create a context
     scpi_t daqifiScpiContext;
     // Init context
@@ -1424,7 +1645,7 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
             scpi_commands,
             interface,
             scpi_units_def,
-            SCPI_IDN1, SCPI_IDN2, SCPI_IDN3, SCPI_IDN4,
+            SCPI_IDN1, modelString, SCPI_IDN3, SCPI_IDN4,
             scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
             scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
 

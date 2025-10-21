@@ -259,10 +259,6 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             tstrSocketRecvMsg *pRecvMessage = (tstrSocketRecvMsg*) pMessage;
 
             if ((NULL != pRecvMessage) && (pRecvMessage->s16BufferSize > 0)) {
-                LOG_D("Receive on socket %d successful\r\n", socket);
-                LOG_D("Client sent %d bytes\r\n", pRecvMessage->s16BufferSize);
-                LOG_D("Client sent %s\r\n", pRecvMessage->pu8Buffer);
-                LOG_D("Sending a test message to client\r\n");
                 gStateMachineContext.pTcpServerContext->client.readBufferLength = pRecvMessage->s16BufferSize;
                 wifi_tcp_server_ProcessReceivedBuff();
                 recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
@@ -466,10 +462,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
                 }
 
-                if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_READY) {
+                SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
+                if (wincStatus != SYS_STATUS_READY) {
                     // Log error only once when entering error state
                     if (!initErrorLogged) {
-                        LOG_E("WiFi driver not ready, retrying initialization...\r\n");
+                        LOG_E("WiFi driver not ready (status=%d), retrying...\r\n", wincStatus);
                         initErrorLogged = true;
                     }
                     //wait for initialization to complete
@@ -1122,7 +1119,11 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     if (pSettings != NULL)
         gStateMachineContext.pWifiSettings = pSettings;
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
-        xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
+        BaseType_t result = xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
+        if (result != pdPASS) {
+            LOG_E("Failed to create fwUpdateTask (1024 bytes)\r\n");
+            gStateMachineContext.fwUpdateTaskHandle = NULL;
+        }
     }
     gStateMachineContext.active = MainState;
     gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);

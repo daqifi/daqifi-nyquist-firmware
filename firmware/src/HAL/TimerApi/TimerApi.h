@@ -27,6 +27,14 @@
 extern "C" {
 #endif
 #define TIMER_CLOCK_FRQ 100000000
+
+typedef enum {
+    TMR_INDEX_2 = 2,
+    TMR_INDEX_3 = 3,
+    TMR_INDEX_4 = 4,
+    TMR_INDEX_6 = 6
+} timerApi_index_t;
+
 typedef enum {
 
     TMR_PRESCALE_VALUE_1 = 0x00,

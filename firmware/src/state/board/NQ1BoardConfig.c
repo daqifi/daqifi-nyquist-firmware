@@ -1,5 +1,7 @@
 #include "BoardConfig.h"
 #include "../../config/default/peripheral/gpio/plib_gpio.h"
+#include "../../config/default/peripheral/gpio/pin_definitions.h"
+#include "../../HAL/TimerApi/TimerApi.h"
 
 
 // The board configuration
@@ -114,23 +116,23 @@ const tBoardConfig NQ1BoardConfig = {
         .Data =
         {
 #ifndef DIO_TIMING_TEST
-            { DIO_0_PORT, DIO_0_PIN & 15, DIO_EN_0_PORT, DIO_EN_0_PIN & 15, false, true, 1, OUTPUT_PIN_RPD1},
+            { DIO_0_PORT, PORTS_BIT_POS_1, DIO_EN_0_PORT, PORTS_BIT_POS_2, false, true, 1, OUTPUT_PIN_RPD1},
 #endif
-            { DIO_1_PORT, DIO_1_PIN & 15, DIO_EN_1_PORT, DIO_EN_1_PIN & 15, true, false, 0xFF},
-            { DIO_2_PORT, DIO_2_PIN & 15, DIO_EN_2_PORT, DIO_EN_2_PIN & 15, true, false, 0xFF},
-            { DIO_3_PORT, DIO_3_PIN & 15, DIO_EN_3_PORT, DIO_EN_3_PIN & 15, false, true, 8, OUTPUT_PIN_RPD12},
-            { DIO_4_PORT, DIO_4_PIN & 15, DIO_EN_4_PORT, DIO_EN_4_PIN & 15, true, true, 4, OUTPUT_PIN_RPF0},
-            { DIO_5_PORT, DIO_5_PIN & 15, DIO_EN_5_PORT, DIO_EN_5_PIN & 15, false, true, 6, OUTPUT_PIN_RPF1},
-            { DIO_6_PORT, DIO_6_PIN & 15, DIO_EN_6_PORT, DIO_EN_6_PIN & 15, true, true, 7, OUTPUT_PIN_RPG0},
-            { DIO_7_PORT, DIO_7_PIN & 15, DIO_EN_7_PORT, DIO_EN_7_PIN & 15, false, true, 3, OUTPUT_PIN_RPG1},
-            { DIO_8_PORT, DIO_8_PIN & 15, DIO_EN_8_PORT, DIO_EN_8_PIN & 15, false, false, 0xFF},
-            { DIO_9_PORT, DIO_9_PIN & 15, DIO_EN_9_PORT, DIO_EN_9_PIN & 15, true, false, 0xFF},
-            { DIO_10_PORT, DIO_10_PIN & 15, DIO_EN_10_PORT, DIO_EN_10_PIN & 15, false, false, 0xFF},
-            { DIO_11_PORT, DIO_11_PIN & 15, DIO_EN_11_PORT, DIO_EN_11_PIN & 15, true, false, 0xFF},
-            { DIO_12_PORT, DIO_12_PIN & 15, DIO_EN_12_PORT, DIO_EN_12_PIN & 15, true, false, 0xFF},
-            { DIO_13_PORT, DIO_13_PIN & 15, DIO_EN_13_PORT, DIO_EN_13_PIN & 15, false, false, 0xFF},
-            { DIO_14_PORT, DIO_14_PIN & 15, DIO_EN_14_PORT, DIO_EN_14_PIN & 15, true, false, 0xFF},
-            { DIO_15_PORT, DIO_15_PIN & 15, DIO_EN_15_PORT, DIO_EN_15_PIN & 15, false, false, 0xFF},
+            { DIO_1_PORT, PORTS_BIT_POS_3, DIO_EN_1_PORT, PORTS_BIT_POS_2, true, false, 0xFF},
+            { DIO_2_PORT, PORTS_BIT_POS_3, DIO_EN_2_PORT, PORTS_BIT_POS_13, true, false, 0xFF},
+            { DIO_3_PORT, PORTS_BIT_POS_12, DIO_EN_3_PORT, PORTS_BIT_POS_0, false, true, 8, OUTPUT_PIN_RPD12},
+            { DIO_4_PORT, PORTS_BIT_POS_0, DIO_EN_4_PORT, PORTS_BIT_POS_7, true, true, 4, OUTPUT_PIN_RPF0},
+            { DIO_5_PORT, PORTS_BIT_POS_1, DIO_EN_5_PORT, PORTS_BIT_POS_7, false, true, 6, OUTPUT_PIN_RPF1},
+            { DIO_6_PORT, PORTS_BIT_POS_0, DIO_EN_6_PORT, PORTS_BIT_POS_4, true, true, 7, OUTPUT_PIN_RPG0},
+            { DIO_7_PORT, PORTS_BIT_POS_1, DIO_EN_7_PORT, PORTS_BIT_POS_5, false, true, 3, OUTPUT_PIN_RPG1},
+            { DIO_8_PORT, PORTS_BIT_POS_6, DIO_EN_8_PORT, PORTS_BIT_POS_7, false, false, 0xFF},
+            { DIO_9_PORT, PORTS_BIT_POS_1, DIO_EN_9_PORT, PORTS_BIT_POS_0, true, false, 0xFF},
+            { DIO_10_PORT, PORTS_BIT_POS_4, DIO_EN_10_PORT, PORTS_BIT_POS_15, false, false, 0xFF},
+            { DIO_11_PORT, PORTS_BIT_POS_2, DIO_EN_11_PORT, PORTS_BIT_POS_10, true, false, 0xFF},
+            { DIO_12_PORT, PORTS_BIT_POS_3, DIO_EN_12_PORT, PORTS_BIT_POS_2, true, false, 0xFF},
+            { DIO_13_PORT, PORTS_BIT_POS_6, DIO_EN_13_PORT, PORTS_BIT_POS_7, false, false, 0xFF},
+            { DIO_14_PORT, PORTS_BIT_POS_5, DIO_EN_14_PORT, PORTS_BIT_POS_5, true, false, 0xFF},
+            { DIO_15_PORT, PORTS_BIT_POS_1, DIO_EN_15_PORT, PORTS_BIT_POS_12, false, false, 0xFF},
         },
 #ifdef DIO_TIMING_TEST
         .Size = 15,
@@ -339,23 +341,23 @@ const tBoardConfig NQ1BoardConfig = {
     .PowerConfig =
     {
         .EN_Vref_Ch = PWR_VREF_EN_PORT,
-        .EN_Vref_Bit = PWR_VREF_EN_PIN & 15,
+        .EN_Vref_Bit = PORTS_BIT_POS_15,       // RJ15
         .EN_3_3V_Ch = PWR_3_3V_EN_PORT,
-        .EN_3_3V_Bit = PWR_3_3V_EN_PIN & 15,
-        .EN_5_10V_Ch = PWR_5V_EN_PORT, 
-        .EN_5_10V_Bit = PWR_5V_EN_PIN & 15,
+        .EN_3_3V_Bit = PORTS_BIT_POS_12,       // RH12
+        .EN_5_10V_Ch = PWR_5V_EN_PORT,
+        .EN_5_10V_Bit = PORTS_BIT_POS_0,       // RD0
         .EN_12V_Ch = PWR_12V_EN_PORT,
-        .EN_12V_Bit = PWR_12V_EN_PIN  & 15,
+        .EN_12V_Bit = PORTS_BIT_POS_15,        // RH15
         .USB_Dp_Ch = USB_DP_MON_PORT,
-        .USB_Dp_Bit = USB_DP_MON_PIN & 15,
+        .USB_Dp_Bit = PORTS_BIT_POS_9,         // RH9
         .USB_Dn_Ch = USB_DN_MON_PORT,
-        .USB_Dn_Bit = USB_DN_MON_PIN & 15,
+        .USB_Dn_Bit = PORTS_BIT_POS_10,        // RH10
         .BQ24297Config.INT_Ch = BATT_MAN_INT_PORT,
-        .BQ24297Config.INT_Bit = BATT_MAN_INT_PIN & 15,
+        .BQ24297Config.INT_Bit = PORTS_BIT_POS_4,   // RA4
         .BQ24297Config.OTG_Ch = BATT_MAN_OTG_PORT,
-        .BQ24297Config.OTG_Bit = BATT_MAN_OTG_PIN & 15,
+        .BQ24297Config.OTG_Bit = PORTS_BIT_POS_5,   // RK5
         .BQ24297Config.STAT_Ch = BATT_MAN_STAT_PORT,
-        .BQ24297Config.STAT_Bit = BATT_MAN_STAT_PIN & 15,
+        .BQ24297Config.STAT_Bit = PORTS_BIT_POS_11, // RH11
         .BQ24297Config.I2C_Index = DRV_I2C_INDEX_0,
         .BQ24297Config.I2C_Address = 0xD6>>1, // Microchip libraries use an 8 bit address with 0 appended to the end of the 7 bit I2C address
     },
@@ -414,14 +416,14 @@ const tBoardConfig NQ1BoardConfig = {
     },
     .StreamingConfig =
     {
-        .TimerIndex = 4,
-        .TSTimerIndex = 6,
+        .TimerIndex = TMR_INDEX_4,
+        .TSTimerIndex = TMR_INDEX_6,
     }
 };
 
-/*! This function is used for getting a board version 1 configuration parameter
+/*! This function is used for getting a board configuration parameter
  * @return Pointer to Board Configuration structure
  */
-const void *NQ1BoardConfig_Get(void) {
+const void *NqBoardConfig_Get(void) {
     return &NQ1BoardConfig;
 }

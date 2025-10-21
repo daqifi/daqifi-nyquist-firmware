@@ -28,6 +28,9 @@ void InitializeBoardData(tBoardData* boardData) {
     boardData->AInLatest.Size = MAX_AIN_CHANNEL;
     AInSampleList_Initialize(MAX_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
     boardData->AInState.Size = MAX_AIN_MOD;
+
+    memset(&boardData->AOutLatest, 0, sizeof (AOutSampleArray));
+    boardData->AOutLatest.Size = MAX_AOUT_CHANNEL;
     // Set default battery values for debugging - allows power on without ADC active
 
 
@@ -106,6 +109,13 @@ void *BoardData_Get(
         case BOARDDATA_AIN_SAMPLES:
             pRet= &g_BoardData.AInSamples;
             break;
+        case BOARDDATA_AOUT_LATEST:
+            if (index < g_BoardData.AOutLatest.Size) {
+                pRet= &g_BoardData.AOutLatest.Data[ index ];
+                break;
+            }
+            pRet= NULL;
+            break;
         case BOARDDATA_POWER_DATA:
             pRet= &g_BoardData.PowerData;
             break;
@@ -183,6 +193,14 @@ void BoardData_Set(
                     &g_BoardData.AInSamples.List,
                     pSetValue,
                     sizeof (HeapList));
+            break;
+        case BOARDDATA_AOUT_LATEST:
+            if (index < g_BoardData.AOutLatest.Size) {
+                memcpy(
+                        &g_BoardData.AOutLatest.Data[ index ],
+                        pSetValue,
+                        sizeof (AOutSample));
+            }
             break;
         case BOARDDATA_POWER_DATA:
             memcpy(

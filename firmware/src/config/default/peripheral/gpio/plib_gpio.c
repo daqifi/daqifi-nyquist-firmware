@@ -47,10 +47,10 @@
 
 
 /* Array to store callback objects of each configured interrupt */
-static volatile GPIO_PIN_CALLBACK_OBJ portPinCbObj[2];
+static volatile GPIO_PIN_CALLBACK_OBJ portPinCbObj[3];
 
 /* Array to store number of interrupts in each PORT Channel + previous interrupt count */
-static uint8_t portNumCb[10 + 1] = { 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, };
+static uint8_t portNumCb[10 + 1] = { 0, 1, 2, 2, 3, 3, 3, 3, 3, 3, 3, };
 
 /******************************************************************************
   Function:
@@ -69,24 +69,30 @@ void GPIO_Initialize ( void )
     ODCASET = 0xcU; /* Open Drain Enable */
     LATA = 0x0U; /* Initial Latch Value */
     TRISACLR = 0x20U; /* Direction Control */
-    TRISASET = 0x1U; /* Direction Control */
     ANSELACLR = 0x20U; /* Digital Mode Enable */
-    ANSELASET = 0x1U; /* Analog Mode Enable */
     CNPUASET = 0x1cU; /* Pull-Up Enable */
 
+    /* Change Notice Enable */
+    CNCONASET = _CNCONA_EDGEDETECT_MASK | _CNCONA_ON_MASK;
+    IEC3SET = _IEC3_CNAIE_MASK;
     /* PORTB Initialization */
     LATB = 0x0U; /* Initial Latch Value */
-    TRISBCLR = 0x4000U; /* Direction Control */
-    TRISBSET = 0x2000U; /* Direction Control */
-    ANSELBCLR = 0x4000U; /* Digital Mode Enable */
-    ANSELBSET = 0x2000U; /* Analog Mode Enable */
+    TRISBCLR = 0x4200U; /* Direction Control */
+    ANSELBCLR = 0x420cU; /* Digital Mode Enable */
+    CNPUBSET = 0x8U; /* Pull-Up Enable */
+
+    /* Change Notice Enable */
+    CNCONBSET = _CNCONB_ON_MASK;
+    PORTB;
+    IEC3SET = _IEC3_CNBIE_MASK;
     /* PORTC Initialization */
-    LATC = 0x0U; /* Initial Latch Value */
-    TRISCCLR = 0x8U; /* Direction Control */
+    LATC = 0x8000U; /* Initial Latch Value */
+    TRISCCLR = 0x8008U; /* Direction Control */
     ANSELCCLR = 0xeU; /* Digital Mode Enable */
     /* PORTD Initialization */
     LATD = 0x0U; /* Initial Latch Value */
     TRISDCLR = 0x2285U; /* Direction Control */
+    ANSELDCLR = 0x8000U; /* Digital Mode Enable */
     CNPUDSET = 0x800U; /* Pull-Up Enable */
 
     /* Change Notice Enable */
@@ -102,18 +108,18 @@ void GPIO_Initialize ( void )
     /* PORTG Initialization */
     LATG = 0x0U; /* Initial Latch Value */
     TRISGCLR = 0x8000U; /* Direction Control */
-    ANSELGCLR = 0x8000U; /* Digital Mode Enable */
+    ANSELGCLR = 0x81c0U; /* Digital Mode Enable */
     /* PORTH Initialization */
     ODCHSET = 0x8000U; /* Open Drain Enable */
-    LATH = 0xa110U; /* Initial Latch Value */
-    TRISHCLR = 0xa110U; /* Direction Control */
+    LATH = 0xa114U; /* Initial Latch Value */
+    TRISHCLR = 0xa19cU; /* Direction Control */
     ANSELHCLR = 0x10U; /* Digital Mode Enable */
     /* PORTJ Initialization */
     LATJ = 0x0U; /* Initial Latch Value */
-    TRISJCLR = 0x94b5U; /* Direction Control */
+    TRISJCLR = 0xb4b5U; /* Direction Control */
     /* PORTK Initialization */
-    LATK = 0x30U; /* Initial Latch Value */
-    TRISKCLR = 0xb0U; /* Direction Control */
+    LATK = 0x37U; /* Initial Latch Value */
+    TRISKCLR = 0xbfU; /* Direction Control */
 
     /* Unlock system for PPS configuration */
     SYSKEY = 0x00000000U;
@@ -124,6 +130,8 @@ void GPIO_Initialize ( void )
 
     /* PPS Input Remapping */
     SDI4R = 13;
+    SDI6R = 11;
+    SDI2R = 1;
 
     /* PPS Output Remapping */
     RPC13R = 8;
@@ -133,6 +141,8 @@ void GPIO_Initialize ( void )
     RPG1R = 11;
     RPG0R = 12;
     RPD1R = 12;
+    RPF8R = 10;
+    RPG8R = 6;
 
         /* Lock back the system after PPS configuration */
     CFGCONbits.IOLOCK = 1U;
@@ -141,11 +151,13 @@ void GPIO_Initialize ( void )
 
     uint32_t i;
     /* Initialize Interrupt Pin data structures */
+    portPinCbObj[1 + 0].pin = GPIO_PIN_RB3;
+    
     portPinCbObj[0 + 0].pin = GPIO_PIN_RA4;
     
-    portPinCbObj[1 + 0].pin = GPIO_PIN_RD11;
+    portPinCbObj[2 + 0].pin = GPIO_PIN_RD11;
     
-    for(i=0U; i<2U; i++)
+    for(i=0U; i<3U; i++)
     {
         portPinCbObj[i].callback = NULL;
     }
@@ -471,6 +483,44 @@ void __attribute__((used)) CHANGE_NOTICE_A_InterruptHandler(void)
 
 // *****************************************************************************
 /* Function:
+    void CHANGE_NOTICE_B_InterruptHandler(void)
+
+  Summary:
+    Interrupt Handler for change notice interrupt for channel B.
+
+  Remarks:
+    It is an internal function called from ISR, user should not call it directly.
+*/
+    
+void __attribute__((used)) CHANGE_NOTICE_B_InterruptHandler(void)
+{
+    uint8_t i;
+    uint32_t status;
+    GPIO_PIN pin;
+    uintptr_t context;
+
+    status  = CNSTATB;
+    status &= CNENB;
+
+    PORTB;
+    IFS3CLR = _IFS3_CNBIF_MASK;
+
+    /* Check pending events and call callback if registered */
+    for(i = 1; i < 2; i++)
+    {
+        pin = portPinCbObj[i].pin;
+
+        if((portPinCbObj[i].callback != NULL) && ((status & ((uint32_t)1U << (pin & 0xFU))) != 0U))
+        {
+            context = portPinCbObj[i].context;
+
+            portPinCbObj[i].callback (pin, context);
+        }
+    }
+}
+
+// *****************************************************************************
+/* Function:
     void CHANGE_NOTICE_D_InterruptHandler(void)
 
   Summary:
@@ -492,7 +542,7 @@ void __attribute__((used)) CHANGE_NOTICE_D_InterruptHandler(void)
     IFS3CLR = _IFS3_CNDIF_MASK;
 
     /* Check pending events and call callback if registered */
-    for(i = 1; i < 2; i++)
+    for(i = 2; i < 3; i++)
     {
         pin = portPinCbObj[i].pin;
 

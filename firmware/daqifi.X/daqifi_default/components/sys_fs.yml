@@ -11,11 +11,11 @@ dependency:
 - dependencyPackage: ''
   name: core
   type: package
-  version: v3.15.1
+  version: v3.15.5
 - dependencyPackage: ''
   name: littlefs
   type: package
-  version: v2.11.1
+  version: v2.11.2
 customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments:
@@ -40,8 +40,8 @@ data:
     - children:
       - attributes:
           id: sys_fs
-          x: '1040'
-          y: '453'
+          x: '1618'
+          y: '394'
         type: ElementPosition
       type: ElementPositions
     type: ComponentGraph

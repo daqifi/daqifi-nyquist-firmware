@@ -1,0 +1,163 @@
+configVersion: 1.0.0
+componentName: spi6
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: spi6
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: csp
+  type: package
+  version: v3.23.0
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments:
+    children:
+    - children:
+      - attributes:
+          id: SPI6_SPI
+        children:
+        - children:
+          - attributes:
+              id: targetComponentID
+            children:
+            - type: Value
+              value: drv_spi_1
+            type: String
+          - attributes:
+              id: targetAttachmentID
+            children:
+            - type: Value
+              value: drv_spi_SPI_dependency
+            type: String
+          type: Attributes
+        type: DirectCapability
+      type: Attachments
+    type: spi6
+  elementPosition:
+    attributes:
+      id: __ROOTVIEW
+    children:
+    - children:
+      - attributes:
+          id: spi6
+          x: '918'
+          y: '259'
+        type: ElementPosition
+      type: ElementPositions
+    type: ComponentGraph
+  symbols:
+    SPIS_SLAVE_SELECT_ENABLE:
+      attributes:
+        id: SPIS_SLAVE_SELECT_ENABLE
+      children:
+      - children:
+        - attributes:
+            id: spi6
+            value: 'true'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    SPI_BRG_VALUE:
+      attributes:
+        id: SPI_BRG_VALUE
+      children:
+      - children:
+        - attributes:
+            id: spi6
+            value: '3'
+          type: Dynamic
+        type: Values
+      type: Integer
+    SPI_INTERRUPT_MODE:
+      attributes:
+        id: SPI_INTERRUPT_MODE
+      children:
+      - children:
+        - attributes:
+            id: readOnly
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            id: spi6
+            value: 'true'
+          type: Dynamic
+        type: Values
+      type: Boolean
+    SPI_MSTR_MODE_EN:
+      attributes:
+        id: SPI_MSTR_MODE_EN
+      children:
+      - children:
+        - attributes:
+            id: readOnly
+          children:
+          - type: Value
+            value: 'true'
+          type: Boolean
+        type: Attributes
+      - children:
+        - attributes:
+            id: spi6
+            value: '0'
+          type: Dynamic
+        type: Values
+      type: KeyValueSet
+    SPI_SPICON_MSSEN:
+      attributes:
+        id: SPI_SPICON_MSSEN
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
+    SPI_SPICON_CLK_POL:
+      attributes:
+        id: SPI_SPICON_CLK_POL
+      children:
+      - children:
+        - attributes:
+            value: '0'
+          type: User
+        type: Values
+      type: KeyValueSet
+    SPI_BAUD_RATE:
+      attributes:
+        id: SPI_BAUD_RATE
+      children:
+      - children:
+        - attributes:
+            value: '12000000'
+          type: User
+        type: Values
+      type: Integer
+    SPI_MASTER_CLOCK:
+      attributes:
+        id: SPI_MASTER_CLOCK
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
+    SPI_SPICON_CLK_PH:
+      attributes:
+        id: SPI_SPICON_CLK_PH
+      children:
+      - children:
+        - attributes:
+            value: '0'
+          type: User
+        type: Values
+      type: KeyValueSet
+  userData: {}

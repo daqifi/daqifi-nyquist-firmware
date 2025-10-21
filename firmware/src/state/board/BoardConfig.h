@@ -15,6 +15,7 @@
 //#define DIO_TIMING_TEST
 
 #include "AInConfig.h"
+#include "AOutConfig.h"
 #include "DIOConfig.h"
 #include "StreamingConfig.h"
 #include "services/daqifi_settings.h"
@@ -34,7 +35,7 @@ extern "C" {
     //! Enumeration with the board configuration parameters.
 
     enum eBoardParameter {
-        //! Board config 
+        //! Board config
         BOARDCONFIG_ALL_CONFIG,
         //! Board variant element
         BOARDCONFIG_VARIANT,
@@ -50,6 +51,10 @@ extern "C" {
         BOARDCONFIG_AIN_MODULE,
         //! AIN channels
         BOARDCONFIG_AIN_CHANNELS,
+        //! AOUT Module element
+        BOARDCONFIG_AOUT_MODULE,
+        //! AOUT channels
+        BOARDCONFIG_AOUT_CHANNELS,
         //! Power Config element
         BOARDCONFIG_POWER_CONFIG,
         //! UI Config element
@@ -66,7 +71,7 @@ extern "C" {
      * @brief Data type associated to the structure sBoardConfig
      */
     typedef struct sBoardConfig {
-        //! The board variant we are configured to run
+        //! The board variant we are configured to run (1=NQ1, 2=NQ2, 3=NQ3)
         uint8_t BoardVariant;
         //! The board hardware revision
         char boardHardwareRev[ BOARDCONFIG_HARDWARE_REVISION_SIZE ];
@@ -83,6 +88,12 @@ extern "C" {
         //! The defined analog input channels. This is an array where 
         // index = channel and data = configuration
         AInArray AInChannels;
+        //! The defined analog output modules. This is an array where index = module 
+        // and data = configuration
+        AOutModArray AOutModules;
+        //! The defined analog output channels. This is an array where 
+        // index = channel and data = configuration
+        AOutArray AOutChannels;
         //! Power Structure
         tPowerConfig PowerConfig;
         //! User Interface Structure

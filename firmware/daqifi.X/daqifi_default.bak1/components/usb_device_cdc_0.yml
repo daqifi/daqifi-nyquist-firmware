@@ -1,0 +1,74 @@
+configVersion: 1.0.0
+componentName: usb_device_cdc_0
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: usb_device_cdc_0
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: usb
+  type: package
+  version: v3.12.0
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments: {}
+  elementPosition: {}
+  symbols:
+    CONFIG_USB_DEVICE_FUNCTION_BULK_IN_ENDPOINT_NUMBER:
+      attributes:
+        id: CONFIG_USB_DEVICE_FUNCTION_BULK_IN_ENDPOINT_NUMBER
+      children:
+      - children:
+        - attributes:
+            id: usb_device_cdc_0
+            value: '2'
+          type: Dynamic
+        type: Values
+      type: Integer
+    CONFIG_USB_DEVICE_FUNCTION_BULK_OUT_ENDPOINT_NUMBER:
+      attributes:
+        id: CONFIG_USB_DEVICE_FUNCTION_BULK_OUT_ENDPOINT_NUMBER
+      children:
+      - children:
+        - attributes:
+            id: usb_device_cdc_0
+            value: '2'
+          type: Dynamic
+        type: Values
+      type: Integer
+    CONFIG_USB_DEVICE_FUNCTION_INTERFACE_NUMBER:
+      attributes:
+        id: CONFIG_USB_DEVICE_FUNCTION_INTERFACE_NUMBER
+      children:
+      - children:
+        - attributes:
+            id: usb_device_cdc_0
+            value: '0'
+          type: Dynamic
+        type: Values
+      type: Integer
+    CONFIG_USB_DEVICE_FUNCTION_INT_ENDPOINT_NUMBER:
+      attributes:
+        id: CONFIG_USB_DEVICE_FUNCTION_INT_ENDPOINT_NUMBER
+      children:
+      - children:
+        - attributes:
+            id: usb_device_cdc_0
+            value: '1'
+          type: Dynamic
+        type: Values
+      type: Integer
+    CONFIG_USB_DEVICE_FUNCTION_WRITE_Q_SIZE:
+      attributes:
+        id: CONFIG_USB_DEVICE_FUNCTION_WRITE_Q_SIZE
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: Integer
+  userData: {}

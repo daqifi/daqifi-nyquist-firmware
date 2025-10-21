@@ -4,36 +4,23 @@
 
 #include "BoardRuntimeConfig.h"
 
+// External function to get default runtime config for current board variant
+extern const tBoardRuntimeConfig* NqBoardRuntimeConfig_GetDefaults(void);
+
 tBoardRuntimeConfig __attribute__((coherent)) pBoardRuntimeConfig;
 
 /*!
  * Initializes the boardRuntimeConfig structure for the current board
- * @param[in] boardVariant Board version, it could NQ1, NQ2 or NQ3. 
+ * @param[in] boardVariant Board version, it could NQ1, NQ2 or NQ3.
  */
 void InitBoardRuntimeConfig(int boardVariant)
 {
     // Initialize variable to known state
     memset(&pBoardRuntimeConfig, 0, sizeof(pBoardRuntimeConfig));
-    
-    switch (boardVariant)
-    {
-    case 3:
-        memcpy(         &pBoardRuntimeConfig,                               
-                        &g_NQ3BoardRuntimeConfig,                           
-                        sizeof(tBoardRuntimeConfig));
-        break;
-    case 2:
-        memcpy(         &pBoardRuntimeConfig,                               
-                        &g_NQ2BoardRuntimeConfig,                           
-                        sizeof(tBoardRuntimeConfig));
-        break;
-    case 1: // Everything else is an NQ1
-    default:
-        memcpy(         &pBoardRuntimeConfig,                               
-                        &g_NQ1BoardRuntimeConfig,                           
-                        sizeof(tBoardRuntimeConfig));
-        break;
-    }
+
+    // Load default configuration for current board variant
+    // Which variant is loaded depends on MPLAB X configuration (NQ1 vs NQ3)
+    memcpy(&pBoardRuntimeConfig, NqBoardRuntimeConfig_GetDefaults(), sizeof(tBoardRuntimeConfig));
 }
 
 /*! This function is used for getting a board configuration in run time         
@@ -56,6 +43,8 @@ void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
             return &pBoardRuntimeConfig.AInModules;
         case BOARDRUNTIMECONFIG_AIN_CHANNELS:
             return &pBoardRuntimeConfig.AInChannels;
+        case BOARDRUNTIMECONFIG_AOUT_CHANNELS:
+            return &pBoardRuntimeConfig.AOutChannels;
         case BOARDRUNTIME_POWER_WRITE_VARIABLES:
             return &pBoardRuntimeConfig.PowerWriteVars;
         case BOARDRUNTIME_UI_WRITE_VARIABLES: 

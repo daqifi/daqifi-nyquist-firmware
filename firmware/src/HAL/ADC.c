@@ -5,10 +5,11 @@
 
 #include "ADC.h"
 
-//#include "ADC/AD7609.h"
+#include "ADC/AD7609.h"
 //#include "ADC/AD7173.h"
 #include "ADC/MC12bADC.h"
 #include "DIO.h"
+#include "Util/Logger.h"
 
 #define UNUSED(x) (void)(x)
 
@@ -57,7 +58,45 @@ static void GetModuleChannelRuntimeData(
         AInRuntimeArray* moduleChannelRuntime,
         uint8_t moduleId);
 
-void ADC_EosInterruptTask(void) {
+/*!
+ * Handles AD7609 data acquisition from deferred interrupt task
+ * Called when BSY pin interrupt signals conversion complete
+ */
+void ADC_HandleAD7609Interrupt(void) {
+    AInSample sample;
+    AInSampleArray samples;
+    uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+
+    samples.Size = 8;
+
+    // Ensure timestamp pointer is valid; use 0 as safe fallback
+    uint32_t timestamp = (valueTMR != NULL) ? *valueTMR : 0;
+
+    // Read all AD7609 channels (polls BSY internally for safety)
+    if (AD7609_ReadSamples(&samples, &gpBoardConfig->AInChannels,
+                          &gpBoardRuntimeConfig->AInChannels, timestamp)) {
+
+        // Store each sample to BoardData at its array index
+        for (size_t s = 0; s < samples.Size; s++) {
+            // Find the array index for this channel
+            uint8_t channelId = samples.Data[s].Channel;
+            for (size_t i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
+                if (gpBoardConfig->AInChannels.Data[i].Type == AIn_AD7609 &&
+                    gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId == channelId) {
+
+                    sample.Timestamp = samples.Data[s].Timestamp;
+                    sample.Channel = channelId;
+                    sample.Value = samples.Data[s].Value;
+                    BoardData_Set(BOARDDATA_AIN_LATEST, i, &sample);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// Internal PIC32 ADC End-of-Scan interrupt task (MC12bADC only)
+void MC12bADC_EosInterruptTask(void) {
     const TickType_t xBlockTime = portMAX_DELAY;
 
     while (1) {
@@ -66,15 +105,20 @@ void ADC_EosInterruptTask(void) {
         int i = 0;
         uint32_t adcval;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-        
-        //Read only the private ADC's as the public ADC's has their own interrupts
+
+        // Ensure timestamp pointer is valid; use 0 as safe fallback
+        uint32_t timestamp = (valueTMR != NULL) ? *valueTMR : 0;
+
+        // Read only the private internal ADC channels (MC12bADC)
+        // Note: AD7609 now uses interrupt-based reading via its own deferred task
         for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-            if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic != 1
+            if (gpBoardConfig->AInChannels.Data[i].Type == AIn_MC12bADC &&
+                gpBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic != 1
                     && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
                 if (!MC12b_ReadResult(gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId, &adcval)) {
                     continue;
                 }
-                sample.Timestamp = *valueTMR;
+                sample.Timestamp = timestamp;
                 sample.Channel = gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
                 sample.Value = adcval;
                 BoardData_Set(
@@ -83,9 +127,12 @@ void ADC_EosInterruptTask(void) {
                         &sample);
             }
         }
-
-
     }
+}
+
+// Legacy wrapper for backward compatibility
+void ADC_EosInterruptTask(void) {
+    MC12bADC_EosInterruptTask();
 }
 
 void ADC_Init(
@@ -96,9 +143,17 @@ void ADC_Init(
     gpBoardRuntimeConfig =
             (tBoardRuntimeConfig *) pBoardRuntimeConfigADCInit;
     gpBoardData = (tBoardData *) pBoardDataADCInit;
-    xTaskCreate((TaskFunction_t) ADC_EosInterruptTask,
-            "ADC Interrupt",
-            2048, NULL, 8, &gADCInterruptHandle);
+    BaseType_t result = xTaskCreate((TaskFunction_t) MC12bADC_EosInterruptTask,
+            "MC12bADC EOS",
+            2048, NULL, 8, &gADCInterruptHandle); // Priority 8 for real-time ADC response
+    if (result != pdPASS) {
+        LOG_E("FATAL: Failed to create MC12bADC_EosInterruptTask (2048 bytes)\r\n");
+    }
+
+    // Register ADC EOS interrupt callback using Harmony's callback mechanism
+    ADCHS_EOSCallbackRegister(ADC_EOSInterruptCB, 0);
+
+    // Note: AD7609 initialization happens later when 10V rail is powered up
 }
 
 bool ADC_WriteChannelStateAll(void) {
@@ -120,7 +175,9 @@ bool ADC_WriteChannelStateAll(void) {
                 result &= MC12b_WriteStateAll(
                         &moduleChannels,
                         &moduleChannelRuntime);
-
+                break;
+            case AIn_AD7609:
+                result &= AD7609_WriteStateAll(&moduleChannels, &moduleChannelRuntime);
                 break;
             default:
                 // Not implemented yet
@@ -131,7 +188,8 @@ bool ADC_WriteChannelStateAll(void) {
     return result;
 }
 
-bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelType) {
+// Generic ADC trigger dispatcher - delegates to specific ADC drivers
+bool ADC_TriggerConversion_Generic(const AInModule* module, MC12b_adcType_t adcChannelType) {
     AInTaskState_t state;
     uint8_t moduleId = ADC_FindModuleIndex(module);
     POWER_STATE powerState = gpBoardData->PowerData.powerState;
@@ -157,6 +215,9 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
         case AIn_MC12bADC:
             result &= MC12b_TriggerConversion(&gpBoardRuntimeConfig->AInChannels, &gpBoardConfig->AInChannels, adcChannelType);
             break;
+        case AIn_AD7609:
+            result &= AD7609_TriggerConversion(&module->Config.AD7609);
+            break;
         default:
             // Not implemented yet
             break;
@@ -169,6 +230,20 @@ bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelTy
             &state);
 
     return result;
+}
+
+// Legacy wrapper for backward compatibility
+bool ADC_TriggerConversion(const AInModule* module, MC12b_adcType_t adcChannelType) {
+    return ADC_TriggerConversion_Generic(module, adcChannelType);
+}
+
+// Specific trigger functions for clarity
+bool MC12bADC_TriggerConversion_Deferred(const AInModule* module) {
+    return ADC_TriggerConversion_Generic(module, MC12B_ADC_TYPE_ALL);
+}
+
+bool AD7609_TriggerConversion_Deferred(const AInModule* module) {
+    return ADC_TriggerConversion_Generic(module, MC12B_ADC_TYPE_ALL); // adcChannelType not used for AD7609
 }
 
 const AInModule* ADC_FindModule(AInType moduleType) {
@@ -202,15 +277,18 @@ void ADC_Tasks(void) {
     for (moduleIndex = 0;
             moduleIndex < gpBoardRuntimeConfig->AInModules.Size;
             ++moduleIndex) {
+        // Update module pointer for current iteration
+        module = &gpBoardConfig->AInModules.Data[moduleIndex];
+        moduleRuntime = &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
+        
         // Get channels associated with the current module
-
         GetModuleChannelRuntimeData(
                 &moduleChannels,
                 &moduleChannelRuntime,
                 moduleIndex);
 
         // Check if the module is enabled - if not, skip it
-        bool isEnabled = (module->Type == AIn_MC12bADC || isPowered) &&
+        bool isEnabled = (module->Type == AIn_MC12bADC || module->Type == AIn_AD7609 || isPowered) &&
                 moduleRuntime->IsEnabled;
         if (!isEnabled) {
             gpBoardData->AInState.Data[moduleIndex].AInTaskState =
@@ -220,8 +298,10 @@ void ADC_Tasks(void) {
 
         if (gpBoardData->AInState.Data[moduleIndex].AInTaskState ==
                 AINTASK_INITIALIZING) {
-            canInit = (module->Type == AIn_MC12bADC || isPowered);
+            // MC12bADC can init anytime, AD7609 requires isPowered (needs 10V rail)
+            canInit = (module->Type == AIn_MC12bADC) || (module->Type == AIn_AD7609 && isPowered);
             initialized = false;
+
             if (canInit) {
                 if (ADC_InitHardware(module, &moduleChannels)) {
                     if (module->Type == AIn_MC12bADC) {
@@ -283,6 +363,8 @@ double ADC_ConvertToVoltage(const AInSample* sample) {
                     &channelConfig->Config.MC12b,
                     pRuntimeConfig,
                     sample);
+        case AIn_AD7609:
+            return AD7609_ConvertToVoltage(pRuntimeConfig, sample);
         default:
             return 0.0;
     }
@@ -337,6 +419,9 @@ bool ADC_WriteModuleState(size_t moduleId, POWER_STATE powerState) {
         case AIn_MC12bADC:
             result &= MC12b_WriteModuleState();
             break;
+        case AIn_AD7609:
+            result &= AD7609_WriteModuleState(powerState == POWERED_UP || powerState == POWERED_UP_EXT_DOWN);
+            break;
         default:
             // Not implemented yet
             break;
@@ -354,6 +439,9 @@ static bool ADC_InitHardware(
             result = MC12b_InitHardware(
                     &pBoardAInModule->Config.MC12b,
                     &gpBoardRuntimeConfig->AInModules.Data[pBoardAInModule->Type]);
+            break;
+        case AIn_AD7609:
+            result = AD7609_InitHardware(&pBoardAInModule->Config.AD7609);
             break;
         default:
             // Not implemented yet
@@ -382,8 +470,14 @@ static void GetModuleChannelRuntimeData(
     }
 }
 
-void ADC_EOSInterruptCB(void) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR(gADCInterruptHandle, &xHigherPriorityTaskWoken);
-    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+void ADC_EOSInterruptCB(uintptr_t context) {
+    (void)context; // Unused
+
+    // Guard against NULL task handle (if task creation failed during init)
+    if (gADCInterruptHandle != NULL) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        vTaskNotifyGiveFromISR(gADCInterruptHandle, &xHigherPriorityTaskWoken);
+        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+    }
+    // If task creation failed, interrupt still clears but no notification sent
 }

@@ -74,22 +74,25 @@ void _Streaming_Deferred_Interrupt_Task(void) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
 
 #if  !defined(TEST_STREAMING)
-        if (pRunTimeStreamConf->IsEnabled) {       
+        if (pRunTimeStreamConf->IsEnabled) {
             if((sizeof(AInPublicSampleList_t)+200)>xPortGetFreeHeapSize()){
+                LOG_E("Streaming: Insufficient heap for sample allocation (free=%u, need=%u)\r\n",
+                      xPortGetFreeHeapSize(), sizeof(AInPublicSampleList_t)+200);
                 continue;
             }
             pPublicSampleList=pvPortCalloc(1,sizeof(AInPublicSampleList_t));
-            if(pPublicSampleList==NULL)
+            if(pPublicSampleList==NULL) {
+                LOG_E("Streaming: Sample allocation failed (pvPortCalloc returned NULL)\r\n");
                 continue;
+            }
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
                 if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
-                        && pBoardConfig->AInChannels.Data[i].Config.MC12b.IsPublic == 1) {
+                        && AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
                     pPublicSampleList->sampleElement[i].Channel=pAiSample->Channel;
                     pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
                     pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
                     pPublicSampleList->isSampleValid[i]=1;
-                   
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
@@ -160,6 +163,14 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
+        // Clear any stale samples from previous streaming session to free heap
+        AInPublicSampleList_t* pStale;
+        while (AInSampleList_PopFront(&pStale)) {
+            if (pStale != NULL) {
+                vPortFree(pStale);
+            }
+        }
+
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
@@ -236,18 +247,54 @@ void streaming_Task(void) {
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
         sdSize = sd_card_manager_GetWriteBuffFreeSize();
 
-        hasUsb = (usbSize > BUFFER_SIZE);
-        hasWifi = (wifiSize > BUFFER_SIZE);
-        hasSD = (sdSize > BUFFER_SIZE);
-
-        maxSize = BUFFER_SIZE;
-        if (hasUsb) maxSize = min(maxSize, usbSize);
-        if (hasWifi) maxSize = min(maxSize, wifiSize);
-        if (hasSD) maxSize = min(maxSize, sdSize);
-
-        if (maxSize < 128) {
-            continue;
+        // Single-interface streaming: only stream to the interface that initiated streaming
+        // This prevents bandwidth overload at high sample rates
+        switch (pRunTimeStreamConf->ActiveInterface) {
+            case StreamingInterface_USB:
+                hasUsb = (usbSize >= 128);
+                hasWifi = false;
+                hasSD = false;
+                break;
+            case StreamingInterface_WiFi:
+                hasUsb = false;
+                hasWifi = (wifiSize >= 128);
+                hasSD = false;
+                break;
+            case StreamingInterface_SD:
+                hasUsb = false;
+                hasWifi = false;
+                hasSD = (sdSize >= 128);
+                break;
+            case StreamingInterface_All:
+            default:
+                // Legacy mode: stream to all interfaces (may cause issues at high rates)
+                hasUsb = (usbSize >= 128);
+                hasWifi = (wifiSize >= 128);
+                hasSD = (sdSize >= 128);
+                break;
         }
+
+        // Log streaming start info once for debugging
+        static bool firstLog = false;
+        if (!firstLog) {
+            LOG_I("Streaming started: interface=%d, usbSize=%u, wifiSize=%u, sdSize=%u",
+                  pRunTimeStreamConf->ActiveInterface, usbSize, wifiSize, sdSize);
+            firstLog = true;
+        }
+
+        // CRITICAL: Always encode to drain the sample queue, even if no outputs have space
+        // This prevents queue backup which causes the deferred interrupt task to drop samples
+        // If no outputs available, sample will be encoded then discarded (better than queue backup)
+
+        // Use maximum available space among all outputs for encoding (not just enabled ones)
+        // This ensures we can always encode even if all outputs are temporarily full
+        maxSize = 128;  // Minimum packet size
+        if (usbSize > maxSize) maxSize = usbSize;
+        if (wifiSize > maxSize) maxSize = wifiSize;
+        if (sdSize > maxSize) maxSize = sdSize;
+
+        // Cap at BUFFER_SIZE to prevent encoder overflow
+        if (maxSize > BUFFER_SIZE) maxSize = BUFFER_SIZE;
         
         nanopbFlag.Size = 0;
         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
@@ -279,14 +326,25 @@ void streaming_Task(void) {
         }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
-            if (hasUsb) {                
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);               
+            if (hasUsb) {
+                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
             }
-            if (hasWifi) {               
-                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);                
+            if (hasWifi) {
+                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
-            if (hasSD && (pRunTimeStreamConf->Encoding == Streaming_Csv || pRunTimeStreamConf->Encoding == Streaming_Json)) {
-                sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
+            if (hasSD) {
+                size_t written = sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
+                static bool sd_logged = false;
+                if (!sd_logged) {
+                    LOG_D("SD: Write called, packetSize=%u, written=%u", packetSize, written);
+                    sd_logged = true;
+                }
+            } else {
+                static bool no_sd_logged = false;
+                if (!no_sd_logged) {
+                    LOG_D("SD: Write skipped - hasSD is false");
+                    no_sd_logged = true;
+                }
             }
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
@@ -298,18 +356,24 @@ void streaming_Task(void) {
 
 void TimestampTimer_Init(void) {
     //     Initialize and start timestamp timer
-    //     This is a free running timer used for reference - 
+    //     This is a free running timer used for reference -
     //     this doesn't interrupt or callback
-    
+
     if (gStreamingTaskHandle == NULL) {
-        xTaskCreate((TaskFunction_t) streaming_Task,
+        BaseType_t result = xTaskCreate((TaskFunction_t) streaming_Task,
                 "Stream task",
                 4096, NULL, 2, &gStreamingTaskHandle);
+        if (result != pdPASS) {
+            LOG_E("FATAL: Failed to create streaming_Task (4096 bytes)\r\n");
+        }
     }
     if (gStreamingInterruptHandle == NULL) {
-        xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
+        BaseType_t result = xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
                 "Stream Interrupt",
                 4096, NULL, 8, &gStreamingInterruptHandle);
+        if (result != pdPASS) {
+            LOG_E("FATAL: Failed to create _Streaming_Deferred_Interrupt_Task (4096 bytes)\r\n");
+        }
     }
     
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);

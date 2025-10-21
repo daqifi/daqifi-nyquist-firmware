@@ -327,7 +327,7 @@
         <targetDevice>PIC32MZ2048EFM144</targetDevice>
         <targetHeader></targetHeader>
         <targetPluginBoard></targetPluginBoard>
-        <platformTool>ri4hybrid</platformTool>
+        <platformTool>pk4hybrid</platformTool>
         <languageToolchain>XC32</languageToolchain>
         <languageToolchainVersion>2.50</languageToolchainVersion>
         <platform>3</platform>

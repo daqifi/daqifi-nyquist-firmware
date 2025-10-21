@@ -11,7 +11,7 @@
 #include "Util/CircularBuffer.h"
 
 #define SD_CARD_MANAGER_CONF_RBUFFER_SIZE 512
-#define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 5120  // Keep at 5KB to fit within uint16_t circular buffer limit
+#define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 8192  // Increased to 8KB for 5kHz streaming support
 
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40

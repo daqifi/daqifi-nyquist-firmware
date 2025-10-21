@@ -111,6 +111,43 @@ Services Layer
      - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
      - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
 
+#### SCPI Command Verification Protocol
+
+**⚠️ CRITICAL: NEVER guess SCPI command syntax. ALWAYS verify first.**
+
+**Mandatory Process Before Using ANY SCPI Command:**
+
+1. **Search for the exact pattern** in `SCPIInterface.c`:
+   ```bash
+   grep -n "pattern.*<keyword>" firmware/src/services/SCPI/SCPIInterface.c
+   ```
+
+2. **Use the EXACT command** from the pattern definition - do not abbreviate unless testing abbreviations
+
+3. **Verify parameter syntax** by reading the callback function implementation
+
+**Common Mistakes to Avoid:**
+- ❌ `SYST:STAR 5000` (guessed)
+- ✅ `SYST:StartStreamData 5000` (verified from SCPIInterface.c:1521)
+
+- ❌ `SYST:STOP` (guessed)
+- ✅ `SYST:StopStreamData` (verified from SCPIInterface.c:1522)
+
+- ❌ `SYST:STOR:SD:GET DAQiFi/file.csv` (unquoted path)
+- ✅ `SYST:STOR:SD:GET "file.csv"` (quoted, verified from SCPIStorageSD.c)
+
+**Verification Example:**
+```bash
+# Step 1: Search for streaming commands
+grep -n "pattern.*Stream" firmware/src/services/SCPI/SCPIInterface.c
+# Result: Line 1521: {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
+
+# Step 2: Use exact command
+device._comm.send_command("SYST:StartStreamData 5000")  # Correct!
+```
+
+**If you use a SCPI command without verifying it first, STOP immediately and verify the syntax.**
+
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`
    - Handles command processing and data streaming
@@ -144,12 +181,94 @@ Each variant has specific:
 - Power management settings
 - UI configurations
 
+#### Switching Between Board Variants
+
+The firmware supports building for different board variants using MPLAB X configurations:
+
+1. **In MPLAB X IDE**:
+   - Right-click project → Set Configuration → Select "Nq1" or "Nq3"
+   - Build the project
+
+2. **From Command Line**:
+   ```bash
+   # Build NQ1 firmware
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe" \
+     -f nbproject/Makefile-Nq1.mk CONF=Nq1 build -j4
+
+   # Build NQ3 firmware
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/gnuBins/GnuWin32/bin/make.exe" \
+     -f nbproject/Makefile-Nq3.mk CONF=Nq3 build -j4
+   ```
+
+3. **How It Works**:
+   - Each configuration includes/excludes variant-specific files
+   - `NqBoardConfig_Get()` returns the appropriate board configuration
+   - `NqBoardRuntimeConfig_GetDefaults()` returns the appropriate runtime defaults
+   - No code changes needed - just switch configuration and rebuild
+
+4. **Variant-Specific Files**:
+   - **NQ1**: `NQ1BoardConfig.c`, `NQ1RuntimeDefaults.c`
+   - **NQ3**: `NQ3BoardConfig.c`, `NQ3RuntimeDefaults.c`
+
 ### Memory Considerations
 
-- FreeRTOS heap configuration critical for stability
+#### Heap Configuration
+- **Total FreeRTOS Heap**: 284KB (`configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
+- **Heap Implementation**: heap_4 (best-fit with coalescence)
+- **Critical**: Heap must accommodate circular buffers, task stacks, and streaming sample queue
+
+#### Major Heap Allocations
+
+**Circular Buffers** (allocated at runtime via `CircularBuf_Init`):
+- **SD Card Write Buffer**: 64KB (`SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE` in `sd_card_manager.c`)
+  - ⚠️ **LARGEST ALLOCATION** - Reduced from 128KB to address heap pressure
+  - Location: `firmware/src/services/sd_card_services/sd_card_manager.c`
+  - **TODO**: Should be dynamically sized based on enabled features (see GitHub issue)
+- **WiFi TCP Write Buffer**: 5.6KB (`WIFI_CIRCULAR_BUFF_SIZE` = 1400 × 4)
+  - Location: `firmware/src/services/wifi_services/wifi_tcp_server.c`
+- **USB CDC Write Buffer**: 2.8KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 700 × 4)
+  - Location: `firmware/src/services/UsbCdc/UsbCdc.c`
+
+**FreeRTOS Task Stacks** (~33KB total):
+- `app_SdCardTask`: 5240 bytes
+- `app_PowerAndUITask`: 4096 bytes
+- `streaming_Task`: 4096 bytes
+- `_Streaming_Deferred_Interrupt_Task`: 4096 bytes
+- `app_USBDeviceTask`: 3072 bytes (note: malloc fails with 4096)
+- `app_WifiTask`: 3000 bytes
+- `lWDRV_WINC_Tasks`: 3000 bytes (WiFi driver)
+- `MC12bADC_EosInterruptTask`: 2048 bytes
+- `lAPP_FREERTOS_Tasks`: 1500 bytes
+- `F_USB_DEVICE_Tasks`: 1024 bytes
+- `F_DRV_USBHS_Tasks`: 1024 bytes
+- `AD7609_DeferredInterruptTask`: 512 bytes
+
+**Streaming Sample Queue**:
+- **Queue Depth**: 20 samples (`MAX_AIN_SAMPLE_COUNT`)
+- **Sample Size**: ~208 bytes (`AInPublicSampleList_t` = 16 channels × 12 bytes + 16 bools)
+- **Max Queue Memory**: ~4KB (20 × 208 bytes)
+- **Allocation**: Dynamic (`pvPortCalloc` in streaming interrupt task)
+- **Critical**: Old samples must be freed before starting new streaming session
+  - Cleared automatically in `Streaming_Start()` since 2025-01-XX
+
+#### Heap Usage Summary
+Typical allocations at steady state:
+- Circular buffers: **72.4KB** (SD: 64KB, WiFi: 5.6KB, USB: 2.8KB)
+- Task stacks: **~33KB**
+- Streaming queue: **Up to 4KB** (dynamically allocated)
+- **Total**: ~109KB used, ~175KB free (under normal conditions)
+
+#### Memory Pressure Indicators
+If heap allocation fails (`xPortGetFreeHeapSize()` returns low values):
+1. **Check streaming sample queue**: `AInSampleList_Size()` - should be <20
+2. **Further reduce SD buffer**: 64KB → 32KB saves additional 32KB if SD logging unused
+3. **Monitor with debugger**: Set breakpoint in `pvPortMalloc` failure path
+
+#### Other Memory Constraints
 - DMA buffers must be cache-aligned
 - Bootloader reserves memory at 0x9D000000
 - Application starts at 0x9D000480 (after bootloader)
+- Sample buffers use coherent attribute for DMA safety
 
 ### Key Files for Understanding the System
 
@@ -157,7 +276,7 @@ Each variant has specific:
 2. **Board Config**: `firmware/src/state/board/BoardConfig.c` - Hardware definitions
 3. **Streaming Engine**: `firmware/src/services/streaming.c` - Data flow control
 4. **SCPI Interface**: `firmware/src/services/SCPI/SCPIInterface.c` - Command processing
-5. **HAL Drivers**: `firmware/src/HAL/ADC.c`, `DIO.c` - Hardware interfaces
+5. **HAL Drivers**: `firmware/src/HAL/ADC.c`, `DIO.c`, `DAC7718/DAC7718.c` - Hardware interfaces
 
 ### Development Considerations
 
@@ -166,6 +285,58 @@ Each variant has specific:
 - Use FreeRTOS primitives for synchronization
 - Respect board variant differences in runtime checks
 - Protocol buffer definitions in `services/DaqifiPB/DaqifiOutMessage.proto`
+
+### DAC7718 Integration (NQ3 Board)
+
+The NQ3 board variant includes a DAC7718 8-channel 12-bit DAC for analog output functionality:
+
+#### Hardware Configuration
+- **SPI Interface**: SPI2 at 10 MHz (configurable)
+- **Control Pins**: 
+  - CS (Chip Select): RK0 (GPIO_PIN_RK0)
+  - CLR/RST (Reset): RJ13 (GPIO_PIN_RJ13) 
+  - LDAC: Tied to 3.3V (no GPIO control)
+- **Power Requirements**: Requires 10V rail (available in POWERED_UP state)
+- **Channels**: 8 analog output channels (0-7)
+- **Resolution**: 12-bit (4096 levels)
+
+#### SCPI Commands for DAC Control
+```bash
+# Set DAC channel voltage
+SOURce:VOLTage:LEVel 0,5.0        # Set channel 0 to 5.0V
+SOURce:VOLTage:LEVel 5.0          # Set all channels to 5.0V
+
+# Read DAC channel voltage  
+SOURce:VOLTage:LEVel? 0           # Read channel 0 voltage
+SOURce:VOLTage:LEVel?             # Read all channel voltages
+
+# Channel enable/disable
+ENAble:SOURce:DC 0,1              # Enable channel 0
+ENAble:SOURce:DC? 0               # Get channel 0 enable status
+
+# Configuration commands
+CONFigure:DAC:RANGe 0,1           # Set channel 0 range
+CONFigure:DAC:UPDATE              # Update all DAC outputs
+
+# Calibration commands
+CONFigure:DAC:chanCALM 0,1.0      # Set channel 0 calibration slope
+CONFigure:DAC:chanCALB 0,0.0      # Set channel 0 calibration offset
+CONFigure:DAC:SAVEcal             # Save user calibration values
+CONFigure:DAC:LOADcal             # Load user calibration values
+```
+
+#### Integration Points
+- **Board Configuration**: `state/board/AOutConfig.h` - Analog output configuration structure
+- **SCPI Module**: `services/SCPI/SCPIDAC.c` - DAC command implementation  
+- **HAL Driver**: `HAL/DAC7718/DAC7718.c` - Hardware abstraction layer
+- **Runtime Config**: `state/runtime/AOutRuntimeConfig.h` - Runtime channel states
+
+#### Power-Safe Initialization
+The DAC7718 uses lazy initialization that:
+1. Initializes global structures at startup (power-independent)
+2. Defers hardware initialization until first DAC command when power is sufficient
+3. Checks for POWERED_UP state (provides 10V rail) before hardware access
+4. Gracefully handles power state transitions
 
 ## Firmware Analysis Report
 
@@ -266,13 +437,13 @@ The project can be built using Microchip tools in WSL/Linux:
    (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -5
    ```
 
-2. **Power State Required**: Always power up the device before attempting WiFi operations
+2. **Power State Required**: Always power up the device before attempting WiFi or DAC operations
    ```bash
-   # Check power state (0=off, 1=MICRO_ON, 2=POWERED_UP)
+   # Check power state (0=STANDBY, 1=POWERED_UP, 2=POWERED_UP_EXT_DOWN)
    (echo -e "SYST:POW:STAT?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
    
-   # Power up device for WiFi operations
-   (echo -e "SYST:POW:STAT 2\r"; sleep 1) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
+   # Power up device for full functionality (enables 10V rail needed for DAC7718)
+   (echo -e "SYST:POW:STAT 1\r"; sleep 1) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail-5
    ```
 
 3. **Use Exact SCPI Commands**: Don't guess command syntax. Check the actual command table in `SCPIInterface.c`
@@ -331,10 +502,9 @@ Use picocom for reliable serial communication:
 ```
 
 Power states:
-- 0: POWERED_DOWN
-- 1: MICRO_ON (USB powered, minimal functionality)
-- 2: POWERED_UP (Full power, all modules active)
-- 3: POWERED_UP_EXT_DOWN (Partial power)
+- 0: STANDBY (MCU on if USB powered, off if battery powered)
+- 1: POWERED_UP (Board fully powered, all modules active)
+- 2: POWERED_UP_EXT_DOWN (Partial power, external power disabled - low battery mode)
 
 #### Windows Network Access
 Check WiFi networks from WSL using Windows netsh:
@@ -383,7 +553,7 @@ fi
 - APPLY command needed to activate runtime settings
 - SAVE command needed to persist to NVM
 - Device may load saved NVM settings on power up, not runtime settings
-- Power states: 0=off, 1=on for setting; 1=MICRO_ON, 2=POWERED_UP for reading
+- Power states: 0=STANDBY, 1=POWERED_UP, 2=POWERED_UP_EXT_DOWN
 
 ### Shell Script Wrapper for Device Commands
 
@@ -546,7 +716,7 @@ voltage, NTC status, and power-up readiness.
    *IDN?  # Should return DAQiFi info
    
    # Check power state
-   SYST:POW:STAT?  # 1=MICRO_ON, 2=POWERED_UP
+   SYST:POW:STAT?  # 0=STANDBY, 1=POWERED_UP, 2=POWERED_UP_EXT_DOWN
    
    # Check errors
    SYST:ERR?  # Should be "No error"
@@ -592,4 +762,7 @@ voltage, NTC status, and power-up readiness.
 3. **Permission Prompts**: Even with wildcards, complex commands may prompt
    - Keep commands simple
    - Use script files instead of complex one-liners
-   - Batch related commands together
+   - Batch related commands together
+- pic32 tris convention is 1=input and 0=output
+- when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
+- always verify scpi command syntax - don't guess.

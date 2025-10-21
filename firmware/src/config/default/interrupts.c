@@ -20,7 +20,7 @@
 
 // DOM-IGNORE-BEGIN
 /*******************************************************************************
- * Copyright (C) 2018 Microchip Technology Inc. and its subsidiaries.
+* Copyright (C) 2025 Microchip Technology Inc. and its subsidiaries.
  *
  * Subject to your compliance with these terms, you may use Microchip software
  * and any derivatives exclusively with Microchip products. It is your
@@ -51,6 +51,7 @@
 #include "configuration.h"
 #include "interrupts.h"
 #include "definitions.h"
+
 
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
@@ -92,16 +93,23 @@ void ADC_DATA27_Handler (void);
 void ADC_DATA38_Handler (void); 
 void ADC_DATA39_Handler (void); 
 void CHANGE_NOTICE_A_Handler (void);
+void CHANGE_NOTICE_B_Handler (void);
 void CHANGE_NOTICE_D_Handler (void);
 void USB_Handler (void);
 void USB_DMA_Handler (void);
 void DMA0_Handler (void);
 void DMA1_Handler (void);
+void DMA2_Handler (void);
+void DMA3_Handler (void);
+void SPI2_RX_Handler (void);
+void SPI2_TX_Handler (void);
 void SPI4_RX_Handler (void);
 void SPI4_TX_Handler (void);
 void FLASH_CONTROL_Handler (void);
 void I2C5_BUS_Handler (void);
 void I2C5_MASTER_Handler (void);
+void SPI6_RX_Handler (void);
+void SPI6_TX_Handler (void);
 void ADC_EOS_Handler (void);
 
 
@@ -139,7 +147,6 @@ void __attribute__((used)) TIMER_5_Handler (void)
 
 void __attribute__((used)) TIMER_6_Handler (void)
 {
-   
 }
 
 void __attribute__((used)) TIMER_7_Handler (void)
@@ -189,6 +196,7 @@ void __attribute__((used)) ADC_DATA5_Handler (void)
     }
     ADC_DATA5_InterruptHandler();
 }
+
 void __attribute__((used)) ADC_DATA6_Handler (void)
 {
     if (ADCHS_ChannelResultIsReady(6)) {
@@ -268,52 +276,99 @@ void __attribute__((used)) ADC_DATA39_Handler (void)
     }
     ADC_DATA39_InterruptHandler();
 }
-void __attribute__((used)) CHANGE_NOTICE_A_Handler(void) {
+
+void __attribute__((used)) CHANGE_NOTICE_A_Handler (void)
+{
     CHANGE_NOTICE_A_InterruptHandler();
 }
 
-void __attribute__((used)) CHANGE_NOTICE_D_Handler(void) {
+void __attribute__((used)) CHANGE_NOTICE_B_Handler (void)
+{
+    CHANGE_NOTICE_B_InterruptHandler();
+}
+
+void __attribute__((used)) CHANGE_NOTICE_D_Handler (void)
+{
     CHANGE_NOTICE_D_InterruptHandler();
 }
 
-void __attribute__((used)) USB_Handler(void) {
+void __attribute__((used)) USB_Handler (void)
+{
     DRV_USBHS_InterruptHandler();
 }
 
-void __attribute__((used)) USB_DMA_Handler(void) {
+void __attribute__((used)) USB_DMA_Handler (void)
+{
     DRV_USBHS_DMAInterruptHandler();
 }
 
-void __attribute__((used)) DMA0_Handler(void) {
+void __attribute__((used)) DMA0_Handler (void)
+{
     DMA0_InterruptHandler();
 }
 
-void __attribute__((used)) DMA1_Handler(void) {
+void __attribute__((used)) DMA1_Handler (void)
+{
     DMA1_InterruptHandler();
 }
 
-void __attribute__((used)) SPI4_RX_Handler(void) {
+void __attribute__((used)) DMA2_Handler (void)
+{
+    DMA2_InterruptHandler();
+}
+
+void __attribute__((used)) DMA3_Handler (void)
+{
+    DMA3_InterruptHandler();
+}
+
+void __attribute__((used)) SPI2_RX_Handler (void)
+{
+    SPI2_RX_InterruptHandler();
+}
+
+void __attribute__((used)) SPI2_TX_Handler (void)
+{
+    SPI2_TX_InterruptHandler();
+}
+
+void __attribute__((used)) SPI4_RX_Handler (void)
+{
     SPI4_RX_InterruptHandler();
 }
 
-void __attribute__((used)) SPI4_TX_Handler(void) {
+void __attribute__((used)) SPI4_TX_Handler (void)
+{
     SPI4_TX_InterruptHandler();
 }
 
-void __attribute__((used)) FLASH_CONTROL_Handler(void) {
+void __attribute__((used)) FLASH_CONTROL_Handler (void)
+{
     NVM_InterruptHandler();
 }
 
-void __attribute__((used)) I2C5_BUS_Handler(void) {
+void __attribute__((used)) I2C5_BUS_Handler (void)
+{
     I2C5_BUS_InterruptHandler();
 }
 
-void __attribute__((used)) I2C5_MASTER_Handler(void) {
+void __attribute__((used)) I2C5_MASTER_Handler (void)
+{
     I2C5_MASTER_InterruptHandler();
 }
 
-void __attribute__((used)) ADC_EOS_Handler(void) {    
-    ADC_EOSInterruptCB();
+void __attribute__((used)) SPI6_RX_Handler (void)
+{
+    SPI6_RX_InterruptHandler();
+}
+
+void __attribute__((used)) SPI6_TX_Handler (void)
+{
+    SPI6_TX_InterruptHandler();
+}
+
+void __attribute__((used)) ADC_EOS_Handler (void)
+{
     ADC_EOS_InterruptHandler();
 }
 

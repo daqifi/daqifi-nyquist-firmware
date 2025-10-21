@@ -11,7 +11,7 @@ dependency:
 - dependencyPackage: ''
   name: wireless_wifi
   type: package
-  version: v3.10.1
+  version: v3.12.1
 customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments:
@@ -56,8 +56,8 @@ data:
     - children:
       - attributes:
           id: drvWifiWinc
-          x: '768'
-          y: '214'
+          x: '1359'
+          y: '146'
         type: ElementPosition
       type: ElementPositions
     type: ComponentGraph
@@ -88,7 +88,7 @@ data:
       children:
       - children:
         - attributes:
-            value: '6000'
+            value: '12000'
           type: User
         type: Values
       type: Integer

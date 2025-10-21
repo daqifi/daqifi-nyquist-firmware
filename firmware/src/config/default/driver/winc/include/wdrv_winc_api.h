@@ -40,8 +40,8 @@ Microchip or any third party.
 */
 // DOM-IGNORE-END
 
-#ifndef _WDRV_WINC_API_H
-#define _WDRV_WINC_API_H
+#ifndef WDRV_WINC_API_H
+#define WDRV_WINC_API_H
 
 // *****************************************************************************
 // *****************************************************************************
@@ -104,6 +104,17 @@ typedef struct
 typedef struct
 {
 } TCPIP_MODULE_MAC_WINC_CONFIG;
+
+#ifdef WDRV_WINC_NETWORK_USE_HARMONY_TCPIP
+// *****************************************************************************
+// *****************************************************************************
+// Section: WINC MACObject
+// *****************************************************************************
+// *****************************************************************************
+
+extern const TCPIP_MAC_OBJECT WDRV_WINC_MACObject;
+
+#endif
 
 // *****************************************************************************
 // *****************************************************************************
@@ -377,4 +388,4 @@ void WDRV_WINC_ISR(SYS_MODULE_OBJ object);
 #endif
 // DOM-IGNORE-END
 
-#endif /* _WDRV_WINC_API_H */
+#endif /* WDRV_WINC_API_H */

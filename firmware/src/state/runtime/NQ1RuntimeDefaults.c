@@ -109,10 +109,11 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .IsEnabled = false,
         .Running = false,
         .ClockPeriod = 130,   // default 3k hz (15khz is the max)
-        .Frequency=30000,
-        .ChannelScanFreqDiv=3, //max channel scan frequency should be 1000 hz
+        .Frequency = 30000,   // Default 30kHz (limited by active channel count in SCPI)
+        .ChannelScanFreqDiv = 3, //max channel scan frequency should be 1000 hz
         .Encoding = Streaming_ProtoBuffer,
         .TSClockPeriod = 0xFFFFFFFF,   // maximum
+        .ActiveInterface = StreamingInterface_USB,  // Default: stream to single interface (USB)
     },
     .wifiSettings = {
         .isEnabled = true,
@@ -137,6 +138,13 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .directory="DAQiFi",
         .file="default.bin",
         .mode=SD_CARD_MANAGER_MODE_NONE,
-    },    
-    
+    },
+
 };
+
+/*! This function is used for getting the board runtime configuration defaults
+ * @return Pointer to Board Runtime Configuration structure
+ */
+const tBoardRuntimeConfig* NqBoardRuntimeConfig_GetDefaults(void) {
+    return &g_NQ1BoardRuntimeConfig;
+}

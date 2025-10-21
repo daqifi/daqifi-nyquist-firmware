@@ -1,155 +1,301 @@
-/*! @file AD7609.c 
- * 
- * This file implements the functions to manage the module ADC AD7609. 
+/*! @file AD7609.c
+ *
+ * @brief AD7609 8-Channel, 18-bit ADC Driver
+ *
+ * This file implements the hardware abstraction layer for the Analog Devices AD7609
+ * simultaneous sampling, 18-bit ADC. The driver supports serial data interface mode
+ * with manual chip select control via Harmony DRV_SPI.
+ *
+ * Key Features:
+ * - 8 differential input channels
+ * - 18-bit resolution with 2's complement output
+ * - Configurable ±5V or ±10V input range per module
+ * - SPI interface at 10 MHz
+ * - Manual conversion triggering via CONVST pin
+ * - Busy signal monitoring for conversion complete
  */
 
 #include "AD7609.h"
-#include "Util/Delay.h"
+#include "configuration.h"
+#include "definitions.h"
+#include "driver/spi/drv_spi.h"
+#include "peripheral/coretimer/plib_coretimer.h"
+#include "state/board/BoardConfig.h"
+#include "state/runtime/BoardRuntimeConfig.h"
+#include "HAL/ADC.h"
+#include "Util/Logger.h"
+#include "system/cache/sys_cache.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
+// Simple delay function using core timer (wrap-around safe, overflow-safe)
+static void AD7609_Delay_ms(uint32_t milliseconds) {
+    uint32_t startCount = CORETIMER_CounterGet();
+    // Use 64-bit arithmetic to prevent overflow for large millisecond values
+    uint32_t ticks = (uint32_t)(((uint64_t)milliseconds * CORETIMER_FrequencyGet()) / 1000U);
+
+    // Use modular arithmetic to handle 32-bit timer wrap-around correctly
+    // Subtraction of unsigned values wraps correctly
+    while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticks) {
+        // Wait for elapsed ticks
+    }
+}
 
 #define UNUSED(x) (void)(x)
 
-//! Pointer to the module configuration data structure to be set in initialization
-static AD7609ModuleConfig* pModuleConfigAD7609; 
-//! Pointer to the module configuration data structure in runtime
-//! to be set in initialization
-static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609; 
+//! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
+#define AD7609_SPI_TIMEOUT 100000
 
-/*! 
- * Function to configre SPI related to ADC
+/**
+ * @brief Extract 18-bit value from big-endian bitstream
+ *
+ * Optimized for AD7609: No bounds checking needed. Buffer is 19 bytes (18 data + 1 padding)
+ * to allow 4-byte window loads for all channels (0-7) without bounds checking overhead.
+ * Valid bit positions: 0, 18, 36, 54, 72, 90, 108, 126 (hwChannel validated in caller).
+ *
+ * @param buf Pointer to 19-byte buffer (18 data + 1 padding)
+ * @param bitPos Bit position in stream (0-126 for channels 0-7)
+ * @return Extracted 18-bit value
  */
-static void AD7609_Apply_SPI_Config( void )
-{
-    //Disable SPI
-    PLIB_SPI_Disable(pModuleConfigAD7609->SPI.spiID);
-    // Optional: Clear SPI interrupts and status flag.
-    //clear SPI buffer
-    PLIB_SPI_BufferClear (pModuleConfigAD7609->SPI.spiID);
-    // Configure General SPI Options
-    PLIB_SPI_StopInIdleDisable(pModuleConfigAD7609->SPI.spiID);
-    PLIB_SPI_PinEnable( pModuleConfigAD7609->SPI.spiID,                     \
-                        SPI_PIN_DATA_OUT|SPI_PIN_DATA_IN);
-    PLIB_SPI_CommunicationWidthSelect(                                      \
-                        pModuleConfigAD7609->SPI.spiID,                     \
-                        pModuleConfigAD7609->SPI.busWidth);
-    PLIB_SPI_InputSamplePhaseSelect(                                        \
-                        pModuleConfigAD7609->SPI.spiID,                     \
-                        pModuleConfigAD7609->SPI.inSamplePhase);
-    PLIB_SPI_ClockPolaritySelect(                                           \
-                        pModuleConfigAD7609->SPI.spiID,                     \
-                        pModuleConfigAD7609->SPI.clockPolarity);
-    PLIB_SPI_OutputDataPhaseSelect(                                         \
-                        pModuleConfigAD7609->SPI.spiID,                     \
-                        pModuleConfigAD7609->SPI.outDataPhase);
-    
-    PLIB_SPI_BaudRateClockSelect (                                          \
-                        pModuleConfigAD7609->SPI.spiID,                     \
-                        pModuleConfigAD7609->SPI.clock);
-    PLIB_SPI_BaudRateSet(                                                   \
-                        pModuleConfigAD7609->SPI.spiID,                     \
-                        SYS_CLK_PeripheralFrequencyGet(                     \
-                        pModuleConfigAD7609->SPI.busClk_id),                \
-                        pModuleConfigAD7609->SPI.baud);
-    PLIB_SPI_MasterEnable(pModuleConfigAD7609->SPI.spiID);
-    PLIB_SPI_FramedCommunicationDisable(pModuleConfigAD7609->SPI.spiID);
-    // Optional: Enable interrupts.
-    // Enable the module
-    PLIB_SPI_Enable(pModuleConfigAD7609->SPI.spiID);
-    while(PLIB_SPI_IsBusy(pModuleConfigAD7609->SPI.spiID));
+static uint32_t AD7609_Extract18Bit(const uint8_t* buf, uint16_t bitPos) {
+    // Calculate byte index and bit offset
+    size_t byteIndex = bitPos >> 3;  // bitPos / 8
+    uint8_t bitInByte = (uint8_t)(bitPos & 0x7U);  // bitPos % 8
+
+    // Load 32-bit window from buffer (big-endian, MSB first)
+    // Channel 7 (bit 126) loads buf[15..18] - all within 19-byte buffer
+    uint32_t window = ((uint32_t)buf[byteIndex]     << 24) |
+                      ((uint32_t)buf[byteIndex + 1U] << 16) |
+                      ((uint32_t)buf[byteIndex + 2U] << 8)  |
+                      ((uint32_t)buf[byteIndex + 3U]);
+
+    // Shift to align 18-bit field at top of window, then shift down and mask
+    return ((window << bitInByte) >> (32 - 18)) & 0x3FFFFU;
 }
 
+//! BSY pin settling timeout
+//! Datasheet: BSY deasserts typically <10us after conversion/read complete
+//! Timeout: 10x datasheet spec = 100us for safety margin
+#define AD7609_BSY_SETTLE_TIMEOUT_US 100
+
+//! Pointer to the module configuration data structure to be set in initialization
+static const AD7609ModuleConfig* pModuleConfigAD7609;
+//! Pointer to the module configuration data structure in runtime
+static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609 __attribute__((unused));
+
+// DRV_SPI handle for AD7609 communication
+static DRV_HANDLE spi_handle = DRV_HANDLE_INVALID;
+
+// AD7609 BSY interrupt handling
+// Volatile ensures ISR sees updates from task context without caching
+static volatile TaskHandle_t gAD7609_TaskHandle = NULL;
+
+// SPI mutex to serialize access to shared SPI bus and DMA buffers
+static SemaphoreHandle_t gAD7609_SpiMutex = NULL;
+
+// Helper to acquire SPI mutex with lazy creation
+static bool AD7609_Lock(void)
+{
+    if (gAD7609_SpiMutex == NULL) {
+        gAD7609_SpiMutex = xSemaphoreCreateMutex();
+        if (gAD7609_SpiMutex == NULL) {
+            LOG_E("AD7609_Lock: Failed to create SPI mutex");
+            return false;
+        }
+    }
+
+    if (xSemaphoreTake(gAD7609_SpiMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        LOG_E("AD7609_Lock: Failed to acquire SPI mutex");
+        return false;
+    }
+
+    return true;
+}
+
+// Helper to release SPI mutex and cleanup CS pin state
+static void AD7609_Unlock(const AD7609ModuleConfig* config, bool csAsserted)
+{
+    // De-assert CS if still asserted
+    if (csAsserted && (config != NULL)) {
+        GPIO_PinWrite(config->CS_Pin, true);
+    }
+
+    // Release mutex
+    if (gAD7609_SpiMutex != NULL) {
+        xSemaphoreGive(gAD7609_SpiMutex);
+    }
+}
+
+// DMA-coherent SPI buffers (must be global for cache coherency)
+// RX buffer is 19 bytes (18 data + 1 padding) to allow window-loading for channel 7
+// without bounds checking overhead. AD7609 sends 144 bits (18 bytes) of data.
+static __attribute__((coherent)) uint8_t gAD7609_txBuffer[18];
+static __attribute__((coherent)) uint8_t gAD7609_rxBuffer[19];
+
+// Accessor function for task handle (used by tasks.c)
+volatile void* AD7609_GetTaskHandle(void) {
+    return &gAD7609_TaskHandle;
+}
+
+// AD7609 BSY pin interrupt callback (called from GPIO ISR)
+void AD7609_BSY_InterruptCallback(GPIO_PIN pin, uintptr_t context)
+{
+    UNUSED(context);
+
+    if (pModuleConfigAD7609 == NULL || pin != pModuleConfigAD7609->BSY_Pin || gAD7609_TaskHandle == NULL) {
+        return;
+    }
+
+    // Disable further BSY interrupts until next sample trigger
+    // (interrupt status already cleared by GPIO PLIB handler before callback)
+    GPIO_PinIntDisable(pModuleConfigAD7609->BSY_Pin);
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(gAD7609_TaskHandle, &xHigherPriorityTaskWoken);
+    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+}
+
+// AD7609 deferred interrupt task (handles SPI read after BSY interrupt)
+void AD7609_DeferredInterruptTask(void) {
+    // Use 100ms timeout to prevent deadlock if interrupt is missed or spurious
+    const TickType_t xBlockTime = pdMS_TO_TICKS(100);
+
+    while (1) {
+        // Wait for BSY pin interrupt to signal conversion complete
+        // ulTaskNotifyTake() returns notification count and clears it atomically
+        uint32_t notificationValue = ulTaskNotifyTake(pdFALSE, xBlockTime);
+
+        if (notificationValue > 0) {
+            // Received valid notification from ISR
+            // Call ADC layer to handle data acquisition and storage
+            // This separates hardware driver from data management
+            ADC_HandleAD7609Interrupt();
+
+            if (pModuleConfigAD7609 != NULL) {
+                // BSY should be idle-high by now (SPI read complete)
+                // If still low, indicates hardware fault - log error but don't block
+                if (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+                    LOG_E("AD7609: BSY pin stuck low after SPI read - possible hardware fault");
+                }
+                // Re-enable interrupt for next conversion
+                GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
+            }
+        } else {
+            // Timeout occurred - no notification received within 100ms
+            // Timeout recovery: re-enable interrupt for next attempt
+            if (pModuleConfigAD7609 != NULL) {
+                GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
+            }
+        }
+    }
+} 
+
 /*!
- *  Reset the module 
+ *  Reset the module - Updated for Harmony 3 GPIO API
  */
 static void AD7609_Reset( void )
 {
-    // Reset AD7609 by pulling RST line high for > 100ns
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->CS_Ch ,                        \
-                        pModuleConfigAD7609->CS_Bit,                        \
-                        true);
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->RST_Ch ,                       \
-                        pModuleConfigAD7609->RST_Bit,                       \
-                        true);
-    Delay(5);
-
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->RST_Ch ,                       \
-                        pModuleConfigAD7609->RST_Bit,                       \
-                        false);
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->CS_Ch ,                        \
-                        pModuleConfigAD7609->CS_Bit,                        \
-                        false);
-    // Delay after reset for chip to initialize
-    Delay(5);
+    AD7609_Delay_ms(100); // Delay reset for 100ms to ensure power on is completed properly 
+    
+    // Proper AD7609 reset sequence (from working commit):
+    // 1. Set CS high (inactive) 
+    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
+    
+    // 2. Set RST high (active reset)
+    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, true);
+    AD7609_Delay_ms(1); // Hold reset for 1ms
+    
+    // 3. Set RST low (release reset)
+    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, false);
+    
+    // 4. Wait for chip to initialize (datasheet: >500ns)
+    AD7609_Delay_ms(1); // 10ms for safety
 }
 
 bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
 {
+    // Initialize AD7609 hardware after power-up
+
     pModuleConfigAD7609 = pBoardConfigInit;
+
+    // Note: SPI mutex created lazily by AD7609_Lock() on first use
+
+    // Open DRV_SPI driver for SPI6 (DRV_SPI_INDEX_1 maps to SPI6)
+    spi_handle = DRV_SPI_Open(DRV_SPI_INDEX_1, DRV_IO_INTENT_READWRITE);
+    if (spi_handle == DRV_HANDLE_INVALID) {
+        LOG_E("AD7609_InitHardware: Failed to open SPI driver");
+        return false;
+    }
+
+    // Initialize GPIO pins for AD7609 control after reset
+    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);      // CS high (inactive)
+    // Per datasheet: Range pin HIGH=±20V, LOW=±10V
+    // But hardware may be wired differently - use inverted logic to match SCPI implementation
+    GPIO_PinWrite(pModuleConfigAD7609->Range_Pin, !pModuleConfigAD7609->Range10V);  // Range setting
+    GPIO_PinWrite(pModuleConfigAD7609->OS0_Pin, pModuleConfigAD7609->OSMode & 0b01); // OS0 setting
+    GPIO_PinWrite(pModuleConfigAD7609->OS1_Pin, (pModuleConfigAD7609->OSMode & 0b10) >> 1); // OS1 setting
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);  // CONVST high (idle state per datasheet)
+    GPIO_PinWrite(pModuleConfigAD7609->STBY_Pin, true);    // STBY high (normal operation, active low)
+    GPIO_PinWrite(pModuleConfigAD7609->RST_Pin, false);    // RST low (idle, not in reset)
     
-    AD7609_Apply_SPI_Config();
+    // Override MCC GPIO configuration for SPI bus management
+    // Ensure proper pin directions and states for AD7609 operation
+    GPIO_PinOutputEnable(pModuleConfigAD7609->CS_Pin);      // CS as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->Range_Pin);   // Range as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->OS0_Pin);   // OS0 as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->OS1_Pin);   // OS1 as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->CONVST_Pin);  // CONVST as output 
+    GPIO_PinOutputEnable(pModuleConfigAD7609->STBY_Pin);    // STBY as output
+    GPIO_PinOutputEnable(pModuleConfigAD7609->RST_Pin);    // RST as output
     
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->CS_Ch ,                        \
-                        pModuleConfigAD7609->CS_Bit,                        \
-                        true);
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->RST_Ch ,                       \
-                        pModuleConfigAD7609->RST_Bit,                       \
-                        true);
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->Range_Ch,                      \
-                        pModuleConfigAD7609->Range_Bit,                     \
-                        pModuleConfigAD7609->Range10V);
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->OS0_Ch ,                       \
-                        pModuleConfigAD7609->OS0_Bit,                       \
-                        pModuleConfigAD7609->OSMode & 0b01);
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->OS1_Ch ,                       \
-                        pModuleConfigAD7609->OS1_Bit,                       \
-                        pModuleConfigAD7609->OSMode & 0b10);
-    PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->CONVST_Ch,                     \
-                        pModuleConfigAD7609->CONVST_Bit,                    \
-                        false);
+    GPIO_PinInputEnable(pModuleConfigAD7609->BSY_Pin);      // BSY as input
     
-    // Board reset occurs later (AD7609_UpdateModuleState)
+    // If RC15 is another SPI device CS, ensure it's inactive
+    GPIO_PinOutputEnable(GPIO_PIN_RC15);
+    GPIO_PinWrite(GPIO_PIN_RC15, true); // Keep inactive
     
+    // Reset the AD7609
+    AD7609_Reset();
+
+    // Register BSY pin interrupt callback (falling edge on conversion complete)
+    // Note: Task creation is handled in config/default/tasks.c
+    // AD7609 BSY goes LOW (falling edge) when conversion is complete
+    GPIO_PinInterruptCallbackRegister(pModuleConfigAD7609->BSY_Pin, AD7609_BSY_InterruptCallback, 0);
+
+    // Wait for BSY to reach idle-high after reset before enabling interrupt
+    // Datasheet: BSY deasserts typically <10us after reset completes
+    // Timeout: 10x spec = 100us, Tick: continuous polling
+    if (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+        const uint32_t coreTimerFreq = CORETIMER_FrequencyGet();
+        const uint32_t timeoutTicks = (coreTimerFreq * AD7609_BSY_SETTLE_TIMEOUT_US) / 1000000;
+        uint32_t startCount = CORETIMER_CounterGet();
+
+        while (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin) &&
+               ((uint32_t)(CORETIMER_CounterGet() - startCount) < timeoutTicks)) {
+            // Continuous polling (wrap-safe arithmetic)
+        }
+
+        // If still low after timeout, log hardware fault
+        if (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+            LOG_E("AD7609_InitHardware: BSY pin stuck low after reset - possible hardware fault");
+        }
+    }
+
+    // Enable falling-edge interrupt for conversion complete detection
+    GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
+
     return true;
 }
 
 bool AD7609_WriteModuleState(bool isPowered)
 {
-    if (!isPowered)
-    {
+    UNUSED(isPowered);
+
+    if (pModuleConfigAD7609 == NULL) {
         return false;
     }
-    
-    // TODO: Do we expose the STBY pin?
-    bool isEnabled = !(PLIB_PORTS_PinGet(                                   \
-                        pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->RST_Ch ,                       \
-                        pModuleConfigAD7609->RST_Bit));
-    if (isEnabled != pModuleRuntimeConfigAD7609->IsEnabled)
-    {
-        if (pModuleRuntimeConfigAD7609->IsEnabled)
-        {
-            AD7609_Reset( );
-        }
-        else
-        {
-            // Hold in reset
-            PLIB_PORTS_PinWrite(                                            \
-                        pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->RST_Ch ,                       \
-                        pModuleConfigAD7609->RST_Bit,                       \
-                        pModuleRuntimeConfigAD7609->IsEnabled);
-        }
-    }
-    
+
     return true;
 }
 
@@ -161,177 +307,233 @@ bool AD7609_WriteStateSingle(
     UNUSED(moduleRuntimeConfig);
     UNUSED(channelConfig);
     UNUSED(channelRuntimeConfig);
-    // Nothing yet!
-    
+
     return true;
 }
 
-bool AD7609_WriteStateAll(                                                  \
-                        const AInArray* channelConfig,                      \
+bool AD7609_WriteStateAll(
+                        const AInArray* channelConfig,
                         AInRuntimeArray* channelRuntimeConfig)
 {
-    int i=0;
-    bool result = true;
-    for (i=0; i<channelRuntimeConfig->Size; ++i)
-    {
-        result &= AD7609_WriteStateSingle(                                  \
-                        pModuleRuntimeConfigAD7609,                         \
-                        &channelConfig->Data[i].Config.AD7609,              \
-                        &channelRuntimeConfig->Data[i]);
+    UNUSED(channelConfig);
+    UNUSED(channelRuntimeConfig);
+
+    if (pModuleConfigAD7609 == NULL) {
+        LOG_E("AD7609_WriteStateAll: AD7609 not initialized");
+        return false;
     }
-    
-    return result;
+
+    return true;
 }
 
-bool AD7609_ReadSamples(AInSampleArray* samples,                            \
-                        const AInArray* channelConfigList,                  \
-                        AInRuntimeArray* channelRuntimeConfigList,          \
+bool AD7609_ReadSamples(AInSampleArray* samples,
+                        const AInArray* channelConfigList,
+                        AInRuntimeArray* channelRuntimeConfigList,
                         uint32_t triggerTimeStamp)
 {
-    uint8_t x=0;
-	uint8_t SPIData=0;;
-	uint16_t Data16[9];
-    
-    if (!pModuleRuntimeConfigAD7609->IsEnabled)
-    {
+    if (pModuleConfigAD7609 == NULL || spi_handle == DRV_HANDLE_INVALID) {
         return false;
     }
-    
-    AD7609_Apply_SPI_Config();
-    
-    // If the chip is not ready, bail out
-    if (PLIB_PORTS_PinGet(                                                  \
-                        pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->BSY_Ch,                        \
-                        pModuleConfigAD7609->BSY_Bit))
-    {
-        return false;
-    }
-	
-    // Select the chip
-	PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->CS_Ch,                         \
-                        pModuleConfigAD7609->CS_Bit,                        \
-                        false);
-    
-    // Wait for the board to settle
-    Delay(5); 
-    
-    for(x=0;x<9;x++)
-    {
-        while(PLIB_SPI_IsBusy(pModuleConfigAD7609->SPI.spiID));
-		PLIB_SPI_BufferWrite(pModuleConfigAD7609->SPI.spiID,0x00);
-        
-        while(PLIB_SPI_IsBusy(pModuleConfigAD7609->SPI.spiID));
-        // Read buffer
-		SPIData=PLIB_SPI_BufferRead(pModuleConfigAD7609->SPI.spiID);	
-		Data16[x]=SPIData;	// Store into temporary data array
-        
-        while(PLIB_SPI_IsBusy(pModuleConfigAD7609->SPI.spiID));
-		PLIB_SPI_BufferWrite(pModuleConfigAD7609->SPI.spiID,0x00);
-        
-        while(PLIB_SPI_IsBusy(pModuleConfigAD7609->SPI.spiID));
-        // Read buffer
-		SPIData=PLIB_SPI_BufferRead(pModuleConfigAD7609->SPI.spiID);	
-		Data16[x]=(Data16[x]<<8)|SPIData;	// Store into temporary data array
-	}
 
-    // TODO: Double check calculations
- 	while(PLIB_SPI_IsBusy(pModuleConfigAD7609->SPI.spiID));
-    
-    // Deselect the chip
-	PLIB_PORTS_PinWrite(pModuleConfigAD7609->DataModule,                    \
-                        pModuleConfigAD7609->CS_Ch,                         \
-                        pModuleConfigAD7609->CS_Bit,                        \
-                        false);
-    
-    // Convert the raw data to samples
-    for (x=0; x<channelConfigList->Size; ++x)
-    {
-        const AInRuntimeConfig* runtimeConfig =                             \
-                        &(channelRuntimeConfigList->Data[x]);
-        if (!runtimeConfig->IsEnabled)
-        {
-            continue;
+    // Check if conversion is ready by reading BSY pin (BSY low = ready)
+    if (GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+        return false; // Chip not ready
+    }
+
+    // Acquire SPI lock before using shared SPI and buffers
+    if (!AD7609_Lock()) {
+        return false;
+    }
+
+    bool success = false;
+    bool csAsserted = false;
+
+    // Configure SPI mode for AD7609 before transfer
+    // AD7609 requires SPI Mode 2: CPOL=1 (idle high), CPHA=0 (sample on first edge)
+    // Harmony enum: LEADING_EDGE = sample on first edge = CPHA=0, maps to CKE=1 for Mode 2
+    // This ensures correct configuration even if SPI bus is shared with other devices
+    DRV_SPI_TRANSFER_SETUP spiSetup;
+    spiSetup.baudRateInHz = 10000000;  // 10 MHz (AD7609 supports up to 24 MHz)
+    spiSetup.clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_HIGH;     // CPOL=1
+    spiSetup.clockPhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE;  // CPHA=0 (first edge, CKE=1)
+    spiSetup.dataBits = DRV_SPI_DATA_BITS_8;
+    spiSetup.chipSelect = SYS_PORT_PIN_NONE;  // Manual CS control
+    spiSetup.csPolarity = DRV_SPI_CS_POLARITY_ACTIVE_LOW;
+
+    if (!DRV_SPI_TransferSetup(spi_handle, &spiSetup)) {
+        LOG_E("AD7609_ReadSamples: Failed to configure SPI mode");
+        goto read_cleanup;
+    }
+
+    // Clear DMA buffers (global, coherent for DMA access)
+    memset(gAD7609_txBuffer, 0, sizeof(gAD7609_txBuffer));
+    memset(gAD7609_rxBuffer, 0, sizeof(gAD7609_rxBuffer));
+
+    // Ensure TX buffer is written back to memory before DMA reads it
+    SYS_CACHE_CleanDCache_by_Addr((void*)gAD7609_txBuffer, sizeof(gAD7609_txBuffer));
+    // Invalidate RX buffer so CPU reads post-DMA contents (not stale cache)
+    SYS_CACHE_InvalidateDCache_by_Addr((void*)gAD7609_rxBuffer, sizeof(gAD7609_rxBuffer));
+
+    // Assert CS (active low)
+    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
+    csAsserted = true;
+
+    // Use DRV_SPI async API (driver is in async mode for WiFi compatibility)
+    DRV_SPI_TRANSFER_HANDLE transferHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
+    DRV_SPI_WriteReadTransferAdd(spi_handle, gAD7609_txBuffer, 18, gAD7609_rxBuffer, 18, &transferHandle);
+
+    if (transferHandle == DRV_SPI_TRANSFER_HANDLE_INVALID) {
+        LOG_E("AD7609_ReadSamples: Failed to queue SPI transfer");
+        goto read_cleanup;
+    }
+
+    // Poll for completion with timeout protection
+    DRV_SPI_TRANSFER_EVENT event;
+    uint32_t timeout = AD7609_SPI_TIMEOUT;
+    do {
+        event = DRV_SPI_TransferStatusGet(transferHandle);
+        if (event != DRV_SPI_TRANSFER_EVENT_PENDING) {
+            break;
         }
-        
-        // Rather than sending us each 18 bit sample individually (which would waste 6 bits per channel),
-        // the AD7609 sends us 18 bytes that we need to dice up into 18-bit chucks
-        const AInChannel* channelConfig = &(channelConfigList->Data[x]);
-        uint8_t index = channelConfig->Config.AD7609.ChannelIndex;
-        uint8_t bitOffset = 2 * channelConfig->Config.AD7609.ChannelIndex;
-        // Take the remainder of the current index
-        uint16_t lowBits = Data16[index] >> bitOffset; 
-        // Take as many bits as needed to make 18
-        uint16_t highBits = Data16[index + 1] & (0xFFFF >> (14 - bitOffset)); 
-        
-        volatile uint32_t tmpData = lowBits & (((uint32_t)highBits) << (16 - bitOffset));
-        if( tmpData & 0b100000000000000000 )
-        {
-            // Convert from negative 18 bit to negative 32 bit 2s compelement
-            tmpData = 0xFFFC0000 | tmpData; 
+    } while (--timeout > 0);
+
+    if (timeout == 0 || event != DRV_SPI_TRANSFER_EVENT_COMPLETE) {
+        LOG_E("AD7609_ReadSamples: SPI transfer %s", (timeout == 0) ? "timeout" : "failed");
+        goto read_cleanup;
+    }
+
+    // Invalidate RX buffer cache again to ensure CPU reads DMA-transferred data
+    // This guarantees we're not reading stale cached values
+    SYS_CACHE_InvalidateDCache_by_Addr((void*)gAD7609_rxBuffer, sizeof(gAD7609_rxBuffer));
+
+    success = true;
+    // Fall through to cleanup
+
+read_cleanup:
+    AD7609_Unlock(pModuleConfigAD7609, csAsserted);
+
+    if (!success) {
+        return false;
+    }
+
+    // AD7609 sends data in serial mode: 18 bits per channel, 8 channels sequentially
+    // Total: 144 bits (18 bytes) in continuous stream, MSB first per channel
+
+    // Treat samples->Size as capacity (maximum samples buffer can hold)
+    size_t capacity = samples->Size;
+    size_t sampleCount = 0;
+
+    for (size_t i = 0; i < channelConfigList->Size; i++) {
+        if (channelConfigList->Data[i].Type == AIn_AD7609 &&
+            channelRuntimeConfigList->Data[i].IsEnabled) {
+
+            // Get the hardware channel number from config
+            uint8_t hwChannel = channelConfigList->Data[i].Config.AD7609.ChannelNumber;
+
+            // Validate hardware channel is in range
+            if (hwChannel >= AD7609_NUM_CHANNELS) {
+                continue; // Skip invalid channels
+            }
+
+            // Calculate bit position in the bitstream
+            uint16_t bitPosition = hwChannel * AD7609_BITS_PER_CHANNEL;
+
+            // Extract 18-bit value (no bounds checking needed - buffer is fixed size)
+            uint32_t tmpData = AD7609_Extract18Bit(gAD7609_rxBuffer, bitPosition);
+
+            // Convert from 18-bit 2's complement to signed 32-bit
+            if (tmpData & AD7609_SIGN_BIT) {
+                tmpData |= AD7609_SIGN_EXTEND;  // Sign extend
+            }
+
+            // Create sample entry with DAQiFi channel ID (check capacity, not current size)
+            if (sampleCount < capacity) {
+                samples->Data[sampleCount].Channel = channelConfigList->Data[i].DaqifiAdcChannelId;
+                samples->Data[sampleCount].Value = (int32_t)tmpData;
+                samples->Data[sampleCount].Timestamp = triggerTimeStamp;
+                sampleCount++;
+            } else {
+                LOG_E("AD7609_ExtractSamples: Sample buffer full (capacity=%u)", capacity);
+                break;  // Stop processing if buffer is full
+            }
         }
-        
-        AInSample* sample = &samples->Data[samples->Size];
-        sample->Channel = channelConfig->ChannelId;
-        // We are using the module trigger timestamp here to allow streaming 
-        //to know which are part of the same set
-        sample->Timestamp = triggerTimeStamp;  
-        // The XYZ_ConvertToVoltage functions are called downstream for 
-        //conversion (FPU doesn't work in an ISR)
-        sample->Value = tmpData; 
-        samples->Size += 1;
-	}
+    }
+
+    // Update Size to reflect actual number of samples written
+    samples->Size = sampleCount;
     
-    return true;
+    return (sampleCount > 0); // Return true if we got any samples
 }
 
 bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
 {
-    AD7609_Apply_SPI_Config();
-    
-    // If the AD7609 is busy the trigger fails
-    if (PLIB_PORTS_PinGet(                                                  \
-                        moduleConfig->DataModule,                           \
-                        moduleConfig->BSY_Ch,                               \
-                        moduleConfig->BSY_Bit))
-    {
+    UNUSED(moduleConfig);
+
+    if (pModuleConfigAD7609 == NULL) {
+        LOG_E("AD7609_TriggerConversion: pModuleConfigAD7609 is NULL");
         return false;
     }
 
-    AD7609_Reset();
-    
-    // Force the CONVST pin low
-    PLIB_PORTS_PinWrite(moduleConfig->DataModule,                           \
-                        moduleConfig->CONVST_Ch,                            \
-                        moduleConfig->CONVST_Bit,                           \
-                        false);	
-    Delay(5); // Wait for the board to settle
-    // Pull CONVST pin high to start conversion
-    PLIB_PORTS_PinWrite(moduleConfig->DataModule,                           \
-                        moduleConfig->CONVST_Ch,                            \
-                        moduleConfig->CONVST_Bit,                           \
-                        true);	
+    // Check if the AD7609 is busy
+    bool busy = GPIO_PinRead(pModuleConfigAD7609->BSY_Pin);
+    if (busy) {
+        return false; // Skip conversion if still busy
+    }
 
-    // Wait until the conversion actually starts
-    Delay(1);
-    
-    // Enable interrupt on change since a conversion has been started
-    // TODO: Use semaphore/ to disallow other SPI (temp sensor) transfer while we are waiting for a sample to complete
-    PLIB_PORTS_ChannelChangeNoticeEnable(                                   \
-                        moduleConfig->DataModule,                           \
-                        moduleConfig->BSY_Ch,                               \
-                        moduleConfig->BSY_BitMask);
-    
+    // Ensure CONVST is at idle HIGH before pulsing (defensive check)
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);
+
+    // Generate deterministic CONVST LOW pulse using core timer
+    // AD7609 datasheet requires LOW-going pulse: idle HIGH → pulse LOW → return HIGH
+    // Minimum pulse width: 25ns, using 200ns for safety margin
+    const uint32_t coreTimerFreq = CORETIMER_FrequencyGet();
+    const uint32_t ticksForPulse = (coreTimerFreq + 4999999U) / 5000000U; // 200ns = 1/(5MHz)
+
+    uint32_t startCount = CORETIMER_CounterGet();
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, false);  // Pulse LOW to trigger conversion
+
+    // Wait for pulse duration using wrap-safe arithmetic
+    while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticksForPulse) {
+        // Busy-wait for 200ns pulse width
+    }
+
+    GPIO_PinWrite(pModuleConfigAD7609->CONVST_Pin, true);   // Return to idle HIGH
     return true;
 }
 
-double AD7609_ConvertToVoltage(                                             \
-                        const AInRuntimeConfig* runtimeConfig,              \
+double AD7609_ConvertToVoltage(
+                        const AInRuntimeConfig* runtimeConfig,
                         const AInSample* sample)
 {
-    double vRef = pModuleConfigAD7609->Range10V ? 10.0 : 5.0;
-    double divVal = runtimeConfig->IsDifferential ? 512.0 : 262144.0;
-    
-    return vRef * (sample->Value / divVal);
+    UNUSED(runtimeConfig);
+
+    if (sample == NULL) {
+        LOG_E("AD7609_ConvertToVoltage: NULL sample");
+        return 0.0;
+    }
+
+    // Get runtime range from module configuration using BoardRunTimeConfig_Get
+    AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
+    double fullScaleVoltage = 10.0; // Default ±10V range
+
+    if (pRuntimeModules != NULL && pRuntimeModules->Size > AIn_AD7609) {
+        // AD7609 module index is AIn_AD7609 (1)
+        fullScaleVoltage = pRuntimeModules->Data[AIn_AD7609].Range;
+    }
+
+    // AD7609 is 18-bit, 2's complement
+    const int32_t maxCode = (AD7609_MAX_VALUE >> 1); // Half scale for signed 18-bit (131071)
+
+    // Convert raw ADC value to signed integer
+    int32_t rawValue = (int32_t)sample->Value;
+
+    // Handle 18-bit 2's complement conversion by checking sign bit
+    // If bit 17 is set, the value is negative and needs sign extension
+    if (rawValue & AD7609_SIGN_BIT) {
+        rawValue |= AD7609_SIGN_EXTEND;  // Sign extend from 18 bits to 32 bits
+    }
+
+    // Convert to voltage: raw / maxCode * fullScale
+    double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
+    return voltage;
 }

@@ -11,7 +11,7 @@ dependency:
 - dependencyPackage: ''
   name: csp
   type: package
-  version: v3.22.2
+  version: v3.23.0
 customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments:
@@ -44,7 +44,7 @@ data:
     - children:
       - attributes:
           id: i2c5
-          x: '1210'
+          x: '289'
           y: '330'
         type: ElementPosition
       type: ElementPositions
@@ -102,4 +102,15 @@ data:
           type: Dynamic
         type: Values
       type: Combo
+    I2C_CLOCK_FREQ:
+      attributes:
+        id: I2C_CLOCK_FREQ
+      children:
+      - children:
+        - attributes:
+            id: i2c5
+            value: '100000000'
+          type: Dynamic
+        type: Values
+      type: Integer
   userData: {}

@@ -56,6 +56,7 @@ defmplabxtrace.log.inx
 __pycache__/
 
 # Claude/AI assistant files
+.claude/settings.local.json
 .claude/COM3
 bq24297.*
 *.ps1

@@ -41,6 +41,7 @@ Microchip or any third party.
 #include "driver/spi/drv_spi.h"
 #include "wdrv_winc_common.h"
 #include "wdrv_winc_spi.h"
+#include "Util/Logger.h"
 
 // *****************************************************************************
 // *****************************************************************************
@@ -74,7 +75,7 @@ static CACHE_ALIGN uint8_t alignedBuffer[CACHE_ALIGNED_SIZE_GET(2048)];
 // *****************************************************************************
 // *****************************************************************************
 
-static void _WDRV_WINC_SPITransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
+static void spiTransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
         DRV_SPI_TRANSFER_HANDLE handle, uintptr_t context)
 {
     switch(event)
@@ -194,11 +195,15 @@ bool WDRV_WINC_SPIOpen(void)
 
     if (OSAL_RESULT_TRUE != OSAL_SEM_Create(&spiDcpt.txSyncSem, OSAL_SEM_TYPE_COUNTING, 10, 0))
     {
+        WDRV_DBG_ERROR_PRINT("WiFi SPI: txSyncSem create failed\r\n");
+        LOG_E("WiFi SPI: txSyncSem create failed (heap exhaustion?)\r\n");
         return false;
     }
 
     if (OSAL_RESULT_TRUE != OSAL_SEM_Create(&spiDcpt.rxSyncSem, OSAL_SEM_TYPE_COUNTING, 10, 0))
     {
+        WDRV_DBG_ERROR_PRINT("WiFi SPI: rxSyncSem create failed\r\n");
+        LOG_E("WiFi SPI: rxSyncSem create failed (heap exhaustion?)\r\n");
         return false;
     }
 
@@ -208,10 +213,12 @@ bool WDRV_WINC_SPIOpen(void)
 
         if (DRV_HANDLE_INVALID == spiDcpt.spiHandle)
         {
-            WDRV_DBG_ERROR_PRINT("SPI open failed\r\n");
-
+            WDRV_DBG_ERROR_PRINT("WiFi SPI: DRV_SPI_Open failed (index=%d)\r\n", spiDcpt.cfg.drvIndex);
+            LOG_E("WiFi SPI: DRV_SPI_Open(index=%d) failed\r\n", spiDcpt.cfg.drvIndex);
             return false;
         }
+        WDRV_DBG_INFORM_PRINT("WiFi SPI: DRV_SPI_Open succeeded (index=%d, handle=%p)\r\n",
+                              spiDcpt.cfg.drvIndex, spiDcpt.spiHandle);
     }
 
     spiTransConf.baudRateInHz = spiDcpt.cfg.baudRateInHz;
@@ -224,7 +231,7 @@ bool WDRV_WINC_SPIOpen(void)
         return false;
     }
 
-    DRV_SPI_TransferEventHandlerSet(spiDcpt.spiHandle, _WDRV_WINC_SPITransferEventHandler, 0);
+    DRV_SPI_TransferEventHandlerSet(spiDcpt.spiHandle, spiTransferEventHandler, 0);
 
     return true;
 }

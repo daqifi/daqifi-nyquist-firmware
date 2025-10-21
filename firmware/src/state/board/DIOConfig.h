@@ -14,25 +14,25 @@ extern "C" {
     typedef struct s_DIOConfig
     {
         /**
-         * The channel associated with the data line
+         * The port channel associated with the data line
          */
         GPIO_PORT DataChannel;
-        
+
         /**
-         * The pin associated with the data line
+         * The bit position (0-15) of the data pin within the port
          */
-        GPIO_PIN DataPin;
-        
+        uint8_t DataBitPos;
+
         /**
-         * The channel associated with the enable line 
+         * The port channel associated with the enable line
          */
         GPIO_PORT EnableChannel;
-        
+
         /**
-         * The pin associated with the enable line 
+         * The bit position (0-15) of the enable pin within the port
          */
-        GPIO_PIN EnablePin;
-        
+        uint8_t EnableBitPos;
+
         /**
          * Indicates whether the 'enable' line is inverted
          */
@@ -45,12 +45,12 @@ extern "C" {
          * Id of the Output compare unit. 0xFF is Invalid
          */
         uint8_t PwmOcmpId;
-        
+
         /**
          * Pwm port remap pin number
          */
         uint16_t PwmRemapPin;
-        
+
     } DIOConfig;
     
     // Define a storage class for DIO Configs

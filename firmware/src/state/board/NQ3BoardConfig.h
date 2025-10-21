@@ -11,10 +11,10 @@
 extern "C" {
 #endif
 
-/*! This function is used for getting a board version 3 configuration parameter
+/*! This function is used for getting a board configuration parameter
  * @return Pointer to Board Configuration structure
  */
-const void *NQ3BoardConfig_Get( void );
+const void *NqBoardConfig_Get( void );
 
 #ifdef __cplusplus
 }

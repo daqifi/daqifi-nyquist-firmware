@@ -53,24 +53,26 @@
 #include "peripheral/ocmp/plib_ocmp6.h"
 #include "peripheral/ocmp/plib_ocmp7.h"
 #include "peripheral/spi/spi_master/plib_spi4_master.h"
+#include "peripheral/spi/spi_master/plib_spi6_master.h"
 #include "usb/usb_chapter_9.h"
 #include "usb/usb_device.h"
 #include "peripheral/ocmp/plib_ocmp1.h"
-#include "peripheral/ocmp/plib_ocmp4.h"
 #include "peripheral/rcon/plib_rcon.h"
+#include "peripheral/ocmp/plib_ocmp4.h"
 #include "driver/sdspi/drv_sdspi.h"
 #include "system/time/sys_time.h"
-#include "peripheral/ocmp/plib_ocmp3.h"
 #include "driver/i2c/drv_i2c.h"
 #include "peripheral/nvm/plib_nvm.h"
-#include "peripheral/coretimer/plib_coretimer.h"
-#include "peripheral/tmr/plib_tmr6.h"
+#include "peripheral/ocmp/plib_ocmp3.h"
 #include "usb/usb_device_cdc.h"
 #include "usb/usb_cdc.h"
+#include "peripheral/tmr/plib_tmr6.h"
+#include "peripheral/coretimer/plib_coretimer.h"
 #include "peripheral/adchs/plib_adchs.h"
 #include "peripheral/tmr/plib_tmr4.h"
 #include "peripheral/tmr/plib_tmr2.h"
 #include "peripheral/tmr/plib_tmr3.h"
+#include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "driver/spi/drv_spi.h"
 #include "system/int/sys_int.h"
 #include "system/ports/sys_ports.h"
@@ -241,6 +243,12 @@ typedef struct
     SYS_MODULE_OBJ drvSPI0;
 
     SYS_MODULE_OBJ  drvUSBHSObject;
+
+    /* SPI1 Driver Object */
+    SYS_MODULE_OBJ drvSPI1;
+
+    /* SPI2 Driver Object */
+    SYS_MODULE_OBJ drvSPI2;
 
 
 } SYSTEM_OBJECTS;
