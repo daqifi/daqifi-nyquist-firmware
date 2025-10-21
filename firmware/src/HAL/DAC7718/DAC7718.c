@@ -142,7 +142,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         rdData = UINT32_MAX;
         goto cleanup;
     }
-    if (Reg > 31U) {
+    if (Reg > DAC7718_MAX_REGISTER) {
         rdData = UINT32_MAX;
         goto cleanup;
     }
@@ -173,11 +173,11 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     Com <<= 7;
     Com |=  (uint32_t)(Reg & 0x1FU);
     Com <<= 12;
-    Com |=  (uint32_t)(Data & 0x0FFFU);
+    Com |=  (uint32_t)(Data & DAC7718_MAX_VALUE);
     Com <<= 4;
 
     // Transmit 24-bit command (MSB first) with timeout protection
-    for (x = 0U; x < 3U; x++) {
+    for (x = 0U; x < DAC7718_TRANSFER_BYTES; x++) {
         uint32_t timeout = DAC7718_SPI_TIMEOUT;
         while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--timeout > 0U)) { }
         if (timeout == 0U) {
@@ -230,7 +230,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         GPIO_PinWrite(config->CS_Pin, false);
         csAsserted = true;
 
-        for (uint8_t i = 0U; i < 3U; i++) {
+        for (uint8_t i = 0U; i < DAC7718_TRANSFER_BYTES; i++) {
             uint32_t to = DAC7718_SPI_TIMEOUT;
             while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--to > 0U)) { }
             if (to == 0U) {
@@ -267,7 +267,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     }
 
     // Only keep data bits (12-bit data is in bits 15:4)
-    rdData = (rdData & 0b000000001111111111110000U) >> 4;
+    rdData = (rdData & (DAC7718_MAX_VALUE << DAC7718_READBACK_SHIFT)) >> DAC7718_READBACK_SHIFT;
 
 cleanup:
     // De-assert CS if still asserted

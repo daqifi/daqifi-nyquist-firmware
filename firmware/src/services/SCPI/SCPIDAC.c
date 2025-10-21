@@ -185,7 +185,7 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             return SCPI_RES_ERR;
         }
 
-        uint8_t dacRegister = (uint8_t)(8U + hwChannel);  // DAC-0 = register 8
+        uint8_t dacRegister = (uint8_t)(DAC7718_REGISTER_OFFSET + hwChannel);
         DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16);
         DAC7718_UpdateLatch(dacInstanceId);
 
@@ -199,7 +199,14 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
             uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;
-            uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
+
+            // Validate hardware channel
+            if (hwChannel >= DAC7718_NUM_CHANNELS) {
+                LOG_E("SCPI_DACVoltageSet: Invalid DAC7718 channel %u (max %u)", hwChannel, DAC7718_NUM_CHANNELS - 1);
+                continue;  // Skip invalid channel, continue with others
+            }
+
+            uint8_t dacRegister = DAC7718_REGISTER_OFFSET + hwChannel;
             DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts);
 
             // Store commanded voltage in BoardData for readback

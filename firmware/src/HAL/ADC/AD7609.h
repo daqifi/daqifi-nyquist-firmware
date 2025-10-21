@@ -14,6 +14,15 @@
 extern "C" {
 #endif
 
+// AD7609 Hardware Constants
+#define AD7609_NUM_CHANNELS      8       // 8 simultaneous sampling input channels (0-7)
+#define AD7609_BITS_PER_CHANNEL  18      // 18-bit resolution per channel
+#define AD7609_TOTAL_BITS        144     // Total bitstream: 8 × 18 = 144 bits
+#define AD7609_BUFFER_BYTES      18      // 144 bits = 18 bytes
+#define AD7609_MAX_VALUE         0x1FFFF // 18-bit max value (131071)
+#define AD7609_SIGN_BIT          0x20000 // Bit 17 (sign bit for 2's complement)
+#define AD7609_SIGN_EXTEND       0xFFFC0000U // Sign extension mask for negative values
+
 /*!
  * Performs board initialization
  * @param[in] pBoardConfigInit The module configuration

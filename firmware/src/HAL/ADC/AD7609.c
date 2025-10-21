@@ -406,19 +406,19 @@ read_cleanup:
             uint8_t hwChannel = channelConfigList->Data[i].Config.AD7609.ChannelNumber;
 
             // Validate hardware channel is in range
-            if (hwChannel >= 8) {
+            if (hwChannel >= AD7609_NUM_CHANNELS) {
                 continue; // Skip invalid channels
             }
 
-            // Calculate bit position in the 144-bit stream
-            uint16_t bitPosition = hwChannel * 18;  // Each channel is 18 bits
+            // Calculate bit position in the bitstream
+            uint16_t bitPosition = hwChannel * AD7609_BITS_PER_CHANNEL;
 
-            // Extract 18-bit value (no bounds checking needed - buffer is fixed 18 bytes)
+            // Extract 18-bit value (no bounds checking needed - buffer is fixed size)
             uint32_t tmpData = AD7609_Extract18Bit(gAD7609_rxBuffer, bitPosition);
 
             // Convert from 18-bit 2's complement to signed 32-bit
-            if (tmpData & 0x20000) {  // Check bit 17 (sign bit)
-                tmpData |= 0xFFFC0000;  // Sign extend
+            if (tmpData & AD7609_SIGN_BIT) {
+                tmpData |= AD7609_SIGN_EXTEND;  // Sign extend
             }
 
             // Create sample entry with DAQiFi channel ID (check capacity, not current size)
@@ -497,15 +497,15 @@ double AD7609_ConvertToVoltage(
     }
 
     // AD7609 is 18-bit, 2's complement
-    const int32_t maxCode = (1 << 17) - 1; // 131071 (half scale for signed 18-bit)
+    const int32_t maxCode = (AD7609_MAX_VALUE >> 1); // Half scale for signed 18-bit (131071)
 
     // Convert raw ADC value to signed integer
     int32_t rawValue = (int32_t)sample->Value;
 
     // Handle 18-bit 2's complement conversion by checking sign bit
     // If bit 17 is set, the value is negative and needs sign extension
-    if (rawValue & (1 << 17)) {  // Check sign bit (bit 17)
-        rawValue |= ~((1 << 18) - 1);  // Sign extend from 18 bits to 32 bits
+    if (rawValue & AD7609_SIGN_BIT) {
+        rawValue |= AD7609_SIGN_EXTEND;  // Sign extend from 18 bits to 32 bits
     }
 
     // Convert to voltage: raw / maxCode * fullScale

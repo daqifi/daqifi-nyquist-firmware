@@ -20,6 +20,12 @@ extern "C" {
 #define DAC7718_RESOLUTION      4096    // 12-bit resolution (4096 levels)
 #define DAC7718_MAX_VALUE       4095    // Maximum DAC code (4096 - 1)
 
+// DAC7718 Protocol Constants
+#define DAC7718_MAX_REGISTER    31      // Maximum register address (5-bit address)
+#define DAC7718_TRANSFER_BYTES  3       // 24-bit SPI protocol (3 bytes)
+#define DAC7718_REGISTER_OFFSET 8       // DAC-0 register starts at address 8
+#define DAC7718_READBACK_SHIFT  4       // Readback data is in bits 15:4
+
 // Forward declaration - using board configuration structure from AOutConfig.h
 typedef DAC7718ModuleConfig tDAC7718Config;
 
