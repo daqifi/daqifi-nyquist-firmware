@@ -247,25 +247,54 @@ void streaming_Task(void) {
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
         sdSize = sd_card_manager_GetWriteBuffFreeSize();
 
-        hasUsb = (usbSize > BUFFER_SIZE);
-        hasWifi = (wifiSize > BUFFER_SIZE);
-        hasSD = (sdSize > BUFFER_SIZE);
-
-        // Debug logging - only log first packet to avoid flooding
-        static bool logged = false;
-        if (!logged) {
-            LOG_D("SD: sdSize=%u, BUFFER_SIZE=%u, hasSD=%d", sdSize, BUFFER_SIZE, hasSD);
-            logged = true;
+        // Single-interface streaming: only stream to the interface that initiated streaming
+        // This prevents bandwidth overload at high sample rates
+        switch (pRunTimeStreamConf->ActiveInterface) {
+            case StreamingInterface_USB:
+                hasUsb = (usbSize >= 128);
+                hasWifi = false;
+                hasSD = false;
+                break;
+            case StreamingInterface_WiFi:
+                hasUsb = false;
+                hasWifi = (wifiSize >= 128);
+                hasSD = false;
+                break;
+            case StreamingInterface_SD:
+                hasUsb = false;
+                hasWifi = false;
+                hasSD = (sdSize >= 128);
+                break;
+            case StreamingInterface_All:
+            default:
+                // Legacy mode: stream to all interfaces (may cause issues at high rates)
+                hasUsb = (usbSize >= 128);
+                hasWifi = (wifiSize >= 128);
+                hasSD = (sdSize >= 128);
+                break;
         }
 
-        maxSize = BUFFER_SIZE;
-        if (hasUsb) maxSize = min(maxSize, usbSize);
-        if (hasWifi) maxSize = min(maxSize, wifiSize);
-        if (hasSD) maxSize = min(maxSize, sdSize);
-
-        if (maxSize < 128) {
-            continue;
+        // Log streaming start info once for debugging
+        static bool firstLog = false;
+        if (!firstLog) {
+            LOG_I("Streaming started: interface=%d, usbSize=%u, wifiSize=%u, sdSize=%u",
+                  pRunTimeStreamConf->ActiveInterface, usbSize, wifiSize, sdSize);
+            firstLog = true;
         }
+
+        // CRITICAL: Always encode to drain the sample queue, even if no outputs have space
+        // This prevents queue backup which causes the deferred interrupt task to drop samples
+        // If no outputs available, sample will be encoded then discarded (better than queue backup)
+
+        // Use maximum available space among all outputs for encoding (not just enabled ones)
+        // This ensures we can always encode even if all outputs are temporarily full
+        maxSize = 128;  // Minimum packet size
+        if (usbSize > maxSize) maxSize = usbSize;
+        if (wifiSize > maxSize) maxSize = wifiSize;
+        if (sdSize > maxSize) maxSize = sdSize;
+
+        // Cap at BUFFER_SIZE to prevent encoder overflow
+        if (maxSize > BUFFER_SIZE) maxSize = BUFFER_SIZE;
         
         nanopbFlag.Size = 0;
         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;

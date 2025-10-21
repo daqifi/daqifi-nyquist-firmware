@@ -109,6 +109,7 @@ const tBoardRuntimeConfig g_NQ3BoardRuntimeConfig = {
         .ChannelScanFreqDiv = 3, //max channel scan frequency should be 1000 hz
         .Encoding = Streaming_ProtoBuffer,
         .TSClockPeriod = 0xFFFFFFFF,   // maximum
+        .ActiveInterface = StreamingInterface_USB,  // Default: stream to single interface (USB)
     },
     .wifiSettings = {
         .isEnabled = true,

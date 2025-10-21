@@ -9,7 +9,7 @@
 
 // BQ24297 bypass for demo boards without BQ24297 populated
 // Uncomment the following line for boards without BQ24297 chip
-#define BYPASS_BQ24297 1
+// #define BYPASS_BQ24297 1
 
 //! Pointer to the BQ24297 device configuration data structure
 static tBQ24297Config *pConfigBQ24;
@@ -207,12 +207,6 @@ void BQ24297_UpdateStatus(void) {
     // REG01: Power-On Configuration
     regData = BQ24297_Read_I2C(0x01);
     if (regData != 0xFF) {
-        // Only log REG01 changes
-        static uint8_t lastReg01 = 0xFF;
-        if (regData != lastReg01) {
-            LOG_D("BQ24297_UpdateStatus: REG01 = 0x%02X", regData);
-            lastReg01 = regData;
-        }
         pData->status.otg = (bool) (regData & 0b00100000);
         pData->status.chgEn = (bool) (regData & 0b00010000);
     } else {
@@ -334,23 +328,20 @@ void BQ24297_ChargeEnable(bool chargeEnable) {
     uint8_t reg = 0;
 
     reg = BQ24297_Read_I2C(0x01);
-    LOG_D("BQ24297_ChargeEnable: REG01 before = 0x%02X", reg);
-    
+
     // OTG and Charge are mutually exclusive
     if (reg & 0x20) {
         return;  // OTG is enabled, cannot modify charge state
     }
-    
+
     if (pData->chargeAllowed && chargeEnable && pData->status.batPresent) {
         // Enable charging, preserve all bits except bit 4 (charge enable)
         reg = (reg & 0b11101111) | 0b00010000; // Clear bit 4, then set it
         BQ24297_Write_I2C(0x01, reg);
-        LOG_D("BQ24297_ChargeEnable: Enabled charging, REG01 = 0x%02X", reg);
     } else {
         // Disable charging, preserve all bits except bit 4 (charge enable)
         reg = (reg & 0b11101111); // Just clear bit 4
         BQ24297_Write_I2C(0x01, reg);
-        LOG_D("BQ24297_ChargeEnable: Disabled charging, REG01 = 0x%02X", reg);
     }
 }
 

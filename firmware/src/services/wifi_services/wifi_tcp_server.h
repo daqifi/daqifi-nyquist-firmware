@@ -18,10 +18,10 @@
 extern "C" {
 #endif
 
-#define WIFI_MAX_CLIENT 1 
+#define WIFI_MAX_CLIENT 1
 #define WIFI_RBUFFER_SIZE ((SOCKET_BUFFER_MAX_LENGTH/2)-1)
-#define WIFI_WBUFFER_SIZE (SOCKET_BUFFER_MAX_LENGTH-1)  // Increased from /2 to support 5kHz streaming
-#define WIFI_CIRCULAR_BUFF_SIZE SOCKET_BUFFER_MAX_LENGTH*4
+#define WIFI_WBUFFER_SIZE SOCKET_BUFFER_MAX_LENGTH  // Use full WINC1500 buffer capacity (1400 bytes)
+#define WIFI_CIRCULAR_BUFF_SIZE SOCKET_BUFFER_MAX_LENGTH*10
 
 /**
  * Data for a particular TCP client

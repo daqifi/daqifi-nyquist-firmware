@@ -247,6 +247,25 @@ static microrl_t* SCPI_GetMicroRLClient(scpi_t* context) {
 }
 
 /**
+ * Helper function to detect which interface initiated a SCPI command
+ * Used for single-interface streaming to prevent bandwidth overload
+ */
+static StreamingInterface SCPI_GetInterface(scpi_t* context) {
+    UsbCdcData_t * pRunTimeUsbSettings = UsbCdc_GetSettings();
+    wifi_tcp_server_context_t * pRunTimeServerData = wifi_manager_GetTcpServerContext();
+
+    if (&pRunTimeUsbSettings->scpiContext == context) {
+        return StreamingInterface_USB;
+    } else if (&pRunTimeServerData->client.scpiContext == context) {
+        return StreamingInterface_WiFi;
+    }
+
+    // Default to USB if interface cannot be determined
+    // Multi-interface streaming (All) is available but not used by default
+    return StreamingInterface_USB;
+}
+
+/**
  * Triggers a board reset 
  */
 static scpi_result_t SCPI_Reset(scpi_t * context) {
@@ -1131,6 +1150,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     } else {
         //No freq given just stream with the current value
     }
+
+    // Detect which interface initiated streaming for single-interface mode
+    // This prevents bandwidth overload at high sample rates (e.g., 1000 Hz × 16 channels)
+    pRunTimeStreamConfig->ActiveInterface = SCPI_GetInterface(context);
 
     Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;

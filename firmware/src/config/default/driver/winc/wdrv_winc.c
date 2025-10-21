@@ -47,6 +47,7 @@ Microchip or any third party.
 
 #include "wdrv_winc.h"
 #include "wdrv_winc_common.h"
+#include "Util/Logger.h"
 #include "wdrv_winc_gpio.h"
 #include "wdrv_winc_spi.h"
 #ifdef WDRV_WINC_DEVICE_LITE_DRIVER
@@ -2278,6 +2279,7 @@ void WDRV_WINC_Tasks(SYS_MODULE_OBJ object)
             if (M2M_SUCCESS != m2m_wifi_init_hold())
             {
                 WDRV_DBG_ERROR_PRINT("m2m_wifi_init_hold failed\r\n");
+                LOG_E("WiFi: m2m_wifi_init_hold failed (device not responding)\r\n");
                 pDcpt->pCtrl->extSysStat = WDRV_WINC_SYS_STATUS_ERROR_DEVICE_NOT_FOUND;
                 pDcpt->sysStat = SYS_STATUS_ERROR;
                 break;
@@ -2306,6 +2308,7 @@ void WDRV_WINC_Tasks(SYS_MODULE_OBJ object)
             if (chipId != 0x34U)
 #endif
             {
+                LOG_E("WiFi: Wrong chip ID 0x%04X (expected 0x15 or 0x34)\r\n", chipId);
                 pDcpt->pCtrl->extSysStat = WDRV_WINC_SYS_STATUS_ERROR_DEVICE_NOT_FOUND;
                 pDcpt->sysStat = SYS_STATUS_ERROR;
                 break;
@@ -2315,6 +2318,7 @@ void WDRV_WINC_Tasks(SYS_MODULE_OBJ object)
             if (OSAL_RESULT_TRUE != OSAL_SEM_Create(&pDcpt->pCtrl->drvEventSemaphore,
                                                     OSAL_SEM_TYPE_COUNTING, 10, 0))
             {
+                LOG_E("WiFi: drvEventSemaphore create failed (heap exhaustion?)\r\n");
                 pDcpt->sysStat = SYS_STATUS_ERROR;
                 return;
             }
@@ -2351,6 +2355,7 @@ void WDRV_WINC_Tasks(SYS_MODULE_OBJ object)
 #endif
             {
                 WDRV_DBG_ERROR_PRINT("m2m_wifi_init_start failed\r\n");
+                LOG_E("WiFi: m2m_wifi_init_start failed (device init error)\r\n");
                 OSAL_SEM_Delete(&pDcpt->pCtrl->drvEventSemaphore);
                 pDcpt->pCtrl->extSysStat = WDRV_WINC_SYS_STATUS_ERROR_DEVICE_FAILURE;
                 pDcpt->sysStat = SYS_STATUS_ERROR;
