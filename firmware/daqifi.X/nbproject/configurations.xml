@@ -1728,7 +1728,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/old_hv2_bootld.ld"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
