@@ -94,6 +94,39 @@ static volatile TaskHandle_t gAD7609_TaskHandle = NULL;
 // SPI mutex to serialize access to shared SPI bus and DMA buffers
 static SemaphoreHandle_t gAD7609_SpiMutex = NULL;
 
+// Helper to acquire SPI mutex with lazy creation
+static bool AD7609_Lock(void)
+{
+    if (gAD7609_SpiMutex == NULL) {
+        gAD7609_SpiMutex = xSemaphoreCreateMutex();
+        if (gAD7609_SpiMutex == NULL) {
+            LOG_E("AD7609_Lock: Failed to create SPI mutex");
+            return false;
+        }
+    }
+
+    if (xSemaphoreTake(gAD7609_SpiMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
+        LOG_E("AD7609_Lock: Failed to acquire SPI mutex");
+        return false;
+    }
+
+    return true;
+}
+
+// Helper to release SPI mutex and cleanup CS pin state
+static void AD7609_Unlock(const AD7609ModuleConfig* config, bool csAsserted)
+{
+    // De-assert CS if still asserted
+    if (csAsserted && (config != NULL)) {
+        GPIO_PinWrite(config->CS_Pin, true);
+    }
+
+    // Release mutex
+    if (gAD7609_SpiMutex != NULL) {
+        xSemaphoreGive(gAD7609_SpiMutex);
+    }
+}
+
 // DMA-coherent SPI buffers (must be global for cache coherency)
 // RX buffer is 19 bytes (18 data + 1 padding) to allow window-loading for channel 7
 // without bounds checking overhead. AD7609 sends 144 bits (18 bytes) of data.
@@ -186,14 +219,7 @@ bool AD7609_InitHardware(const AD7609ModuleConfig* pBoardConfigInit)
 
     pModuleConfigAD7609 = pBoardConfigInit;
 
-    // Create SPI mutex for serializing shared SPI bus access
-    if (gAD7609_SpiMutex == NULL) {
-        gAD7609_SpiMutex = xSemaphoreCreateMutex();
-        if (gAD7609_SpiMutex == NULL) {
-            LOG_E("AD7609_InitHardware: Failed to create SPI mutex");
-            return false;
-        }
-    }
+    // Note: SPI mutex created lazily by AD7609_Lock() on first use
 
     // Open DRV_SPI driver for SPI6 (DRV_SPI_INDEX_1 maps to SPI6)
     spi_handle = DRV_SPI_Open(DRV_SPI_INDEX_1, DRV_IO_INTENT_READWRITE);
@@ -315,11 +341,12 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     }
 
     // Acquire SPI lock before using shared SPI and buffers
-    if (xSemaphoreTake(gAD7609_SpiMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
-        LOG_E("AD7609_ReadSamples: Failed to acquire SPI mutex");
+    if (!AD7609_Lock()) {
         return false;
     }
+
     bool success = false;
+    bool csAsserted = false;
 
     // Configure SPI mode for AD7609 before transfer
     // AD7609 requires SPI Mode 2: CPOL=1 (idle high), CPHA=0 (sample on first edge)
@@ -335,8 +362,7 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
 
     if (!DRV_SPI_TransferSetup(spi_handle, &spiSetup)) {
         LOG_E("AD7609_ReadSamples: Failed to configure SPI mode");
-        xSemaphoreGive(gAD7609_SpiMutex);
-        return false;
+        goto read_cleanup;
     }
 
     // Clear DMA buffers (global, coherent for DMA access)
@@ -350,6 +376,7 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
 
     // Assert CS (active low)
     GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, false);
+    csAsserted = true;
 
     // Use DRV_SPI async API (driver is in async mode for WiFi compatibility)
     DRV_SPI_TRANSFER_HANDLE transferHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
@@ -383,9 +410,7 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
     // Fall through to cleanup
 
 read_cleanup:
-    // Deassert CS (inactive high) on all paths
-    GPIO_PinWrite(pModuleConfigAD7609->CS_Pin, true);
-    xSemaphoreGive(gAD7609_SpiMutex);
+    AD7609_Unlock(pModuleConfigAD7609, csAsserted);
 
     if (!success) {
         return false;

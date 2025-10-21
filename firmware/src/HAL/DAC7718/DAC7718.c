@@ -47,6 +47,39 @@ static uint8_t spi_rxData[3] __attribute__((coherent, aligned(4)));
 //! Mutex to protect DAC7718 initialization and SPI access
 static SemaphoreHandle_t gDAC7718_Mutex = NULL;
 
+// Helper to acquire mutex with lazy creation
+static bool DAC7718_Lock(void)
+{
+    if (gDAC7718_Mutex == NULL) {
+        gDAC7718_Mutex = xSemaphoreCreateMutex();
+        if (gDAC7718_Mutex == NULL) {
+            LOG_E("DAC7718_Lock: Failed to create mutex");
+            return false;
+        }
+    }
+
+    if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        LOG_E("DAC7718_Lock: Failed to acquire mutex");
+        return false;
+    }
+
+    return true;
+}
+
+// Helper to release mutex and cleanup CS pin state
+static void DAC7718_Unlock(tDAC7718Config* config, bool csAsserted)
+{
+    // De-assert CS if still asserted
+    if (csAsserted && (config != NULL)) {
+        GPIO_PinWrite(config->CS_Pin, true);
+    }
+
+    // Release mutex
+    if (gDAC7718_Mutex != NULL) {
+        xSemaphoreGive(gDAC7718_Mutex);
+    }
+}
+
 /*!
 * Resets the DAC7718.  Must be called after DAC7718_Init
 * @param id Driver instance ID
@@ -133,7 +166,6 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     uint32_t Com;
     uint32_t rdData = 0;
     uint8_t x;
-    bool mutexAcquired = false;
     bool csAsserted = false;
     tDAC7718Config* config = NULL;
 
@@ -155,13 +187,9 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     }
 
     // Acquire mutex to serialize SPI writes
-    if (gDAC7718_Mutex != NULL) {
-        if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-            LOG_E("DAC7718_ReadWriteReg: Failed to acquire mutex");
-            rdData = UINT32_MAX;
-            goto cleanup;
-        }
-        mutexAcquired = true;
+    if (!DAC7718_Lock()) {
+        rdData = UINT32_MAX;
+        goto cleanup;
     }
 
     // Assert CS (active low)
@@ -270,16 +298,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     rdData = (rdData & (DAC7718_MAX_VALUE << DAC7718_READBACK_SHIFT)) >> DAC7718_READBACK_SHIFT;
 
 cleanup:
-    // De-assert CS if still asserted
-    if (csAsserted && (config != NULL)) {
-        GPIO_PinWrite(config->CS_Pin, true);
-    }
-
-    // Release mutex
-    if (mutexAcquired) {
-        xSemaphoreGive(gDAC7718_Mutex);
-    }
-
+    DAC7718_Unlock(config, csAsserted);
     return rdData;
 }
 
