@@ -223,12 +223,21 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
         freq = 15000 / activeType1ChannelCount;
     }
-    
-    // Prevent divide by zero exception
-    if (freq == 0) {
-        freq = 1000; // Default to 1kHz if frequency is 0
+
+    // If streaming is disabled (freq == 0), don't recalculate timer periods
+    // Frequency = 0 means streaming is off (set via SYST:StartStreamData 0)
+    if (freq == 0 || !pRunTimeStreamConfig->IsEnabled) {
+        // Channels enabled/disabled, but timer configuration unchanged
+        return SCPI_RES_OK;
     }
-    
+
+    // Guard against invalid timer configuration returning 0 clock frequency
+    if (clkFreq == 0) {
+        LOG_E("SCPI_ADCChanEnableSet: Invalid timer clock frequency (timer index %u)",
+              pBoardConfig->StreamingConfig.TimerIndex);
+        return SCPI_RES_ERR;
+    }
+
     pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
     pRunTimeStreamConfig->Frequency = freq;
     pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
