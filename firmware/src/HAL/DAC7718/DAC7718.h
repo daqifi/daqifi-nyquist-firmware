@@ -14,7 +14,12 @@
 #ifdef	__cplusplus
 extern "C" {
 #endif
-    
+
+// DAC7718 Hardware Constants
+#define DAC7718_NUM_CHANNELS    8       // 8 output channels (0-7)
+#define DAC7718_RESOLUTION      4096    // 12-bit resolution (4096 levels)
+#define DAC7718_MAX_VALUE       4095    // Maximum DAC code (4096 - 1)
+
 // Forward declaration - using board configuration structure from AOutConfig.h
 typedef DAC7718ModuleConfig tDAC7718Config;
 

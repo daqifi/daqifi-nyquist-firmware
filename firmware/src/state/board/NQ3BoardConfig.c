@@ -2,6 +2,7 @@
 #include "../../config/default/peripheral/gpio/plib_gpio.h"
 #include "../../config/default/peripheral/gpio/pin_definitions.h"
 #include "../../HAL/TimerApi/TimerApi.h"
+#include "../../HAL/DAC7718/DAC7718.h"
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
@@ -378,13 +379,13 @@ const tBoardConfig NQ3BoardConfig = {
                         .CS_Pin = DAC7718_CS_PIN,     // CS on RK0
                         .RST_Pin = DAC7718_RST_PIN,   // CLR/RST on RJ13
                         .DAC_Range = 0,               // Default range setting
-                        .Resolution = 4096,           // 12-bit DAC (4096 levels)
+                        .Resolution = DAC7718_RESOLUTION,  // 12-bit DAC (4096 levels)
                         .MinVoltage = 0.0,            // Unipolar: 0V minimum
                         .MaxVoltage = 10.0,            // Maximum output voltage (software clamp)
                         .HardwareFullScale = 10.0,    // 10V full scale (4x gain configuration)
                     }
                 },
-                .Size = 8  // DAC7718 has 8 channels
+                .Size = DAC7718_NUM_CHANNELS  // DAC7718 has 8 channels
             },
         },
         .Size = 1
@@ -449,14 +450,16 @@ const tBoardConfig NQ3BoardConfig = {
         .USB_Dp_Bit = PORTS_BIT_POS_9,         // RH9
         .USB_Dn_Ch = USB_DN_MON_PORT,
         .USB_Dn_Bit = PORTS_BIT_POS_10,        // RH10
-        .BQ24297Config.INT_Ch = BATT_MAN_INT_PORT,
-        .BQ24297Config.INT_Bit = PORTS_BIT_POS_4,   // RA4
-        .BQ24297Config.OTG_Ch = BATT_MAN_OTG_PORT,
-        .BQ24297Config.OTG_Bit = PORTS_BIT_POS_5,   // RK5
-        .BQ24297Config.STAT_Ch = BATT_MAN_STAT_PORT,
-        .BQ24297Config.STAT_Bit = PORTS_BIT_POS_11, // RH11
-        .BQ24297Config.I2C_Index = DRV_I2C_INDEX_0,
-        .BQ24297Config.I2C_Address = 0xD6>>1, // Microchip libraries use an 8 bit address with 0 appended to the end of the 7 bit I2C address
+        .BQ24297Config = {
+            .INT_Ch = BATT_MAN_INT_PORT,
+            .INT_Bit = PORTS_BIT_POS_4,   // RA4
+            .OTG_Ch = BATT_MAN_OTG_PORT,
+            .OTG_Bit = PORTS_BIT_POS_5,   // RK5
+            .STAT_Ch = BATT_MAN_STAT_PORT,
+            .STAT_Bit = PORTS_BIT_POS_11, // RH11
+            .I2C_Index = DRV_I2C_INDEX_0,
+            .I2C_Address = (0xD6U >> 1),  // 7-bit address format
+        },
     },
     .UIConfig =
     {

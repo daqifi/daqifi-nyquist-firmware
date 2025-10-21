@@ -175,10 +175,18 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // Convert voltage to DAC counts using configuration
         uint32_t counts = DAC_VoltageToCounts(voltage, pDACModule);
 
-        // Get hardware channel number from board configuration
+        // Clamp counts to valid 16-bit resolution for DAC7718
+        uint16_t counts16 = (uint16_t)(counts & 0xFFFFU);
+
+        // Get hardware channel number from board configuration and validate
         uint8_t hwChannel = pBoardConfigAOutChannels->Data[index].Config.DAC7718.ChannelNumber;
-        uint8_t dacRegister = 8 + hwChannel;  // DAC-0 = register 8
-        DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts);
+        if (hwChannel >= DAC7718_NUM_CHANNELS) {
+            LOG_E("SCPI_DACVoltageSet: Invalid DAC7718 channel %u (max %u)", hwChannel, DAC7718_NUM_CHANNELS - 1);
+            return SCPI_RES_ERR;
+        }
+
+        uint8_t dacRegister = (uint8_t)(8U + hwChannel);  // DAC-0 = register 8
+        DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16);
         DAC7718_UpdateLatch(dacInstanceId);
 
         // Store commanded voltage in BoardData for readback

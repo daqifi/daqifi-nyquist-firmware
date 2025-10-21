@@ -47,6 +47,33 @@ static void AD7609_Delay_ms(uint32_t milliseconds) {
 //! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
 #define AD7609_SPI_TIMEOUT 100000
 
+/**
+ * @brief Extract 18-bit value from big-endian bitstream
+ *
+ * Optimized for AD7609: No bounds checking needed. Buffer is 19 bytes (18 data + 1 padding)
+ * to allow 4-byte window loads for all channels (0-7) without bounds checking overhead.
+ * Valid bit positions: 0, 18, 36, 54, 72, 90, 108, 126 (hwChannel validated in caller).
+ *
+ * @param buf Pointer to 19-byte buffer (18 data + 1 padding)
+ * @param bitPos Bit position in stream (0-126 for channels 0-7)
+ * @return Extracted 18-bit value
+ */
+static uint32_t AD7609_Extract18Bit(const uint8_t* buf, uint16_t bitPos) {
+    // Calculate byte index and bit offset
+    size_t byteIndex = bitPos >> 3;  // bitPos / 8
+    uint8_t bitInByte = (uint8_t)(bitPos & 0x7U);  // bitPos % 8
+
+    // Load 32-bit window from buffer (big-endian, MSB first)
+    // Channel 7 (bit 126) loads buf[15..18] - all within 19-byte buffer
+    uint32_t window = ((uint32_t)buf[byteIndex]     << 24) |
+                      ((uint32_t)buf[byteIndex + 1U] << 16) |
+                      ((uint32_t)buf[byteIndex + 2U] << 8)  |
+                      ((uint32_t)buf[byteIndex + 3U]);
+
+    // Shift to align 18-bit field at top of window, then shift down and mask
+    return ((window << bitInByte) >> (32 - 18)) & 0x3FFFFU;
+}
+
 //! BSY pin settling timeout
 //! Datasheet: BSY deasserts typically <10us after conversion/read complete
 //! Timeout: 10x datasheet spec = 100us for safety margin
@@ -68,8 +95,10 @@ static volatile TaskHandle_t gAD7609_TaskHandle = NULL;
 static SemaphoreHandle_t gAD7609_SpiMutex = NULL;
 
 // DMA-coherent SPI buffers (must be global for cache coherency)
+// RX buffer is 19 bytes (18 data + 1 padding) to allow window-loading for channel 7
+// without bounds checking overhead. AD7609 sends 144 bits (18 bytes) of data.
 static __attribute__((coherent)) uint8_t gAD7609_txBuffer[18];
-static __attribute__((coherent)) uint8_t gAD7609_rxBuffer[18];
+static __attribute__((coherent)) uint8_t gAD7609_rxBuffer[19];
 
 // Accessor function for task handle (used by tasks.c)
 volatile void* AD7609_GetTaskHandle(void) {
@@ -362,38 +391,13 @@ read_cleanup:
         return false;
     }
 
-    // Helper function: Extract 18-bit value from big-endian bitstream with bounds checking
-    // Prevents out-of-bounds access by validating buffer boundaries
-    auto bool extract18Bit(const uint8_t* buf, size_t bufLen, uint16_t bitPos, uint32_t* out) {
-        // Calculate which bytes we need (may span up to 4 bytes for unaligned positions)
-        size_t byteIndex = bitPos >> 3;  // bitPos / 8
-
-        // Ensure we have enough bytes remaining in buffer
-        if (byteIndex + 3 >= bufLen) {
-            return false;  // Prevent OOB when bit window extends past buffer
-        }
-
-        // Read 32-bit window from buffer (big-endian, MSB first)
-        uint32_t window = ((uint32_t)buf[byteIndex]     << 24) |
-                          ((uint32_t)buf[byteIndex + 1] << 16) |
-                          ((uint32_t)buf[byteIndex + 2] << 8)  |
-                          ((uint32_t)buf[byteIndex + 3]);
-
-        // Calculate bit offset within the byte
-        uint8_t bitInByte = bitPos & 0x7;  // bitPos % 8
-
-        // Shift to align 18-bit field at top of window, then shift down
-        uint32_t val = (window << bitInByte) >> (32 - 18);
-
-        // Mask to 18 bits and return
-        *out = val & 0x3FFFF;
-        return true;
-    };
-
     // AD7609 sends data in serial mode: 18 bits per channel, 8 channels sequentially
     // Total: 144 bits (18 bytes) in continuous stream, MSB first per channel
 
+    // Treat samples->Size as capacity (maximum samples buffer can hold)
+    size_t capacity = samples->Size;
     size_t sampleCount = 0;
+
     for (size_t i = 0; i < channelConfigList->Size; i++) {
         if (channelConfigList->Data[i].Type == AIn_AD7609 &&
             channelRuntimeConfigList->Data[i].IsEnabled) {
@@ -409,28 +413,28 @@ read_cleanup:
             // Calculate bit position in the 144-bit stream
             uint16_t bitPosition = hwChannel * 18;  // Each channel is 18 bits
 
-            // Extract 18-bit value using bounds-checked helper function
-            uint32_t tmpData;
-            if (!extract18Bit(gAD7609_rxBuffer, sizeof(gAD7609_rxBuffer), bitPosition, &tmpData)) {
-                LOG_E("AD7609_ExtractSamples: OOB access for channel %u at bit %u", hwChannel, bitPosition);
-                continue;  // Skip this channel on error
-            }
+            // Extract 18-bit value (no bounds checking needed - buffer is fixed 18 bytes)
+            uint32_t tmpData = AD7609_Extract18Bit(gAD7609_rxBuffer, bitPosition);
 
             // Convert from 18-bit 2's complement to signed 32-bit
             if (tmpData & 0x20000) {  // Check bit 17 (sign bit)
                 tmpData |= 0xFFFC0000;  // Sign extend
             }
 
-            // Create sample entry with DAQiFi channel ID
-            if (sampleCount < samples->Size) {
+            // Create sample entry with DAQiFi channel ID (check capacity, not current size)
+            if (sampleCount < capacity) {
                 samples->Data[sampleCount].Channel = channelConfigList->Data[i].DaqifiAdcChannelId;
-                samples->Data[sampleCount].Value = tmpData;
+                samples->Data[sampleCount].Value = (int32_t)tmpData;
                 samples->Data[sampleCount].Timestamp = triggerTimeStamp;
                 sampleCount++;
+            } else {
+                LOG_E("AD7609_ExtractSamples: Sample buffer full (capacity=%u)", capacity);
+                break;  // Stop processing if buffer is full
             }
         }
     }
 
+    // Update Size to reflect actual number of samples written
     samples->Size = sampleCount;
     
     return (sampleCount > 0); // Return true if we got any samples
