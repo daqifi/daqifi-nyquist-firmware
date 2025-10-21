@@ -11,6 +11,7 @@
 **/*.X/production/
 **/*.X/disassembly/
 **/*.X/queuelogs/
+**/*.X/daqifi_*.bak*/
 
 # Build artifacts (anywhere in the tree)
 *.hex
@@ -45,12 +46,14 @@ funclist
 # Log files
 *.log
 MPLABXLog.xml
+defmplabxtrace.log.inx
 
 # Local settings
 .vscode/
 .idea/
 *.suo
 *.user
+__pycache__/
 
 # Claude/AI assistant files
 .claude/settings.local.json
