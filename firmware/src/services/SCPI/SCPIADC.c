@@ -224,11 +224,21 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         freq = 15000 / activeType1ChannelCount;
     }
 
-    // If streaming is disabled (freq == 0), don't recalculate timer periods
-    // Frequency = 0 means streaming is off (set via SYST:StartStreamData 0)
-    if (freq == 0 || !pRunTimeStreamConfig->IsEnabled) {
-        // Channels enabled/disabled, but timer configuration unchanged
+    // CRITICAL: Always call ADC_WriteChannelStateAll() to enable/disable channel interrupts
+    // This must happen even when streaming is off, so channels are ready when streaming starts
+    if (!ADC_WriteChannelStateAll()) {
+        return SCPI_RES_ERR;
+    }
+
+    // If streaming is globally disabled, channel states updated but no timer recalculation needed
+    if (!pRunTimeStreamConfig->IsEnabled) {
         return SCPI_RES_OK;
+    }
+
+    // Individual channel frequencies default to 0 - use 1kHz as reasonable default
+    // This maintains Arghya's original design for individual channel frequency control
+    if (freq == 0) {
+        freq = 1000; // Default to 1kHz for individual channel sampling
     }
 
     // Guard against invalid timer configuration returning 0 clock frequency
@@ -247,11 +257,7 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
     }
 
-    if (ADC_WriteChannelStateAll()) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
