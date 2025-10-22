@@ -80,22 +80,28 @@ extern "C" {
     
     //Per-module logging level control
     #ifndef LOG_LEVEL_POWER
-        #define LOG_LEVEL_POWER     LOG_LEVEL_NONE
+        #define LOG_LEVEL_POWER     LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_WIFI
-        #define LOG_LEVEL_WIFI      LOG_LEVEL_NONE
+        #define LOG_LEVEL_WIFI      LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_BQ24297
-        #define LOG_LEVEL_BQ24297   LOG_LEVEL_NONE
+        #define LOG_LEVEL_BQ24297   LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_SD
-        #define LOG_LEVEL_SD        LOG_LEVEL_NONE
+        #define LOG_LEVEL_SD        LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_USB
-        #define LOG_LEVEL_USB       LOG_LEVEL_NONE
+        #define LOG_LEVEL_USB       LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_SCPI
-        #define LOG_LEVEL_SCPI      LOG_LEVEL_NONE
+        #define LOG_LEVEL_SCPI      LOG_LEVEL_ERROR
+    #endif
+    #ifndef LOG_LEVEL_ADC
+        #define LOG_LEVEL_ADC       LOG_LEVEL_ERROR
+    #endif
+    #ifndef LOG_LEVEL_DAC
+        #define LOG_LEVEL_DAC       LOG_LEVEL_ERROR
     #endif
 
 /**
@@ -113,7 +119,7 @@ size_t LogMessagePop(uint8_t* buffer, size_t maxSize);
 // Helper macro to get the log level for the current module
 // Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)
 #ifndef LOG_LVL
-    #define LOG_LVL LOG_LEVEL_NONE  // Default to NONE if not specified
+    #define LOG_LVL LOG_LEVEL_ERROR  // Default to ERROR if not specified
 #endif
 
 

@@ -11,7 +11,7 @@ dependency:
 - dependencyPackage: ''
   name: core
   type: package
-  version: v3.15.1
+  version: v3.15.5
 customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments: {}
@@ -22,8 +22,8 @@ data:
     - children:
       - attributes:
           id: drv_spi
-          x: '597'
-          y: '128'
+          x: '1054'
+          y: '69'
         type: ElementPosition
       type: ElementPositions
     type: ComponentGraph
@@ -76,7 +76,7 @@ data:
       - children:
         - attributes:
             id: drv_spi
-            value: '1'
+            value: '2'
           type: Dynamic
         type: Values
       type: Integer

@@ -11,7 +11,7 @@ dependency:
 - dependencyPackage: ''
   name: csp
   type: package
-  version: v3.22.2
+  version: v3.23.0
 customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments:
@@ -44,8 +44,8 @@ data:
     - children:
       - attributes:
           id: spi4
-          x: '392'
-          y: '232'
+          x: '919'
+          y: '168'
         type: ElementPosition
       type: ElementPositions
     type: ComponentGraph
@@ -123,6 +123,16 @@ data:
     SPI_SPICON_MSSEN:
       attributes:
         id: SPI_SPICON_MSSEN
+      children:
+      - children:
+        - attributes:
+            value: '1'
+          type: User
+        type: Values
+      type: KeyValueSet
+    SPI_MASTER_CLOCK:
+      attributes:
+        id: SPI_MASTER_CLOCK
       children:
       - children:
         - attributes:

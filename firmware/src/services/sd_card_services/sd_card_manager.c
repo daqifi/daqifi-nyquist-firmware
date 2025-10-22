@@ -4,7 +4,7 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (128 * 1024)  // 128KB buffer
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB buffer (reduced to free heap for streaming)
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
@@ -75,7 +75,7 @@ __exit:
 
 static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
     if (len>sizeof (gSdCardData.writeBuffer))
-        return false;
+        return -1;  // Error: buffer overflow
     memcpy(gSdCardData.writeBuffer, buf, len);
     gSdCardData.writeBufferLength = len;
     gSdCardData.sdCardWriteBufferOffset = 0;
@@ -498,15 +498,26 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {
+    static bool logged = false;
+    if (!logged) {
+        LOG_D("SD_MGR: GetWriteBuffFreeSize: enable=%d, mode=%d (WRITE=%d)",
+              gpSdCardSettings->enable, gpSdCardSettings->mode, SD_CARD_MANAGER_MODE_WRITE);
+        logged = true;
+    }
+
     if (gpSdCardSettings->enable != 1 || gpSdCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
         return 0;
     }
-    
+
     // Must protect circular buffer access with mutex
     xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
     size_t freeSize = CircularBuf_NumBytesFree(&gSdCardData.wCirbuf);
     xSemaphoreGive(gSdCardData.wMutex);
-    
+
+    if (!logged) {
+        LOG_D("SD_MGR: Returning freeSize=%u", freeSize);
+    }
+
     return freeSize;
 }
 

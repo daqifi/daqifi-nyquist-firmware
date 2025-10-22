@@ -11,7 +11,7 @@ dependency:
 - dependencyPackage: ''
   name: usb
   type: package
-  version: v3.12.0
+  version: v3.16.0
 customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
 data:
   attachments: {}
@@ -22,8 +22,8 @@ data:
     - children:
       - attributes:
           id: drv_usbhs_v1
-          x: '0'
-          y: '6'
+          x: '224'
+          y: '130'
         type: ElementPosition
       type: ElementPositions
     type: ComponentGraph

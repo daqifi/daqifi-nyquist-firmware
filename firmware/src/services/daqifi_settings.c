@@ -1,6 +1,9 @@
 #include "daqifi_settings.h"
 #include "wdrv_winc_client_api.h"
 #include "HAL/NVM/nvm.h"
+#include "version.h"
+#include "state/board/BoardConfig.h"
+#include "state/board/NQ3BoardConfig.h"
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -55,10 +58,11 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
         case DaqifiSettings_TopLevelSettings:
         {
             TopLevelSettings* pTopLevelSettings = &(settings->settings.topLevelSettings);
+            const tBoardConfig* pBoardConfig = (const tBoardConfig*)NqBoardConfig_Get();
             pTopLevelSettings->calVals = 0;
-            strcpy(pTopLevelSettings->boardHardwareRev, BOARD_HARDWARE_REV);
-            strcpy(pTopLevelSettings->boardFirmwareRev, BOARD_FIRMWARE_REV);
-            pTopLevelSettings->boardVariant = BOARD_VARIANT;
+            strcpy(pTopLevelSettings->boardHardwareRev, HARDWARE_REVISION);
+            strcpy(pTopLevelSettings->boardFirmwareRev, FIRMWARE_REVISION);
+            pTopLevelSettings->boardVariant = pBoardConfig->BoardVariant;
             break;
         }
         case DaqifiSettings_FactAInCalParams:
@@ -99,7 +103,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
 
             //mac address will be populated after reading from ATWINC
             wifi->networkMode = DEFAULT_WIFI_NETWORK_MODE;
-            wifi->isOtaModeEnabled=false;
+            wifi->isWifiFirmwareUpdateModeEnabled=false;
             memset(&wifi->macAddr, 0, sizeof (WDRV_WINC_MAC_ADDR));
             wifi->ipAddr.Val = inet_addr(DEFAULT_NETWORK_IP_ADDRESS);
             wifi->ipMask.Val = inet_addr(DEFAULT_NETWORK_IP_MASK);
@@ -124,12 +128,15 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
 
     switch (settings->type) {
         case DaqifiSettings_TopLevelSettings:
-            strcpy(settings->settings.topLevelSettings.boardHardwareRev, BOARD_HARDWARE_REV);
-            strcpy(settings->settings.topLevelSettings.boardFirmwareRev, BOARD_FIRMWARE_REV);
-            settings->settings.topLevelSettings.boardVariant = BOARD_VARIANT;
+        {
+            const tBoardConfig* pBoardConfig = (const tBoardConfig*)NqBoardConfig_Get();
+            strcpy(settings->settings.topLevelSettings.boardHardwareRev, HARDWARE_REVISION);
+            strcpy(settings->settings.topLevelSettings.boardFirmwareRev, FIRMWARE_REVISION);
+            settings->settings.topLevelSettings.boardVariant = pBoardConfig->BoardVariant;
             address = TOP_LEVEL_SETTINGS_ADDR;
             dataSize = sizeof (TopLevelSettings);
             break;
+        }
         case DaqifiSettings_FactAInCalParams:
             address = FAINCAL_SETTINGS_ADDR;
             dataSize = sizeof(AInCalArray);

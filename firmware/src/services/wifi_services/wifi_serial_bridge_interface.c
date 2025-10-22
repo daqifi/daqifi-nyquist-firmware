@@ -72,9 +72,19 @@ uint8_t wifiSerialBridgeIntf_UARTReadGetByte(void) {
 }
 
 size_t wifi_serial_bridge_interface_UARTReadGetBuffer(void *pBuf, size_t numBytes) {
-    size_t count = wifi_serial_bridge_interface_UARTReadGetCount();
+    if (gUsartReadMutex == NULL) {
+        return 0;
+    }
+
+    // Lock mutex for entire read operation to prevent race with write
+    if (OSAL_RESULT_FALSE == OSAL_MUTEX_Lock(&gUsartReadMutex, OSAL_WAIT_FOREVER)) {
+        return 0;
+    }
+
+    size_t count = gUsartReceiveLength;
 
     if (0 == count) {
+        OSAL_MUTEX_Unlock(&gUsartReadMutex);
         return 0;
     }
 
@@ -104,10 +114,9 @@ size_t wifi_serial_bridge_interface_UARTReadGetBuffer(void *pBuf, size_t numByte
 
         gUsartReceiveOutOffset += numBytes;
     }
-    if (OSAL_RESULT_TRUE == OSAL_MUTEX_Lock(&gUsartReadMutex, OSAL_WAIT_FOREVER)) {
-        gUsartReceiveLength -= numBytes;
-        OSAL_MUTEX_Unlock(&gUsartReadMutex);
-    }
+
+    gUsartReceiveLength -= numBytes;
+    OSAL_MUTEX_Unlock(&gUsartReadMutex);
 
     return numBytes;
 }

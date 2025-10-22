@@ -4,6 +4,7 @@
 #include "definitions.h"
 
 #include "AInRuntimeConfig.h"
+#include "AOutRuntimeConfig.h"
 #include "DIORuntimeConfig.h"
 #include "StreamingRuntimeConfig.h"
 //#include "TcpServerConfig.h"
@@ -30,9 +31,11 @@ enum eBoardRunTimeParameter{
     //! Digital input/output global enable 
     BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE,
     //! Runtime setting analog input modules
-    BOARDRUNTIMECONFIG_AIN_MODULES, 
+    BOARDRUNTIMECONFIG_AIN_MODULES,
     //! Board analog input channels
     BOARDRUNTIMECONFIG_AIN_CHANNELS,
+    //! Board analog output channels
+    BOARDRUNTIMECONFIG_AOUT_CHANNELS,
     //! Power write variables
     BOARDRUNTIME_POWER_WRITE_VARIABLES, 
     //! User interface write variables
@@ -69,6 +72,9 @@ typedef struct sBoardRuntimeConfig
     //!Runtime settings for the analog input channels
     //!This is an array where index = channel and data = configuration
     AInRuntimeArray AInChannels;
+    //!Runtime settings for the analog output channels
+    //!This is an array where index = channel and data = configuration
+    AOutRuntimeArray AOutChannels;
     //! Power write variables
     tPowerWriteVars PowerWriteVars;
     //! User interface write variables

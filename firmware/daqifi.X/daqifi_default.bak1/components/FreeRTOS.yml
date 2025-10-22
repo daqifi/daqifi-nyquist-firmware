@@ -1,0 +1,146 @@
+configVersion: 1.0.0
+componentName: FreeRTOS
+coreVersion: 5.8.2
+device: PIC32MZ2048EFM144
+library: []
+dependency:
+- dependencyPackage: class com.microchip.mcc.harmony.HarmonyModule
+  name: FreeRTOS
+  type: module
+  version: ''
+- dependencyPackage: ''
+  name: FreeRTOS-Kernel
+  type: package
+  version: V11.2.0
+- dependencyPackage: ''
+  name: core
+  type: package
+  version: v3.15.1
+customDataClassName: com.microchip.utils_mh3.utils.persistence.CustomModuleData
+data:
+  attachments: {}
+  elementPosition:
+    attributes:
+      id: __ROOTVIEW
+    children:
+    - children:
+      - attributes:
+          id: FreeRTOS
+          x: '160'
+          y: '257'
+        type: ElementPosition
+      type: ElementPositions
+    type: ComponentGraph
+  symbols:
+    FREERTOS_INCLUDE_UXTASKGETSTACKHIGHWATERMARK:
+      attributes:
+        id: FREERTOS_INCLUDE_UXTASKGETSTACKHIGHWATERMARK
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    FREERTOS_INCLUDE_XTASKGETSCHEDULERSTATE:
+      attributes:
+        id: FREERTOS_INCLUDE_XTASKGETSCHEDULERSTATE
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    FREERTOS_ISR_STACK_SIZE:
+      attributes:
+        id: FREERTOS_ISR_STACK_SIZE
+      children:
+      - children:
+        - attributes:
+            value: '8192'
+          type: User
+        type: Values
+      type: Integer
+    FREERTOS_MAX_PRIORITIES:
+      attributes:
+        id: FREERTOS_MAX_PRIORITIES
+      children:
+      - children:
+        - attributes:
+            value: '10'
+          type: User
+        type: Values
+      type: Integer
+    FREERTOS_MAX_SYSCALL_INTERRUPT_PRIORITY:
+      attributes:
+        id: FREERTOS_MAX_SYSCALL_INTERRUPT_PRIORITY
+      children:
+      - children:
+        - attributes:
+            value: '4'
+          type: User
+        type: Values
+      type: Integer
+    FREERTOS_MEMORY_MANAGEMENT_CHOICE:
+      attributes:
+        id: FREERTOS_MEMORY_MANAGEMENT_CHOICE
+      children:
+      - children:
+        - attributes:
+            value: Heap_4
+          type: User
+        type: Values
+      type: Combo
+    FREERTOS_MINIMAL_STACK_SIZE:
+      attributes:
+        id: FREERTOS_MINIMAL_STACK_SIZE
+      children:
+      - children:
+        - attributes:
+            value: '512'
+          type: User
+        type: Values
+      type: Integer
+    FREERTOS_PERIPHERAL_CLOCK_HZ:
+      attributes:
+        id: FREERTOS_PERIPHERAL_CLOCK_HZ
+      children:
+      - children:
+        - attributes:
+            id: FreeRTOS
+            value: '100000000'
+          type: Dynamic
+        type: Values
+      type: Integer
+    FREERTOS_TOTAL_HEAP_SIZE:
+      attributes:
+        id: FREERTOS_TOTAL_HEAP_SIZE
+      children:
+      - children:
+        - attributes:
+            value: '124000'
+          type: User
+        type: Values
+      type: Integer
+    FREERTOS_USE_CONFIGASSERT:
+      attributes:
+        id: FREERTOS_USE_CONFIGASSERT
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+    FREERTOS_USE_TASK_FPU_SUPPORT:
+      attributes:
+        id: FREERTOS_USE_TASK_FPU_SUPPORT
+      children:
+      - children:
+        - attributes:
+            value: 'true'
+          type: User
+        type: Values
+      type: Boolean
+  userData: {}

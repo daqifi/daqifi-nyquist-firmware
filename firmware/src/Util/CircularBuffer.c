@@ -25,6 +25,7 @@
 #include "string.h"
 #include <stdlib.h>
 #include "osal/osal.h"
+#include "Logger.h"
 
 #define	max(a,b)	(((a) > (b)) ? (a) : (b))
 #define	min(a,b)	(((a) < (b)) ? (a) : (b))
@@ -36,6 +37,9 @@
 void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32_t size)
 {
     cirbuf->buf_ptr                = OSAL_Malloc(size);
+    if (cirbuf->buf_ptr == NULL) {
+        LOG_E("CircularBuf_Init: Failed to allocate %u bytes (OSAL_Malloc returned NULL)\r\n", size);
+    }
     cirbuf->process_callback       = fp;
     cirbuf->buf_size               = size;
     cirbuf->insertPtr              = cirbuf->removePtr = cirbuf->buf_ptr;
@@ -123,36 +127,59 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
 
         }
         else if(cirbuf->process_callback!= NULL){
-                 
+
             //start next transfer
             //make sure we don't transfer the out of bound data.
             if((cirbuf->removePtr + bytesToSend) > BUF_END){
-                uint32_t chunk1 = 0;
-                uint32_t chunk2 = 0;
 
-                // transfer the first part of data
-                chunk1 = (BUF_END - cirbuf->removePtr + 1);     
-                *error = cirbuf->process_callback(cirbuf->removePtr, chunk1);
+                // IMPORTANT: Only process first chunk when using callbacks
+                // Calling callback twice in succession causes data corruption in
+                // UsbCdc_Wrapper_Write which uses a shared buffer. The second chunk
+                // will be processed on the next CircularBuf_ProcessBytes call.
+                uint32_t chunk1_size = (BUF_END - cirbuf->removePtr + 1);
+                uint32_t bytesThisCall = (bytesToSend < chunk1_size) ? bytesToSend : chunk1_size;
+                int cbRet = cirbuf->process_callback(cirbuf->removePtr, bytesThisCall);
 
-                // wrap-around the pointer to the beginning of the buffer,
-                // then transfer second part of data. 
-                cirbuf->removePtr = BUF_START;
-                bytesRemoved = chunk1;
-                
-                // Only process second chunk if first chunk succeeded
-                if (*error >= 0) {
-                    chunk2 = bytesToSend - chunk1;
-                    *error = cirbuf->process_callback(cirbuf->removePtr, chunk2);
-                    cirbuf->removePtr += chunk2;
-                    bytesRemoved += chunk2;
+                if (cbRet >= 0) {
+                    // Callback returns number of bytes actually processed
+                    uint32_t actuallyRemoved = (uint32_t)cbRet;
+                    // Clamp to requested size to avoid pointer overrun on buggy callbacks
+                    if (actuallyRemoved > bytesThisCall) {
+                        actuallyRemoved = bytesThisCall;
+                    }
+                    // Wrap-around only if we processed to end of buffer
+                    if (actuallyRemoved == chunk1_size) {
+                        cirbuf->removePtr = BUF_START;
+                    } else {
+                        cirbuf->removePtr += actuallyRemoved;
+                    }
+                    cirbuf->totalBytes -= actuallyRemoved;
+                    bytesRemoved = actuallyRemoved;
+                    *error = cbRet;
+                } else {
+                    bytesRemoved = 0;
+                    *error = cbRet;
                 }
             }
             else{
-                *error = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
-                cirbuf->removePtr += bytesToSend;
-                bytesRemoved = bytesToSend;
-            } 
-            cirbuf->totalBytes -= bytesRemoved;
+
+                int cbRet = cirbuf->process_callback(cirbuf->removePtr, bytesToSend);
+                if (cbRet >= 0) {
+                    // Callback returns number of bytes actually processed
+                    uint32_t actuallyRemoved = (uint32_t)cbRet;
+                    // Clamp to requested size to avoid pointer overrun on buggy callbacks
+                    if (actuallyRemoved > bytesToSend) {
+                        actuallyRemoved = bytesToSend;
+                    }
+                    cirbuf->removePtr += actuallyRemoved;
+                    cirbuf->totalBytes -= actuallyRemoved;
+                    bytesRemoved = actuallyRemoved;
+                    *error = cbRet;
+                } else {
+                    bytesRemoved = 0;
+                    *error = cbRet;
+                }
+            }
         }
     }
     

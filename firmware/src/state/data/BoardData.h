@@ -13,6 +13,7 @@
 #define __BOARDDATA_H__
 
 #include "AInSample.h"
+#include "AOutSample.h"
 #include "DIOSample.h"
 #include "Util/HeapList.h"
 #include "HAL/Power/PowerApi.h"
@@ -46,6 +47,8 @@ extern "C" {
         BOARDDATA_AIN_LATEST_TIMESTAMP,
         //! Collected analog input samples
         BOARDDATA_AIN_SAMPLES,
+        //! Latest AOUT commanded voltages
+        BOARDDATA_AOUT_LATEST,
         //! Global power structure
         BOARDDATA_POWER_DATA,
         //! UI Global structure
@@ -77,6 +80,8 @@ extern "C" {
         AInSampleArray AInLatest;
         //! Collected Analog-input samples
         AInSampleList AInSamples;
+        //! The latest AOut commanded voltages
+        AOutSampleArray AOutLatest;
         //! Global Power structure
         tPowerData PowerData;
         //! Global UI Structure

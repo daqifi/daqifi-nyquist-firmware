@@ -10,9 +10,17 @@ extern "C" {
     typedef enum eStreamingEncoding
     {
         Streaming_ProtoBuffer = 0,
-        Streaming_Json = 1,  
+        Streaming_Json = 1,
         Streaming_Csv=2,
     } StreamingEncoding;
+
+    typedef enum eStreamingInterface
+    {
+        StreamingInterface_USB = 0,
+        StreamingInterface_WiFi = 1,
+        StreamingInterface_SD = 2,
+        StreamingInterface_All = 3,  // Legacy mode: stream to all interfaces
+    } StreamingInterface;
     
     /**
      * Contains the board configuration for the streaming timer
@@ -71,7 +79,14 @@ extern "C" {
          * The type of encoding to use
          */
         StreamingEncoding Encoding;
-        
+
+        /**
+         * Which interface to stream data to (USB, WiFi, SD, or All)
+         * Default: Single interface (the one that initiated streaming)
+         * Multi-interface streaming (All) is available but not used by default
+         */
+        StreamingInterface ActiveInterface;
+
     } StreamingRuntimeConfig;
 
 

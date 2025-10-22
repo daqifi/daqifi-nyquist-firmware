@@ -24,11 +24,11 @@ extern "C" {
         //         * Channel is provided by an AD7173 chip
         //         */
         //        AIn_AD7173,
-        //                
-        //        /**
-        //         * Channel is provided by an AD7609 chip
-        //         */
-        //        AIn_AD7609,
+                        
+        /**
+         * Channel is provided by an AD7609 chip
+         */
+        AIn_AD7609,
     } AInType;
 
     /**
@@ -38,6 +38,40 @@ extern "C" {
         //DRV_ADC_MODULE_ID moduleId;
         double Resolution; // Per-module resolution
     } MC12bModuleConfig;
+
+    /**
+     * SPI Configuration structure for AD7609
+     */
+    typedef struct s_AD7609_SPI_Config {
+        uint32_t spiID;
+        uint32_t baud;
+        uint32_t clock;
+        uint32_t busClk_id;
+        uint32_t clockPolarity;
+        uint32_t busWidth;
+        uint32_t inSamplePhase;
+        uint32_t outDataPhase;
+    } AD7609_SPI_Config;
+
+    /**
+     * Configuration for an AD7609 module - Updated for Harmony 3
+     */
+    typedef struct s_AD7609ModuleConfig {
+        AD7609_SPI_Config SPI;
+        // GPIO pins using modern Harmony 3 GPIO_PIN format
+        GPIO_PIN CS_Pin;
+        GPIO_PIN BSY_Pin;
+        GPIO_PIN RST_Pin;
+        GPIO_PIN Range_Pin;
+        GPIO_PIN OS0_Pin;
+        GPIO_PIN OS1_Pin;
+        GPIO_PIN CONVST_Pin;
+        GPIO_PIN STBY_Pin;
+        // Configuration settings
+        bool Range10V;
+        uint32_t OSMode;
+        double Resolution;
+    } AD7609ModuleConfig;
 
 
     /**
@@ -56,7 +90,7 @@ extern "C" {
         union u_AInModuleImpl {
             MC12bModuleConfig MC12b;
             //            AD7173ModuleConfig AD7173;
-            //            AD7609ModuleConfig AD7609;
+            AD7609ModuleConfig AD7609;
         } Config;
 
         /**
@@ -102,7 +136,44 @@ extern "C" {
          * Calculated by 1/((Range/Vref)*(R2/(R1+R2)))
          */
         double InternalScale;
+
+        /**
+         * Temperature sensor parameters (only used if this channel measures temperature)
+         * Set IsTemperatureSensor = true to enable temperature conversion
+         */
+        bool IsTemperatureSensor;
+
+        /**
+         * Voltage at reference temperature (e.g., 0.5V for PIC32MZ internal sensor)
+         */
+        double TempOffsetVoltage;
+
+        /**
+         * Temperature sensitivity in V/°C (e.g., 0.005 for 5mV/°C)
+         */
+        double TempSensitivity;
+
+        /**
+         * Reference temperature in °C at offset voltage (e.g., -40°C for PIC32MZ)
+         */
+        double TempReferenceC;
     } MC12bChannelConfig;
+
+    /**
+     * Holds intrinsic channel information for an AD7609-backed channel
+     */
+    typedef struct s_AD7609ChannelConfig {
+        /**
+         * The channel number on the AD7609 chip (0-7)
+         */
+        uint8_t ChannelNumber;
+
+        /**
+         * Indicates whether this channel is publicly available (to the user) or private
+         * For consistency with MC12bChannelConfig
+         */
+        bool IsPublic;
+    } AD7609ChannelConfig;
 
     /**
      * Defines the immutable parameters for a single Analog in channel
@@ -123,13 +194,22 @@ extern "C" {
         union u_AInChannelImpl {
             MC12bChannelConfig MC12b;
             //            AD7173ChannelConfig AD7173;
-            //            AD7609ChannelConfig AD7609;
+            AD7609ChannelConfig AD7609;
         } Config;
 
     } AInChannel;
 
+    /**
+     * Helper macro to check if an AInChannel is public
+     * Handles all ADC types consistently
+     */
+    #define AInChannel_IsPublic(channel) ( \
+        ((channel)->Type == AIn_MC12bADC && (channel)->Config.MC12b.IsPublic) || \
+        ((channel)->Type == AIn_AD7609 && (channel)->Config.AD7609.IsPublic) \
+    )
+
     // Define a storage class for analog input modules
-#define MAX_AIN_MOD 1
+#define MAX_AIN_MOD 2
     ARRAYWRAPPERDEF(AInModArray, AInModule, MAX_AIN_MOD);
 
     // Define a storage class for analog input channels

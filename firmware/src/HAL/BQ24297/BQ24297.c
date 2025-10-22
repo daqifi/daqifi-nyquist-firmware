@@ -9,6 +9,10 @@
 #include "services/UsbCdc/UsbCdc.h"
 #include "peripheral/gpio/plib_gpio.h"
 
+// BQ24297 bypass for demo boards without BQ24297 populated
+// Uncomment the following line for boards without BQ24297 chip
+// #define BYPASS_BQ24297 1
+
 //! Pointer to the BQ24297 device configuration data structure
 static tBQ24297Config *pConfigBQ24;
 //! Pointer to the BQ24297 device "Write Variables" data structure
@@ -35,6 +39,34 @@ void BQ24297_InitHardware(
     pConfigBQ24 = pConfigInit;
     pWriteVariables = pWriteInit;
     pData = pDataInit;
+
+#ifdef BYPASS_BQ24297
+    // Demo board bypass: Set up dummy "good" status values
+    LOG_I("BQ24297_InitHardware: BYPASS_BQ24297 enabled - simulating working BQ24297");
+    
+    // Mark as initialized
+    pData->initComplete = true;
+    
+    // Set "good" power status values for demo board
+    pData->status.pgStat = 1;        // External power present
+    pData->status.vsysStat = 0;      // Battery voltage good (>3.0V)
+    pData->status.batPresent = 1;    // Battery present
+    pData->status.chgStat = 3;       // Charge complete
+    pData->status.ntcFault = 0;      // NTC normal
+    pData->status.otg = 0;           // OTG disabled
+    pData->status.chgEn = 1;         // Charging enabled
+    pData->chargeAllowed = true;     // Allow charging
+    
+    LOG_I("BQ24297_InitHardware: Demo values - pgStat=%d, vsysStat=%d, batPresent=%d", 
+          pData->status.pgStat, pData->status.vsysStat, pData->status.batPresent);
+    
+    // Initialize OTG GPIO (even on demo board for consistency)
+    BATT_MAN_OTG_OutputEnable();
+    BATT_MAN_OTG_Clear();  // Set LOW = OTG disabled
+    
+    LOG_I("BQ24297_InitHardware: Demo board initialized with good power status");
+    return;
+#endif
     // Battery management initialization (hardware interface)
 
     // ***Disable I2C calls*** as Harmony 2.06 doesn't have a working, 
@@ -157,6 +189,11 @@ void BQ24297_Config_Settings(void) {
  * Use BQ24297_UpdateStatusSafe() if you don't want to reset faults
  */
 void BQ24297_UpdateStatus(void) {
+#ifdef BYPASS_BQ24297
+    // Demo board bypass: Don't update status, keep dummy values
+    return;
+#endif
+
     uint8_t regData = 0;
     bool hasErrors = false;
 
@@ -172,12 +209,6 @@ void BQ24297_UpdateStatus(void) {
     // REG01: Power-On Configuration
     regData = BQ24297_Read_I2C(0x01);
     if (regData != 0xFF) {
-        // Only log REG01 changes
-        static uint8_t lastReg01 = 0xFF;
-        if (regData != lastReg01) {
-            LOG_D("BQ24297_UpdateStatus: REG01 = 0x%02X", regData);
-            lastReg01 = regData;
-        }
         pData->status.otg = (bool) (regData & 0b00100000);
         pData->status.chgEn = (bool) (regData & 0b00010000);
     } else {
@@ -262,6 +293,11 @@ void BQ24297_UpdateStatus(void) {
  * Safe to call frequently as it doesn't read REG09
  */
 void BQ24297_UpdateStatusSafe(void) {
+#ifdef BYPASS_BQ24297
+    // Demo board bypass: Don't update status, keep dummy values
+    return;
+#endif
+
     uint8_t regData = 0;
     bool hasErrors = false;
 
@@ -294,23 +330,20 @@ void BQ24297_ChargeEnable(bool chargeEnable) {
     uint8_t reg = 0;
 
     reg = BQ24297_Read_I2C(0x01);
-    LOG_D("BQ24297_ChargeEnable: REG01 before = 0x%02X", reg);
-    
+
     // OTG and Charge are mutually exclusive
     if (reg & 0x20) {
         return;  // OTG is enabled, cannot modify charge state
     }
-    
+
     if (pData->chargeAllowed && chargeEnable && pData->status.batPresent) {
         // Enable charging, preserve all bits except bit 4 (charge enable)
         reg = (reg & 0b11101111) | 0b00010000; // Clear bit 4, then set it
         BQ24297_Write_I2C(0x01, reg);
-        LOG_D("BQ24297_ChargeEnable: Enabled charging, REG01 = 0x%02X", reg);
     } else {
         // Disable charging, preserve all bits except bit 4 (charge enable)
         reg = (reg & 0b11101111); // Just clear bit 4
         BQ24297_Write_I2C(0x01, reg);
-        LOG_D("BQ24297_ChargeEnable: Disabled charging, REG01 = 0x%02X", reg);
     }
 }
 
@@ -371,6 +404,18 @@ void BQ24297_AutoSetILim(void) {
 }
 
 uint8_t BQ24297_Read_I2C(uint8_t reg) {
+#ifdef BYPASS_BQ24297
+    // Demo board bypass: Return dummy "good" register values
+    switch (reg) {
+        case 0x00: return 0x7E; // Good charging config, HIZ=0
+        case 0x01: return 0x51; // OTG=0, CHG=1, good config  
+        case 0x07: return 0x0B; // BATFET enabled, good status
+        case 0x08: return 0x23; // External power good, battery good
+        case 0x09: return 0x40; // Battery present, normal fault status
+        default:   return 0x00; // Default good value
+    }
+#endif
+
     uint8_t I2CData[1];
     uint8_t rxData = 0;
 
@@ -399,6 +444,13 @@ uint8_t BQ24297_Read_I2C(uint8_t reg) {
 }
 
 bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
+#ifdef BYPASS_BQ24297
+    // Demo board bypass: Pretend all writes succeed
+    (void)reg;    // Suppress unused warnings
+    (void)txData;
+    return true;  // Always return success
+#endif
+
     uint8_t I2CData[2];
 
     // Build data packet

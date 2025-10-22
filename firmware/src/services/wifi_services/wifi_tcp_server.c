@@ -110,15 +110,10 @@ static bool TcpServerFlush() {
         return true;
     }
 
-    do {
-        //sockRet = send(gpServerData->client.clientSocket, (char*) gpServerData->client.writeBuffer, gpServerData->client.writeBufferLength, 0); 
-        sockRet = send(gpServerData->client.clientSocket, (char*) gpServerData->client.writeBuffer, gpServerData->client.writeBufferLength, 0); 
-        if (sockRet == SOCK_ERR_BUFFER_FULL) {
-            vTaskDelay(TCPSERVER_EWOULDBLOCK_ERROR_TIMEOUT);
-        }
-
-    } while (sockRet != SOCK_ERR_NO_ERROR && sockRet != SOCK_ERR_CONN_ABORTED);
-
+    // Non-blocking send: try once, return immediately if WINC buffer is full
+    // This prevents the streaming task from blocking for multiple milliseconds
+    // during high-rate streaming when WiFi bandwidth is saturated
+    sockRet = send(gpServerData->client.clientSocket, (char*) gpServerData->client.writeBuffer, gpServerData->client.writeBufferLength, 0);
 
     if (sockRet == SOCK_ERR_CONN_ABORTED) {
         funRet = false;
@@ -126,6 +121,17 @@ static bool TcpServerFlush() {
         gpServerData->client.tcpSendPending = 1;
         gpServerData->client.writeBufferLength = 0;
         funRet = true;
+    } else if (sockRet == SOCK_ERR_BUFFER_FULL) {
+        // WINC module buffer full - return false without blocking
+        // Data remains in writeBuffer and will be retried on next TransmitBufferedData call
+        funRet = false;
+    } else {
+        // Other error - log for debugging
+        static uint32_t errorCount = 0;
+        if ((++errorCount % 100) == 0) {
+            LOG_E("TcpServerFlush: send() returned error %d (count=%lu)", sockRet, errorCount);
+        }
+        funRet = false;
     }
 
     return funRet;
@@ -257,12 +263,21 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
 }
 
 static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
+    // Validate context pointer to prevent null dereference
+    if (gpServerData == NULL) {
+        return -1;  // Not initialized
+    }
+
     // Validate length against buffer size to prevent overflow
     if (len > sizeof(gpServerData->client.writeBuffer))
-        return false;
+        return -1;  // Error
     memcpy(gpServerData->client.writeBuffer, buf, len);
     gpServerData->client.writeBufferLength = len;
-    return TcpServerFlush(&gpServerData->client);
+
+    // Return number of bytes written on success, negative on error
+    // Circular buffer expects this API: return >= 0 (bytes written) or < 0 (error)
+    bool flushResult = TcpServerFlush(&gpServerData->client);
+    return flushResult ? (int)len : -1;
 }
 //==========================External Apis==========================
 
@@ -353,26 +368,29 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
 
     if (len == 0)return 0;
 
-    // Wait for buffer space with mutex protection
-    bool hasSpace = false;
-    while (!hasSpace) {
-        xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
-        hasSpace = (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) >= len);
-        xSemaphoreGive(gpServerData->client.wMutex);
-        
-        if (!hasSpace) {
-            vTaskDelay(10);
-        }
-    }
-
-    // Check and write with single mutex acquisition
+    // Non-blocking check for buffer space
+    // If buffer is full, return 0 immediately instead of blocking
+    // This prevents the streaming task from stalling for 10-60ms
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
     if (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
         xSemaphoreGive(gpServerData->client.wMutex);
-        return 0;
+        return 0;  // No space available - return immediately
     }
     bytesAdded = CircularBuf_AddBytes(&gpServerData->client.wCirbuf, (uint8_t*) data, len);
+
+    // Proactive flush: If buffer is >10% full (560 bytes), trigger transmission
+    // This minimizes latency by sending data to the WINC module immediately
+    // The WINC's TCP stack handles packet coalescing with Nagle's algorithm
+    // Keeps buffer mostly empty to maximize room for high-rate streaming data
+    size_t bytesInBuffer = CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf);
+    bool shouldFlush = (bytesInBuffer > (WIFI_CIRCULAR_BUFF_SIZE / 10));
     xSemaphoreGive(gpServerData->client.wMutex);
+
+    // Trigger flush outside mutex to avoid blocking other writers
+    // Check tcpSendPending first to avoid unnecessary function calls
+    if (shouldFlush && gpServerData->client.tcpSendPending == 0) {
+        wifi_tcp_server_TransmitBufferedData();
+    }
 
     return bytesAdded;
 }

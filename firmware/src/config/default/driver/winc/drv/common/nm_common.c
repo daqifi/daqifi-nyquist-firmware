@@ -55,12 +55,12 @@ void nm_sleep(uint32_t u32TimeMsec)
  */
 void nm_reset(void)
 {
-    WDRV_WINC_GPIOChipEnableDeassert();
-    WDRV_WINC_GPIOResetAssert();
+    WDRV_WINC_GPIOChipEnableDeassert();  // CHIP_EN LOW
+    WDRV_WINC_GPIOResetAssert();         // RESETN LOW
     nm_sleep(100);
-    WDRV_WINC_GPIOChipEnableAssert();
+    WDRV_WINC_GPIOChipEnableAssert();    // CHIP_EN HIGH
     nm_sleep(10);
-    WDRV_WINC_GPIOResetDeassert();
+    WDRV_WINC_GPIOResetDeassert();       // RESETN HIGH
     nm_sleep(10);
 }
 

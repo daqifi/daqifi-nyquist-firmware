@@ -1,30 +1,93 @@
-/* 
+/*
  * @file   DAC7718.c
  * @brief This file manages the DAC7718 module
- * 
+ *
  */
+#define LOG_LVL LOG_LEVEL_DAC
 
 #include "DAC7718.h"
+#include "peripheral/gpio/plib_gpio.h"
+#include "peripheral/spi/spi_master/plib_spi2_master.h"
+#include "peripheral/coretimer/plib_coretimer.h"
+#include "Util/Logger.h"
+#include "semphr.h"
+
+// Simple delay function using core timer (wrap-around safe, overflow-safe)
+static void DAC7718_Delay_us(uint32_t microseconds) {
+    // Cache frequency on first call to avoid repeated function calls
+    static uint32_t freq = 0U;
+    if (freq == 0U) {
+        freq = CORETIMER_FrequencyGet();
+    }
+
+    uint32_t startCount = CORETIMER_CounterGet();
+    // Use 64-bit arithmetic to prevent overflow for large microsecond values
+    uint32_t ticks = (uint32_t)(((uint64_t)microseconds * freq) / 1000000U);
+
+    // Use modular arithmetic to handle 32-bit timer wrap-around correctly
+    while ((uint32_t)(CORETIMER_CounterGet() - startCount) < ticks) {
+        // Wait for elapsed ticks
+    }
+}
 
 //! Max number of configuration to DAC7718 module
 #define MAX_DAC7718_CONFIG 1
 
+//! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
+#define DAC7718_SPI_TIMEOUT 100000
+
 //! Buffer with DAC7718 configurations
 static tDAC7718Config m_DAC7718Config[MAX_DAC7718_CONFIG];
-//! Number of configuration 
+//! Number of configuration
 static uint8_t m_DAC7718ConfigCount;
+
+//! Static SPI buffers to avoid stack/cache issues
+static uint8_t spi_txData[3] __attribute__((coherent, aligned(4)));
+static uint8_t spi_rxData[3] __attribute__((coherent, aligned(4)));
+
+//! Mutex to protect DAC7718 initialization and SPI access
+static SemaphoreHandle_t gDAC7718_Mutex = NULL;
+
+// Helper to acquire mutex with lazy creation
+static bool DAC7718_Lock(void)
+{
+    if (gDAC7718_Mutex == NULL) {
+        gDAC7718_Mutex = xSemaphoreCreateMutex();
+        if (gDAC7718_Mutex == NULL) {
+            LOG_E("DAC7718_Lock: Failed to create mutex");
+            return false;
+        }
+    }
+
+    if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        LOG_E("DAC7718_Lock: Failed to acquire mutex");
+        return false;
+    }
+
+    return true;
+}
+
+// Helper to release mutex and cleanup CS pin state
+static void DAC7718_Unlock(tDAC7718Config* config, bool csAsserted)
+{
+    // De-assert CS if still asserted
+    if (csAsserted && (config != NULL)) {
+        GPIO_PinWrite(config->CS_Pin, true);
+    }
+
+    // Release mutex
+    if (gDAC7718_Mutex != NULL) {
+        xSemaphoreGive(gDAC7718_Mutex);
+    }
+}
 
 /*!
 * Resets the DAC7718.  Must be called after DAC7718_Init
 * @param id Driver instance ID
 */
-static void DAC7718_Reset(uint8_t id); 
+// static void DAC7718_Reset(uint8_t id);  // Not used - CLR tied to RST 
 
-/*!
-* Sets the SPI parameters and opens the SPI port
-* @param id Driver instance ID
-*/
-static void DAC7718_Apply_SPI_Config(uint8_t id); 
+// SPI2 is configured by MCC - no separate configuration needed
 
 void DAC7718_InitGlobal( void )
 {
@@ -32,7 +95,7 @@ void DAC7718_InitGlobal( void )
     m_DAC7718ConfigCount = 0;
 }
 
-uint8_t DAC7718_NewConfig(tDAC7718Config *newDAC7718Config)
+uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config)
 {
     uint8_t id = m_DAC7718ConfigCount;
     ++m_DAC7718ConfigCount;
@@ -50,174 +113,211 @@ tDAC7718Config* DAC7718_GetConfig(uint8_t id)
 void DAC7718_Init(uint8_t id, uint8_t range)
 {
     tDAC7718Config* config = DAC7718_GetConfig(id);
-    
-    DAC7718_Apply_SPI_Config(id);
-    
-	// Initialize all associated ports to known value
-    PLIB_PORTS_PinWrite(PORTS_ID_0, config->CS_Ch , config->CS_Bit, true);
-    PLIB_PORTS_PinWrite(PORTS_ID_0, config->RST_Ch , config->RST_Bit, true);
 
+    if (config == NULL) {
+        LOG_E("DAC7718_Init: invalid config id=%u", id);
+        return;
+    }
 
-	// Set port directions
-    // NOTE: Directions are set in MHC
+    // Create mutex on first use (thread-safe in FreeRTOS context)
+    if (gDAC7718_Mutex == NULL) {
+        gDAC7718_Mutex = xSemaphoreCreateMutex();
+        if (gDAC7718_Mutex == NULL) {
+            LOG_E("DAC7718_Init: Failed to create mutex");
+            return;
+        }
+    }
 
+    // SPI2 is already initialized by MCC
 
-	// Send reset to DACXX18
-	DAC7718_Reset(id);
+	// Configure GPIO pins as outputs before setting values (prevents glitches)
+    GPIO_PinOutputEnable(config->CS_Pin);
+    GPIO_PinOutputEnable(config->RST_Pin);
 
-	// Set gain=4xVREF
-	DAC7718_ReadWriteReg(id, 0, 0, 0b100000011000);
+	// Initialize GPIO pins - CS high (inactive), RST high for normal operation
+    GPIO_PinWrite(config->CS_Pin, true);
+    GPIO_PinWrite(config->RST_Pin, true);
+
+	// Hardware reset sequence: RST low pulse, then high
+	// DAC7718 datasheet requires minimum 100ns reset pulse
+	GPIO_PinWrite(config->RST_Pin, false);  // Assert reset (active low)
+	DAC7718_Delay_us(1);  // 1us delay (10x minimum spec, guaranteed safe)
+	GPIO_PinWrite(config->RST_Pin, true);   // De-assert reset (return to idle high)
+
+	// Configure DAC gain based on range parameter
+	// Range 0: 0-5V  (GAIN-A=0, GAIN-B=0 for 2x gain)
+	// Range 1: 0-10V (GAIN-A=1, GAIN-B=1 for 4x gain)
+	// Currently fixed to 10V range, but infrastructure available for future use
+	(void)range;  // Parameter reserved for future use
+	uint16_t configReg = 0b100000011000;  // GAIN-A=1, GAIN-B=1 for 4x gain (10V)
+
+	// Note: DAC7718_ReadWriteReg handles mutex locking internally
+	uint32_t result = DAC7718_ReadWriteReg(id, 0, 0, configReg);
+	if (result == UINT32_MAX) {
+	    LOG_E("DAC7718_Init: Failed to write configuration register");
+	    return;
+	}
+
+	// Update latch to apply configuration
+	DAC7718_UpdateLatch(id);
 }
 
-uint32_t DAC7718_ReadWriteReg(                                              \
-                        uint8_t id,                                         \
-                        uint8_t RW,                                         \
-                        uint8_t Reg,                                        \
-                        uint32_t Data)
+uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
 {
-	uint32_t Com=0;
-	uint8_t x = 0;
+    uint32_t Com;
+    uint32_t rdData = 0;
+    uint8_t x;
+    bool csAsserted = false;
+    tDAC7718Config* config = NULL;
 
-	if(RW>1) return(0);		// Return 0 if improper R/W mode selected
-	if(Reg>31) return(0);		// Return 0 if improper channel selected
-	if(Data>4095) return(0);
+    // Validate inputs
+    if (RW > 1U) {
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
+    if (Reg > DAC7718_MAX_REGISTER) {
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
 
-    tDAC7718Config* config = DAC7718_GetConfig(id);
-    
-    DAC7718_Apply_SPI_Config(id);
-    //Enable CS_ADC
-    PLIB_PORTS_PinWrite(PORTS_ID_0, config->CS_Ch , config->CS_Bit, false);
+    config = DAC7718_GetConfig(id);
+    if (config == NULL) {
+        LOG_E("DAC7718_ReadWriteReg: invalid config id=%u", id);
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
 
-	// Build 24 bit command (12 bit version)
-	Com=(RW&0b1);
-	Com=Com<<7;
-	Com=Com|(Reg&0b11111);
-	Com=Com<<12;
-	Com=Com|(Data&0b111111111111);	// Shift DataWidth bits
-	Com=Com<<4;
-	
-	// Write 24 bit command (MSB first)
-	for(x=0;x<3;x++){
-        while(PLIB_SPI_IsBusy(config->SPI.spiID));
-		PLIB_SPI_BufferWrite(config->SPI.spiID,(Com&0x00FF0000)>>16);
-		Com=Com<<8;
-		PLIB_SPI_BufferRead(config->SPI.spiID);	// Clear buffer
-	}
-    while(PLIB_SPI_IsBusy(config->SPI.spiID));
-    //Disable CS_ADC
-	PLIB_PORTS_PinWrite(PORTS_ID_0, config->CS_Ch , config->CS_Bit, true);	
+    // Acquire mutex to serialize SPI writes
+    if (!DAC7718_Lock()) {
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
 
-	// Read data if user has signaled to do so with RW bit (MSB first)
-	if (RW==1){
-        // Send NOP command to get data out without changing any settings
-		Com=0b000000001000000110100000;
-        //Enable CS_ADC
-		PLIB_PORTS_PinWrite(                                                \
-                        PORTS_ID_0,                                         \
-                        config->CS_Ch ,                                     \
-                        config->CS_Bit,                                     \
-                        false);	
-		Data=0;
-		for(x=0;x<3;x++){
-            while(PLIB_SPI_IsBusy(config->SPI.spiID));
-			Data = Data << 8;
-			PLIB_SPI_BufferWrite(config->SPI.spiID,(Com&0x00FF0000)>>16);
-			Com=Com<<8;
-			Data |= (PLIB_SPI_BufferRead(config->SPI.spiID));
-		}
-		while(PLIB_SPI_IsBusy(config->SPI.spiID));
-        //Disable CS_ADC
-		PLIB_PORTS_PinWrite(                                                \
-                        PORTS_ID_0,                                         \
-                        config->CS_Ch ,                                     \
-                        config->CS_Bit,                                     \
-                        true);	
-	}
-    // Only keep data bits
-	Data=(Data&0b000000001111111111110000)>>4;	
-	return (Data);
+    // Assert CS (active low)
+    GPIO_PinWrite(config->CS_Pin, false);
+    csAsserted = true;
+
+    // Build 24-bit command
+    Com  = (uint32_t)(RW & 0x1U);
+    Com <<= 7;
+    Com |=  (uint32_t)(Reg & 0x1FU);
+    Com <<= 12;
+    Com |=  (uint32_t)(Data & DAC7718_MAX_VALUE);
+    Com <<= 4;
+
+    // Transmit 24-bit command (MSB first) with timeout protection
+    for (x = 0U; x < DAC7718_TRANSFER_BYTES; x++) {
+        uint32_t timeout = DAC7718_SPI_TIMEOUT;
+        while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--timeout > 0U)) { }
+        if (timeout == 0U) {
+            LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %u", x);
+            rdData = UINT32_MAX;
+            goto cleanup;
+        }
+        SPI2BUF = (uint8_t)((Com & 0x00FF0000UL) >> 16);
+        Com <<= 8;
+
+        timeout = DAC7718_SPI_TIMEOUT;
+        while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--timeout > 0U)) { }
+        if (timeout == 0U) {
+            LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %u", x);
+            rdData = UINT32_MAX;
+            goto cleanup;
+        }
+        (void)SPI2BUF; // clear
+    }
+
+    // Wait for shift register to empty (transmission complete)
+    uint32_t timeout = DAC7718_SPI_TIMEOUT;
+    while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
+    if (timeout == 0U) {
+        LOG_E("DAC7718_ReadWriteReg: Shift register timeout");
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
+    // De-assert CS after first transaction
+    GPIO_PinWrite(config->CS_Pin, true);
+    csAsserted = false;
+
+    // Readback if requested
+    if (RW == 1U) {
+        // Inter-frame delay: DAC7718 requires minimum CS high time between transactions
+        // Datasheet specifies minimum 50ns. The CS rising edge latches the read command,
+        // and the DAC loads the readback data during this CS high period.
+        // Cannot eliminate CS toggle - it's required by the protocol to delimit frames.
+        // Using 100ns (2x minimum) provides adequate margin while minimizing overhead.
+        // Note: At 200MHz core clock, 100ns = 20 ticks, well within timer resolution.
+        DAC7718_Delay_us(1);  // ~1us actual (minimum resolution), datasheet requires 50ns
+
+        Com = 0b000000001000000110100000U; // NOP to clock out data
+
+        spi_txData[0] = (uint8_t)((Com >> 16) & 0xFFU);
+        spi_txData[1] = (uint8_t)((Com >> 8)  & 0xFFU);
+        spi_txData[2] = (uint8_t)( Com        & 0xFFU);
+
+        // Assert CS for readback transaction
+        GPIO_PinWrite(config->CS_Pin, false);
+        csAsserted = true;
+
+        for (uint8_t i = 0U; i < DAC7718_TRANSFER_BYTES; i++) {
+            uint32_t to = DAC7718_SPI_TIMEOUT;
+            while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--to > 0U)) { }
+            if (to == 0U) {
+                LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %u", i);
+                rdData = UINT32_MAX;
+                goto cleanup;
+            }
+            SPI2BUF = spi_txData[i];
+
+            to = DAC7718_SPI_TIMEOUT;
+            while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--to > 0U)) { }
+            if (to == 0U) {
+                LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %u", i);
+                rdData = UINT32_MAX;
+                goto cleanup;
+            }
+            spi_rxData[i] = (uint8_t)SPI2BUF;
+        }
+
+        // Wait for shift register to empty (readback transmission complete)
+        timeout = DAC7718_SPI_TIMEOUT;
+        while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
+        if (timeout == 0U) {
+            LOG_E("DAC7718_ReadWriteReg: NOP shift register timeout");
+            rdData = UINT32_MAX;
+            goto cleanup;
+        }
+        // De-assert CS after readback transaction
+        GPIO_PinWrite(config->CS_Pin, true);
+        csAsserted = false;
+
+        // Reconstruct received data
+        rdData = (spi_rxData[0] << 16) | (spi_rxData[1] << 8) | spi_rxData[2];
+    }
+
+    // Only keep data bits (12-bit data is in bits 15:4)
+    rdData = (rdData & (DAC7718_MAX_VALUE << DAC7718_READBACK_SHIFT)) >> DAC7718_READBACK_SHIFT;
+
+cleanup:
+    DAC7718_Unlock(config, csAsserted);
+    return rdData;
 }
 
 void DAC7718_UpdateLatch(uint8_t id)
 {
-	// Set gain=4xVREF, and LD to update the latches
-	DAC7718_ReadWriteReg(id, 0, 0, 0b110000011000);
+	// Validate ID
+	if (id >= MAX_DAC7718_CONFIG) {
+		LOG_E("DAC7718_UpdateLatch: invalid id=%u", id);
+		return;
+	}
+
+	// Write to configuration register with LD bit set to update all DAC outputs
+	// Note: DAC7718_ReadWriteReg handles mutex locking internally
+	uint32_t result = DAC7718_ReadWriteReg(id, 0, 0, 0b110000011000);
+
+	if (result == UINT32_MAX) {
+		LOG_E("DAC7718_UpdateLatch: Failed to update latch");
+	}
 }
 
-/*!
-* Resets the DAC7718.  Must be called after DAC7718_Init
-* @param id Driver instance ID
-*/
-static void DAC7718_Reset(uint8_t id)
-{
-    tDAC7718Config* config = DAC7718_GetConfig(id);
-    
-	// Reset DAC7718 by pulling RST line high for > 100ns
-	// this process requires CS line be high (if it is not already).
-    PLIB_PORTS_PinWrite(                                                    \
-                        PORTS_ID_0,                                         \
-                        config->CS_Ch ,                                     \
-                        config->CS_Bit,                                     \
-                        true);
-    PLIB_PORTS_PinWrite(PORTS_ID_0,                                         \
-                        config->RST_Ch ,                                    \
-                        config->RST_Bit,                                    \
-                        false);
-    asm("nop");
-	asm("nop");
-	asm("nop");
-	asm("nop");
-	asm("nop");
-    asm("nop");
-	asm("nop");
-	asm("nop");
-	asm("nop");
-	asm("nop");
-    asm("nop");
-	asm("nop");
-	asm("nop");
-	asm("nop");
-	asm("nop");
-    PLIB_PORTS_PinWrite(PORTS_ID_0, config->RST_Ch , config->RST_Bit, true);
-}
-
-/*!
-* Sets the SPI parameters and opens the SPI port
-* @param id Driver instance ID
-*/
-static void DAC7718_Apply_SPI_Config(uint8_t id){
-    tDAC7718Config* config = DAC7718_GetConfig(id);
-    
-    //Disable SPI
-    PLIB_SPI_Disable(config->SPI.spiID);
-    // Optional: Clear SPI interrupts and status flag.
-    //clear SPI buffer
-    PLIB_SPI_BufferClear (config->SPI.spiID);
-    // Configure General SPI Options
-    PLIB_SPI_StopInIdleDisable(config->SPI.spiID);
-    PLIB_SPI_PinEnable(config->SPI.spiID, SPI_PIN_DATA_OUT|SPI_PIN_DATA_IN);
-    PLIB_SPI_CommunicationWidthSelect(                                      \
-                        config->SPI.spiID,                                  \
-                        config->SPI.busWidth);
-    PLIB_SPI_InputSamplePhaseSelect(                                        \
-                        config->SPI.spiID,                                  \
-                        config->SPI.inSamplePhase);
-    PLIB_SPI_ClockPolaritySelect(                                           \
-                        config->SPI.spiID,                                  \
-                        config->SPI.clockPolarity);
-    PLIB_SPI_OutputDataPhaseSelect(                                         \
-                        config->SPI.spiID,                                  \
-                        config->SPI.outDataPhase);
-    
-    PLIB_SPI_BaudRateClockSelect (config->SPI.spiID, config->SPI.clock);
-    PLIB_SPI_BaudRateSet(                                                   \
-                    config->SPI.spiID,                                      \
-                    SYS_CLK_PeripheralFrequencyGet(config->SPI.busClk_id),  \
-                    config->SPI.baud);
-    PLIB_SPI_MasterEnable(config->SPI.spiID);
-    PLIB_SPI_FramedCommunicationDisable(config->SPI.spiID);
-    // Optional: Enable interrupts.
-    // Enable the module
-    PLIB_SPI_Enable(config->SPI.spiID);
-    while(PLIB_SPI_IsBusy(config->SPI.spiID));
-}
+// SPI2 configuration is handled by MCC-generated initialization

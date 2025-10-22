@@ -57,9 +57,18 @@ html/
 
 # Backup files
 *.bak
+*.bak[0-9]/
+*.bak[0-9][0-9]/
 *~
 *.swp
 
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python

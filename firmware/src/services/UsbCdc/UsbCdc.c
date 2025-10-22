@@ -191,8 +191,15 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             /* This means that the data write got completed. We can schedule
              * the next write. */
             USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE val = *(USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE*) (pData);
-            if (val.handle == pUsbCdcDataObject->writeTransferHandle && val.length == pUsbCdcDataObject->writeBufferLength)
+            if (val.handle == pUsbCdcDataObject->writeTransferHandle) {
+                // Log warning if actual transferred length differs from requested
+                if (val.length != pUsbCdcDataObject->writeBufferLength) {
+                    LOG_E("USB write length mismatch: expected %u, got %u",
+                          (unsigned)pUsbCdcDataObject->writeBufferLength, (unsigned)val.length);
+                }
+                // Always finalize to prevent stuck state, even on partial write
                 UsbCdc_FinalizeWrite(pUsbCdcDataObject);
+            }
             break;
         }
         default:
@@ -293,24 +300,56 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
 int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     // Validate length against buffer size to prevent overflow
-    if (len > USBCDC_WBUFFER_SIZE) {
-        return -1;  // Buffer too small
+    if (len == 0 || len > USBCDC_WBUFFER_SIZE) {
+        return -1;  // Invalid length
     }
-    
+
     // Validate buffer pointer to prevent null dereference
-    if (len > 0 && buf == NULL) {
+    if (buf == NULL) {
         return -1;  // Invalid buffer pointer
     }
-    
+
+    // Ensure device is configured before attempting write
+    if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) {
+        return -1;  // USB not configured/ready
+    }
+
+    // Begin atomic section to prevent race conditions with concurrent writes
+    taskENTER_CRITICAL();
+
+    // Check if previous write is still pending to prevent buffer corruption
+    if (gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        taskEXIT_CRITICAL();
+        return -1;  // Previous write still in progress
+    }
+
+    // Prepare buffer while in atomic section to prevent another task from corrupting it
     memcpy(gRunTimeUsbSttings.writeBuffer, buf, (size_t)len);
     gRunTimeUsbSttings.writeBufferLength = len;
+    gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+
+    taskEXIT_CRITICAL();
+
+    // Call USB driver outside critical section (may block/take time)
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
             &gRunTimeUsbSttings.writeTransferHandle,
             gRunTimeUsbSttings.writeBuffer,
             len,
             USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
 
-    return writeResult;
+    if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
+        // Write failed - ensure handle is invalid (atomic update)
+        taskENTER_CRITICAL();
+        gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+        gRunTimeUsbSttings.writeBufferLength = 0;
+        taskEXIT_CRITICAL();
+        return -1;
+    }
+
+    // Success: report bytes accepted for transfer
+    // Note: Don't check if handle is still valid here - the write complete interrupt
+    // can fire so fast that UsbCdc_FinalizeWrite already reset it to INVALID
+    return (int)len;
 }
 
 /**
@@ -329,45 +368,42 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
         if (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0) {
             CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USBCDC_WBUFFER_SIZE, &writeResult);
+        } else {
+            // No data to write, return true (success - nothing to do)
+            xSemaphoreGive(client->wMutex);
+            return true;
         }
         xSemaphoreGive(client->wMutex);
 
-        if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
-            //while(1);
+        // CircularBuffer callback now returns bytes written (>= 0) on success, < 0 on error
+        // Handle errors
+        if (writeResult < 0) {
+            switch (writeResult) {
+                case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_NOT_CONFIGURED:
+                case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_INVALID:
+                case USB_DEVICE_CDC_RESULT_ERROR_PARAMETER_INVALID:
+                case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
+                case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
+                    // Reset the interface
+                    gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
+                    return false;
+
+                case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
+                    SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Bad USB write size");
+                    return false;
+                case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_QUEUE_FULL: // Too many pending requests. Just wait.
+                case USB_DEVICE_CDC_RESULT_ERROR: // Concurrency issue. Just wait.
+                default:
+                    // No action
+                    return false;
+            }
         }
 
-        switch (writeResult) {
-            case USB_DEVICE_CDC_RESULT_OK:
-                // Normal operation
-                break;
-
-            case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_NOT_CONFIGURED:
-            case USB_DEVICE_CDC_RESULT_ERROR_INSTANCE_INVALID:
-            case USB_DEVICE_CDC_RESULT_ERROR_PARAMETER_INVALID:
-            case USB_DEVICE_CDC_RESULT_ERROR_ENDPOINT_HALTED:
-            case USB_DEVICE_CDC_RESULT_ERROR_TERMINATED_BY_HOST:
-                // Reset the interface
-                gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
-                return false;
-
-            case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_SIZE_INVALID: // Bad input (GIGO)
-                SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Bad USB write size");
-                return false;
-            case USB_DEVICE_CDC_RESULT_ERROR_TRANSFER_QUEUE_FULL: // Too many pending requests. Just wait.
-            case USB_DEVICE_CDC_RESULT_ERROR: // Concurrency issue. Just wait. 
-            default:
-                // No action
-                return false;
-        }
-
-        if (gRunTimeUsbSttings.writeTransferHandle ==
-                USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-            // SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Non-error w/ invalid transfer handle"); // Means USB write could not be scheduled
-            return false;
-        }
+        // Success: callback returned bytes written (>= 0)
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 /**
@@ -543,32 +579,21 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
 
     if (len == 0)return 0;
 
-    // Add timeout to prevent infinite hang
-    // Maximum wait time: 500ms
-    TickType_t startTime = xTaskGetTickCount();
-    TickType_t timeoutTicks = 500 / portTICK_PERIOD_MS;
-    
-    // Wait for buffer space with mutex protection
-    bool hasSpace = false;
-    while (!hasSpace) {
-        xSemaphoreTake(client->wMutex, portMAX_DELAY);
-        hasSpace = (CircularBuf_NumBytesFree(&client->wCirbuf) >= len);
-        size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
-        xSemaphoreGive(client->wMutex);
-        
-        if (!hasSpace) {
-            if ((xTaskGetTickCount() - startTime) >= timeoutTicks) {
-                //commTest.USBOverflow++;
-                LOG_E("USB: Write buffer timeout - needed %d bytes, only %d free", 
-                      len, currentFree);
-                return 0;
-            }
-            vTaskDelay(2 / portTICK_PERIOD_MS);
-        }
-    }
-
-    //Obtain ownership of the mutex object
+    // Non-blocking check for buffer space
+    // If buffer is full, return 0 immediately instead of blocking
+    // This prevents the streaming task from stalling during high-rate streaming
     xSemaphoreTake(client->wMutex, portMAX_DELAY);
+    size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
+    if (currentFree < len) {
+        xSemaphoreGive(client->wMutex);
+        // Only log if buffer is critically full to avoid spam
+        static uint32_t dropCount = 0;
+        if (currentFree < 128 && (++dropCount % 1000) == 0) {
+            LOG_E("USB: Buffer full - dropped %lu packets (needed %d bytes, only %d free)",
+                  dropCount, len, currentFree);
+        }
+        return 0;  // No space available - return immediately
+    }
     bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
     xSemaphoreGive(client->wMutex);
 

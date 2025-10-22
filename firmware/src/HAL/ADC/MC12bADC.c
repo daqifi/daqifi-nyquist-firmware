@@ -157,8 +157,10 @@ bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pA
     if (type == MC12B_ADC_TYPE_DEDICATED || type==MC12B_ADC_TYPE_ALL) {
         for (int i = 0; i < aiChannelSize; i++) {
             if (pRunTimeChannlConfig->Data[i].IsEnabled) {
-                if (pAIConfigArr->Data[i].Config.MC12b.ChannelType == 1){                   
-                    ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);                     
+                // Check Type before accessing union member
+                if (pAIConfigArr->Data[i].Type == AIn_MC12bADC &&
+                        pAIConfigArr->Data[i].Config.MC12b.ChannelType == 1){
+                    ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
                 }
             }
         }

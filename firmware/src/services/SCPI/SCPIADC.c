@@ -18,6 +18,10 @@
 #include "../daqifi_settings.h"
 #include "HAL/TimerApi/TimerApi.h"
 
+// FreeRTOS
+#include "FreeRTOS.h"
+#include "task.h"
+
 scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
     int channel;
     AInSample *pAInLatest;
@@ -40,9 +44,15 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
             SCPI_ResultDouble(context, 0.0);
             return SCPI_RES_OK;
         }
+
         pAInLatest = BoardData_Get(
                 BOARDDATA_AIN_LATEST,
                 index);
+
+        if (pAInLatest == NULL) {
+            SCPI_ResultDouble(context, 0.0);
+            return SCPI_RES_OK;
+        }
 
         val = ADC_ConvertToVoltage(pAInLatest);
         SCPI_ResultDouble(context, val);
@@ -98,49 +108,109 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         if (channelIndex > pBoardConfigAInChannels->Size) {
             return SCPI_RES_ERR;
         }
-        if (module->Type == AIn_MC12bADC) // If the current module is the internal ADC then check to see if the channel is public
-        {
-            if (channel->Config.MC12b.IsPublic) {
-                channelRuntimeConfig->IsEnabled = (param2 > 0); // If public, allow allow configuration.
-            } else {
-                return SCPI_RES_ERR; //  If private, return error
-            }
-        } else {
-            channelRuntimeConfig->IsEnabled = (param2 > 0); // If not the internal ADC, allow configuration.
+        
+        // Board variant-aware channel enable logic
+        uint8_t boardVariant = pBoardConfig->BoardVariant;
+        uint8_t channelId = (uint8_t) param1;
+        
+        switch (boardVariant) {
+            case 1: // NQ1: User channels 0-15 (MC12bADC), monitoring channels always on
+                if (channelId <= 15) {
+                    if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
+                        channelRuntimeConfig->IsEnabled = (param2 > 0);
+                    } else {
+                        return SCPI_RES_ERR; // Private or wrong type
+                    }
+                } else {
+                    return SCPI_RES_ERR; // Monitoring channels not user-controllable
+                }
+                break;
+                
+            case 3: // NQ3: User channels 0-7 (AD7609), monitoring channels always on
+                if (channelId <= 7) {
+                    if (module->Type == AIn_AD7609) {
+                        channelRuntimeConfig->IsEnabled = (param2 > 0);
+                    } else {
+                        return SCPI_RES_ERR; // Wrong type for NQ3 user channels
+                    }
+                } else {
+                    return SCPI_RES_ERR; // Monitoring channels not user-controllable
+                }
+                break;
+                
+            default: // NQ2 or unknown variants
+                // Legacy behavior for compatibility
+                if (module->Type == AIn_MC12bADC) {
+                    if (channel->Config.MC12b.IsPublic) {
+                        channelRuntimeConfig->IsEnabled = (param2 > 0);
+                    } else {
+                        return SCPI_RES_ERR;
+                    }
+                } else {
+                    channelRuntimeConfig->IsEnabled = (param2 > 0);
+                }
+                break;
         }
     } else {
-        // Channel mask
-        size_t index = 0;
-        for (index = 0; index < pBoardConfigAInChannels->Size; ++index) {
+        // Channel mask - board variant-aware bulk enable
+        uint8_t boardVariant = pBoardConfig->BoardVariant;
+        uint8_t maxUserChannel = (boardVariant == 3) ? 7 : 15; // NQ3: 0-7, others: 0-15
+        
+        for (size_t index = 0; index <= maxUserChannel; ++index) {
             size_t channelIndex = ADC_FindChannelIndex((uint8_t) index);
-            AInRuntimeConfig* channelRuntimeConfig =
-                    &pRuntimeAInChannels->Data[channelIndex];
-            AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
-            const AInModule* module = ADC_FindModule(channel->Type);
-            bool value = (bool) ((param1 & (1 << index)) > 0);
+            if (channelIndex < pBoardConfigAInChannels->Size) {
+                AInRuntimeConfig* channelRuntimeConfig =
+                        &pRuntimeAInChannels->Data[channelIndex];
+                AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
+                const AInModule* module = ADC_FindModule(channel->Type);
+                bool value = (bool) ((param1 & (1 << index)) > 0);
 
-            // TODO: Perhaps add some sort of feedback if the user is attempting to edit a value beyond their  - this is fairly tricky to implement however
-            if (module->Type == AIn_MC12bADC) // If the current module is the internal ADC then check to see if the channel is public
-            {
-                if (channel->Config.MC12b.IsPublic) {
-                    channelRuntimeConfig->IsEnabled = value; // If public, allow allow configuration.
+                switch (boardVariant) {
+                    case 1: // NQ1: MC12bADC user channels 0-15
+                        if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
+                            channelRuntimeConfig->IsEnabled = value;
+                        }
+                        break;
+                        
+                    case 3: // NQ3: AD7609 user channels 0-7
+                        if (module->Type == AIn_AD7609) {
+                            channelRuntimeConfig->IsEnabled = value;
+                        }
+                        break;
+                        
+                    default: // NQ2 or legacy
+                        if (module->Type == AIn_MC12bADC) {
+                            if (channel->Config.MC12b.IsPublic) {
+                                channelRuntimeConfig->IsEnabled = value;
+                            }
+                        } else {
+                            channelRuntimeConfig->IsEnabled = value;
+                        }
+                        break;
                 }
-            } else {
-                channelRuntimeConfig->IsEnabled = value; // If not the internal ADC, allow configuration.
             }
         }
+        // Note: Monitoring channels (>maxUserChannel) are always enabled and not user-controllable
     }
     uint16_t activeType1ChannelCount = 0;
+    bool hasActiveAD7609Channels __attribute__((unused)) = false;
     uint64_t freq = pRunTimeStreamConfig->Frequency;
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
     int i;
+    
+    // Count active channels and detect AD7609 usage
     for (i = 0; i < pBoardConfigAInChannels->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            if (pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
+            if (pBoardConfigAInChannels->Data[i].Type == AIn_AD7609) {
+                hasActiveAD7609Channels = true;
+            } else if (pBoardConfigAInChannels->Data[i].Type == AIn_MC12bADC && 
+                       pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
                 activeType1ChannelCount++;
             }
         }
     }
+    
+    // Note: Internal monitoring channels are configured with fixed 1Hz in NQ3 runtime config
     /**
      * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
      * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
@@ -153,6 +223,31 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
         freq = 15000 / activeType1ChannelCount;
     }
+
+    // CRITICAL: Always call ADC_WriteChannelStateAll() to enable/disable channel interrupts
+    // This must happen even when streaming is off, so channels are ready when streaming starts
+    if (!ADC_WriteChannelStateAll()) {
+        return SCPI_RES_ERR;
+    }
+
+    // If streaming is globally disabled, channel states updated but no timer recalculation needed
+    if (!pRunTimeStreamConfig->IsEnabled) {
+        return SCPI_RES_OK;
+    }
+
+    // Individual channel frequencies default to 0 - use 1kHz as reasonable default
+    // This maintains Arghya's original design for individual channel frequency control
+    if (freq == 0) {
+        freq = 1000; // Default to 1kHz for individual channel sampling
+    }
+
+    // Guard against invalid timer configuration returning 0 clock frequency
+    if (clkFreq == 0) {
+        LOG_E("SCPI_ADCChanEnableSet: Invalid timer clock frequency (timer index %u)",
+              pBoardConfig->StreamingConfig.TimerIndex);
+        return SCPI_RES_ERR;
+    }
+
     pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
     pRunTimeStreamConfig->Frequency = freq;
     pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
@@ -162,11 +257,7 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
     }
 
-    if (ADC_WriteChannelStateAll()) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
@@ -289,14 +380,86 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
-    int param1;
-    if (SCPI_ParamInt32(context, &param1, FALSE));
+    int32_t rangeParam;
+
+    // Get range parameter (0=±5V, 1=±10V)
+    if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
+        return SCPI_RES_ERR;
+    }
+
+    // Validate range value
+    if (rangeParam != 0 && rangeParam != 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    // Find the AD7609 module
+    const AInModule* module = ADC_FindModule(AIn_AD7609);
+    if (module == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Get runtime modules configuration
+    AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
+    uint8_t moduleIndex = AIn_AD7609;  // Use module type as index
+
+    // Validate runtime configuration and module index
+    if (pRuntimeModules == NULL || moduleIndex >= pRuntimeModules->Size) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Prevent changing range while streaming is active
+    // Changing range during streaming can corrupt ADC data
+    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pStreamCfg && pStreamCfg->Running) {
+        LOG_E("SCPI_ADCChanRangeSet: Rejecting range change during active streaming");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Convert parameter to voltage range
+    double rangeVoltage = (rangeParam == 1) ? 10.0 : 5.0;
+    bool range10V = (rangeParam == 1);
+
+    // Ensure Range_Pin is configured as output before writing
+    GPIO_PinOutputEnable(module->Config.AD7609.Range_Pin);
+
+    // Update hardware pin (Range_Pin: LOW=±10V, HIGH=±5V)
+    GPIO_PinWrite(module->Config.AD7609.Range_Pin, !range10V);
+
+    // Wait for AD7609 analog circuitry to settle after range change
+    // Datasheet specifies settling time; conservative 2ms delay ensures stability
+    vTaskDelay(pdMS_TO_TICKS(2));
+
+    // Store range value after hardware has settled
+    pRuntimeModules->Data[moduleIndex].Range = rangeVoltage;
+
+    LOG_I("AD7609 module range set to ±%.1fV", rangeVoltage);
+
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_ADCChanRangeGet(scpi_t * context) {
-    int param1;
-    if (SCPI_ParamInt32(context, &param1, FALSE));
+    // Find the AD7609 module
+    const AInModule* module = ADC_FindModule(AIn_AD7609);
+    if (module == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // AD7609 is module index 1 in NQ3 board
+    AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
+    uint8_t moduleIndex = AIn_AD7609;  // Use module type as index
+
+    // Get range and convert to 0/1 format
+    double rangeVoltage = pRuntimeModules->Data[moduleIndex].Range;
+    int32_t rangeParam = (rangeVoltage >= 9.0) ? 1 : 0;  // >=9V means 10V range
+
+    SCPI_ResultInt32(context, rangeParam);
+
     return SCPI_RES_OK;
 }
 
