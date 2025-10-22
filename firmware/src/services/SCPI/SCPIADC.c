@@ -224,9 +224,14 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         freq = 15000 / activeType1ChannelCount;
     }
 
-    // If streaming is globally disabled, don't recalculate timer periods
+    // CRITICAL: Always call ADC_WriteChannelStateAll() to enable/disable channel interrupts
+    // This must happen even when streaming is off, so channels are ready when streaming starts
+    if (!ADC_WriteChannelStateAll()) {
+        return SCPI_RES_ERR;
+    }
+
+    // If streaming is globally disabled, channel states updated but no timer recalculation needed
     if (!pRunTimeStreamConfig->IsEnabled) {
-        // Streaming is off - channels can be enabled/disabled but no timer changes
         return SCPI_RES_OK;
     }
 
@@ -252,11 +257,7 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
     }
 
-    if (ADC_WriteChannelStateAll()) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
