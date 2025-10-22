@@ -335,6 +335,7 @@ void streaming_Task(void) {
             }
             if (hasSD) {
                 size_t written = sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
+                (void)written;  // May be unused when LOG_D is disabled
                 static bool sd_logged = false;
                 if (!sd_logged) {
                     LOG_D("SD: Write called, packetSize=%u, written=%u", packetSize, written);

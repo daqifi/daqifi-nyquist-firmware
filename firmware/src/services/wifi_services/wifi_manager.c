@@ -241,6 +241,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
 
             if (NULL != pAcceptMessage) {
                 char s[20];
+                (void)s;  // May be unused when LOG_D is disabled
                 if (gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) // close any open client (only one client supported at one time)
                 {
                     wifi_tcp_server_CloseClientSocket();
@@ -279,6 +280,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 uint32_t strRemoteHostAddr = pstrRx->strRemoteAddr.sin_addr.s_addr;
                 char s[20];
                 inet_ntop(AF_INET, &strRemoteHostAddr, s, sizeof (s));
+                (void)s; (void)u16port;  // May be unused when LOG_D is disabled
                 LOG_D("\r\nUDP Discovery: Received frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
                 LOG_D("UDP Discovery: Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
                 uint16_t announcePacktLen = UDP_BUFFER_SIZE;
@@ -377,6 +379,7 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
         addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT);
         addr.sin_addr.s_addr = 0;  // Listen on all interfaces (same as INADDR_ANY)
         int bindResult = bind(*pSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+        (void)bindResult;  // May be unused when LOG_D is disabled
         LOG_D("UDP socket bind result: %d\r\n", bindResult);
         returnStatus = true;
     } else {
