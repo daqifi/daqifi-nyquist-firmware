@@ -425,9 +425,10 @@ size_t Nanopb_Encode(tBoardData* state,
                         if (!pPublicSampleList->isSampleValid[i])
                             continue;
                         data = pPublicSampleList->sampleElement[i];
-                        if (data.Channel > maxDataIndex)
-                            continue;
-                        message.analog_in_data[data.Channel] = data.Value;
+                        if (message.analog_in_data_count > maxDataIndex)
+                            break;  // Array full
+                        // Use sequential packing
+                        message.analog_in_data[message.analog_in_data_count] = data.Value;
                         message.analog_in_data_count++;
                     }
 
