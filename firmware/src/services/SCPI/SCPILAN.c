@@ -1,3 +1,5 @@
+#define LOG_LVL LOG_LEVEL_SCPI
+
 #include "SCPILAN.h"
 
 // General
@@ -19,10 +21,6 @@
 #include "services/wifi_services/wifi_manager.h"
 // SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently
 // SPI coordination handled at operation level when needed
-
-#include "Util/Logger.h"
-
-#define LOG_LEVEL_LOCAL 'D'
 
 #define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
 

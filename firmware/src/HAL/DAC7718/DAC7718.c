@@ -1,8 +1,9 @@
-/* 
+/*
  * @file   DAC7718.c
  * @brief This file manages the DAC7718 module
- * 
+ *
  */
+#define LOG_LVL LOG_LEVEL_DAC
 
 #include "DAC7718.h"
 #include "peripheral/gpio/plib_gpio.h"

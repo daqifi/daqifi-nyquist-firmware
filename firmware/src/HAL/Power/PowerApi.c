@@ -1,8 +1,7 @@
-/*! @file PowerApi.c 
- * 
+/*! @file PowerApi.c
+ *
  * This file implements the functions to manage power API
  */
-#define LOG_EN  LOG_POWER
 #define LOG_LVL LOG_LEVEL_POWER
 
 #include "HAL/Power/PowerApi.h"

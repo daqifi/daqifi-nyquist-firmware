@@ -1,4 +1,4 @@
-
+#define LOG_LVL LOG_LEVEL_USB
 #include "UsbCdc.h"
 
 // libraries
