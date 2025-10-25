@@ -335,10 +335,13 @@ void streaming_Task(void) {
             }
             if (hasSD) {
                 size_t written = sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
+                if (written != packetSize) {
+                    LOG_E("SD: Short/failed write, expected=%u, written=%u", (unsigned)packetSize, (unsigned)written);
+                }
                 (void)written;  // May be unused when LOG_D is disabled
                 static bool sd_logged = false;
                 if (!sd_logged) {
-                    LOG_D("SD: Write called, packetSize=%u, written=%u", packetSize, written);
+                    LOG_D("SD: Write called, packetSize=%u, written=%u", (unsigned)packetSize, (unsigned)written);
                     sd_logged = true;
                 }
             } else {

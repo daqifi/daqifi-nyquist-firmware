@@ -202,8 +202,9 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
     }
 }
 
-static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
 #define UDP_BUFFER_SIZE 1460
+
+static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
     static uint8_t udpBuffer[UDP_BUFFER_SIZE];
     switch (messageType) {
         case SOCKET_MSG_BIND:
@@ -218,7 +219,15 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     listen(gStateMachineContext.pTcpServerContext->serverSocket, 0);
                 }
             } else {
-                LOG_E("[%s:%d]Error Socket Bind", __FILE__, __LINE__);
+                LOG_E("Socket bind failed (socket=%d, status=%d)", socket,
+                      (pBindMessage != NULL) ? pBindMessage->status : -1);
+                // Close failed socket to clean up resources
+                shutdown(socket);
+                if (socket == gStateMachineContext.udpServerSocket) {
+                    gStateMachineContext.udpServerSocket = -1;
+                } else if (socket == gStateMachineContext.pTcpServerContext->serverSocket) {
+                    gStateMachineContext.pTcpServerContext->serverSocket = -1;
+                }
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;
