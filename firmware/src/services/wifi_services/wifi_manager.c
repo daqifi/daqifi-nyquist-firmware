@@ -215,7 +215,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     LOG_D("UDP socket bind successful (socket=%d), starting recvfrom on port %d\r\n", socket, WIFI_MANAGER_UDP_LISTEN_PORT);
                     recvfrom(socket, udpBuffer, UDP_BUFFER_SIZE, 0);
                     SendEvent(WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED);
-                } else if (socket == gStateMachineContext.pTcpServerContext->serverSocket) {
+                } else if (gStateMachineContext.pTcpServerContext != NULL &&
+                           socket == gStateMachineContext.pTcpServerContext->serverSocket) {
                     listen(gStateMachineContext.pTcpServerContext->serverSocket, 0);
                 }
             } else {
@@ -225,7 +226,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 shutdown(socket);
                 if (socket == gStateMachineContext.udpServerSocket) {
                     gStateMachineContext.udpServerSocket = -1;
-                } else if (socket == gStateMachineContext.pTcpServerContext->serverSocket) {
+                } else if (gStateMachineContext.pTcpServerContext != NULL &&
+                           socket == gStateMachineContext.pTcpServerContext->serverSocket) {
                     gStateMachineContext.pTcpServerContext->serverSocket = -1;
                 }
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
