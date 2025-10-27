@@ -223,7 +223,9 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 LOG_E("Socket bind failed (socket=%d, status=%d)", socket,
                       (pBindMessage != NULL) ? pBindMessage->status : -1);
                 // Close failed socket to clean up resources
-                shutdown(socket);
+                if (socket >= 0) {
+                    shutdown(socket);
+                }
                 if (socket == gStateMachineContext.udpServerSocket) {
                     gStateMachineContext.udpServerSocket = -1;
                 } else if (gStateMachineContext.pTcpServerContext != NULL &&
