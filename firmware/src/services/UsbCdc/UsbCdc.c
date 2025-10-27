@@ -589,8 +589,8 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
         // Only log if buffer is critically full to avoid spam
         static uint32_t dropCount = 0;
         if (currentFree < 128 && (++dropCount % 1000) == 0) {
-            LOG_E("USB: Buffer full - dropped %lu packets (needed %d bytes, only %d free)",
-                  dropCount, len, currentFree);
+            LOG_E("USB: Buffer full - dropped %u packets (needed %d bytes, only %d free)",
+                  (unsigned)dropCount, len, currentFree);
         }
         return 0;  // No space available - return immediately
     }

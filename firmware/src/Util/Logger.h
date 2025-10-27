@@ -106,10 +106,11 @@ extern "C" {
 
 /**
  * Logs a formatted message
- * @param format
+ * @param format The format string
+ * @param ... Variable arguments
  * @return The number of characters written
  */
-int LogMessage(const char* format, ...);
+int LogMessage(const char* format, ...) __attribute__((format(printf, 1, 2)));
 
 size_t LogMessageCount();
 
@@ -118,30 +119,33 @@ size_t LogMessagePop(uint8_t* buffer, size_t maxSize);
 
 // Helper macro to get the log level for the current module
 // Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)
+// If not defined, defaults to ERROR level (safe for production, Harmony compatibility)
 #ifndef LOG_LVL
-    #define LOG_LVL LOG_LEVEL_ERROR  // Default to ERROR if not specified
+    #define LOG_LVL LOG_LEVEL_ERROR
 #endif
 
+// Helper to safely discard arguments when logging disabled
+#define LOG_NOOP(...) do { } while(0)
 
 // LOG_E is enabled at ERROR level and above
 #if (LOG_LVL >= LOG_LEVEL_ERROR)
     #define LOG_E(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
-    #define LOG_E(fmt,...) do { } while(0)
+    #define LOG_E(...) LOG_NOOP(__VA_ARGS__)
 #endif
 
 // LOG_I is enabled at INFO level and above
 #if (LOG_LVL >= LOG_LEVEL_INFO)
     #define LOG_I(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
-    #define LOG_I(fmt,...) do { } while(0)
+    #define LOG_I(...) LOG_NOOP(__VA_ARGS__)
 #endif
 
 // LOG_D is enabled at DEBUG level
 #if (LOG_LVL >= LOG_LEVEL_DEBUG)
     #define LOG_D(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
-    #define LOG_D(fmt,...) do { } while(0)
+    #define LOG_D(...) LOG_NOOP(__VA_ARGS__)
 #endif
 
 
