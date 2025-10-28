@@ -1,3 +1,4 @@
+#define LOG_LVL LOG_LEVEL_WIFI
 #include "wifi_manager.h"
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
@@ -201,8 +202,9 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
     }
 }
 
-static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
 #define UDP_BUFFER_SIZE 1460
+
+static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
     static uint8_t udpBuffer[UDP_BUFFER_SIZE];
     switch (messageType) {
         case SOCKET_MSG_BIND:
@@ -213,11 +215,23 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     LOG_D("UDP socket bind successful (socket=%d), starting recvfrom on port %d\r\n", socket, WIFI_MANAGER_UDP_LISTEN_PORT);
                     recvfrom(socket, udpBuffer, UDP_BUFFER_SIZE, 0);
                     SendEvent(WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED);
-                } else if (socket == gStateMachineContext.pTcpServerContext->serverSocket) {
+                } else if (gStateMachineContext.pTcpServerContext != NULL &&
+                           socket == gStateMachineContext.pTcpServerContext->serverSocket) {
                     listen(gStateMachineContext.pTcpServerContext->serverSocket, 0);
                 }
             } else {
-                LOG_E("[%s:%d]Error Socket Bind", __FILE__, __LINE__);
+                LOG_E("Socket bind failed (socket=%d, status=%d)", socket,
+                      (pBindMessage != NULL) ? pBindMessage->status : -1);
+                // Close failed socket to clean up resources
+                if (socket >= 0) {
+                    shutdown(socket);
+                }
+                if (socket == gStateMachineContext.udpServerSocket) {
+                    gStateMachineContext.udpServerSocket = -1;
+                } else if (gStateMachineContext.pTcpServerContext != NULL &&
+                           socket == gStateMachineContext.pTcpServerContext->serverSocket) {
+                    gStateMachineContext.pTcpServerContext->serverSocket = -1;
+                }
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;
@@ -240,6 +254,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
 
             if (NULL != pAcceptMessage) {
                 char s[20];
+                (void)s;  // May be unused when LOG_D is disabled
                 if (gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) // close any open client (only one client supported at one time)
                 {
                     wifi_tcp_server_CloseClientSocket();
@@ -278,6 +293,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 uint32_t strRemoteHostAddr = pstrRx->strRemoteAddr.sin_addr.s_addr;
                 char s[20];
                 inet_ntop(AF_INET, &strRemoteHostAddr, s, sizeof (s));
+                (void)s; (void)u16port;  // May be unused when LOG_D is disabled
                 LOG_D("\r\nUDP Discovery: Received frame with size=%d\r\nHost address=%s\r\nPort number = %d\r\n", pstrRx->s16BufferSize, s, u16port);
                 LOG_D("UDP Discovery: Frame Data : %.*s\r\n", pstrRx->s16BufferSize, (char*) pstrRx->pu8Buffer);
                 uint16_t announcePacktLen = UDP_BUFFER_SIZE;
@@ -376,6 +392,7 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
         addr.sin_port = _htons(WIFI_MANAGER_UDP_LISTEN_PORT);
         addr.sin_addr.s_addr = 0;  // Listen on all interfaces (same as INADDR_ANY)
         int bindResult = bind(*pSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+        (void)bindResult;  // May be unused when LOG_D is disabled
         LOG_D("UDP socket bind result: %d\r\n", bindResult);
         returnStatus = true;
     } else {

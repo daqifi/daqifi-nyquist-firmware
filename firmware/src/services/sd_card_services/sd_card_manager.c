@@ -1,3 +1,5 @@
+#define LOG_LVL LOG_LEVEL_SD
+
 #include <string.h>
 #include "Util/Logger.h"
 #include "sd_card_manager.h"

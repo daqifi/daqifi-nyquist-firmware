@@ -129,7 +129,7 @@ static bool TcpServerFlush() {
         // Other error - log for debugging
         static uint32_t errorCount = 0;
         if ((++errorCount % 100) == 0) {
-            LOG_E("TcpServerFlush: send() returned error %d (count=%lu)", sockRet, errorCount);
+            LOG_E("TcpServerFlush: send() returned error %d (count=%u)", sockRet, (unsigned)errorCount);
         }
         funRet = false;
     }

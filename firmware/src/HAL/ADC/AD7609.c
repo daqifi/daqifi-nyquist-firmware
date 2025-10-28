@@ -14,6 +14,7 @@
  * - Manual conversion triggering via CONVST pin
  * - Busy signal monitoring for conversion complete
  */
+#define LOG_LVL LOG_LEVEL_ADC
 
 #include "AD7609.h"
 #include "configuration.h"

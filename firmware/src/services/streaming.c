@@ -334,10 +334,37 @@ void streaming_Task(void) {
                 wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
             if (hasSD) {
-                size_t written = sd_card_manager_WriteToBuffer((const char *) buffer, packetSize);
+                const uint8_t* p = buffer;
+                size_t remaining = packetSize;
+                size_t total_written = 0;
+                unsigned int attempts = 0;
+                const unsigned int max_attempts = 3;
+
+                while (remaining > 0 && attempts < max_attempts) {
+                    size_t w = sd_card_manager_WriteToBuffer((const char *)p, remaining);
+                    if (w == 0) {
+                        // No progress, break to avoid tight loop
+                        break;
+                    }
+                    total_written += w;
+                    p += w;
+                    remaining -= w;
+                    attempts++;
+                    if (remaining > 0) {
+                        // Partial write, yield to give SD task a chance
+                        taskYIELD();
+                    }
+                }
+
+                if (total_written != packetSize) {
+                    LOG_E("SD: Write failed after %u attempts, expected=%u, written=%u",
+                          attempts, (unsigned)packetSize, (unsigned)total_written);
+                }
+
                 static bool sd_logged = false;
                 if (!sd_logged) {
-                    LOG_D("SD: Write called, packetSize=%u, written=%u", packetSize, written);
+                    LOG_D("SD: Write completed, packetSize=%u, written=%u, attempts=%u",
+                          (unsigned)packetSize, (unsigned)total_written, attempts);
                     sd_logged = true;
                 }
             } else {
