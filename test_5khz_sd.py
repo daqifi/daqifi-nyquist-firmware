@@ -128,14 +128,14 @@ def run_5khz_test(tester, channel=4, duration_sec=10):
     tester.send_command("SYSTem:STReam:FORmat 2")  # 2=CSV
 
     print("  - Destination: SD card")
-    tester.send_command("SYSTem:STReam:DEST 1")  # 1=SD
+    tester.send_command("SYSTem:STReam:INTerface 2")  # 2=SD
 
     # Step 3: Enable only the test channel
     print(f"\nStep 3: Enabling Channel {channel} only...")
-    tester.send_command(f"ENAble:AIN:CHANnel {channel},1")
+    tester.send_command(f"ENAble:VOLTage:DC {channel},1")
 
     # Verify
-    enabled = tester.query(f"ENAble:AIN:CHANnel? {channel}")
+    enabled = tester.query(f"ENAble:VOLTage:DC? {channel}")
     print(f"  Channel {channel} enabled: {enabled}")
 
     # Step 4: Start streaming

@@ -1153,9 +1153,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         //No freq given just stream with the current value
     }
 
-    // Detect which interface initiated streaming for single-interface mode
-    // This prevents bandwidth overload at high sample rates (e.g., 1000 Hz × 16 channels)
-    pRunTimeStreamConfig->ActiveInterface = SCPI_GetInterface(context);
+    // Auto-detect interface only if user hasn't explicitly set it via SYSTem:STReam:INTerface
+    // If current interface matches what auto-detection would choose, allow override
+    // If different, user explicitly set it (e.g., SD or All) so preserve their choice
+    StreamingInterface detectedInterface = SCPI_GetInterface(context);
+    StreamingInterface currentInterface = pRunTimeStreamConfig->ActiveInterface;
+
+    // Only auto-detect if current setting matches the detected interface
+    // (meaning user hasn't changed it, or wants auto-detection)
+    if (currentInterface == detectedInterface || currentInterface == StreamingInterface_USB) {
+        pRunTimeStreamConfig->ActiveInterface = detectedInterface;
+    }
+    // Otherwise keep user's explicit setting (e.g., SD or All)
 
     Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;
@@ -1225,6 +1234,18 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     if (param1 < 0 || param1 > 3) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
+    }
+
+    // Check if SD card is enabled when trying to use SD or All interfaces
+    if (param1 == StreamingInterface_SD || param1 == StreamingInterface_All) {
+        sd_card_manager_settings_t* pSdCardSettings =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+        if (!pSdCardSettings->enable) {
+            LOG_E("Cannot set interface to SD - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
     }
 
     pRunTimeStreamConfig->ActiveInterface = (StreamingInterface) param1;
