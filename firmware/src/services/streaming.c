@@ -97,6 +97,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+                static uint32_t queueDropCount = 0;
+                if ((++queueDropCount % 100) == 0) {
+                    LOG_E("Streaming: Sample queue full - dropped %u samples (queue at capacity)",
+                          (unsigned)queueDropCount);
+                }
                 vPortFree(pPublicSampleList);
             }
 
