@@ -1212,6 +1212,33 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
+    int param1;
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    // Validate interface value: 0=USB, 1=WiFi, 2=SD, 3=All
+    if (param1 < 0 || param1 > 3) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    pRunTimeStreamConfig->ActiveInterface = (StreamingInterface) param1;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    SCPI_ResultInt32(context, (int) pRunTimeStreamConfig->ActiveInterface);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
@@ -1562,6 +1589,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:StreamData?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:STReam:FORmat", .callback = SCPI_SetStreamFormat,}, // 0 = pb = default, 1 = text (json)
     {.pattern = "SYSTem:STReam:FORmat?", .callback = SCPI_GetStreamFormat,},
+    {.pattern = "SYSTem:STReam:INTerface", .callback = SCPI_SetStreamInterface,}, // 0=USB, 1=WiFi, 2=SD, 3=All
+    {.pattern = "SYSTem:STReam:INTerface?", .callback = SCPI_GetStreamInterface,},
     {.pattern = "SYSTem:STReam:Stats?", .callback = SCPI_GetStreamStats,},
     {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
     //
