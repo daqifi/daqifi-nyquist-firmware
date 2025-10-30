@@ -28,7 +28,8 @@
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
 #include "Util/Logger.h"
-// SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently  
+#include "../UsbCdc/UsbCdc.h"
+// SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently
 // SPI coordination handled at operation level when needed
 #include <string.h>
 
@@ -103,15 +104,20 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+            LOG_E("SD:LOGging - Filename too long: %d bytes, max: %d\r\n", fileLen, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
         memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
         pSdCardRuntimeConfig->file[fileLen] = '\0';
+        LOG_D("SD:LOGging - Set filename to '%s' (%d bytes) dir='%s'\r\n",
+              pSdCardRuntimeConfig->file, fileLen, pSdCardRuntimeConfig->directory);
+    } else {
+        LOG_D("SD:LOGging - No filename provided, using existing: '%s'\r\n", pSdCardRuntimeConfig->file);
     }
-   
+
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
-    
+
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     result = SCPI_RES_OK;
 __exit_point:
@@ -163,17 +169,17 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
    
 
     if (!pSdCardRuntimeConfig->enable) {
-        // Log the error but send nothing - SCPI handler adds termination
         LOG_E("SD:LIST? - SD card not enabled\r\n");
-        result = SCPI_RES_OK;
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
     // Check if SD card is actually present and mounted
     if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
-        // Log the error but send nothing - SCPI handler adds termination
         LOG_E("SD:LIST? - No SD card detected\r\n");
-        result = SCPI_RES_OK;
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
         goto __exit_point;
     }
     
@@ -192,13 +198,17 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
     // If no directory specified, the sd_card_manager will use the default from settings
     
-    // Set mode to LIST_DIRECTORY and let sd_card_manager handle it asynchronously
-    // The results will be sent via sd_card_manager_DataReadyCB() callback to USB CDC
-    // Note: WiFi must be disabled before SD operations (mutual exclusion enforced at higher level)
+    // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
-    
-    // Return OK immediately - the actual listing will be sent asynchronously
+
+    // Wait for sd_card_manager to complete listing (up to 2 seconds)
+    int waitCount = 0;
+    while (waitCount < 200 && !sd_card_manager_IsIdle()) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waitCount++;
+    }
+
     result = SCPI_RES_OK;
 __exit_point:
     return result;

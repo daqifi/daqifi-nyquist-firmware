@@ -10,7 +10,7 @@
 #include "services/daqifi_settings.h"
 #include "Util/CircularBuffer.h"
 
-#define SD_CARD_MANAGER_CONF_RBUFFER_SIZE 512
+#define SD_CARD_MANAGER_CONF_RBUFFER_SIZE 512   // Small buffer, send directory listings in chunks
 #define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 8192  // Increased to 8KB for 5kHz streaming support
 
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
@@ -128,6 +128,13 @@ extern "C" {
      *       to write data using sd_card_manager_WriteToBuffer().
      */
     size_t sd_card_manager_GetWriteBuffFreeSize(void);
+
+    /**
+     * @brief Checks if the SD card manager is currently idle (not processing any operation).
+     *
+     * @return true if idle, false if busy processing an operation
+     */
+    bool sd_card_manager_IsIdle(void);
 
     /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.

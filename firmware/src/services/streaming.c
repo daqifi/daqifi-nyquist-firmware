@@ -280,6 +280,18 @@ void streaming_Task(void) {
                 break;
         }
 
+        // Override: If SD card logging is explicitly enabled, automatically enable SD output
+        // Only allow USB+SD (not WiFi+SD, as they share the SPI bus)
+        sd_card_manager_settings_t* pSdCardSettings =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+        if (pSdCardSettings && pSdCardSettings->enable &&
+            pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+            // Only enable SD if we're not streaming to WiFi (SPI bus conflict)
+            if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_WiFi) {
+                hasSD = (sdSize >= 128);
+            }
+        }
+
         // Log streaming start info once for debugging
         static bool firstLog = false;
         if (!firstLog) {
