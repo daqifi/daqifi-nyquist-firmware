@@ -419,6 +419,93 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * @brief Delete a file from the SD card
+ *
+ * Usage: SYST:STOR:SD:DELete "filename"
+ *
+ * Example: SYST:STOR:SD:DEL "test.csv"
+ */
+scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
+    const char* pBuff;
+    size_t fileLen = 0;
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!pSdCardRuntimeConfig->enable) {
+        LOG_E("SD:DELete - SD card not enabled\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Get filename parameter (required)
+    SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+
+    if (fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+        LOG_E("SD:DELete - Invalid filename length: %d\r\n", fileLen);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Set the filename
+    memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
+    pSdCardRuntimeConfig->file[fileLen] = '\0';
+    LOG_D("SD:DELete - Deleting file '%s'\r\n", pSdCardRuntimeConfig->file);
+
+    // Set mode to DELETE and trigger the operation
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+
+    // Wait for sd_card_manager to complete deletion (up to 1 second)
+    int waitCount = 0;
+    while (waitCount < 100 && !sd_card_manager_IsIdle()) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waitCount++;
+    }
+
+    result = SCPI_RES_OK;
+__exit_point:
+    return result;
+}
+
+/**
+ * @brief Format the SD card (erase all files)
+ *
+ * Usage: SYST:STOR:SD:FORmat
+ *
+ * WARNING: This will erase ALL files on the SD card!
+ */
+scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!pSdCardRuntimeConfig->enable) {
+        LOG_E("SD:FORmat - SD card not enabled\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    LOG_D("SD:FORmat - Formatting SD card (erasing all files)\r\n");
+
+    // Set mode to FORMAT and trigger the operation
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+
+    // Wait for sd_card_manager to complete format (up to 5 seconds - formatting can be slow)
+    int waitCount = 0;
+    while (waitCount < 500 && !sd_card_manager_IsIdle()) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waitCount++;
+    }
+
+    result = SCPI_RES_OK;
+__exit_point:
+    return result;
+}
+
 /* *****************************************************************************
  End of File
  */

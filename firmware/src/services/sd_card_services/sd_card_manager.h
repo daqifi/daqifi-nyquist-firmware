@@ -33,6 +33,8 @@ extern "C" {
         SD_CARD_MANAGER_MODE_READ,
         SD_CARD_MANAGER_MODE_WRITE,
         SD_CARD_MANAGER_MODE_LIST_DIRECTORY,
+        SD_CARD_MANAGER_MODE_DELETE_FILE,
+        SD_CARD_MANAGER_MODE_FORMAT,
     } sd_card_manager_mode_t;
 
     typedef struct {

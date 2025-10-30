@@ -1650,6 +1650,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
+    {.pattern = "SYSTem:STORage:SD:DELete", .callback = SCPI_StorageSDDelete},
+    {.pattern = "SYSTem:STORage:SD:FORmat", .callback = SCPI_StorageSDFormat},
     {.pattern = "SYSTem:STORage:SD:BENCHmark", .callback = SCPI_StorageSDBenchmark},
     {.pattern = "SYSTem:STORage:SD:BENCHmark?", .callback = SCPI_StorageSDBenchmarkQuery},
     // FreeRTOS

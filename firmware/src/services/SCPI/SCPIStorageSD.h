@@ -38,6 +38,10 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context);
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context);
 scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context);
 
+// SD Card File Management Commands
+scpi_result_t SCPI_StorageSDDelete(scpi_t * context);
+scpi_result_t SCPI_StorageSDFormat(scpi_t * context);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

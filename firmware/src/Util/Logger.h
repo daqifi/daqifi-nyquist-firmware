@@ -89,13 +89,13 @@ extern "C" {
         #define LOG_LEVEL_BQ24297   LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_SD
-        #define LOG_LEVEL_SD        LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_SD        LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_USB
         #define LOG_LEVEL_USB       LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_SCPI
-        #define LOG_LEVEL_SCPI      LOG_LEVEL_DEBUG
+        #define LOG_LEVEL_SCPI      LOG_LEVEL_ERROR
     #endif
     #ifndef LOG_LEVEL_ADC
         #define LOG_LEVEL_ADC       LOG_LEVEL_ERROR

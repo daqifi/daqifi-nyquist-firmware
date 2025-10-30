@@ -19,6 +19,8 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR,
+    SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE,
+    SD_CARD_MANAGER_PROCESS_STATE_FORMAT,
     SD_CARD_MANAGER_PROCESS_STATE_DEINIT,
     SD_CARD_MANAGER_PROCESS_STATE_IDLE,
     SD_CARD_MANAGER_PROCESS_STATE_ERROR,
@@ -240,8 +242,13 @@ void sd_card_manager_ProcessState() {
                 bool fileValid = strlen(gpSdCardSettings->file) > 0 &&
                                 strlen(gpSdCardSettings->file) <= SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX;
 
-                if (dirValid && (fileValid || gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_LIST_DIRECTORY)) {
-                    // LIST mode doesn't need a filename, just directory
+                // LIST and FORMAT modes don't need a filename
+                // DELETE, READ, WRITE need a filename
+                bool needsFile = (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE ||
+                                 gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
+                                 gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
+
+                if (dirValid && (!needsFile || fileValid)) {
                     gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
                 } else {
                     // Only log error once per enable, not continuously
@@ -368,6 +375,12 @@ void sd_card_manager_ProcessState() {
             } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_LIST_DIRECTORY) {
                 // LIST mode doesn't need to open a file, just list the directory
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR;
+            } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE) {
+                // DELETE mode - delete the specified file
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE;
+            } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_FORMAT) {
+                // FORMAT mode - erase all files on SD card
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_FORMAT;
             } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
@@ -508,6 +521,52 @@ void sd_card_manager_ProcessState() {
             gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
         }
             break;
+
+        case SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE:
+        {
+            LOG_D("[SD] Deleting file: '%s'\r\n", gSdCardData.filePath);
+
+            // Delete the file
+            if (SYS_FS_FileDirectoryRemove(gSdCardData.filePath) == SYS_FS_RES_SUCCESS) {
+                LOG_D("[SD] File deleted successfully\r\n");
+            } else {
+                SYS_FS_ERROR err = SYS_FS_Error();
+                LOG_E("[SD] Failed to delete file '%s', error=%d\r\n", gSdCardData.filePath, err);
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                break;
+            }
+
+            gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+        }
+            break;
+
+        case SD_CARD_MANAGER_PROCESS_STATE_FORMAT:
+        {
+            LOG_D("[SD] Formatting SD card at '%s'\r\n", SD_CARD_MANAGER_DISK_MOUNT_NAME);
+
+            // Format the drive using FAT filesystem
+            // Use SYS_FS_FORMAT_ANY to auto-select FAT16/FAT32 based on card size
+            SYS_FS_FORMAT_PARAM opt = {
+                .fmt = SYS_FS_FORMAT_ANY,
+                .au_size = 0  // Auto-select allocation unit size
+            };
+
+            // Work buffer for format operation (512 bytes required)
+            static uint8_t formatWorkBuffer[512];
+
+            if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
+                LOG_D("[SD] Format completed successfully\r\n");
+            } else {
+                SYS_FS_ERROR err = SYS_FS_Error();
+                LOG_E("[SD] Format failed, error=%d\r\n", err);
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                break;
+            }
+
+            gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+        }
+            break;
+
         case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
 
             break;
