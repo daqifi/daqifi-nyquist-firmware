@@ -34,6 +34,7 @@
 #include "services/wifi_services/wifi_manager.h"
 #include "SCPIStorageSD.h"
 #include "../streaming.h"
+#include "../csv_encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
 
@@ -1169,6 +1170,9 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     pRunTimeStreamConfig->IsEnabled = false;
 
     Streaming_UpdateState();
+
+    // Reset CSV encoder state so next session gets a fresh header
+    csv_ResetEncoder();
 
     return SCPI_RES_OK;
 }
