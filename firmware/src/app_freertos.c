@@ -242,12 +242,17 @@ static void app_SdCardTask(void* p_arg) {
         bool isStreaming = (pStreamConfig != NULL) && pStreamConfig->IsEnabled;
         bool isWifiFirmwareUpdateMode = wifi_manager_IsWifiFirmwareUpdateActive();
 
-        if (isStreaming || isWifiFirmwareUpdateMode) {
+        // Check if streaming is to WiFi (which uses SPI bus and conflicts with SD)
+        bool isWifiStreaming = isStreaming &&
+                              (pStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
+                               pStreamConfig->ActiveInterface == StreamingInterface_All);
+
+        if (isWifiStreaming || isWifiFirmwareUpdateMode) {
             // WiFi streaming or firmware update mode active - suspend SD operations to avoid SPI bus contention
             // This prevents the ~590 second streaming failure and WiFi flash erase failures
             vTaskDelay(100 / portTICK_PERIOD_MS); // Reduced frequency check when SPI in use
         } else {
-            // WiFi not streaming - safe to run full SD operations
+            // Safe to run SD operations (not streaming, or streaming to USB/SD only)
             // Normal SD card maintenance: driver tasks, state processing, file system
             DRV_SDSPI_Tasks(sysObj.drvSDSPI0);      // Harmony SD driver background processing
             sd_card_manager_ProcessState();         // SD card state management

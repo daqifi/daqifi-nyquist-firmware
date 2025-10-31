@@ -28,7 +28,8 @@
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
 #include "Util/Logger.h"
-// SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently  
+#include "../UsbCdc/UsbCdc.h"
+// SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently
 // SPI coordination handled at operation level when needed
 #include <string.h>
 
@@ -103,15 +104,20 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+            LOG_E("SD:LOGging - Filename too long: %d bytes, max: %d\r\n", fileLen, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
         memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
         pSdCardRuntimeConfig->file[fileLen] = '\0';
+        LOG_D("SD:LOGging - Set filename to '%s' (%d bytes) dir='%s'\r\n",
+              pSdCardRuntimeConfig->file, fileLen, pSdCardRuntimeConfig->directory);
+    } else {
+        LOG_D("SD:LOGging - No filename provided, using existing: '%s'\r\n", pSdCardRuntimeConfig->file);
     }
-   
+
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
-    
+
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
     result = SCPI_RES_OK;
 __exit_point:
@@ -163,17 +169,17 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
    
 
     if (!pSdCardRuntimeConfig->enable) {
-        // Log the error but send nothing - SCPI handler adds termination
         LOG_E("SD:LIST? - SD card not enabled\r\n");
-        result = SCPI_RES_OK;
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
     // Check if SD card is actually present and mounted
     if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
-        // Log the error but send nothing - SCPI handler adds termination
         LOG_E("SD:LIST? - No SD card detected\r\n");
-        result = SCPI_RES_OK;
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
         goto __exit_point;
     }
     
@@ -192,13 +198,18 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
     // If no directory specified, the sd_card_manager will use the default from settings
     
-    // Set mode to LIST_DIRECTORY and let sd_card_manager handle it asynchronously
-    // The results will be sent via sd_card_manager_DataReadyCB() callback to USB CDC
-    // Note: WiFi must be disabled before SD operations (mutual exclusion enforced at higher level)
+    // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
-    
-    // Return OK immediately - the actual listing will be sent asynchronously
+
+    // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
+    if (!sd_card_manager_WaitForCompletion(10000)) {
+        LOG_E("SD:LIST? - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -407,6 +418,95 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
     context->interface->write(context, resultStr, strlen(resultStr));
     
     return SCPI_RES_OK;
+}
+
+/**
+ * @brief Delete a file from the SD card
+ *
+ * Usage: SYST:STOR:SD:DELete "filename"
+ *
+ * Example: SYST:STOR:SD:DEL "test.csv"
+ */
+scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
+    const char* pBuff;
+    size_t fileLen = 0;
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!pSdCardRuntimeConfig->enable) {
+        LOG_E("SD:DELete - SD card not enabled\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Get filename parameter (required)
+    SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+
+    if (fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+        LOG_E("SD:DELete - Invalid filename length: %d\r\n", fileLen);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Set the filename
+    memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
+    pSdCardRuntimeConfig->file[fileLen] = '\0';
+    LOG_D("SD:DELete - Deleting file '%s'\r\n", pSdCardRuntimeConfig->file);
+
+    // Set mode to DELETE and trigger the operation
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+
+    // Wait for sd_card_manager to complete deletion (up to 5 seconds)
+    if (!sd_card_manager_WaitForCompletion(5000)) {
+        LOG_E("SD:DELete - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    result = SCPI_RES_OK;
+__exit_point:
+    return result;
+}
+
+/**
+ * @brief Format the SD card (erase all files)
+ *
+ * Usage: SYST:STOR:SD:FORmat
+ *
+ * WARNING: This will erase ALL files on the SD card!
+ */
+scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!pSdCardRuntimeConfig->enable) {
+        LOG_E("SD:FORmat - SD card not enabled\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    LOG_D("SD:FORmat - Formatting SD card (erasing all files)\r\n");
+
+    // Set mode to FORMAT and trigger the operation
+    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
+    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+
+    // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
+    if (!sd_card_manager_WaitForCompletion(30000)) {
+        LOG_E("SD:FORmat - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    result = SCPI_RES_OK;
+__exit_point:
+    return result;
 }
 
 /* *****************************************************************************

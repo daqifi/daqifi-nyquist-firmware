@@ -19,6 +19,8 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR,
+    SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE,
+    SD_CARD_MANAGER_PROCESS_STATE_FORMAT,
     SD_CARD_MANAGER_PROCESS_STATE_DEINIT,
     SD_CARD_MANAGER_PROCESS_STATE_IDLE,
     SD_CARD_MANAGER_PROCESS_STATE_ERROR,
@@ -41,6 +43,7 @@ typedef struct {
     CircularBuf_t wCirbuf;
 
     SemaphoreHandle_t wMutex;
+    SemaphoreHandle_t opCompleteSemaphore;  // Signals when async operations complete
 
     char filePath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
 
@@ -124,7 +127,18 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
  * printf("%s", outputBuffer);
  * @endcode
  */
-static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize) {
+// Callback function type for sending directory listing chunks
+typedef void (*ListChunkCallback)(const uint8_t* data, size_t len);
+
+// Static callback for sending directory listing chunks
+static void sd_listdir_send_chunk(const uint8_t* data, size_t len) {
+    if (len > 0) {
+        LOG_D("[SD] Sending chunk: %d bytes\r\n", (int)len);
+        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_LIST_DIRECTORY, (uint8_t*)data, len);
+    }
+}
+
+static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize, ListChunkCallback sendChunk) {
     SYS_FS_FSTAT stat;
     size_t strBuffIndex = 0;
     SYS_FS_HANDLE dirHandle;
@@ -132,13 +146,19 @@ static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_
 
     memset(newPath, 0, sizeof (newPath));
     memset(&stat, 0, sizeof (stat));
+    LOG_D("[SD] ListFiles: Opening directory '%s'\r\n", dirPath);
     dirHandle = SYS_FS_DirOpen(dirPath);
     if (dirHandle == SYS_FS_HANDLE_INVALID) {
         SYS_FS_ERROR err = SYS_FS_Error();
+        LOG_E("[SD] ListFiles: Failed to open directory '%s', error=%d\r\n", dirPath, err);
         strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
                 "\r\n[Error:%d]Failed to open directory [%s]\r\n", err, dirPath);
-        return strBuffIndex;
+        if (strBuffIndex > 0 && sendChunk) {
+            sendChunk(pStrBuff, strBuffIndex);
+        }
+        return;
     }
+
     while (true) {
         if (SYS_FS_DirRead(dirHandle, &stat) == SYS_FS_RES_FAILURE) {
             SYS_FS_ERROR err = SYS_FS_Error();
@@ -148,36 +168,57 @@ static size_t ListFilesInDirectory(const char* dirPath, uint8_t *pStrBuff, size_
         }
 
         if (stat.fname[0] == '\0') {
+            LOG_D("[SD] ListFiles: End of directory\r\n");
             break;
         }
+
+        LOG_D("[SD] ListFiles: Read entry '%s'\r\n", stat.fname);
+
         if (strcmp(stat.fname, ".") == 0 || strcmp(stat.fname, "..") == 0) {
             continue;
         }
-        snprintf(newPath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s", dirPath, stat.fname);
-        if (stat.fattrib & SYS_FS_ATTR_DIR) {
 
-            size_t bytesWritten = ListFilesInDirectory(newPath, pStrBuff + strBuffIndex, strBuffSize - strBuffIndex);
-            strBuffIndex += bytesWritten;
-            if (strBuffIndex >= strBuffSize) {
-                break;
-            }
+        snprintf(newPath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s", dirPath, stat.fname);
+
+        if (stat.fattrib & SYS_FS_ATTR_DIR) {
+            // For subdirectories, recursively list (skip for now to keep simple)
+            LOG_D("[SD] ListFiles: Skipping subdirectory '%s'\r\n", newPath);
         } else {
-            int n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                    "%s\r\n", newPath);
-            if (n < 0 || (size_t) n >= strBuffSize - strBuffIndex) {
-                break;
+            LOG_D("[SD] ListFiles: Found file '%s'\r\n", newPath);
+            int n = snprintf(NULL, 0, "%s\r\n", newPath);  // Calculate length needed
+
+            // Check if buffer is getting full - need space for this entry
+            if (n > 0 && (strBuffIndex + n) >= (strBuffSize - 4)) {
+                // Send current chunk before adding this entry
+                if (sendChunk && strBuffIndex > 0) {
+                    pStrBuff[strBuffIndex] = '\0';
+                    sendChunk(pStrBuff, strBuffIndex);
+                    strBuffIndex = 0;  // Reset buffer for next chunk
+                }
             }
-            strBuffIndex += n;
+
+            // Now add the filename to buffer (either current or freshly reset)
+            n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                    "%s\r\n", newPath);
+            if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
+                strBuffIndex += n;
+            }
         }
     }
 
-    if (SYS_FS_DirClose(dirHandle) != SYS_FS_RES_SUCCESS) {
-        SYS_FS_ERROR err = SYS_FS_Error();
-        strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                "\r\n[Error:%d]Failed to close directory\r\n", err);
+    // Send final chunk if any data remains
+    if (sendChunk && strBuffIndex > 0) {
+        // Remove trailing CRLF from final chunk to avoid extra blank line before prompt
+        while (strBuffIndex > 0 && (pStrBuff[strBuffIndex - 1] == '\r' || pStrBuff[strBuffIndex - 1] == '\n')) {
+            strBuffIndex--;
+        }
+        if (strBuffIndex > 0) {
+            pStrBuff[strBuffIndex] = '\0';
+            sendChunk(pStrBuff, strBuffIndex);
+        }
     }
 
-    return strBuffIndex;
+    SYS_FS_DirClose(dirHandle);
 }
 
 bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
@@ -188,6 +229,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
                 SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
         gSdCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSdCardData.wMutex);
+        gSdCardData.opCompleteSemaphore = xSemaphoreCreateBinary();
         isInitDone = true;
         gpSdCardSettings = pSettings;
         gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
@@ -201,14 +243,37 @@ void sd_card_manager_ProcessState() {
 
     switch (gSdCardData.currentProcessState) {
         case SD_CARD_MANAGER_PROCESS_STATE_INIT:
-            if (gpSdCardSettings->enable &&
-                    strlen(gpSdCardSettings->directory) > 0 &&
-                    strlen(gpSdCardSettings->directory) <= SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX &&
-                    strlen(gpSdCardSettings->file) > 0 &&
-                    strlen(gpSdCardSettings->directory) <= SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
-                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
-            } else if (gpSdCardSettings->enable) {
-                LOG_E("[%s:%d]Invalid SD Card Directory or file name", __FILE__, __LINE__);
+            // Only initialize if SD is enabled AND has a valid operation mode
+            // Just enabling SD without setting a mode (WRITE/READ/LIST) is valid - don't spam errors
+            if (gpSdCardSettings->enable && gpSdCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
+                // Validate directory and file settings
+                bool dirValid = strlen(gpSdCardSettings->directory) > 0 &&
+                               strlen(gpSdCardSettings->directory) <= SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX;
+                bool fileValid = strlen(gpSdCardSettings->file) > 0 &&
+                                strlen(gpSdCardSettings->file) <= SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX;
+
+                // LIST and FORMAT modes don't need a filename
+                // DELETE, READ, WRITE need a filename
+                bool needsFile = (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE ||
+                                 gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
+                                 gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
+
+                // Reset error flag on valid configuration (allows new errors to be logged after fix)
+                static bool errorLogged = false;
+
+                if (dirValid && (!needsFile || fileValid)) {
+                    errorLogged = false;  // Reset flag on successful validation
+                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
+                } else {
+                    // Only log error once per enable, not continuously
+                    if (!errorLogged) {
+                        LOG_E("[%s:%d]Invalid SD Card Directory or file name (dir='%s', file='%s')",
+                              __FILE__, __LINE__,
+                              gpSdCardSettings->directory,
+                              gpSdCardSettings->file);
+                        errorLogged = true;
+                    }
+                }
             }
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK:
@@ -228,22 +293,39 @@ void sd_card_manager_ProcessState() {
 
         case SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK:
             if (gSdCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                // Flush any pending data before closing to prevent data loss
+                xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                bool hasPendingData = gSdCardData.totalBytesFlushPending > 0;
+                xSemaphoreGive(gSdCardData.wMutex);
+
+                if (hasPendingData) {
+                    LOG_D("[SD] Flushing %d bytes before unmount\r\n", (int)gSdCardData.totalBytesFlushPending);
+                    if (SYS_FS_FileSync(gSdCardData.fileHandle) != -1) {
+                        xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                        gSdCardData.totalBytesFlushPending = 0;
+                        xSemaphoreGive(gSdCardData.wMutex);
+                        LOG_D("[SD] Flushed pending data before unmount\r\n");
+                    } else {
+                        LOG_E("[%s:%d]Error flushing before unmount", __FILE__, __LINE__);
+                    }
+                }
+
+                LOG_D("[SD] Closing file '%s'\r\n", gSdCardData.filePath);
                 SYS_FS_FileClose(gSdCardData.fileHandle);
                 gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
             }
             if (SYS_FS_Unmount(SD_CARD_MANAGER_DISK_MOUNT_NAME) == 0) {
                 gSdCardData.discMounted = false;
+                LOG_D("[SD] Unmounted successfully\r\n");
             }
             if (gSdCardData.discMounted == true) {
                 /* The disk could not be un mounted. Try
                  * un mounting again untill success. */
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             } else {
-                if (!gpSdCardSettings->enable) {
-                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_INIT;
-                } else {
-                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
-                }
+                // Always go back to INIT after unmounting
+                // INIT will decide whether to mount based on enable flag and mode
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_INIT;
             }
             break;
 
@@ -261,13 +343,15 @@ void sd_card_manager_ProcessState() {
         case SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY:
             if (SYS_FS_DirectoryMake(gpSdCardSettings->directory) == SYS_FS_RES_FAILURE) {
                 if (SYS_FS_Error() == SYS_FS_ERROR_EXIST) {
+                    LOG_D("[SD] Directory '%s' already exists\r\n", gpSdCardSettings->directory);
                     gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                 } else {
                     gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                    LOG_E("[%s:%d]Invalid SD Card Directory name", __FILE__, __LINE__);
+                    LOG_E("[%s:%d]Invalid SD Card Directory name '%s'", __FILE__, __LINE__, gpSdCardSettings->directory);
                 }
                 /* Error while creating a new drive */
             } else {
+                LOG_D("[SD] Created directory '%s'\r\n", gpSdCardSettings->directory);
                 /* Open a file for writing. */
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
             }
@@ -277,28 +361,49 @@ void sd_card_manager_ProcessState() {
             memset(gSdCardData.filePath, 0, sizeof (gSdCardData.filePath));
             snprintf(gSdCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
                     gpSdCardSettings->directory, gpSdCardSettings->file);
+            LOG_D("[SD] Opening file: '%s', mode=%d\r\n", gSdCardData.filePath, gpSdCardSettings->mode);
             if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+                // Use WRITE_PLUS to create/truncate file (overwrite mode)
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
-                        (SYS_FS_FILE_OPEN_APPEND_PLUS));
+                        (SYS_FS_FILE_OPEN_WRITE_PLUS));
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
                 gSdCardData.totalBytesFlushPending = 0;
                 gSdCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
+
+                if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
+                    /* Could not open the file. Error out*/
+                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    LOG_E("[%s:%d]Failed to open SD Card file for writing: '%s'", __FILE__, __LINE__, gSdCardData.filePath);
+                }
             } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE;
+
+                if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
+                    /* Could not open the file. Error out*/
+                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s'", __FILE__, __LINE__, gSdCardData.filePath);
+                }
             } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_LIST_DIRECTORY) {
+                // LIST mode doesn't need to open a file, just list the directory
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR;
-                break;
+            } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE) {
+                // DELETE mode - delete the specified file
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE;
+            } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_FORMAT) {
+                // FORMAT mode - erase all files on SD card
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_FORMAT;
             } else if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
-            }
-            if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
-                /* Could not open the file. Error out*/
-                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                LOG_E("[%s:%d]Invalid SD Card file name", __FILE__, __LINE__);
+
+                if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
+                    /* Could not open the file. Error out*/
+                    gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    LOG_E("[%s:%d]Failed to open SD Card file: '%s'", __FILE__, __LINE__, gSdCardData.filePath);
+                }
             }
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE:
@@ -409,29 +514,74 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR:
         {
-            size_t readLen = 0;
-            gSdCardData.readBuffer[0] = '\r';
-            gSdCardData.readBuffer[1] = '\n';
-            readLen = ListFilesInDirectory(
+            LOG_D("[SD] Listing directory: '%s'\r\n", gpSdCardSettings->directory);
+
+            // List files in chunks using static callback
+            ListFilesInDirectoryChunked(
                     gpSdCardSettings->directory,
-                    gSdCardData.readBuffer + 2,
-                    SD_CARD_MANAGER_CONF_RBUFFER_SIZE - 1 - 2);
-            readLen += 2;
-            if (readLen > 0 && readLen < SD_CARD_MANAGER_CONF_RBUFFER_SIZE) {
-                gSdCardData.readBufferLength = readLen;
-                gSdCardData.readBuffer[readLen] = '\0';
-            } else if (readLen >= SD_CARD_MANAGER_CONF_RBUFFER_SIZE) {
-                gSdCardData.readBufferLength = SD_CARD_MANAGER_CONF_RBUFFER_SIZE - 1;
-                gSdCardData.readBuffer[readLen] = '\0';
-            } else {
-                gSdCardData.readBufferLength = 0;
-            }
-            sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_LIST_DIRECTORY,
                     gSdCardData.readBuffer,
-                    gSdCardData.readBufferLength);
+                    SD_CARD_MANAGER_CONF_RBUFFER_SIZE,
+                    sd_listdir_send_chunk);
+
             gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+            // Signal completion
+            xSemaphoreGive(gSdCardData.opCompleteSemaphore);
         }
             break;
+
+        case SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE:
+        {
+            LOG_D("[SD] Deleting file: '%s'\r\n", gSdCardData.filePath);
+
+            // Delete the file
+            if (SYS_FS_FileDirectoryRemove(gSdCardData.filePath) == SYS_FS_RES_SUCCESS) {
+                LOG_D("[SD] File deleted successfully\r\n");
+            } else {
+                SYS_FS_ERROR err = SYS_FS_Error();
+                LOG_E("[SD] Failed to delete file '%s', error=%d\r\n", gSdCardData.filePath, err);
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                // Signal completion even on error
+                xSemaphoreGive(gSdCardData.opCompleteSemaphore);
+                break;
+            }
+
+            gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+            // Signal completion
+            xSemaphoreGive(gSdCardData.opCompleteSemaphore);
+        }
+            break;
+
+        case SD_CARD_MANAGER_PROCESS_STATE_FORMAT:
+        {
+            LOG_D("[SD] Formatting SD card at '%s'\r\n", SD_CARD_MANAGER_DISK_MOUNT_NAME);
+
+            // Format the drive using FAT filesystem
+            // Use SYS_FS_FORMAT_ANY to auto-select FAT16/FAT32 based on card size
+            SYS_FS_FORMAT_PARAM opt = {
+                .fmt = SYS_FS_FORMAT_ANY,
+                .au_size = 0  // Auto-select allocation unit size
+            };
+
+            // Work buffer for format operation (512 bytes required)
+            static uint8_t formatWorkBuffer[512];
+
+            if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
+                LOG_D("[SD] Format completed successfully\r\n");
+            } else {
+                SYS_FS_ERROR err = SYS_FS_Error();
+                LOG_E("[SD] Format failed, error=%d\r\n", err);
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                // Signal completion even on error
+                xSemaphoreGive(gSdCardData.opCompleteSemaphore);
+                break;
+            }
+
+            gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+            // Signal completion
+            xSemaphoreGive(gSdCardData.opCompleteSemaphore);
+        }
+            break;
+
         case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
 
             break;
@@ -480,6 +630,15 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
     bytesAdded = CircularBuf_AddBytes(&gSdCardData.wCirbuf, (uint8_t*) pData, len);
     xSemaphoreGive(gSdCardData.wMutex);
+
+    static uint32_t totalWritten = 0;
+    static uint32_t writeCount = 0;
+    totalWritten += bytesAdded;
+    writeCount++;
+    if (writeCount % 10 == 0) {  // Log every 10 writes to avoid spam
+        LOG_D("[SD] WriteToBuffer: %u writes, %u total bytes\r\n", writeCount, totalWritten);
+    }
+
     return bytesAdded;
 }
 
@@ -495,6 +654,27 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     }
     gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
+}
+
+bool sd_card_manager_IsIdle() {
+    return (gSdCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_IDLE ||
+            gSdCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT);
+}
+
+bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
+    if (sd_card_manager_IsIdle()) {
+        return true;  // Already idle
+    }
+
+    TickType_t timeout = (timeoutMs == 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
+
+    // Wait for operation complete semaphore
+    if (xSemaphoreTake(gSdCardData.opCompleteSemaphore, timeout) == pdTRUE) {
+        return true;  // Operation completed
+    } else {
+        LOG_E("[SD] WaitForCompletion timeout after %u ms\r\n", timeoutMs);
+        return false;  // Timeout
+    }
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {

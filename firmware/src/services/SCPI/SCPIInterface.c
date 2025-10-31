@@ -33,6 +33,7 @@
 #include "SCPILAN.h"
 #include "services/wifi_services/wifi_manager.h"
 #include "SCPIStorageSD.h"
+#include "../sd_card_services/sd_card_manager.h"
 #include "../streaming.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
@@ -1153,9 +1154,30 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         //No freq given just stream with the current value
     }
 
-    // Detect which interface initiated streaming for single-interface mode
-    // This prevents bandwidth overload at high sample rates (e.g., 1000 Hz × 16 channels)
-    pRunTimeStreamConfig->ActiveInterface = SCPI_GetInterface(context);
+    // Auto-detect interface only if user hasn't explicitly set it via SYSTem:STReam:INTerface
+    // If current interface matches what auto-detection would choose, allow override
+    // If different, user explicitly set it (e.g., SD or All) so preserve their choice
+    StreamingInterface detectedInterface = SCPI_GetInterface(context);
+    StreamingInterface currentInterface = pRunTimeStreamConfig->ActiveInterface;
+
+    // Only auto-detect if current setting matches the detected interface
+    // (meaning user hasn't changed it, or wants auto-detection)
+    if (currentInterface == detectedInterface || currentInterface == StreamingInterface_USB) {
+        pRunTimeStreamConfig->ActiveInterface = detectedInterface;
+    }
+    // Otherwise keep user's explicit setting (e.g., SD or All)
+
+    // Check for WiFi+SD conflict (both use SPI bus)
+    sd_card_manager_settings_t* pSdCardSettings =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if ((pRunTimeStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
+         pRunTimeStreamConfig->ActiveInterface == StreamingInterface_All) &&
+        pSdCardSettings != NULL &&
+        pSdCardSettings->enable && pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        LOG_E("Cannot start WiFi streaming while SD logging is active (SPI bus conflict)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;
@@ -1169,6 +1191,17 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     pRunTimeStreamConfig->IsEnabled = false;
 
     Streaming_UpdateState();
+
+    // Close SD card file if logging was enabled
+    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if (pSdCardRuntimeConfig != NULL &&
+        pSdCardRuntimeConfig->enable && pSdCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
+        pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+        // Give SD card manager task time to close the file
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 
     return SCPI_RES_OK;
 }
@@ -1209,6 +1242,55 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
 
     SCPI_ResultInt32(context, (int) pRunTimeStreamConfig->Encoding);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
+    int param1;
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    // Validate interface value: 0=USB, 1=WiFi, 2=SD, 3=All
+    if (param1 < 0 || param1 > 3) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    sd_card_manager_settings_t* pSdCardSettings =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    // Check if SD card is enabled when trying to use SD or All interfaces
+    if (param1 == StreamingInterface_SD || param1 == StreamingInterface_All) {
+        if (pSdCardSettings != NULL && !pSdCardSettings->enable) {
+            LOG_E("Cannot set interface to SD - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
+    }
+
+    // Check for WiFi+SD conflict (both use SPI bus)
+    if (param1 == StreamingInterface_WiFi || param1 == StreamingInterface_All) {
+        if (pSdCardSettings != NULL &&
+            pSdCardSettings->enable && pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+            LOG_E("Cannot stream to WiFi while SD logging is active (SPI bus conflict). Disable SD logging first.");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
+    }
+
+    pRunTimeStreamConfig->ActiveInterface = (StreamingInterface) param1;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    SCPI_ResultInt32(context, (int) pRunTimeStreamConfig->ActiveInterface);
     return SCPI_RES_OK;
 }
 
@@ -1562,6 +1644,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:StreamData?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:STReam:FORmat", .callback = SCPI_SetStreamFormat,}, // 0 = pb = default, 1 = text (json)
     {.pattern = "SYSTem:STReam:FORmat?", .callback = SCPI_GetStreamFormat,},
+    {.pattern = "SYSTem:STReam:INTerface", .callback = SCPI_SetStreamInterface,}, // 0=USB, 1=WiFi, 2=SD, 3=All
+    {.pattern = "SYSTem:STReam:INTerface?", .callback = SCPI_GetStreamInterface,},
     {.pattern = "SYSTem:STReam:Stats?", .callback = SCPI_GetStreamStats,},
     {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
     //
@@ -1569,6 +1653,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
+    {.pattern = "SYSTem:STORage:SD:DELete", .callback = SCPI_StorageSDDelete},
+    {.pattern = "SYSTem:STORage:SD:FORmat", .callback = SCPI_StorageSDFormat},
     {.pattern = "SYSTem:STORage:SD:BENCHmark", .callback = SCPI_StorageSDBenchmark},
     {.pattern = "SYSTem:STORage:SD:BENCHmark?", .callback = SCPI_StorageSDBenchmarkQuery},
     // FreeRTOS

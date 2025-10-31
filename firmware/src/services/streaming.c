@@ -97,6 +97,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+                static uint32_t queueDropCount = 0;
+                if ((++queueDropCount % 100) == 0) {
+                    LOG_E("Streaming: Sample queue full - dropped %u samples (queue at capacity)",
+                          (unsigned)queueDropCount);
+                }
                 vPortFree(pPublicSampleList);
             }
 
@@ -273,6 +278,18 @@ void streaming_Task(void) {
                 hasWifi = (wifiSize >= 128);
                 hasSD = (sdSize >= 128);
                 break;
+        }
+
+        // Override: If SD card logging is explicitly enabled, automatically enable SD output
+        // Only allow USB+SD (not WiFi+SD, as they share the SPI bus)
+        sd_card_manager_settings_t* pSdCardSettings =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+        if (pSdCardSettings && pSdCardSettings->enable &&
+            pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+            // Only enable SD if we're not streaming to WiFi (SPI bus conflict)
+            if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_WiFi) {
+                hasSD = (sdSize >= 128);
+            }
         }
 
         // Log streaming start info once for debugging
