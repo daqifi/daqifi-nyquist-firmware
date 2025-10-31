@@ -130,6 +130,14 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
 // Callback function type for sending directory listing chunks
 typedef void (*ListChunkCallback)(const uint8_t* data, size_t len);
 
+// Static callback for sending directory listing chunks
+static void sd_listdir_send_chunk(const uint8_t* data, size_t len) {
+    if (len > 0) {
+        LOG_D("[SD] Sending chunk: %d bytes\r\n", (int)len);
+        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_LIST_DIRECTORY, (uint8_t*)data, len);
+    }
+}
+
 static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize, ListChunkCallback sendChunk) {
     SYS_FS_FSTAT stat;
     size_t strBuffIndex = 0;
@@ -503,22 +511,14 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR:
         {
-            // Callback function to send each chunk
-            void sendChunk(const uint8_t* data, size_t len) {
-                if (len > 0) {
-                    LOG_D("[SD] Sending chunk: %d bytes\r\n", len);
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_LIST_DIRECTORY, (uint8_t*)data, len);
-                }
-            }
-
             LOG_D("[SD] Listing directory: '%s'\r\n", gpSdCardSettings->directory);
 
-            // List files in chunks
+            // List files in chunks using static callback
             ListFilesInDirectoryChunked(
                     gpSdCardSettings->directory,
                     gSdCardData.readBuffer,
                     SD_CARD_MANAGER_CONF_RBUFFER_SIZE,
-                    sendChunk);
+                    sd_listdir_send_chunk);
 
             gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
             // Signal completion
