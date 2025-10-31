@@ -43,6 +43,7 @@ typedef struct {
     CircularBuf_t wCirbuf;
 
     SemaphoreHandle_t wMutex;
+    SemaphoreHandle_t opCompleteSemaphore;  // Signals when async operations complete
 
     char filePath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
 
@@ -220,6 +221,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
                 SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
         gSdCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSdCardData.wMutex);
+        gSdCardData.opCompleteSemaphore = xSemaphoreCreateBinary();
         isInitDone = true;
         gpSdCardSettings = pSettings;
         gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
@@ -519,6 +521,8 @@ void sd_card_manager_ProcessState() {
                     sendChunk);
 
             gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+            // Signal completion
+            xSemaphoreGive(gSdCardData.opCompleteSemaphore);
         }
             break;
 
@@ -533,10 +537,14 @@ void sd_card_manager_ProcessState() {
                 SYS_FS_ERROR err = SYS_FS_Error();
                 LOG_E("[SD] Failed to delete file '%s', error=%d\r\n", gSdCardData.filePath, err);
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                // Signal completion even on error
+                xSemaphoreGive(gSdCardData.opCompleteSemaphore);
                 break;
             }
 
             gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+            // Signal completion
+            xSemaphoreGive(gSdCardData.opCompleteSemaphore);
         }
             break;
 
@@ -560,10 +568,14 @@ void sd_card_manager_ProcessState() {
                 SYS_FS_ERROR err = SYS_FS_Error();
                 LOG_E("[SD] Format failed, error=%d\r\n", err);
                 gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                // Signal completion even on error
+                xSemaphoreGive(gSdCardData.opCompleteSemaphore);
                 break;
             }
 
             gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+            // Signal completion
+            xSemaphoreGive(gSdCardData.opCompleteSemaphore);
         }
             break;
 
@@ -644,6 +656,22 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
 bool sd_card_manager_IsIdle() {
     return (gSdCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_IDLE ||
             gSdCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT);
+}
+
+bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
+    if (sd_card_manager_IsIdle()) {
+        return true;  // Already idle
+    }
+
+    TickType_t timeout = (timeoutMs == 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
+
+    // Wait for operation complete semaphore
+    if (xSemaphoreTake(gSdCardData.opCompleteSemaphore, timeout) == pdTRUE) {
+        return true;  // Operation completed
+    } else {
+        LOG_E("[SD] WaitForCompletion timeout after %u ms\r\n", timeoutMs);
+        return false;  // Timeout
+    }
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {

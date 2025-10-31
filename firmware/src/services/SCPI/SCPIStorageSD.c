@@ -202,11 +202,12 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
 
-    // Wait for sd_card_manager to complete listing (up to 2 seconds)
-    int waitCount = 0;
-    while (waitCount < 200 && !sd_card_manager_IsIdle()) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        waitCount++;
+    // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
+    if (!sd_card_manager_WaitForCompletion(10000)) {
+        LOG_E("SD:LIST? - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
     }
 
     result = SCPI_RES_OK;
@@ -458,11 +459,12 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
 
-    // Wait for sd_card_manager to complete deletion (up to 1 second)
-    int waitCount = 0;
-    while (waitCount < 100 && !sd_card_manager_IsIdle()) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        waitCount++;
+    // Wait for sd_card_manager to complete deletion (up to 5 seconds)
+    if (!sd_card_manager_WaitForCompletion(5000)) {
+        LOG_E("SD:DELete - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
     }
 
     result = SCPI_RES_OK;
@@ -494,11 +496,12 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
     sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
 
-    // Wait for sd_card_manager to complete format (up to 5 seconds - formatting can be slow)
-    int waitCount = 0;
-    while (waitCount < 500 && !sd_card_manager_IsIdle()) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-        waitCount++;
+    // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
+    if (!sd_card_manager_WaitForCompletion(30000)) {
+        LOG_E("SD:FORmat - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
     }
 
     result = SCPI_RES_OK;

@@ -139,6 +139,14 @@ extern "C" {
     bool sd_card_manager_IsIdle(void);
 
     /**
+     * @brief Waits for the current SD card operation to complete.
+     *
+     * @param[in] timeoutMs Maximum time to wait in milliseconds (0 = wait forever)
+     * @return true if operation completed, false if timeout occurred
+     */
+    bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received
