@@ -258,11 +258,14 @@ void sd_card_manager_ProcessState() {
                                  gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
                                  gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
 
+                // Reset error flag on valid configuration (allows new errors to be logged after fix)
+                static bool errorLogged = false;
+
                 if (dirValid && (!needsFile || fileValid)) {
+                    errorLogged = false;  // Reset flag on successful validation
                     gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
                 } else {
                     // Only log error once per enable, not continuously
-                    static bool errorLogged = false;
                     if (!errorLogged) {
                         LOG_E("[%s:%d]Invalid SD Card Directory or file name (dir='%s', file='%s')",
                               __FILE__, __LINE__,
