@@ -10,27 +10,28 @@
 #include <stdbool.h>
 
 /*
- * CSV Format:
- * StreamTrigStamp,an_ch1_ts,an_ch1_val,an_ch2_ts,an_ch2_val, ..., an_ch16_ts,an_ch16_val,dio_ts,dio_val\n\0
- * 
+ * CSV Format (simplified - removed redundant StreamTrigStamp):
+ * ch0_ts,ch0_val,ch1_ts,ch1_val, ..., ch15_ts,ch15_val,dio_ts,dio_val\n\0
+ *
  * Notes:
  * - Each row represents one data packet.
+ * - Per-channel timestamps provide accurate conversion times
  * - If a channel or DIO sample is not valid, its fields appear as empty: ",,"
  * - Each row always ends with \n and is null-terminated (\0).
  *
  * Examples:
  *
  * 1. Only Analog Channel 3 is valid, no DIO sample:
- *  2938830365,,,,,,,,2938580134,1200,,,,,,,,,,,,,,,,,,,,,,,
+ *  ,,,,,,2938580134,1200,,,,,,,,,,,,,,,,,,,,,
  *
  * 2. Analog Channel 5 and DIO both valid:
- *  2938830450,,,,,,,,,,,,2938580567,1225,,,,,,,,,,,,,,,,,,,2940010001,3
+ *  ,,,,,,,,,,2938580567,1225,,,,,,,,,,,,,,,2940010001,3
  *
  * 3. All fields invalid (empty row, rare but valid state):
- *  2938830580,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ *  ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
  *
- * 4. Analog Channel 1 valid, DIO also valid:
- *  2938830650,2938580011,1300,,,,,,,,,,,,,,,,,,,,,,,,,,,,,2940010008,15
+ * 4. Analog Channel 0 and 1 valid, DIO also valid:
+ *  2938580011,1300,2938580015,1305,,,,,,,,,,,,,,,,,,,,,,,2940010008,15
  *
  */
 static size_t tryWriteRow(
@@ -54,26 +55,34 @@ static size_t tryWriteRow(
 
     char *q = out;
     int   w;
+    bool firstField = true;
 
-  
-    w = snprintf(q, rem, "%u", state->StreamTrigStamp);
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q   += w; rem -= w;
-
-    
+    // Write channel timestamp,value pairs (no leading StreamTrigStamp)
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (*hadAIN && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
             int mv = (int)(ADC_ConvertToVoltage(s) * 1000.0);
-            w = snprintf(q, rem, ",%u,%d", s->Timestamp, mv);
+            // First field has no leading comma
+            if (firstField) {
+                w = snprintf(q, rem, "%u,%d", s->Timestamp, mv);
+                firstField = false;
+            } else {
+                w = snprintf(q, rem, ",%u,%d", s->Timestamp, mv);
+            }
         } else {
-            w = snprintf(q, rem, ",,");
+            // Empty channel: two commas (or one if first field)
+            if (firstField) {
+                w = snprintf(q, rem, ",");
+                firstField = false;
+            } else {
+                w = snprintf(q, rem, ",,");
+            }
         }
         if (w < 0 || (size_t)w >= rem) return 0;
         q   += w; rem -= w;
     }
 
-    
+    // Write DIO timestamp,value pair
     if (*hadDIO) {
         w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
     } else {
