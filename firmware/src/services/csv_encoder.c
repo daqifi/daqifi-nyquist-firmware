@@ -64,8 +64,14 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
 
     // Get device info
     StreamingRuntimeConfig* streamConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    uint8_t variant = *(uint8_t*)BoardConfig_Get(BOARDCONFIG_VARIANT, 0);
-    uint64_t serialNum = *(uint64_t*)BoardConfig_Get(BOARDCONFIG_SERIAL_NUMBER, 0);
+
+    // Get variant and serial number with NULL checks
+    uint8_t variant = 0;
+    uint64_t serialNum = 0;
+    void* pVar = BoardConfig_Get(BOARDCONFIG_VARIANT, 0);
+    void* pSer = BoardConfig_Get(BOARDCONFIG_SERIAL_NUMBER, 0);
+    if (pVar) variant = *(uint8_t*)pVar;
+    if (pSer) serialNum = *(uint64_t*)pSer;
 
     // Line 1: Device name (Product + Variant)
     w = snprintf(q, rem, "# Device: %s %d\n", DAQIFI_PRODUCT_NAME, variant);
@@ -99,8 +105,12 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
         }
     }
 
-    // Add DIO columns
-    w = snprintf(q, rem, ",dio_ts,dio_val\n");
+    // Add DIO columns (no leading comma if no analog columns)
+    if (firstCol) {
+        w = snprintf(q, rem, "dio_ts,dio_val\n");
+    } else {
+        w = snprintf(q, rem, ",dio_ts,dio_val\n");
+    }
     if (w < 0 || (size_t)w >= rem) return 0;
     q += w; rem -= w;
 
@@ -160,11 +170,19 @@ static size_t tryWriteRow(
         q   += w; rem -= w;
     }
 
-    // Write DIO timestamp,value pair
+    // Write DIO timestamp,value pair (no leading comma if first field)
     if (*hadDIO) {
-        w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
+        if (firstField) {
+            w = snprintf(q, rem, "%u,%u", dioPeek.Timestamp, dioPeek.Values);
+        } else {
+            w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
+        }
     } else {
-        w = snprintf(q, rem, ",,");
+        if (firstField) {
+            w = snprintf(q, rem, ",");  // Single comma for empty first field
+        } else {
+            w = snprintf(q, rem, ",,");
+        }
     }
     if (w < 0 || (size_t)w >= rem) return 0;
     q   += w; rem -= w;
@@ -201,12 +219,15 @@ size_t csv_Encode(
     // Generate header on first call
     if (!csvHeaderSent) {
         size_t headerLen = generateHeader(p, rem, channelConfig);
-        if (headerLen > 0) {
-            p += headerLen;
-            rem -= headerLen;
-            total += headerLen;
-            csvHeaderSent = true;
+        if (headerLen == 0) {
+            // Not enough space to write header; don't emit partial data
+            *p = '\0';
+            return 0;
         }
+        p += headerLen;
+        rem -= headerLen;
+        total += headerLen;
+        csvHeaderSent = true;
     }
 
     while (1) {
