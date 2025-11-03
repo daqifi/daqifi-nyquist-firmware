@@ -1189,7 +1189,9 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
 
-    pRunTimeStreamConfig->IsEnabled = false;
+    if (pRunTimeStreamConfig) {
+        pRunTimeStreamConfig->IsEnabled = false;
+    }
 
     Streaming_UpdateState();
 

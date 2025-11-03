@@ -147,7 +147,7 @@ static size_t tryWriteRow(
             continue;
         }
 
-        if (*hadAIN && ainPeek->isSampleValid[i]) {
+        if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
             int mv = (int)(ADC_ConvertToVoltage(s) * 1000.0);
             // First field has no leading comma
@@ -158,16 +158,17 @@ static size_t tryWriteRow(
                 w = snprintf(q, rem, ",%u,%d", s->Timestamp, mv);
             }
         } else {
-            // Empty channel: two commas (or one if first field)
+            // No valid sample for this enabled channel: emit empty ts,val pair
+            // Always two fields (timestamp and value) to align with header
             if (firstField) {
-                w = snprintf(q, rem, ",");
+                w = snprintf(q, rem, ",,");  // Empty pair, no leading comma
                 firstField = false;
             } else {
-                w = snprintf(q, rem, ",,");
+                w = snprintf(q, rem, ",,");  // Empty pair with leading comma
             }
         }
         if (w < 0 || (size_t)w >= rem) return 0;
-        q   += w; rem -= w;
+        q += w; rem -= w;
     }
 
     // Write DIO timestamp,value pair (no leading comma if first field)
