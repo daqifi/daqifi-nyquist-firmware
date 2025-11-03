@@ -1,6 +1,7 @@
 
 #include "../services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "state/data/BoardData.h"
+#include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
 #include "encoder.h"
@@ -14,10 +15,11 @@
 static bool csvHeaderSent = false;
 
 /*
- * CSV Format (optimized - header + enabled channels only):
+ * CSV Format (optimized - header with metadata + enabled channels only):
  *
  * Header (sent once per session):
- * # Enabled ADC: 0,4,7
+ * # Device: Nyquist NQ1
+ * # Sample Rate: 100 Hz
  * ch0_ts,ch0_val,ch4_ts,ch4_val,ch7_ts,ch7_val,dio_ts,dio_val
  *
  * Data rows (only enabled channels):
@@ -25,21 +27,24 @@ static bool csvHeaderSent = false;
  *
  * Benefits:
  * - Only outputs enabled channels (not all 16)
- * - Header identifies column mapping
- * - Dramatically smaller files (e.g., 1 channel = 2 fields vs 32 fields)
+ * - Self-documenting with device info and sample rate
+ * - Column names identify channel mapping
+ * - Dramatically smaller files (e.g., 1 channel = 4 fields vs 34 fields)
  * - Per-channel timestamps for accuracy
  *
  * Examples:
  *
- * 1. Single channel (ch4) enabled:
- *    Header: # Enabled ADC: 4
- *            ch4_ts,ch4_val,dio_ts,dio_val
- *    Data:   798519461,2773,,
+ * 1. Single channel (ch4) enabled at 100Hz:
+ *    # Device: Nyquist NQ1
+ *    # Sample Rate: 100 Hz
+ *    ch4_ts,ch4_val,dio_ts,dio_val
+ *    798519461,2773,,
  *
- * 2. Multiple channels (ch0,4,7) and DIO:
- *    Header: # Enabled ADC: 0,4,7
- *            ch0_ts,ch0_val,ch4_ts,ch4_val,ch7_ts,ch7_val,dio_ts,dio_val
- *    Data:   798519461,2773,798519465,2801,798519469,2795,798520000,15
+ * 2. Multiple channels (ch0,4,7) at 5000Hz:
+ *    # Device: Nyquist NQ1
+ *    # Sample Rate: 5000 Hz
+ *    ch0_ts,ch0_val,ch4_ts,ch4_val,ch7_ts,ch7_val,dio_ts,dio_val
+ *    798519461,2773,798519465,2801,798519469,2795,798520000,15
  *
  */
 
@@ -51,31 +56,35 @@ void csv_ResetEncoder(void) {
 }
 
 /**
- * @brief Generate CSV header with enabled channel information
+ * @brief Generate CSV header with device metadata and column names
  */
 static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig) {
     char *q = out;
     int w;
 
-    // Line 1: Comment listing enabled channels
-    w = snprintf(q, rem, "# Enabled ADC:");
+    // Get device info
+    StreamingRuntimeConfig* streamConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    uint8_t variant = *(uint8_t*)BoardConfig_Get(BOARDCONFIG_VARIANT, 0);
+    uint64_t serialNum = *(uint64_t*)BoardConfig_Get(BOARDCONFIG_SERIAL_NUMBER, 0);
+
+    // Line 1: Device name (Product + Variant)
+    w = snprintf(q, rem, "# Device: %s %d\n", DAQIFI_PRODUCT_NAME, variant);
     if (w < 0 || (size_t)w >= rem) return 0;
     q += w; rem -= w;
 
-    // List enabled channel IDs
-    for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-        if (channelConfig->Data[i].IsEnabled) {
-            w = snprintf(q, rem, " %d", i);
-            if (w < 0 || (size_t)w >= rem) return 0;
-            q += w; rem -= w;
-        }
+    // Line 2: Serial number
+    w = snprintf(q, rem, "# Serial Number: %016llX\n", (unsigned long long)serialNum);
+    if (w < 0 || (size_t)w >= rem) return 0;
+    q += w; rem -= w;
+
+    // Line 3: Sample rate
+    if (streamConfig) {
+        w = snprintf(q, rem, "# Sample Rate: %u Hz\n", (unsigned int)streamConfig->Frequency);
+        if (w < 0 || (size_t)w >= rem) return 0;
+        q += w; rem -= w;
     }
 
-    w = snprintf(q, rem, "\n");
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
-
-    // Line 2: Column headers (only enabled channels)
+    // Line 4: Column headers (only enabled channels)
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (channelConfig->Data[i].IsEnabled) {

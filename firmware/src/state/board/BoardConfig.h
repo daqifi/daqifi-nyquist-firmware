@@ -27,6 +27,9 @@
 extern "C" {
 #endif
 
+    // Product name for all DAQiFi Nyquist devices
+    #define DAQIFI_PRODUCT_NAME "Nyquist"
+
     //! Size in chars of the board hardware revision field
 #define BOARDCONFIG_HARDWARE_REVISION_SIZE              16
     //! Size in chars of the board firmware revision field
