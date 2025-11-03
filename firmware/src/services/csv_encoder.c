@@ -175,18 +175,21 @@ static size_t tryWriteRow(
     if (*hadDIO) {
         if (firstField) {
             w = snprintf(q, rem, "%u,%u", dioPeek.Timestamp, dioPeek.Values);
+            firstField = false;
         } else {
             w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
         }
     } else {
+        // Empty DIO: always emit two fields (ts,val pair) to match header
         if (firstField) {
-            w = snprintf(q, rem, ",");  // Single comma for empty first field
+            w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (no leading comma)
+            firstField = false;
         } else {
-            w = snprintf(q, rem, ",,");
+            w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (with leading comma)
         }
     }
     if (w < 0 || (size_t)w >= rem) return 0;
-    q   += w; rem -= w;
+    q += w; rem -= w;
 
   
     if (rem < 1) return 0;
