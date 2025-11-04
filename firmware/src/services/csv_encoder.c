@@ -58,7 +58,7 @@ void csv_ResetEncoder(void) {
 /**
  * @brief Generate CSV header with device metadata and column names
  */
-static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig) {
+static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig, bool dioEnabled) {
     char *q = out;
     int w;
 
@@ -105,14 +105,21 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
         }
     }
 
-    // Add DIO columns (no leading comma if no analog columns)
-    if (firstCol) {
-        w = snprintf(q, rem, "dio_ts,dio_val\n");
+    // Add DIO columns only if DIO is enabled
+    if (dioEnabled) {
+        if (firstCol) {
+            w = snprintf(q, rem, "dio_ts,dio_val\n");
+        } else {
+            w = snprintf(q, rem, ",dio_ts,dio_val\n");
+        }
+        if (w < 0 || (size_t)w >= rem) return 0;
+        q += w; rem -= w;
     } else {
-        w = snprintf(q, rem, ",dio_ts,dio_val\n");
+        // No DIO columns - just end the header
+        w = snprintf(q, rem, "\n");
+        if (w < 0 || (size_t)w >= rem) return 0;
+        q += w; rem -= w;
     }
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
 
     return (size_t)(q - out);
 }
@@ -121,6 +128,7 @@ static size_t tryWriteRow(
     size_t      rem,
     tBoardData *state,
     AInRuntimeArray* channelConfig,
+    bool        dioEnabled,
     bool       *hadAIN,
     bool       *hadDIO
 ) {
@@ -171,25 +179,28 @@ static size_t tryWriteRow(
         q += w; rem -= w;
     }
 
-    // Write DIO timestamp,value pair (no leading comma if first field)
-    if (*hadDIO) {
-        if (firstField) {
-            w = snprintf(q, rem, "%u,%u", dioPeek.Timestamp, dioPeek.Values);
-            firstField = false;
+    // Write DIO timestamp,value pair only if DIO is enabled
+    if (dioEnabled) {
+        if (*hadDIO) {
+            if (firstField) {
+                w = snprintf(q, rem, "%u,%u", dioPeek.Timestamp, dioPeek.Values);
+                firstField = false;
+            } else {
+                w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
+            }
         } else {
-            w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
+            // Empty DIO: always emit two fields (ts,val pair) to match header
+            if (firstField) {
+                w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (no leading comma)
+                firstField = false;
+            } else {
+                w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (with leading comma)
+            }
         }
-    } else {
-        // Empty DIO: always emit two fields (ts,val pair) to match header
-        if (firstField) {
-            w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (no leading comma)
-            firstField = false;
-        } else {
-            w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (with leading comma)
-        }
+        if (w < 0 || (size_t)w >= rem) return 0;
+        q += w; rem -= w;
     }
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
+    // If DIO disabled, don't output DIO columns at all
 
   
     if (rem < 1) return 0;
@@ -216,13 +227,17 @@ size_t csv_Encode(
         return 0;
     }
 
+    // Get DIO enable state
+    bool* pDioEnable = (bool*)BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    bool dioEnabled = (pDioEnable && *pDioEnable);
+
     char   *p     = (char*)pBuffer;
     size_t  rem   = buffSize - 1;  // reserve 1 byte up front for '\0'
     size_t  total = 0;
 
     // Generate header on first call
     if (!csvHeaderSent) {
-        size_t headerLen = generateHeader(p, rem, channelConfig);
+        size_t headerLen = generateHeader(p, rem, channelConfig, dioEnabled);
         if (headerLen == 0) {
             // Not enough space to write header; don't emit partial data
             *p = '\0';
@@ -237,7 +252,7 @@ size_t csv_Encode(
     while (1) {
         bool hadAIN, hadDIO;
         // attempt to write the next row in-place
-        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, &hadAIN, &hadDIO);
+        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO);
         if (rowLen == 0 || rowLen > rem) {
             break;  // no data left or row won?t fit
         }
