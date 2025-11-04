@@ -7,6 +7,7 @@
 #include "encoder.h"
 #include "csv_encoder.h"
 #include "../HAL/ADC.h"
+#include "../HAL/TimerApi/TimerApi.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -90,7 +91,18 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
         q += w; rem -= w;
     }
 
-    // Line 4: Column headers (only enabled channels)
+    // Line 4: Timestamp tick rate (for converting timestamps to seconds)
+    // Get actual timer frequency (accounts for prescaler)
+    const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    uint32_t tickRate = TIMER_CLOCK_FRQ;  // Default fallback
+    if (boardConfig) {
+        tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
+    }
+    w = snprintf(q, rem, "# Timestamp Tick Rate: %u Hz\n", tickRate);
+    if (w < 0 || (size_t)w >= rem) return 0;
+    q += w; rem -= w;
+
+    // Line 5: Column headers (only enabled channels)
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (channelConfig->Data[i].IsEnabled) {
