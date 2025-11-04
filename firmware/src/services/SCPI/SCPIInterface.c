@@ -35,6 +35,7 @@
 #include "SCPIStorageSD.h"
 #include "../sd_card_services/sd_card_manager.h"
 #include "../streaming.h"
+#include "../csv_encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
 
@@ -1188,7 +1189,9 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
 
-    pRunTimeStreamConfig->IsEnabled = false;
+    if (pRunTimeStreamConfig) {
+        pRunTimeStreamConfig->IsEnabled = false;
+    }
 
     Streaming_UpdateState();
 
@@ -1202,6 +1205,9 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
         // Give SD card manager task time to close the file
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+
+    // Reset CSV encoder state so next session gets a fresh header
+    csv_ResetEncoder();
 
     return SCPI_RES_OK;
 }
