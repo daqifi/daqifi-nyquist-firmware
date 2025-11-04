@@ -63,9 +63,6 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     char *q = out;
     int w;
 
-    // Get device info
-    StreamingRuntimeConfig* streamConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-
     // Get variant and serial number with NULL checks
     uint8_t variant = 0;
     uint64_t serialNum = 0;
@@ -84,14 +81,7 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     if (w < 0 || (size_t)w >= rem) return 0;
     q += w; rem -= w;
 
-    // Line 3: Sample rate
-    if (streamConfig) {
-        w = snprintf(q, rem, "# Sample Rate: %u Hz\n", (unsigned int)streamConfig->Frequency);
-        if (w < 0 || (size_t)w >= rem) return 0;
-        q += w; rem -= w;
-    }
-
-    // Line 4: Timestamp tick rate (for converting timestamps to seconds)
+    // Line 3: Timestamp tick rate (for converting timestamps to seconds)
     // Get actual timer frequency (accounts for prescaler)
     const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t tickRate = TIMER_CLOCK_FRQ;  // Default fallback
@@ -102,7 +92,7 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     if (w < 0 || (size_t)w >= rem) return 0;
     q += w; rem -= w;
 
-    // Line 5: Column headers (only enabled channels)
+    // Line 4: Column headers (only enabled channels)
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (channelConfig->Data[i].IsEnabled) {
