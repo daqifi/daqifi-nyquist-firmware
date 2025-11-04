@@ -1195,7 +1195,6 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
 
     Streaming_UpdateState();
 
-<<<<<<< HEAD
     // Close SD card file if logging was enabled
     sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     if (pSdCardRuntimeConfig != NULL &&
@@ -1206,10 +1205,9 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
         // Give SD card manager task time to close the file
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-=======
+
     // Reset CSV encoder state so next session gets a fresh header
     csv_ResetEncoder();
->>>>>>> bb2a949b (feat(csv): add header and output only enabled channels)
 
     return SCPI_RES_OK;
 }
