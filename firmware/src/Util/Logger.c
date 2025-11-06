@@ -224,8 +224,12 @@ void LogMessageInit(void) {
     logBuffer.tail = 0;
     logBuffer.count = 0;
     
-    if(logBuffer.mutex == NULL)
-    logBuffer.mutex = xSemaphoreCreateMutex();
+    if(logBuffer.mutex == NULL){
+        logBuffer.mutex = xSemaphoreCreateMutex();
+        // Critical failure: halt system
+        __builtin_software_breakpoint();
+        while(logBuffer.mutex == NULL);
+    }
 }
 
 /**
@@ -238,27 +242,29 @@ void LogMessageInit(void) {
  */
 static bool LogMessageAdd(const char *message) {
     
-    static bool bInit = false;
-    static uint32_t test = 0;
+    static volatile bool bInit = false;
     int message_len = strlen(message);
     
     if((message_len == 0) || (message_len>= LOG_MESSAGE_SIZE))
     return false;
     
     if(!bInit){
+        taskENTER_CRITICAL();
         LogMessageInit();
         #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
         InitICSPLogging();
         #endif
         bInit = true;
+        taskEXIT_CRITICAL();
     }
     
     #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
     LogMessageICSP(message, message_len);
     #endif
     
-    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
-        strcpy(logBuffer.entries[logBuffer.head].message, message);
+    if ((xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) 
+    &&  (message_len<LOG_MESSAGE_SIZE)) {
+        strncpy(logBuffer.entries[logBuffer.head].message, message, message_len);
         logBuffer.entries[logBuffer.head].message[message_len] = '\0';
         logBuffer.head = (logBuffer.head + 1) % LOG_MAX_ENTRY_COUNT;
 
