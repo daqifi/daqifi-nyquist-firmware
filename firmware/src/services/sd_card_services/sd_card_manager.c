@@ -82,7 +82,9 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
     memcpy(gSdCardData.writeBuffer, buf, len);
     gSdCardData.writeBufferLength = len;
     gSdCardData.sdCardWriteBufferOffset = 0;
-    return SDCardWrite();
+    // Return length to indicate success - actual write happens in state machine
+    // Calling SDCardWrite() here causes duplicate writes!
+    return len;
 }
 
 /**
