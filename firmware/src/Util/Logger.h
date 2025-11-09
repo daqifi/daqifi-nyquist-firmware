@@ -8,6 +8,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include "libraries/scpi/libscpi/inc/scpi/types.h"
 
 #ifndef LOGGER_H
 #define	LOGGER_H
@@ -104,18 +107,31 @@ extern "C" {
         #define LOG_LEVEL_DAC       LOG_LEVEL_ERROR
     #endif
 
+#define LOG_MAX_ENTRY_COUNT 64
+#define LOG_MESSAGE_SIZE 128
+
+typedef struct {
+    char     message[LOG_MESSAGE_SIZE];
+} LogEntry;
+
+typedef struct {
+    LogEntry entries[LOG_MAX_ENTRY_COUNT];
+    uint8_t head;
+    uint8_t tail;
+    uint8_t count;
+    SemaphoreHandle_t mutex;
+} LogBuffer;
+
 /**
  * Logs a formatted message
  * @param format The format string
  * @param ... Variable arguments
  * @return The number of characters written
  */
-int LogMessage(const char* format, ...) __attribute__((format(printf, 1, 2)));
-
+int    LogMessage(const char* format, ...) __attribute__((format(printf, 1, 2)));
 size_t LogMessageCount();
-
-size_t LogMessagePop(uint8_t* buffer, size_t maxSize);
-
+void   LogMessageDump(scpi_t * context);
+void   LogMessageInit(void);
 
 // Helper macro to get the log level for the current module
 // Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)
