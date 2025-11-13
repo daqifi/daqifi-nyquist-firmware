@@ -522,16 +522,17 @@ void sd_card_manager_ProcessState() {
                 size_t bytesRead = 0;
                 gSdCardData.readBufferLength = 0;
 
-                bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdCardData.readBuffer,
-                                           SD_CARD_MANAGER_CONF_RBUFFER_SIZE - 1);
+                // Use 64KB circular buffer memory for reads (mutually exclusive with writes)
+                bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdCardData.wCirbuf.buf_ptr,
+                                           gSdCardData.wCirbuf.buf_size);
 
                 if (bytesRead == (size_t) - 1) {
                     // Read error
                     LOG_E("[SD] Transfer ERROR: %u MB, read#%u", totalBytesRead/(1024*1024), readCount);
-                    gSdCardData.readBufferLength = sprintf((char*) gSdCardData.readBuffer,
+                    gSdCardData.readBufferLength = sprintf((char*) gSdCardData.wCirbuf.buf_ptr,
                             "%s", "\r\nError!! Reading SD Card\r\n");
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdCardData.readBuffer,
+                            gSdCardData.wCirbuf.buf_ptr,
                             gSdCardData.readBufferLength);
 
                     // Close file handle to prevent resource leak
@@ -546,10 +547,10 @@ void sd_card_manager_ProcessState() {
                     LOG_E("[SD] Transfer COMPLETE: %u MB in %u reads, heap=%u",
                           totalBytesRead/(1024*1024), readCount, xPortGetFreeHeapSize());
 
-                    gSdCardData.readBufferLength = sprintf((char*) gSdCardData.readBuffer,
+                    gSdCardData.readBufferLength = sprintf((char*) gSdCardData.wCirbuf.buf_ptr,
                             "%s", "\r\n\n__END_OF_FILE__\r\n\n");
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdCardData.readBuffer,
+                            gSdCardData.wCirbuf.buf_ptr,
                             gSdCardData.readBufferLength);
 
                     // Close file handle
@@ -574,7 +575,7 @@ void sd_card_manager_ProcessState() {
 
                     gSdCardData.readBufferLength = bytesRead;
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdCardData.readBuffer,
+                            gSdCardData.wCirbuf.buf_ptr,
                             gSdCardData.readBufferLength);
 
                     // Delay every 1 second to allow lower priority tasks to run
