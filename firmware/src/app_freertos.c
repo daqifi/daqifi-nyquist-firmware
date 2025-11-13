@@ -152,26 +152,38 @@ void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSe
 
 void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
     size_t transferredLength = 0;
-    int retryCount = 0;
-    const int maxRetries = 100;
+    const size_t chunkSize = 2048;  // Send in 2KB chunks to avoid filling USB buffer
 
     while (transferredLength < dataLen) {
-        size_t bytesWritten = UsbCdc_WriteToBuffer(
-                NULL,
-                (const char *) pDataBuff + transferredLength,
-                dataLen - transferredLength
-                );
+        size_t remaining = dataLen - transferredLength;
+        size_t toSend = (remaining < chunkSize) ? remaining : chunkSize;
+        int retryCount = 0;
+        const int maxRetries = 1000;  // 5 seconds max per chunk
+        size_t chunkSent = 0;
 
-        if (bytesWritten > 0) {
-            transferredLength += bytesWritten;
-            retryCount = 0;
-        } else {
-            retryCount++;
-            if (retryCount >= maxRetries) {
-                break;
+        while (chunkSent < toSend && retryCount < maxRetries) {
+            size_t bytesWritten = UsbCdc_WriteToBuffer(
+                    NULL,
+                    (const char *) pDataBuff + transferredLength + chunkSent,
+                    toSend - chunkSent
+                    );
+
+            if (bytesWritten > 0) {
+                chunkSent += bytesWritten;
+                retryCount = 0;
+            } else {
+                retryCount++;
+                vTaskDelay(5 / portTICK_PERIOD_MS);
             }
-            vTaskDelay(5 / portTICK_PERIOD_MS);
         }
+
+        if (chunkSent < toSend) {
+            LOG_E("[USB] Timeout: sent %u/%u bytes total",
+                  (unsigned)(transferredLength + chunkSent), (unsigned)dataLen);
+            break;
+        }
+
+        transferredLength += chunkSent;
     }
 }
 

@@ -4,10 +4,14 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB buffer (reduced to free heap for streaming)
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
+
+// Shared coherent buffer for all SD operations (write, read, list)
+// DMA-safe for SPI transfers. Mutually exclusive operations share this buffer.
+static __attribute__((coherent)) uint8_t gSdSharedBuffer[SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE];
 
 typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_INIT,
@@ -226,9 +230,14 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
 bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     static bool isInitDone = false;
     if (!isInitDone) {
-        CircularBuf_Init(&gSdCardData.wCirbuf,
-                CircularBufferToSDWrite,
-                SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
+        // Initialize circular buffer using static coherent memory instead of heap
+        gSdCardData.wCirbuf.buf_ptr = gSdSharedBuffer;
+        gSdCardData.wCirbuf.buf_size = SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE;
+        gSdCardData.wCirbuf.process_callback = CircularBufferToSDWrite;
+        gSdCardData.wCirbuf.insertPtr = gSdSharedBuffer;
+        gSdCardData.wCirbuf.removePtr = gSdSharedBuffer;
+        gSdCardData.wCirbuf.totalBytes = 0;
+
         gSdCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSdCardData.wMutex);
         gSdCardData.opCompleteSemaphore = xSemaphoreCreateBinary();
@@ -365,10 +374,10 @@ void sd_card_manager_ProcessState() {
                     gpSdCardSettings->directory, gpSdCardSettings->file);
             LOG_D("[SD] Opening file: '%s', mode=%d\r\n", gSdCardData.filePath, gpSdCardSettings->mode);
             if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
-                // Clear circular buffer and write buffer to prevent stale data from previous session
+                // Clear shared buffer and write buffer to prevent stale data from previous session
                 xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
                 CircularBuf_Reset(&gSdCardData.wCirbuf);
-                memset(gSdCardData.wCirbuf.buf_ptr, 0, gSdCardData.wCirbuf.buf_size);
+                memset(gSdSharedBuffer, 0, SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
                 memset(gSdCardData.writeBuffer, 0, sizeof(gSdCardData.writeBuffer));
                 xSemaphoreGive(gSdCardData.wMutex);
 
@@ -522,17 +531,19 @@ void sd_card_manager_ProcessState() {
                 size_t bytesRead = 0;
                 gSdCardData.readBufferLength = 0;
 
-                // Use 64KB circular buffer memory for reads (mutually exclusive with writes)
-                bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdCardData.wCirbuf.buf_ptr,
-                                           gSdCardData.wCirbuf.buf_size);
+                // Use 64KB shared buffer for reads (mutually exclusive with writes)
+                bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer,
+                                           SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
+
+                LOG_E("[SD] FileRead returned: %d bytes (read#%u)", (int)bytesRead, readCount);
 
                 if (bytesRead == (size_t) - 1) {
                     // Read error
                     LOG_E("[SD] Transfer ERROR: %u MB, read#%u", totalBytesRead/(1024*1024), readCount);
-                    gSdCardData.readBufferLength = sprintf((char*) gSdCardData.wCirbuf.buf_ptr,
+                    gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
                             "%s", "\r\nError!! Reading SD Card\r\n");
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdCardData.wCirbuf.buf_ptr,
+                            gSdSharedBuffer,
                             gSdCardData.readBufferLength);
 
                     // Close file handle to prevent resource leak
@@ -547,10 +558,10 @@ void sd_card_manager_ProcessState() {
                     LOG_E("[SD] Transfer COMPLETE: %u MB in %u reads, heap=%u",
                           totalBytesRead/(1024*1024), readCount, xPortGetFreeHeapSize());
 
-                    gSdCardData.readBufferLength = sprintf((char*) gSdCardData.wCirbuf.buf_ptr,
+                    gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
                             "%s", "\r\n\n__END_OF_FILE__\r\n\n");
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdCardData.wCirbuf.buf_ptr,
+                            gSdSharedBuffer,
                             gSdCardData.readBufferLength);
 
                     // Close file handle
@@ -575,7 +586,7 @@ void sd_card_manager_ProcessState() {
 
                     gSdCardData.readBufferLength = bytesRead;
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdCardData.wCirbuf.buf_ptr,
+                            gSdSharedBuffer,
                             gSdCardData.readBufferLength);
 
                     // Delay every 1 second to allow lower priority tasks to run
