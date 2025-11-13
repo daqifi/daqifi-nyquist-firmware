@@ -488,8 +488,8 @@ void sd_card_manager_ProcessState() {
             // Yields every 1 second to other tasks. Priority boosted to prevent preemption.
             // Diagnostic logging added for GitHub #146.
 
-            static uint32_t totalBytesRead = 0;
-            static uint32_t readCount = 0;
+            uint32_t totalBytesRead = 0;
+            uint32_t readCount = 0;
 
             // Boost task priority to prevent preemption during file transfer
             TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
@@ -501,11 +501,17 @@ void sd_card_manager_ProcessState() {
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);  // Yield every 1 second
 
             LOG_E("[SD] Transfer START: %s", gSdCardData.filePath);
-            totalBytesRead = 0;
-            readCount = 0;
 
             // Read entire file in continuous loop
             while (1) {
+                // Abort if file handle became invalid
+                if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
+                    LOG_E("[SD] Transfer ABORTED: file handle invalid");
+                    totalBytesRead = 0;
+                    readCount = 0;
+                    break;
+                }
+
                 size_t bytesRead = 0;
                 gSdCardData.readBufferLength = 0;
 
@@ -555,10 +561,8 @@ void sd_card_manager_ProcessState() {
 
                     // Log every 50MB
                     if (totalBytesRead % (50*1024*1024) < 512) {
-                        LOG_E("[SD] Progress: %u MB, read#%u, heap=%u, buf[0-3]=%02X %02X %02X %02X",
-                              totalBytesRead/(1024*1024), readCount, xPortGetFreeHeapSize(),
-                              gSdCardData.readBuffer[0], gSdCardData.readBuffer[1],
-                              gSdCardData.readBuffer[2], gSdCardData.readBuffer[3]);
+                        LOG_E("[SD] Progress: %u MB, read#%u, heap=%u",
+                              totalBytesRead/(1024*1024), readCount, xPortGetFreeHeapSize());
                     }
 
                     gSdCardData.readBufferLength = bytesRead;
