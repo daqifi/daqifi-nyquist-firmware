@@ -365,6 +365,13 @@ void sd_card_manager_ProcessState() {
                     gpSdCardSettings->directory, gpSdCardSettings->file);
             LOG_D("[SD] Opening file: '%s', mode=%d\r\n", gSdCardData.filePath, gpSdCardSettings->mode);
             if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+                // Clear circular buffer and write buffer to prevent stale data from previous session
+                xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                CircularBuf_Reset(&gSdCardData.wCirbuf);
+                memset(gSdCardData.wCirbuf.buf_ptr, 0, gSdCardData.wCirbuf.buf_size);
+                memset(gSdCardData.writeBuffer, 0, sizeof(gSdCardData.writeBuffer));
+                xSemaphoreGive(gSdCardData.wMutex);
+
                 // Use WRITE_PLUS to create/truncate file (overwrite mode)
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
