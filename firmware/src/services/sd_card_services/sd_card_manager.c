@@ -507,10 +507,10 @@ void sd_card_manager_ProcessState() {
             uint32_t totalBytesRead = 0;
             uint32_t readCount = 0;
 
-            // Boost task priority to prevent preemption during file transfer
+            // Boost task priority to match USB tasks for balanced time slicing
             TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
             UBaseType_t originalPriority = uxTaskPriorityGet(currentTask);
-            vTaskPrioritySet(currentTask, 7);  // Above USB stack (6), below ADC interrupt (8)
+            vTaskPrioritySet(currentTask, 7);  // Same as USB tasks for round-robin scheduling
 
             // Track time for periodic yielding
             TickType_t lastYieldTime = xTaskGetTickCount();
@@ -531,9 +531,9 @@ void sd_card_manager_ProcessState() {
                 size_t bytesRead = 0;
                 gSdCardData.readBufferLength = 0;
 
-                // Use 64KB shared buffer for reads (mutually exclusive with writes)
+                // Use 8KB reads (64KB causes SYS_FS_FileRead to block indefinitely)
                 bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer,
-                                           SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
+                                           8192);
 
                 LOG_E("[SD] FileRead returned: %d bytes (read#%u)", (int)bytesRead, readCount);
 
