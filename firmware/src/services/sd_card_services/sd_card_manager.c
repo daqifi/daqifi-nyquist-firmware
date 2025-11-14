@@ -535,8 +535,6 @@ void sd_card_manager_ProcessState() {
                 bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer,
                                            8192);
 
-                LOG_E("[SD] FileRead returned: %d bytes (read#%u)", (int)bytesRead, readCount);
-
                 if (bytesRead == (size_t) - 1) {
                     // Read error
                     LOG_E("[SD] Transfer ERROR: %u MB, read#%u", totalBytesRead/(1024*1024), readCount);
@@ -577,12 +575,6 @@ void sd_card_manager_ProcessState() {
                     // Data chunk read successfully
                     totalBytesRead += bytesRead;
                     readCount++;
-
-                    // Log every 50MB
-                    if (totalBytesRead % (50*1024*1024) < 512) {
-                        LOG_E("[SD] Progress: %u MB, read#%u, heap=%u",
-                              totalBytesRead/(1024*1024), readCount, xPortGetFreeHeapSize());
-                    }
 
                     gSdCardData.readBufferLength = bytesRead;
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
