@@ -152,7 +152,9 @@ void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSe
 
 void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
     size_t transferredLength = 0;
-    const size_t maxChunk = 2000;  // Stay under 8KB USB buffer
+    const size_t maxChunk = 2000;
+    uint32_t retryCount = 0;
+    const uint32_t maxRetries = 10000;  // Timeout after 10 seconds
 
     while (transferredLength < dataLen) {
         size_t remaining = dataLen - transferredLength;
@@ -166,10 +168,21 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
 
         if (bytesWritten > 0) {
             transferredLength += bytesWritten;
+            retryCount = 0;
         } else {
-            // Buffer full - yield to USB tasks
-            taskYIELD();
+            retryCount++;
+            if (retryCount >= maxRetries) {
+                LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
+                      (unsigned)transferredLength, (unsigned)dataLen, retryCount);
+                break;  // Give up to avoid infinite loop
+            }
+            vTaskDelay(1);
         }
+    }
+
+    if (transferredLength < dataLen) {
+        LOG_E("[USB] Incomplete transfer: sent %u/%u bytes",
+              (unsigned)transferredLength, (unsigned)dataLen);
     }
 }
 

@@ -203,9 +203,9 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                 }
             }
 
-            // Now add the filename to buffer (either current or freshly reset)
+            // Now add the filename and size to buffer (space-separated)
             n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                    "%s\r\n", newPath);
+                    "%s %u\r\n", newPath, (unsigned)stat.fsize);
             if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
                 strBuffIndex += n;
             }
@@ -583,7 +583,7 @@ void sd_card_manager_ProcessState() {
 
                     // Delay every 1 second to allow lower priority tasks to run
                     if ((xTaskGetTickCount() - lastYieldTime) >= yieldInterval) {
-                        vTaskDelay(pdMS_TO_TICKS(2));
+                        vTaskDelay(pdMS_TO_TICKS(1));
                         lastYieldTime = xTaskGetTickCount();
                     }
                 }
