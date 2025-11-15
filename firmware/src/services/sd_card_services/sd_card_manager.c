@@ -557,7 +557,7 @@ void sd_card_manager_ProcessState() {
                           totalBytesRead/(1024*1024), readCount, xPortGetFreeHeapSize());
 
                     gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
-                            "%s", "\r\n\n__END_OF_FILE__\r\n\n");
+                            "%s", "__END_OF_FILE__");
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                             gSdSharedBuffer,
                             gSdCardData.readBufferLength);
