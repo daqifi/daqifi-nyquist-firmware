@@ -586,14 +586,9 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
     if (currentFree < len) {
         xSemaphoreGive(client->wMutex);
-        // Only log if buffer is critically full to avoid spam
-        static uint32_t dropCount = 0;
-        if (currentFree < 128 && (++dropCount % 1000) == 0) {
-            LOG_E("USB: Buffer full - dropped %u packets (needed %u bytes, only %u free)",
-                  (unsigned)dropCount, (unsigned)len, (unsigned)currentFree);
-            dropCount = 0;
-        }
-        return 0;  // No space available - return immediately
+        // Buffer full - return 0 to signal caller to retry
+        // Logging disabled to prevent delays during high-speed transfers
+        return 0;
     }
     bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
     xSemaphoreGive(client->wMutex);

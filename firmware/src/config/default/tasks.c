@@ -75,11 +75,15 @@
 
 static void F_USB_DEVICE_Tasks(  void *pvParameters  )
 {
+    // Boost priority after startup
+    portYIELD();  // Let other tasks initialize first
+    vTaskPrioritySet(NULL, 6);
+
     while(true)
     {
-                /* USB Device layer tasks routine */
+        /* USB Device layer tasks routine */
         USB_DEVICE_Tasks(sysObj.usbDevObject0);
-        vTaskDelay(1U / portTICK_PERIOD_MS);
+        vTaskDelay(1);  // Block to ensure app_USBDeviceTask can run
     }
 }
 
@@ -233,7 +237,7 @@ void SYS_Tasks ( void )
         "USB_DEVICE_TASKS",
         1024,
         (void*)NULL,
-        6,
+        2,  // Start low, self-boosts after delay
         (TaskHandle_t*)NULL
     );
     if (usbDeviceResult != pdPASS) {
@@ -245,7 +249,7 @@ void SYS_Tasks ( void )
         "DRV_USBHS_TASKS",
         1024,
         (void*)NULL,
-        1,
+        2,  // Start low, will be boosted if needed
         (TaskHandle_t*)NULL
     );
     if (usbDriverResult != pdPASS) {

@@ -152,14 +152,18 @@ void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSe
 
 void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
     size_t transferredLength = 0;
-    int retryCount = 0;
-    const int maxRetries = 100;
+    const size_t maxChunk = 4000;  // Match 4KB USB buffer
+    uint32_t retryCount = 0;
+    const uint32_t maxRetries = 10000;
 
     while (transferredLength < dataLen) {
+        size_t remaining = dataLen - transferredLength;
+        size_t toSend = (remaining < maxChunk) ? remaining : maxChunk;
+
         size_t bytesWritten = UsbCdc_WriteToBuffer(
                 NULL,
                 (const char *) pDataBuff + transferredLength,
-                dataLen - transferredLength
+                toSend
                 );
 
         if (bytesWritten > 0) {
@@ -168,23 +172,29 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
         } else {
             retryCount++;
             if (retryCount >= maxRetries) {
+                LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
+                      (unsigned)transferredLength, (unsigned)dataLen, retryCount);
                 break;
             }
-            vTaskDelay(5 / portTICK_PERIOD_MS);
+            vTaskDelay(1);  // Block to ensure USB tasks can drain buffer
         }
+    }
+
+    if (transferredLength < dataLen) {
+        LOG_E("[USB] Incomplete transfer: sent %u/%u bytes",
+              (unsigned)transferredLength, (unsigned)dataLen);
     }
 }
 
 static void app_USBDeviceTask(void* p_arg) {
     UsbCdc_Initialize();
-    UsbCdcData_t* pUsbCdcContext = UsbCdc_GetSettings();
+
+    // Boost priority after initialization complete
+    vTaskPrioritySet(NULL, 7);
+
     while (1) {
         UsbCdc_ProcessState();
-        if (pUsbCdcContext->isTransparentModeActive) {
-            taskYIELD();
-        } else {
-            vTaskDelay(5 / portTICK_PERIOD_MS);
-        }
+        vTaskDelay(1);
     }
 }
 
@@ -510,7 +520,7 @@ static void app_TasksCreate() {
             "USBDeviceTask",
             USBDEVICETASK_SIZE,
             NULL,
-            2,
+            2,  // Start at normal priority, self-boosts after init
             NULL);
     /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {

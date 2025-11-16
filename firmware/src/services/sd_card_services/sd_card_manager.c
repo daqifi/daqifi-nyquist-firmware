@@ -4,10 +4,14 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB buffer (reduced to free heap for streaming)
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
+
+// Shared coherent buffer for all SD operations (write, read, list)
+// DMA-safe for SPI transfers. Mutually exclusive operations share this buffer.
+static __attribute__((coherent)) uint8_t gSdSharedBuffer[SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE];
 
 typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_INIT,
@@ -199,9 +203,9 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                 }
             }
 
-            // Now add the filename to buffer (either current or freshly reset)
+            // Now add the filename and size to buffer (space-separated)
             n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                    "%s\r\n", newPath);
+                    "%s %u\r\n", newPath, (unsigned)stat.fsize);
             if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
                 strBuffIndex += n;
             }
@@ -226,9 +230,14 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
 bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     static bool isInitDone = false;
     if (!isInitDone) {
-        CircularBuf_Init(&gSdCardData.wCirbuf,
-                CircularBufferToSDWrite,
-                SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
+        // Initialize circular buffer using static coherent memory instead of heap
+        gSdCardData.wCirbuf.buf_ptr = gSdSharedBuffer;
+        gSdCardData.wCirbuf.buf_size = SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE;
+        gSdCardData.wCirbuf.process_callback = CircularBufferToSDWrite;
+        gSdCardData.wCirbuf.insertPtr = gSdSharedBuffer;
+        gSdCardData.wCirbuf.removePtr = gSdSharedBuffer;
+        gSdCardData.wCirbuf.totalBytes = 0;
+
         gSdCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSdCardData.wMutex);
         gSdCardData.opCompleteSemaphore = xSemaphoreCreateBinary();
@@ -365,6 +374,13 @@ void sd_card_manager_ProcessState() {
                     gpSdCardSettings->directory, gpSdCardSettings->file);
             LOG_D("[SD] Opening file: '%s', mode=%d\r\n", gSdCardData.filePath, gpSdCardSettings->mode);
             if (gpSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+                // Clear shared buffer and write buffer to prevent stale data from previous session
+                xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
+                CircularBuf_Reset(&gSdCardData.wCirbuf);
+                memset(gSdSharedBuffer, 0, SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
+                memset(gSdCardData.writeBuffer, 0, sizeof(gSdCardData.writeBuffer));
+                xSemaphoreGive(gSdCardData.wMutex);
+
                 // Use WRITE_PLUS to create/truncate file (overwrite mode)
                 gSdCardData.fileHandle = SYS_FS_FileOpen(gSdCardData.filePath,
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
@@ -484,34 +500,93 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE:
         {
-            size_t bytesRead = 0;
-            gSdCardData.readBufferLength = 0;
-            bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdCardData.readBuffer, SD_CARD_MANAGER_CONF_RBUFFER_SIZE - 1);
+            // Continuous loop for file transfer instead of one chunk per task tick.
+            // Yields every 1 second to other tasks. Priority boosted to prevent preemption.
+            // Diagnostic logging added for GitHub #146.
 
-            if (bytesRead == (size_t) - 1) {
-                gSdCardData.readBufferLength = sprintf((char*) gSdCardData.readBuffer,
-                        "%s", "\r\nError!! Reading SD Card\r\n");
-                sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                        gSdCardData.readBuffer,
-                        gSdCardData.readBufferLength);
-                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
-            } else if (bytesRead == 0) {
-                //End of File
-                gSdCardData.readBufferLength = sprintf((char*) gSdCardData.readBuffer,
-                        "%s", "\r\n\n__END_OF_FILE__\r\n\n");
-                sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                        gSdCardData.readBuffer,
-                        gSdCardData.readBufferLength);
+            uint32_t totalBytesRead = 0;
+            uint32_t readCount = 0;
+
+            // Boost task priority to match USB tasks for balanced time slicing
+            TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
+            UBaseType_t originalPriority = uxTaskPriorityGet(currentTask);
+            vTaskPrioritySet(currentTask, 7);  // Same as USB tasks for round-robin scheduling
+
+            // Track time for periodic yielding
+            TickType_t lastYieldTime = xTaskGetTickCount();
+            const TickType_t yieldInterval = pdMS_TO_TICKS(1000);  // Yield every 1 second
+
+            // Read entire file in continuous loop
+            while (1) {
+                // Abort if file handle became invalid
+                if (gSdCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
+                    LOG_E("[SD] Transfer ABORTED: file handle invalid");
+                    totalBytesRead = 0;
+                    readCount = 0;
+                    break;
+                }
+
+                size_t bytesRead = 0;
                 gSdCardData.readBufferLength = 0;
-                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
 
-            } else {
-                gSdCardData.readBufferLength = bytesRead;
-                sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                        gSdCardData.readBuffer,
-                        gSdCardData.readBufferLength);
+                // Use 16KB reads for better throughput
+                bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer,
+                                           16384);
 
+                if (bytesRead == (size_t) - 1) {
+                    // Read error
+                    LOG_E("[SD] Transfer ERROR: %u MB, read#%u", totalBytesRead/(1024*1024), readCount);
+                    gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
+                            "%s", "\r\nError!! Reading SD Card\r\n");
+                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                            gSdSharedBuffer,
+                            gSdCardData.readBufferLength);
+
+                    // Close file handle to prevent resource leak
+                    SYS_FS_FileClose(gSdCardData.fileHandle);
+                    gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    totalBytesRead = 0;
+                    readCount = 0;
+                    break;
+
+                } else if (bytesRead == 0) {
+                    // End of file
+                    gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
+                            "%s", "__END_OF_FILE__");
+                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                            gSdSharedBuffer,
+                            gSdCardData.readBufferLength);
+
+                    // Close file handle
+                    SYS_FS_FileClose(gSdCardData.fileHandle);
+                    gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+
+                    gSdCardData.readBufferLength = 0;
+                    totalBytesRead = 0;
+                    readCount = 0;
+                    break;
+
+                } else {
+                    // Data chunk read successfully
+                    totalBytesRead += bytesRead;
+                    readCount++;
+
+                    gSdCardData.readBufferLength = bytesRead;
+                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                            gSdSharedBuffer,
+                            gSdCardData.readBufferLength);
+
+                    // Delay every 1 second to allow lower priority tasks to run
+                    if ((xTaskGetTickCount() - lastYieldTime) >= yieldInterval) {
+                        vTaskDelay(pdMS_TO_TICKS(1));
+                        lastYieldTime = xTaskGetTickCount();
+                    }
+                }
             }
+
+            // Restore original task priority
+            vTaskPrioritySet(currentTask, originalPriority);
+            gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
         }
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR:
