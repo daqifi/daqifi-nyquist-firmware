@@ -531,9 +531,9 @@ void sd_card_manager_ProcessState() {
                 size_t bytesRead = 0;
                 gSdCardData.readBufferLength = 0;
 
-                // Use 8KB reads (64KB causes SYS_FS_FileRead to block indefinitely)
+                // Use 16KB reads for better throughput
                 bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer,
-                                           8192);
+                                           16384);
 
                 if (bytesRead == (size_t) - 1) {
                     // Read error

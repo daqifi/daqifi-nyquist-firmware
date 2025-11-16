@@ -152,9 +152,9 @@ void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSe
 
 void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
     size_t transferredLength = 0;
-    const size_t maxChunk = 2000;
+    const size_t maxChunk = 4000;  // Match 4KB USB buffer
     uint32_t retryCount = 0;
-    const uint32_t maxRetries = 10000;  // Timeout after 10 seconds
+    const uint32_t maxRetries = 10000;
 
     while (transferredLength < dataLen) {
         size_t remaining = dataLen - transferredLength;
