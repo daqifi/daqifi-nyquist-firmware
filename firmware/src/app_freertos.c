@@ -174,9 +174,9 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
             if (retryCount >= maxRetries) {
                 LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
                       (unsigned)transferredLength, (unsigned)dataLen, retryCount);
-                break;  // Give up to avoid infinite loop
+                break;
             }
-            vTaskDelay(1);
+            vTaskDelay(1);  // Block to ensure USB tasks can drain buffer
         }
     }
 
@@ -188,6 +188,10 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
 
 static void app_USBDeviceTask(void* p_arg) {
     UsbCdc_Initialize();
+
+    // Boost priority after initialization complete
+    vTaskPrioritySet(NULL, 7);
+
     while (1) {
         UsbCdc_ProcessState();
         vTaskDelay(1);
@@ -516,7 +520,7 @@ static void app_TasksCreate() {
             "USBDeviceTask",
             USBDEVICETASK_SIZE,
             NULL,
-            7,
+            2,  // Start at normal priority, self-boosts after init
             NULL);
     /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
