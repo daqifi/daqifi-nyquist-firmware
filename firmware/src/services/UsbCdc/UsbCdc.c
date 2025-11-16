@@ -584,13 +584,14 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     // This prevents the streaming task from stalling during high-rate streaming
     xSemaphoreTake(client->wMutex, portMAX_DELAY);
     size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
-    if (currentFree < len) {
+    if (currentFree == 0) {
         xSemaphoreGive(client->wMutex);
-        // Buffer full - return 0 to signal caller to retry
-        // Logging disabled to prevent delays during high-speed transfers
-        return 0;
+        return 0;  // No space at all
     }
-    bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
+
+    // Partial write - send whatever fits
+    size_t toWrite = (len < currentFree) ? len : currentFree;
+    bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, toWrite);
     xSemaphoreGive(client->wMutex);
 
     return bytesAdded;

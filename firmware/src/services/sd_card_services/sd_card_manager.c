@@ -11,7 +11,8 @@
 
 // Shared coherent buffer for all SD operations (write, read, list)
 // DMA-safe for SPI transfers. Mutually exclusive operations share this buffer.
-static __attribute__((coherent)) uint8_t gSdSharedBuffer[SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE];
+// Cache-line aligned for optimal DMA performance.
+static __attribute__((coherent, aligned(16))) uint8_t gSdSharedBuffer[SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE];
 
 typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_INIT,
@@ -514,7 +515,18 @@ void sd_card_manager_ProcessState() {
 
             // Track time for periodic yielding
             TickType_t lastYieldTime = xTaskGetTickCount();
-            const TickType_t yieldInterval = pdMS_TO_TICKS(1000);  // Yield every 1 second
+            const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
+
+            // Calculate safe read size based on buffer capacity
+            size_t maxRead = sizeof(gSdSharedBuffer);
+            if (maxRead > 16384U) maxRead = 16384U;  // Cap at tested maximum
+            maxRead = (maxRead / 4096U) * 4096U;      // Align to USB chunk size
+            if (maxRead == 0U) {
+                LOG_E("[SD] Buffer too small for read");
+                vTaskPrioritySet(currentTask, originalPriority);
+                gSdCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                break;
+            }
 
             // Read entire file in continuous loop
             while (1) {
@@ -529,18 +541,12 @@ void sd_card_manager_ProcessState() {
                 size_t bytesRead = 0;
                 gSdCardData.readBufferLength = 0;
 
-                // Use 16KB reads for better throughput
-                bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer,
-                                           16384);
+                // Dynamic read size based on buffer capacity
+                bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer, maxRead);
 
                 if (bytesRead == (size_t) - 1) {
-                    // Read error
+                    // Read error - log only, don't send error text through data stream
                     LOG_E("[SD] Transfer ERROR: %u MB, read#%u", totalBytesRead/(1024*1024), readCount);
-                    gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
-                            "%s", "\r\nError!! Reading SD Card\r\n");
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdSharedBuffer,
-                            gSdCardData.readBufferLength);
 
                     // Close file handle to prevent resource leak
                     SYS_FS_FileClose(gSdCardData.fileHandle);
