@@ -516,8 +516,6 @@ void sd_card_manager_ProcessState() {
             TickType_t lastYieldTime = xTaskGetTickCount();
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);  // Yield every 1 second
 
-            LOG_E("[SD] Transfer START: %s", gSdCardData.filePath);
-
             // Read entire file in continuous loop
             while (1) {
                 // Abort if file handle became invalid
@@ -553,9 +551,6 @@ void sd_card_manager_ProcessState() {
 
                 } else if (bytesRead == 0) {
                     // End of file
-                    LOG_E("[SD] Transfer COMPLETE: %u MB in %u reads, heap=%u",
-                          totalBytesRead/(1024*1024), readCount, xPortGetFreeHeapSize());
-
                     gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
                             "%s", "__END_OF_FILE__");
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
