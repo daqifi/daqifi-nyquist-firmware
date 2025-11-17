@@ -766,3 +766,10 @@ voltage, NTC status, and power-up readiness.
 - pic32 tris convention is 1=input and 0=output
 - when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
 - always verify scpi command syntax - don't guess.
+- we don't need to generate analysis docs or the like unless asked
+- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
+ error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
+error was.
+- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
+ error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
+error was.
