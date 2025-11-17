@@ -146,15 +146,6 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
         pSDCardRuntimeConfig->file[fileLen] = '\0';
     }
-
-    if (fileLen > 0) {
-        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
-            result = SCPI_RES_ERR;
-            goto __exit_point;
-        }
-        memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
-        pSDCardRuntimeConfig->file[fileLen] = '\0';
-    }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     result = SCPI_RES_OK;
