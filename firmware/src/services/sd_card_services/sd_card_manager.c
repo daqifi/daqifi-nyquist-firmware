@@ -20,6 +20,10 @@
 // Cache-line aligned for optimal DMA performance.
 static __attribute__((coherent, aligned(16))) uint8_t gSdSharedBuffer[SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE];
 
+// Mutex to serialize SD operations (READ, WRITE, LIST) on shared buffer
+// Prevents race conditions from cross-task state changes via UpdateSettings()
+static SemaphoreHandle_t gSDOpMutex = NULL;
+
 /**
  * Helper function: Wait for USB buffer to drain before EOF/close
  * Prevents race condition where EOF arrives before last data is processed
@@ -264,6 +268,11 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
         gSDCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSDCardData.wMutex);
         gSDCardData.opCompleteSemaphore = xSemaphoreCreateBinary();
+
+        // Create operation mutex to serialize READ/WRITE/LIST on gSDSharedBuffer
+        if (gSDOpMutex == NULL) {
+            gSDOpMutex = xSemaphoreCreateMutex();
+        }
         isInitDone = true;
         gpSDCardSettings = pSettings;
         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
@@ -523,6 +532,11 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE:
         {
+            // Take mutex to serialize access to gSDSharedBuffer
+            if (gSDOpMutex) {
+                xSemaphoreTake(gSDOpMutex, portMAX_DELAY);
+            }
+
             // Continuous loop for file transfer instead of one chunk per task tick.
             // Yields every 1 second to other tasks. Priority boosted to prevent preemption.
             // Diagnostic logging added for GitHub #146.
@@ -546,6 +560,12 @@ void sd_card_manager_ProcessState() {
             if (maxRead == 0U) {
                 LOG_E("[SD] Buffer too small for read");
                 vTaskPrioritySet(currentTask, originalPriority);
+
+                // Release mutex on error path
+                if (gSDOpMutex) {
+                    xSemaphoreGive(gSDOpMutex);
+                }
+
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
                 break;
             }
@@ -616,11 +636,22 @@ void sd_card_manager_ProcessState() {
 
             // Restore original task priority
             vTaskPrioritySet(currentTask, originalPriority);
+
+            // Release mutex - operation complete
+            if (gSDOpMutex) {
+                xSemaphoreGive(gSDOpMutex);
+            }
+
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
         }
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR:
         {
+            // Take mutex to serialize access to gSDSharedBuffer (used in callbacks)
+            if (gSDOpMutex) {
+                xSemaphoreTake(gSDOpMutex, portMAX_DELAY);
+            }
+
             LOG_D("[SD] Listing directory: '%s'\r\n", gpSDCardSettings->directory);
 
             // List files in chunks using static callback
@@ -629,6 +660,11 @@ void sd_card_manager_ProcessState() {
                     gSDCardData.messageBuffer,
                     SD_CARD_MANAGER_CONF_RBUFFER_SIZE,
                     sd_listdir_send_chunk);
+
+            // Release mutex - operation complete
+            if (gSDOpMutex) {
+                xSemaphoreGive(gSDOpMutex);
+            }
 
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
             // Signal completion
