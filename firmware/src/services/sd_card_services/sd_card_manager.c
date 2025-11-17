@@ -234,7 +234,22 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
                     "%s %u\r\n", newPath, (unsigned)stat.fsize);
             if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
-                strBuffIndex += n;
+                strBuffIndex += (size_t)n;
+            } else {
+                // Entry doesn't fit - flush buffer and retry with fresh buffer
+                if (sendChunk && strBuffIndex > 0) {
+                    pStrBuff[strBuffIndex] = '\0';
+                    sendChunk(pStrBuff, strBuffIndex);
+                    strBuffIndex = 0;
+
+                    // Retry with fresh buffer
+                    n = snprintf((char *) pStrBuff, strBuffSize,
+                                "%s %u\r\n", newPath, (unsigned)stat.fsize);
+                    if (n > 0 && (size_t)n < strBuffSize) {
+                        strBuffIndex = (size_t)n;
+                    }
+                    // If still doesn't fit, entry is too large for buffer (skip it)
+                }
             }
         }
     }

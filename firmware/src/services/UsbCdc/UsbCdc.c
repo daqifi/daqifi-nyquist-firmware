@@ -575,9 +575,8 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     if (client == NULL) {
         client = &gRunTimeUsbSttings;
     }
-    size_t bytesAdded = 0;
 
-    if (len == 0)return 0;
+    if (len == 0) return 0;
 
     // Non-blocking check for buffer space
     // If buffer is full, return 0 immediately instead of blocking
@@ -586,12 +585,20 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
     if (currentFree == 0) {
         xSemaphoreGive(client->wMutex);
-        return 0;  // No space at all
+        return 0;
     }
 
-    // Partial write - send whatever fits
-    size_t toWrite = (len < currentFree) ? len : currentFree;
-    bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, toWrite);
+    // Partial write - clamp to chunk size for better flow control
+    // Limit to USBCDC_WBUFFER_SIZE to align with USB driver transfer granularity
+    size_t toWrite = len;
+    if (toWrite > currentFree) {
+        toWrite = currentFree;
+    }
+    if (toWrite > USBCDC_WBUFFER_SIZE) {
+        toWrite = USBCDC_WBUFFER_SIZE;
+    }
+
+    size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, toWrite);
     xSemaphoreGive(client->wMutex);
 
     return bytesAdded;
