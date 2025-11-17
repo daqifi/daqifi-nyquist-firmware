@@ -506,6 +506,20 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE:
         {
+            // Helper function: Wait for USB buffer to drain before EOF/close
+            // Prevents race condition where EOF arrives before last data is processed
+            static inline void sd_wait_usb_drain(void) {
+                extern size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client);
+                TickType_t start = xTaskGetTickCount();
+                while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(50)) {
+                    // If buffer is mostly drained, assume progress and exit
+                    if (UsbCdc_WriteBuffFreeSize(NULL) > (USBCDC_WBUFFER_SIZE / 2)) {
+                        break;
+                    }
+                    vTaskDelay(1);
+                }
+            }
+
             // Continuous loop for file transfer instead of one chunk per task tick.
             // Yields every 1 second to other tasks. Priority boosted to prevent preemption.
             // Diagnostic logging added for GitHub #146.
@@ -533,6 +547,9 @@ void sd_card_manager_ProcessState() {
                 break;
             }
 
+            // EOF marker as literal constant (safer than sprintf)
+            static const char eofMarker[] = "__END_OF_FILE__";
+
             // Read entire file in continuous loop
             while (1) {
                 // Abort if file handle became invalid
@@ -543,15 +560,28 @@ void sd_card_manager_ProcessState() {
                     break;
                 }
 
-                size_t bytesRead = 0;
-                gSDCardData.messageBufferLength = 0;
+                // Backpressure-aware sizing: cap read by downstream USB free space
+                extern size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client);
+                size_t downstreamFree = UsbCdc_WriteBuffFreeSize(NULL);
+                size_t readTarget = maxRead;
+                if (downstreamFree != 0 && downstreamFree < readTarget) {
+                    // Cap read size to available downstream space, keep alignment
+                    readTarget = (downstreamFree / SD_READ_ALIGNMENT_SIZE) * SD_READ_ALIGNMENT_SIZE;
+                    if (readTarget == 0) {
+                        // No space available, yield briefly and retry
+                        vTaskDelay(pdMS_TO_TICKS(1));
+                        continue;
+                    }
+                }
 
-                // Dynamic read size based on buffer capacity
-                bytesRead = SYS_FS_FileRead(gSDCardData.fileHandle, gSdSharedBuffer, maxRead);
+                size_t bytesRead = SYS_FS_FileRead(gSDCardData.fileHandle, gSdSharedBuffer, readTarget);
 
                 if (bytesRead == (size_t) - 1) {
                     // Read error - log only, don't send error text through data stream
                     LOG_E("[SD] Transfer ERROR: %u MB, read#%u", totalBytesRead/(1024*1024), readCount);
+
+                    // Wait for USB to drain any pending data before closing
+                    sd_wait_usb_drain();
 
                     // Close file handle to prevent resource leak
                     SYS_FS_FileClose(gSDCardData.fileHandle);
@@ -561,18 +591,18 @@ void sd_card_manager_ProcessState() {
                     break;
 
                 } else if (bytesRead == 0) {
-                    // End of file - use separate buffer to prevent corruption
-                    gSDCardData.messageBufferLength = sprintf((char*) gSDCardData.messageBuffer,
-                            "%s", "__END_OF_FILE__");
+                    // End of file - wait for USB to drain before sending EOF marker
+                    sd_wait_usb_drain();
+
+                    // Send EOF marker using literal constant (safer than sprintf)
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSDCardData.messageBuffer,
-                            gSDCardData.messageBufferLength);
+                            (uint8_t*)eofMarker,
+                            sizeof(eofMarker) - 1);
 
                     // Close file handle
                     SYS_FS_FileClose(gSDCardData.fileHandle);
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
 
-                    gSDCardData.messageBufferLength = 0;
                     totalBytesRead = 0;
                     readCount = 0;
                     break;
@@ -582,10 +612,9 @@ void sd_card_manager_ProcessState() {
                     totalBytesRead += bytesRead;
                     readCount++;
 
-                    gSDCardData.messageBufferLength = bytesRead;
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                             gSdSharedBuffer,
-                            gSDCardData.messageBufferLength);
+                            bytesRead);
 
                     // Delay every 1 second to allow lower priority tasks to run
                     if ((xTaskGetTickCount() - lastYieldTime) >= yieldInterval) {

@@ -132,8 +132,12 @@ static tBoardConfig * gpBoardConfig;
 extern const NanopbFlagsArray fields_discovery;
 
 // USB transfer constants for SD card callback
-#define USB_TRANSFER_CHUNK_SIZE     4000    // Maximum bytes per USB write (prevents buffer overflow)
-#define USB_TRANSFER_MAX_RETRIES    10000   // Maximum retry attempts (10 second timeout at 1ms per retry)
+// Clamp chunk size to USB buffer capacity for compile-time safety
+#define USB_TRANSFER_CHUNK_SIZE_RAW     4000U
+#define USB_TRANSFER_CHUNK_SIZE \
+    ((USBCDC_WBUFFER_SIZE < USB_TRANSFER_CHUNK_SIZE_RAW) ? \
+     (USBCDC_WBUFFER_SIZE - 16U) : USB_TRANSFER_CHUNK_SIZE_RAW)
+#define USB_TRANSFER_MAX_RETRIES        10000U   // Maximum retry attempts (10 second timeout at 1ms per retry)
 
 static void app_SystemInit();
 static void app_USBDeviceTask(void* p_arg);
@@ -164,7 +168,24 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
 
     while (transferredLength < dataLen) {
         size_t remaining = dataLen - transferredLength;
-        size_t toSend = (remaining < USB_TRANSFER_CHUNK_SIZE) ? remaining : USB_TRANSFER_CHUNK_SIZE;
+
+        // Dynamically size write based on actual USB buffer free space
+        size_t freeSpace = UsbCdc_WriteBuffFreeSize(NULL);
+        if (freeSpace == 0) {
+            // No space available, wait and retry
+            if (++retryCount >= USB_TRANSFER_MAX_RETRIES) {
+                LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
+                      (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
+                break;
+            }
+            vTaskDelay(1);
+            continue;
+        }
+
+        // Calculate optimal write size: min(remaining, freeSpace, chunk_size)
+        size_t toSend = remaining;
+        if (toSend > freeSpace) toSend = freeSpace;
+        if (toSend > USB_TRANSFER_CHUNK_SIZE) toSend = USB_TRANSFER_CHUNK_SIZE;
 
         size_t bytesWritten = UsbCdc_WriteToBuffer(
                 NULL,
@@ -180,13 +201,14 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
                 vTaskDelay(1);
             }
         } else {
+            // Should not happen since we checked freeSpace > 0
             retryCount++;
             if (retryCount >= USB_TRANSFER_MAX_RETRIES) {
                 LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
                       (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
                 break;
             }
-            vTaskDelay(1);  // Block to ensure USB tasks can drain buffer
+            vTaskDelay(1);
         }
     }
 
