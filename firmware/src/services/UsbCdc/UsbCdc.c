@@ -579,9 +579,12 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     if (len == 0) return 0;
 
     // Non-blocking check for buffer space
-    // If buffer is full, return 0 immediately instead of blocking
-    // This prevents the streaming task from stalling during high-rate streaming
-    xSemaphoreTake(client->wMutex, portMAX_DELAY);
+    // Use try-lock (timeout=0) to keep function truly non-blocking
+    // If mutex is busy or buffer is full, return 0 immediately
+    if (xSemaphoreTake(client->wMutex, 0) != pdTRUE) {
+        return 0;  // Mutex busy, can't write now
+    }
+
     size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
     if (currentFree == 0) {
         xSemaphoreGive(client->wMutex);
