@@ -168,24 +168,7 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
 
     while (transferredLength < dataLen) {
         size_t remaining = dataLen - transferredLength;
-
-        // Dynamically size write based on actual USB buffer free space
-        size_t freeSpace = UsbCdc_WriteBuffFreeSize(NULL);
-        if (freeSpace == 0) {
-            // No space available, wait and retry
-            if (++retryCount >= USB_TRANSFER_MAX_RETRIES) {
-                LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
-                      (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
-                break;
-            }
-            vTaskDelay(1);
-            continue;
-        }
-
-        // Calculate optimal write size: min(remaining, freeSpace, chunk_size)
-        size_t toSend = remaining;
-        if (toSend > freeSpace) toSend = freeSpace;
-        if (toSend > USB_TRANSFER_CHUNK_SIZE) toSend = USB_TRANSFER_CHUNK_SIZE;
+        size_t toSend = (remaining < USB_TRANSFER_CHUNK_SIZE) ? remaining : USB_TRANSFER_CHUNK_SIZE;
 
         size_t bytesWritten = UsbCdc_WriteToBuffer(
                 NULL,
@@ -201,7 +184,6 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
                 vTaskDelay(1);
             }
         } else {
-            // Should not happen since we checked freeSpace > 0
             retryCount++;
             if (retryCount >= USB_TRANSFER_MAX_RETRIES) {
                 LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",

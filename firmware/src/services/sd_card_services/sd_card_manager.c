@@ -563,20 +563,8 @@ void sd_card_manager_ProcessState() {
                     break;
                 }
 
-                // Backpressure-aware sizing: cap read by downstream USB free space
-                size_t downstreamFree = UsbCdc_WriteBuffFreeSize(NULL);
-                size_t readTarget = maxRead;
-                if (downstreamFree != 0 && downstreamFree < readTarget) {
-                    // Cap read size to available downstream space, keep alignment
-                    readTarget = (downstreamFree / SD_READ_ALIGNMENT_SIZE) * SD_READ_ALIGNMENT_SIZE;
-                    if (readTarget == 0) {
-                        // No space available, yield briefly and retry
-                        vTaskDelay(pdMS_TO_TICKS(1));
-                        continue;
-                    }
-                }
-
-                size_t bytesRead = SYS_FS_FileRead(gSDCardData.fileHandle, gSdSharedBuffer, readTarget);
+                // Read at maximum rate (backpressure handled by callback retry logic)
+                size_t bytesRead = SYS_FS_FileRead(gSDCardData.fileHandle, gSdSharedBuffer, maxRead);
 
                 if (bytesRead == (size_t) - 1) {
                     // Read error - log only, don't send error text through data stream
