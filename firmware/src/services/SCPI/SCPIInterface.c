@@ -782,11 +782,6 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
     
     size_t logSize = LogMessageCount();
     
-    // If no logs, add a message to indicate the log is empty
-    if (logSize == 0) {
-        context->interface->write(context, "Log is empty\n", 13);
-    }
-    
     size_t i = 0;
     for (i = 0; i < logSize; ++i) {
         size_t messageSize = LogMessagePop((uint8_t*) buffer, 128);
