@@ -33,11 +33,11 @@ typedef enum {
 
 typedef struct {
     sd_card_manager_processState_t currentProcessState;
-    /** Client read buffer */
-    uint8_t readBuffer[SD_CARD_MANAGER_CONF_RBUFFER_SIZE] __attribute__((coherent));
+    /** Control message buffer (for EOF marker, error messages) */
+    uint8_t messageBuffer[SD_CARD_MANAGER_CONF_RBUFFER_SIZE] __attribute__((coherent));
 
-    /** The current length of the read buffer */
-    size_t readBufferLength;
+    /** The current length of the message buffer */
+    size_t messageBufferLength;
 
     /** Client write buffer */
     uint8_t writeBuffer[SD_CARD_MANAGER_CONF_WBUFFER_SIZE]__attribute__((coherent));
@@ -539,7 +539,7 @@ void sd_card_manager_ProcessState() {
                 }
 
                 size_t bytesRead = 0;
-                gSdCardData.readBufferLength = 0;
+                gSdCardData.messageBufferLength = 0;
 
                 // Dynamic read size based on buffer capacity
                 bytesRead = SYS_FS_FileRead(gSdCardData.fileHandle, gSdSharedBuffer, maxRead);
@@ -556,18 +556,18 @@ void sd_card_manager_ProcessState() {
                     break;
 
                 } else if (bytesRead == 0) {
-                    // End of file
-                    gSdCardData.readBufferLength = sprintf((char*) gSdSharedBuffer,
+                    // End of file - use separate buffer to prevent corruption
+                    gSdCardData.messageBufferLength = sprintf((char*) gSdCardData.messageBuffer,
                             "%s", "__END_OF_FILE__");
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            gSdSharedBuffer,
-                            gSdCardData.readBufferLength);
+                            gSdCardData.messageBuffer,
+                            gSdCardData.messageBufferLength);
 
                     // Close file handle
                     SYS_FS_FileClose(gSdCardData.fileHandle);
                     gSdCardData.fileHandle = SYS_FS_HANDLE_INVALID;
 
-                    gSdCardData.readBufferLength = 0;
+                    gSdCardData.messageBufferLength = 0;
                     totalBytesRead = 0;
                     readCount = 0;
                     break;
@@ -577,10 +577,10 @@ void sd_card_manager_ProcessState() {
                     totalBytesRead += bytesRead;
                     readCount++;
 
-                    gSdCardData.readBufferLength = bytesRead;
+                    gSdCardData.messageBufferLength = bytesRead;
                     sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                             gSdSharedBuffer,
-                            gSdCardData.readBufferLength);
+                            gSdCardData.messageBufferLength);
 
                     // Delay every 1 second to allow lower priority tasks to run
                     if ((xTaskGetTickCount() - lastYieldTime) >= yieldInterval) {
@@ -602,7 +602,7 @@ void sd_card_manager_ProcessState() {
             // List files in chunks using static callback
             ListFilesInDirectoryChunked(
                     gpSdCardSettings->directory,
-                    gSdCardData.readBuffer,
+                    gSdCardData.messageBuffer,
                     SD_CARD_MANAGER_CONF_RBUFFER_SIZE,
                     sd_listdir_send_chunk);
 
