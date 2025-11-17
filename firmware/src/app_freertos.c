@@ -174,11 +174,15 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
         if (bytesWritten > 0) {
             transferredLength += bytesWritten;
             retryCount = 0;
+            // If partial write, yield to let USB drain before retrying
+            if (bytesWritten < toSend) {
+                vTaskDelay(1);
+            }
         } else {
             retryCount++;
             if (retryCount >= maxRetries) {
                 LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
-                      (unsigned)transferredLength, (unsigned)dataLen, retryCount);
+                      (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
                 break;
             }
             vTaskDelay(1);  // Block to ensure USB tasks can drain buffer
