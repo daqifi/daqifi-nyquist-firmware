@@ -131,6 +131,9 @@ static tBoardRuntimeConfig * gpBoardRuntimeConfig;
 static tBoardConfig * gpBoardConfig;
 extern const NanopbFlagsArray fields_discovery;
 
+// USB transfer constants for SD card callback
+#define USB_TRANSFER_CHUNK_SIZE     4000    // Maximum bytes per USB write (prevents buffer overflow)
+#define USB_TRANSFER_MAX_RETRIES    10000   // Maximum retry attempts (10 second timeout at 1ms per retry)
 
 static void app_SystemInit();
 static void app_USBDeviceTask(void* p_arg);
@@ -157,13 +160,11 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
     }
 
     size_t transferredLength = 0;
-    const size_t maxChunk = 4000;
     uint32_t retryCount = 0;
-    const uint32_t maxRetries = 10000;  // 10 second timeout at 1ms per retry
 
     while (transferredLength < dataLen) {
         size_t remaining = dataLen - transferredLength;
-        size_t toSend = (remaining < maxChunk) ? remaining : maxChunk;
+        size_t toSend = (remaining < USB_TRANSFER_CHUNK_SIZE) ? remaining : USB_TRANSFER_CHUNK_SIZE;
 
         size_t bytesWritten = UsbCdc_WriteToBuffer(
                 NULL,
@@ -180,7 +181,7 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
             }
         } else {
             retryCount++;
-            if (retryCount >= maxRetries) {
+            if (retryCount >= USB_TRANSFER_MAX_RETRIES) {
                 LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
                       (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
                 break;

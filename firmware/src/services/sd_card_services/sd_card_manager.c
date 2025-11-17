@@ -9,6 +9,11 @@
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
 
+// File read transfer constants
+#define SD_READ_MAX_CHUNK_SIZE      16384U  // Maximum read size (16KB) - tested maximum for stability
+#define SD_READ_ALIGNMENT_SIZE      4096U   // Chunk alignment (4KB) - matches USB transfer granularity
+#define SD_FLUSH_THRESHOLD          4096U   // Minimum bytes to trigger flush before unmount
+
 // Shared coherent buffer for all SD operations (write, read, list)
 // DMA-safe for SPI transfers. Mutually exclusive operations share this buffer.
 // Cache-line aligned for optimal DMA performance.
@@ -478,7 +483,7 @@ void sd_card_manager_ProcessState() {
 
             xSemaphoreTake(gSdCardData.wMutex, portMAX_DELAY);
             bool needsFlush = (currentMillis - gSdCardData.lastFlushMillis > 5000 ||
-                    gSdCardData.totalBytesFlushPending > 4096) && 
+                    gSdCardData.totalBytesFlushPending > SD_FLUSH_THRESHOLD) &&
                     gSdCardData.totalBytesFlushPending > 0;
             if (needsFlush) {
                 xSemaphoreGive(gSdCardData.wMutex);
@@ -519,8 +524,8 @@ void sd_card_manager_ProcessState() {
 
             // Calculate safe read size based on buffer capacity
             size_t maxRead = sizeof(gSdSharedBuffer);
-            if (maxRead > 16384U) maxRead = 16384U;  // Cap at tested maximum
-            maxRead = (maxRead / 4096U) * 4096U;      // Align to USB chunk size
+            if (maxRead > SD_READ_MAX_CHUNK_SIZE) maxRead = SD_READ_MAX_CHUNK_SIZE;
+            maxRead = (maxRead / SD_READ_ALIGNMENT_SIZE) * SD_READ_ALIGNMENT_SIZE;
             if (maxRead == 0U) {
                 LOG_E("[SD] Buffer too small for read");
                 vTaskPrioritySet(currentTask, originalPriority);
