@@ -138,7 +138,7 @@ extern const NanopbFlagsArray fields_discovery;
 static void app_SystemInit();
 static void app_USBDeviceTask(void* p_arg);
 static void app_WifiTask(void* p_arg);
-static void app_SdCardTask(void* p_arg);
+static void app_SDCardTask(void* p_arg);
 
 void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
@@ -252,7 +252,7 @@ static void app_WifiTask(void* p_arg) {
  * Avoids SD operations during WiFi streaming to prevent SPI bus contention
  * that was causing WiFi streaming failures every ~590 seconds.
  */
-static void app_SdCardTask(void* p_arg) {
+static void app_SDCardTask(void* p_arg) {
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
     while (1) {
         // Critical fix: Prevent SPI bus contention between WiFi streaming/firmware update and SD operations
@@ -548,15 +548,15 @@ static void app_TasksCreate() {
         LOG_E("FATAL: Failed to create WifiTask (3000 bytes)\r\n");
         while (1);
     }
-    errStatus = xTaskCreate((TaskFunction_t) app_SdCardTask,
-            "SdCardTask",
+    errStatus = xTaskCreate((TaskFunction_t) app_SDCardTask,
+            "SDCardTask",
             5240,
             NULL,
             2,
             NULL);
     /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
-        LOG_E("FATAL: Failed to create SdCardTask (5240 bytes)\r\n");
+        LOG_E("FATAL: Failed to create SDCardTask (5240 bytes)\r\n");
         while (1);
     }
 }

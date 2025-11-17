@@ -1164,12 +1164,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // Otherwise keep user's explicit setting (e.g., SD or All)
 
     // Check for WiFi+SD conflict (both use SPI bus)
-    sd_card_manager_settings_t* pSdCardSettings =
+    sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     if ((pRunTimeStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
          pRunTimeStreamConfig->ActiveInterface == StreamingInterface_All) &&
-        pSdCardSettings != NULL &&
-        pSdCardSettings->enable && pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        pSDCardSettings != NULL &&
+        pSDCardSettings->enable && pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
         LOG_E("Cannot start WiFi streaming while SD logging is active (SPI bus conflict)");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
@@ -1191,12 +1191,12 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     Streaming_UpdateState();
 
     // Close SD card file if logging was enabled
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    if (pSdCardRuntimeConfig != NULL &&
-        pSdCardRuntimeConfig->enable && pSdCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if (pSDCardRuntimeConfig != NULL &&
+        pSDCardRuntimeConfig->enable && pSDCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE) {
         // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
-        pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         // Give SD card manager task time to close the file
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -1261,12 +1261,12 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    sd_card_manager_settings_t* pSdCardSettings =
+    sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     // Check if SD card is enabled when trying to use SD or All interfaces
     if (param1 == StreamingInterface_SD || param1 == StreamingInterface_All) {
-        if (pSdCardSettings != NULL && !pSdCardSettings->enable) {
+        if (pSDCardSettings != NULL && !pSDCardSettings->enable) {
             LOG_E("Cannot set interface to SD - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
@@ -1275,8 +1275,8 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
 
     // Check for WiFi+SD conflict (both use SPI bus)
     if (param1 == StreamingInterface_WiFi || param1 == StreamingInterface_All) {
-        if (pSdCardSettings != NULL &&
-            pSdCardSettings->enable && pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        if (pSDCardSettings != NULL &&
+            pSDCardSettings->enable && pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
             LOG_E("Cannot stream to WiFi while SD logging is active (SPI bus conflict). Disable SD logging first.");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
