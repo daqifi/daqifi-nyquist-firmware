@@ -132,11 +132,13 @@ static tBoardConfig * gpBoardConfig;
 extern const NanopbFlagsArray fields_discovery;
 
 // USB transfer constants for SD card callback
-// Clamp chunk size to USB buffer capacity for compile-time safety
+// Clamp chunk size to USB buffer capacity with underflow protection
 #define USB_TRANSFER_CHUNK_SIZE_RAW     4000U
 #define USB_TRANSFER_CHUNK_SIZE \
-    ((USBCDC_WBUFFER_SIZE < USB_TRANSFER_CHUNK_SIZE_RAW) ? \
-     (USBCDC_WBUFFER_SIZE - 16U) : USB_TRANSFER_CHUNK_SIZE_RAW)
+    ((USBCDC_WBUFFER_SIZE <= 32U) ? 16U : \
+     ((USBCDC_WBUFFER_SIZE < USB_TRANSFER_CHUNK_SIZE_RAW) ? \
+      (USBCDC_WBUFFER_SIZE - 16U) : \
+      USB_TRANSFER_CHUNK_SIZE_RAW))
 #define USB_TRANSFER_MAX_RETRIES        10000U   // Maximum retry attempts (10 second timeout at 1ms per retry)
 
 static void app_SystemInit();
