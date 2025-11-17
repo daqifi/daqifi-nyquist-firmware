@@ -3,6 +3,7 @@
 #include <string.h>
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
+#include "services/UsbCdc/UsbCdc.h"
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
@@ -18,6 +19,22 @@
 // DMA-safe for SPI transfers. Mutually exclusive operations share this buffer.
 // Cache-line aligned for optimal DMA performance.
 static __attribute__((coherent, aligned(16))) uint8_t gSdSharedBuffer[SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE];
+
+/**
+ * Helper function: Wait for USB buffer to drain before EOF/close
+ * Prevents race condition where EOF arrives before last data is processed
+ * Waits up to 50ms for USB buffer to be >50% drained
+ */
+static void sd_wait_usb_drain(void) {
+    TickType_t start = xTaskGetTickCount();
+    while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(50)) {
+        // If buffer is mostly drained, assume progress and exit
+        if (UsbCdc_WriteBuffFreeSize(NULL) > (USBCDC_WBUFFER_SIZE / 2)) {
+            break;
+        }
+        vTaskDelay(1);
+    }
+}
 
 typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_INIT,
@@ -506,20 +523,6 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE:
         {
-            // Helper function: Wait for USB buffer to drain before EOF/close
-            // Prevents race condition where EOF arrives before last data is processed
-            static inline void sd_wait_usb_drain(void) {
-                extern size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client);
-                TickType_t start = xTaskGetTickCount();
-                while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(50)) {
-                    // If buffer is mostly drained, assume progress and exit
-                    if (UsbCdc_WriteBuffFreeSize(NULL) > (USBCDC_WBUFFER_SIZE / 2)) {
-                        break;
-                    }
-                    vTaskDelay(1);
-                }
-            }
-
             // Continuous loop for file transfer instead of one chunk per task tick.
             // Yields every 1 second to other tasks. Priority boosted to prevent preemption.
             // Diagnostic logging added for GitHub #146.
@@ -561,7 +564,6 @@ void sd_card_manager_ProcessState() {
                 }
 
                 // Backpressure-aware sizing: cap read by downstream USB free space
-                extern size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client);
                 size_t downstreamFree = UsbCdc_WriteBuffFreeSize(NULL);
                 size_t readTarget = maxRead;
                 if (downstreamFree != 0 && downstreamFree < readTarget) {
