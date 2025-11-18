@@ -99,7 +99,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     LOG_E("Streaming: Sample queue full - dropped %u samples (queue at capacity)",
                           (unsigned)queueDropCount);
                 }
-                vPortFree(pPublicSampleList);
+                AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
             }
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
@@ -170,7 +170,7 @@ static void Streaming_Start(void) {
         AInPublicSampleList_t* pStale;
         while (AInSampleList_PopFront(&pStale)) {
             if (pStale != NULL) {
-                vPortFree(pStale);
+                AInSampleList_FreeToPool(pStale);  // Use pool instead of vPortFree!
             }
         }
 
