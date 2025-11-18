@@ -159,13 +159,15 @@ static size_t tryWriteRow(
 
         if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
-            int mv = (int)(ADC_ConvertToVoltage(s) * 1000.0);
+            // Output raw ADC counts instead of converted voltage (much faster!)
+            // User can apply calibration in post-processing if needed
+            int rawValue = s->Value;
             // First field has no leading comma
             if (firstField) {
-                w = snprintf(q, rem, "%u,%d", s->Timestamp, mv);
+                w = snprintf(q, rem, "%u,%d", s->Timestamp, rawValue);
                 firstField = false;
             } else {
-                w = snprintf(q, rem, ",%u,%d", s->Timestamp, mv);
+                w = snprintf(q, rem, ",%u,%d", s->Timestamp, rawValue);
             }
         } else {
             // No valid sample for this enabled channel: emit empty ts,val pair
