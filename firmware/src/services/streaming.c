@@ -80,9 +80,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                       xPortGetFreeHeapSize(), sizeof(AInPublicSampleList_t)+200);
                 continue;
             }
-            pPublicSampleList=pvPortCalloc(1,sizeof(AInPublicSampleList_t));
+            // Use object pool instead of heap allocation (eliminates vPortFree overhead)
+            pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
-                LOG_E("Streaming: Sample allocation failed (pvPortCalloc returned NULL)\r\n");
+                LOG_E("Streaming: Sample pool exhausted\r\n");
                 continue;
             }
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {

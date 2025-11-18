@@ -265,7 +265,7 @@ size_t csv_Encode(
         if (hadAIN) {
             AInPublicSampleList_t *tmp = NULL;
             AInSampleList_PopFront(&tmp);
-            vPortFree(tmp);
+            AInSampleList_FreeToPool(tmp);  // Use object pool instead of vPortFree
         }
         if (hadDIO) {
             DIOSample tmpD;
