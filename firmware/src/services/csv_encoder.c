@@ -12,6 +12,35 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// Fast integer to string (replaces slow snprintf)
+static inline char* uint32_to_str(uint32_t value, char* buf) {
+    if (value == 0) {
+        *buf++ = '0';
+        return buf;
+    }
+
+    char temp[11];
+    int len = 0;
+    while (value > 0) {
+        temp[len++] = '0' + (value % 10);
+        value /= 10;
+    }
+
+    while (len > 0) {
+        *buf++ = temp[--len];
+    }
+
+    return buf;
+}
+
+static inline char* int_to_str(int value, char* buf) {
+    if (value < 0) {
+        *buf++ = '-';
+        value = -value;
+    }
+    return uint32_to_str((uint32_t)value, buf);
+}
+
 // Track whether CSV header has been sent (reset when streaming stops)
 static bool csvHeaderSent = false;
 
@@ -163,12 +192,15 @@ static size_t tryWriteRow(
             // User can apply calibration in post-processing if needed
             int rawValue = s->Value;
             // First field has no leading comma
-            if (firstField) {
-                w = snprintf(q, rem, "%u,%d", s->Timestamp, rawValue);
-                firstField = false;
-            } else {
-                w = snprintf(q, rem, ",%u,%d", s->Timestamp, rawValue);
+            char* p = q;
+            if (!firstField) {
+                *p++ = ',';
             }
+            p = uint32_to_str(s->Timestamp, p);
+            *p++ = ',';
+            p = int_to_str(rawValue, p);
+            w = p - q;
+            firstField = false;
         } else {
             // No valid sample for this enabled channel: emit empty ts,val pair
             // Always two fields (timestamp and value) to align with header
@@ -265,7 +297,7 @@ size_t csv_Encode(
         if (hadAIN) {
             AInPublicSampleList_t *tmp = NULL;
             AInSampleList_PopFront(&tmp);
-            vPortFree(tmp);
+            AInSampleList_FreeToPool(tmp);  // Use object pool instead of vPortFree
         }
         if (hadDIO) {
             DIOSample tmpD;
