@@ -54,7 +54,7 @@ void AInSampleList_Destroy()
         while (!AInSampleList_IsEmpty()) {
             if (AInSampleList_PopFront(&pData)) {
                 if (pData != NULL) {
-                    vPortFree(pData);
+                    AInSampleList_FreeToPool(pData);  // Use pool instead of vPortFree!
                     pData = NULL;
                 }
             }
