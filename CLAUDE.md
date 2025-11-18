@@ -219,15 +219,19 @@ The firmware supports building for different board variants using MPLAB X config
 
 #### Major Heap Allocations
 
-**Circular Buffers** (allocated at runtime via `CircularBuf_Init`):
-- **SD Card Write Buffer**: 64KB (`SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE` in `sd_card_manager.c`)
-  - ⚠️ **LARGEST ALLOCATION** - Reduced from 128KB to address heap pressure
+**Static Buffers** (compile-time allocation, not on heap):
+- **SD Card Shared Buffer**: 64KB (`gSdSharedBuffer` in `sd_card_manager.c`)
+  - Static coherent buffer for all SD operations (write, read, list)
+  - DMA-safe, cache-line aligned
+  - **Changed from heap to static allocation to reduce heap pressure**
   - Location: `firmware/src/services/sd_card_services/sd_card_manager.c`
-  - **TODO**: Should be dynamically sized based on enabled features (see GitHub issue)
+
+**Circular Buffers** (heap-allocated at runtime):
 - **WiFi TCP Write Buffer**: 5.6KB (`WIFI_CIRCULAR_BUFF_SIZE` = 1400 × 4)
   - Location: `firmware/src/services/wifi_services/wifi_tcp_server.c`
-- **USB CDC Write Buffer**: 2.8KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 700 × 4)
+- **USB CDC Write Buffer**: 16KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 4096 × 4)
   - Location: `firmware/src/services/UsbCdc/UsbCdc.c`
+  - Increased from 8KB to improve throughput and reduce buffer-full conditions
 
 **FreeRTOS Task Stacks** (~33KB total):
 - `app_SdCardTask`: 5240 bytes
@@ -253,16 +257,19 @@ The firmware supports building for different board variants using MPLAB X config
 
 #### Heap Usage Summary
 Typical allocations at steady state:
-- Circular buffers: **72.4KB** (SD: 64KB, WiFi: 5.6KB, USB: 2.8KB)
+- Circular buffers: **21.6KB** (WiFi: 5.6KB, USB: 16KB)
 - Task stacks: **~33KB**
 - Streaming queue: **Up to 4KB** (dynamically allocated)
-- **Total**: ~109KB used, ~175KB free (under normal conditions)
+- **Total heap**: ~59KB used, **~225KB free** (under normal conditions)
+- **Static buffers**: 64KB (SD card buffer - not counted against heap)
 
 #### Memory Pressure Indicators
 If heap allocation fails (`xPortGetFreeHeapSize()` returns low values):
 1. **Check streaming sample queue**: `AInSampleList_Size()` - should be <20
-2. **Further reduce SD buffer**: 64KB → 32KB saves additional 32KB if SD logging unused
+2. **Reduce USB/WiFi buffers**: If SD logging is primary use case, can reduce USB/WiFi buffer sizes
 3. **Monitor with debugger**: Set breakpoint in `pvPortMalloc` failure path
+
+Note: SD buffer is now static (not heap), significantly improving heap availability.
 
 #### Other Memory Constraints
 - DMA buffers must be cache-aligned
@@ -766,3 +773,10 @@ voltage, NTC status, and power-up readiness.
 - pic32 tris convention is 1=input and 0=output
 - when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
 - always verify scpi command syntax - don't guess.
+- we don't need to generate analysis docs or the like unless asked
+- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
+ error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
+error was.
+- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
+ error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
+error was.

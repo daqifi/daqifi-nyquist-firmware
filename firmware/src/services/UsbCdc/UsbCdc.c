@@ -575,27 +575,33 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     if (client == NULL) {
         client = &gRunTimeUsbSttings;
     }
-    size_t bytesAdded = 0;
 
-    if (len == 0)return 0;
+    if (len == 0) return 0;
 
     // Non-blocking check for buffer space
-    // If buffer is full, return 0 immediately instead of blocking
-    // This prevents the streaming task from stalling during high-rate streaming
-    xSemaphoreTake(client->wMutex, portMAX_DELAY);
-    size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
-    if (currentFree < len) {
-        xSemaphoreGive(client->wMutex);
-        // Only log if buffer is critically full to avoid spam
-        static uint32_t dropCount = 0;
-        if (currentFree < 128 && (++dropCount % 1000) == 0) {
-            LOG_E("USB: Buffer full - dropped %u packets (needed %u bytes, only %u free)",
-                  (unsigned)dropCount, (unsigned)len, (unsigned)currentFree);
-            dropCount = 0;
-        }
-        return 0;  // No space available - return immediately
+    // Use try-lock (timeout=0) to keep function truly non-blocking
+    // If mutex is busy or buffer is full, return 0 immediately
+    if (xSemaphoreTake(client->wMutex, 0) != pdTRUE) {
+        return 0;  // Mutex busy, can't write now
     }
-    bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
+
+    size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
+    if (currentFree == 0) {
+        xSemaphoreGive(client->wMutex);
+        return 0;
+    }
+
+    // Partial write - clamp to chunk size for better flow control
+    // Limit to USBCDC_WBUFFER_SIZE to align with USB driver transfer granularity
+    size_t toWrite = len;
+    if (toWrite > currentFree) {
+        toWrite = currentFree;
+    }
+    if (toWrite > USBCDC_WBUFFER_SIZE) {
+        toWrite = USBCDC_WBUFFER_SIZE;
+    }
+
+    size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, toWrite);
     xSemaphoreGive(client->wMutex);
 
     return bytesAdded;
