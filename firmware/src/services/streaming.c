@@ -75,14 +75,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
 #if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
-            if((sizeof(AInPublicSampleList_t)+200)>xPortGetFreeHeapSize()){
-                LOG_E("Streaming: Insufficient heap for sample allocation (free=%u, need=%u)\r\n",
-                      xPortGetFreeHeapSize(), sizeof(AInPublicSampleList_t)+200);
-                continue;
-            }
-            pPublicSampleList=pvPortCalloc(1,sizeof(AInPublicSampleList_t));
+            // Use object pool instead of heap allocation (eliminates vPortFree overhead)
+            // No heap check needed - pool uses pre-allocated static memory
+            pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
-                LOG_E("Streaming: Sample allocation failed (pvPortCalloc returned NULL)\r\n");
+                LOG_E("Streaming: Sample pool exhausted\r\n");
                 continue;
             }
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
