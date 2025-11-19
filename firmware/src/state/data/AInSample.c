@@ -34,12 +34,12 @@ void AInSampleList_Initialize(
                             const LockProvider* lockPrototype){
 
 
-    (void)maxSize;
     (void)dropOnOverflow;
     (void)lockPrototype;
 
-    queueSize = maxSize;
-    analogInputsQueue = xQueueCreate( maxSize, sizeof(AInPublicSampleList_t *) );
+    // Clamp queue size to pool size to prevent exhaustion
+    queueSize = (maxSize > SAMPLE_POOL_SIZE) ? SAMPLE_POOL_SIZE : maxSize;
+    analogInputsQueue = xQueueCreate( queueSize, sizeof(AInPublicSampleList_t *) );
 
     // Initialize object pool
     if (poolMutex == NULL) {
@@ -151,9 +151,8 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
         if (poolInUse[i] == 0) {
             poolInUse[i] = 1;
             result = &samplePool[i];
-            // Clear only isSampleValid array (critical for data integrity)
-            // Full memset outside mutex to minimize lock time
-            memset(result->isSampleValid, 0, sizeof(result->isSampleValid));
+            // Clear entire structure to ensure no stale data (Qodo requirement)
+            memset(result, 0, sizeof(AInPublicSampleList_t));
             break;
         }
     }
