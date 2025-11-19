@@ -141,17 +141,13 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
         if (poolInUse[i] == 0) {
             poolInUse[i] = 1;
             result = &samplePool[i];
+            // Clear inside mutex to prevent race condition
+            memset(result, 0, sizeof(AInPublicSampleList_t));
             break;
         }
     }
 
     xSemaphoreGive(poolMutex);
-
-    // Clear sample structure to ensure clean state (especially isSampleValid array)
-    // Critical for data integrity - prevents stale channel data
-    if (result != NULL) {
-        memset(result, 0, sizeof(AInPublicSampleList_t));
-    }
 
     return result;
 }
