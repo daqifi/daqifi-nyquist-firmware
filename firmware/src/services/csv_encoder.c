@@ -12,6 +12,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <limits.h>  // For INT_MIN
+#include <string.h>  // For strlen
+
+// Constants for integer formatting
+#define MAX_UINT32_STR_LEN 11  // 10 digits + null terminator
 
 // Fast integer to string with bounds checking (replaces slow snprintf)
 static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
@@ -24,7 +28,7 @@ static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
         return buf;
     }
 
-    char temp[11];
+    char temp[MAX_UINT32_STR_LEN];
     int len = 0;
     while (value > 0) {
         temp[len++] = '0' + (value % 10);
@@ -47,7 +51,7 @@ static inline char* int_to_str(int value, char* buf, size_t rem) {
     // Handle INT_MIN special case (undefined behavior on -value)
     if (value == INT_MIN) {
         const char* str = "-2147483648";
-        size_t len = 11;  // Length of INT_MIN string
+        size_t len = strlen(str);  // Calculate length programmatically
         if (len > rem) {
             return buf;  // Not enough space
         }
