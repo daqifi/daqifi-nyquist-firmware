@@ -222,14 +222,15 @@ static size_t tryWriteRow(
             AInSample *s = &ainPeek->sampleElement[i];
             // Convert to calibrated millivolts (backwards compatible)
             double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
-            // Clamp to int range to prevent overflow
-            int mv;
-            if (voltage_mv > INT_MAX) {
-                mv = INT_MAX;
-            } else if (voltage_mv < INT_MIN) {
-                mv = INT_MIN;
+            // Clamp to int32_t range for portability
+            int32_t mv;
+            if (voltage_mv > (double)INT32_MAX) {
+                mv = INT32_MAX;
+            } else if (voltage_mv < (double)INT32_MIN) {
+                mv = INT32_MIN;
             } else {
-                mv = (int)voltage_mv;
+                // Round to nearest instead of truncation
+                mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
             }
             // First field has no leading comma
             char* p = q;
