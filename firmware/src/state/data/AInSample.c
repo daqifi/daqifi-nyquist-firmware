@@ -54,25 +54,32 @@ void AInSampleList_Initialize(
 
 void AInSampleList_Destroy()
 {
-    if (analogInputsQueue != NULL) {
+    // Atomically capture and nullify queue handle to prevent further use
+    taskENTER_CRITICAL();
+    QueueHandle_t q = analogInputsQueue;
+    analogInputsQueue = NULL;
+    taskEXIT_CRITICAL();
+
+    // Drain queue safely (using captured handle)
+    if (q != NULL) {
         AInPublicSampleList_t* pData;
-        while (!AInSampleList_IsEmpty()) {
-            if (AInSampleList_PopFront(&pData)) {
+        while (uxQueueMessagesWaiting(q) > 0) {
+            if (xQueueReceive(q, &pData, 0) == pdTRUE) {
                 if (pData != NULL) {
-                    AInSampleList_FreeToPool(pData);  // Use pool instead of vPortFree!
-                    pData = NULL;
+                    AInSampleList_FreeToPool(pData);
                 }
             }
         }
-        vQueueDelete(analogInputsQueue);
-        analogInputsQueue = NULL;
+        vQueueDelete(q);
     }
 
-    // Clean up pool mutex on destroy
+    // Atomically delete mutex
+    taskENTER_CRITICAL();
     if (poolMutex != NULL) {
         vSemaphoreDelete(poolMutex);
         poolMutex = NULL;
     }
+    taskEXIT_CRITICAL();
 }
 
 bool AInSampleList_PushBack(const AInPublicSampleList_t* pData){
