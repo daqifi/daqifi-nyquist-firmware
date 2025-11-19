@@ -220,7 +220,16 @@ static size_t tryWriteRow(
         if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
             // Convert to calibrated millivolts (backwards compatible)
-            int mv = (int)(ADC_ConvertToVoltage(s) * 1000.0);
+            double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
+            // Clamp to int range to prevent overflow
+            int mv;
+            if (voltage_mv > INT_MAX) {
+                mv = INT_MAX;
+            } else if (voltage_mv < INT_MIN) {
+                mv = INT_MIN;
+            } else {
+                mv = (int)voltage_mv;
+            }
             // First field has no leading comma
             char* p = q;
             size_t space = rem;

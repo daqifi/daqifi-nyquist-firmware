@@ -19,10 +19,14 @@ static uint32_t queueSize = 0;
 
 // Object pool for sample structures (eliminates heap allocation/free overhead)
 // Increased from 20 to 100 for better buffering at high rates (10ms buffer at 10kHz)
+// Must match queue size initialized in AInSampleList_Initialize()
 #define SAMPLE_POOL_SIZE 100  // Provides ~10ms buffer at 10kHz
 static AInPublicSampleList_t samplePool[SAMPLE_POOL_SIZE];
 static uint8_t poolInUse[SAMPLE_POOL_SIZE];  // 0=free, 1=in use
 static SemaphoreHandle_t poolMutex = NULL;
+
+// Compile-time assertion to ensure pool size matches expected queue size
+_Static_assert(SAMPLE_POOL_SIZE >= 20, "Pool must be at least 20 for queue");
 
 void AInSampleList_Initialize(
                             size_t maxSize,
@@ -147,8 +151,9 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
         if (poolInUse[i] == 0) {
             poolInUse[i] = 1;
             result = &samplePool[i];
-            // Clear inside mutex to prevent race condition
-            memset(result, 0, sizeof(AInPublicSampleList_t));
+            // Clear only isSampleValid array (critical for data integrity)
+            // Full memset outside mutex to minimize lock time
+            memset(result->isSampleValid, 0, sizeof(result->isSampleValid));
             break;
         }
     }
