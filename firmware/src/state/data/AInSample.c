@@ -73,11 +73,15 @@ void AInSampleList_Destroy()
         vQueueDelete(q);
     }
 
-    // Atomically delete mutex
+    // Atomically delete mutex and reset pool
     taskENTER_CRITICAL();
     if (poolMutex != NULL) {
         vSemaphoreDelete(poolMutex);
         poolMutex = NULL;
+    }
+    // Reset pool flags to initial state
+    for (int i = 0; i < SAMPLE_POOL_SIZE; i++) {
+        poolInUse[i] = 0;
     }
     taskEXIT_CRITICAL();
 }
