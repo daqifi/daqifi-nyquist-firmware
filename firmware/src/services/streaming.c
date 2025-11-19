@@ -20,6 +20,7 @@
 
 //#define TEST_STREAMING
 
+#define LOG_QUEUE_DROP_INTERVAL 100  // Log queue full error every N drops
 #define UNUSED(x) (void)(x)
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
@@ -95,7 +96,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
                 static uint32_t queueDropCount = 0;
-                if ((++queueDropCount % 100) == 0) {
+                if ((++queueDropCount % LOG_QUEUE_DROP_INTERVAL) == 0) {
                     LOG_E("Streaming: Sample queue full - dropped %u samples (queue at capacity)",
                           (unsigned)queueDropCount);
                 }
