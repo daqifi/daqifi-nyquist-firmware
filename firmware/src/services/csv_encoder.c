@@ -243,11 +243,18 @@ static size_t tryWriteRow(
             // No valid sample for this enabled channel: emit empty ts,val pair
             // Always two fields (timestamp and value) to align with header
             char* p = q;
+            size_t space = rem;
+
+            // Check space before each write
             if (!firstField) {
+                if (space == 0) { w = 0; break; }
                 *p++ = ',';
+                space--;
             }
+            if (space < 2) { w = 0; break; }  // Need at least 2 commas
             *p++ = ',';
             *p++ = ',';
+
             w = p - q;
             firstField = false;
         }
