@@ -12,9 +12,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Fast integer to string (replaces slow snprintf)
-// Note: Caller must ensure sufficient buffer space (max 11 chars for uint32)
-static inline char* uint32_to_str(uint32_t value, char* buf) {
+// Fast integer to string with bounds checking (replaces slow snprintf)
+static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
+    if (rem == 0) {
+        return buf;  // No space
+    }
+
     if (value == 0) {
         *buf++ = '0';
         return buf;
@@ -27,6 +30,11 @@ static inline char* uint32_to_str(uint32_t value, char* buf) {
         value /= 10;
     }
 
+    // Check if we have enough space
+    if ((size_t)len > rem) {
+        return buf;  // Not enough space, return original pointer
+    }
+
     while (len > 0) {
         *buf++ = temp[--len];
     }
@@ -34,11 +42,14 @@ static inline char* uint32_to_str(uint32_t value, char* buf) {
     return buf;
 }
 
-static inline char* int_to_str(int value, char* buf) {
+static inline char* int_to_str(int value, char* buf, size_t rem) {
     // Handle INT_MIN special case (undefined behavior on -value)
     if (value == INT_MIN) {
-        // -2147483648 hardcoded
         const char* str = "-2147483648";
+        size_t len = 11;  // Length of INT_MIN string
+        if (len > rem) {
+            return buf;  // Not enough space
+        }
         while (*str) {
             *buf++ = *str++;
         }
@@ -46,10 +57,14 @@ static inline char* int_to_str(int value, char* buf) {
     }
 
     if (value < 0) {
+        if (rem == 0) {
+            return buf;  // No space for minus sign
+        }
         *buf++ = '-';
+        rem--;
         value = -value;
     }
-    return uint32_to_str((uint32_t)value, buf);
+    return uint32_to_str((uint32_t)value, buf, rem);
 }
 
 // Track whether CSV header has been sent (reset when streaming stops)
@@ -204,12 +219,19 @@ static size_t tryWriteRow(
             int rawValue = s->Value;
             // First field has no leading comma
             char* p = q;
+            size_t space = rem;
             if (!firstField) {
+                if (space == 0) { w = 0; break; }
                 *p++ = ',';
+                space--;
             }
-            p = uint32_to_str(s->Timestamp, p);
+            p = uint32_to_str(s->Timestamp, p, space);
+            size_t used = p - q;
+            space = (used < rem) ? rem - used : 0;
+            if (space == 0) { w = 0; break; }
             *p++ = ',';
-            p = int_to_str(rawValue, p);
+            space--;
+            p = int_to_str(rawValue, p, space);
             w = p - q;
             firstField = false;
         } else {
