@@ -18,9 +18,10 @@
 #define MAX_UINT32_STR_LEN 11  // 10 digits + null terminator
 
 // Fast integer to string with bounds checking (replaces slow snprintf)
+// Returns NULL on error (insufficient space), updated pointer on success
 static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
     if (rem == 0) {
-        return buf;  // No space
+        return NULL;  // No space - signal error
     }
 
     if (value == 0) {
@@ -37,7 +38,7 @@ static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
 
     // Check if we have enough space
     if ((size_t)len > rem) {
-        return buf;  // Not enough space, return original pointer
+        return NULL;  // Not enough space - signal error
     }
 
     while (len > 0) {
@@ -53,7 +54,7 @@ static inline char* int_to_str(int value, char* buf, size_t rem) {
         const char* str = "-2147483648";
         size_t len = strlen(str);  // Calculate length programmatically
         if (len > rem) {
-            return buf;  // Not enough space
+            return NULL;  // Not enough space - signal error
         }
         while (*str) {
             *buf++ = *str++;
@@ -63,13 +64,13 @@ static inline char* int_to_str(int value, char* buf, size_t rem) {
 
     if (value < 0) {
         if (rem == 0) {
-            return buf;  // No space for minus sign
+            return NULL;  // No space for minus sign - signal error
         }
         *buf++ = '-';
         rem--;
         value = -value;
     }
-    return uint32_to_str((uint32_t)value, buf, rem);
+    return uint32_to_str((uint32_t)value, buf, rem);  // Can return NULL
 }
 
 // Track whether CSV header has been sent (reset when streaming stops)
@@ -239,12 +240,14 @@ static size_t tryWriteRow(
                 space--;
             }
             p = uint32_to_str(s->Timestamp, p, space);
+            if (p == NULL) { w = 0; break; }  // Check for error
             size_t used = p - q;
             space = (used < rem) ? rem - used : 0;
             if (space == 0) { w = 0; break; }
             *p++ = ',';
             space--;
             p = int_to_str(mv, p, space);
+            if (p == NULL) { w = 0; break; }  // Check for error
             w = p - q;
             firstField = false;
         } else {
