@@ -146,8 +146,11 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
 
     xSemaphoreGive(poolMutex);
 
-    // Note: Caller will initialize fields, no need to clear
-    // (Removed memset - was adding 50-100 cycles overhead)
+    // Clear sample structure to ensure clean state (especially isSampleValid array)
+    // Critical for data integrity - prevents stale channel data
+    if (result != NULL) {
+        memset(result, 0, sizeof(AInPublicSampleList_t));
+    }
 
     return result;
 }
