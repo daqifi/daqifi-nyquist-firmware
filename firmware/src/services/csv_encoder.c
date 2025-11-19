@@ -219,9 +219,8 @@ static size_t tryWriteRow(
 
         if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
-            // Output raw ADC counts instead of converted voltage (much faster!)
-            // User can apply calibration in post-processing if needed
-            int rawValue = s->Value;
+            // Convert to calibrated millivolts (backwards compatible)
+            int mv = (int)(ADC_ConvertToVoltage(s) * 1000.0);
             // First field has no leading comma
             char* p = q;
             size_t space = rem;
@@ -236,7 +235,7 @@ static size_t tryWriteRow(
             if (space == 0) { w = 0; break; }
             *p++ = ',';
             space--;
-            p = int_to_str(rawValue, p, space);
+            p = int_to_str(mv, p, space);
             w = p - q;
             firstField = false;
         } else {
