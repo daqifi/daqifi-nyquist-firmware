@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 // Fast integer to string (replaces slow snprintf)
+// Note: Caller must ensure sufficient buffer space (max 11 chars for uint32)
 static inline char* uint32_to_str(uint32_t value, char* buf) {
     if (value == 0) {
         *buf++ = '0';
@@ -34,6 +35,16 @@ static inline char* uint32_to_str(uint32_t value, char* buf) {
 }
 
 static inline char* int_to_str(int value, char* buf) {
+    // Handle INT_MIN special case (undefined behavior on -value)
+    if (value == INT_MIN) {
+        // -2147483648 hardcoded
+        const char* str = "-2147483648";
+        while (*str) {
+            *buf++ = *str++;
+        }
+        return buf;
+    }
+
     if (value < 0) {
         *buf++ = '-';
         value = -value;

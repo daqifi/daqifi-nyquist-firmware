@@ -18,7 +18,8 @@ static QueueHandle_t analogInputsQueue;
 static uint32_t queueSize = 0;
 
 // Object pool for sample structures (eliminates heap allocation/free overhead)
-#define SAMPLE_POOL_SIZE 20  // Must be >= queue size
+// Increased from 20 to 100 for better buffering at high rates (10ms buffer at 10kHz)
+#define SAMPLE_POOL_SIZE 100  // Provides ~10ms buffer at 10kHz
 static AInPublicSampleList_t samplePool[SAMPLE_POOL_SIZE];
 static uint8_t poolInUse[SAMPLE_POOL_SIZE];  // 0=free, 1=in use
 static SemaphoreHandle_t poolMutex = NULL;
@@ -156,15 +157,18 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
 }
 
 void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
-    if (pSample == NULL) {
+    if (pSample == NULL || poolMutex == NULL) {
         return;
     }
 
     ptrdiff_t index = pSample - samplePool;
 
     if (index < 0 || index >= SAMPLE_POOL_SIZE) {
-        return;
+        return;  // Not from our pool
     }
 
+    // Thread-safe deallocation (protect poolInUse modification)
+    xSemaphoreTake(poolMutex, portMAX_DELAY);
     poolInUse[index] = 0;
+    xSemaphoreGive(poolMutex);
 }
