@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>  // For INT_MIN
 
 // Fast integer to string with bounds checking (replaces slow snprintf)
 static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {

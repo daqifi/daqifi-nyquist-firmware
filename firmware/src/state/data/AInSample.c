@@ -63,6 +63,12 @@ void AInSampleList_Destroy()
         vQueueDelete(analogInputsQueue);
         analogInputsQueue = NULL;
     }
+
+    // Clean up pool mutex on destroy
+    if (poolMutex != NULL) {
+        vSemaphoreDelete(poolMutex);
+        poolMutex = NULL;
+    }
 }
 
 bool AInSampleList_PushBack(const AInPublicSampleList_t* pData){
