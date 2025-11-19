@@ -236,19 +236,19 @@ static size_t tryWriteRow(
             char* p = q;
             size_t space = rem;
             if (!firstField) {
-                if (space == 0) { w = 0; break; }
+                if (space == 0) return 0;  // Buffer exhausted
                 *p++ = ',';
                 space--;
             }
             p = uint32_to_str(s->Timestamp, p, space);
-            if (p == NULL) { w = 0; break; }  // Check for error
+            if (p == NULL) return 0;  // Buffer exhausted
             size_t used = p - q;
             space = (used < rem) ? rem - used : 0;
-            if (space == 0) { w = 0; break; }
+            if (space == 0) return 0;  // Buffer exhausted
             *p++ = ',';
             space--;
             p = int_to_str(mv, p, space);
-            if (p == NULL) { w = 0; break; }  // Check for error
+            if (p == NULL) return 0;  // Buffer exhausted
             w = p - q;
             firstField = false;
         } else {
@@ -259,11 +259,11 @@ static size_t tryWriteRow(
 
             // Check space before each write
             if (!firstField) {
-                if (space == 0) { w = 0; break; }
+                if (space == 0) return 0;  // Buffer exhausted
                 *p++ = ',';
                 space--;
             }
-            if (space < 2) { w = 0; break; }  // Need at least 2 commas
+            if (space < 2) return 0;  // Buffer exhausted
             *p++ = ',';
             *p++ = ',';
 
