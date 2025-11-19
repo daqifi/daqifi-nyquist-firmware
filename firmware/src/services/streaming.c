@@ -87,11 +87,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
                         && AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
-                    // Use channel ID from BoardConfig (authoritative source) instead of sample data
-                    pPublicSampleList->sampleElement[i].Channel=pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
-                    pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
-                    pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
-                    pPublicSampleList->isSampleValid[i]=1;
+                    // Null check to prevent crash
+                    if (pAiSample != NULL) {
+                        // Use channel ID from BoardConfig (authoritative source) instead of sample data
+                        pPublicSampleList->sampleElement[i].Channel=pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+                        pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
+                        pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
+                        pPublicSampleList->isSampleValid[i]=1;
+                    } else {
+                        // Mark as invalid if sample data unavailable
+                        pPublicSampleList->isSampleValid[i]=0;
+                    }
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q

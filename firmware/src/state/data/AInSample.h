@@ -141,6 +141,10 @@ extern "C" {
      */
     bool AInSampleList_IsEmpty(void);
 
+    // Object pool functions to eliminate heap allocation/deallocation
+    AInPublicSampleList_t* AInSampleList_AllocateFromPool(void);
+    void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample);
+
 #ifdef __cplusplus
 }
 #endif
