@@ -204,12 +204,14 @@ static size_t tryWriteRow(
         } else {
             // No valid sample for this enabled channel: emit empty ts,val pair
             // Always two fields (timestamp and value) to align with header
-            if (firstField) {
-                w = snprintf(q, rem, ",,");  // Empty pair, no leading comma
-                firstField = false;
-            } else {
-                w = snprintf(q, rem, ",,");  // Empty pair with leading comma
+            char* p = q;
+            if (!firstField) {
+                *p++ = ',';
             }
+            *p++ = ',';
+            *p++ = ',';
+            w = p - q;
+            firstField = false;
         }
         if (w < 0 || (size_t)w >= rem) return 0;
         q += w; rem -= w;
