@@ -261,12 +261,11 @@ static size_t tryWriteRow(
             // Check space before each write
             if (!firstField) {
                 if (space == 0) return 0;  // Buffer exhausted
-                *p++ = ',';
+                *p++ = ',';  // separator before empty ts
                 space--;
             }
-            if (space < 2) return 0;  // Buffer exhausted
-            *p++ = ',';
-            *p++ = ',';
+            if (space < 1) return 0;  // Buffer exhausted
+            *p++ = ',';  // separator between empty ts and empty val
 
             w = p - q;
             firstField = false;
