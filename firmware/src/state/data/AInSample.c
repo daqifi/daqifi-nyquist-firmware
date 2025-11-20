@@ -108,13 +108,12 @@ void AInSampleList_Destroy()
     taskEXIT_CRITICAL();
 
     // Step 3 & 4: Drain queue and delete (using captured handle)
+    // Drain until xQueueReceive fails - more robust than checking message count
     if (q != NULL) {
         AInPublicSampleList_t* pData;
-        while (uxQueueMessagesWaiting(q) > 0) {
-            if (xQueueReceive(q, &pData, 0) == pdTRUE) {
-                if (pData != NULL) {
-                    AInSampleList_FreeToPool(pData);
-                }
+        while (xQueueReceive(q, &pData, 0) == pdTRUE) {
+            if (pData != NULL) {
+                AInSampleList_FreeToPool(pData);
             }
         }
         vQueueDelete(q);
