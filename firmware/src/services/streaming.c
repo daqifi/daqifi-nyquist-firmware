@@ -92,11 +92,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         // Use channel ID from BoardConfig (authoritative source) instead of sample data
                         pPublicSampleList->sampleElement[i].Channel=pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
                         // Copy entire sample atomically to prevent torn reads
-                        // Use ISR-safe version as it works in all contexts
-                        UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+                        // Task-only context - use efficient critical section
+                        taskENTER_CRITICAL();
                         pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
                         pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
-                        taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
+                        taskEXIT_CRITICAL();
 
                         pPublicSampleList->isSampleValid[i]=1;
                     } else {
