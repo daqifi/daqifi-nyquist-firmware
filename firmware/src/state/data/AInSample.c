@@ -139,61 +139,111 @@ void AInSampleList_Destroy()
 }
 
 bool AInSampleList_PushBack(const AInPublicSampleList_t* pData){
-    if (pData == NULL || analogInputsQueue == NULL) {
+    if (pData == NULL) {
         return false;
     }
 
-    BaseType_t queueResult = xQueueSend(analogInputsQueue, &pData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
+    // Atomically capture queue handle to prevent TOCTOU race with Destroy
+    taskENTER_CRITICAL();
+    QueueHandle_t q = analogInputsQueue;
+    taskEXIT_CRITICAL();
 
+    if (q == NULL) {
+        return false;
+    }
+
+    BaseType_t queueResult = xQueueSend(q, &pData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
     return queueResult == pdTRUE;
 }
 bool AInSampleList_PushBackFromIsr(const AInPublicSampleList_t* pData){
-    if (pData == NULL || analogInputsQueue == NULL) {
+    if (pData == NULL) {
+        return false;
+    }
+
+    // Atomically capture queue handle (ISR-safe critical section)
+    UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+    QueueHandle_t q = analogInputsQueue;
+    taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
+
+    if (q == NULL) {
         return false;
     }
 
     BaseType_t xTaskWokenByReceive = pdFALSE;
-    BaseType_t queueResult = xQueueSendFromISR(analogInputsQueue, &pData, &xTaskWokenByReceive);
+    BaseType_t queueResult = xQueueSendFromISR(q, &pData, &xTaskWokenByReceive);
 
     portEND_SWITCHING_ISR(xTaskWokenByReceive);
     return queueResult == pdTRUE;
 }
 bool AInSampleList_PopFront( AInPublicSampleList_t** ppData)
 {
-    if (ppData == NULL || analogInputsQueue == NULL) {
+    if (ppData == NULL) {
         return false;
     }
 
-    BaseType_t queueResult = xQueueReceive(analogInputsQueue, ppData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
+    // Atomically capture queue handle to prevent TOCTOU race with Destroy
+    taskENTER_CRITICAL();
+    QueueHandle_t q = analogInputsQueue;
+    taskEXIT_CRITICAL();
+
+    if (q == NULL) {
+        return false;
+    }
+
+    BaseType_t queueResult = xQueueReceive(q, ppData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
     return queueResult == pdTRUE;
 }
 
 bool AInSampleList_PeekFront(AInPublicSampleList_t** ppData)
 {
-    if (ppData == NULL || analogInputsQueue == NULL) {
+    if (ppData == NULL) {
         return false;
     }
 
-    BaseType_t queueResult = xQueuePeek(analogInputsQueue, ppData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
+    // Atomically capture queue handle to prevent TOCTOU race with Destroy
+    taskENTER_CRITICAL();
+    QueueHandle_t q = analogInputsQueue;
+    taskEXIT_CRITICAL();
+
+    if (q == NULL) {
+        return false;
+    }
+
+    BaseType_t queueResult = xQueuePeek(q, ppData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
     return queueResult == pdTRUE;
 }
 
 size_t AInSampleList_Size()
 {
-  if (queueSize == 0 || analogInputsQueue == NULL) {
+    if (queueSize == 0) {
         return 0;
     }
-    return (queueSize - uxQueueSpacesAvailable(analogInputsQueue));
+
+    // Atomically capture queue handle to prevent TOCTOU race with Destroy
+    taskENTER_CRITICAL();
+    QueueHandle_t q = analogInputsQueue;
+    taskEXIT_CRITICAL();
+
+    if (q == NULL) {
+        return 0;
+    }
+
+    return (queueSize - uxQueueSpacesAvailable(q));
 }
 
 bool AInSampleList_IsEmpty()
 {
-    if (analogInputsQueue == NULL) {
+    // Atomically capture queue handle to prevent TOCTOU race with Destroy
+    taskENTER_CRITICAL();
+    QueueHandle_t q = analogInputsQueue;
+    taskEXIT_CRITICAL();
+
+    if (q == NULL) {
         return true;
     }
 
     AInPublicSampleList_t* pData;
-    BaseType_t queueResult = xQueuePeek(analogInputsQueue, &pData, 0);
+    BaseType_t queueResult = xQueuePeek(q, &pData, 0);
     return queueResult != pdTRUE;
 }
 
