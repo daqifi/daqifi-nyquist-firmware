@@ -119,19 +119,23 @@ void AInSampleList_Destroy()
         vQueueDelete(q);
     }
 
-    // Step 5: Reset pool to initial state (keep mutex for next session)
+    // Step 5: Reset pool to initial state with proper synchronization
+    // Use poolMutex (not critical section) to ensure all in-flight Allocate/Free
+    // operations complete before resetting the free list. This prevents corruption
+    // if a task allocated a sample before poolActive was set to false.
+    //
     // NOTE: We intentionally do NOT delete poolMutex here to prevent UAF.
-    // If Allocate/Free is racing with Destroy, the mutex must remain valid
-    // until the racing operation completes. The mutex is only ~80 bytes and
-    // persists for system lifetime.
-    taskENTER_CRITICAL();
-    // Rebuild free list chain: 0 -> 1 -> 2 -> ... -> N-1 -> END
-    for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
-        nextFree[i] = i + 1;
+    // The mutex persists for system lifetime (~80 bytes).
+    if (poolMutex != NULL) {
+        xSemaphoreTake(poolMutex, portMAX_DELAY);  // Synchronization barrier
+        // Rebuild free list chain: 0 -> 1 -> 2 -> ... -> N-1 -> END
+        for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
+            nextFree[i] = i + 1;
+        }
+        nextFree[SAMPLE_POOL_SIZE - 1] = -1;
+        freeHead = 0;
+        xSemaphoreGive(poolMutex);
     }
-    nextFree[SAMPLE_POOL_SIZE - 1] = -1;
-    freeHead = 0;
-    taskEXIT_CRITICAL();
 }
 
 bool AInSampleList_PushBack(const AInPublicSampleList_t* pData){
