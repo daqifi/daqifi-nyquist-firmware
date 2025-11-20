@@ -1,0 +1,48 @@
+### A. Data Acquisition (ADC & ISR)
+
+This stage is about getting data from the hardware into memory with minimal CPU overhead.
+
+1.  **Use DMA with Ping-Pong Buffers:** This is the most effective optimization at the hardware level. Configure the DMA controller to fill a large buffer of samples directly from the ADC without CPU intervention. Use two buffers ("ping" and "pong"); while the DMA fills one, your task processes the other, eliminating the per-sample interrupt overhead.
+2.  **Utilize ADC Batch/Scan Mode:** Configure the ADC to automatically scan and convert all enabled channels on a single trigger. This reduces interrupt frequency and ensures all channel samples are time-correlated.
+3.  **Hardware Timestamps:** If available on the PIC32, use an input capture peripheral triggered by the ADC conversion signal to get precise hardware-based timestamps. This is faster and more accurate than calling an RTOS function.
+4.  **Minimalist ISR:** Verify that the ISR that signals the deferred task does the absolute minimum work possible: ideally, just clearing the interrupt flag and giving a semaphore or notification (`xSemaphoreGiveFromISR`). All other logic belongs in the task.
+
+### B. Data Handling & Buffering (RTOS)
+
+This stage focuses on efficiently moving data from the acquisition task to the storage task.
+
+5.  **Use Direct-to-Task Notifications:** Replace the current queue/semaphore mechanism with `xTaskNotifyFromISR()` and `ulTaskNotifyTake()`. This is a lighter and faster method of signaling between an ISR and a waiting task.
+6.  **Further Increase Memory Pool Size:** Increase `SAMPLE_POOL_SIZE` from 100 to **500 or more**. You have ample RAM. A larger pool absorbs longer SD card write-latency spikes, which is the most common cause of data loss at high speeds. A 500-sample buffer provides a 50ms safety margin at 10kHz.
+7.  **Review Task Priorities:** Conduct a formal review of the RTOS task priorities. A strict priority scheme is essential:
+    *   `_Streaming_Deferred_Interrupt_Task` (data capture): HIGHEST
+    *   `streaming_Task` (encoding/consuming): MEDIUM
+    *   SD Card Writer Task: LOW
+    This ensures the data capture task is never delayed by encoding or writing.
+8.  **Confirm Queue of Pointers:** The current design of queuing pointers to sample objects (`AInPublicSampleList_t *`) instead of copying the entire structure is a best practice. Confirm and document this design choice.
+
+### C. Data Formatting (CSV Encoder)
+
+This stage is currently a major bottleneck. The goal is to minimize or eliminate on-the-fly string conversion.
+
+9.  **Switch to Binary Logging (Highest-Impact Optimization):** This is the single most important suggestion. Instead of formatting to CSV in real-time, write the raw binary `structs` of timestamp and ADC value data directly to the file. This completely removes the CPU-intensive string conversion, making the process orders of magnitude faster and more efficient. The conversion to CSV can be done offline by your Python tools.
+10. **Use Lookup Tables for `itoa`:** If binary logging is not an option, replace the algorithmic `int_to_str` functions with lookup tables (LUTs). Pre-calculate the string representations of numbers (e.g., 0-999) and store them in program memory. Conversion then becomes a series of fast `memcpy` operations.
+11. **Optimize Loop for Comma Placement:** In `tryWriteRow`, instead of checking `if (!firstField)` inside the loop, write the first sample *before* the loop. Then, structure the loop to prepend a comma before writing each subsequent sample. This removes a conditional branch from the hot path of the loop.
+12. **Use Fixed-Point Math:** If you need to apply calibration or scaling, avoid floating-point math. Represent voltages as integers (e.g., store 1.234V as `1234`). This allows for fast integer arithmetic instead of slow floating-point operations.
+
+### D. Data Storage (SD Card & Filesystem)
+
+This stage focuses on maximizing the I/O throughput to the physical media.
+
+13. **Increase SD Card Write Buffer:** Accumulate the formatted data (whether CSV or binary) into a large RAM buffer (e.g., 8KB or 16KB, a multiple of the 512-byte sector size) and write the entire buffer in a single `f_write()` call. This minimizes filesystem overhead and is far more efficient than frequent small writes.
+14. **Pre-Allocate File Space:** Before starting a logging session, use FatFs's `f_expand()` function to pre-allocate a large, contiguous block of storage for the log file. This prevents the filesystem from having to search for free clusters during the write stream, which is a major source of latency spikes.
+15. **Minimize `f_sync()` Calls:** Do not call `f_sync()` during a high-speed stream. This function is very slow as it forces all cached data and metadata to be written to the card. Call it only once after the stream is complete. The trade-off is a small risk of data loss on sudden power failure vs. a massive performance gain.
+16. **Optimize SD Card SPI Clock Speed:** Profile and configure the SPI clock for the SD card to the maximum stable frequency supported by both the PIC32 and the card (typically 25-50 MHz).
+17. **Use a Simpler Filesystem (Advanced):** For extreme performance, replace FatFs with a simple, custom logging filesystem designed for sequential writes, or bypass the filesystem entirely and write to a raw partition.
+
+### E. System-Level & Architectural
+
+These are high-level improvements to the overall system design.
+
+18. **Profile Everything:** Use a logic analyzer and GPIO pin toggling or the MPLAB debugger's stopwatch to precisely measure the execution time of each stage in the data path (ISR, task execution, encoding, `f_write` call). This will provide hard data on where the bottlenecks actually are, turning guesses into facts.
+19. **Dedicated SPI Bus for SD Card:** Architecturally, the best solution for performance is to give the SD card its own dedicated SPI bus. This eliminates contention with the WiFi module, reduces the need for SPI bus mutexes, and significantly reduces latency and timing jitter.
+20. **Run SD Card Operations from a Lower-Priority Task:** All filesystem operations (`f_write`, `f_sync`) should be handled in a dedicated, low-priority "storage" task. The higher-priority streaming task's only job should be to format the data and place it into a large, thread-safe circular buffer that is read by this storage task. This fully decouples the real-time data path from slow, blocking I/O.
