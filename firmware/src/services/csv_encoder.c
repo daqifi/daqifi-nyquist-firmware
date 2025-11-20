@@ -329,12 +329,12 @@ static size_t tryWriteRow(
                 w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
             }
         } else {
-            // Empty DIO: always emit two fields (ts,val pair) to match header
+            // Empty DIO: emit two empty fields (ts,val) to match header columns
             if (firstField) {
-                w = snprintf(q, rem, ",");  // Two empty fields: ,empty_ts,empty_val
+                w = snprintf(q, rem, ",");  // [empty_ts],[empty_val] - comma separates the two
                 firstField = false;
             } else {
-                w = snprintf(q, rem, ",,");  // Separator + two empty fields
+                w = snprintf(q, rem, ",,");  // [sep],[empty_ts],[empty_val]
             }
         }
         if (w < 0 || (size_t)w >= rem) return 0;
