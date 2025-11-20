@@ -1,3 +1,16 @@
+/*! @file csv_encoder.c
+ * @brief CSV encoder for streaming analog and digital samples.
+ *
+ * Encodes sample data into a human-readable CSV format optimized for:
+ * - Only outputs enabled channels (reduces file size dramatically)
+ * - Self-documenting header with device info and column names
+ * - Per-channel timestamps for accurate timing analysis
+ * - Calibrated millivolt values for immediate use
+ *
+ * Uses fast integer-to-string conversion to avoid snprintf overhead
+ * in the hot path (data rows). Header generation uses snprintf for
+ * simplicity since it runs only once per session.
+ */
 
 #include "../services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "state/data/BoardData.h"
@@ -11,6 +24,83 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>  // For INT_MIN
+#include <string.h>  // For strlen
+
+// =============================================================================
+// Fast Integer Formatting (avoids snprintf overhead in hot path)
+// =============================================================================
+#define MAX_UINT32_STR_LEN 11  // Max digits for uint32_t (4294967295) + null
+
+/**
+ * @brief Converts uint32 to string without snprintf overhead.
+ *
+ * @param value  The value to convert
+ * @param buf    Output buffer pointer
+ * @param rem    Remaining space in buffer
+ * @return Updated buffer pointer, or NULL if insufficient space
+ */
+static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
+    if (rem == 0) {
+        return NULL;  // No space - signal error
+    }
+
+    if (value == 0) {
+        *buf++ = '0';
+        return buf;
+    }
+
+    char temp[MAX_UINT32_STR_LEN];
+    int len = 0;
+    while (value > 0) {
+        temp[len++] = '0' + (value % 10);
+        value /= 10;
+    }
+
+    // Check if we have enough space
+    if ((size_t)len > rem) {
+        return NULL;  // Not enough space - signal error
+    }
+
+    while (len > 0) {
+        *buf++ = temp[--len];
+    }
+
+    return buf;
+}
+
+/**
+ * @brief Converts signed int to string, handles INT_MIN edge case.
+ *
+ * @param value  The value to convert
+ * @param buf    Output buffer pointer
+ * @param rem    Remaining space in buffer
+ * @return Updated buffer pointer, or NULL if insufficient space
+ */
+static inline char* int_to_str(int value, char* buf, size_t rem) {
+    // Handle INT_MIN special case (-2147483648 cannot be negated safely)
+    if (value == INT_MIN) {
+        const char* str = "-2147483648";
+        size_t len = strlen(str);  // Calculate length programmatically
+        if (len > rem) {
+            return NULL;  // Not enough space - signal error
+        }
+        while (*str) {
+            *buf++ = *str++;
+        }
+        return buf;
+    }
+
+    if (value < 0) {
+        if (rem == 0) {
+            return NULL;  // No space for minus sign - signal error
+        }
+        *buf++ = '-';
+        rem--;
+        value = -value;
+    }
+    return uint32_to_str((uint32_t)value, buf, rem);  // Can return NULL
+}
 
 // Track whether CSV header has been sent (reset when streaming stops)
 static bool csvHeaderSent = false;
@@ -125,6 +215,22 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
 
     return (size_t)(q - out);
 }
+/**
+ * @brief Attempts to write one data row to the output buffer.
+ *
+ * Writes timestamp,value pairs for all enabled analog channels and DIO.
+ * Uses peek-before-pop strategy: peeks queues first to check data availability,
+ * writes the row, then caller pops if successful.
+ *
+ * @param out           Output buffer
+ * @param rem           Remaining space in buffer
+ * @param state         Board data state (for DIO samples)
+ * @param channelConfig Channel enable configuration
+ * @param dioEnabled    Whether DIO output is enabled
+ * @param hadAIN        [out] True if analog samples were available
+ * @param hadDIO        [out] True if DIO samples were available
+ * @return Bytes written (0 if no data or insufficient space)
+ */
 static size_t tryWriteRow(
     char       *out,
     size_t      rem,
@@ -159,25 +265,55 @@ static size_t tryWriteRow(
 
         if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
-            // Output raw ADC counts instead of converted voltage (much faster!)
-            // User can apply calibration in post-processing if needed
-            int rawValue = s->Value;
-            // First field has no leading comma
-            if (firstField) {
-                w = snprintf(q, rem, "%u,%d", s->Timestamp, rawValue);
-                firstField = false;
+
+            // Convert to calibrated millivolts (backwards compatible)
+            double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
+            // Clamp to int32_t range for portability
+            int32_t mv;
+            if (voltage_mv > (double)INT32_MAX) {
+                mv = INT32_MAX;
+            } else if (voltage_mv < (double)INT32_MIN) {
+                mv = INT32_MIN;
             } else {
-                w = snprintf(q, rem, ",%u,%d", s->Timestamp, rawValue);
+                // Round to nearest instead of truncation
+                mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
             }
+            // First field has no leading comma
+            char* p = q;
+            size_t space = rem;
+            if (!firstField) {
+                if (space == 0) return 0;  // Buffer exhausted
+                *p++ = ',';
+                space--;
+            }
+            p = uint32_to_str(s->Timestamp, p, space);
+            if (p == NULL) return 0;  // Buffer exhausted
+            size_t used = p - q;
+            space = (used < rem) ? rem - used : 0;
+            if (space == 0) return 0;  // Buffer exhausted
+            *p++ = ',';
+            space--;
+            p = int_to_str(mv, p, space);
+            if (p == NULL) return 0;  // Buffer exhausted
+            w = p - q;
+            firstField = false;
         } else {
             // No valid sample for this enabled channel: emit empty ts,val pair
             // Always two fields (timestamp and value) to align with header
-            if (firstField) {
-                w = snprintf(q, rem, ",,");  // Empty pair, no leading comma
-                firstField = false;
-            } else {
-                w = snprintf(q, rem, ",,");  // Empty pair with leading comma
+            char* p = q;
+            size_t space = rem;
+
+            // Check space before each write
+            if (!firstField) {
+                if (space == 0) return 0;  // Buffer exhausted
+                *p++ = ',';  // separator before empty ts
+                space--;
             }
+            if (space < 1) return 0;  // Buffer exhausted
+            *p++ = ',';  // separator between empty ts and empty val
+
+            w = p - q;
+            firstField = false;
         }
         if (w < 0 || (size_t)w >= rem) return 0;
         q += w; rem -= w;
@@ -193,12 +329,12 @@ static size_t tryWriteRow(
                 w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
             }
         } else {
-            // Empty DIO: always emit two fields (ts,val pair) to match header
+            // Empty DIO: emit two empty fields (ts,val) to match header columns
             if (firstField) {
-                w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (no leading comma)
+                w = snprintf(q, rem, ",");  // [empty_ts],[empty_val] - comma separates the two
                 firstField = false;
             } else {
-                w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (with leading comma)
+                w = snprintf(q, rem, ",,");  // [sep],[empty_ts],[empty_val]
             }
         }
         if (w < 0 || (size_t)w >= rem) return 0;
@@ -214,13 +350,26 @@ static size_t tryWriteRow(
 }
 
 
+/**
+ * @brief Main CSV encoder - encodes all available samples into buffer.
+ *
+ * Encodes analog and DIO samples into CSV format. On first call, outputs
+ * a header with device metadata and column names. Subsequent calls output
+ * data rows only.
+ *
+ * @param state     Board data state (for DIO samples)
+ * @param fields    Unused (for API compatibility with other encoders)
+ * @param pBuffer   Output buffer
+ * @param buffSize  Size of output buffer
+ * @return Bytes written (excluding null terminator)
+ */
 size_t csv_Encode(
     tBoardData*       state,
     NanopbFlagsArray* fields,
     uint8_t*          pBuffer,
     size_t            buffSize
 ) {
-    // need at least room for '\n' + '\0'
+    // Need at least room for '\n' + '\0'
     if (!pBuffer || buffSize < 2) {
         return 0;
     }

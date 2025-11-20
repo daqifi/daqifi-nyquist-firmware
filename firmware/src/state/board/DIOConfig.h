@@ -55,7 +55,12 @@ extern "C" {
     
     // Define a storage class for DIO Configs
     #define MAX_DIO_CHANNEL 16
-    #define MAX_DIO_SAMPLE_COUNT 255
+
+    /**
+     * Maximum DIO samples in queue. Set to 256 (power-of-2) for
+     * efficient modulo operations in circular buffer arithmetic.
+     */
+    #define MAX_DIO_SAMPLE_COUNT 256
     ARRAYWRAPPERDEF(DIOArray, DIOConfig, MAX_DIO_CHANNEL);
     
 #ifdef __cplusplus

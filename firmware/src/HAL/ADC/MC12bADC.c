@@ -182,6 +182,7 @@ double MC12b_ConvertToVoltage(
 
     dataOut = (range * scale * CalM * (double) sample->Value) /
             (gpModuleConfigMC12->Resolution) + runtimeConfig->CalB;
+
     return (dataOut);
 }
 

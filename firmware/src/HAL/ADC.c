@@ -350,6 +350,12 @@ double ADC_ConvertToVoltage(const AInSample* sample) {
             &gpBoardRuntimeConfig->AInChannels;
 
     size_t channelIndex = ADC_FindChannelIndex(sample->Channel);
+
+    // Validate channel index to prevent out-of-bounds access
+    if (channelIndex >= gpBoardConfig->AInChannels.Size) {
+        return 0.0;  // Invalid channel - return safe value
+    }
+
     const AInChannel* channelConfig =
             &gpBoardConfig->AInChannels.Data[channelIndex];
     const AInRuntimeConfig* pRuntimeConfig =

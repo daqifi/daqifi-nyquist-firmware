@@ -1,6 +1,18 @@
-/*! @file streaming.c 
- * 
- * This file implements the functions to manage the streaming
+/*! @file streaming.c
+ * @brief Real-time data streaming engine for analog and digital samples.
+ *
+ * This module manages the data acquisition and streaming pipeline:
+ * 1. Deferred interrupt task: Collects samples from ADC/DIO into object pool
+ * 2. Streaming task: Encodes samples (CSV/JSON/ProtoBuf) and writes to outputs
+ *
+ * Key features:
+ * - Uses object pool (not heap) for O(1) sample allocation
+ * - Supports 15kHz+ sample rates with 512-sample queue depth
+ * - Single-interface streaming to prevent bandwidth contention
+ * - FPU context saving for voltage conversion in streaming task
+ *
+ * @see AInSample.c for object pool implementation
+ * @see csv_encoder.c for CSV output format
  */
 
 #include "streaming.h"
@@ -20,6 +32,9 @@
 
 //#define TEST_STREAMING
 
+// Log queue full error every N drops to avoid flooding the log at high rates.
+// At 15kHz this means we log approximately once per 6.7ms during overflow.
+#define LOG_QUEUE_DROP_INTERVAL 100
 #define UNUSED(x) (void)(x)
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
@@ -47,6 +62,18 @@ static TaskHandle_t gStreamingTaskHandle;
 static void Streaming_StuffDummyData(void);
 #endif
 
+/**
+ * @brief Deferred interrupt handler for sample collection.
+ *
+ * This task runs at high priority and is notified by the timer ISR.
+ * It collects the latest ADC and DIO samples into an object pool entry,
+ * then pushes the entry to the sample queue for the streaming task.
+ *
+ * Critical path optimizations:
+ * - Uses object pool allocation (O(1)) instead of heap
+ * - Uses critical section for atomic sample copy (prevents torn reads)
+ * - Triggers next ADC conversion immediately after sample collection
+ */
 void _Streaming_Deferred_Interrupt_Task(void) {
     TickType_t xBlockTime = portMAX_DELAY;
 #if  !defined(TEST_STREAMING)
@@ -75,12 +102,8 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
 #if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
-            if((sizeof(AInPublicSampleList_t)+200)>xPortGetFreeHeapSize()){
-                LOG_E("Streaming: Insufficient heap for sample allocation (free=%u, need=%u)\r\n",
-                      xPortGetFreeHeapSize(), sizeof(AInPublicSampleList_t)+200);
-                continue;
-            }
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
+            // No heap check needed - pool uses pre-allocated static memory
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
                 LOG_E("Streaming: Sample pool exhausted\r\n");
@@ -90,20 +113,31 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
                         && AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
-                    // Use channel ID from BoardConfig (authoritative source) instead of sample data
-                    pPublicSampleList->sampleElement[i].Channel=pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
-                    pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
-                    pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
-                    pPublicSampleList->isSampleValid[i]=1;
+                    // Null check to prevent crash
+                    if (pAiSample != NULL) {
+                        // Use channel ID from BoardConfig (authoritative source) instead of sample data
+                        pPublicSampleList->sampleElement[i].Channel=pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+                        // Copy entire sample atomically to prevent torn reads
+                        // Task-only context - use efficient critical section
+                        taskENTER_CRITICAL();
+                        pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
+                        pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
+                        taskEXIT_CRITICAL();
+
+                        pPublicSampleList->isSampleValid[i]=1;
+                    } else {
+                        // Mark as invalid if sample data unavailable
+                        pPublicSampleList->isSampleValid[i]=0;
+                    }
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
                 static uint32_t queueDropCount = 0;
-                if ((++queueDropCount % 100) == 0) {
+                if ((++queueDropCount % LOG_QUEUE_DROP_INTERVAL) == 0) {
                     LOG_E("Streaming: Sample queue full - dropped %u samples (queue at capacity)",
                           (unsigned)queueDropCount);
                 }
-                vPortFree(pPublicSampleList);
+                AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
             }
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
@@ -174,7 +208,7 @@ static void Streaming_Start(void) {
         AInPublicSampleList_t* pStale;
         while (AInSampleList_PopFront(&pStale)) {
             if (pStale != NULL) {
-                vPortFree(pStale);
+                AInSampleList_FreeToPool(pStale);  // Use pool instead of vPortFree!
             }
         }
 
@@ -228,6 +262,9 @@ void Streaming_UpdateState(void) {
  */
 
 void streaming_Task(void) {
+    // Enable FPU context saving for this task (required for ADC voltage conversion)
+    portTASK_USES_FLOATING_POINT();
+
      TickType_t xBlockTime = portMAX_DELAY;
     NanopbFlagsArray nanopbFlag;
     size_t usbSize, wifiSize, sdSize, maxSize;
