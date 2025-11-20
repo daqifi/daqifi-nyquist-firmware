@@ -203,6 +203,7 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
 }
 
 static void app_USBDeviceTask(void* p_arg) {
+    // Enable FPU context saving - USB task processes streaming data with voltage conversion
     portTASK_USES_FLOATING_POINT();
     UsbCdc_Initialize();
 
@@ -216,6 +217,7 @@ static void app_USBDeviceTask(void* p_arg) {
 }
 
 static void app_WifiTask(void* p_arg) {
+    // Enable FPU context saving - WiFi task processes streaming data with voltage conversion
     portTASK_USES_FLOATING_POINT();
     enum{
         APP_WIFI_STATE_WAIT_POWER_UP=0,

@@ -179,7 +179,9 @@ void BoardData_Set(
             break;
         case BOARDDATA_AIN_LATEST:
             if (index < g_BoardData.AInLatest.Size) {
-                // Use ISR-safe critical section (works from both task and ISR context)
+                // Atomic write to prevent torn reads by streaming task.
+                // Called from ADC ISR, so must use ISR-safe critical section.
+                // Without this, streaming task could read partial sample (old timestamp + new value).
                 UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
                 memcpy(
                         &g_BoardData.AInLatest.Data[ index ],
