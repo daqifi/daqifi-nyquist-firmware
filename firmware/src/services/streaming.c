@@ -91,8 +91,13 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     if (pAiSample != NULL) {
                         // Use channel ID from BoardConfig (authoritative source) instead of sample data
                         pPublicSampleList->sampleElement[i].Channel=pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+                        // Copy entire sample atomically to prevent torn reads
+                        // Use ISR-safe version as it works in all contexts
+                        UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
                         pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
                         pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
+                        taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
+
                         pPublicSampleList->isSampleValid[i]=1;
                     } else {
                         // Mark as invalid if sample data unavailable
@@ -231,6 +236,9 @@ void Streaming_UpdateState(void) {
  */
 
 void streaming_Task(void) {
+    // Enable FPU context saving for this task (required for ADC voltage conversion)
+    portTASK_USES_FLOATING_POINT();
+
      TickType_t xBlockTime = portMAX_DELAY;
     NanopbFlagsArray nanopbFlag;
     size_t usbSize, wifiSize, sdSize, maxSize;

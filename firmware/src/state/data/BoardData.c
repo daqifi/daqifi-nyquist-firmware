@@ -13,6 +13,9 @@
 #include "Util/NullLockProvider.h"
 #include "state/board/DIOConfig.h"
 #include "../../HAL/ADC.h"
+#include "FreeRTOS.h"
+#include "task.h"
+
 tBoardData __attribute__((coherent)) g_BoardData;
 
 void InitializeBoardData(tBoardData* boardData) {
@@ -176,11 +179,13 @@ void BoardData_Set(
             break;
         case BOARDDATA_AIN_LATEST:
             if (index < g_BoardData.AInLatest.Size) {
+                // Use ISR-safe critical section (works from both task and ISR context)
+                UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
                 memcpy(
                         &g_BoardData.AInLatest.Data[ index ],
                         pSetValue,
                         sizeof (AInSample));
-
+                taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
             }
             break;
         case BOARDDATA_AIN_LATEST_TIMESTAMP:

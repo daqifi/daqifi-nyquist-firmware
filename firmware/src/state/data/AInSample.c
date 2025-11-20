@@ -8,6 +8,7 @@
 #include "AInSample.h"
 #include "FreeRTOS.h"
 #include "queue.h"
+#include <string.h>  // For memset
 
 //! Ticks to wait for QUEUE OPERATIONS
 #define AINSAMPLE_QUEUE_TICKS_TO_WAIT               0  // No delay

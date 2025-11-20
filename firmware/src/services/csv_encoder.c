@@ -220,6 +220,7 @@ static size_t tryWriteRow(
 
         if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
+
             // Convert to calibrated millivolts (backwards compatible)
             double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
             // Clamp to int32_t range for portability
