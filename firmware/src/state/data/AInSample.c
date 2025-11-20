@@ -42,9 +42,12 @@ void AInSampleList_Initialize(
     (void)dropOnOverflow;
     (void)lockPrototype;
 
-    // Clamp queue size to pool size to prevent exhaustion
-    queueSize = (maxSize > SAMPLE_POOL_SIZE) ? SAMPLE_POOL_SIZE : maxSize;
-    analogInputsQueue = xQueueCreate( queueSize, sizeof(AInPublicSampleList_t *) );
+    // Enforce invariant: queue size cannot exceed pool capacity
+    configASSERT(maxSize <= SAMPLE_POOL_SIZE);
+
+    queueSize = maxSize;
+    analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
+    configASSERT(analogInputsQueue != NULL);
 
     // Initialize object pool
     if (poolMutex == NULL) {
