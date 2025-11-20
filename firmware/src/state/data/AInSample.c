@@ -120,12 +120,12 @@ void AInSampleList_Destroy()
         vQueueDelete(q);
     }
 
-    // Step 5: Atomically delete mutex and reset pool to initial state
+    // Step 5: Reset pool to initial state (keep mutex for next session)
+    // NOTE: We intentionally do NOT delete poolMutex here to prevent UAF.
+    // If Allocate/Free is racing with Destroy, the mutex must remain valid
+    // until the racing operation completes. The mutex is only ~80 bytes and
+    // persists for system lifetime.
     taskENTER_CRITICAL();
-    if (poolMutex != NULL) {
-        vSemaphoreDelete(poolMutex);
-        poolMutex = NULL;
-    }
     // Rebuild free list chain: 0 -> 1 -> 2 -> ... -> N-1 -> END
     for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
         nextFree[i] = i + 1;
