@@ -287,10 +287,10 @@ static size_t tryWriteRow(
         } else {
             // Empty DIO: always emit two fields (ts,val pair) to match header
             if (firstField) {
-                w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (no leading comma)
+                w = snprintf(q, rem, ",");  // Two empty fields: ,empty_ts,empty_val
                 firstField = false;
             } else {
-                w = snprintf(q, rem, ",,");  // Empty DIO ts,val pair (with leading comma)
+                w = snprintf(q, rem, ",,");  // Separator + two empty fields
             }
         }
         if (w < 0 || (size_t)w >= rem) return 0;
