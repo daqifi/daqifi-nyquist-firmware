@@ -54,8 +54,8 @@ extern "C" {
     } AInPublicSampleList_t;
 
     // Define a storage class for analog input channels
-    //#define MAX_AIN_CHANNEL    48
-#define MAX_AIN_SAMPLE_COUNT 50  // Increased for 5kHz streaming support (10ms buffer depth)
+
+#define MAX_AIN_SAMPLE_COUNT 512  
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**

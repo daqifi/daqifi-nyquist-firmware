@@ -19,11 +19,14 @@ static QueueHandle_t analogInputsQueue;
 static uint32_t queueSize = 0;
 
 // Object pool for sample structures (eliminates heap allocation/free overhead)
-// Increased from 20 to 100 for better buffering at high rates (10ms buffer at 10kHz)
 // Must match queue size initialized in AInSampleList_Initialize()
-#define SAMPLE_POOL_SIZE 100  // Provides ~10ms buffer at 10kHz
+#define SAMPLE_POOL_SIZE 512
 static AInPublicSampleList_t samplePool[SAMPLE_POOL_SIZE];
-static uint8_t poolInUse[SAMPLE_POOL_SIZE];  // 0=free, 1=in use
+
+// Free list for O(1) allocation/deallocation (replaces linear scan)
+static int16_t freeHead = -1;              // Index of first free slot (-1 = empty)
+static int16_t nextFree[SAMPLE_POOL_SIZE]; // Each slot points to next free
+
 static SemaphoreHandle_t poolMutex = NULL;
 static volatile bool poolActive = false;  // Guards against teardown races
 
@@ -48,10 +51,13 @@ void AInSampleList_Initialize(
         poolMutex = xSemaphoreCreateMutex();
     }
 
-    // Mark all pool entries as free
-    for (int i = 0; i < SAMPLE_POOL_SIZE; i++) {
-        poolInUse[i] = 0;
+    // Build free list chain: 0 → 1 → 2 → ... → N-1 → -1
+    for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
+        nextFree[i] = i + 1;
     }
+    nextFree[SAMPLE_POOL_SIZE - 1] = -1;  // End of list
+    freeHead = 0;  // Start at first entry
+
     poolActive = true;
 }
 
@@ -85,10 +91,12 @@ void AInSampleList_Destroy()
         vSemaphoreDelete(poolMutex);
         poolMutex = NULL;
     }
-    // Reset pool flags to initial state
-    for (int i = 0; i < SAMPLE_POOL_SIZE; i++) {
-        poolInUse[i] = 0;
+    // Rebuild free list to initial state
+    for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
+        nextFree[i] = i + 1;
     }
+    nextFree[SAMPLE_POOL_SIZE - 1] = -1;
+    freeHead = 0;
     taskEXIT_CRITICAL();
 }
 
@@ -164,14 +172,13 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
     AInPublicSampleList_t* result = NULL;
     xSemaphoreTake(poolMutex, portMAX_DELAY);
 
-    for (int i = 0; i < SAMPLE_POOL_SIZE; i++) {
-        if (poolInUse[i] == 0) {
-            poolInUse[i] = 1;
-            result = &samplePool[i];
-            // Clear entire structure to ensure no stale data (Qodo requirement)
-            memset(result, 0, sizeof(AInPublicSampleList_t));
-            break;
-        }
+    // O(1) allocation: pop from free list head
+    if (freeHead >= 0) {
+        int idx = freeHead;
+        freeHead = nextFree[idx];  // Move head to next free
+        result = &samplePool[idx];
+        // Clear entire structure to ensure no stale data
+        memset(result, 0, sizeof(AInPublicSampleList_t));
     }
 
     xSemaphoreGive(poolMutex);
@@ -190,8 +197,9 @@ void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
         return;  // Not from our pool
     }
 
-    // Thread-safe deallocation (protect poolInUse modification)
+    // O(1) deallocation: push to free list head
     xSemaphoreTake(poolMutex, portMAX_DELAY);
-    poolInUse[index] = 0;
+    nextFree[index] = freeHead;
+    freeHead = (int16_t)index;
     xSemaphoreGive(poolMutex);
 }
