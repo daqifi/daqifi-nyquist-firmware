@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
     /**
-     * Contains DIO information for a given time
+     * State machine states for analog input task processing
      */
     typedef enum e_AInTaskState {
         AINTASK_INITIALIZING,
@@ -29,7 +29,7 @@ extern "C" {
     ARRAYWRAPPERDEF(AInModDataArray, AInModData, MAX_AIN_MOD);
 
     /**
-     * Contains DIO information for a given time
+     * Contains a single analog input sample with timestamp and value
      */
     typedef struct s_AInSample {
         /**
@@ -55,7 +55,12 @@ extern "C" {
 
     // Define a storage class for analog input channels
 
-#define MAX_AIN_SAMPLE_COUNT 512  
+    /**
+     * Maximum samples in the streaming queue and object pool.
+     * Set to 512 to support high-speed acquisition (15kHz+) without queue drops.
+     * This value determines the SAMPLE_POOL_SIZE in AInSample.c.
+     */
+#define MAX_AIN_SAMPLE_COUNT 512
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**
@@ -141,8 +146,24 @@ extern "C" {
      */
     bool AInSampleList_IsEmpty(void);
 
-    // Object pool functions to eliminate heap allocation/deallocation
+    /**
+     * @brief Allocates a sample structure from the pre-allocated object pool.
+     *
+     * Uses O(1) free list allocation to eliminate heap allocation overhead.
+     * The returned structure is zero-initialized.
+     *
+     * @return Pointer to allocated sample, or NULL if pool is exhausted.
+     */
     AInPublicSampleList_t* AInSampleList_AllocateFromPool(void);
+
+    /**
+     * @brief Returns a sample structure to the object pool.
+     *
+     * Uses O(1) free list deallocation to eliminate heap free overhead.
+     * Safe to call with NULL or non-pool pointers (will be ignored).
+     *
+     * @param pSample Pointer to sample structure to return to pool.
+     */
     void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample);
 
 #ifdef __cplusplus

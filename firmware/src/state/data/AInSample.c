@@ -1,6 +1,15 @@
 /*! @file AInSample.c
- * @brief File with the implementation of the functionality to send and receive
- * messages with the data coming from Analog Inputs.
+ * @brief Analog input sample queue and object pool implementation.
+ *
+ * Implements a FreeRTOS queue for streaming analog input samples between the
+ * ADC interrupt handler and the streaming task. Uses a pre-allocated object pool
+ * with O(1) free list allocation to eliminate heap overhead at high sample rates.
+ *
+ * Performance characteristics:
+ * - Queue: Standard FreeRTOS queue (thread-safe, ISR-safe)
+ * - Pool allocation: O(1) via free list (no fragmentation, deterministic timing)
+ * - Pool size: 512 samples to support 15kHz+ streaming
+ *
  * @author Javier Longares Abaiz - When Technology becomes art.
  * @web www.javierlongares.com
  */
@@ -18,14 +27,27 @@ static QueueHandle_t analogInputsQueue;
 //! Size of the queue, in number of items
 static uint32_t queueSize = 0;
 
-// Object pool for sample structures (eliminates heap allocation/free overhead)
-// Must match queue size initialized in AInSampleList_Initialize()
+// =============================================================================
+// Object Pool Configuration
+// =============================================================================
+// Pool size must match MAX_AIN_SAMPLE_COUNT in AInSample.h for consistency.
+// This eliminates heap allocation/deallocation overhead during streaming.
 #define SAMPLE_POOL_SIZE 512
 static AInPublicSampleList_t samplePool[SAMPLE_POOL_SIZE];
 
-// Free list for O(1) allocation/deallocation (replaces linear scan)
+// =============================================================================
+// Free List Data Structures (O(1) allocation/deallocation)
+// =============================================================================
+// The free list is a singly-linked list embedded in the nextFree array.
+// Each free slot contains the index of the next free slot, forming a chain.
+// Allocation pops from head, deallocation pushes to head - both O(1).
+//
+// Example state with slots 0,2,5 free:
+//   freeHead = 0
+//   nextFree[0] = 2, nextFree[2] = 5, nextFree[5] = -1 (end)
+//   Chain: 0 -> 2 -> 5 -> END
 static int16_t freeHead = -1;              // Index of first free slot (-1 = empty)
-static int16_t nextFree[SAMPLE_POOL_SIZE]; // Each slot points to next free
+static int16_t nextFree[SAMPLE_POOL_SIZE]; // Each slot points to next free slot
 
 static SemaphoreHandle_t poolMutex = NULL;
 static volatile bool poolActive = false;  // Guards against teardown races
@@ -64,18 +86,28 @@ void AInSampleList_Initialize(
     poolActive = true;
 }
 
+/**
+ * @brief Destroys the sample queue and resets the object pool.
+ *
+ * Teardown sequence (order matters for thread safety):
+ * 1. Block new pool operations (poolActive = false)
+ * 2. Atomically capture and nullify queue handle
+ * 3. Drain remaining samples back to pool
+ * 4. Delete FreeRTOS resources
+ * 5. Reset pool to initial state
+ */
 void AInSampleList_Destroy()
 {
-    // Block new pool operations first
+    // Step 1: Block new pool operations first
     poolActive = false;
 
-    // Atomically capture and nullify queue handle to prevent further use
+    // Step 2: Atomically capture and nullify queue handle to prevent further use
     taskENTER_CRITICAL();
     QueueHandle_t q = analogInputsQueue;
     analogInputsQueue = NULL;
     taskEXIT_CRITICAL();
 
-    // Drain queue safely (using captured handle)
+    // Step 3 & 4: Drain queue and delete (using captured handle)
     if (q != NULL) {
         AInPublicSampleList_t* pData;
         while (uxQueueMessagesWaiting(q) > 0) {
@@ -88,13 +120,13 @@ void AInSampleList_Destroy()
         vQueueDelete(q);
     }
 
-    // Atomically delete mutex and reset pool
+    // Step 5: Atomically delete mutex and reset pool to initial state
     taskENTER_CRITICAL();
     if (poolMutex != NULL) {
         vSemaphoreDelete(poolMutex);
         poolMutex = NULL;
     }
-    // Rebuild free list to initial state
+    // Rebuild free list chain: 0 -> 1 -> 2 -> ... -> N-1 -> END
     for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
         nextFree[i] = i + 1;
     }

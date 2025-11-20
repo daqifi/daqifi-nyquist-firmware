@@ -1,6 +1,18 @@
-/*! @file streaming.c 
- * 
- * This file implements the functions to manage the streaming
+/*! @file streaming.c
+ * @brief Real-time data streaming engine for analog and digital samples.
+ *
+ * This module manages the data acquisition and streaming pipeline:
+ * 1. Deferred interrupt task: Collects samples from ADC/DIO into object pool
+ * 2. Streaming task: Encodes samples (CSV/JSON/ProtoBuf) and writes to outputs
+ *
+ * Key features:
+ * - Uses object pool (not heap) for O(1) sample allocation
+ * - Supports 15kHz+ sample rates with 512-sample queue depth
+ * - Single-interface streaming to prevent bandwidth contention
+ * - FPU context saving for voltage conversion in streaming task
+ *
+ * @see AInSample.c for object pool implementation
+ * @see csv_encoder.c for CSV output format
  */
 
 #include "streaming.h"
@@ -20,7 +32,9 @@
 
 //#define TEST_STREAMING
 
-#define LOG_QUEUE_DROP_INTERVAL 100  // Log queue full error every N drops
+// Log queue full error every N drops to avoid flooding the log at high rates.
+// At 15kHz this means we log approximately once per 6.7ms during overflow.
+#define LOG_QUEUE_DROP_INTERVAL 100
 #define UNUSED(x) (void)(x)
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
@@ -48,6 +62,18 @@ static TaskHandle_t gStreamingTaskHandle;
 static void Streaming_StuffDummyData(void);
 #endif
 
+/**
+ * @brief Deferred interrupt handler for sample collection.
+ *
+ * This task runs at high priority and is notified by the timer ISR.
+ * It collects the latest ADC and DIO samples into an object pool entry,
+ * then pushes the entry to the sample queue for the streaming task.
+ *
+ * Critical path optimizations:
+ * - Uses object pool allocation (O(1)) instead of heap
+ * - Uses critical section for atomic sample copy (prevents torn reads)
+ * - Triggers next ADC conversion immediately after sample collection
+ */
 void _Streaming_Deferred_Interrupt_Task(void) {
     TickType_t xBlockTime = portMAX_DELAY;
 #if  !defined(TEST_STREAMING)

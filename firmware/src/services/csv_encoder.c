@@ -1,3 +1,16 @@
+/*! @file csv_encoder.c
+ * @brief CSV encoder for streaming analog and digital samples.
+ *
+ * Encodes sample data into a human-readable CSV format optimized for:
+ * - Only outputs enabled channels (reduces file size dramatically)
+ * - Self-documenting header with device info and column names
+ * - Per-channel timestamps for accurate timing analysis
+ * - Calibrated millivolt values for immediate use
+ *
+ * Uses fast integer-to-string conversion to avoid snprintf overhead
+ * in the hot path (data rows). Header generation uses snprintf for
+ * simplicity since it runs only once per session.
+ */
 
 #include "../services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "state/data/BoardData.h"
@@ -14,11 +27,19 @@
 #include <limits.h>  // For INT_MIN
 #include <string.h>  // For strlen
 
-// Constants for integer formatting
-#define MAX_UINT32_STR_LEN 11  // 10 digits + null terminator
+// =============================================================================
+// Fast Integer Formatting (avoids snprintf overhead in hot path)
+// =============================================================================
+#define MAX_UINT32_STR_LEN 11  // Max digits for uint32_t (4294967295) + null
 
-// Fast integer to string with bounds checking (replaces slow snprintf)
-// Returns NULL on error (insufficient space), updated pointer on success
+/**
+ * @brief Converts uint32 to string without snprintf overhead.
+ *
+ * @param value  The value to convert
+ * @param buf    Output buffer pointer
+ * @param rem    Remaining space in buffer
+ * @return Updated buffer pointer, or NULL if insufficient space
+ */
 static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
     if (rem == 0) {
         return NULL;  // No space - signal error
@@ -48,8 +69,16 @@ static inline char* uint32_to_str(uint32_t value, char* buf, size_t rem) {
     return buf;
 }
 
+/**
+ * @brief Converts signed int to string, handles INT_MIN edge case.
+ *
+ * @param value  The value to convert
+ * @param buf    Output buffer pointer
+ * @param rem    Remaining space in buffer
+ * @return Updated buffer pointer, or NULL if insufficient space
+ */
 static inline char* int_to_str(int value, char* buf, size_t rem) {
-    // Handle INT_MIN special case (undefined behavior on -value)
+    // Handle INT_MIN special case (-2147483648 cannot be negated safely)
     if (value == INT_MIN) {
         const char* str = "-2147483648";
         size_t len = strlen(str);  // Calculate length programmatically
@@ -186,6 +215,22 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
 
     return (size_t)(q - out);
 }
+/**
+ * @brief Attempts to write one data row to the output buffer.
+ *
+ * Writes timestamp,value pairs for all enabled analog channels and DIO.
+ * Uses peek-before-pop strategy: peeks queues first to check data availability,
+ * writes the row, then caller pops if successful.
+ *
+ * @param out           Output buffer
+ * @param rem           Remaining space in buffer
+ * @param state         Board data state (for DIO samples)
+ * @param channelConfig Channel enable configuration
+ * @param dioEnabled    Whether DIO output is enabled
+ * @param hadAIN        [out] True if analog samples were available
+ * @param hadDIO        [out] True if DIO samples were available
+ * @return Bytes written (0 if no data or insufficient space)
+ */
 static size_t tryWriteRow(
     char       *out,
     size_t      rem,
@@ -305,13 +350,26 @@ static size_t tryWriteRow(
 }
 
 
+/**
+ * @brief Main CSV encoder - encodes all available samples into buffer.
+ *
+ * Encodes analog and DIO samples into CSV format. On first call, outputs
+ * a header with device metadata and column names. Subsequent calls output
+ * data rows only.
+ *
+ * @param state     Board data state (for DIO samples)
+ * @param fields    Unused (for API compatibility with other encoders)
+ * @param pBuffer   Output buffer
+ * @param buffSize  Size of output buffer
+ * @return Bytes written (excluding null terminator)
+ */
 size_t csv_Encode(
     tBoardData*       state,
     NanopbFlagsArray* fields,
     uint8_t*          pBuffer,
     size_t            buffSize
 ) {
-    // need at least room for '\n' + '\0'
+    // Need at least room for '\n' + '\0'
     if (!pBuffer || buffSize < 2) {
         return 0;
     }
