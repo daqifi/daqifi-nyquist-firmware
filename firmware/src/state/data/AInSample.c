@@ -25,6 +25,7 @@ static uint32_t queueSize = 0;
 static AInPublicSampleList_t samplePool[SAMPLE_POOL_SIZE];
 static uint8_t poolInUse[SAMPLE_POOL_SIZE];  // 0=free, 1=in use
 static SemaphoreHandle_t poolMutex = NULL;
+static volatile bool poolActive = false;  // Guards against teardown races
 
 // Compile-time assertion to ensure pool size matches expected queue size
 _Static_assert(SAMPLE_POOL_SIZE >= 20, "Pool must be at least 20 for queue");
@@ -51,10 +52,14 @@ void AInSampleList_Initialize(
     for (int i = 0; i < SAMPLE_POOL_SIZE; i++) {
         poolInUse[i] = 0;
     }
+    poolActive = true;
 }
 
 void AInSampleList_Destroy()
 {
+    // Block new pool operations first
+    poolActive = false;
+
     // Atomically capture and nullify queue handle to prevent further use
     taskENTER_CRITICAL();
     QueueHandle_t q = analogInputsQueue;
@@ -152,7 +157,7 @@ bool AInSampleList_IsEmpty()
 // ============================================================================
 
 AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
-    if (poolMutex == NULL) {
+    if (!poolActive || poolMutex == NULL) {
         return NULL;
     }
 
@@ -175,7 +180,7 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
 }
 
 void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
-    if (pSample == NULL || poolMutex == NULL) {
+    if (pSample == NULL || !poolActive || poolMutex == NULL) {
         return;
     }
 
