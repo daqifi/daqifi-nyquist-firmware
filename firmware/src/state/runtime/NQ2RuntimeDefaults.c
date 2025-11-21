@@ -87,5 +87,12 @@ const tBoardRuntimeConfig g_NQ2BoardRuntimeConfig = {
     },
     //.wifiSettings = {0},
     //.usbSettings = {0},
-    //.serverData = {0}
+    //.serverData = {0},
+    .sdCardConfig={
+        .enable=false,
+        .directory="DAQiFi",
+        .file="default.bin",
+        .mode=SD_CARD_MANAGER_MODE_NONE,
+        .maxFileSizeBytes=4185448858ULL,  // 3.9GB (safe for FAT32's 4GB limit)
+    },
 };

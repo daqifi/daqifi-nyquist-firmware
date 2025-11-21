@@ -500,6 +500,55 @@ __exit_point:
     return result;
 }
 
+/**
+ * @brief Set maximum file size for automatic file splitting
+ *
+ * Command: SYST:STOR:SD:MAXSize <bytes>
+ * Example: SYST:STOR:SD:MAXSize 4185448858  (3.9GB)
+ *          SYST:STOR:SD:MAXSize 0           (unlimited)
+ */
+scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    int64_t maxSizeBytes;
+    if (!SCPI_ParamInt64(context, &maxSizeBytes, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // Validate range (0 = unlimited, or positive value up to UINT64_MAX)
+    if (maxSizeBytes < 0) {
+        LOG_E("SD:MAXSize - Invalid size: %lld (must be >= 0)\r\n", maxSizeBytes);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
+    LOG_D("SD:MAXSize - Set max file size to %llu bytes (%s)\r\n",
+          pSDCardRuntimeConfig->maxFileSizeBytes,
+          (maxSizeBytes == 0) ? "unlimited" : "splitting enabled");
+
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    result = SCPI_RES_OK;
+
+__exit_point:
+    return result;
+}
+
+/**
+ * @brief Query maximum file size setting
+ *
+ * Command: SYST:STOR:SD:MAXSize?
+ * Returns: <bytes> (0 = unlimited)
+ */
+scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    SCPI_ResultUInt64(context, pSDCardRuntimeConfig->maxFileSizeBytes);
+    return SCPI_RES_OK;
+}
+
 /* *****************************************************************************
  End of File
  */

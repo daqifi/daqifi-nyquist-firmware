@@ -42,6 +42,7 @@ extern "C" {
         sd_card_manager_mode_t mode;
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+        uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
     } sd_card_manager_settings_t;
 
 

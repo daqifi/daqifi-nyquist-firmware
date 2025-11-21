@@ -4,6 +4,7 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
+#include "services/csv_encoder.h"  // For csv_ResetEncoder on file rotation
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
@@ -85,6 +86,12 @@ typedef struct {
     uint16_t totalBytesFlushPending;
     uint64_t lastFlushMillis;
     bool discMounted;
+
+    // File splitting state
+    char baseFilename[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];  // Original filename without counter
+    uint32_t fileCounter;        // Current file number (1, 2, 3, ...)
+    uint64_t currentFileBytes;   // Bytes written to current file
+    bool fileSplittingEnabled;   // True if maxFileSizeBytes > 0
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -292,8 +299,62 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
         gpSDCardSettings = pSettings;
         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_INIT;
+
+        // Initialize file splitting state
+        memset(gSDCardData.baseFilename, 0, sizeof(gSDCardData.baseFilename));
+        gSDCardData.fileCounter = 0;
+        gSDCardData.currentFileBytes = 0;
+        gSDCardData.fileSplittingEnabled = false;
     }
     return true;
+}
+
+/**
+ * @brief Extracts base filename (without extension) from given filename.
+ *
+ * Example: "data.csv" → "data" stored in baseFilename field
+ *
+ * @param filename Input filename (may include extension)
+ */
+static void extractBaseFilename(const char* filename) {
+    strncpy(gSDCardData.baseFilename, filename, sizeof(gSDCardData.baseFilename) - 1);
+    gSDCardData.baseFilename[sizeof(gSDCardData.baseFilename) - 1] = '\0';
+
+    // Find last dot for extension
+    char* ext = strrchr(gSDCardData.baseFilename, '.');
+    if (ext != NULL) {
+        *ext = '\0';  // Remove extension from base filename
+    }
+}
+
+/**
+ * @brief Generates filename with sequential numbering.
+ *
+ * Format: basename-NNN.ext (e.g., "data-001.csv", "data-002.csv")
+ *
+ * @param outPath Output buffer for full path
+ * @param maxLen Maximum length of output buffer
+ * @param counter File counter (1, 2, 3, ...)
+ * @param directory Directory path
+ * @param baseFilename Base filename (without extension)
+ * @param originalFilename Original filename (used to extract extension)
+ */
+static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
+                             const char* directory, const char* baseFilename,
+                             const char* originalFilename) {
+    // Extract extension from original filename
+    const char* ext = strrchr(originalFilename, '.');
+    if (ext == NULL) {
+        ext = "";  // No extension
+    }
+
+    if (counter == 0) {
+        // First file: use original name without counter
+        snprintf(outPath, maxLen, "%s/%s", directory, originalFilename);
+    } else {
+        // Subsequent files: add counter suffix (001, 002, etc.)
+        snprintf(outPath, maxLen, "%s/%s-%03u%s", directory, baseFilename, counter, ext);
+    }
 }
 
 void sd_card_manager_ProcessState() {
@@ -417,10 +478,25 @@ void sd_card_manager_ProcessState() {
 
         case SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE:
             memset(gSDCardData.filePath, 0, sizeof (gSDCardData.filePath));
-            snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
-                    gpSDCardSettings->directory, gpSDCardSettings->file);
-            LOG_D("[SD] Opening file: '%s', mode=%d\r\n", gSDCardData.filePath, gpSDCardSettings->mode);
+            LOG_D("[SD] Opening file, mode=%d\r\n", gpSDCardSettings->mode);
             if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+                // Initialize file splitting if enabled
+                gSDCardData.fileSplittingEnabled = (gpSDCardSettings->maxFileSizeBytes > 0);
+
+                // Extract base filename and generate actual filename with counter
+                if (gSDCardData.fileCounter == 0) {
+                    // First time opening - extract base filename
+                    extractBaseFilename(gpSDCardSettings->file);
+                }
+
+                generateFilename(gSDCardData.filePath, sizeof(gSDCardData.filePath),
+                               gSDCardData.fileCounter, gpSDCardSettings->directory,
+                               gSDCardData.baseFilename, gpSDCardSettings->file);
+
+                LOG_D("[SD] Opening file '%s' (counter=%u, splitting=%s)\r\n",
+                     gSDCardData.filePath, gSDCardData.fileCounter,
+                     gSDCardData.fileSplittingEnabled ? "enabled" : "disabled");
+
                 // Clear shared buffer and write buffer to prevent stale data from previous session
                 xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
                 CircularBuf_Reset(&gSDCardData.wCirbuf);
@@ -433,6 +509,7 @@ void sd_card_manager_ProcessState() {
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
                 gSDCardData.totalBytesFlushPending = 0;
+                gSDCardData.currentFileBytes = 0;  // Reset byte counter for new file
                 gSDCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
@@ -441,6 +518,11 @@ void sd_card_manager_ProcessState() {
                     LOG_E("[%s:%d]Failed to open SD Card file for writing: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
                 }
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
+                // For READ mode, construct filename directly from settings (no splitting)
+                snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
+                        gpSDCardSettings->directory, gpSDCardSettings->file);
+                LOG_D("[SD] Opening file for read: '%s'\r\n", gSDCardData.filePath);
+
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE;
@@ -499,12 +581,18 @@ void sd_card_manager_ProcessState() {
                     if (gSDCardData.sdCardWritePending == 1) {
                         writeLen = SDCardWrite();
                         if (writeLen >= gSDCardData.writeBufferLength) {
+                            // Track bytes written for file splitting
+                            gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
+
                             xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
                             gSDCardData.sdCardWritePending = 0;
                             gSDCardData.writeBufferLength = 0;
                             gSDCardData.sdCardWriteBufferOffset = 0;
                             xSemaphoreGive(gSDCardData.wMutex);
                         } else if (writeLen >= 0) {
+                            // Track partial write
+                            gSDCardData.currentFileBytes += writeLen;
+
                             xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
                             gSDCardData.writeBufferLength -= writeLen;
                             gSDCardData.sdCardWriteBufferOffset = writeLen;
@@ -519,6 +607,45 @@ void sd_card_manager_ProcessState() {
                         break;  // No more data to process
                     }
                 }
+            }
+
+            // Check if file size limit reached and rotation is needed
+            if (gSDCardData.fileSplittingEnabled &&
+                gSDCardData.currentFileBytes >= gpSDCardSettings->maxFileSizeBytes) {
+                LOG_D("[SD] File size limit reached (%llu >= %llu), rotating to next file\r\n",
+                     gSDCardData.currentFileBytes, gpSDCardSettings->maxFileSizeBytes);
+
+                // Flush and close current file
+                if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                    // Flush any remaining data
+                    xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
+                    bool hasPending = gSDCardData.totalBytesFlushPending > 0;
+                    xSemaphoreGive(gSDCardData.wMutex);
+
+                    if (hasPending) {
+                        if (SYS_FS_FileSync(gSDCardData.fileHandle) == -1) {
+                            LOG_E("[%s:%d]Error flushing before file rotation", __FILE__, __LINE__);
+                        } else {
+                            xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
+                            gSDCardData.totalBytesFlushPending = 0;
+                            xSemaphoreGive(gSDCardData.wMutex);
+                        }
+                    }
+
+                    // Close current file
+                    SYS_FS_FileClose(gSDCardData.fileHandle);
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    LOG_D("[SD] Closed file '%s' (wrote %llu bytes)\r\n",
+                         gSDCardData.filePath, gSDCardData.currentFileBytes);
+                }
+
+                // Reset CSV encoder so new file gets a fresh header
+                csv_ResetEncoder();
+
+                // Increment counter and reopen with new filename
+                gSDCardData.fileCounter++;
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                break;  // Exit to reopen with new filename
             }
             uint64_t currentMillis = pdTICKS_TO_MS(xTaskGetTickCount());
 
