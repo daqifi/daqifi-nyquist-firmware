@@ -632,8 +632,12 @@ void sd_card_manager_ProcessState() {
                         }
                     }
 
-                    // Close current file
-                    SYS_FS_FileClose(gSDCardData.fileHandle);
+                    // Close current file with error checking
+                    if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
+                        LOG_E("[%s:%d]Error closing file before rotation", __FILE__, __LINE__);
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        break;
+                    }
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     LOG_D("[SD] Closed file '%s' (wrote %llu bytes)\r\n",
                          gSDCardData.filePath, gSDCardData.currentFileBytes);
@@ -642,10 +646,18 @@ void sd_card_manager_ProcessState() {
                 // Reset CSV encoder so new file gets a fresh header
                 csv_ResetEncoder();
 
-                // Increment counter and reopen with new filename
-                gSDCardData.fileCounter++;
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
-                break;  // Exit to reopen with new filename
+                // Increment counter with overflow protection
+                // Limit to 9999 files (39TB @ 3.9GB each) - prevents counter overflow
+                // and ensures 3-digit format (-001 to -999, then -1000 to -9999)
+                if (gSDCardData.fileCounter < 9999) {
+                    gSDCardData.fileCounter++;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                } else {
+                    LOG_E("[%s:%d]File counter limit reached (9999 files). Stop streaming to prevent data loss.",
+                          __FILE__, __LINE__);
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                }
+                break;  // Exit to reopen with new filename or error
             }
             uint64_t currentMillis = pdTICKS_TO_MS(xTaskGetTickCount());
 
