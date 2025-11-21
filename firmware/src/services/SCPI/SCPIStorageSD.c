@@ -517,17 +517,28 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
         goto __exit_point;
     }
 
-    // Validate range (0 = unlimited, or positive value up to UINT64_MAX)
+    // Validate range (0 = unlimited, or positive value)
     if (maxSizeBytes < 0) {
         LOG_E("SD:MAXSize - Invalid size: %lld (must be >= 0)\r\n", maxSizeBytes);
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
     }
 
-    pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
+    // FAT32 filesystem limit protection: 4GB hard limit
+    // Warn and cap if user tries to exceed filesystem capabilities
+    const uint64_t FAT32_MAX_FILE_SIZE = 4294967295ULL;  // 4GB - 1 byte
+    if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes > FAT32_MAX_FILE_SIZE) {
+        LOG_W("SD:MAXSize - Requested %llu bytes exceeds FAT32 limit (4GB). "
+              "Capping to 4,185,448,858 bytes (3.9GB) for safety.\r\n",
+              (uint64_t)maxSizeBytes);
+        pSDCardRuntimeConfig->maxFileSizeBytes = 4185448858ULL;  // 3.9GB safe limit
+    } else {
+        pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
+    }
+
     LOG_D("SD:MAXSize - Set max file size to %llu bytes (%s)\r\n",
           pSDCardRuntimeConfig->maxFileSizeBytes,
-          (maxSizeBytes == 0) ? "unlimited" : "splitting enabled");
+          (pSDCardRuntimeConfig->maxFileSizeBytes == 0) ? "unlimited" : "splitting enabled");
 
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     result = SCPI_RES_OK;
