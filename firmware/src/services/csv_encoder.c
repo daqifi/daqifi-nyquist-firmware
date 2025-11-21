@@ -105,6 +105,54 @@ static inline char* int_to_str(int value, char* buf, size_t rem) {
 // Track whether CSV header has been sent (reset when streaming stops)
 static bool csvHeaderSent = false;
 
+// =============================================================================
+// Pre-computed CSV Header Strings (stored in program memory for fast access)
+// =============================================================================
+// Avoids snprintf overhead during header generation - critical for minimizing
+// file rotation pause at high sample rates (15kHz+).
+
+// Metadata header prefixes
+static const char CSV_HEADER_DEVICE_PREFIX[] = "# Device: ";
+static const char CSV_HEADER_TICKRATE_PREFIX[] = "# Timestamp Tick Rate: ";
+static const char CSV_HEADER_HZ_SUFFIX[] = " Hz\n";
+
+// Pre-computed channel header strings for all 16 analog channels
+// Format: "chN_ts,chN_val" or ",chN_ts,chN_val"
+static const char* CSV_CHANNEL_HEADERS_FIRST[MAX_AIN_PUBLIC_CHANNELS] = {
+    "ch0_ts,ch0_val",   "ch1_ts,ch1_val",   "ch2_ts,ch2_val",   "ch3_ts,ch3_val",
+    "ch4_ts,ch4_val",   "ch5_ts,ch5_val",   "ch6_ts,ch6_val",   "ch7_ts,ch7_val",
+    "ch8_ts,ch8_val",   "ch9_ts,ch9_val",   "ch10_ts,ch10_val", "ch11_ts,ch11_val",
+    "ch12_ts,ch12_val", "ch13_ts,ch13_val", "ch14_ts,ch14_val", "ch15_ts,ch15_val"
+};
+
+static const char* CSV_CHANNEL_HEADERS_SUBSEQUENT[MAX_AIN_PUBLIC_CHANNELS] = {
+    ",ch0_ts,ch0_val",   ",ch1_ts,ch1_val",   ",ch2_ts,ch2_val",   ",ch3_ts,ch3_val",
+    ",ch4_ts,ch4_val",   ",ch5_ts,ch5_val",   ",ch6_ts,ch6_val",   ",ch7_ts,ch7_val",
+    ",ch8_ts,ch8_val",   ",ch9_ts,ch9_val",   ",ch10_ts,ch10_val", ",ch11_ts,ch11_val",
+    ",ch12_ts,ch12_val", ",ch13_ts,ch13_val", ",ch14_ts,ch14_val", ",ch15_ts,ch15_val"
+};
+
+// DIO header strings
+static const char CSV_DIO_HEADER_FIRST[] = "dio_ts,dio_val\n";
+static const char CSV_DIO_HEADER_SUBSEQUENT[] = ",dio_ts,dio_val\n";
+
+/**
+ * @brief Fast string copy from flash to RAM (inline for zero call overhead).
+ *
+ * Optimized for copying static strings from program memory. Avoids strlen()
+ * overhead by copying until null terminator.
+ *
+ * @param dst Destination pointer
+ * @param src Source string (typically from flash)
+ * @return Updated destination pointer
+ */
+static inline char* fast_strcpy(char* dst, const char* src) {
+    while (*src) {
+        *dst++ = *src++;
+    }
+    return dst;
+}
+
 /*
  * CSV Format (optimized - header with metadata + enabled channels only):
  *
@@ -147,11 +195,14 @@ void csv_ResetEncoder(void) {
 }
 
 /**
- * @brief Generate CSV header with device metadata and column names
+ * @brief Generate CSV header with device metadata and column names (optimized)
+ *
+ * Uses pre-computed strings from flash to minimize file rotation latency.
+ * Critical for maintaining data continuity at high sample rates (15kHz+).
  */
 static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig, bool dioEnabled) {
     char *q = out;
-    int w;
+    char *start = out;
 
     // Get variant and serial number with NULL checks
     uint8_t variant = 0;
@@ -161,56 +212,52 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     if (pVar) variant = *(uint8_t*)pVar;
     if (pSer) serialNum = *(uint64_t*)pSer;
 
-    // Line 1: Device name (Product + Variant)
-    w = snprintf(q, rem, "# Device: %s %d\n", DAQIFI_PRODUCT_NAME, variant);
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
+    // Line 1: Device name (Product + Variant) - Optimized with fast_strcpy
+    if (rem < 50) return 0;  // Safety check
+    q = fast_strcpy(q, CSV_HEADER_DEVICE_PREFIX);
+    q = fast_strcpy(q, DAQIFI_PRODUCT_NAME);
+    *q++ = ' ';
+    q = uint32_to_str(variant, q, rem - (q - start));
+    if (q == NULL) return 0;
+    *q++ = '\n';
 
-    // Line 2: Serial number
-    w = snprintf(q, rem, "# Serial Number: %016llX\n", (unsigned long long)serialNum);
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
+    // Line 2: Serial number (hex format) - Keep snprintf for hex formatting
+    int w = snprintf(q, rem - (q - start), "# Serial Number: %016llX\n", (unsigned long long)serialNum);
+    if (w < 0 || (size_t)w >= (rem - (q - start))) return 0;
+    q += w;
 
-    // Line 3: Timestamp tick rate (for converting timestamps to seconds)
-    // Get actual timer frequency (accounts for prescaler)
+    // Line 3: Timestamp tick rate - Optimized with fast_strcpy + uint32_to_str
     const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t tickRate = TIMER_CLOCK_FRQ;  // Default fallback
     if (boardConfig) {
         tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
     }
-    w = snprintf(q, rem, "# Timestamp Tick Rate: %u Hz\n", tickRate);
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
 
-    // Line 4: Column headers (only enabled channels)
+    q = fast_strcpy(q, CSV_HEADER_TICKRATE_PREFIX);
+    q = uint32_to_str(tickRate, q, rem - (q - start));
+    if (q == NULL) return 0;
+    q = fast_strcpy(q, CSV_HEADER_HZ_SUFFIX);
+
+    // Line 4: Column headers (only enabled channels) - Optimized with pre-computed strings
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (channelConfig->Data[i].IsEnabled) {
-            if (firstCol) {
-                w = snprintf(q, rem, "ch%d_ts,ch%d_val", i, i);
-                firstCol = false;
-            } else {
-                w = snprintf(q, rem, ",ch%d_ts,ch%d_val", i, i);
-            }
-            if (w < 0 || (size_t)w >= rem) return 0;
-            q += w; rem -= w;
+            // Use pre-computed string (with or without leading comma)
+            const char* header = firstCol ? CSV_CHANNEL_HEADERS_FIRST[i]
+                                          : CSV_CHANNEL_HEADERS_SUBSEQUENT[i];
+            q = fast_strcpy(q, header);
+            firstCol = false;
         }
     }
 
-    // Add DIO columns only if DIO is enabled
+    // Add DIO columns only if DIO is enabled - Optimized with pre-computed strings
     if (dioEnabled) {
-        if (firstCol) {
-            w = snprintf(q, rem, "dio_ts,dio_val\n");
-        } else {
-            w = snprintf(q, rem, ",dio_ts,dio_val\n");
-        }
-        if (w < 0 || (size_t)w >= rem) return 0;
-        q += w; rem -= w;
+        const char* dio_header = firstCol ? CSV_DIO_HEADER_FIRST
+                                          : CSV_DIO_HEADER_SUBSEQUENT;
+        q = fast_strcpy(q, dio_header);
     } else {
         // No DIO columns - just end the header
-        w = snprintf(q, rem, "\n");
-        if (w < 0 || (size_t)w >= rem) return 0;
-        q += w; rem -= w;
+        *q++ = '\n';
     }
 
     return (size_t)(q - out);
