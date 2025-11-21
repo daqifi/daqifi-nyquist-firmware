@@ -103,6 +103,11 @@ extern "C" {
         tUIConfig UIConfig;
         //! Stream configuration structure
         tStreamingConfig StreamingConfig;
+        //! CSV column headers (pre-computed for fast header generation)
+        // Format: csvChannelHeadersFirst[i] = "chN_ts,chN_val"
+        //         csvChannelHeadersSubsequent[i] = ",chN_ts,chN_val"
+        const char* const* csvChannelHeadersFirst;
+        const char* const* csvChannelHeadersSubsequent;
     } tBoardConfig;
 
     /*!

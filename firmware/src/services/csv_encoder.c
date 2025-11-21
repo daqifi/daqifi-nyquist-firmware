@@ -116,21 +116,8 @@ static const char CSV_HEADER_DEVICE_PREFIX[] = "# Device: ";
 static const char CSV_HEADER_TICKRATE_PREFIX[] = "# Timestamp Tick Rate: ";
 static const char CSV_HEADER_HZ_SUFFIX[] = " Hz\n";
 
-// Pre-computed channel header strings for all 16 analog channels
-// Format: "chN_ts,chN_val" or ",chN_ts,chN_val"
-static const char* CSV_CHANNEL_HEADERS_FIRST[MAX_AIN_PUBLIC_CHANNELS] = {
-    "ch0_ts,ch0_val",   "ch1_ts,ch1_val",   "ch2_ts,ch2_val",   "ch3_ts,ch3_val",
-    "ch4_ts,ch4_val",   "ch5_ts,ch5_val",   "ch6_ts,ch6_val",   "ch7_ts,ch7_val",
-    "ch8_ts,ch8_val",   "ch9_ts,ch9_val",   "ch10_ts,ch10_val", "ch11_ts,ch11_val",
-    "ch12_ts,ch12_val", "ch13_ts,ch13_val", "ch14_ts,ch14_val", "ch15_ts,ch15_val"
-};
-
-static const char* CSV_CHANNEL_HEADERS_SUBSEQUENT[MAX_AIN_PUBLIC_CHANNELS] = {
-    ",ch0_ts,ch0_val",   ",ch1_ts,ch1_val",   ",ch2_ts,ch2_val",   ",ch3_ts,ch3_val",
-    ",ch4_ts,ch4_val",   ",ch5_ts,ch5_val",   ",ch6_ts,ch6_val",   ",ch7_ts,ch7_val",
-    ",ch8_ts,ch8_val",   ",ch9_ts,ch9_val",   ",ch10_ts,ch10_val", ",ch11_ts,ch11_val",
-    ",ch12_ts,ch12_val", ",ch13_ts,ch13_val", ",ch14_ts,ch14_val", ",ch15_ts,ch15_val"
-};
+// Channel header strings are now stored in board config (csvChannelHeadersFirst/Subsequent)
+// This allows board-specific naming conventions (e.g., "ain" vs "ch" prefix)
 
 // DIO header strings
 static const char CSV_DIO_HEADER_FIRST[] = "dio_ts,dio_val\n";
@@ -238,13 +225,16 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     if (q == NULL) return 0;
     q = fast_strcpy(q, CSV_HEADER_HZ_SUFFIX);
 
-    // Line 4: Column headers (only enabled channels) - Optimized with pre-computed strings
+    // Line 4: Column headers (only enabled channels) - Use board-specific arrays
+    const char* const* headerFirst = boardConfig ? boardConfig->csvChannelHeadersFirst : NULL;
+    const char* const* headerSubsequent = boardConfig ? boardConfig->csvChannelHeadersSubsequent : NULL;
+    if (!headerFirst || !headerSubsequent) return 0;  // Safety check
+
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (channelConfig->Data[i].IsEnabled) {
             // Use pre-computed string (with or without leading comma)
-            const char* header = firstCol ? CSV_CHANNEL_HEADERS_FIRST[i]
-                                          : CSV_CHANNEL_HEADERS_SUBSEQUENT[i];
+            const char* header = firstCol ? headerFirst[i] : headerSubsequent[i];
             q = fast_strcpy(q, header);
             firstCol = false;
         }
