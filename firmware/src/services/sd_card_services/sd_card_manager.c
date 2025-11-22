@@ -10,6 +10,7 @@
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 #define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
+#define SD_CARD_MANAGER_MAX_SPLIT_FILES    9999
 
 // File read transfer constants
 #define SD_READ_MAX_CHUNK_SIZE      16384U  // Maximum read size (16KB) - tested maximum for stability
@@ -630,6 +631,43 @@ void sd_card_manager_ProcessState() {
                 LOG_D("[SD] File size limit reached (%llu >= %llu), rotating to next file\r\n",
                      gSDCardData.currentFileBytes, gpSDCardSettings->maxFileSizeBytes);
 
+                // Drain circular buffer completely before rotation to prevent data loss
+                xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
+                size_t bufferBytes = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
+                xSemaphoreGive(gSDCardData.wMutex);
+
+                if (bufferBytes > 0) {
+                    LOG_D("[SD] Draining %zu bytes from circular buffer before rotation\r\n", bufferBytes);
+                    // Process all remaining data in circular buffer
+                    while (CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0) {
+                        int writeLen = -2;
+                        xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
+                        if (gSDCardData.sdCardWritePending != 1) {
+                            gSDCardData.sdCardWritePending = 1;
+                            CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                            gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
+                            xSemaphoreGive(gSDCardData.wMutex);
+
+                            // Write immediately
+                            writeLen = SDCardWrite();
+                            if (writeLen >= 0) {
+                                gSDCardData.currentFileBytes += writeLen;
+                                xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
+                                gSDCardData.sdCardWritePending = 0;
+                                gSDCardData.writeBufferLength = 0;
+                                gSDCardData.sdCardWriteBufferOffset = 0;
+                                xSemaphoreGive(gSDCardData.wMutex);
+                            } else {
+                                LOG_E("[%s:%d]Error draining buffer before rotation", __FILE__, __LINE__);
+                                break;
+                            }
+                        } else {
+                            xSemaphoreGive(gSDCardData.wMutex);
+                            break;
+                        }
+                    }
+                }
+
                 // Flush and close current file
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                     // Flush any remaining data
@@ -665,12 +703,12 @@ void sd_card_manager_ProcessState() {
                 // Increment counter with overflow protection
                 // Limit to 9999 files (39TB @ 3.9GB each) - prevents counter overflow
                 // and ensures 3-digit format (-001 to -999, then -1000 to -9999)
-                if (gSDCardData.fileCounter < 9999) {
+                if (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES) {
                     gSDCardData.fileCounter++;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                 } else {
-                    LOG_E("[%s:%d]File counter limit reached (9999 files). Stop streaming to prevent data loss.",
-                          __FILE__, __LINE__);
+                    LOG_E("[%s:%d]File counter limit reached (%d files). Stop streaming to prevent data loss.",
+                          __FILE__, __LINE__, SD_CARD_MANAGER_MAX_SPLIT_FILES);
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                 }
                 break;  // Exit to reopen with new filename or error
