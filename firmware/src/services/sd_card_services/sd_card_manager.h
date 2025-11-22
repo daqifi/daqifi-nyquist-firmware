@@ -16,8 +16,12 @@
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40
 
-// File size limits
-#define SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE 4185448858ULL  // 3.9GB (safe for FAT32's 4GB limit)
+// File size limits for automatic splitting (FAT32 protection)
+// FAT32 max: 2^32 - 1 bytes (4GB - 1 byte)
+// Safety margin: 100MB to account for filesystem metadata and overhead
+#define SD_CARD_MANAGER_FAT32_MAX_FILE_SIZE 4294967295ULL  // 4GB - 1 byte
+#define SD_CARD_MANAGER_FAT32_SAFETY_MARGIN (100ULL * 1024ULL * 1024ULL)  // 100MB
+#define SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE (SD_CARD_MANAGER_FAT32_MAX_FILE_SIZE - SD_CARD_MANAGER_FAT32_SAFETY_MARGIN)  // 4GB - 100MB
 
 // Performance tuning parameters
 #define SD_CARD_MANAGER_WRITE_TIMEOUT_MS 2000      // Timeout for WriteToBuffer operation
