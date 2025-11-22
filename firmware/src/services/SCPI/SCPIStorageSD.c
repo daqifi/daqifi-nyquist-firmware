@@ -517,9 +517,18 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
         goto __exit_point;
     }
 
-    // Validate range (0 = unlimited, or positive value)
+    // Validate range (0 = unlimited, or >= minimum size)
     if (maxSizeBytes < 0) {
         LOG_E("SD:MAXSize - Invalid size: %lld (must be >= 0)\r\n", maxSizeBytes);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // Minimum file size protection: Prevent rapid rotation and filesystem stress
+    const uint64_t MIN_FILE_SIZE = 1000;  // 1000 bytes minimum
+    if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes < MIN_FILE_SIZE) {
+        LOG_E("[%s:%d]SD:MAXSize - Size %llu too small (minimum %llu bytes)",
+              __FILE__, __LINE__, (uint64_t)maxSizeBytes, MIN_FILE_SIZE);
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
     }
