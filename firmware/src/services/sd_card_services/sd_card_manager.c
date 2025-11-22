@@ -351,8 +351,6 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
     size_t dirLen = strlen(directory);
     size_t baseLen = strlen(baseFilename);
     size_t origLen = strlen(originalFilename);
-    // Worst-case extra: slash + "-" + 10 digits + extension + NUL
-    size_t worstExtra = 1 + 1 + 10 + strlen(useExt) + 1;
     if (counter == 0) {
         if (dirLen + 1 + origLen + 1 > maxLen) {
             LOG_E("[%s:%d]Filename too long: dir='%s' file='%s' (max %zu)",

@@ -546,11 +546,16 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
         goto __exit_point;
     }
 
-    pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
-
-    LOG_D("SD:MAXSize - Set max file size to %llu bytes (%s)\r\n",
-          pSDCardRuntimeConfig->maxFileSizeBytes,
-          (pSDCardRuntimeConfig->maxFileSizeBytes == 0) ? "unlimited" : "splitting enabled");
+    // If user sets 0, use safe filesystem maximum (3.9GB for FAT32)
+    if (maxSizeBytes == 0) {
+        pSDCardRuntimeConfig->maxFileSizeBytes = SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE;  // 3.9GB safe default
+        LOG_D("SD:MAXSize - Using filesystem maximum: %llu bytes (3.9GB)\r\n",
+              pSDCardRuntimeConfig->maxFileSizeBytes);
+    } else {
+        pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
+        LOG_D("SD:MAXSize - Set max file size to %llu bytes\r\n",
+              pSDCardRuntimeConfig->maxFileSizeBytes);
+    }
 
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     result = SCPI_RES_OK;
