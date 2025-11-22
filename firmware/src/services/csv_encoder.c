@@ -221,8 +221,14 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     q = fast_strcpy_bounded(q, &rem, DAQIFI_PRODUCT_NAME);
     if (rem == 0) return 0;
     *q++ = ' '; rem--;
+
+    char* before = q;
     q = uint32_to_str(variant, q, rem);
     if (q == NULL) return 0;
+    size_t written = q - before;
+    if (written > rem) return 0;  // Safety check
+    rem -= written;
+
     if (rem == 0) return 0;
     *q++ = '\n'; rem--;
 
@@ -235,8 +241,14 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
 
     q = fast_strcpy_bounded(q, &rem, CSV_HEADER_TICKRATE_PREFIX);
+
+    before = q;
     q = uint32_to_str(tickRate, q, rem);
     if (q == NULL) return 0;
+    written = q - before;
+    if (written > rem) return 0;  // Safety check
+    rem -= written;
+
     q = fast_strcpy_bounded(q, &rem, CSV_HEADER_HZ_SUFFIX);
 
     // Line 4: Column headers
