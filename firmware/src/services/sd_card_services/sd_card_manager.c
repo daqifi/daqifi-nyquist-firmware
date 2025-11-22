@@ -700,16 +700,20 @@ void sd_card_manager_ProcessState() {
                 // Subsequent split files contain data rows only for cleaner merging
                 // and zero latency rotation
 
-                // Increment counter with overflow protection
-                // Limit to 9999 files (39TB @ 3.9GB each) - prevents counter overflow
-                // and ensures 3-digit format (-001 to -999, then -1000 to -9999)
                 if (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES) {
                     gSDCardData.fileCounter++;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                 } else {
-                    LOG_E("[%s:%d]File counter limit reached (%d files). Stop streaming to prevent data loss.",
+                    LOG_E("[%s:%d]File counter limit reached (%d files). Stopping streaming.",
                           __FILE__, __LINE__, SD_CARD_MANAGER_MAX_SPLIT_FILES);
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    // Cleanly stop: close file if open and signal completion to prevent deadlock
+                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                        SYS_FS_FileSync(gSDCardData.fileHandle);
+                        SYS_FS_FileClose(gSDCardData.fileHandle);
+                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    }
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
                 }
                 break;  // Exit to reopen with new filename or error
             }
