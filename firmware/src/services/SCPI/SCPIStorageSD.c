@@ -33,6 +33,10 @@
 // SPI coordination handled at operation level when needed
 #include <string.h>
 
+#define SCPI_SD_LIST_TIMEOUT_MS 10000
+#define SCPI_SD_DELETE_TIMEOUT_MS 5000
+#define SCPI_SD_FORMAT_TIMEOUT_MS 30000
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 /* Section: File Scope or Global Data                                         */
@@ -194,7 +198,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
-    if (!sd_card_manager_WaitForCompletion(10000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -451,7 +455,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
-    if (!sd_card_manager_WaitForCompletion(5000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
         LOG_E("SD:DELete - Operation timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -488,7 +492,7 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
-    if (!sd_card_manager_WaitForCompletion(30000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
         LOG_E("SD:FORmat - Operation timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -498,6 +502,79 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     result = SCPI_RES_OK;
 __exit_point:
     return result;
+}
+
+/**
+ * @brief Set maximum file size for automatic file splitting
+ *
+ * Command: SYST:STOR:SD:MAXSize <bytes>
+ * Example: SYST:STOR:SD:MAXSize 4185448858  (3.9GB)
+ *          SYST:STOR:SD:MAXSize 0           (unlimited)
+ */
+scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    int64_t maxSizeBytes;
+    if (!SCPI_ParamInt64(context, &maxSizeBytes, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // Validate range (0 = unlimited, or >= minimum size)
+    if (maxSizeBytes < 0) {
+        LOG_E("SD:MAXSize - Invalid size: %lld (must be >= 0)\r\n", maxSizeBytes);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // Minimum file size protection: Prevent rapid rotation and filesystem stress
+    const uint64_t MIN_FILE_SIZE = 1000;  // 1000 bytes minimum
+    if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes < MIN_FILE_SIZE) {
+        LOG_E("[%s:%d]SD:MAXSize - Size %llu too small (minimum %llu bytes)",
+              __FILE__, __LINE__, (uint64_t)maxSizeBytes, MIN_FILE_SIZE);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // FAT32 filesystem limit protection: 4GB hard limit
+    const uint64_t FAT32_MAX_FILE_SIZE = 4294967295ULL;  // 4GB - 1 byte
+    if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes > FAT32_MAX_FILE_SIZE) {
+        LOG_E("SD:MAXSize - Requested size %lld exceeds FAT32 limit (%llu bytes).\r\n",
+              (long long)maxSizeBytes, (unsigned long long)FAT32_MAX_FILE_SIZE);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // If user sets 0, use safe filesystem maximum (3.9GB for FAT32)
+    if (maxSizeBytes == 0) {
+        pSDCardRuntimeConfig->maxFileSizeBytes = SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE;  // 3.9GB safe default
+        LOG_D("SD:MAXSize - Using filesystem maximum: %llu bytes (3.9GB)\r\n",
+              pSDCardRuntimeConfig->maxFileSizeBytes);
+    } else {
+        pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
+        LOG_D("SD:MAXSize - Set max file size to %llu bytes\r\n",
+              pSDCardRuntimeConfig->maxFileSizeBytes);
+    }
+
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    result = SCPI_RES_OK;
+
+__exit_point:
+    return result;
+}
+
+/**
+ * @brief Query maximum file size setting
+ *
+ * Command: SYST:STOR:SD:MAXSize?
+ * Returns: <bytes> (0 = unlimited)
+ */
+scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    SCPI_ResultUInt64(context, pSDCardRuntimeConfig->maxFileSizeBytes);
+    return SCPI_RES_OK;
 }
 
 /* *****************************************************************************

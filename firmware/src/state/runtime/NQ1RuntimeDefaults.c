@@ -138,6 +138,7 @@ const tBoardRuntimeConfig g_NQ1BoardRuntimeConfig = {
         .directory="DAQiFi",
         .file="default.bin",
         .mode=SD_CARD_MANAGER_MODE_NONE,
+        .maxFileSizeBytes=SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE,  // 3.9GB (safe for FAT32's 4GB limit)
     },
 
 };

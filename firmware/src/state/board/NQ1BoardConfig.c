@@ -3,6 +3,24 @@
 #include "../../config/default/peripheral/gpio/pin_definitions.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 
+// =============================================================================
+// CSV Column Headers (pre-computed in program memory for fast header generation)
+// =============================================================================
+// Board-specific column names - NQ1 uses "ain" prefix for analog inputs
+static const char* NQ1_CSV_CHANNEL_HEADERS_FIRST[] = {
+    "ain0_ts,ain0_val",   "ain1_ts,ain1_val",   "ain2_ts,ain2_val",   "ain3_ts,ain3_val",
+    "ain4_ts,ain4_val",   "ain5_ts,ain5_val",   "ain6_ts,ain6_val",   "ain7_ts,ain7_val",
+    "ain8_ts,ain8_val",   "ain9_ts,ain9_val",   "ain10_ts,ain10_val", "ain11_ts,ain11_val",
+    "ain12_ts,ain12_val", "ain13_ts,ain13_val", "ain14_ts,ain14_val", "ain15_ts,ain15_val"
+};
+
+static const char* NQ1_CSV_CHANNEL_HEADERS_SUBSEQUENT[] = {
+    ",ain0_ts,ain0_val",   ",ain1_ts,ain1_val",   ",ain2_ts,ain2_val",   ",ain3_ts,ain3_val",
+    ",ain4_ts,ain4_val",   ",ain5_ts,ain5_val",   ",ain6_ts,ain6_val",   ",ain7_ts,ain7_val",
+    ",ain8_ts,ain8_val",   ",ain9_ts,ain9_val",   ",ain10_ts,ain10_val", ",ain11_ts,ain11_val",
+    ",ain12_ts,ain12_val", ",ain13_ts,ain13_val", ",ain14_ts,ain14_val", ",ain15_ts,ain15_val"
+};
+
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
@@ -418,7 +436,9 @@ const tBoardConfig NQ1BoardConfig = {
     {
         .TimerIndex = TMR_INDEX_4,
         .TSTimerIndex = TMR_INDEX_6,
-    }
+    },
+    .csvChannelHeadersFirst = NQ1_CSV_CHANNEL_HEADERS_FIRST,
+    .csvChannelHeadersSubsequent = NQ1_CSV_CHANNEL_HEADERS_SUBSEQUENT
 };
 
 /*! This function is used for getting a board configuration parameter

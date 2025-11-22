@@ -369,6 +369,39 @@ A comprehensive technical analysis of the firmware has been completed and is ava
 
 The report includes detailed technical analysis, code examples, and a prioritized roadmap for optimization. Reference this document before making performance-critical modifications to understand current limitations and optimization opportunities.
 
+### SD Card File Splitting
+
+**Feature:** Automatic file splitting prevents FAT32 4GB file size limit issues during long logging sessions.
+
+**Configuration:**
+```bash
+# Set maximum file size (range: 1000 bytes to 4GB)
+SYST:STOR:SD:MAXSize 2000000000    # 2GB limit
+SYST:STOR:SD:MAXSize 0              # Use filesystem maximum (3.9GB default)
+SYST:STOR:SD:MAXSize?               # Query current setting
+```
+
+**File Naming:**
+- First file: Uses original name (e.g., `experiment.csv`)
+- Split files: Sequential 4-digit numbering (e.g., `experiment-0001.csv`, `experiment-0002.csv`)
+- Supports up to 9999 files per session (~39TB @ 3.9GB each)
+
+**CSV Headers:**
+- First file: Full CSV header (device info, column names with "ain" prefix)
+- Split files: Data rows only (no headers) - simplifies merging
+
+**Safety Features:**
+- Default: 3.9GB limit (100MB below FAT32 maximum)
+- Minimum: 1000 bytes (prevents rapid rotation)
+- Circular buffer draining before rotation (zero data loss)
+- Unconditional filesystem flush before file close
+
+**Python Tools:**
+- `download_sd_files.py` - Auto-detects and groups split files
+- `analyze_split_files.py` - Validates integrity, merges parts
+
+**Implementation:** `firmware/src/services/sd_card_services/sd_card_manager.c`
+
 ## Development Notes
 
 ### Building with Linux/WSL

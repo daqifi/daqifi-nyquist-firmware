@@ -16,6 +16,13 @@
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40
 
+// File size limits for automatic splitting (FAT32 protection)
+// FAT32 max: 2^32 - 1 bytes (4GB - 1 byte)
+// Safety margin: 100MB to account for filesystem metadata and overhead
+#define SD_CARD_MANAGER_FAT32_MAX_FILE_SIZE 4294967295ULL  // 4GB - 1 byte
+#define SD_CARD_MANAGER_FAT32_SAFETY_MARGIN (100ULL * 1024ULL * 1024ULL)  // 100MB
+#define SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE (SD_CARD_MANAGER_FAT32_MAX_FILE_SIZE - SD_CARD_MANAGER_FAT32_SAFETY_MARGIN)  // 4GB - 100MB
+
 // Performance tuning parameters
 #define SD_CARD_MANAGER_WRITE_TIMEOUT_MS 2000      // Timeout for WriteToBuffer operation
 #define SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS 1  // Wait interval when buffer is full
@@ -42,6 +49,7 @@ extern "C" {
         sd_card_manager_mode_t mode;
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+        uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
     } sd_card_manager_settings_t;
 
 

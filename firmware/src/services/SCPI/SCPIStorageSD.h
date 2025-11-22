@@ -42,6 +42,10 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context);
 scpi_result_t SCPI_StorageSDDelete(scpi_t * context);
 scpi_result_t SCPI_StorageSDFormat(scpi_t * context);
 
+// SD Card File Splitting Commands
+scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context);
+scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

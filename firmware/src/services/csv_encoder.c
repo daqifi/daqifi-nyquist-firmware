@@ -17,6 +17,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/Logger.h"  // For LOG_E
 #include "encoder.h"
 #include "csv_encoder.h"
 #include "../HAL/ADC.h"
@@ -105,6 +106,49 @@ static inline char* int_to_str(int value, char* buf, size_t rem) {
 // Track whether CSV header has been sent (reset when streaming stops)
 static bool csvHeaderSent = false;
 
+// =============================================================================
+// Pre-computed CSV Header Strings (stored in program memory for fast access)
+// =============================================================================
+// Avoids snprintf overhead during header generation - critical for minimizing
+// file rotation pause at high sample rates (15kHz+).
+
+// Metadata header prefixes
+static const char CSV_HEADER_DEVICE_PREFIX[] = "# Device: ";
+static const char CSV_HEADER_TICKRATE_PREFIX[] = "# Timestamp Tick Rate: ";
+static const char CSV_HEADER_HZ_SUFFIX[] = " Hz\n";
+
+// Channel header strings are now stored in board config (csvChannelHeadersFirst/Subsequent)
+// This allows board-specific naming conventions (e.g., "ain" vs "ch" prefix)
+
+// DIO header strings
+static const char CSV_DIO_HEADER_FIRST[] = "dio_ts,dio_val\n";
+static const char CSV_DIO_HEADER_SUBSEQUENT[] = ",dio_ts,dio_val\n";
+
+/**
+ * @brief Fast string copy from flash to RAM (inline for zero call overhead).
+ *
+ * Optimized for copying static strings from program memory. Avoids strlen()
+ * overhead by copying until null terminator.
+ *
+ * @param dst Destination pointer
+ * @param src Source string (typically from flash)
+ * @return Updated destination pointer
+ */
+static inline char* fast_strcpy(char* dst, const char* src) {
+    while (*src) {
+        *dst++ = *src++;
+    }
+    return dst;
+}
+
+static inline char* fast_strcpy_bounded(char* dst, size_t* prem, const char* src) {
+    while (*src && *prem > 0) {
+        *dst++ = *src++;
+        (*prem)--;
+    }
+    return dst;
+}
+
 /*
  * CSV Format (optimized - header with metadata + enabled channels only):
  *
@@ -147,11 +191,20 @@ void csv_ResetEncoder(void) {
 }
 
 /**
- * @brief Generate CSV header with device metadata and column names
+ * @brief Generate CSV header with device metadata and column names (optimized)
+ *
+ * Uses pre-computed strings from flash to minimize file rotation latency.
+ * Critical for maintaining data continuity at high sample rates (15kHz+).
  */
 static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig, bool dioEnabled) {
     char *q = out;
-    int w;
+
+    // Get board config early with NULL check
+    const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    if (!boardConfig) {
+        LOG_E("[CSV] Board config is NULL, cannot generate header");
+        return 0;  // Cannot generate header without board config
+    }
 
     // Get variant and serial number with NULL checks
     uint8_t variant = 0;
@@ -161,56 +214,67 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     if (pVar) variant = *(uint8_t*)pVar;
     if (pSer) serialNum = *(uint64_t*)pSer;
 
-    // Line 1: Device name (Product + Variant)
-    w = snprintf(q, rem, "# Device: %s %d\n", DAQIFI_PRODUCT_NAME, variant);
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
+    if (rem < 2) return 0; // minimal safety
+
+    // Line 1: Device name
+    q = fast_strcpy_bounded(q, &rem, CSV_HEADER_DEVICE_PREFIX);
+    q = fast_strcpy_bounded(q, &rem, DAQIFI_PRODUCT_NAME);
+    if (rem == 0) return 0;
+    *q++ = ' '; rem--;
+
+    char* before = q;
+    q = uint32_to_str(variant, q, rem);
+    if (q == NULL) return 0;
+    size_t written = q - before;
+    if (written > rem) return 0;  // Safety check
+    rem -= written;
+
+    if (rem == 0) return 0;
+    *q++ = '\n'; rem--;
 
     // Line 2: Serial number
-    w = snprintf(q, rem, "# Serial Number: %016llX\n", (unsigned long long)serialNum);
+    int w = snprintf(q, rem, "# Serial Number: %016llX\n", (unsigned long long)serialNum);
     if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
+    q += w; rem -= (size_t)w;
 
-    // Line 3: Timestamp tick rate (for converting timestamps to seconds)
-    // Get actual timer frequency (accounts for prescaler)
-    const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    uint32_t tickRate = TIMER_CLOCK_FRQ;  // Default fallback
-    if (boardConfig) {
-        tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
+    // Line 3: Timestamp tick rate
+    uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
+
+    q = fast_strcpy_bounded(q, &rem, CSV_HEADER_TICKRATE_PREFIX);
+
+    before = q;
+    q = uint32_to_str(tickRate, q, rem);
+    if (q == NULL) return 0;
+    written = q - before;
+    if (written > rem) return 0;  // Safety check
+    rem -= written;
+
+    q = fast_strcpy_bounded(q, &rem, CSV_HEADER_HZ_SUFFIX);
+
+    // Line 4: Column headers
+    const char* const* headerFirst = boardConfig->csvChannelHeadersFirst;
+    const char* const* headerSubsequent = boardConfig->csvChannelHeadersSubsequent;
+    if (!headerFirst || !headerSubsequent) {
+        LOG_E("[CSV] Board config missing CSV column header arrays");
+        return 0;  // Safety check - arrays must be initialized
     }
-    w = snprintf(q, rem, "# Timestamp Tick Rate: %u Hz\n", tickRate);
-    if (w < 0 || (size_t)w >= rem) return 0;
-    q += w; rem -= w;
 
-    // Line 4: Column headers (only enabled channels)
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (channelConfig->Data[i].IsEnabled) {
-            if (firstCol) {
-                w = snprintf(q, rem, "ch%d_ts,ch%d_val", i, i);
-                firstCol = false;
-            } else {
-                w = snprintf(q, rem, ",ch%d_ts,ch%d_val", i, i);
-            }
-            if (w < 0 || (size_t)w >= rem) return 0;
-            q += w; rem -= w;
+            const char* header = firstCol ? headerFirst[i] : headerSubsequent[i];
+            q = fast_strcpy_bounded(q, &rem, header);
+            firstCol = false;
         }
     }
 
-    // Add DIO columns only if DIO is enabled
     if (dioEnabled) {
-        if (firstCol) {
-            w = snprintf(q, rem, "dio_ts,dio_val\n");
-        } else {
-            w = snprintf(q, rem, ",dio_ts,dio_val\n");
-        }
-        if (w < 0 || (size_t)w >= rem) return 0;
-        q += w; rem -= w;
+        const char* dio_header = firstCol ? CSV_DIO_HEADER_FIRST
+                                          : CSV_DIO_HEADER_SUBSEQUENT;
+        q = fast_strcpy_bounded(q, &rem, dio_header);
     } else {
-        // No DIO columns - just end the header
-        w = snprintf(q, rem, "\n");
-        if (w < 0 || (size_t)w >= rem) return 0;
-        q += w; rem -= w;
+        if (rem == 0) return 0;
+        *q++ = '\n'; rem--;
     }
 
     return (size_t)(q - out);
