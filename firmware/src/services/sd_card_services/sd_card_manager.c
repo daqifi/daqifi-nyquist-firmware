@@ -643,8 +643,9 @@ void sd_card_manager_ProcessState() {
                          gSDCardData.filePath, gSDCardData.currentFileBytes);
                 }
 
-                // Reset CSV encoder so new file gets a fresh header
-                csv_ResetEncoder();
+                // DO NOT reset CSV encoder - only first file gets header
+                // Subsequent split files contain data rows only for cleaner merging
+                // and zero latency rotation
 
                 // Increment counter with overflow protection
                 // Limit to 9999 files (39TB @ 3.9GB each) - prevents counter overflow
