@@ -343,26 +343,43 @@ static void extractBaseFilename(const char* filename) {
 static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
                              const char* directory, const char* baseFilename,
                              const char* originalFilename) {
-    // Extract extension from original filename
+    // Extract extension (includes leading dot if present)
     const char* ext = strrchr(originalFilename, '.');
-    if (ext == NULL) {
-        ext = "";  // No extension
+    const char* useExt = (ext != NULL) ? ext : "";
+
+    // Pre-validate length to avoid truncation
+    size_t dirLen = strlen(directory);
+    size_t baseLen = strlen(baseFilename);
+    size_t origLen = strlen(originalFilename);
+    // Worst-case extra: slash + "-" + 10 digits + extension + NUL
+    size_t worstExtra = 1 + 1 + 10 + strlen(useExt) + 1;
+    if (counter == 0) {
+        if (dirLen + 1 + origLen + 1 > maxLen) {
+            LOG_E("[%s:%d]Filename too long: dir='%s' file='%s' (max %zu)",
+                  __FILE__, __LINE__, directory, originalFilename, maxLen);
+            outPath[0] = '\0';
+            return;
+        }
+    } else {
+        if (dirLen + 1 + baseLen + 1 + 10 + strlen(useExt) + 1 > maxLen) {
+            LOG_E("[%s:%d]Filename too long for split file: dir='%s' base='%s' ext='%s' (max %zu)",
+                  __FILE__, __LINE__, directory, baseFilename, useExt, maxLen);
+            outPath[0] = '\0';
+            return;
+        }
     }
 
     int written;
     if (counter == 0) {
-        // First file: use original name without counter
         written = snprintf(outPath, maxLen, "%s/%s", directory, originalFilename);
     } else {
-        // Subsequent files: add counter suffix (001, 002, etc.)
-        written = snprintf(outPath, maxLen, "%s/%s-%u%s", directory, baseFilename, counter, ext);
+        written = snprintf(outPath, maxLen, "%s/%s-%u%s", directory, baseFilename, counter, useExt);
     }
 
-    // Check for buffer overflow
     if (written < 0 || (size_t)written >= maxLen) {
-        LOG_E("[%s:%d]Filename buffer overflow (needed %d bytes, have %zu)",
-              __FILE__, __LINE__, written, maxLen);
-        outPath[0] = '\0';  // Set empty to signal error
+        LOG_E("[%s:%d]Filename buffer overflow (needed %d bytes, have %zu): dir='%s' base='%s' cnt=%u ext='%s'",
+              __FILE__, __LINE__, written, maxLen, directory, baseFilename, counter, useExt);
+        outPath[0] = '\0';
     }
 }
 
