@@ -540,7 +540,8 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
     // FAT32 filesystem limit protection: 4GB hard limit
     const uint64_t FAT32_MAX_FILE_SIZE = 4294967295ULL;  // 4GB - 1 byte
     if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes > FAT32_MAX_FILE_SIZE) {
-        LOG_E("SD:MAXSize - Requested size %lld exceeds FAT32 limit (%llu bytes).\r\n", maxSizeBytes, FAT32_MAX_FILE_SIZE);
+        LOG_E("SD:MAXSize - Requested size %lld exceeds FAT32 limit (%llu bytes).\r\n",
+              (long long)maxSizeBytes, (unsigned long long)FAT32_MAX_FILE_SIZE);
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
     }
