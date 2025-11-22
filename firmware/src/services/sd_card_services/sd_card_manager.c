@@ -355,7 +355,7 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
         written = snprintf(outPath, maxLen, "%s/%s", directory, originalFilename);
     } else {
         // Subsequent files: add counter suffix (001, 002, etc.)
-        written = snprintf(outPath, maxLen, "%s/%s-%03u%s", directory, baseFilename, counter, ext);
+        written = snprintf(outPath, maxLen, "%s/%s-%04u%s", directory, baseFilename, counter, ext);
     }
 
     // Check for buffer overflow

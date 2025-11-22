@@ -33,6 +33,10 @@
 // SPI coordination handled at operation level when needed
 #include <string.h>
 
+#define SCPI_SD_LIST_TIMEOUT_MS 10000
+#define SCPI_SD_DELETE_TIMEOUT_MS 5000
+#define SCPI_SD_FORMAT_TIMEOUT_MS 30000
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 /* Section: File Scope or Global Data                                         */
@@ -194,7 +198,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
-    if (!sd_card_manager_WaitForCompletion(10000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -451,7 +455,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
-    if (!sd_card_manager_WaitForCompletion(5000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
         LOG_E("SD:DELete - Operation timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -488,7 +492,7 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
-    if (!sd_card_manager_WaitForCompletion(30000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
         LOG_E("SD:FORmat - Operation timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
