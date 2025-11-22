@@ -141,6 +141,14 @@ static inline char* fast_strcpy(char* dst, const char* src) {
     return dst;
 }
 
+static inline char* fast_strcpy_bounded(char* dst, size_t* prem, const char* src) {
+    while (*src && *prem > 0) {
+        *dst++ = *src++;
+        (*prem)--;
+    }
+    return dst;
+}
+
 /*
  * CSV Format (optimized - header with metadata + enabled channels only):
  *
@@ -190,7 +198,6 @@ void csv_ResetEncoder(void) {
  */
 static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig, bool dioEnabled) {
     char *q = out;
-    char *start = out;
 
     // Get board config early with NULL check
     const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
@@ -207,29 +214,32 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     if (pVar) variant = *(uint8_t*)pVar;
     if (pSer) serialNum = *(uint64_t*)pSer;
 
-    // Line 1: Device name (Product + Variant) - Optimized with fast_strcpy
-    if (rem < 50) return 0;  // Safety check
-    q = fast_strcpy(q, CSV_HEADER_DEVICE_PREFIX);
-    q = fast_strcpy(q, DAQIFI_PRODUCT_NAME);
-    *q++ = ' ';
-    q = uint32_to_str(variant, q, rem - (q - start));
+    if (rem < 2) return 0; // minimal safety
+
+    // Line 1: Device name
+    q = fast_strcpy_bounded(q, &rem, CSV_HEADER_DEVICE_PREFIX);
+    q = fast_strcpy_bounded(q, &rem, DAQIFI_PRODUCT_NAME);
+    if (rem == 0) return 0;
+    *q++ = ' '; rem--;
+    q = uint32_to_str(variant, q, rem);
     if (q == NULL) return 0;
-    *q++ = '\n';
+    if (rem == 0) return 0;
+    *q++ = '\n'; rem--;
 
-    // Line 2: Serial number (hex format) - Keep snprintf for hex formatting
-    int w = snprintf(q, rem - (q - start), "# Serial Number: %016llX\n", (unsigned long long)serialNum);
-    if (w < 0 || (size_t)w >= (rem - (q - start))) return 0;
-    q += w;
+    // Line 2: Serial number
+    int w = snprintf(q, rem, "# Serial Number: %016llX\n", (unsigned long long)serialNum);
+    if (w < 0 || (size_t)w >= rem) return 0;
+    q += w; rem -= (size_t)w;
 
-    // Line 3: Timestamp tick rate - Optimized with fast_strcpy + uint32_to_str
+    // Line 3: Timestamp tick rate
     uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
 
-    q = fast_strcpy(q, CSV_HEADER_TICKRATE_PREFIX);
-    q = uint32_to_str(tickRate, q, rem - (q - start));
+    q = fast_strcpy_bounded(q, &rem, CSV_HEADER_TICKRATE_PREFIX);
+    q = uint32_to_str(tickRate, q, rem);
     if (q == NULL) return 0;
-    q = fast_strcpy(q, CSV_HEADER_HZ_SUFFIX);
+    q = fast_strcpy_bounded(q, &rem, CSV_HEADER_HZ_SUFFIX);
 
-    // Line 4: Column headers (only enabled channels) - Use board-specific arrays
+    // Line 4: Column headers
     const char* const* headerFirst = boardConfig->csvChannelHeadersFirst;
     const char* const* headerSubsequent = boardConfig->csvChannelHeadersSubsequent;
     if (!headerFirst || !headerSubsequent) {
@@ -240,21 +250,19 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (channelConfig->Data[i].IsEnabled) {
-            // Use pre-computed string (with or without leading comma)
             const char* header = firstCol ? headerFirst[i] : headerSubsequent[i];
-            q = fast_strcpy(q, header);
+            q = fast_strcpy_bounded(q, &rem, header);
             firstCol = false;
         }
     }
 
-    // Add DIO columns only if DIO is enabled - Optimized with pre-computed strings
     if (dioEnabled) {
         const char* dio_header = firstCol ? CSV_DIO_HEADER_FIRST
                                           : CSV_DIO_HEADER_SUBSEQUENT;
-        q = fast_strcpy(q, dio_header);
+        q = fast_strcpy_bounded(q, &rem, dio_header);
     } else {
-        // No DIO columns - just end the header
-        *q++ = '\n';
+        if (rem == 0) return 0;
+        *q++ = '\n'; rem--;
     }
 
     return (size_t)(q - out);
