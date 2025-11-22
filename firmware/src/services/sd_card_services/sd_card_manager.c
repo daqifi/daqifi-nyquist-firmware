@@ -685,19 +685,14 @@ void sd_card_manager_ProcessState() {
 
                 // Flush and close current file
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                    // Flush any remaining data
-                    xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
-                    bool hasPending = gSDCardData.totalBytesFlushPending > 0;
-                    xSemaphoreGive(gSDCardData.wMutex);
-
-                    if (hasPending) {
-                        if (SYS_FS_FileSync(gSDCardData.fileHandle) == -1) {
-                            LOG_E("[%s:%d]Error flushing before file rotation", __FILE__, __LINE__);
-                        } else {
-                            xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
-                            gSDCardData.totalBytesFlushPending = 0;
-                            xSemaphoreGive(gSDCardData.wMutex);
-                        }
+                    // Always sync before close - ensures all filesystem buffers flushed
+                    // Not just our counter, but also FS driver and SD card controller caches
+                    if (SYS_FS_FileSync(gSDCardData.fileHandle) == -1) {
+                        LOG_E("[%s:%d]Error flushing before file rotation", __FILE__, __LINE__);
+                    } else {
+                        xSemaphoreTake(gSDCardData.wMutex, portMAX_DELAY);
+                        gSDCardData.totalBytesFlushPending = 0;
+                        xSemaphoreGive(gSDCardData.wMutex);
                     }
 
                     // Close current file with error checking
