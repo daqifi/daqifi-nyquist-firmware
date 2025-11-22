@@ -525,16 +525,14 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
     }
 
     // FAT32 filesystem limit protection: 4GB hard limit
-    // Warn and cap if user tries to exceed filesystem capabilities
     const uint64_t FAT32_MAX_FILE_SIZE = 4294967295ULL;  // 4GB - 1 byte
     if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes > FAT32_MAX_FILE_SIZE) {
-        LOG_E("[%s:%d]SD:MAXSize - Requested %llu bytes exceeds FAT32 limit (4GB). "
-              "Capping to 4,185,448,858 bytes (3.9GB) for safety.",
-              __FILE__, __LINE__, (uint64_t)maxSizeBytes);
-        pSDCardRuntimeConfig->maxFileSizeBytes = 4185448858ULL;  // 3.9GB safe limit
-    } else {
-        pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
+        LOG_E("SD:MAXSize - Requested size %lld exceeds FAT32 limit (%llu bytes).\r\n", maxSizeBytes, FAT32_MAX_FILE_SIZE);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
     }
+
+    pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
 
     LOG_D("SD:MAXSize - Set max file size to %llu bytes (%s)\r\n",
           pSDCardRuntimeConfig->maxFileSizeBytes,

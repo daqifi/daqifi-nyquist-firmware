@@ -348,12 +348,20 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
         ext = "";  // No extension
     }
 
+    int written;
     if (counter == 0) {
         // First file: use original name without counter
-        snprintf(outPath, maxLen, "%s/%s", directory, originalFilename);
+        written = snprintf(outPath, maxLen, "%s/%s", directory, originalFilename);
     } else {
         // Subsequent files: add counter suffix (001, 002, etc.)
-        snprintf(outPath, maxLen, "%s/%s-%03u%s", directory, baseFilename, counter, ext);
+        written = snprintf(outPath, maxLen, "%s/%s-%03u%s", directory, baseFilename, counter, ext);
+    }
+
+    // Check for buffer overflow
+    if (written < 0 || (size_t)written >= maxLen) {
+        LOG_E("[%s:%d]Filename buffer overflow (needed %d bytes, have %zu)",
+              __FILE__, __LINE__, written, maxLen);
+        outPath[0] = '\0';  // Set empty to signal error
     }
 }
 
@@ -442,6 +450,13 @@ void sd_card_manager_ProcessState() {
                  * un mounting again untill success. */
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             } else {
+                // Reset file splitting state for next session
+                gSDCardData.fileCounter = 0;
+                gSDCardData.currentFileBytes = 0;
+                memset(gSDCardData.baseFilename, 0, sizeof(gSDCardData.baseFilename));
+                gSDCardData.fileSplittingEnabled = false;
+                LOG_D("[SD] File splitting state reset for next session\r\n");
+
                 // Always go back to INIT after unmounting
                 // INIT will decide whether to mount based on enable flag and mode
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_INIT;

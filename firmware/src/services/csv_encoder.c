@@ -17,6 +17,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/Logger.h"  // For LOG_E
 #include "encoder.h"
 #include "csv_encoder.h"
 #include "../HAL/ADC.h"
@@ -191,6 +192,13 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     char *q = out;
     char *start = out;
 
+    // Get board config early with NULL check
+    const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    if (!boardConfig) {
+        LOG_E("[CSV] Board config is NULL, cannot generate header");
+        return 0;  // Cannot generate header without board config
+    }
+
     // Get variant and serial number with NULL checks
     uint8_t variant = 0;
     uint64_t serialNum = 0;
@@ -214,11 +222,7 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     q += w;
 
     // Line 3: Timestamp tick rate - Optimized with fast_strcpy + uint32_to_str
-    const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    uint32_t tickRate = TIMER_CLOCK_FRQ;  // Default fallback
-    if (boardConfig) {
-        tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
-    }
+    uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
 
     q = fast_strcpy(q, CSV_HEADER_TICKRATE_PREFIX);
     q = uint32_to_str(tickRate, q, rem - (q - start));
@@ -226,9 +230,12 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     q = fast_strcpy(q, CSV_HEADER_HZ_SUFFIX);
 
     // Line 4: Column headers (only enabled channels) - Use board-specific arrays
-    const char* const* headerFirst = boardConfig ? boardConfig->csvChannelHeadersFirst : NULL;
-    const char* const* headerSubsequent = boardConfig ? boardConfig->csvChannelHeadersSubsequent : NULL;
-    if (!headerFirst || !headerSubsequent) return 0;  // Safety check
+    const char* const* headerFirst = boardConfig->csvChannelHeadersFirst;
+    const char* const* headerSubsequent = boardConfig->csvChannelHeadersSubsequent;
+    if (!headerFirst || !headerSubsequent) {
+        LOG_E("[CSV] Board config missing CSV column header arrays");
+        return 0;  // Safety check - arrays must be initialized
+    }
 
     bool firstCol = true;
     for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
