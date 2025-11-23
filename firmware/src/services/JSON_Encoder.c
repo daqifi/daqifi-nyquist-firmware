@@ -48,7 +48,7 @@ void json_ResetEncoder(void) {
  * @return Bytes written (0 on failure)
  */
 static size_t generateJsonHeader(char *out, size_t buffSize) {
-    if (!out || buffSize < 128) {  // Ensure enough room for metadata
+    if (!out || buffSize == 0) {
         return 0;
     }
 
@@ -68,6 +68,17 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
     // Get timestamp tick rate (0 = timer not initialized, indicates config problem)
     uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
 
+    // Determine required size dynamically (avoids hardcoded buffer size)
+    int need = snprintf(NULL, 0,
+        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u}}\n",
+        DAQIFI_PRODUCT_NAME,
+        variant,
+        (unsigned long long)serialNum,
+        tickRate);
+    if (need < 0 || (size_t)(need + 1) > buffSize) {  // +1 for null terminator
+        return 0;
+    }
+
     // Generate compact JSON metadata object
     int written = snprintf(out, buffSize,
         "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u}}\n",
@@ -77,7 +88,7 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
         tickRate);
 
     if (written < 0 || written >= (int)buffSize) {
-        return 0;  // Not enough space
+        return 0;
     }
 
     return (size_t)written;
@@ -112,21 +123,29 @@ size_t Json_Encode(tBoardData* state,
             }
             return 0;
         }
-        startIndex = headerLen;  // Advance offset only, don't modify pointers
+        startIndex = headerLen;
         initialOffsetIndex = startIndex;
         jsonHeaderSent = true;
+
+        // If no room left to start an object, send header now and return
+        if (buffSize - startIndex <= 3) {  // Need at least "{\n" (3 bytes)
+            if (buffSize > 0) {
+                size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                charBuffer[term] = '\0';
+            }
+            return startIndex;  // Return header bytes (valid data)
+        }
     }
 
     // Start JSON sample object (write at current offset)
     int objWritten = snprintf(charBuffer + startIndex, buffSize - startIndex, "{\n");
     if (objWritten < 0 || objWritten >= (int)(buffSize - startIndex)) {
-        // Could not start a new JSON object; signal failure for this frame
+        // Could not start a new JSON object; return what we have (e.g., header)
         if (buffSize > 0) {
-            // Ensure termination without corrupting previous header
             size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
             charBuffer[term] = '\0';
         }
-        return 0;  // Return 0 on failure (not partial header length)
+        return startIndex;  // Return already-written bytes (e.g., header)
     }
     startIndex += objWritten;
     initialOffsetIndex = startIndex;
@@ -427,16 +446,19 @@ size_t Json_Encode(tBoardData* state,
     int written = snprintf(charBuffer + startIndex,
             buffSize - startIndex,
             "\n}\n");
-    if (written > 0 && written < (int)(buffSize - startIndex)) {
-        startIndex += written;
+    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+        // Truncated or error; incomplete JSON is invalid, signal failure
+        if (buffSize > 0) {
+            size_t term = (startIndex < buffSize) ? startIndex : (buffSize - 1);
+            charBuffer[term] = '\0';
+        }
+        return 0;  // Invalid/incomplete JSON - return failure
     }
+    startIndex += written;
 
     // Ensure safe null-termination without exceeding buffer
     if (buffSize > 0) {
-        if (startIndex >= buffSize) {
-            startIndex = buffSize - 1;
-        }
-        charBuffer[startIndex] = '\0';
+        charBuffer[startIndex < buffSize ? startIndex : (buffSize - 1)] = '\0';
     }
     return startIndex; // Return the number of bytes written
 }
