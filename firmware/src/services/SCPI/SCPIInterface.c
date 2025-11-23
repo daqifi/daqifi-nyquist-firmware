@@ -1077,10 +1077,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     uint16_t activeType1ChannelCount = 0;
     bool hasActiveAD7609Channels __attribute__((unused)) = false;
     int i;
+    bool hasEnabledChannels = false;
     
     // Count active channels and detect AD7609 usage
     for (i = 0; i < pBoardConfigADC->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
+            hasEnabledChannels = true;
             if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
                 hasActiveAD7609Channels = true;
             } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC && 
@@ -1088,6 +1090,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 activeType1ChannelCount++;
             }
         }
+    }
+    
+    if (!hasEnabledChannels) {
+        LOG_E("Streaming command rejected: No channels enabled");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        return SCPI_RES_ERR;
     }
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {
