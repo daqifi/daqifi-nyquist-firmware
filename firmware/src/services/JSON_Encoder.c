@@ -75,7 +75,11 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
         variant,
         (unsigned long long)serialNum,
         tickRate);
-    if (need < 0 || (size_t)(need + 1) > buffSize) {  // +1 for null terminator
+    if (need < 0) {
+        return 0;
+    }
+    size_t required = (size_t)need + 1; // +1 for null terminator
+    if (required > buffSize) {
         return 0;
     }
 
@@ -87,7 +91,7 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
         (unsigned long long)serialNum,
         tickRate);
 
-    if (written < 0 || written >= (int)buffSize) {
+    if (written < 0 || (size_t)written >= buffSize) {
         return 0;
     }
 

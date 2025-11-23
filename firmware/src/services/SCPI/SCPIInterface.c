@@ -1067,8 +1067,36 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     const tBoardConfig * pBoardConfig = BoardConfig_Get(
             BOARDCONFIG_ALL_CONFIG, 0);
+    // Check power state first - streaming requires powered-up state
+    const tPowerData *pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL) {
+        LOG_E("Streaming command rejected: Power data unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    if (pPowerState->powerState != POWERED_UP && pPowerState->powerState != POWERED_UP_EXT_DOWN) {
+        LOG_E("Streaming command rejected: Device must be powered up (SYST:POW:STAT 1)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+
+    // Validate ADC runtime/config pointers
+    if (pRuntimeAInChannels == NULL || pBoardConfigADC == NULL) {
+        LOG_E("Streaming command rejected: ADC runtime/config unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Defensive bound check to avoid mismatched arrays
+    if (pBoardConfigADC->Size > pRuntimeAInChannels->Size) {
+        LOG_E("Streaming command rejected: ADC config/runtime size mismatch (%u > %u)",
+              pBoardConfigADC->Size, pRuntimeAInChannels->Size);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // timer running frequency
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
@@ -1077,17 +1105,45 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     uint16_t activeType1ChannelCount = 0;
     bool hasActiveAD7609Channels __attribute__((unused)) = false;
     int i;
-    
-    // Count active channels and detect AD7609 usage
-    for (i = 0; i < pBoardConfigADC->Size; i++) {
+    bool hasEnabledChannels = false;
+
+    // Count active PUBLIC ADC channels and detect AD7609 usage
+    // Internal monitoring channels (IsPublic=false) don't count as user channels
+    // Use minimum of both array sizes to prevent out-of-bounds access
+    size_t adcCount = pBoardConfigADC->Size < pRuntimeAInChannels->Size ?
+                      pBoardConfigADC->Size : pRuntimeAInChannels->Size;
+    for (i = 0; i < (int)adcCount; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
+            // Check IsPublic based on channel type (it's in the union)
+            bool isPublic = false;
             if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
-                hasActiveAD7609Channels = true;
-            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC && 
-                       pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
-                activeType1ChannelCount++;
+                isPublic = pBoardConfigADC->Data[i].Config.AD7609.IsPublic;
+                if (isPublic) {
+                    hasEnabledChannels = true;
+                    hasActiveAD7609Channels = true;
+                }
+            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC) {
+                isPublic = pBoardConfigADC->Data[i].Config.MC12b.IsPublic;
+                if (isPublic) {
+                    hasEnabledChannels = true;
+                    if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
+                        activeType1ChannelCount++;
+                    }
+                }
             }
         }
+    }
+
+    // Check if DIO is globally enabled
+    bool *pDIOGlobalEnable = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    if (pDIOGlobalEnable && *pDIOGlobalEnable) {
+        hasEnabledChannels = true;
+    }
+
+    if (!hasEnabledChannels) {
+        LOG_E("Streaming command rejected: No ADC or DIO channels enabled");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        return SCPI_RES_ERR;
     }
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {

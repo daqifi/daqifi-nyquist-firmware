@@ -82,9 +82,12 @@ extern "C" {
  *
  * For small systems, full set of errors will occupy large ammount of data
  * It is enabled by default on full blown systems and disabled on limited bare metal systems
+ *
+ * DAQiFi override: Enable full error list for better SCPI compliance and user experience
+ * Cost is ~2KB flash, which is acceptable for this professional instrument
  */
 #ifndef USE_FULL_ERROR_LIST
-#define USE_FULL_ERROR_LIST SYSTEM_TYPE
+#define USE_FULL_ERROR_LIST 1
 #endif
 
 /**
