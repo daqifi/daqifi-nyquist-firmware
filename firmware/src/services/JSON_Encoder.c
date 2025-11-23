@@ -303,7 +303,13 @@ size_t Json_Encode(tBoardData* state,
         int written = snprintf(charBuffer + startIndex,
                 buffSize - startIndex,
                 "\"di\":[");
-        if (written < 0 || written >= (int)(buffSize - startIndex)) return startIndex;
+        if (written < 0 || written >= (int)(buffSize - startIndex)) {
+            // Null-terminate before early return
+            if (startIndex < buffSize) {
+                charBuffer[startIndex] = '\0';
+            }
+            return startIndex;
+        }
         startIndex += written;
 
         size_t diElementsStart = startIndex;
@@ -339,7 +345,13 @@ size_t Json_Encode(tBoardData* state,
             int closeWritten = snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
                     "],\n");
-            if (closeWritten < 0 || closeWritten >= (int)(buffSize - startIndex)) return startIndex;
+            if (closeWritten < 0 || closeWritten >= (int)(buffSize - startIndex)) {
+                // Null-terminate before early return
+                if (startIndex < buffSize) {
+                    charBuffer[startIndex] = '\0';
+                }
+                return startIndex;
+            }
             startIndex += closeWritten;
         }
 
