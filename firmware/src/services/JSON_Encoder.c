@@ -48,18 +48,16 @@ void json_ResetEncoder(void) {
  * @return Bytes written (0 on failure)
  */
 static size_t generateJsonHeader(char *out, size_t buffSize) {
-    if (!out || buffSize < 100) {  // Need minimum space for metadata
+    if (!out || buffSize < 128) {  // Ensure enough room for metadata
         return 0;
     }
 
-    // Get board config with NULL check
     const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     if (!boardConfig) {
         LOG_E("[JSON] Board config is NULL, cannot generate header");
         return 0;
     }
 
-    // Get variant and serial number
     uint8_t variant = 0;
     uint64_t serialNum = 0;
     void* pVar = BoardConfig_Get(BOARDCONFIG_VARIANT, 0);
@@ -67,8 +65,15 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
     if (pVar) variant = *(uint8_t*)pVar;
     if (pSer) serialNum = *(uint64_t*)pSer;
 
-    // Get timestamp tick rate
-    uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
+    // Get timestamp tick rate with validation
+    uint32_t tickRate = 0;
+    uint8_t tsIdx = boardConfig->StreamingConfig.TSTimerIndex;
+    tickRate = TimerApi_FrequencyGet(tsIdx);
+    if (tickRate == 0) {
+        // Fallback to safe default if timer not initialized
+        // Note: This should not happen in production, indicates config issue
+        tickRate = 1000000u;  // 1 MHz default
+    }
 
     // Generate compact JSON metadata object
     int written = snprintf(out, buffSize,
@@ -109,22 +114,28 @@ size_t Json_Encode(tBoardData* state,
         size_t headerLen = generateJsonHeader(charBuffer, buffSize);
         if (headerLen == 0) {
             // Not enough space for header
-            charBuffer[0] = '\0';
+            if (buffSize > 0) {
+                charBuffer[0] = '\0';
+            }
             return 0;
         }
-        charBuffer += headerLen;
-        buffSize -= headerLen;
-        startIndex = headerLen;
+        startIndex = headerLen;  // Advance offset only, don't modify pointers
+        initialOffsetIndex = startIndex;
         jsonHeaderSent = true;
     }
 
-    // Start JSON sample object
-    size_t objStart = snprintf(charBuffer, buffSize, "{\n");
-    if (objStart >= buffSize) {
-        if (startIndex < buffSize) charBuffer[0] = '\0';
-        return startIndex;
+    // Start JSON sample object (write at current offset)
+    int objWritten = snprintf(charBuffer + startIndex, buffSize - startIndex, "{\n");
+    if (objWritten < 0 || objWritten >= (int)(buffSize - startIndex)) {
+        // Could not start a new JSON object; signal failure for this frame
+        if (buffSize > 0) {
+            // Ensure termination without corrupting previous header
+            size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+            charBuffer[term] = '\0';
+        }
+        return 0;  // Return 0 on failure (not partial header length)
     }
-    startIndex += objStart;
+    startIndex += objWritten;
     initialOffsetIndex = startIndex;
 
 
