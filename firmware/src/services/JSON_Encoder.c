@@ -1,14 +1,18 @@
-/*! @file JSON_Encoder.c 
- * 
+/*! @file JSON_Encoder.c
+ *
  * This file implements the functions to manage the JSON encoder
  */
 
 #include "../services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "state/data/BoardData.h"
+#include "state/board/BoardConfig.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/Logger.h"
 #include "encoder.h"
 #include "JSON_Encoder.h"
 #include "../HAL/ADC.h"
+#include "../HAL/TimerApi/TimerApi.h"
 
 #ifndef min
 #define min(x,y) x <= y ? x : y
@@ -23,13 +27,80 @@
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
 
+// Track whether JSON header has been sent (reset when streaming stops)
+static bool jsonHeaderSent = false;
+
+/**
+ * @brief Reset JSON encoder state (call when streaming stops)
+ */
+void json_ResetEncoder(void) {
+    jsonHeaderSent = false;
+}
+
+/**
+ * @brief Generate JSON metadata header with device info (sent once per session)
+ *
+ * Outputs a JSON object containing device metadata similar to CSV header:
+ * {"meta":{"dev":"Nyquist NQ1","sn":"0123456789ABCDEF","tick_hz":1000000}}
+ *
+ * @param out      Output buffer
+ * @param buffSize Size of output buffer
+ * @return Bytes written (0 on failure)
+ */
+static size_t generateJsonHeader(char *out, size_t buffSize) {
+    if (!out || buffSize == 0) {
+        return 0;
+    }
+
+    const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    if (!boardConfig) {
+        LOG_E("[JSON] Board config is NULL, cannot generate header");
+        return 0;
+    }
+
+    uint8_t variant = 0;
+    uint64_t serialNum = 0;
+    void* pVar = BoardConfig_Get(BOARDCONFIG_VARIANT, 0);
+    void* pSer = BoardConfig_Get(BOARDCONFIG_SERIAL_NUMBER, 0);
+    if (pVar) variant = *(uint8_t*)pVar;
+    if (pSer) serialNum = *(uint64_t*)pSer;
+
+    // Get timestamp tick rate (0 = timer not initialized, indicates config problem)
+    uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
+
+    // Determine required size dynamically (avoids hardcoded buffer size)
+    int need = snprintf(NULL, 0,
+        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u}}\n",
+        DAQIFI_PRODUCT_NAME,
+        variant,
+        (unsigned long long)serialNum,
+        tickRate);
+    if (need < 0 || (size_t)(need + 1) > buffSize) {  // +1 for null terminator
+        return 0;
+    }
+
+    // Generate compact JSON metadata object
+    int written = snprintf(out, buffSize,
+        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u}}\n",
+        DAQIFI_PRODUCT_NAME,
+        variant,
+        (unsigned long long)serialNum,
+        tickRate);
+
+    if (written < 0 || written >= (int)buffSize) {
+        return 0;
+    }
+
+    return (size_t)written;
+}
+
 size_t Json_Encode(tBoardData* state,
         NanopbFlagsArray* fields,
         uint8_t* pBuffer, size_t buffSize) {
     int tmpLen = 0;
     char* charBuffer = (char*) pBuffer;
-    size_t startIndex = snprintf(charBuffer, buffSize, "{\n");
-    size_t initialOffsetIndex = startIndex;
+    size_t startIndex = 0;
+    size_t initialOffsetIndex = 0;
     size_t i = 0;
     bool encodeDIO = false;
     bool encodeADC = false;
@@ -38,23 +109,66 @@ size_t Json_Encode(tBoardData* state,
         return 0; // Return 0 if buffer is NULL
     }
 
-    if (pBuffer == NULL) {
-        return 0;
+    if (buffSize < 10) {
+        return 0;  // Minimum buffer size check
     }
 
+    // Generate metadata header on first call (once per streaming session)
+    if (!jsonHeaderSent) {
+        size_t headerLen = generateJsonHeader(charBuffer, buffSize);
+        if (headerLen == 0) {
+            // Not enough space for header
+            if (buffSize > 0) {
+                charBuffer[0] = '\0';
+            }
+            return 0;
+        }
+        startIndex = headerLen;
+        initialOffsetIndex = startIndex;
+        jsonHeaderSent = true;
+
+        // If no room left to start an object, send header now and return
+        if (buffSize - startIndex <= 3) {  // Need at least "{\n" (3 bytes)
+            if (buffSize > 0) {
+                size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                charBuffer[term] = '\0';
+            }
+            return startIndex;  // Return header bytes (valid data)
+        }
+    }
+
+    // Start JSON sample object (write at current offset)
+    int objWritten = snprintf(charBuffer + startIndex, buffSize - startIndex, "{\n");
+    if (objWritten < 0 || objWritten >= (int)(buffSize - startIndex)) {
+        // Could not start a new JSON object; return what we have (e.g., header)
+        if (buffSize > 0) {
+            size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+            charBuffer[term] = '\0';
+        }
+        return startIndex;  // Return already-written bytes (e.g., header)
+    }
+    startIndex += objWritten;
+    initialOffsetIndex = startIndex;
 
     for (i = 0; i < fields->Size; ++i) {
-        if (buffSize - startIndex < 3) {
-            break;
-        }
-
         switch (fields->Data[i]) {
             case DaqifiOutMessage_msg_time_stamp_tag:
-                startIndex += snprintf(charBuffer + startIndex,
+            {
+                int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
-                        "\"timestamp\":%u,\n",
+                        "\"ts\":%u,\n",
                         state->StreamTrigStamp);
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    // Null-terminate safely before early return
+                    if (buffSize > 0) {
+                        size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                        charBuffer[term] = '\0';
+                    }
+                    return startIndex;
+                }
+                startIndex += written;
                 break;
+            }
             case DaqifiOutMessage_analog_in_data_tag:
                 encodeADC = true;
                 break;
@@ -82,10 +196,15 @@ size_t Json_Encode(tBoardData* state,
                 inet_ntop(AF_INET, &wifiSettings->ipAddr.Val, tmp, TMP_MAX_LEN);
                 tmpLen = strlen(tmp);
                 if (tmpLen > 0) {
-                    startIndex += snprintf(charBuffer + startIndex,
+                    int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ip\":\"%s\",\n",
                             tmp);
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        // Optional field - skip on buffer full, continue processing
+                        break;
+                    }
+                    startIndex += written;
                 }
                 break;
             }
@@ -113,10 +232,15 @@ size_t Json_Encode(tBoardData* state,
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 tmpLen = MacAddr_ToString(wifiSettings->macAddr.addr, tmp, TMP_MAX_LEN);
                 if (tmpLen > 0) {
-                    startIndex += snprintf(charBuffer + startIndex,
+                    int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"mac\":\"%s\",\n",
                             tmp);
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        // Optional field - skip on buffer full, continue processing
+                        break;
+                    }
+                    startIndex += written;
                 }
                 break;
             }
@@ -125,10 +249,15 @@ size_t Json_Encode(tBoardData* state,
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 tmpLen = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
                 if (tmpLen > 0) {
-                    startIndex += snprintf(charBuffer + startIndex,
+                    int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ssid\":\"%s\",\n",
                             wifiSettings->ssid);
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        // Optional field - skip on buffer full, continue processing
+                        break;
+                    }
+                    startIndex += written;
                 }
                 break;
             }
@@ -158,19 +287,29 @@ size_t Json_Encode(tBoardData* state,
             case DaqifiOutMessage_device_port_tag:
             {
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
-                startIndex += snprintf(charBuffer + startIndex,
+                int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"port\":%u,\n",
                         wifiSettings->tcpPort);
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    // Optional field - skip on buffer full, continue processing
+                    break;
+                }
+                startIndex += written;
                 break;
             }
             case DaqifiOutMessage_wifi_security_mode_tag:
             {
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
-                startIndex += snprintf(charBuffer + startIndex,
+                int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"sec\":%u,\n",
                         wifiSettings->securityMode);
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    // Optional field - skip on buffer full, continue processing
+                    break;
+                }
+                startIndex += written;
                 break;
             }
             case DaqifiOutMessage_friendly_device_name_tag:
@@ -184,29 +323,66 @@ size_t Json_Encode(tBoardData* state,
 
     // Encode DIO if needed
     if (encodeDIO) {
-        startIndex += snprintf(charBuffer + startIndex,
+        size_t diStart = startIndex;
+
+        int written = snprintf(charBuffer + startIndex,
                 buffSize - startIndex,
-                "\"dio\":[");
+                "\"di\":[");
+        if (written < 0 || written >= (int)(buffSize - startIndex)) {
+            // Null-terminate safely before early return
+            if (buffSize > 0) {
+                size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                charBuffer[term] = '\0';
+            }
+            return startIndex;
+        }
+        startIndex += written;
+
+        size_t diElementsStart = startIndex;
 
         while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
             DIOSample data;
-            DIOSampleList_PopFront(&state->DIOSamples, &data);
-            startIndex += snprintf(charBuffer + startIndex,
+            // Peek first to avoid data loss if write fails
+            if (!DIOSampleList_PeekFront(&state->DIOSamples, &data)) break;
+
+            int elemWritten = snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
-                    "{\"time\":%u, \"mask\":%u, \"data\":%u},",
+                    "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
                     state->StreamTrigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
+            if (elemWritten < 0 || elemWritten >= (int)(buffSize - startIndex)) {
+                break;  // Keep sample for next attempt
+            }
+
+            // Write succeeded - commit by removing sample from queue
+            startIndex += elemWritten;
+            DIOSampleList_PopFront(&state->DIOSamples, &data);
         }
 
-        // Remove trailing comma and add closing bracket for dio array
-        if (charBuffer[startIndex - 1] == ',') {
-            startIndex -= 1; // Remove trailing comma
+        if (startIndex == diElementsStart) {
+            // No elements were written; roll back emission of "di":[
+            startIndex = diStart;
+        } else {
+            // Remove trailing comma and close array
+            if (startIndex > 0 && charBuffer[startIndex - 1] == ',') {
+                startIndex -= 1;
+            }
+            int closeWritten = snprintf(charBuffer + startIndex,
+                    buffSize - startIndex,
+                    "],\n");
+            if (closeWritten < 0 || closeWritten >= (int)(buffSize - startIndex)) {
+                // Null-terminate safely before early return
+                if (buffSize > 0) {
+                    size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                    charBuffer[term] = '\0';
+                }
+                return startIndex;
+            }
+            startIndex += closeWritten;
         }
-        startIndex += snprintf(charBuffer + startIndex,
-                buffSize - startIndex,
-                "],\n");
-        initialOffsetIndex=startIndex; // so that analog data can be appended
+
+        initialOffsetIndex = startIndex; // so that analog data can be appended
     }
 
     // Encode ADC if needed
@@ -230,46 +406,67 @@ size_t Json_Encode(tBoardData* state,
 
                  data = pPublicSampleList->sampleElement[i];
                 if (!timestampAdded) {
-                    startIndex += snprintf(charBuffer + startIndex,
+                    int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
-                            "\"timestamp\":%u,\n",
+                            "\"ts\":%u,\n",
                             data.Timestamp);
-                    startIndex += snprintf(charBuffer + startIndex,
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                    startIndex += written;
+
+                    written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
-                            "\"adc\":[\n");
+                            "\"ai\":[\n");
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                    startIndex += written;
                     timestampAdded = true;
                 }
 
-               
+
                 double voltage = ADC_ConvertToVoltage(&data) * 1000; // Convert to millivolts
-                startIndex += snprintf(charBuffer + startIndex,
+                int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
-                        "{\"ch\":%u, \"data\":%u},\n",
+                        "{\"ch\":%u, \"val\":%u},\n",
                         data.Channel,
                         (int) voltage);
+                if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                startIndex += written;
             }
 
             AInSampleList_FreeToPool(pPublicSampleList);  // Use pool instead of vPortFree
             if(startIndex == initialOffsetIndex) //no adc data added
                 break;
             // Remove trailing comma and close adc array
-            if (charBuffer[startIndex - 2] == ',') {
+            if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
                 startIndex -= 2; // Remove trailing comma
             }
-            startIndex += snprintf(charBuffer + startIndex,
+            int written = snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
                     "\n],\n");
+            if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+            startIndex += written;
         }
     }
 
     // Close the JSON object
-    if (charBuffer[startIndex - 2] == ',') {
+    if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
         startIndex -= 2; // Remove trailing comma
     }
-    startIndex += snprintf(charBuffer + startIndex,
+    int written = snprintf(charBuffer + startIndex,
             buffSize - startIndex,
             "\n}\n");
+    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+        // Truncated or error; incomplete JSON is invalid, signal failure
+        if (buffSize > 0) {
+            size_t term = (startIndex < buffSize) ? startIndex : (buffSize - 1);
+            charBuffer[term] = '\0';
+        }
+        return 0;  // Invalid/incomplete JSON - return failure
+    }
+    startIndex += written;
 
-    charBuffer[startIndex] = '\0'; // Null-terminate the JSON string
+    // Ensure safe null-termination without exceeding buffer
+    if (buffSize > 0) {
+        charBuffer[startIndex < buffSize ? startIndex : (buffSize - 1)] = '\0';
+    }
     return startIndex; // Return the number of bytes written
 }
