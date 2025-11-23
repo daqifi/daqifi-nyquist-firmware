@@ -150,12 +150,7 @@ size_t Json_Encode(tBoardData* state,
     startIndex += objWritten;
     initialOffsetIndex = startIndex;
 
-
     for (i = 0; i < fields->Size; ++i) {
-        if (buffSize - startIndex < 3) {
-            break;
-        }
-
         switch (fields->Data[i]) {
             case DaqifiOutMessage_msg_time_stamp_tag:
             {
@@ -164,11 +159,12 @@ size_t Json_Encode(tBoardData* state,
                         "\"ts\":%u,\n",
                         state->StreamTrigStamp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
-                    // Avoid out-of-bounds write when buffer is full
-                    if (startIndex < buffSize) {
-                        charBuffer[startIndex] = '\0';
+                    // Null-terminate safely before early return
+                    if (buffSize > 0) {
+                        size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                        charBuffer[term] = '\0';
                     }
-                    return startIndex;  // Return early, not break
+                    return startIndex;
                 }
                 startIndex += written;
                 break;
@@ -204,9 +200,11 @@ size_t Json_Encode(tBoardData* state,
                             buffSize - startIndex,
                             "\"ip\":\"%s\",\n",
                             tmp);
-                    if (written > 0 && written < (int)(buffSize - startIndex)) {
-                        startIndex += written;
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        // Optional field - skip on buffer full, continue processing
+                        break;
                     }
+                    startIndex += written;
                 }
                 break;
             }
@@ -238,9 +236,11 @@ size_t Json_Encode(tBoardData* state,
                             buffSize - startIndex,
                             "\"mac\":\"%s\",\n",
                             tmp);
-                    if (written > 0 && written < (int)(buffSize - startIndex)) {
-                        startIndex += written;
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        // Optional field - skip on buffer full, continue processing
+                        break;
                     }
+                    startIndex += written;
                 }
                 break;
             }
@@ -253,9 +253,11 @@ size_t Json_Encode(tBoardData* state,
                             buffSize - startIndex,
                             "\"ssid\":\"%s\",\n",
                             wifiSettings->ssid);
-                    if (written > 0 && written < (int)(buffSize - startIndex)) {
-                        startIndex += written;
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        // Optional field - skip on buffer full, continue processing
+                        break;
                     }
+                    startIndex += written;
                 }
                 break;
             }
@@ -289,9 +291,11 @@ size_t Json_Encode(tBoardData* state,
                         buffSize - startIndex,
                         "\"port\":%u,\n",
                         wifiSettings->tcpPort);
-                if (written > 0 && written < (int)(buffSize - startIndex)) {
-                    startIndex += written;
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    // Optional field - skip on buffer full, continue processing
+                    break;
                 }
+                startIndex += written;
                 break;
             }
             case DaqifiOutMessage_wifi_security_mode_tag:
@@ -301,9 +305,11 @@ size_t Json_Encode(tBoardData* state,
                         buffSize - startIndex,
                         "\"sec\":%u,\n",
                         wifiSettings->securityMode);
-                if (written > 0 && written < (int)(buffSize - startIndex)) {
-                    startIndex += written;
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    // Optional field - skip on buffer full, continue processing
+                    break;
                 }
+                startIndex += written;
                 break;
             }
             case DaqifiOutMessage_friendly_device_name_tag:
@@ -323,9 +329,10 @@ size_t Json_Encode(tBoardData* state,
                 buffSize - startIndex,
                 "\"di\":[");
         if (written < 0 || written >= (int)(buffSize - startIndex)) {
-            // Null-terminate before early return
-            if (startIndex < buffSize) {
-                charBuffer[startIndex] = '\0';
+            // Null-terminate safely before early return
+            if (buffSize > 0) {
+                size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                charBuffer[term] = '\0';
             }
             return startIndex;
         }
@@ -365,9 +372,10 @@ size_t Json_Encode(tBoardData* state,
                     buffSize - startIndex,
                     "],\n");
             if (closeWritten < 0 || closeWritten >= (int)(buffSize - startIndex)) {
-                // Null-terminate before early return
-                if (startIndex < buffSize) {
-                    charBuffer[startIndex] = '\0';
+                // Null-terminate safely before early return
+                if (buffSize > 0) {
+                    size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+                    charBuffer[term] = '\0';
                 }
                 return startIndex;
             }
