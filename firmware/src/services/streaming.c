@@ -212,6 +212,9 @@ static void Streaming_Start(void) {
             }
         }
 
+        // Clear encoding buffer once to prevent stale data artifacts in SD files
+        memset(buffer, 0, BUFFER_SIZE);
+
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
@@ -362,7 +365,7 @@ void streaming_Task(void) {
             nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_data_tag;
             nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
         }
-        
+
         packetSize = 0;
         if (nanopbFlag.Size > 0) {
             if(pRunTimeStreamConf->Encoding == Streaming_Csv){
