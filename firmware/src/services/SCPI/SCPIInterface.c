@@ -1067,6 +1067,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     const tBoardConfig * pBoardConfig = BoardConfig_Get(
             BOARDCONFIG_ALL_CONFIG, 0);
+    // Check power state first - streaming requires powered-up state
+    const tPowerData *pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL ||
+        (pPowerState->powerState != POWERED_UP && pPowerState->powerState != POWERED_UP_EXT_DOWN)) {
+        LOG_E("Streaming command rejected: Device must be powered up (SYST:POW:STAT 1)");
+        SCPI_ErrorPush(context, SCPI_ERROR_HARDWARE_MISSING);
+        return SCPI_RES_ERR;
+    }
+
     volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
 
