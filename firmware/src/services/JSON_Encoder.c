@@ -55,7 +55,10 @@ size_t Json_Encode(tBoardData* state,
                         buffSize - startIndex,
                         "\"ts\":%u,\n",
                         state->StreamTrigStamp);
-                if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    charBuffer[startIndex] = '\0';
+                    return startIndex;  // Return early, not break
+                }
                 startIndex += written;
                 break;
             }
@@ -211,19 +214,26 @@ size_t Json_Encode(tBoardData* state,
 
         while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
             DIOSample data;
-            DIOSampleList_PopFront(&state->DIOSamples, &data);
+            // Peek first to avoid data loss if write fails
+            if (!DIOSampleList_PeekFront(&state->DIOSamples, &data)) break;
+
             int written = snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
                     "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
                     state->StreamTrigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
-            if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+            if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                break;  // Keep sample for next attempt
+            }
+
+            // Write succeeded - commit by removing sample from queue
             startIndex += written;
+            DIOSampleList_PopFront(&state->DIOSamples, &data);
         }
 
         // Remove trailing comma and add closing bracket for dio array
-        if (charBuffer[startIndex - 1] == ',') {
+        if (startIndex > 0 && charBuffer[startIndex - 1] == ',') {
             startIndex -= 1; // Remove trailing comma
         }
         written = snprintf(charBuffer + startIndex,
@@ -285,7 +295,7 @@ size_t Json_Encode(tBoardData* state,
             if(startIndex == initialOffsetIndex) //no adc data added
                 break;
             // Remove trailing comma and close adc array
-            if (charBuffer[startIndex - 2] == ',') {
+            if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
                 startIndex -= 2; // Remove trailing comma
             }
             int written = snprintf(charBuffer + startIndex,
@@ -297,7 +307,7 @@ size_t Json_Encode(tBoardData* state,
     }
 
     // Close the JSON object
-    if (charBuffer[startIndex - 2] == ',') {
+    if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
         startIndex -= 2; // Remove trailing comma
     }
     int written = snprintf(charBuffer + startIndex,
