@@ -1,14 +1,18 @@
-/*! @file JSON_Encoder.c 
- * 
+/*! @file JSON_Encoder.c
+ *
  * This file implements the functions to manage the JSON encoder
  */
 
 #include "../services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "state/data/BoardData.h"
+#include "state/board/BoardConfig.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/StringFormatters.h"
+#include "Util/Logger.h"
 #include "encoder.h"
 #include "JSON_Encoder.h"
 #include "../HAL/ADC.h"
+#include "../HAL/TimerApi/TimerApi.h"
 
 #ifndef min
 #define min(x,y) x <= y ? x : y
@@ -23,13 +27,71 @@
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
 
+// Track whether JSON header has been sent (reset when streaming stops)
+static bool jsonHeaderSent = false;
+
+/**
+ * @brief Reset JSON encoder state (call when streaming stops)
+ */
+void json_ResetEncoder(void) {
+    jsonHeaderSent = false;
+}
+
+/**
+ * @brief Generate JSON metadata header with device info (sent once per session)
+ *
+ * Outputs a JSON object containing device metadata similar to CSV header:
+ * {"meta":{"dev":"Nyquist NQ1","sn":"0123456789ABCDEF","tick_hz":1000000}}
+ *
+ * @param out      Output buffer
+ * @param buffSize Size of output buffer
+ * @return Bytes written (0 on failure)
+ */
+static size_t generateJsonHeader(char *out, size_t buffSize) {
+    if (!out || buffSize < 100) {  // Need minimum space for metadata
+        return 0;
+    }
+
+    // Get board config with NULL check
+    const tBoardConfig* boardConfig = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    if (!boardConfig) {
+        LOG_E("[JSON] Board config is NULL, cannot generate header");
+        return 0;
+    }
+
+    // Get variant and serial number
+    uint8_t variant = 0;
+    uint64_t serialNum = 0;
+    void* pVar = BoardConfig_Get(BOARDCONFIG_VARIANT, 0);
+    void* pSer = BoardConfig_Get(BOARDCONFIG_SERIAL_NUMBER, 0);
+    if (pVar) variant = *(uint8_t*)pVar;
+    if (pSer) serialNum = *(uint64_t*)pSer;
+
+    // Get timestamp tick rate
+    uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
+
+    // Generate compact JSON metadata object
+    int written = snprintf(out, buffSize,
+        "{\"meta\":{\"dev\":\"%s %u\",\"sn\":\"%016llX\",\"tick_hz\":%u}}\n",
+        DAQIFI_PRODUCT_NAME,
+        variant,
+        (unsigned long long)serialNum,
+        tickRate);
+
+    if (written < 0 || written >= (int)buffSize) {
+        return 0;  // Not enough space
+    }
+
+    return (size_t)written;
+}
+
 size_t Json_Encode(tBoardData* state,
         NanopbFlagsArray* fields,
         uint8_t* pBuffer, size_t buffSize) {
     int tmpLen = 0;
     char* charBuffer = (char*) pBuffer;
-    size_t startIndex = snprintf(charBuffer, buffSize, "{\n");
-    size_t initialOffsetIndex = startIndex;
+    size_t startIndex = 0;
+    size_t initialOffsetIndex = 0;
     size_t i = 0;
     bool encodeDIO = false;
     bool encodeADC = false;
@@ -38,9 +100,32 @@ size_t Json_Encode(tBoardData* state,
         return 0; // Return 0 if buffer is NULL
     }
 
-    if (pBuffer == NULL) {
-        return 0;
+    if (buffSize < 10) {
+        return 0;  // Minimum buffer size check
     }
+
+    // Generate metadata header on first call (once per streaming session)
+    if (!jsonHeaderSent) {
+        size_t headerLen = generateJsonHeader(charBuffer, buffSize);
+        if (headerLen == 0) {
+            // Not enough space for header
+            charBuffer[0] = '\0';
+            return 0;
+        }
+        charBuffer += headerLen;
+        buffSize -= headerLen;
+        startIndex = headerLen;
+        jsonHeaderSent = true;
+    }
+
+    // Start JSON sample object
+    size_t objStart = snprintf(charBuffer, buffSize, "{\n");
+    if (objStart >= buffSize) {
+        if (startIndex < buffSize) charBuffer[0] = '\0';
+        return startIndex;
+    }
+    startIndex += objStart;
+    initialOffsetIndex = startIndex;
 
 
     for (i = 0; i < fields->Size; ++i) {

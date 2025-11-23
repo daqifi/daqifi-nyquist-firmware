@@ -36,6 +36,7 @@
 #include "../sd_card_services/sd_card_manager.h"
 #include "../streaming.h"
 #include "../csv_encoder.h"
+#include "../JSON_Encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
 
@@ -1201,8 +1202,9 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // Reset CSV encoder state so next session gets a fresh header
+    // Reset encoder state so next session gets fresh headers
     csv_ResetEncoder();
+    json_ResetEncoder();
 
     return SCPI_RES_OK;
 }
