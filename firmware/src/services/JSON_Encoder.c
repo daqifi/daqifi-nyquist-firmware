@@ -65,15 +65,8 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
     if (pVar) variant = *(uint8_t*)pVar;
     if (pSer) serialNum = *(uint64_t*)pSer;
 
-    // Get timestamp tick rate with validation
-    uint32_t tickRate = 0;
-    uint8_t tsIdx = boardConfig->StreamingConfig.TSTimerIndex;
-    tickRate = TimerApi_FrequencyGet(tsIdx);
-    if (tickRate == 0) {
-        // Fallback to safe default if timer not initialized
-        // Note: This should not happen in production, indicates config issue
-        tickRate = 1000000u;  // 1 MHz default
-    }
+    // Get timestamp tick rate (0 = timer not initialized, indicates config problem)
+    uint32_t tickRate = TimerApi_FrequencyGet(boardConfig->StreamingConfig.TSTimerIndex);
 
     // Generate compact JSON metadata object
     int written = snprintf(out, buffSize,
