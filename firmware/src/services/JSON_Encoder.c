@@ -52,7 +52,7 @@ size_t Json_Encode(tBoardData* state,
             case DaqifiOutMessage_msg_time_stamp_tag:
                 startIndex += snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
-                        "\"timestamp\":%u,\n",
+                        "\"ts\":%u,\n",
                         state->StreamTrigStamp);
                 break;
             case DaqifiOutMessage_analog_in_data_tag:
@@ -186,14 +186,14 @@ size_t Json_Encode(tBoardData* state,
     if (encodeDIO) {
         startIndex += snprintf(charBuffer + startIndex,
                 buffSize - startIndex,
-                "\"dio\":[");
+                "\"di\":[");
 
         while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
             DIOSample data;
             DIOSampleList_PopFront(&state->DIOSamples, &data);
             startIndex += snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
-                    "{\"time\":%u, \"mask\":%u, \"data\":%u},",
+                    "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
                     state->StreamTrigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
@@ -232,19 +232,19 @@ size_t Json_Encode(tBoardData* state,
                 if (!timestampAdded) {
                     startIndex += snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
-                            "\"timestamp\":%u,\n",
+                            "\"ts\":%u,\n",
                             data.Timestamp);
                     startIndex += snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
-                            "\"adc\":[\n");
+                            "\"ai\":[\n");
                     timestampAdded = true;
                 }
 
-               
+
                 double voltage = ADC_ConvertToVoltage(&data) * 1000; // Convert to millivolts
                 startIndex += snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
-                        "{\"ch\":%u, \"data\":%u},\n",
+                        "{\"ch\":%u, \"val\":%u},\n",
                         data.Channel,
                         (int) voltage);
             }
