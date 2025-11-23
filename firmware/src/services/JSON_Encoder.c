@@ -56,7 +56,10 @@ size_t Json_Encode(tBoardData* state,
                         "\"ts\":%u,\n",
                         state->StreamTrigStamp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
-                    charBuffer[startIndex] = '\0';
+                    // Avoid out-of-bounds write when buffer is full
+                    if (startIndex < buffSize) {
+                        charBuffer[startIndex] = '\0';
+                    }
                     return startIndex;  // Return early, not break
                 }
                 startIndex += written;
@@ -206,42 +209,52 @@ size_t Json_Encode(tBoardData* state,
 
     // Encode DIO if needed
     if (encodeDIO) {
+        size_t diStart = startIndex;
+
         int written = snprintf(charBuffer + startIndex,
                 buffSize - startIndex,
                 "\"di\":[");
         if (written < 0 || written >= (int)(buffSize - startIndex)) return startIndex;
         startIndex += written;
 
+        size_t diElementsStart = startIndex;
+
         while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
             DIOSample data;
             // Peek first to avoid data loss if write fails
             if (!DIOSampleList_PeekFront(&state->DIOSamples, &data)) break;
 
-            int written = snprintf(charBuffer + startIndex,
+            int elemWritten = snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
                     "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
                     state->StreamTrigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
-            if (written < 0 || written >= (int)(buffSize - startIndex)) {
+            if (elemWritten < 0 || elemWritten >= (int)(buffSize - startIndex)) {
                 break;  // Keep sample for next attempt
             }
 
             // Write succeeded - commit by removing sample from queue
-            startIndex += written;
+            startIndex += elemWritten;
             DIOSampleList_PopFront(&state->DIOSamples, &data);
         }
 
-        // Remove trailing comma and add closing bracket for dio array
-        if (startIndex > 0 && charBuffer[startIndex - 1] == ',') {
-            startIndex -= 1; // Remove trailing comma
+        if (startIndex == diElementsStart) {
+            // No elements were written; roll back emission of "di":[
+            startIndex = diStart;
+        } else {
+            // Remove trailing comma and close array
+            if (startIndex > 0 && charBuffer[startIndex - 1] == ',') {
+                startIndex -= 1;
+            }
+            int closeWritten = snprintf(charBuffer + startIndex,
+                    buffSize - startIndex,
+                    "],\n");
+            if (closeWritten < 0 || closeWritten >= (int)(buffSize - startIndex)) return startIndex;
+            startIndex += closeWritten;
         }
-        written = snprintf(charBuffer + startIndex,
-                buffSize - startIndex,
-                "],\n");
-        if (written < 0 || written >= (int)(buffSize - startIndex)) return startIndex;
-        startIndex += written;
-        initialOffsetIndex=startIndex; // so that analog data can be appended
+
+        initialOffsetIndex = startIndex; // so that analog data can be appended
     }
 
     // Encode ADC if needed
@@ -317,6 +330,12 @@ size_t Json_Encode(tBoardData* state,
         startIndex += written;
     }
 
-    charBuffer[startIndex] = '\0'; // Null-terminate the JSON string
+    // Ensure safe null-termination without exceeding buffer
+    if (buffSize > 0) {
+        if (startIndex >= buffSize) {
+            startIndex = buffSize - 1;
+        }
+        charBuffer[startIndex] = '\0';
+    }
     return startIndex; // Return the number of bytes written
 }
