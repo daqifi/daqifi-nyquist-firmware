@@ -1087,22 +1087,39 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     bool hasActiveAD7609Channels __attribute__((unused)) = false;
     int i;
     bool hasEnabledChannels = false;
-    
-    // Count active channels and detect AD7609 usage
+
+    // Count active PUBLIC ADC channels and detect AD7609 usage
+    // Internal monitoring channels (IsPublic=false) don't count as user channels
     for (i = 0; i < pBoardConfigADC->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            hasEnabledChannels = true;
+            // Check IsPublic based on channel type (it's in the union)
+            bool isPublic = false;
             if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
-                hasActiveAD7609Channels = true;
-            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC && 
-                       pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
-                activeType1ChannelCount++;
+                isPublic = pBoardConfigADC->Data[i].Config.AD7609.IsPublic;
+                if (isPublic) {
+                    hasEnabledChannels = true;
+                    hasActiveAD7609Channels = true;
+                }
+            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC) {
+                isPublic = pBoardConfigADC->Data[i].Config.MC12b.IsPublic;
+                if (isPublic) {
+                    hasEnabledChannels = true;
+                    if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
+                        activeType1ChannelCount++;
+                    }
+                }
             }
         }
     }
-    
+
+    // Check if DIO is globally enabled
+    bool *pDIOGlobalEnable = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    if (pDIOGlobalEnable && *pDIOGlobalEnable) {
+        hasEnabledChannels = true;
+    }
+
     if (!hasEnabledChannels) {
-        LOG_E("Streaming command rejected: No channels enabled");
+        LOG_E("Streaming command rejected: No ADC or DIO channels enabled");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
         return SCPI_RES_ERR;
     }
