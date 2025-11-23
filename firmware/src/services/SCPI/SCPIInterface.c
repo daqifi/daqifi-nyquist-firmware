@@ -1076,7 +1076,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
     if (pPowerState->powerState != POWERED_UP && pPowerState->powerState != POWERED_UP_EXT_DOWN) {
         LOG_E("Streaming command rejected: Device must be powered up (SYST:POW:STAT 1)");
-        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
 
