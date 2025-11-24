@@ -420,6 +420,8 @@
           <itemPath>../src/state/board/NQ2BoardConfig.h</itemPath>
           <itemPath>../src/state/board/NQ3BoardConfig.h</itemPath>
           <itemPath>../src/state/board/StreamingConfig.h</itemPath>
+          <itemPath>../src/state/board/CommonBoardPinDefs.h</itemPath>
+          <itemPath>../src/state/board/CommonMonitoringChannels.h</itemPath>
         </logicalFolder>
         <logicalFolder name="data" displayName="data" projectFiles="true">
           <itemPath>../src/state/data/AInSample.h</itemPath>
@@ -431,6 +433,7 @@
           <itemPath>../src/state/runtime/BoardRuntimeConfig.h</itemPath>
           <itemPath>../src/state/runtime/DIORuntimeConfig.h</itemPath>
           <itemPath>../src/state/runtime/StreamingRuntimeConfig.h</itemPath>
+          <itemPath>../src/state/runtime/CommonRuntimeDefaults.h</itemPath>
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="system" displayName="system" projectFiles="true">
@@ -3765,7 +3768,7 @@
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
+                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
@@ -6417,7 +6420,7 @@
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
+                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/Nq1/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
@@ -9069,7 +9072,7 @@
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
+                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/Nq3/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
