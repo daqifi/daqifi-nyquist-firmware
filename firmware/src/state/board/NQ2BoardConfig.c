@@ -1,159 +1,43 @@
 #include "BoardConfig.h"
+#include "CommonBoardPinDefs.h"
+#include "CommonBoardConfig.h"
+#include "CommonMonitoringChannels.h"
+#include "../../HAL/TimerApi/TimerApi.h"
+#include "../../HAL/DAC7718/DAC7718.h"
 
-// =============================================================================
-// CSV Column Headers (pre-computed in program memory for fast header generation)
-// =============================================================================
-// Board-specific column names - NQ2 uses "ain" prefix for analog inputs
-static const char* NQ2_CSV_CHANNEL_HEADERS_FIRST[] = {
-    "ain0_ts,ain0_val",   "ain1_ts,ain1_val",   "ain2_ts,ain2_val",   "ain3_ts,ain3_val",
-    "ain4_ts,ain4_val",   "ain5_ts,ain5_val",   "ain6_ts,ain6_val",   "ain7_ts,ain7_val",
-    "ain8_ts,ain8_val",   "ain9_ts,ain9_val",   "ain10_ts,ain10_val", "ain11_ts,ain11_val",
-    "ain12_ts,ain12_val", "ain13_ts,ain13_val", "ain14_ts,ain14_val", "ain15_ts,ain15_val"
-};
-
-static const char* NQ2_CSV_CHANNEL_HEADERS_SUBSEQUENT[] = {
-    ",ain0_ts,ain0_val",   ",ain1_ts,ain1_val",   ",ain2_ts,ain2_val",   ",ain3_ts,ain3_val",
-    ",ain4_ts,ain4_val",   ",ain5_ts,ain5_val",   ",ain6_ts,ain6_val",   ",ain7_ts,ain7_val",
-    ",ain8_ts,ain8_val",   ",ain9_ts,ain9_val",   ",ain10_ts,ain10_val", ",ain11_ts,ain11_val",
-    ",ain12_ts,ain12_val", ",ain13_ts,ain13_val", ",ain14_ts,ain14_val", ",ain15_ts,ain15_val"
-};
+// CSV column headers now in CommonBoardConfig.c
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
+
+// Common port definitions now in CommonBoardPinDefs.h
+
+// NQ2-specific pin definitions (peripheral modules use Pin API, not Port API)
+#define DAC7718_CS_PIN             GPIO_PIN_RK0    // DAC CS on RK0
+#define DAC7718_RST_PIN            GPIO_PIN_RJ13   // DAC CLR/RST on RJ13
+
+// PORTS_REMAP_OUTPUT_PIN enum now in CommonBoardPinDefs.h
 const tBoardConfig NQ2BoardConfig = {
     .BoardVariant = 2,
-    .DIOChannels = {
-        .Data = {
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_D,                                     \
-                        PORTS_BIT_POS_1,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_D,                                     \
-                        PORTS_BIT_POS_2,                                    \
-                        false},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_3,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_2,                                    \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_D,                                     \
-                        PORTS_BIT_POS_3,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_D,                                     \
-                        PORTS_BIT_POS_13,                                   \
-                        true},      
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_D,                                     \
-                        PORTS_BIT_POS_12,                                   \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_0,                                    \
-                        false},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_F,                                     \
-                        PORTS_BIT_POS_0,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_D,                                     \
-                        PORTS_BIT_POS_7,                                    \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_F,                                     \
-                        PORTS_BIT_POS_0,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_D,                                     \
-                        PORTS_BIT_POS_7,                                    \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_F,                                     \
-                        PORTS_BIT_POS_1,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_K,                                     \
-                        PORTS_BIT_POS_7,                                    \
-                        false},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_G,                                     \
-                        PORTS_BIT_POS_0,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_4,                                    \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_G,                                     \
-                        PORTS_BIT_POS_1,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_5,                                    \
-                        false},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_6,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_7,                                    \
-                        false},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_1,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_0,                                    \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_4,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_G,                                     \
-                        PORTS_BIT_POS_15,                                   \
-                        false},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_C,                                     \
-                        PORTS_BIT_POS_2,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_10,                                   \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_3,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_2,                                    \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_6,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_7,                                    \
-                        false},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_E,                                     \
-                        PORTS_BIT_POS_5,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_A,                                     \
-                        PORTS_BIT_POS_5,                                    \
-                        true},
-            {           PORTS_ID_0,                                         \
-                        PORT_CHANNEL_C,                                     \
-                        PORTS_BIT_POS_1,                                    \
-                        PORTS_ID_0,                                         \
-                        PORT_CHANNEL_J,                                     \
-                        PORTS_BIT_POS_12,                                   \
-                        false},  
-        },
+    // DIO channels - common config but can't extract #ifdef to macro
+    .DIOChannels =
+    {
+        .Data = COMMON_DIO_CHANNELS_CONFIG_DATA,
+#ifdef DIO_TIMING_TEST
+        .Size = 15,
+#else
         .Size = 16,
+#endif
     },
-    .AInModules = {
-        .Data = {
+    .AInModules =
+    {
+        .Data =
+        {
             {
                 .Type = AIn_MC12bADC,
-                .Config = {                                     
-                    .MC12b = {  
-                        .moduleId = DRV_ADC_ID_1, 
-                        .Resolution = 4096 } },
+                .Config =
+                {.MC12b =
+                    { .Resolution = 4096}},
                 .Size = 16
             },
             {
@@ -161,24 +45,19 @@ const tBoardConfig NQ2BoardConfig = {
                 .Config = {
                     .AD7173 = {
                         .SPI = {
-                            .spiID = SPI_ID_6,
+                            .spiID = 6,  // SPI6 configured in MCC
                             .baud = 15000000,
-                            .clock = SPI_BAUD_RATE_PBCLK_CLOCK,   
-                            .busClk_id = CLK_BUS_PERIPHERAL_2,   
-                            .clockPolarity = SPI_CLOCK_POLARITY_IDLE_HIGH, 
-                            .busWidth = SPI_COMMUNICATION_WIDTH_8BITS,    
-                            .inSamplePhase = SPI_INPUT_SAMPLING_PHASE_IN_MIDDLE,     
-                            .outDataPhase = SPI_OUTPUT_DATA_PHASE_ON_IDLE_TO_ACTIVE_CLOCK,
+                            .clock = 1,
+                            .busClk_id = 2,
+                            .clockPolarity = 1,
+                            .busWidth = 8,
+                            .inSamplePhase = 1,
+                            .outDataPhase = 0,
                         },
-                        .DataModule = PORTS_ID_0, 
-                        .CS_Ch = PORT_CHANNEL_B,    
-                        .CS_Bit = PORTS_BIT_POS_3,    
-                        .SPI_SDI_Ch = PORT_CHANNEL_F,    
-                        .SPI_SDI_Bit = PORTS_BIT_POS_2,
-                        .SPI_SDI_BitMask = 0b100,    // Mask of the port above
-                        .ERR_Ch = PORT_CHANNEL_B,
-                        .ERR_Bit = PORTS_BIT_POS_2,
-                        .Resolution = 16777216,
+                        .CS_Pin = GPIO_PIN_RB3,
+                        .ERR_Pin = GPIO_PIN_RB2,
+                        .SDI_Pin = GPIO_PIN_RF2,
+                        .Resolution = 16777216,  // 24-bit ADC
                     }
                 },
                 .Size = 16
@@ -188,206 +67,182 @@ const tBoardConfig NQ2BoardConfig = {
     },
     .AInChannels = {
         .Data = {
-            // External ADC AD7173
+            // User-accessible AD7173 channels (0-15) - NQ2's main feature
             {
-                .ChannelId = 16,
-                .DataModule = 2,
-                .Config = {.AD7173 = {0}}
+                .DaqifiAdcChannelId = 0,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 0, .IsPublic = true}}
             },
             {
-                .ChannelId = 17,
-                .DataModule = 2,
-                .Config = {.AD7173 = {1}}
+                .DaqifiAdcChannelId = 1,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 1, .IsPublic = true}}
             },
             {
-                .ChannelId = 18,
-                .DataModule = 2,
-                .Config = {.AD7173 = {2}}
+                .DaqifiAdcChannelId = 2,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 2, .IsPublic = true}}
             },
             {
-                .ChannelId = 19,
-                .DataModule = 2,
-                .Config = {.AD7173 = {3}}
+                .DaqifiAdcChannelId = 3,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 3, .IsPublic = true}}
             },
             {
-                .ChannelId = 20,
-                .DataModule = 2,
-                .Config = {.AD7173 = {4}}
+                .DaqifiAdcChannelId = 4,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 4, .IsPublic = true}}
             },
             {
-                .ChannelId = 21,
-                .DataModule = 2,
-                .Config = {.AD7173 = {5}}
+                .DaqifiAdcChannelId = 5,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 5, .IsPublic = true}}
             },
             {
-                .ChannelId = 22,
-                .DataModule = 2,
-                .Config = {.AD7173 = {6}}
+                .DaqifiAdcChannelId = 6,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 6, .IsPublic = true}}
             },
             {
-                .ChannelId = 23,
-                .DataModule = 2,
-                .Config = {.AD7173 = {7}}
-            },
-                        {
-                .ChannelId = 24,
-                .DataModule = 2,
-                .Config = {.AD7173 = {8}}
+                .DaqifiAdcChannelId = 7,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 7, .IsPublic = true}}
             },
             {
-                .ChannelId = 25,
-                .DataModule = 2,
-                .Config = {.AD7173 = {9}}
+                .DaqifiAdcChannelId = 8,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 8, .IsPublic = true}}
             },
             {
-                .ChannelId = 26,
-                .DataModule = 2,
-                .Config = {.AD7173 = {10}}
+                .DaqifiAdcChannelId = 9,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 9, .IsPublic = true}}
             },
             {
-                .ChannelId = 27,
-                .DataModule = 2,
-                .Config = {.AD7173 = {11}}
+                .DaqifiAdcChannelId = 10,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 10, .IsPublic = true}}
             },
             {
-                .ChannelId = 28,
-                .DataModule = 2,
-                .Config = {.AD7173 = {12}}
+                .DaqifiAdcChannelId = 11,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 11, .IsPublic = true}}
             },
             {
-                .ChannelId = 29,
-                .DataModule = 2,
-                .Config = {.AD7173 = {13}}
+                .DaqifiAdcChannelId = 12,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 12, .IsPublic = true}}
             },
             {
-                .ChannelId = 30,
-                .DataModule = 2,
-                .Config = {.AD7173 = {14}}
+                .DaqifiAdcChannelId = 13,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 13, .IsPublic = true}}
             },
             {
-                .ChannelId = 31,
-                .DataModule = 2,
-                .Config = {.AD7173 = {15}}
+                .DaqifiAdcChannelId = 14,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 14, .IsPublic = true}}
+            },
+            {
+                .DaqifiAdcChannelId = 15,
+                .Type = AIn_AD7173,
+                .Config = {.AD7173 = {.ChannelNumber = 15, .IsPublic = true}}
             },
 
-            // ADC Channels for internal use
-            // TODO: It may make sense to put these in the power settings.
-            {
-                .ChannelId = ADC_CHANNEL_3_3V,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 19, 2, false}} // +3.3V_Mon
-            },
-            {
-                .ChannelId = ADC_CHANNEL_2_5VREF,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 31, 2, false}} // +2.5VRef_Mon
-            },
-            {
-                .ChannelId = ADC_CHANNEL_VBATT,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 30, 2, false}} // Vbat_Mon
-            },
-            {
-                .ChannelId = ADC_CHANNEL_5V,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 42, 2, false}} // +5V_ADC_Mon
-            },
-            {
-                .ChannelId = ADC_CHANNEL_10V,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 32, 2, false}} // +10/+12V_Mon
-            },
-            {
-                .ChannelId = ADC_CHANNEL_TEMP,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 44, 2, false}} // On board temperature sensor 5mV/degC 0->5V=-40degC
-            },
-            {
-                .ChannelId = ADC_CHANNEL_5VREF,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 29, 2, false}} // On board +5V ref (only on Nq2)
-            },
-            {
-                .ChannelId = ADC_CHANNEL_VSYS,
-                .DataModule = 0,
-                .Config = {.MC12b = {false, 10, 2, false}} // Board system power
-            },
+            // Internal monitoring channels (from CommonMonitoringChannels.h)
+            COMMON_MONITORING_CHANNELS_BOARDCONFIG
         },
-        .Size = 24
+        .Size = 24  // 16 AD7173 + 8 monitoring
     },
-    .PowerConfig = {
-        .EN_Vref_Ch = PORT_CHANNEL_J,
-        .EN_Vref_Bit = PORTS_BIT_POS_15,
-        .EN_3_3V_Ch = PORT_CHANNEL_H,
-        .EN_3_3V_Bit = PORTS_BIT_POS_12,
-        .EN_5_10V_Ch = PORT_CHANNEL_D,
-        .EN_5_10V_Bit = PORTS_BIT_POS_0,
-        .EN_12V_Ch = PORT_CHANNEL_H,
-        .EN_12V_Bit = PORTS_BIT_POS_15,
-        .USB_Dp_Ch = PORT_CHANNEL_H, 
-        .USB_Dp_Bit = PORTS_BIT_POS_9, 
-        .USB_Dn_Ch = PORT_CHANNEL_H, 
-        .USB_Dn_Bit = PORTS_BIT_POS_10,
-    },
-    .UIConfig = {
-        .LED1_Mod = 0,
-        .LED1_Ch = PORT_CHANNEL_C,      // White LED
-        .LED1_Bit = PORTS_BIT_POS_3,
-        .LED2_Mod = 0,
-        .LED2_Ch = PORT_CHANNEL_B,       // Blue LED
-        .LED2_Bit = PORTS_BIT_POS_14,
-        .button_Mod = 0,
-        .button_Ch = PORT_CHANNEL_J,    // The only button
-        .button_Bit = PORTS_BIT_POS_14,
-        .LED1_Ind = {
-            .patterns = {
-                {0,0,0,0,0,0,0,0},  // LEDs off
-                {0,0,0,0,0,0,0,0},  // Error state
-                {0,0,1,1,0,0,1,1},  // Bat exhausted
-                {1,1,1,1,1,1,1,1},  // Plugged in
-                {0,1,1,1,1,1,1,1},  // Plugged in, power on
-                {0,1,0,1,1,1,1,1},  // Plugged in, power on, charging
-                {0,1,1,1,1,1,1,1},  // Plugged in, power on, streaming
-                {0,1,0,1,1,1,1,1},  // Plugged in, power on, charging, streaming
-                {1,0,0,0,0,0,0,0},  // Power on
-                {1,0,0,0,0,0,0,0},  // Power on, streaming
-                {1,0,1,0,0,0,0,0},  // Power on, batt low
-                {1,0,1,0,0,0,0,0},  // Power on, streaming, batt low
+    .AOutModules =
+    {
+        .Data =
+        {
+            {
+                .Type = AOut_DAC7718,
+                .Config = {
+                    .DAC7718 = {
+                        .SPI = {
+                            .spiID = 2,          // SPI2 as specified
+                            .baud = 10000000,    // 10 MHz SPI clock
+                            .clock = 1,
+                            .busClk_id = 2,
+                            .clockPolarity = 0,  // CPOL = 0 for DAC7718
+                            .busWidth = 8,       // 8-bit transfers
+                            .inSamplePhase = 1,  // CPHA = 1 for DAC7718
+                            .outDataPhase = 0,
+                        },
+                        .CS_Pin = DAC7718_CS_PIN,     // CS on RK0
+                        .RST_Pin = DAC7718_RST_PIN,   // CLR/RST on RJ13
+                        .DAC_Range = 0,               // Default range setting
+                        .Resolution = DAC7718_RESOLUTION,  // 12-bit DAC (4096 levels)
+                        .MinVoltage = 0.0,            // Unipolar: 0V minimum
+                        .MaxVoltage = 10.0,            // Maximum output voltage (software clamp)
+                        .HardwareFullScale = 10.0,    // 10V full scale (4x gain configuration)
+                    }
                 },
-            .period = {2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
+                .Size = DAC7718_NUM_CHANNELS  // DAC7718 has 8 channels
+            },
         },
-        
-        .LED2_Ind = {
-            .patterns = {
-                {0,0,0,0,0,0,0,0},  // LEDs off
-                {1,0,1,0,1,0,1,0},  // Error state
-                {1,1,0,0,1,1,0,0},  // Bat exhausted
-                {0,0,0,0,0,0,0,0},  // Plugged in
-                {0,0,0,0,0,0,0,0},  // Plugged in, power on
-                {0,0,0,0,0,0,0,0},  // Plugged in, power on, charging
-                {1,0,0,0,0,0,0,0},  // Plugged in, power on, streaming
-                {1,0,0,0,0,0,0,0},  // Plugged in, power on, charging, streaming
-                {0,0,0,0,0,0,0,0},  // Power on
-                {1,0,0,0,0,0,0,0},  // Power on, streaming
-                {0,0,0,0,0,0,0,0},  // Power on, batt low
-                {1,0,0,0,0,0,0,0},  // Power on, streaming, batt low
-                },
-            .period = {2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
+        .Size = 1
+    },
+    .AOutChannels = {
+        .Data = {
+            // DAC7718 channel mapping: User 0-7 → DAC 3,2,1,0,7,6,5,4
+            {
+                .DaqifiDacChannelId = 0,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 3}}
+            },
+            {
+                .DaqifiDacChannelId = 1,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 2}}
+            },
+            {
+                .DaqifiDacChannelId = 2,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 1}}
+            },
+            {
+                .DaqifiDacChannelId = 3,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 0}}
+            },
+            {
+                .DaqifiDacChannelId = 4,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 7}}
+            },
+            {
+                .DaqifiDacChannelId = 5,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 6}}
+            },
+            {
+                .DaqifiDacChannelId = 6,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 5}}
+            },
+            {
+                .DaqifiDacChannelId = 7,
+                .Type = AOut_DAC7718,
+                .Config = {.DAC7718 = {.ChannelNumber = 4}}
+            },
         },
+        .Size = 8
     },
-    .StreamingConfig = {
-        .TimerIndex = DRV_TMR_INDEX_1,
-        .TimerIntent = DRV_IO_INTENT_EXCLUSIVE,
-        .TSTimerIndex = DRV_TMR_INDEX_2,
-        .TSTimerIntent = DRV_IO_INTENT_EXCLUSIVE,
-    },
-    .csvChannelHeadersFirst = NQ2_CSV_CHANNEL_HEADERS_FIRST,
-    .csvChannelHeadersSubsequent = NQ2_CSV_CHANNEL_HEADERS_SUBSEQUENT
+    .PowerConfig = COMMON_POWER_CONFIG,
+    .UIConfig = COMMON_UI_CONFIG,
+    .StreamingConfig = COMMON_STREAMING_CONFIG,
+    .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
+    .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT
 };
-/*! This function is used for getting a board version 1 configuration parameter
+
+/*! This function is used for getting a board configuration parameter
  * @return Pointer to Board Configuration structure
  */
-const void *NQ2BoardConfig_Get( void )
+const void *NqBoardConfig_Get( void )
 {
-    return &NQ2BoardConfig; 
+    return &NQ2BoardConfig;
 }
