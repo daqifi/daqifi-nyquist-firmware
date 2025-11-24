@@ -1,25 +1,10 @@
 #include "BoardConfig.h"
 #include "CommonBoardPinDefs.h"
+#include "CommonBoardConfig.h"
 #include "CommonMonitoringChannels.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 
-// =============================================================================
-// CSV Column Headers (pre-computed in program memory for fast header generation)
-// =============================================================================
-// Board-specific column names - NQ1 uses "ain" prefix for analog inputs
-static const char* NQ1_CSV_CHANNEL_HEADERS_FIRST[] = {
-    "ain0_ts,ain0_val",   "ain1_ts,ain1_val",   "ain2_ts,ain2_val",   "ain3_ts,ain3_val",
-    "ain4_ts,ain4_val",   "ain5_ts,ain5_val",   "ain6_ts,ain6_val",   "ain7_ts,ain7_val",
-    "ain8_ts,ain8_val",   "ain9_ts,ain9_val",   "ain10_ts,ain10_val", "ain11_ts,ain11_val",
-    "ain12_ts,ain12_val", "ain13_ts,ain13_val", "ain14_ts,ain14_val", "ain15_ts,ain15_val"
-};
-
-static const char* NQ1_CSV_CHANNEL_HEADERS_SUBSEQUENT[] = {
-    ",ain0_ts,ain0_val",   ",ain1_ts,ain1_val",   ",ain2_ts,ain2_val",   ",ain3_ts,ain3_val",
-    ",ain4_ts,ain4_val",   ",ain5_ts,ain5_val",   ",ain6_ts,ain6_val",   ",ain7_ts,ain7_val",
-    ",ain8_ts,ain8_val",   ",ain9_ts,ain9_val",   ",ain10_ts,ain10_val", ",ain11_ts,ain11_val",
-    ",ain12_ts,ain12_val", ",ain13_ts,ain13_val", ",ain14_ts,ain14_val", ",ain15_ts,ain15_val"
-};
+// CSV column headers now in CommonBoardConfig.c
 
 
 // The board configuration
@@ -31,27 +16,7 @@ const tBoardConfig NQ1BoardConfig = {
     .BoardVariant = 1,
     .DIOChannels =
     {
-        .Data =
-        {
-#ifndef DIO_TIMING_TEST
-            { DIO_0_PORT, PORTS_BIT_POS_1, DIO_EN_0_PORT, PORTS_BIT_POS_2, false, true, 1, OUTPUT_PIN_RPD1},
-#endif
-            { DIO_1_PORT, PORTS_BIT_POS_3, DIO_EN_1_PORT, PORTS_BIT_POS_2, true, false, 0xFF},
-            { DIO_2_PORT, PORTS_BIT_POS_3, DIO_EN_2_PORT, PORTS_BIT_POS_13, true, false, 0xFF},
-            { DIO_3_PORT, PORTS_BIT_POS_12, DIO_EN_3_PORT, PORTS_BIT_POS_0, false, true, 8, OUTPUT_PIN_RPD12},
-            { DIO_4_PORT, PORTS_BIT_POS_0, DIO_EN_4_PORT, PORTS_BIT_POS_7, true, true, 4, OUTPUT_PIN_RPF0},
-            { DIO_5_PORT, PORTS_BIT_POS_1, DIO_EN_5_PORT, PORTS_BIT_POS_7, false, true, 6, OUTPUT_PIN_RPF1},
-            { DIO_6_PORT, PORTS_BIT_POS_0, DIO_EN_6_PORT, PORTS_BIT_POS_4, true, true, 7, OUTPUT_PIN_RPG0},
-            { DIO_7_PORT, PORTS_BIT_POS_1, DIO_EN_7_PORT, PORTS_BIT_POS_5, false, true, 3, OUTPUT_PIN_RPG1},
-            { DIO_8_PORT, PORTS_BIT_POS_6, DIO_EN_8_PORT, PORTS_BIT_POS_7, false, false, 0xFF},
-            { DIO_9_PORT, PORTS_BIT_POS_1, DIO_EN_9_PORT, PORTS_BIT_POS_0, true, false, 0xFF},
-            { DIO_10_PORT, PORTS_BIT_POS_4, DIO_EN_10_PORT, PORTS_BIT_POS_15, false, false, 0xFF},
-            { DIO_11_PORT, PORTS_BIT_POS_2, DIO_EN_11_PORT, PORTS_BIT_POS_10, true, false, 0xFF},
-            { DIO_12_PORT, PORTS_BIT_POS_3, DIO_EN_12_PORT, PORTS_BIT_POS_2, true, false, 0xFF},
-            { DIO_13_PORT, PORTS_BIT_POS_6, DIO_EN_13_PORT, PORTS_BIT_POS_7, false, false, 0xFF},
-            { DIO_14_PORT, PORTS_BIT_POS_5, DIO_EN_14_PORT, PORTS_BIT_POS_5, true, false, 0xFF},
-            { DIO_15_PORT, PORTS_BIT_POS_1, DIO_EN_15_PORT, PORTS_BIT_POS_12, false, false, 0xFF},
-        },
+        .Data = COMMON_DIO_CHANNELS_CONFIG_DATA,
 #ifdef DIO_TIMING_TEST
         .Size = 15,
 #else
@@ -281,8 +246,8 @@ const tBoardConfig NQ1BoardConfig = {
         .TimerIndex = TMR_INDEX_4,
         .TSTimerIndex = TMR_INDEX_6,
     },
-    .csvChannelHeadersFirst = NQ1_CSV_CHANNEL_HEADERS_FIRST,
-    .csvChannelHeadersSubsequent = NQ1_CSV_CHANNEL_HEADERS_SUBSEQUENT
+    .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
+    .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT
 };
 
 /*! This function is used for getting a board configuration parameter

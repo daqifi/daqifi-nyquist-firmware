@@ -997,6 +997,7 @@
           <itemPath>../src/state/board/NQ1BoardConfig.c</itemPath>
           <itemPath>../src/state/board/NQ2BoardConfig.c</itemPath>
           <itemPath>../src/state/board/NQ3BoardConfig.c</itemPath>
+          <itemPath>../src/state/board/CommonBoardConfig.c</itemPath>
         </logicalFolder>
         <logicalFolder name="data" displayName="data" projectFiles="true">
           <itemPath>../src/state/data/AInSample.c</itemPath>
