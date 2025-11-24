@@ -40,24 +40,24 @@ extern const char* COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16];
  *       include the section with the #ifdef DIO_TIMING_TEST conditional.
  */
 #define COMMON_DIO_CHANNELS_CONFIG_DATA \
-    { \
-        { .Port = DIO_0_PORT, .BitPos = PORTS_BIT_POS_1, .EnPort = DIO_EN_0_PORT, .EnBitPos = PORTS_BIT_POS_2, .IsInputCapable = false, .HasPwm = true, .PwmIndex = 1, .PpsOutput = OUTPUT_PIN_RPD1 }, \
-        { .Port = DIO_1_PORT, .BitPos = PORTS_BIT_POS_3, .EnPort = DIO_EN_1_PORT, .EnBitPos = PORTS_BIT_POS_2, .IsInputCapable = true,  .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_2_PORT, .BitPos = PORTS_BIT_POS_3, .EnPort = DIO_EN_2_PORT, .EnBitPos = PORTS_BIT_POS_13, .IsInputCapable = true, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_3_PORT, .BitPos = PORTS_BIT_POS_12, .EnPort = DIO_EN_3_PORT, .EnBitPos = PORTS_BIT_POS_0, .IsInputCapable = false, .HasPwm = true, .PwmIndex = 8, .PpsOutput = OUTPUT_PIN_RPD12 }, \
-        { .Port = DIO_4_PORT, .BitPos = PORTS_BIT_POS_0, .EnPort = DIO_EN_4_PORT, .EnBitPos = PORTS_BIT_POS_7, .IsInputCapable = true, .HasPwm = true, .PwmIndex = 4, .PpsOutput = OUTPUT_PIN_RPF0 }, \
-        { .Port = DIO_5_PORT, .BitPos = PORTS_BIT_POS_1, .EnPort = DIO_EN_5_PORT, .EnBitPos = PORTS_BIT_POS_7, .IsInputCapable = false, .HasPwm = true, .PwmIndex = 6, .PpsOutput = OUTPUT_PIN_RPF1 }, \
-        { .Port = DIO_6_PORT, .BitPos = PORTS_BIT_POS_0, .EnPort = DIO_EN_6_PORT, .EnBitPos = PORTS_BIT_POS_4, .IsInputCapable = true, .HasPwm = true, .PwmIndex = 7, .PpsOutput = OUTPUT_PIN_RPG0 }, \
-        { .Port = DIO_7_PORT, .BitPos = PORTS_BIT_POS_1, .EnPort = DIO_EN_7_PORT, .EnBitPos = PORTS_BIT_POS_5, .IsInputCapable = false, .HasPwm = true, .PwmIndex = 3, .PpsOutput = OUTPUT_PIN_RPG1 }, \
-        { .Port = DIO_8_PORT, .BitPos = PORTS_BIT_POS_6, .EnPort = DIO_EN_8_PORT, .EnBitPos = PORTS_BIT_POS_7, .IsInputCapable = false, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_9_PORT, .BitPos = PORTS_BIT_POS_1, .EnPort = DIO_EN_9_PORT, .EnBitPos = PORTS_BIT_POS_0, .IsInputCapable = true, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_10_PORT, .BitPos = PORTS_BIT_POS_4, .EnPort = DIO_EN_10_PORT, .EnBitPos = PORTS_BIT_POS_15, .IsInputCapable = false, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_11_PORT, .BitPos = PORTS_BIT_POS_2, .EnPort = DIO_EN_11_PORT, .EnBitPos = PORTS_BIT_POS_10, .IsInputCapable = true, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_12_PORT, .BitPos = PORTS_BIT_POS_3, .EnPort = DIO_EN_12_PORT, .EnBitPos = PORTS_BIT_POS_2, .IsInputCapable = true, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_13_PORT, .BitPos = PORTS_BIT_POS_6, .EnPort = DIO_EN_13_PORT, .EnBitPos = PORTS_BIT_POS_7, .IsInputCapable = false, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_14_PORT, .BitPos = PORTS_BIT_POS_5, .EnPort = DIO_EN_14_PORT, .EnBitPos = PORTS_BIT_POS_5, .IsInputCapable = true, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-        { .Port = DIO_15_PORT, .BitPos = PORTS_BIT_POS_1, .EnPort = DIO_EN_15_PORT, .EnBitPos = PORTS_BIT_POS_12, .IsInputCapable = false, .HasPwm = false, .PwmIndex = 0xFF, .PpsOutput = (PORTS_REMAP_OUTPUT_PIN)0xFF }, \
-    }
+        { \
+            { DIO_0_PORT, PORTS_BIT_POS_1, DIO_EN_0_PORT, PORTS_BIT_POS_2, false, true, 1, OUTPUT_PIN_RPD1}, \
+            { DIO_1_PORT, PORTS_BIT_POS_3, DIO_EN_1_PORT, PORTS_BIT_POS_2, true, false, 0xFF}, \
+            { DIO_2_PORT, PORTS_BIT_POS_3, DIO_EN_2_PORT, PORTS_BIT_POS_13, true, false, 0xFF}, \
+            { DIO_3_PORT, PORTS_BIT_POS_12, DIO_EN_3_PORT, PORTS_BIT_POS_0, false, true, 8, OUTPUT_PIN_RPD12}, \
+            { DIO_4_PORT, PORTS_BIT_POS_0, DIO_EN_4_PORT, PORTS_BIT_POS_7, true, true, 4, OUTPUT_PIN_RPF0}, \
+            { DIO_5_PORT, PORTS_BIT_POS_1, DIO_EN_5_PORT, PORTS_BIT_POS_7, false, true, 6, OUTPUT_PIN_RPF1}, \
+            { DIO_6_PORT, PORTS_BIT_POS_0, DIO_EN_6_PORT, PORTS_BIT_POS_4, true, true, 7, OUTPUT_PIN_RPG0}, \
+            { DIO_7_PORT, PORTS_BIT_POS_1, DIO_EN_7_PORT, PORTS_BIT_POS_5, false, true, 3, OUTPUT_PIN_RPG1}, \
+            { DIO_8_PORT, PORTS_BIT_POS_6, DIO_EN_8_PORT, PORTS_BIT_POS_7, false, false, 0xFF}, \
+            { DIO_9_PORT, PORTS_BIT_POS_1, DIO_EN_9_PORT, PORTS_BIT_POS_0, true, false, 0xFF}, \
+            { DIO_10_PORT, PORTS_BIT_POS_4, DIO_EN_10_PORT, PORTS_BIT_POS_15, false, false, 0xFF}, \
+            { DIO_11_PORT, PORTS_BIT_POS_2, DIO_EN_11_PORT, PORTS_BIT_POS_10, true, false, 0xFF}, \
+            { DIO_12_PORT, PORTS_BIT_POS_3, DIO_EN_12_PORT, PORTS_BIT_POS_2, true, false, 0xFF}, \
+            { DIO_13_PORT, PORTS_BIT_POS_6, DIO_EN_13_PORT, PORTS_BIT_POS_7, false, false, 0xFF}, \
+            { DIO_14_PORT, PORTS_BIT_POS_5, DIO_EN_14_PORT, PORTS_BIT_POS_5, true, false, 0xFF}, \
+            { DIO_15_PORT, PORTS_BIT_POS_1, DIO_EN_15_PORT, PORTS_BIT_POS_12, false, false, 0xFF}, \
+        }
 
 // =============================================================================
 // Common PowerConfig, UIConfig (NQ1 LED patterns), StreamingConfig
