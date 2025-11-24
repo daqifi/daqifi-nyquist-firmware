@@ -2104,7 +2104,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ1BoardConfig.c" ex="false" overriding="false">
+      <item path="../src/state/board/NQ1BoardConfig.c" ex="true" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2152,7 +2152,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ3BoardConfig.c" ex="true" overriding="false">
+      <item path="../src/state/board/NQ3BoardConfig.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2337,7 +2337,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ1RuntimeDefaults.c"
-            ex="false"
+            ex="true"
             overriding="false">
         <C32>
         </C32>
@@ -2373,7 +2373,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ3RuntimeDefaults.c"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>

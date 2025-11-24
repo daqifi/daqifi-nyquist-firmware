@@ -31,10 +31,13 @@ extern const char* COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16];
 // =============================================================================
 
 /**
- * DIO channels configuration - identical across all board variants.
+ * DIO channels configuration data - identical across all board variants.
  * 16 channels with same port mappings, bit positions, and PPS assignments.
  *
  * NOTE: DIO_0 has conditional compilation for DIO_TIMING_TEST mode.
+ * NOTE: The .DIOChannels section (with .Size field) cannot be fully extracted
+ *       to a macro due to #ifdef preprocessor limitations. Each variant must
+ *       include the section with the #ifdef DIO_TIMING_TEST conditional.
  */
 #define COMMON_DIO_CHANNELS_CONFIG_DATA \
         { \
@@ -55,6 +58,39 @@ extern const char* COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16];
             { DIO_14_PORT, PORTS_BIT_POS_5, DIO_EN_14_PORT, PORTS_BIT_POS_5, true, false, 0xFF}, \
             { DIO_15_PORT, PORTS_BIT_POS_1, DIO_EN_15_PORT, PORTS_BIT_POS_12, false, false, 0xFF}, \
         }
+
+// =============================================================================
+// Common PowerConfig, UIConfig (NQ1 LED patterns), StreamingConfig
+// =============================================================================
+
+#define COMMON_POWER_CONFIG { \
+    .EN_Vref_Ch = PWR_VREF_EN_PORT, .EN_Vref_Bit = PORTS_BIT_POS_15, \
+    .EN_3_3V_Ch = PWR_3_3V_EN_PORT, .EN_3_3V_Bit = PORTS_BIT_POS_12, \
+    .EN_5_10V_Ch = PWR_5V_EN_PORT, .EN_5_10V_Bit = PORTS_BIT_POS_0, \
+    .EN_12V_Ch = PWR_12V_EN_PORT, .EN_12V_Bit = PORTS_BIT_POS_15, \
+    .USB_Dp_Ch = USB_DP_MON_PORT, .USB_Dp_Bit = PORTS_BIT_POS_9, \
+    .USB_Dn_Ch = USB_DN_MON_PORT, .USB_Dn_Bit = PORTS_BIT_POS_10, \
+    .BQ24297Config = { \
+        .INT_Ch = BATT_MAN_INT_PORT, .INT_Bit = PORTS_BIT_POS_4, \
+        .OTG_Ch = BATT_MAN_OTG_PORT, .OTG_Bit = PORTS_BIT_POS_5, \
+        .STAT_Ch = BATT_MAN_STAT_PORT, .STAT_Bit = PORTS_BIT_POS_11, \
+        .I2C_Index = DRV_I2C_INDEX_0, .I2C_Address = 0xD6>>1, \
+    }, \
+}
+
+#define COMMON_UI_CONFIG { \
+    .LED1_Pin = LED_WHITE_PIN, .LED2_Pin = LED_BLUE_PIN, .button_Pin = BUTTON_PIN, \
+    .LED1_Ind = { \
+        .patterns = {{0,0,0,0,0,0,0,0},{0,0,0,0,0,0,0,0},{0,0,1,1,0,0,1,1},{0,0,0,0,0,0,0,0},{1,1,1,1,1,1,1,1},{0,1,1,1,1,1,1,1},{1,1,1,1,1,1,1,1},{0,1,1,1,1,1,1,1},{1,0,0,0,0,0,0,0},{1,0,0,0,0,0,0,0},{1,0,1,0,0,0,0,0},{1,0,1,0,0,0,0,0}}, \
+        .period = {2,0,2,2,2,2,2,2,2,2,2,2}, \
+    }, \
+    .LED2_Ind = { \
+        .patterns = {{0,0,0,0,0,0,0,0},{1,0,1,0,1,0,1,0},{1,1,0,0,1,1,0,0},{0,0,0,0,0,0,0,0},{0,0,0,0,0,0,0,0},{0,0,0,0,0,0,0,0},{1,0,0,0,0,0,0,0},{1,0,0,0,0,0,0,0},{0,0,0,0,0,0,0,0},{1,0,0,0,0,0,0,0},{0,0,0,0,0,0,0,0},{1,0,0,0,0,0,0,0}}, \
+        .period = {2,1,2,2,2,2,2,2,2,2,2,2}, \
+    }, \
+}
+
+#define COMMON_STREAMING_CONFIG {.TimerIndex = TMR_INDEX_4, .TSTimerIndex = TMR_INDEX_6}
 
 #ifdef __cplusplus
 }
