@@ -22,9 +22,10 @@ extern "C" {
 /**
  * Common CSV column headers for analog input channels.
  * All variants use 16 channels with "ain" prefix and timestamp,value pairs.
+ * const char* const = immutable pointer to immutable string
  */
-extern const char* COMMON_CSV_CHANNEL_HEADERS_FIRST[16];
-extern const char* COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16];
+extern const char* const COMMON_CSV_CHANNEL_HEADERS_FIRST[16];
+extern const char* const COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16];
 
 // =============================================================================
 // Common DIO Channels Configuration Macro

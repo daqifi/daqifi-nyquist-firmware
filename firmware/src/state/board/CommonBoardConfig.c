@@ -15,8 +15,9 @@
 /**
  * CSV column headers for first channel in a row (no leading comma).
  * All variants use 16 analog input channels with "ain" prefix.
+ * const char* const = immutable pointer to immutable string
  */
-const char* COMMON_CSV_CHANNEL_HEADERS_FIRST[16] = {
+const char* const COMMON_CSV_CHANNEL_HEADERS_FIRST[16] = {
     "ain0_ts,ain0_val",   "ain1_ts,ain1_val",   "ain2_ts,ain2_val",   "ain3_ts,ain3_val",
     "ain4_ts,ain4_val",   "ain5_ts,ain5_val",   "ain6_ts,ain6_val",   "ain7_ts,ain7_val",
     "ain8_ts,ain8_val",   "ain9_ts,ain9_val",   "ain10_ts,ain10_val", "ain11_ts,ain11_val",
@@ -26,8 +27,9 @@ const char* COMMON_CSV_CHANNEL_HEADERS_FIRST[16] = {
 /**
  * CSV column headers for subsequent channels in a row (with leading comma).
  * All variants use 16 analog input channels with "ain" prefix.
+ * const char* const = immutable pointer to immutable string
  */
-const char* COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16] = {
+const char* const COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16] = {
     ",ain0_ts,ain0_val",   ",ain1_ts,ain1_val",   ",ain2_ts,ain2_val",   ",ain3_ts,ain3_val",
     ",ain4_ts,ain4_val",   ",ain5_ts,ain5_val",   ",ain6_ts,ain6_val",   ",ain7_ts,ain7_val",
     ",ain8_ts,ain8_val",   ",ain9_ts,ain9_val",   ",ain10_ts,ain10_val", ",ain11_ts,ain11_val",
