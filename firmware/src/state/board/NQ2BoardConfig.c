@@ -2,6 +2,7 @@
 #include "CommonBoardPinDefs.h"
 #include "CommonBoardConfig.h"
 #include "CommonMonitoringChannels.h"
+#include "SPIConfigEnums.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../../HAL/DAC7718/DAC7718.h"
 
@@ -45,14 +46,14 @@ const tBoardConfig NQ2BoardConfig = {
                 .Config = {
                     .AD7173 = {
                         .SPI = {
-                            .spiID = 6,  // SPI6 configured in MCC
+                            .spiID = HAL_SPI_ID_6,  // SPI6 configured in MCC
                             .baud = 15000000,
-                            .clock = 1,
-                            .busClk_id = 2,
-                            .clockPolarity = 1,
-                            .busWidth = 8,
-                            .inSamplePhase = 1,
-                            .outDataPhase = 0,
+                            .clock = HAL_SPI_CLOCK_PBCLK,
+                            .busClk_id = HAL_CLK_BUS_PERIPHERAL_2,
+                            .clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_HIGH,
+                            .busWidth = HAL_SPI_WIDTH_8BITS,
+                            .inSamplePhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE,
+                            .outDataPhase = HAL_SPI_OUTPUT_PHASE_IDLE_TO_ACTIVE,
                         },
                         .CS_Pin = GPIO_PIN_RB3,
                         .ERR_Pin = GPIO_PIN_RB2,
@@ -163,14 +164,14 @@ const tBoardConfig NQ2BoardConfig = {
                 .Config = {
                     .DAC7718 = {
                         .SPI = {
-                            .spiID = 2,          // SPI2 as specified
-                            .baud = 10000000,    // 10 MHz SPI clock
-                            .clock = 1,
-                            .busClk_id = 2,
-                            .clockPolarity = 0,  // CPOL = 0 for DAC7718
-                            .busWidth = 8,       // 8-bit transfers
-                            .inSamplePhase = 1,  // CPHA = 1 for DAC7718
-                            .outDataPhase = 0,
+                            .spiID = HAL_SPI_ID_2,          // SPI2 as specified
+                            .baud = 10000000,               // 10 MHz SPI clock
+                            .clock = HAL_SPI_CLOCK_PBCLK,
+                            .busClk_id = HAL_CLK_BUS_PERIPHERAL_2,
+                            .clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_LOW,  // CPOL = 0 for DAC7718
+                            .busWidth = HAL_SPI_WIDTH_8BITS,                   // 8-bit transfers
+                            .inSamplePhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE,  // CPHA = 1 for DAC7718
+                            .outDataPhase = HAL_SPI_OUTPUT_PHASE_IDLE_TO_ACTIVE,
                         },
                         .CS_Pin = DAC7718_CS_PIN,     // CS on RK0
                         .RST_Pin = DAC7718_RST_PIN,   // CLR/RST on RJ13
