@@ -50,9 +50,9 @@ const tBoardConfig NQ2BoardConfig = {
                             .baud = 15000000,
                             .clock = HAL_SPI_CLOCK_PBCLK,
                             .busClk_id = HAL_CLK_BUS_PERIPHERAL_2,
-                            .clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_HIGH,
+                            .clockPolarity = HAL_SPI_CLOCK_POLARITY_IDLE_HIGH,
                             .busWidth = HAL_SPI_WIDTH_8BITS,
-                            .inSamplePhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE,
+                            .inSamplePhase = HAL_SPI_CLOCK_PHASE_LEADING_EDGE,
                             .outDataPhase = HAL_SPI_OUTPUT_PHASE_IDLE_TO_ACTIVE,
                         },
                         .CS_Pin = GPIO_PIN_RB3,
@@ -168,9 +168,9 @@ const tBoardConfig NQ2BoardConfig = {
                             .baud = 10000000,               // 10 MHz SPI clock
                             .clock = HAL_SPI_CLOCK_PBCLK,
                             .busClk_id = HAL_CLK_BUS_PERIPHERAL_2,
-                            .clockPolarity = DRV_SPI_CLOCK_POLARITY_IDLE_LOW,  // CPOL = 0 for DAC7718
+                            .clockPolarity = HAL_SPI_CLOCK_POLARITY_IDLE_LOW,  // CPOL = 0 for DAC7718
                             .busWidth = HAL_SPI_WIDTH_8BITS,                   // 8-bit transfers
-                            .inSamplePhase = DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE,  // CPHA = 1 for DAC7718
+                            .inSamplePhase = HAL_SPI_CLOCK_PHASE_LEADING_EDGE,  // CPHA = 1 for DAC7718
                             .outDataPhase = HAL_SPI_OUTPUT_PHASE_IDLE_TO_ACTIVE,
                         },
                         .CS_Pin = DAC7718_CS_PIN,     // CS on RK0

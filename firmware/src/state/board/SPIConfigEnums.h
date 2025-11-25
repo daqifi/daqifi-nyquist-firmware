@@ -3,8 +3,8 @@
  * @brief SPI configuration enums for DAQiFi HAL abstraction layer
  *
  * Provides symbolic constants for SPI peripheral configuration.
- * Uses Harmony v3 driver enums where applicable, with custom enums
- * for HAL-specific fields not covered by Harmony.
+ * All constants use HAL_ prefix for consistency. Where Harmony v3
+ * provides equivalent enums, we alias them; otherwise we define custom values.
  */
 
 #ifndef SPI_CONFIG_ENUMS_H
@@ -50,7 +50,22 @@ typedef enum {
 } HAL_CLK_BUS_ID;
 
 // =============================================================================
+// SPI Clock Polarity (aliased from Harmony v3 for consistency)
+// =============================================================================
+
+#define HAL_SPI_CLOCK_POLARITY_IDLE_LOW   DRV_SPI_CLOCK_POLARITY_IDLE_LOW   // = 0
+#define HAL_SPI_CLOCK_POLARITY_IDLE_HIGH  DRV_SPI_CLOCK_POLARITY_IDLE_HIGH  // = 1
+
+// =============================================================================
+// SPI Clock Phase / Input Sampling (aliased from Harmony v3 for consistency)
+// =============================================================================
+
+#define HAL_SPI_CLOCK_PHASE_TRAILING_EDGE  DRV_SPI_CLOCK_PHASE_VALID_TRAILING_EDGE  // = 0
+#define HAL_SPI_CLOCK_PHASE_LEADING_EDGE   DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE   // = 1
+
+// =============================================================================
 // SPI Data Width (custom - number of bits per transfer)
+// Note: Our HAL uses actual bit count (8, 16, 32), not Harmony's index values
 // =============================================================================
 
 typedef enum {
@@ -67,13 +82,6 @@ typedef enum {
     HAL_SPI_OUTPUT_PHASE_IDLE_TO_ACTIVE = 0,  // Data changes on idle-to-active clock transition
     HAL_SPI_OUTPUT_PHASE_ACTIVE_TO_IDLE = 1,  // Data changes on active-to-idle clock transition
 } HAL_SPI_OUTPUT_PHASE;
-
-// =============================================================================
-// Use Harmony v3 enums directly (already defined in drv_spi_definitions.h)
-// =============================================================================
-
-// Clock Polarity: DRV_SPI_CLOCK_POLARITY_IDLE_LOW (0), DRV_SPI_CLOCK_POLARITY_IDLE_HIGH (1)
-// Input Sampling Phase: DRV_SPI_CLOCK_PHASE_VALID_TRAILING_EDGE (0), DRV_SPI_CLOCK_PHASE_VALID_LEADING_EDGE (1)
 
 #ifdef __cplusplus
 }
