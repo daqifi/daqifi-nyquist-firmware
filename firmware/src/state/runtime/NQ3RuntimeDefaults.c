@@ -1,12 +1,6 @@
 #include "BoardRuntimeConfig.h"
-#include "HAL/BQ24297/BQ24297.h"
-#include "services/sd_card_services/sd_card_manager.h"
-#include <string.h>  // For strlen
-
-// Compile-time assertions to ensure WiFi string constants fit within their buffers
-_Static_assert(sizeof(DEFAULT_WIFI_AP_SSID) <= WDRV_WINC_MAX_SSID_LEN + 1, "WiFi SSID too long");
-_Static_assert(sizeof(DEFAULT_WIFI_WPA_PSK_PASSKEY) <= WDRV_WINC_PSK_LEN + 1, "WiFi passkey too long");
-_Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN + 1, "Hostname too long");
+#include "CommonRuntimeDefaults.h"
+#include "../board/CommonMonitoringChannels.h"
 
 /**
  * Default WiFi Configuration for NQ3 Board:
@@ -18,28 +12,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
  * This configuration is used when no WiFi settings are stored in NVM.
  */
 const tBoardRuntimeConfig g_NQ3BoardRuntimeConfig = {
-    .DIOChannels = {
-        .Data = {
-            {.IsInput = true, .IsReadOnly = false, .Value = false,.IsPwmActive=false,.PwmFrequency=0,.PwmDutyCycle=0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-            {true, false, false,false,0,0},
-        },
-        .Size = 16,
-    },
-    .DIOGlobalEnable = false,
+    COMMON_DIO_RUNTIME_DEFAULTS,
     .AInModules =
     {
         .Data =
@@ -62,15 +35,8 @@ const tBoardRuntimeConfig g_NQ3BoardRuntimeConfig = {
             {false, false, 0, 1, 0},
             {false, false, 0, 1, 0},
             {false, false, 0, 1, 0},
-            // Internal monitoring channels (MC12bADC) - always enabled at 1Hz for system health
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_3_3V - 1Hz monitoring
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_2_5VREF - 1Hz monitoring  
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_VBATT - 1Hz monitoring
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_5V - 1Hz monitoring
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_10V - 1Hz monitoring
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_TEMP - 1Hz monitoring
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_5VREF - 1Hz monitoring
-            {true, false, 1, 1, 0}, // ADC_CHANNEL_VSYS - 1Hz monitoring
+            // Internal monitoring channels (from CommonMonitoringChannels.h)
+            COMMON_MONITORING_CHANNELS_RUNTIME
         },
         .Size = 16,
     },
@@ -90,52 +56,11 @@ const tBoardRuntimeConfig g_NQ3BoardRuntimeConfig = {
         },
         .Size = 8,
     },
-    .PowerWriteVars = {
-       .EN_3_3V_Val = true,     // 3.3V rail on
-       .EN_5_10V_Val = false,   // 5V rail off initially
-       .EN_12V_Val = true,      // 12V rail on (NQ3 supports 12V)
-       .EN_Vref_Val = false,    // Vref rail off initially
-       .BQ24297WriteVars.OTG_Val = true, // OTG mode for battery operation
-    },
-    .UIWriteVars = {
-        .LED1 = false,
-        .LED2 = false,
-    },
-    .StreamingConfig = {
-        .IsEnabled = false,
-        .Running = false,
-        .ClockPeriod = 130,   // default 3k hz (15khz is the max)
-        .Frequency = 30000,   // Default 30kHz (limited by active channel count in SCPI)
-        .ChannelScanFreqDiv = 3, //max channel scan frequency should be 1000 hz
-        .Encoding = Streaming_ProtoBuffer,
-        .TSClockPeriod = 0xFFFFFFFF,   // maximum
-        .ActiveInterface = StreamingInterface_USB,  // Default: stream to single interface (USB)
-    },
-    .wifiSettings = {
-        .isEnabled = true,
-        .isOtaModeEnabled = false,
-        .networkMode = DEFAULT_WIFI_NETWORK_MODE,
-        .securityMode = DEFAULT_WIFI_AP_SECURITY_MODE,
-        .ssid = DEFAULT_WIFI_AP_SSID,
-        .passKey = DEFAULT_WIFI_WPA_PSK_PASSKEY,
-        .passKeyLength = strlen(DEFAULT_WIFI_WPA_PSK_PASSKEY),  // Safer than sizeof
-        .hostName = DEFAULT_NETWORK_HOST_NAME,
-        .tcpPort = DEFAULT_TCP_PORT,
-        .rssi_percent = 0,                // Signal strength (not applicable for AP mode)
-        .macAddr = {{0}},                 // Will be populated from hardware
-        .ipAddr = {.Val = 0},            // DHCP/automatic configuration
-        .ipMask = {.Val = 0},            // DHCP/automatic configuration
-        .gateway = {.Val = 0},           // DHCP/automatic configuration
-    },
-    //.usbSettings = {0},
-    //.serverData = {0},
-    .sdCardConfig={
-        .enable=false,
-        .directory="DAQiFi",
-        .file="default.bin",
-        .mode=SD_CARD_MANAGER_MODE_NONE,
-        .maxFileSizeBytes=SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE,  // 3.9GB (safe for FAT32's 4GB limit)
-    },
+    COMMON_POWER_RUNTIME_DEFAULTS,
+    COMMON_UI_RUNTIME_DEFAULTS,
+    COMMON_STREAMING_RUNTIME_DEFAULTS,
+    COMMON_WIFI_RUNTIME_DEFAULTS,
+    COMMON_SDCARD_RUNTIME_DEFAULTS,
 
 };
 

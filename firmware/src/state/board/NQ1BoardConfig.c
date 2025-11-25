@@ -1,163 +1,28 @@
 #include "BoardConfig.h"
-#include "../../config/default/peripheral/gpio/plib_gpio.h"
-#include "../../config/default/peripheral/gpio/pin_definitions.h"
+#include "CommonBoardPinDefs.h"
+#include "CommonBoardConfig.h"
+#include "CommonMonitoringChannels.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 
-// =============================================================================
-// CSV Column Headers (pre-computed in program memory for fast header generation)
-// =============================================================================
-// Board-specific column names - NQ1 uses "ain" prefix for analog inputs
-static const char* NQ1_CSV_CHANNEL_HEADERS_FIRST[] = {
-    "ain0_ts,ain0_val",   "ain1_ts,ain1_val",   "ain2_ts,ain2_val",   "ain3_ts,ain3_val",
-    "ain4_ts,ain4_val",   "ain5_ts,ain5_val",   "ain6_ts,ain6_val",   "ain7_ts,ain7_val",
-    "ain8_ts,ain8_val",   "ain9_ts,ain9_val",   "ain10_ts,ain10_val", "ain11_ts,ain11_val",
-    "ain12_ts,ain12_val", "ain13_ts,ain13_val", "ain14_ts,ain14_val", "ain15_ts,ain15_val"
-};
-
-static const char* NQ1_CSV_CHANNEL_HEADERS_SUBSEQUENT[] = {
-    ",ain0_ts,ain0_val",   ",ain1_ts,ain1_val",   ",ain2_ts,ain2_val",   ",ain3_ts,ain3_val",
-    ",ain4_ts,ain4_val",   ",ain5_ts,ain5_val",   ",ain6_ts,ain6_val",   ",ain7_ts,ain7_val",
-    ",ain8_ts,ain8_val",   ",ain9_ts,ain9_val",   ",ain10_ts,ain10_val", ",ain11_ts,ain11_val",
-    ",ain12_ts,ain12_val", ",ain13_ts,ain13_val", ",ain14_ts,ain14_val", ",ain15_ts,ain15_val"
-};
+// CSV column headers now in CommonBoardConfig.c
 
 
 // The board configuration
 // TODO: It would be handy if this was at a special place in memory so we could flash just the board config (vs recompiling the firmware w/ a different configuration)
-#define DIO_0_PORT GPIO_PORT_D
-#define DIO_1_PORT GPIO_PORT_J
-#define DIO_2_PORT GPIO_PORT_D
-#define DIO_3_PORT GPIO_PORT_D
-#define DIO_4_PORT GPIO_PORT_F
-#define DIO_5_PORT GPIO_PORT_F
-#define DIO_6_PORT GPIO_PORT_G
-#define DIO_7_PORT GPIO_PORT_G
-#define DIO_8_PORT GPIO_PORT_J
-#define DIO_9_PORT GPIO_PORT_E
-#define DIO_10_PORT GPIO_PORT_E
-#define DIO_11_PORT GPIO_PORT_C
-#define DIO_12_PORT GPIO_PORT_E
-#define DIO_13_PORT GPIO_PORT_E
-#define DIO_14_PORT GPIO_PORT_E
-#define DIO_15_PORT GPIO_PORT_C
 
-#define DIO_EN_0_PORT GPIO_PORT_D
-#define DIO_EN_1_PORT GPIO_PORT_J
-#define DIO_EN_2_PORT GPIO_PORT_D
-#define DIO_EN_3_PORT GPIO_PORT_J
-#define DIO_EN_4_PORT GPIO_PORT_D
-#define DIO_EN_5_PORT GPIO_PORT_K
-#define DIO_EN_6_PORT GPIO_PORT_J
-#define DIO_EN_7_PORT GPIO_PORT_J
-#define DIO_EN_8_PORT GPIO_PORT_J
-#define DIO_EN_9_PORT GPIO_PORT_E
-#define DIO_EN_10_PORT GPIO_PORT_G
-#define DIO_EN_11_PORT GPIO_PORT_J
-#define DIO_EN_12_PORT GPIO_PORT_E
-#define DIO_EN_13_PORT GPIO_PORT_E
-#define DIO_EN_14_PORT GPIO_PORT_A
-#define DIO_EN_15_PORT GPIO_PORT_J
-
-#define PWR_3_3V_EN_PORT GPIO_PORT_H
-#define PWR_VREF_EN_PORT GPIO_PORT_J
-#define PWR_5V_EN_PORT GPIO_PORT_D
-#define PWR_12V_EN_PORT GPIO_PORT_H
-#define USB_DP_MON_PORT GPIO_PORT_H
-#define USB_DN_MON_PORT GPIO_PORT_H
-#define BATT_MAN_INT_PORT GPIO_PORT_A
-#define BATT_MAN_OTG_PORT GPIO_PORT_K
-#define BATT_MAN_STAT_PORT GPIO_PORT_H
-#define LED_WHITE_PORT GPIO_PORT_C
-#define LED_BLUE_PORT GPIO_PORT_B
-#define BUTTON_PORT GPIO_PORT_J
-typedef enum {
-    OUTPUT_PIN_RPA14 = 0,
-    OUTPUT_PIN_RPA15 = 1,
-    OUTPUT_PIN_RPB0 = 2,
-    OUTPUT_PIN_RPB1 = 3,
-    OUTPUT_PIN_RPB2 = 4,
-    OUTPUT_PIN_RPB3 = 5,
-    OUTPUT_PIN_RPB5 = 7,
-    OUTPUT_PIN_RPB6 = 8,
-    OUTPUT_PIN_RPB7 = 9,
-    OUTPUT_PIN_RPB8 = 10,
-    OUTPUT_PIN_RPB9 = 11,
-    OUTPUT_PIN_RPB10 = 12,
-    OUTPUT_PIN_RPB14 = 16,
-    OUTPUT_PIN_RPB15 = 17,
-    OUTPUT_PIN_RPC1 = 19,
-    OUTPUT_PIN_RPC2 = 20,
-    OUTPUT_PIN_RPC3 = 21,
-    OUTPUT_PIN_RPC4 = 22,
-    OUTPUT_PIN_RPC13 = 31,
-    OUTPUT_PIN_RPC14 = 32,
-    OUTPUT_PIN_RPD0 = 34,
-    OUTPUT_PIN_RPD1 = 35,
-    OUTPUT_PIN_RPD2 = 36,
-    OUTPUT_PIN_RPD3 = 37,
-    OUTPUT_PIN_RPD4 = 38,
-    OUTPUT_PIN_RPD5 = 39,
-    OUTPUT_PIN_RPD6 = 40,
-    OUTPUT_PIN_RPD7 = 41,
-    OUTPUT_PIN_RPD9 = 43,
-    OUTPUT_PIN_RPD10 = 44,
-    OUTPUT_PIN_RPD11 = 45,
-    OUTPUT_PIN_RPD12 = 46,
-    OUTPUT_PIN_RPD14 = 48,
-    OUTPUT_PIN_RPD15 = 49,
-    OUTPUT_PIN_RPE3 = 53,
-    OUTPUT_PIN_RPE5 = 55,
-    OUTPUT_PIN_RPE8 = 58,
-    OUTPUT_PIN_RPE9 = 59,
-    OUTPUT_PIN_RPF0 = 66,
-    OUTPUT_PIN_RPF1 = 67,
-    OUTPUT_PIN_RPF2 = 68,
-    OUTPUT_PIN_RPF3 = 69,
-    OUTPUT_PIN_RPF4 = 70,
-    OUTPUT_PIN_RPF5 = 71,
-    OUTPUT_PIN_RPF8 = 74,
-    OUTPUT_PIN_RPF12 = 78,
-    OUTPUT_PIN_RPF13 = 79,
-    OUTPUT_PIN_RPG0 = 82,
-    OUTPUT_PIN_RPG1 = 83,
-    OUTPUT_PIN_RPG6 = 88,
-    OUTPUT_PIN_RPG7 = 89,
-    OUTPUT_PIN_RPG8 = 90,
-    OUTPUT_PIN_RPG9 = 91
-
-} PORTS_REMAP_OUTPUT_PIN;
+// Common port definitions and PORTS_REMAP_OUTPUT_PIN enum now in CommonBoardPinDefs.h
 
 const tBoardConfig NQ1BoardConfig = {
     .BoardVariant = 1,
+    // DIO channels - common config but can't extract #ifdef to macro
     .DIOChannels =
     {
-        .Data =
-        {
-#ifndef DIO_TIMING_TEST
-            { DIO_0_PORT, PORTS_BIT_POS_1, DIO_EN_0_PORT, PORTS_BIT_POS_2, false, true, 1, OUTPUT_PIN_RPD1},
-#endif
-            { DIO_1_PORT, PORTS_BIT_POS_3, DIO_EN_1_PORT, PORTS_BIT_POS_2, true, false, 0xFF},
-            { DIO_2_PORT, PORTS_BIT_POS_3, DIO_EN_2_PORT, PORTS_BIT_POS_13, true, false, 0xFF},
-            { DIO_3_PORT, PORTS_BIT_POS_12, DIO_EN_3_PORT, PORTS_BIT_POS_0, false, true, 8, OUTPUT_PIN_RPD12},
-            { DIO_4_PORT, PORTS_BIT_POS_0, DIO_EN_4_PORT, PORTS_BIT_POS_7, true, true, 4, OUTPUT_PIN_RPF0},
-            { DIO_5_PORT, PORTS_BIT_POS_1, DIO_EN_5_PORT, PORTS_BIT_POS_7, false, true, 6, OUTPUT_PIN_RPF1},
-            { DIO_6_PORT, PORTS_BIT_POS_0, DIO_EN_6_PORT, PORTS_BIT_POS_4, true, true, 7, OUTPUT_PIN_RPG0},
-            { DIO_7_PORT, PORTS_BIT_POS_1, DIO_EN_7_PORT, PORTS_BIT_POS_5, false, true, 3, OUTPUT_PIN_RPG1},
-            { DIO_8_PORT, PORTS_BIT_POS_6, DIO_EN_8_PORT, PORTS_BIT_POS_7, false, false, 0xFF},
-            { DIO_9_PORT, PORTS_BIT_POS_1, DIO_EN_9_PORT, PORTS_BIT_POS_0, true, false, 0xFF},
-            { DIO_10_PORT, PORTS_BIT_POS_4, DIO_EN_10_PORT, PORTS_BIT_POS_15, false, false, 0xFF},
-            { DIO_11_PORT, PORTS_BIT_POS_2, DIO_EN_11_PORT, PORTS_BIT_POS_10, true, false, 0xFF},
-            { DIO_12_PORT, PORTS_BIT_POS_3, DIO_EN_12_PORT, PORTS_BIT_POS_2, true, false, 0xFF},
-            { DIO_13_PORT, PORTS_BIT_POS_6, DIO_EN_13_PORT, PORTS_BIT_POS_7, false, false, 0xFF},
-            { DIO_14_PORT, PORTS_BIT_POS_5, DIO_EN_14_PORT, PORTS_BIT_POS_5, true, false, 0xFF},
-            { DIO_15_PORT, PORTS_BIT_POS_1, DIO_EN_15_PORT, PORTS_BIT_POS_12, false, false, 0xFF},
-        },
+        .Data = COMMON_DIO_CHANNELS_CONFIG_DATA,
 #ifdef DIO_TIMING_TEST
         .Size = 15,
 #else
         .Size = 16,
 #endif
-
     },
     .AInModules =
     {
@@ -295,150 +160,16 @@ const tBoardConfig NQ1BoardConfig = {
                     {false, ADCHS_CH8, ADCHS_MODULE7_MASK, 2, true, 1}}
             },
 
-            // ADC Channels for internal use
-            // TODO: It may make sense to put these in the power settings.
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_3_3V,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH19, ADCHS_MODULE7_MASK, 2, false, 1}} // +3.3V_Mon
-            },
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_2_5VREF,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH31, ADCHS_MODULE7_MASK, 2, false, 1}} // +2.5VRef_Mon
-            },
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_VBATT,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH30, ADCHS_MODULE7_MASK, 2, false, 1}} // Vbat_Mon
-            },
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_5V,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH42, ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // +5V_Prot_Mon
-            },
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_10V,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH32, ADCHS_MODULE7_MASK, 2, false, 3.905000000000}} // +10_Prot_Mon
-            },
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_TEMP,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH44, ADCHS_MODULE7_MASK, 2, false, 1}} // On board temperature sensor 5mV/degC 0->5V=-40degC
-            },
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_5VREF,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH29, ADCHS_MODULE7_MASK, 2, false, 2.16666666667}} // On board +5V ref (only on Nq2)
-            },
-            {
-                .DaqifiAdcChannelId = ADC_CHANNEL_VSYS,
-                .Type = AIn_MC12bADC,
-                .Config =
-                {.MC12b =
-                    {false, ADCHS_CH41, ADCHS_MODULE7_MASK, 2, false, 1.409090909091}} // Board system power
-            },
+            // Internal monitoring channels (from CommonMonitoringChannels.h)
+            COMMON_MONITORING_CHANNELS_BOARDCONFIG
         },
         .Size = 24
     },
-    .PowerConfig =
-    {
-        .EN_Vref_Ch = PWR_VREF_EN_PORT,
-        .EN_Vref_Bit = PORTS_BIT_POS_15,       // RJ15
-        .EN_3_3V_Ch = PWR_3_3V_EN_PORT,
-        .EN_3_3V_Bit = PORTS_BIT_POS_12,       // RH12
-        .EN_5_10V_Ch = PWR_5V_EN_PORT,
-        .EN_5_10V_Bit = PORTS_BIT_POS_0,       // RD0
-        .EN_12V_Ch = PWR_12V_EN_PORT,
-        .EN_12V_Bit = PORTS_BIT_POS_15,        // RH15
-        .USB_Dp_Ch = USB_DP_MON_PORT,
-        .USB_Dp_Bit = PORTS_BIT_POS_9,         // RH9
-        .USB_Dn_Ch = USB_DN_MON_PORT,
-        .USB_Dn_Bit = PORTS_BIT_POS_10,        // RH10
-        .BQ24297Config.INT_Ch = BATT_MAN_INT_PORT,
-        .BQ24297Config.INT_Bit = PORTS_BIT_POS_4,   // RA4
-        .BQ24297Config.OTG_Ch = BATT_MAN_OTG_PORT,
-        .BQ24297Config.OTG_Bit = PORTS_BIT_POS_5,   // RK5
-        .BQ24297Config.STAT_Ch = BATT_MAN_STAT_PORT,
-        .BQ24297Config.STAT_Bit = PORTS_BIT_POS_11, // RH11
-        .BQ24297Config.I2C_Index = DRV_I2C_INDEX_0,
-        .BQ24297Config.I2C_Address = 0xD6>>1, // Microchip libraries use an 8 bit address with 0 appended to the end of the 7 bit I2C address
-    },
-    .UIConfig =
-    {
-       
-        // White LED
-        .LED1_Pin = LED_WHITE_PIN,
-        
-        // Blue LED
-        .LED2_Pin = LED_BLUE_PIN,
-       
-        // The only button
-        .button_Pin = BUTTON_PIN,
-        .LED1_Ind =
-        {
-            .patterns =
-            {
-                {0, 0, 0, 0, 0, 0, 0, 0}, // LEDs off
-                {0, 0, 0, 0, 0, 0, 0, 0}, // Error state
-                {0, 0, 1, 1, 0, 0, 1, 1}, // Bat exhausted
-                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in
-                {1, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on
-                {0, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on, charging
-                {1, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on, streaming
-                {0, 1, 1, 1, 1, 1, 1, 1}, // Plugged in, power on, charging, streaming
-                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on
-                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on, streaming
-                {1, 0, 1, 0, 0, 0, 0, 0}, // Power on, batt low
-                {1, 0, 1, 0, 0, 0, 0, 0}, // Power on, streaming, batt low
-            },
-            .period =
-            {2, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
-        },
-
-        .LED2_Ind =
-        {
-            .patterns =
-            {
-                {0, 0, 0, 0, 0, 0, 0, 0}, // LEDs off
-                {1, 0, 1, 0, 1, 0, 1, 0}, // Error state
-                {1, 1, 0, 0, 1, 1, 0, 0}, // Bat exhausted
-                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in
-                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on
-                {0, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on, charging
-                {1, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on, streaming
-                {1, 0, 0, 0, 0, 0, 0, 0}, // Plugged in, power on, charging, streaming
-                {0, 0, 0, 0, 0, 0, 0, 0}, // Power on
-                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on, streaming
-                {0, 0, 0, 0, 0, 0, 0, 0}, // Power on, batt low
-                {1, 0, 0, 0, 0, 0, 0, 0}, // Power on, streaming, batt low
-            },
-            .period =
-            {2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
-        },
-    },
-    .StreamingConfig =
-    {
-        .TimerIndex = TMR_INDEX_4,
-        .TSTimerIndex = TMR_INDEX_6,
-    },
-    .csvChannelHeadersFirst = NQ1_CSV_CHANNEL_HEADERS_FIRST,
-    .csvChannelHeadersSubsequent = NQ1_CSV_CHANNEL_HEADERS_SUBSEQUENT
+    .PowerConfig = COMMON_POWER_CONFIG,
+    .UIConfig = COMMON_UI_CONFIG,
+    .StreamingConfig = COMMON_STREAMING_CONFIG,
+    .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
+    .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT
 };
 
 /*! This function is used for getting a board configuration parameter
