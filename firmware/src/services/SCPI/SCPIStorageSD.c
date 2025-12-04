@@ -65,7 +65,9 @@
 #define LAN_ACTIVE_ERROR_MSG "\r\nError !! Please Disable LAN\r\n"
 #define SD_CARD_NOT_ENABLED_ERROR_MSG "\r\nError !! Please Enabled SD Card\r\n"
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
-#define SD_CARD_BUSY_ERROR_MSG "\r\nError !! SD Card busy - stop streaming or wait for current operation\r\n"
+
+// Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency
+#define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy with current operation\r\n")
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -75,20 +77,25 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    // Simple enable/disable - no mutex blocking for concurrent operations
-    // SPI coordination handled at operation level, not enable level
+
     if (param1 != 0) {
-        // Don't check for SD card presence here - let the SD card manager task handle it
-        // This prevents blocking the SCPI handler if no card is present
+        // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = true;
     } else {
+        // Disable SD card - check if busy first to prevent data loss
+        if (sd_card_manager_IsBusy()) {
+            LOG_SD_BUSY("ENAble");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = false;
     }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-    result = SCPI_RES_OK;  
+    result = SCPI_RES_OK;
 __exit_point:
     return result;
 }
@@ -107,7 +114,7 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
 
     // Check if SD card is busy with another operation
     if (sd_card_manager_IsBusy()) {
-        LOG_E("SD:LOGging - SD card busy with current operation\r\n");
+        LOG_SD_BUSY("LOGging");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -151,7 +158,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
 
     // Check if SD card is busy with another operation
     if (sd_card_manager_IsBusy()) {
-        LOG_E("SD:GET - SD card busy with current operation\r\n");
+        LOG_SD_BUSY("GET");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -198,7 +205,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
 
     // Check if SD card is busy with another operation
     if (sd_card_manager_IsBusy()) {
-        LOG_E("SD:LIST? - SD card busy with current operation\r\n");
+        LOG_SD_BUSY("LISt");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -463,7 +470,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
 
     // Check if SD card is busy with another operation
     if (sd_card_manager_IsBusy()) {
-        LOG_E("SD:DELete - SD card busy with current operation\r\n");
+        LOG_SD_BUSY("DELete");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -528,7 +535,7 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
 
     // Check if SD card is busy with another operation
     if (sd_card_manager_IsBusy()) {
-        LOG_E("SD:FORmat - SD card busy with current operation\r\n");
+        LOG_SD_BUSY("FORmat");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;

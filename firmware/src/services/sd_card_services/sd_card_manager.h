@@ -169,16 +169,13 @@ extern "C" {
      * - Actively writing/logging to SD card
      * - Delete, format, list, or read operation is in progress
      *
+     * @note This function is not fully atomic - it checks mode and state separately.
+     *       This is acceptable for the intended use case (pre-operation check) where
+     *       occasional false negatives during state transitions are tolerable.
+     *
      * @return true if busy, false if available for new operations
      */
     bool sd_card_manager_IsBusy(void);
-
-    /**
-     * @brief Gets the current operation mode.
-     *
-     * @return Current sd_card_manager_mode_t value
-     */
-    sd_card_manager_mode_t sd_card_manager_GetCurrentMode(void);
 
     /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.

@@ -1062,6 +1062,11 @@ bool sd_card_manager_GetLastOperationResult(void) {
 }
 
 bool sd_card_manager_IsBusy(void) {
+    // Note: This function is not fully atomic (no mutex). The two checks below
+    // could see inconsistent state if modified by another task between them.
+    // This is acceptable for pre-operation checks where false negatives during
+    // brief state transitions are tolerable.
+
     // Busy if any operation mode is active (WRITE, READ, LIST, DELETE, FORMAT)
     // Mode is set when operation starts and cleared when complete
     if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
@@ -1079,9 +1084,6 @@ bool sd_card_manager_IsBusy(void) {
     }
 }
 
-sd_card_manager_mode_t sd_card_manager_GetCurrentMode(void) {
-    return gpSDCardSettings->mode;
-}
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {
     static bool logged = false;
