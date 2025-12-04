@@ -462,6 +462,13 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if the operation succeeded
+    if (!sd_card_manager_GetLastOperationResult()) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -494,6 +501,13 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
         LOG_E("SD:FORmat - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if the operation succeeded
+    if (!sd_card_manager_GetLastOperationResult()) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;

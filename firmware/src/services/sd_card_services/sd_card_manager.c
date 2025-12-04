@@ -93,6 +93,9 @@ typedef struct {
     uint32_t fileCounter;        // Current file number (1, 2, 3, ...)
     uint64_t currentFileBytes;   // Bytes written to current file
     bool fileSplittingEnabled;   // True if maxFileSizeBytes > 0
+
+    // Operation result tracking
+    bool lastOperationSuccess;   // Result of last completed operation
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -567,7 +570,10 @@ void sd_card_manager_ProcessState() {
                 // LIST mode doesn't need to open a file, just list the directory
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE) {
-                // DELETE mode - delete the specified file
+                // DELETE mode - construct file path and delete the specified file
+                snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
+                        gpSDCardSettings->directory, gpSDCardSettings->file);
+                LOG_D("[SD] Preparing to delete file: '%s'\r\n", gSDCardData.filePath);
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_FORMAT) {
                 // FORMAT mode - erase all files on SD card
@@ -888,6 +894,9 @@ void sd_card_manager_ProcessState() {
                 xSemaphoreGive(gSDOpMutex);
             }
 
+            gSDCardData.lastOperationSuccess = true;  // List always succeeds (may return empty)
+            // Reset mode to prevent re-triggering
+            gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
             // Signal completion
             xSemaphoreGive(gSDCardData.opCompleteSemaphore);
@@ -901,15 +910,15 @@ void sd_card_manager_ProcessState() {
             // Delete the file
             if (SYS_FS_FileDirectoryRemove(gSDCardData.filePath) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] File deleted successfully\r\n");
+                gSDCardData.lastOperationSuccess = true;
             } else {
                 SYS_FS_ERROR err = SYS_FS_Error();
                 LOG_E("[SD] Failed to delete file '%s', error=%d\r\n", gSDCardData.filePath, err);
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                // Signal completion even on error
-                xSemaphoreGive(gSDCardData.opCompleteSemaphore);
-                break;
+                gSDCardData.lastOperationSuccess = false;
             }
 
+            // Reset mode to prevent re-triggering
+            gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
             // Signal completion
             xSemaphoreGive(gSDCardData.opCompleteSemaphore);
@@ -932,15 +941,15 @@ void sd_card_manager_ProcessState() {
 
             if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] Format completed successfully\r\n");
+                gSDCardData.lastOperationSuccess = true;
             } else {
                 SYS_FS_ERROR err = SYS_FS_Error();
                 LOG_E("[SD] Format failed, error=%d\r\n", err);
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                // Signal completion even on error
-                xSemaphoreGive(gSDCardData.opCompleteSemaphore);
-                break;
+                gSDCardData.lastOperationSuccess = false;
             }
 
+            // Reset mode to prevent re-triggering
+            gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
             // Signal completion
             xSemaphoreGive(gSDCardData.opCompleteSemaphore);
@@ -1040,6 +1049,10 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
         LOG_E("[SD] WaitForCompletion timeout after %u ms\r\n", timeoutMs);
         return false;  // Timeout
     }
+}
+
+bool sd_card_manager_GetLastOperationResult(void) {
+    return gSDCardData.lastOperationSuccess;
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {

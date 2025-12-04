@@ -155,6 +155,13 @@ extern "C" {
     bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs);
 
     /**
+     * @brief Gets the result of the last completed operation.
+     *
+     * @return true if last operation succeeded, false if it failed
+     */
+    bool sd_card_manager_GetLastOperationResult(void);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received
