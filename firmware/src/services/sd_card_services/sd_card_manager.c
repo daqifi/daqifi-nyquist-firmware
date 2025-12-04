@@ -294,6 +294,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
         gSDCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSDCardData.wMutex);
         gSDCardData.opCompleteSemaphore = xSemaphoreCreateBinary();
+        gSDCardData.lastOperationSuccess = true;  // Initialize to success
 
         // Create operation mutex to serialize READ/WRITE/LIST on gSDSharedBuffer
         if (gSDOpMutex == NULL) {
@@ -571,8 +572,13 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE) {
                 // DELETE mode - construct file path and delete the specified file
-                snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
-                        gpSDCardSettings->directory, gpSDCardSettings->file);
+                // Strip trailing slash from directory to avoid double slashes
+                size_t dirLen = strlen(gpSDCardSettings->directory);
+                while (dirLen > 0 && gpSDCardSettings->directory[dirLen - 1] == '/') {
+                    dirLen--;
+                }
+                snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%.*s/%s",
+                        (int)dirLen, gpSDCardSettings->directory, gpSDCardSettings->file);
                 LOG_D("[SD] Preparing to delete file: '%s'\r\n", gSDCardData.filePath);
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_FORMAT) {
