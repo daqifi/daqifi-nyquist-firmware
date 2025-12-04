@@ -1055,6 +1055,28 @@ bool sd_card_manager_GetLastOperationResult(void) {
     return gSDCardData.lastOperationSuccess;
 }
 
+bool sd_card_manager_IsBusy(void) {
+    // Busy if any operation mode is active (WRITE, READ, LIST, DELETE, FORMAT)
+    // Mode is set when operation starts and cleared when complete
+    if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
+        return true;
+    }
+
+    // Also check state machine for transient states during initialization
+    switch (gSDCardData.currentProcessState) {
+        case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
+        case SD_CARD_MANAGER_PROCESS_STATE_INIT:
+        case SD_CARD_MANAGER_PROCESS_STATE_ERROR:
+            return false;
+        default:
+            return true;
+    }
+}
+
+sd_card_manager_mode_t sd_card_manager_GetCurrentMode(void) {
+    return gpSDCardSettings->mode;
+}
+
 size_t sd_card_manager_GetWriteBuffFreeSize() {
     static bool logged = false;
     if (!logged) {

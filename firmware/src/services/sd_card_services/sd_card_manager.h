@@ -162,6 +162,25 @@ extern "C" {
     bool sd_card_manager_GetLastOperationResult(void);
 
     /**
+     * @brief Checks if the SD card manager is busy with an active operation.
+     *
+     * This should be called before starting any new SD operation to prevent
+     * conflicts. Returns true if:
+     * - Actively writing/logging to SD card
+     * - Delete, format, list, or read operation is in progress
+     *
+     * @return true if busy, false if available for new operations
+     */
+    bool sd_card_manager_IsBusy(void);
+
+    /**
+     * @brief Gets the current operation mode.
+     *
+     * @return Current sd_card_manager_mode_t value
+     */
+    sd_card_manager_mode_t sd_card_manager_GetCurrentMode(void);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received

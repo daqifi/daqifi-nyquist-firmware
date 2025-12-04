@@ -65,6 +65,7 @@
 #define LAN_ACTIVE_ERROR_MSG "\r\nError !! Please Disable LAN\r\n"
 #define SD_CARD_NOT_ENABLED_ERROR_MSG "\r\nError !! Please Enabled SD Card\r\n"
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
+#define SD_CARD_BUSY_ERROR_MSG "\r\nError !! SD Card busy - stop streaming or wait for current operation\r\n"
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -104,6 +105,14 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("SD:LOGging - SD card busy with current operation\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
@@ -139,7 +148,15 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("SD:GET - SD card busy with current operation\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
@@ -156,6 +173,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
 __exit_point:
     return result;
 }
+
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     const char* pBuff;
     size_t fileLen = 0;
@@ -177,7 +195,15 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("SD:LIST? - SD card busy with current operation\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     // Get optional directory parameter
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
@@ -435,6 +461,14 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("SD:DELete - SD card busy with current operation\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     // Get filename parameter (required)
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
@@ -487,6 +521,14 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
 
     if (!pSDCardRuntimeConfig->enable) {
         LOG_E("SD:FORmat - SD card not enabled\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("SD:FORmat - SD card busy with current operation\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
