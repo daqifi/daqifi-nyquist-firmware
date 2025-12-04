@@ -9,7 +9,7 @@
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
-#define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
+// SD_CARD_MANAGER_DISK_DEV_NAME is now in header for external use
 #define SD_CARD_MANAGER_MAX_SPLIT_FILES    9999
 
 // File read transfer constants
@@ -913,7 +913,7 @@ void sd_card_manager_ProcessState() {
         {
             LOG_D("[SD] Deleting file: '%s'\r\n", gSDCardData.filePath);
 
-            // Delete the file
+            // Delete the file (FAT f_unlink already calls sync_fs internally)
             if (SYS_FS_FileDirectoryRemove(gSDCardData.filePath) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] File deleted successfully\r\n");
                 gSDCardData.lastOperationSuccess = true;

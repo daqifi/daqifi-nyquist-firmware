@@ -29,6 +29,8 @@
 #define SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE 4     // Max chunks to process per task cycle (4 * 5KB = 20KB)
 #define SD_CARD_MANAGER_TASK_DELAY_MS 1            // Task delay for SD card processing (reduced from 5ms)
 
+// Device paths for SD card operations
+#define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
 
 /* Provide C++ Compatibility */
 #ifdef __cplusplus
