@@ -68,6 +68,22 @@
 
 // Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency
 #define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy with current operation\r\n")
+
+/**
+ * @brief Check if SD card media is present
+ * @param context SCPI context for error reporting
+ * @return true if present, false if not (error already pushed to context)
+ */
+static bool SCPI_CheckSDCardPresent(scpi_t *context) {
+    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        LOG_E("SD - No SD card detected\r\n");
+        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return false;
+    }
+    return true;
+}
+
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -120,6 +136,12 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
@@ -164,6 +186,12 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
@@ -196,9 +224,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
 
     // Check if SD card is actually present and mounted
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
-        LOG_E("SD:LIST? - No SD card detected\r\n");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -282,8 +308,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
     
     // Double-check that SD card is actually present
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
-        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -476,6 +501,12 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     // Get filename parameter (required)
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
@@ -537,6 +568,12 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FORmat");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
