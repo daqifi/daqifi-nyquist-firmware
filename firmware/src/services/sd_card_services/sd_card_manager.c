@@ -590,6 +590,16 @@ void sd_card_manager_ProcessState() {
                     break;
                 }
 
+                // Reject path traversal attempts (e.g., "../" or "/..")
+                if (strstr(gSDCardData.filePath, "..") != NULL) {
+                    LOG_E("[SD] Delete path rejected (traversal attempt): '%s'\r\n", gSDCardData.filePath);
+                    gSDCardData.lastOperationSuccess = false;
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                    break;
+                }
+
                 LOG_D("[SD] Preparing to delete file: '%s'\r\n", gSDCardData.filePath);
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_FORMAT) {
