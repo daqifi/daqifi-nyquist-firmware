@@ -577,8 +577,19 @@ void sd_card_manager_ProcessState() {
                 while (dirLen > 0 && gpSDCardSettings->directory[dirLen - 1] == '/') {
                     dirLen--;
                 }
-                snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%.*s/%s",
+                int pathLen = snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%.*s/%s",
                         (int)dirLen, gpSDCardSettings->directory, gpSDCardSettings->file);
+
+                // Validate path was not truncated
+                if (pathLen < 0 || pathLen >= (int)SD_CARD_MANAGER_FILE_PATH_LEN_MAX) {
+                    LOG_E("[SD] Delete path too long (need %d, max %d)\r\n", pathLen, SD_CARD_MANAGER_FILE_PATH_LEN_MAX - 1);
+                    gSDCardData.lastOperationSuccess = false;
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                    break;
+                }
+
                 LOG_D("[SD] Preparing to delete file: '%s'\r\n", gSDCardData.filePath);
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_FORMAT) {

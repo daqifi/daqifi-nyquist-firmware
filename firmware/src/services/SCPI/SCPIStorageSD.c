@@ -282,7 +282,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
     
     // Double-check that SD card is actually present
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
+    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
         context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
         result = SCPI_RES_ERR;
         goto __exit_point;
