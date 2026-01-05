@@ -158,9 +158,8 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         LOG_D("SD:LOGging - No filename provided, using existing: '%s'\r\n", pSDCardRuntimeConfig->file);
     }
 
-    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
-
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    // Note: Mode is set to WRITE when streaming actually starts (in SCPI_StartStreaming)
+    // This allows other SD operations (list, delete, etc.) to work after setting filename
     result = SCPI_RES_OK;
 __exit_point:
     return result;
