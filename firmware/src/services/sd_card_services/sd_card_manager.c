@@ -572,6 +572,8 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE) {
                 // DELETE mode - construct file path and delete the specified file
+                // Initialize to false to prevent reading stale success from previous operation
+                gSDCardData.lastOperationSuccess = false;
                 // Strip trailing slash from directory to avoid double slashes
                 size_t dirLen = strlen(gpSDCardSettings->directory);
                 while (dirLen > 0 && gpSDCardSettings->directory[dirLen - 1] == '/') {
