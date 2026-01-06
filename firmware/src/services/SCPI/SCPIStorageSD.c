@@ -65,6 +65,25 @@
 #define LAN_ACTIVE_ERROR_MSG "\r\nError !! Please Disable LAN\r\n"
 #define SD_CARD_NOT_ENABLED_ERROR_MSG "\r\nError !! Please Enabled SD Card\r\n"
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
+
+// Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency
+#define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy with current operation\r\n")
+
+/**
+ * @brief Check if SD card media is present
+ * @param context SCPI context for error reporting
+ * @return true if present, false if not (error already pushed to context)
+ */
+static bool SCPI_CheckSDCardPresent(scpi_t *context) {
+    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        LOG_E("SD - No SD card detected\r\n");
+        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return false;
+    }
+    return true;
+}
+
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -74,20 +93,25 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    // Simple enable/disable - no mutex blocking for concurrent operations
-    // SPI coordination handled at operation level, not enable level
+
     if (param1 != 0) {
-        // Don't check for SD card presence here - let the SD card manager task handle it
-        // This prevents blocking the SCPI handler if no card is present
+        // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = true;
     } else {
+        // Disable SD card - check if busy first to prevent data loss
+        if (sd_card_manager_IsBusy()) {
+            LOG_SD_BUSY("ENAble");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = false;
     }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-    result = SCPI_RES_OK;  
+    result = SCPI_RES_OK;
 __exit_point:
     return result;
 }
@@ -100,6 +124,20 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
 
     if (!pSDCardRuntimeConfig->enable) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("LOGging");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -120,9 +158,8 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
         LOG_D("SD:LOGging - No filename provided, using existing: '%s'\r\n", pSDCardRuntimeConfig->file);
     }
 
-    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
-
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    // Note: Mode is set to WRITE when streaming actually starts (in SCPI_StartStreaming)
+    // This allows other SD operations (list, delete, etc.) to work after setting filename
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -139,7 +176,21 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("GET");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
@@ -156,6 +207,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
 __exit_point:
     return result;
 }
+
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     const char* pBuff;
     size_t fileLen = 0;
@@ -171,13 +223,19 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
 
     // Check if SD card is actually present and mounted
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
-        LOG_E("SD:LIST? - No SD card detected\r\n");
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("LISt");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
     // Get optional directory parameter
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
@@ -249,8 +307,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
     
     // Double-check that SD card is actually present
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
-        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -435,6 +492,20 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("DELete");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     // Get filename parameter (required)
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
@@ -457,6 +528,13 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
         LOG_E("SD:DELete - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if the operation succeeded
+    if (!sd_card_manager_GetLastOperationResult()) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -485,6 +563,20 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
         goto __exit_point;
     }
 
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("FORmat");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     LOG_D("SD:FORmat - Formatting SD card (erasing all files)\r\n");
 
     // Set mode to FORMAT and trigger the operation
@@ -494,6 +586,13 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
         LOG_E("SD:FORmat - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if the operation succeeded
+    if (!sd_card_manager_GetLastOperationResult()) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;

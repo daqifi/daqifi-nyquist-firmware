@@ -29,6 +29,8 @@
 #define SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE 4     // Max chunks to process per task cycle (4 * 5KB = 20KB)
 #define SD_CARD_MANAGER_TASK_DELAY_MS 1            // Task delay for SD card processing (reduced from 5ms)
 
+// Device paths for SD card operations
+#define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
 
 /* Provide C++ Compatibility */
 #ifdef __cplusplus
@@ -153,6 +155,29 @@ extern "C" {
      * @return true if operation completed, false if timeout occurred
      */
     bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs);
+
+    /**
+     * @brief Gets the result of the last completed operation.
+     *
+     * @return true if last operation succeeded, false if it failed
+     */
+    bool sd_card_manager_GetLastOperationResult(void);
+
+    /**
+     * @brief Checks if the SD card manager is busy with an active operation.
+     *
+     * This should be called before starting any new SD operation to prevent
+     * conflicts. Returns true if:
+     * - Actively writing/logging to SD card
+     * - Delete, format, list, or read operation is in progress
+     *
+     * @note This function is not fully atomic - it checks mode and state separately.
+     *       This is acceptable for the intended use case (pre-operation check) where
+     *       occasional false negatives during state transitions are tolerable.
+     *
+     * @return true if busy, false if available for new operations
+     */
+    bool sd_card_manager_IsBusy(void);
 
     /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.

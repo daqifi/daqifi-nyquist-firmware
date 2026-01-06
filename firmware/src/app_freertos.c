@@ -528,7 +528,7 @@ static void app_TasksCreate() {
             "PowerAndUITask",
             4096,  // Further increased to prevent stack overflow during disconnect/reconnect
             NULL,
-            2,
+            7,  // Priority 7: UI always responsive (same as USB, above data processing tasks)
             NULL);
     /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
