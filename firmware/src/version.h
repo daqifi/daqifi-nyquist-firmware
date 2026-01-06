@@ -16,7 +16,7 @@ extern "C" {
 #define HARDWARE_REVISION "2.0.0"
 
 //! Firmware revision string
-#define FIRMWARE_REVISION "3.4.1n_12_12_25"
+#define FIRMWARE_REVISION "3.4.2"
 
 #ifdef __cplusplus
 }
