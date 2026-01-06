@@ -1238,6 +1238,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
     if (sdLoggingRequested) {
+        // Check if SD card is busy with another operation (DELETE, FORMAT, etc.)
+        if (sd_card_manager_IsBusy()) {
+            LOG_E("Cannot start SD logging - SD card busy with another operation");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
     }

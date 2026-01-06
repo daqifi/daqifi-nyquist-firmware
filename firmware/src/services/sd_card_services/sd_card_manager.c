@@ -1079,10 +1079,19 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
 }
 
 bool sd_card_manager_GetLastOperationResult(void) {
+    // If SD manager hasn't been initialized yet, report failure
+    if (gpSDCardSettings == NULL) {
+        return false;
+    }
     return gSDCardData.lastOperationSuccess;
 }
 
 bool sd_card_manager_IsBusy(void) {
+    // If SD manager hasn't been initialized yet, treat as busy/unavailable
+    if (gpSDCardSettings == NULL) {
+        return true;
+    }
+
     // Note: This function is not fully atomic (no mutex). The two checks below
     // could see inconsistent state if modified by another task between them.
     // This is acceptable for pre-operation checks where false negatives during
