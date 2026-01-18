@@ -39,6 +39,7 @@
 #include "../JSON_Encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
+#include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
 
 //
 #define UNUSED(x) (void)(x)
@@ -397,13 +398,26 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     // Connectivity Section
     const char* connHeader = "[Connectivity]\r\n";
     context->interface->write(context, connHeader, strlen(connHeader));
-    bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER || 
+    bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER ||
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
-    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext power: %s\r\n",
+    bool vbusDetected = UsbCdc_IsVbusDetected();
+    /* Read VBUS level directly from USB hardware register */
+    USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+    const char* vbusLevelStr = "Unknown";
+    switch (vbusLevel) {
+        case USBHS_VBUS_SESSION_END: vbusLevelStr = "None"; break;
+        case USBHS_VBUS_BELOW_AVALID: vbusLevelStr = "Low"; break;
+        case USBHS_VBUS_BELOW_VBUSVALID: vbusLevelStr = "Medium"; break;
+        case USBHS_VBUS_VALID: vbusLevelStr = "Valid"; break;
+        default: break;
+    }
+    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext power: %s | VBUS: %s (HW: %s)\r\n",
         hasUSBPower ? "Connected" : "Disconnected",
-        wifiStatus == WIFI_STATUS_CONNECTED ? "Connected" : 
+        wifiStatus == WIFI_STATUS_CONNECTED ? "Connected" :
         (wifiStatus == WIFI_STATUS_DISCONNECTED ? "Disconnected" : "Disabled"),
-        pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
+        pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None",
+        vbusDetected ? "Yes" : "No",
+        vbusLevelStr);
     context->interface->write(context, buffer, strlen(buffer));
     
     // Power Section
