@@ -6,7 +6,7 @@
 #include "services/UsbCdc/UsbCdc.h"
 #include "services/csv_encoder.h"  // For csv_ResetEncoder on file rotation
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (64 * 1024)  // 64KB shared buffer for all SD operations
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (32 * 1024)  // 32KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 // SD_CARD_MANAGER_DISK_DEV_NAME is now in header for external use

@@ -30,10 +30,9 @@ static uint32_t queueSize = 0;
 // =============================================================================
 // Object Pool Configuration
 // =============================================================================
-// Pool size must match MAX_AIN_SAMPLE_COUNT in AInSample.h for consistency.
+// Pool size uses MAX_AIN_SAMPLE_COUNT directly to ensure consistency.
 // This eliminates heap allocation/deallocation overhead during streaming.
-#define SAMPLE_POOL_SIZE 512
-static AInPublicSampleList_t samplePool[SAMPLE_POOL_SIZE];
+static AInPublicSampleList_t samplePool[MAX_AIN_SAMPLE_COUNT];
 
 // =============================================================================
 // Free List Data Structures (O(1) allocation/deallocation)
@@ -47,13 +46,13 @@ static AInPublicSampleList_t samplePool[SAMPLE_POOL_SIZE];
 //   nextFree[0] = 2, nextFree[2] = 5, nextFree[5] = -1 (end)
 //   Chain: 0 -> 2 -> 5 -> END
 static int16_t freeHead = -1;              // Index of first free slot (-1 = empty)
-static int16_t nextFree[SAMPLE_POOL_SIZE]; // Each slot points to next free slot
+static int16_t nextFree[MAX_AIN_SAMPLE_COUNT]; // Each slot points to next free slot
 
 static SemaphoreHandle_t poolMutex = NULL;
 static volatile bool poolActive = false;  // Guards against teardown races
 
 // Compile-time assertion to ensure pool size matches expected queue size
-_Static_assert(SAMPLE_POOL_SIZE >= 20, "Pool must be at least 20 for queue");
+_Static_assert(MAX_AIN_SAMPLE_COUNT >= 20, "Pool must be at least 20 for queue");
 
 void AInSampleList_Initialize(
                             size_t maxSize,
@@ -65,7 +64,7 @@ void AInSampleList_Initialize(
     (void)lockPrototype;
 
     // Enforce invariant: queue size cannot exceed pool capacity
-    configASSERT(maxSize <= SAMPLE_POOL_SIZE);
+    configASSERT(maxSize <= MAX_AIN_SAMPLE_COUNT);
 
     queueSize = maxSize;
     analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
@@ -77,10 +76,10 @@ void AInSampleList_Initialize(
     }
 
     // Build free list chain: 0 → 1 → 2 → ... → N-1 → -1
-    for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
+    for (int i = 0; i < MAX_AIN_SAMPLE_COUNT - 1; i++) {
         nextFree[i] = i + 1;
     }
-    nextFree[SAMPLE_POOL_SIZE - 1] = -1;  // End of list
+    nextFree[MAX_AIN_SAMPLE_COUNT - 1] = -1;  // End of list
     freeHead = 0;  // Start at first entry
 
     poolActive = true;
@@ -129,10 +128,10 @@ void AInSampleList_Destroy()
     if (poolMutex != NULL) {
         xSemaphoreTake(poolMutex, portMAX_DELAY);  // Synchronization barrier
         // Rebuild free list chain: 0 -> 1 -> 2 -> ... -> N-1 -> END
-        for (int i = 0; i < SAMPLE_POOL_SIZE - 1; i++) {
+        for (int i = 0; i < MAX_AIN_SAMPLE_COUNT - 1; i++) {
             nextFree[i] = i + 1;
         }
-        nextFree[SAMPLE_POOL_SIZE - 1] = -1;
+        nextFree[MAX_AIN_SAMPLE_COUNT - 1] = -1;
         freeHead = 0;
         xSemaphoreGive(poolMutex);
     }
@@ -281,7 +280,7 @@ void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
 
     ptrdiff_t index = pSample - samplePool;
 
-    if (index < 0 || index >= SAMPLE_POOL_SIZE) {
+    if (index < 0 || index >= MAX_AIN_SAMPLE_COUNT) {
         return;  // Not from our pool
     }
 
