@@ -57,10 +57,15 @@ extern "C" {
 
     /**
      * Maximum samples in the streaming queue and object pool.
-     * Set to 512 to support high-speed acquisition (15kHz+) without queue drops.
-     * This value determines the SAMPLE_POOL_SIZE in AInSample.c.
+     * Single source of truth - used directly in AInSample.c for pool allocation.
+     *
+     * Memory impact: ~208 bytes per sample (16ch × 12 bytes + 16 bools + overhead)
+     *   512 samples = ~107 KB static RAM
+     *   1024 samples = ~215 KB static RAM
+     *
+     * Increasing this value requires sufficient free RAM (check memoryfile.xml).
      */
-#define MAX_AIN_SAMPLE_COUNT 512
+#define MAX_AIN_SAMPLE_COUNT 700
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**
