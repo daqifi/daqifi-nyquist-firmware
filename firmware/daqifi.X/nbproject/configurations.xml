@@ -608,6 +608,7 @@
         <itemPath>../src/third_party/zlib/crc32.h</itemPath>
       </logicalFolder>
       <itemPath>../src/app_freertos.h</itemPath>
+      <itemPath>../src/version.h</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -1158,7 +1159,7 @@
         <platform>3</platform>
       </toolsSet>
       <packs>
-        <pack name="PIC32MZ-EF_DFP" vendor="Microchip" version="1.4.168"/>
+        <pack name="PIC32MZ-EF_DFP" vendor="Microchip" version="1.5.173"/>
       </packs>
       <ScriptingSettings>
       </ScriptingSettings>
@@ -1732,7 +1733,7 @@
         </C32Global>
       </item>
       <item path="../src/config/default/old_hv2_bootld.ld"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -2104,7 +2105,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ1BoardConfig.c" ex="true" overriding="false">
+      <item path="../src/state/board/NQ1BoardConfig.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2152,7 +2153,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/state/board/NQ3BoardConfig.c" ex="false" overriding="false">
+      <item path="../src/state/board/NQ3BoardConfig.c" ex="true" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2337,7 +2338,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ1RuntimeDefaults.c"
-            ex="true"
+            ex="false"
             overriding="false">
         <C32>
         </C32>
@@ -2373,7 +2374,7 @@
         </C32Global>
       </item>
       <item path="../src/state/runtime/NQ3RuntimeDefaults.c"
-            ex="false"
+            ex="true"
             overriding="false">
         <C32>
         </C32>
@@ -2411,7 +2412,6 @@
       <C32>
         <property key="additional-warnings" value="true"/>
         <property key="addresss-attribute-use" value="false"/>
-        <property key="appendMe" value=""/>
         <property key="cast-align" value="false"/>
         <property key="code-model" value="default"/>
         <property key="const-model" value="default"/>
@@ -2461,7 +2461,6 @@
         <property key="additional-options-chop-files" value="false"/>
       </C32-AR>
       <C32-AS>
-        <property key="appendMe" value=""/>
         <property key="assembler-symbols" value=""/>
         <property key="enable-symbols" value="true"/>
         <property key="exclude-floating-point-library" value="false"/>
@@ -2494,7 +2493,6 @@
         <property key="additional-options-use-response-files" value="false"/>
         <property key="additional-options-write-sla" value="false"/>
         <property key="allocate-dinit" value="false"/>
-        <property key="appendMe" value="-defsym=_ebase_address=0x9d010000"/>
         <property key="code-dinit" value="false"/>
         <property key="ebase-addr" value=""/>
         <property key="enable-check-sections" value="false"/>
@@ -2541,7 +2539,6 @@
       <C32CPP>
         <property key="additional-warnings" value="false"/>
         <property key="addresss-attribute-use" value="false"/>
-        <property key="appendMe" value=""/>
         <property key="check-new" value="false"/>
         <property key="eh-specs" value="true"/>
         <property key="enable-app-io" value="false"/>
@@ -3190,7 +3187,7 @@
         <property key="periphComp6.gte" value="gt"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
+                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
@@ -5842,7 +5839,7 @@
         <property key="periphComp6.gte" value="gt"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
+                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/Nq1/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
@@ -8494,7 +8491,7 @@
         <property key="periphComp6.gte" value="gt"/>
         <property key="poweroptions.powerenable" value="false"/>
         <property key="programmerToGoFilePath"
-                  value="D:/Repositories/DAQIFI/repo/daqifi-nyquist-firmware/dev_v3/firmware/daqifi.X/debug/default/daqifi_ptg"/>
+                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/Nq3/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
