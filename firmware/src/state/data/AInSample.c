@@ -8,7 +8,7 @@
  * Performance characteristics:
  * - Queue: Standard FreeRTOS queue (thread-safe, ISR-safe)
  * - Pool allocation: O(1) via free list (no fragmentation, deterministic timing)
- * - Pool size: 512 samples to support 15kHz+ streaming
+ * - Pool size: MAX_AIN_SAMPLE_COUNT (700) samples for high-speed streaming
  *
  * @author Javier Longares Abaiz - When Technology becomes art.
  * @web www.javierlongares.com

@@ -60,7 +60,7 @@ extern "C" {
      * Single source of truth - used directly in AInSample.c for pool allocation.
      *
      * Memory impact: ~208 bytes per sample (16ch × 12 bytes + 16 bools + overhead)
-     *   512 samples = ~107 KB static RAM
+     *   700 samples = ~146 KB static RAM (current setting)
      *   1024 samples = ~215 KB static RAM
      *
      * Increasing this value requires sufficient free RAM (check memoryfile.xml).
