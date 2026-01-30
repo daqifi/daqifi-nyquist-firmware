@@ -64,7 +64,7 @@ static inline void SD_CheckFsOpDuration(TickType_t startTick, const char* operat
               operation, elapsed, SD_DEBUG_TIMEOUT_MS, result);
     } else if (elapsed > 5000) {
         // Also log warning for operations > 5 seconds (unusual but not critical)
-        LOG_W("[SD] Slow operation: %s took %u ms, result=%d", operation, elapsed, result);
+        LOG_I("[SD] Slow operation: %s took %u ms, result=%d", operation, elapsed, result);
     }
 }
 
