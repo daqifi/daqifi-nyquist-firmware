@@ -220,11 +220,15 @@ The firmware supports building for different board variants using MPLAB X config
 #### Major Heap Allocations
 
 **Static Buffers** (compile-time allocation, not on heap):
-- **SD Card Shared Buffer**: 64KB (`gSdSharedBuffer` in `sd_card_manager.c`)
+- **SD Card Shared Buffer**: 32KB (`gSdSharedBuffer` in `sd_card_manager.c`)
   - Static coherent buffer for all SD operations (write, read, list)
   - DMA-safe, cache-line aligned
-  - **Changed from heap to static allocation to reduce heap pressure**
+  - Reduced from 64KB to 32KB to allow larger sample pool
   - Location: `firmware/src/services/sd_card_services/sd_card_manager.c`
+- **Sample Pool**: ~146KB (700 samples × ~210 bytes)
+  - Static pool for streaming analog input samples
+  - Uses O(1) free-list allocation to avoid heap fragmentation
+  - Location: `firmware/src/state/data/AInSample.c`
 
 **Circular Buffers** (heap-allocated at runtime):
 - **WiFi TCP Write Buffer**: 5.6KB (`WIFI_CIRCULAR_BUFF_SIZE` = 1400 × 4)
@@ -248,28 +252,27 @@ The firmware supports building for different board variants using MPLAB X config
 - `AD7609_DeferredInterruptTask`: 512 bytes
 
 **Streaming Sample Queue**:
-- **Queue Depth**: 20 samples (`MAX_AIN_SAMPLE_COUNT`)
+- **Pool Size**: 700 samples (`MAX_AIN_SAMPLE_COUNT` in `AInSample.h`)
 - **Sample Size**: ~208 bytes (`AInPublicSampleList_t` = 16 channels × 12 bytes + 16 bools)
-- **Max Queue Memory**: ~4KB (20 × 208 bytes)
-- **Allocation**: Dynamic (`pvPortCalloc` in streaming interrupt task)
+- **Total Pool Memory**: ~146KB (700 × 208 bytes, statically allocated)
+- **Allocation**: Static pool with O(1) free-list allocation (no heap usage)
 - **Critical**: Old samples must be freed before starting new streaming session
-  - Cleared automatically in `Streaming_Start()` since 2025-01-XX
+  - Cleared automatically in `Streaming_Start()`
 
 #### Heap Usage Summary
 Typical allocations at steady state:
 - Circular buffers: **21.6KB** (WiFi: 5.6KB, USB: 16KB)
 - Task stacks: **~33KB**
-- Streaming queue: **Up to 4KB** (dynamically allocated)
-- **Total heap**: ~59KB used, **~225KB free** (under normal conditions)
-- **Static buffers**: 64KB (SD card buffer - not counted against heap)
+- **Total heap**: ~55KB used, **~229KB free** (under normal conditions)
+- **Static buffers**: ~178KB (32KB SD buffer + 146KB sample pool - not on heap)
 
 #### Memory Pressure Indicators
 If heap allocation fails (`xPortGetFreeHeapSize()` returns low values):
-1. **Check streaming sample queue**: `AInSampleList_Size()` - should be <20
+1. **Check streaming sample pool**: `AInSampleList_Size()` - should be <700
 2. **Reduce USB/WiFi buffers**: If SD logging is primary use case, can reduce USB/WiFi buffer sizes
 3. **Monitor with debugger**: Set breakpoint in `pvPortMalloc` failure path
 
-Note: SD buffer is now static (not heap), significantly improving heap availability.
+Note: SD buffer and sample pool are now static (not heap), significantly improving heap availability.
 
 #### Other Memory Constraints
 - DMA buffers must be cache-aligned

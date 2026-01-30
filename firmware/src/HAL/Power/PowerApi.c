@@ -93,6 +93,10 @@ static void Power_UpdateState(void);
  */
 static void Power_UpdateChgPct(void);
 /*!
+ * Function to update power status from GPIO and ADC (no I2C)
+ */
+static void Power_UpdateStatusFromGPIO(void);
+/*!
  * Function to update the configuration
  */
 static void Power_Update_Settings(void);
@@ -139,36 +143,8 @@ void Power_Tasks(void) {
     if (pData->BQ24297Data.initComplete == false) {
         BQ24297_Config_Settings();
     }
-    
-    /* CRITICAL SAFETY CHECKS
-     * These checks prevent power loss during USB disconnect:
-     * 1. HIZ mode (bit 7 of REG00) blocks charging if set
-     * 2. BATFET disabled (bit 5 of REG07) disconnects battery
-     */
-    
-    // Check REG00 for HIZ mode - if set (1), it blocks charging and can cause power loss
-    uint8_t reg00 = BQ24297_Read_I2C(0x00);
-    if (reg00 != 0xFF && (reg00 & 0x80)) {
-        LOG_D("Power_Tasks: HIZ mode detected - clearing");
-        reg00 &= 0x7F;  // Clear bit 7 to exit HIZ mode
-        BQ24297_Write_I2C(0x00, reg00);
-        
-        // Force a power settings update after clearing HIZ
-        BQ24297_UpdateStatus();
-        Power_Update_Settings();
-    }
-    
-    // Check REG07 bit 5 - if set (1), BATFET is disabled which will cause power loss
-    uint8_t reg07 = BQ24297_Read_I2C(0x07);
-    if (reg07 != 0xFF && (reg07 & 0x20)) {
-        LOG_D("Power_Tasks: BATFET disabled - re-enabling");
-        reg07 &= 0xDF;  // Clear bit 5 to enable BATFET
-        BQ24297_Write_I2C(0x07, reg07);
-    }
 
-    // Rate limit Power_UpdateState to 1 second intervals
-    // This provides adequate safety monitoring while reducing unnecessary LED activity
-    // Hardware resettable fuses provide protection against shorts/overcurrent
+    /* Update power state at 1 second intervals */
     static TickType_t lastUpdateTime = 0;
     TickType_t currentTime = xTaskGetTickCount();
     if ((currentTime - lastUpdateTime) >= pdMS_TO_TICKS(1000)) {
@@ -273,34 +249,27 @@ static void Power_Up(bool enableExtPower) {
      *   - User requested (enableExtPower=true) AND
      *   - Either external power present OR battery sufficient
      * Keep disabled when:
-     *   - User wants conservation mode (enableExtPower=false) OR  
+     *   - User wants conservation mode (enableExtPower=false) OR
      *   - Battery too low for safe operation
      */
     if (enableExtPower) {
-        // User wants external power - check if we should enable it
-        // Refresh charger/power-good status before making decisions
-        BQ24297_UpdateStatusSafe();
+        /* User wants external power - check if we should enable it
+         * Use GPIO/ADC to get current status (no I2C) */
+        Power_UpdateStatusFromGPIO();
         bool hasExternalPower = pData->BQ24297Data.status.pgStat;
-        
+
         if (hasExternalPower) {
-            // External power present - always safe to enable
+            /* External power present - always safe to enable */
             pWriteVariables->EN_5_10V_Val = true;
-        } else if (pData->BQ24297Data.status.batPresent) {
-            // On battery only - check charge level before enabling
-            Power_UpdateChgPct();  // Ensure we have current battery percentage
-            if (pData->chargePct >= BATT_EXT_DOWN_TH) {
-                // Battery has sufficient charge
-                pWriteVariables->EN_5_10V_Val = true;
-            } else {
-                // Battery too low - don't enable external power to avoid immediate re-transition
-                pWriteVariables->EN_5_10V_Val = false;
-            }
+        } else if (pData->chargePct >= BATT_EXT_DOWN_TH) {
+            /* Battery has sufficient charge */
+            pWriteVariables->EN_5_10V_Val = true;
         } else {
-            // No power source available
+            /* Battery too low - don't enable external power to avoid immediate re-transition */
             pWriteVariables->EN_5_10V_Val = false;
         }
     } else {
-        // User explicitly wants external power disabled (state 2)
+        /* User explicitly wants external power disabled (state 2) */
         pWriteVariables->EN_5_10V_Val = false;
     }
     Power_Write();
@@ -350,9 +319,58 @@ void Power_Down(void) {
 }
 
 /*
+ * Update power status from GPIO and ADC (no I2C)
+ *
+ * Replaces I2C polling with:
+ *   - USB VBUS detection for external power (pgStat equivalent)
+ *   - ADC battery voltage for vsysStat equivalent
+ *   - BATT_MAN_STAT GPIO for charging status
+ *
+ * This eliminates I2C bus hang risk during normal operation.
+ * The previous I2C polling (~70 reads/sec on USB power) caused intermittent
+ * hangs in PowerAndUITask, leading to LED unresponsiveness (issue #172).
+ *
+ * Future: Issue #173 tracks adding interrupt-driven I2C for scenarios that
+ * require BQ24297 register access (config changes, detailed diagnostics).
+ */
+static void Power_UpdateStatusFromGPIO(void) {
+    /* Update battery voltage and charge percentage from ADC */
+    Power_UpdateChgPct();
+
+    /* Update external power status from USB VBUS detection
+     * This replaces BQ24297 pgStat polling */
+    bool hasExternalPower = UsbCdc_IsVbusDetected();
+    pData->BQ24297Data.status.pgStat = hasExternalPower;
+
+    /* Update vsysStat equivalent from ADC battery voltage
+     * vsysStat=1 means battery < 3.0V (VSYSMIN threshold) */
+    pData->BQ24297Data.status.vsysStat = (pData->battVoltage < 3.0f);
+
+    /* Read charging status from BATT_MAN_STAT GPIO
+     * BQ24297 STAT pin: LOW = charging, HIGH = not charging/complete
+     * Map to chgStat: 0=not charging, 1=pre-charge, 2=fast charge, 3=done */
+    bool isCharging = !BATT_MAN_STAT_Get();  /* Active low */
+    if (isCharging) {
+        pData->BQ24297Data.status.chgStat = 2;  /* Fast charging */
+    } else if (hasExternalPower && pData->chargePct >= 95.0f) {
+        pData->BQ24297Data.status.chgStat = 3;  /* Charge complete */
+    } else {
+        pData->BQ24297Data.status.chgStat = 0;  /* Not charging */
+    }
+
+    /* Update external power source type
+     * Without I2C, we can't distinguish USB types, so assume USB 500mA when VBUS present */
+    if (hasExternalPower) {
+        pData->externalPowerSource = USB_500MA_EXT_POWER;
+    } else {
+        pData->externalPowerSource = NO_EXT_POWER;
+    }
+}
+
+/*
  * Rate-limited status update helper
- * Prevents excessive I2C traffic and ADC reads
- * 
+ * Uses GPIO and ADC instead of I2C to avoid bus hang risk
+ *
  * @param updateIntervalMs Minimum time between updates (ms)
  * @param lastUpdateTime Pointer to timestamp of last update
  * @return true if update performed, false if rate-limited
@@ -361,8 +379,7 @@ static bool Power_UpdateStatusIfNeeded(uint32_t updateIntervalMs, TickType_t* la
     TickType_t currentTime = xTaskGetTickCount();
     if ((currentTime - *lastUpdateTime) >= pdMS_TO_TICKS(updateIntervalMs)) {
         *lastUpdateTime = currentTime;
-        Power_UpdateChgPct();
-        BQ24297_UpdateStatus();
+        Power_UpdateStatusFromGPIO();
         return true;
     }
     return false;
@@ -389,12 +406,12 @@ static bool Power_HasSufficientPower(void) {
  */
 static void Power_HandleStandbyState(void) {
     /* Priority 1: Handle user power-up requests */
-    if (pData->requestedPowerState == DO_POWER_UP || 
+    if (pData->requestedPowerState == DO_POWER_UP ||
         pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {
-        
-        /* Refresh charger/power-good status before power-up decision */
-        BQ24297_UpdateStatusSafe();
-        
+
+        /* Refresh power status from GPIO/ADC before power-up decision */
+        Power_UpdateStatusFromGPIO();
+
         if (Power_HasSufficientPower()) {
             // Power up with or without external power based on request
             bool enableExtPower = (pData->requestedPowerState == DO_POWER_UP);
@@ -464,11 +481,9 @@ static void Power_HandlePoweredUpState(void) {
     }
     /* Automatic transition when battery needs conservation */
     else if (!hasExternalPower) {
-        /* Refresh charger/power-good status before threshold decision */
-        BQ24297_UpdateStatusSafe();
-        /* Get fresh battery reading before threshold decision */
-        Power_UpdateChgPct();
-        
+        /* Refresh power status from GPIO/ADC before threshold decision */
+        Power_UpdateStatusFromGPIO();
+
         if (pData->chargePct < BATT_EXT_DOWN_TH) {
             LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
                   pData->chargePct);
@@ -489,19 +504,14 @@ static void Power_HandlePoweredUpState(void) {
  *   - Critical battery level (<5%)
  */
 static void Power_HandlePoweredUpExtDownState(void) {
-    // Rate limit status updates
+    /* Rate limit status updates - uses GPIO/ADC, no I2C */
     static TickType_t lastExtDownUpdate = 0;
     Power_UpdateStatusIfNeeded(1000, &lastExtDownUpdate);
-    
+
     bool hasExternalPower = pData->BQ24297Data.status.pgStat;
-    
-    // Check for automatic recovery if auto external power control is enabled
+
+    /* Check for automatic recovery if auto external power control is enabled */
     if (pData->autoExtPowerEnabled) {
-        // Refresh charger/power-good status before making decisions
-        BQ24297_UpdateStatusSafe();
-        // Get fresh battery reading
-        Power_UpdateChgPct();
-        
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Auto-recovery - re-enable external power */
@@ -510,17 +520,16 @@ static void Power_HandlePoweredUpExtDownState(void) {
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
             pData->powerState = POWERED_UP;
-            return;  // Exit early after state change
+            return;  /* Exit early after state change */
         }
     }
-    
-    // Handle user power state change requests
+
+    /* Handle user power state change requests */
     if (pData->requestedPowerState == DO_POWER_UP) {
-        // Refresh charger/power-good status before making decisions
-        BQ24297_UpdateStatusSafe();
-        // Get fresh battery reading before decision
-        Power_UpdateChgPct();
-        
+        /* Refresh power status from GPIO/ADC before decision */
+        Power_UpdateStatusFromGPIO();
+        hasExternalPower = pData->BQ24297Data.status.pgStat;
+
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Manual recovery - re-enable external power */
@@ -530,32 +539,25 @@ static void Power_HandlePoweredUpExtDownState(void) {
             Power_Write();
             pData->powerState = POWERED_UP;
         } else {
-            // Cannot enable external power due to low battery
-            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %.1f%%, needs %.1f%%", 
+            /* Cannot enable external power due to low battery */
+            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %.1f%%, needs %.1f%%",
                   pData->chargePct, BATT_EXT_DOWN_TH + BATT_HYST);
         }
         pData->requestedPowerState = NO_CHANGE;
     }
     /* Critical battery check - must shut down to prevent damage */
-    else if (!hasExternalPower) {
-        /* Refresh charger/power-good status before critical decision */
-        BQ24297_UpdateStatusSafe();
-        /* Get fresh battery reading for critical safety decision */
-        Power_UpdateChgPct();
-        
-        if (pData->chargePct < BATT_LOW_TH) {
-            LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY", 
-                  pData->chargePct);
-            
-            /* Explicitly disable all external rails before shutdown */
-            pWriteVariables->EN_5_10V_Val = false;
-            pWriteVariables->EN_12V_Val = true;     /* Inverted logic - true = off */
-            pWriteVariables->EN_Vref_Val = false;
-            Power_Write();
-            
-            pData->shutdownNotified = false;
-            pData->powerState = STANDBY;
-        }
+    else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
+        LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY",
+              pData->chargePct);
+
+        /* Explicitly disable all external rails before shutdown */
+        pWriteVariables->EN_5_10V_Val = false;
+        pWriteVariables->EN_12V_Val = true;     /* Inverted logic - true = off */
+        pWriteVariables->EN_Vref_Val = false;
+        Power_Write();
+
+        pData->shutdownNotified = false;
+        pData->powerState = STANDBY;
     }
 }
 
@@ -644,58 +646,18 @@ static void Power_UpdateChgPct(void) {
 }
 
 static void Power_Update_Settings(void) {
-    /* Update charging and power settings based on current status */
-
-    /* Skip if input detection in progress (DPM_STAT = 1)
-     * Prevents interference with BQ24297's auto-detection
+    /* Update power settings based on current status
+     *
+     * NOTE: External power source is now updated in Power_UpdateStatusFromGPIO()
+     * I2C-based BQ24297 calls (AutoSetILim, SetPowerMode) are only done during
+     * initial configuration in BQ24297_Config_Settings() to avoid I2C bus hangs.
+     *
+     * Charging is configured once at startup. The BQ24297 handles charging
+     * autonomously based on its hardware configuration.
      */
-    if (pData->BQ24297Data.status.dpmStat) {
-        return;
-    }
 
-    
-
-    // Update external power source based on BQ24297 detection
-    if (pData->BQ24297Data.status.pgStat) {
-        // External power is present - determine type from vBusStat
-        switch (pData->BQ24297Data.status.vBusStat) {
-            case 0b01: // USB host
-                // Check actual current limit to distinguish USB types
-                if (pData->BQ24297Data.status.inLim <= ILim_150) {
-                    pData->externalPowerSource = USB_100MA_EXT_POWER;
-                } else {
-                    pData->externalPowerSource = USB_500MA_EXT_POWER;
-                }
-                break;
-            case 0b10: // Adapter/charger
-                pData->externalPowerSource = CHARGER_2A_EXT_POWER;
-                break;
-            case 0b11: // OTG
-                // OTG mode active - but if pgStat=1, external power is actually present
-                // This happens during transition from OTG to charge mode
-                pData->externalPowerSource = USB_500MA_EXT_POWER;
-                break;
-            case 0b00: // Unknown but power good
-            default:
-                // Default to USB when power is good but type unknown
-                pData->externalPowerSource = USB_500MA_EXT_POWER;
-                break;
-        }
-    } else {
-        // No external power
-        pData->externalPowerSource = NO_EXT_POWER;
-    }
-
-    // Check new power source and set parameters accordingly
-    BQ24297_AutoSetILim();
-    
-    // Update BQ24297 power mode based on external power availability
-    // This will handle charging enable/disable appropriately
-    BQ24297_SetPowerMode(pData->BQ24297Data.status.pgStat);
-
-    // Automatic OTG mode transitions are disabled
-    // OTG can only be controlled manually via SCPI commands
-    // This prevents unexpected power state changes during USB disconnect/reconnect
+    /* Nothing to do here anymore - status updates happen in Power_UpdateStatusFromGPIO()
+     * and BQ24297 configuration happens once at init */
 }
 
 

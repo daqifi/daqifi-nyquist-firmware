@@ -10,6 +10,7 @@
 #include "Util/Logger.h"
 #include "HAL/BQ24297/BQ24297.h"
 #include "state/data/BoardData.h"
+#include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
@@ -253,29 +254,34 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             break;
 
         case USB_DEVICE_EVENT_POWER_REMOVED:
+        {
+            /* VBUS Sag Workaround:
+             * When switching power states (e.g., SYST:POW:STAT 1), the internal
+             * power rail transitions cause VBUS voltage to momentarily sag from
+             * "Valid" (~5V) to "Medium" (~4V), triggering a false POWER_REMOVED
+             * event from the USB hardware. However, USB is still physically
+             * connected and VBUS recovers.
+             *
+             * Fix: Read the actual hardware VBUS level before detaching. If VBUS
+             * is still at Medium (USBHS_VBUS_BELOW_VBUSVALID) or above, ignore
+             * the event. Only detach if VBUS drops to Low or None, indicating
+             * true USB disconnection.
+             *
+             * See issue #173 for related I2C/interrupt handling improvements. */
+            USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
 
-            /* VBUS is not available any more. Detach the device. */
-            gRunTimeUsbSttings.isVbusDetected = false;
-            
-            // Check if this is a real disconnect or false trigger at startup
-            tPowerData* pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-            if (pPowerData && pPowerData->BQ24297Data.initComplete) {
-                // Only trust this event if BQ24297 is initialized
-                BQ24297_UpdateStatusSafe();
-                if (pPowerData->BQ24297Data.status.pgStat) {
-                    LOG_D("USB: False VBUS removal detected (pgStat=1), ignoring");
-                    break;
-                }
+            if (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID) {
+                /* VBUS still present at Medium or above - false removal event */
+                LOG_D("USB: False VBUS removal (HW level=%d), ignoring", vbusLevel);
+                break;
             }
-            
-            LOG_E("USB: VBUS removed - USB POWER LOST!");
-            
-            // OTG mode is now controlled manually via SCPI commands only
-            // Automatic OTG transitions have been disabled to prevent unexpected power state changes
-            
-            
+
+            /* VBUS truly removed (Low or None) */
+            gRunTimeUsbSttings.isVbusDetected = false;
+            LOG_D("USB: VBUS removed (HW level=%d) - USB power lost", vbusLevel);
             USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             break;
+        }
 
         case USB_DEVICE_EVENT_SUSPENDED:
             // Transfer handles become invalid during suspend - host stops all transfers
