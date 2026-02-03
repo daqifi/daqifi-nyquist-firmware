@@ -1011,6 +1011,35 @@ static scpi_result_t SCPI_SetAutoExtPower(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * SCPI Callback: Get BQ24297 VBUS status (DPDM detection result)
+ * Command: SYST:POW:VBUS?
+ * Returns: 0=Unknown, 1=USB_SDP (500mA), 2=Adapter (DCP/CDP), 3=OTG
+ * Also returns human-readable string
+ */
+static scpi_result_t SCPI_GetVBUSStatus(scpi_t * context) {
+    // Read fresh status from BQ24297
+    BQ24297_UpdateStatus();
+
+    tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
+    uint8_t vbusStat = pBoardData->PowerData.BQ24297Data.status.vBusStat;
+    uint8_t inLim = pBoardData->PowerData.BQ24297Data.status.inLim;
+
+    // VBUS status strings
+    const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
+    // ILIM strings (from BQ24297 REG00 bits [2:0])
+    const char* ilimStr[] = {"100mA", "150mA", "500mA", "900mA", "1A", "1.5A", "2A", "3A"};
+
+    char buffer[80];
+    snprintf(buffer, sizeof(buffer), "%d,%s,ILIM=%s\r\n",
+             vbusStat,
+             (vbusStat < 4) ? vbusStr[vbusStat] : "Invalid",
+             (inLim < 8) ? ilimStr[inLim] : "Invalid");
+
+    context->interface->write(context, buffer, strlen(buffer));
+    return SCPI_RES_OK;
+}
+
 // OTG control functions are disabled - see command table for explanation
 #if 0
 /**
@@ -1625,6 +1654,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
     {.pattern = "SYSTem:POWer:AUTO:EXTernal?", .callback = SCPI_GetAutoExtPower,},
     {.pattern = "SYSTem:POWer:AUTO:EXTernal", .callback = SCPI_SetAutoExtPower,},
+    {.pattern = "SYSTem:POWer:VBUS?", .callback = SCPI_GetVBUSStatus,},
     // OTG commands disabled - OTG mode is managed automatically by the power system
     // When external power is present, OTG is always disabled for safety
     // When on battery power, OTG is controlled by the board configuration
