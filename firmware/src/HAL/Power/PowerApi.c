@@ -341,9 +341,12 @@ static void Power_UpdateStatusFromGPIO(void) {
     /* Update external power status from hardware VBUS detection
      * Read directly from USB hardware register - more reliable than software events
      * which may not trigger correctly for wall chargers without USB data lines.
-     * USBHS_VBUS_VALID (0x18) indicates valid 5V on VBUS. */
+     *
+     * Use USBHS_VBUS_BELOW_VBUSVALID threshold (~4.0V) instead of USBHS_VBUS_VALID
+     * (~4.75V) to handle wall chargers with minor voltage sag. This aligns better
+     * with BQ24297's pgStat threshold (3.88V) for external power detection. */
     USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
-    bool hasExternalPower = (vbusLevel >= USBHS_VBUS_VALID);
+    bool hasExternalPower = (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
     pData->BQ24297Data.status.pgStat = hasExternalPower;
 
     /* Update vsysStat equivalent from ADC battery voltage
