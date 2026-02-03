@@ -206,37 +206,66 @@ int LogMessage(const char* format, ...)
 }
 
 /**
- * @brief Returns the current number of messages in the log buffer.
- * 
+ * @brief Returns the current number of messages in the log buffer (thread-safe).
+ *
  * @return size_t Number of stored log messages
  */
 size_t LogMessageCount()
 {
+    size_t count;
+
+    if (logBuffer.mutex == NULL) {
+        // Not yet initialized, return raw value
+        return logBuffer.count;
+    }
+
+    // Try to acquire mutex without blocking
+    if (xSemaphoreTake(logBuffer.mutex, 0) == pdTRUE) {
+        count = logBuffer.count;
+        xSemaphoreGive(logBuffer.mutex);
+        return count;
+    }
+
+    // Mutex contention - return snapshot (may be slightly stale)
     return logBuffer.count;
 }
 
 /**
- * @brief Initializes the log buffer and its mutex.
- *        This function is safe to call multiple times.
+ * @brief Initializes the log buffer and its mutex (idempotent).
+ *        Safe to call multiple times - subsequent calls have no effect.
  */
 void LogMessageInit(void) {
+    // Already initialized - do not wipe buffered logs
+    if (logBuffer.mutex != NULL) {
+        return;
+    }
+
     logBuffer.head = 0;
     logBuffer.tail = 0;
     logBuffer.count = 0;
 
-    if(logBuffer.mutex == NULL){
-        logBuffer.mutex = xSemaphoreCreateMutex();
-        if(logBuffer.mutex == NULL) {
-            // Critical failure: halt system - mutex creation failed
-            __builtin_software_breakpoint();
-            while(1);
-        }
+    logBuffer.mutex = xSemaphoreCreateMutex();
+    if (logBuffer.mutex == NULL) {
+        // Critical failure: halt system - mutex creation failed
+        __builtin_software_breakpoint();
+        while(1);
     }
+}
+
+/**
+ * @brief Check if currently executing in ISR context (MIPS/PIC32).
+ * @return true if in ISR, false otherwise
+ */
+static inline bool LogIsInISR(void) {
+    // MIPS Status register: EXL (bit 1) or ERL (bit 2) set means exception/ISR
+    uint32_t status = __builtin_mfc0(12, 0);
+    return (status & 0x06) != 0;
 }
 
 /**
  * @brief Internal helper to add a message to the log buffer.
  *        Also sends the message over ICSP UART if enabled.
+ *        Safe to call from ISR context (logs via ICSP only, buffer skipped).
  *
  * @param message Null-terminated message string
  * @return int    Number of characters written, or 0 on failure
@@ -244,15 +273,29 @@ void LogMessageInit(void) {
 static int LogMessageAdd(const char *message) {
 
     static volatile bool bInit = false;
-    int message_len = strlen(message);
+    int message_len;
 
-    if((message_len == 0) || (message_len >= LOG_MESSAGE_SIZE))
+    if (message == NULL) {
+        return 0;
+    }
+
+    message_len = strlen(message);
+
+    if ((message_len == 0) || (message_len >= LOG_MESSAGE_SIZE))
         return 0;
 
+    // ISR context: cannot use mutex or task APIs - only ICSP output
+    if (LogIsInISR()) {
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+        LogMessageICSP(message, message_len);
+        #endif
+        return 0;  // Cannot buffer from ISR
+    }
+
     // Double-checked locking for thread-safe initialization
-    if(!bInit){
+    if (!bInit) {
         taskENTER_CRITICAL();
-        if(!bInit) {  // Re-check after acquiring lock
+        if (!bInit) {  // Re-check after acquiring lock
             LogMessageInit();
             #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
             InitICSPLogging();
@@ -266,8 +309,7 @@ static int LogMessageAdd(const char *message) {
     LogMessageICSP(message, message_len);
     #endif
 
-    if ((xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE)
-    &&  (message_len < LOG_MESSAGE_SIZE)) {
+    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
         strncpy(logBuffer.entries[logBuffer.head].message, message, message_len);
         logBuffer.entries[logBuffer.head].message[message_len] = '\0';
         logBuffer.head = (logBuffer.head + 1) % LOG_MAX_ENTRY_COUNT;
