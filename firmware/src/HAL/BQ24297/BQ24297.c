@@ -174,10 +174,9 @@ void BQ24297_Config_Settings(void) {
     LOG_D("BQ24297_Config_Settings: Initialization complete");
 }
 
-/* 
+/*
  * Updates BQ24297 status by reading all registers
- * WARNING: This function reads REG09 which resets fault flags!
- * Use BQ24297_UpdateStatusSafe() if you don't want to reset faults
+ * NOTE: Only called at boot - no I2C polling after init
  */
 void BQ24297_UpdateStatus(void) {
 #ifdef BYPASS_BQ24297
@@ -276,43 +275,6 @@ void BQ24297_UpdateStatus(void) {
     // Check for critical faults
     if (pData->status.bat_fault) {
         LOG_E("BQ24297: BATFET fault - battery disconnected from system!");
-    }
-}
-
-/*
- * Updates BQ24297 status without resetting fault flags
- * Safe to call frequently as it doesn't read REG09
- */
-void BQ24297_UpdateStatusSafe(void) {
-#ifdef BYPASS_BQ24297
-    // Demo board bypass: Don't update status, keep dummy values
-    return;
-#endif
-
-    uint8_t regData = 0;
-    bool hasErrors = false;
-
-    // REG01: Power-On Configuration - Check OTG/CHG status
-    regData = BQ24297_Read_I2C(0x01);
-    if (regData != 0xFF) {
-        pData->status.otg = (bool) (regData & 0b00100000);
-        pData->status.chgEn = (bool) (regData & 0b00010000);
-    } else {
-        hasErrors = true;
-    }
-
-    // REG08: System Status - Check power status
-    regData = BQ24297_Read_I2C(0x08);
-    if (regData != 0xFF) {
-        pData->status.vBusStat = (uint8_t) (regData & 0b11000000) >> 6;
-        pData->status.chgStat = (uint8_t) (regData & 0b00110000) >> 4;
-        pData->status.pgStat = (bool) (regData & 0b00000100);
-    } else {
-        hasErrors = true;
-    }
-    
-    if (hasErrors) {
-        LOG_E("BQ24297_UpdateStatusSafe: I2C communication errors detected");
     }
 }
 
@@ -645,22 +607,19 @@ void BQ24297_UpdateBatteryStatus(void) {
 void BQ24297_SetPowerMode(bool externalPowerPresent) {
     static bool lastExternalPowerState = false;
     static bool initialized = false;
-    
+
     // Only log when state actually changes
     if (!initialized || lastExternalPowerState != externalPowerPresent) {
         if (externalPowerPresent) {
-            LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
+            LOG_D("BQ24297_SetPowerMode: External power detected");
         } else {
-            LOG_D("BQ24297_SetPowerMode: External power lost, battery power only");
+            LOG_D("BQ24297_SetPowerMode: Battery power only");
         }
         lastExternalPowerState = externalPowerPresent;
         initialized = true;
     }
-    
-    if (externalPowerPresent) {
-        // External power available - disable OTG (can't provide power while receiving)
-        BQ24297_DisableOTG(false);  // Don't re-enable charging, it's always on
-    }
-    // Note: Charging is always enabled. BQ24297 hardware handles it autonomously.
-    // OTG mode is controlled manually via SCPI commands when needed.
+
+    // OTG mode is disabled by default in the BQ24297 and set to disabled at init.
+    // Charging is always enabled and handled autonomously by the hardware.
+    // No action needed here - just logging state changes above.
 }
