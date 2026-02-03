@@ -459,9 +459,19 @@ static void Power_HandleStandbyState(void) {
      * - 1000ms on battery: Conserve power
      */
     static TickType_t lastStandbyUpdate = 0;
+    static bool lastPgStat = false;
     uint32_t updateInterval = pData->BQ24297Data.status.pgStat ? 100 : 1000;
     if (Power_UpdateStatusIfNeeded(updateInterval, &lastStandbyUpdate)) {
         Power_Update_Settings();
+
+        /* Override DPDM ILIM when external power is newly detected in standby
+         * DPDM auto-detection often incorrectly sets 500mA for wall chargers */
+        bool currentPgStat = pData->BQ24297Data.status.pgStat;
+        if (currentPgStat && !lastPgStat) {
+            LOG_D("Power_HandleStandbyState: External power detected, setting ILIM to 2A");
+            BQ24297_SetILim2A();
+        }
+        lastPgStat = currentPgStat;
     }
 }
 
