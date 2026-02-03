@@ -790,20 +790,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
  * @return 
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
-   
-    // Add a test log message to verify logging works  
-    LOG_D("SCPI_SysLogGet called - log count: %d", LogMessageCount());
-    
-    size_t logSize = LogMessageCount();
-    
-    // If no logs, add a message to indicate the log is empty
-    if (logSize == 0) {
-        context->interface->write(context, "Log is empty\n", 13);
-    }
-    else{
-        LogMessageDump(context);
-    }
-    
+    LogMessageDump(context);
     return SCPI_RES_OK;
 }
 
