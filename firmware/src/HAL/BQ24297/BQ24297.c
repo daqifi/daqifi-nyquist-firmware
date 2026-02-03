@@ -356,6 +356,22 @@ void BQ24297_AutoSetILim(void) {
     }
 }
 
+void BQ24297_SetILim500mA(void) {
+    uint8_t reg0 = BQ24297_Read_I2C(0x00);
+
+    // Clear HIZ if set, preserve VINDPM bits [6:3], set ILIM to 500mA (0b010)
+    uint8_t writeVal = 0b00000010 | (reg0 & 0b01111000);
+    BQ24297_Write_I2C(0x00, writeVal);
+
+    // Verify write
+    uint8_t readback = BQ24297_Read_I2C(0x00);
+    if ((readback & 0b00000111) == 0b00000010) {
+        LOG_D("BQ24297_SetILim500mA: ILIM set to 500mA (REG00=0x%02X)", readback);
+    } else {
+        LOG_E("BQ24297_SetILim500mA: Failed! Expected ILIM=0x02, got 0x%02X", readback & 0x07);
+    }
+}
+
 uint8_t BQ24297_Read_I2C(uint8_t reg) {
 #ifdef BYPASS_BQ24297
     // Demo board bypass: Return dummy "good" register values

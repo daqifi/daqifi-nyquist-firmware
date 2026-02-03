@@ -238,6 +238,10 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
                 /* Mark that the device is now configured */
                 gRunTimeUsbSttings.state = USB_CDC_STATE_WAIT;
+
+                /* Set BQ24297 input current limit to 500mA now that USB is enumerated
+                 * USB descriptor requests 500mA, so host has granted this */
+                BQ24297_SetILim500mA();
             }
             break;
 

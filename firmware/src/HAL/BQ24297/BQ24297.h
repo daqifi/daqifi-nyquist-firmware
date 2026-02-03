@@ -230,9 +230,15 @@ void BQ24297_ChargeEnable(bool chargeEnable);
 void BQ24297_ForceDPDM( void );
     
 /*!
- * Autosetting current limit
+ * Autosetting current limit (sets to 2A)
  */
 void BQ24297_AutoSetILim( void );
+
+/*!
+ * Set input current limit to 500mA for USB operation
+ * Call after USB enumeration completes
+ */
+void BQ24297_SetILim500mA(void);
 
 /*!
  * Enable OTG boost mode
