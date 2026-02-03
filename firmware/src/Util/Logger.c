@@ -217,24 +217,36 @@ size_t LogMessageCount(void)
 }
 
 /**
- * @brief Initializes the log buffer and its mutex (idempotent).
+ * @brief Initializes the log buffer and its mutex (idempotent, thread-safe).
  *        Safe to call multiple times - subsequent calls have no effect.
  */
 void LogMessageInit(void) {
-    // Already initialized - do not wipe buffered logs
+    // Fast path: already initialized
     if (logBuffer.mutex != NULL) {
         return;
     }
 
-    logBuffer.head = 0;
-    logBuffer.tail = 0;
-    logBuffer.count = 0;
-
-    logBuffer.mutex = xSemaphoreCreateMutex();
-    if (logBuffer.mutex == NULL) {
+    // Create mutex outside critical section (FreeRTOS API needs interrupts)
+    SemaphoreHandle_t newMutex = xSemaphoreCreateMutex();
+    if (newMutex == NULL) {
         // Critical failure: halt system - mutex creation failed
         __builtin_software_breakpoint();
         while(1);
+    }
+
+    // Critical section only for pointer assignment and buffer init
+    taskENTER_CRITICAL();
+    if (logBuffer.mutex == NULL) {
+        // We won the race - initialize buffer and assign mutex
+        logBuffer.head = 0;
+        logBuffer.tail = 0;
+        logBuffer.count = 0;
+        logBuffer.mutex = newMutex;
+        taskEXIT_CRITICAL();
+    } else {
+        // Another thread won - discard our mutex
+        taskEXIT_CRITICAL();
+        vSemaphoreDelete(newMutex);
     }
 }
 
@@ -278,17 +290,16 @@ static int LogMessageAdd(const char *message) {
         return 0;  // Cannot buffer from ISR
     }
 
-    // Double-checked locking for thread-safe initialization
+    // Thread-safe lazy initialization
+    // Note: LogMessageInit() and InitICSPLogging() are idempotent and handle
+    // their own thread-safety. We avoid calling them inside critical section
+    // because they use FreeRTOS APIs that require interrupts enabled.
     if (!isLoggerInitialized) {
-        taskENTER_CRITICAL();
-        if (!isLoggerInitialized) {
-            LogMessageInit();
-            #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
-            InitICSPLogging();
-            #endif
-            isLoggerInitialized = true;
-        }
-        taskEXIT_CRITICAL();
+        LogMessageInit();
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+        InitICSPLogging();
+        #endif
+        isLoggerInitialized = true;
     }
 
     #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
