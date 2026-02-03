@@ -152,31 +152,31 @@ static int LogMessageFormatImpl(const char* format, va_list args)
         return 0;
     }
 
-    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 3, format, args);
-    if (size <= 0){ 
+    // Reserve 3 bytes for \r\n\0 - guarantees room to append
+    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);
+    if (size <= 0){
         size = 0;
         return size;
     }
-    
-    size = min((LOG_MESSAGE_SIZE-3), size);
-   
-    // Ensure message ends with \r\n
+
+    // Clamp to actual buffer content (vsnprintf returns what it would have written)
+    size = min((LOG_MESSAGE_SIZE - 3), size);
+
+    // Ensure message ends with \r\n (always have room due to -3 reservation)
     if (size >= 2 && buffer[size-2] == '\r' && buffer[size-1] == '\n') {
         // Already has \r\n
     } else if (size >= 1 && buffer[size-1] == '\n') {
-        if (size < LOG_MESSAGE_SIZE - 2) {
-            buffer[size-1] = '\r';
-            buffer[size] = '\n';
-            buffer[size+1] = '\0';
-            size++;
-        }
+        // Has \n only, convert to \r\n
+        buffer[size-1] = '\r';
+        buffer[size] = '\n';
+        buffer[size+1] = '\0';
+        size++;
     } else {
-        if (size < LOG_MESSAGE_SIZE - 3) {
-            buffer[size] = '\r';
-            buffer[size+1] = '\n';
-            buffer[size+2] = '\0';
-            size += 2;
-        }
+        // No newline, append \r\n
+        buffer[size] = '\r';
+        buffer[size+1] = '\n';
+        buffer[size+2] = '\0';
+        size += 2;
     }
 
     if (size > 0) {
