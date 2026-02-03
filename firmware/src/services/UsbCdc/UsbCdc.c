@@ -247,11 +247,12 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
-            /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
+            /* VBUS was detected. Set ILIM to 2A immediately assuming wall charger.
+             * If this is actually a PC, USB enumeration will complete and
+             * USB_DEVICE_EVENT_CONFIGURED will reduce ILIM to 500mA.
+             * This overrides DPDM auto-detection which may limit us to 500mA. */
             gRunTimeUsbSttings.isVbusDetected = true;
-
-            // Don't manipulate OTG here - MCU VBUS detection is unreliable
-            // Power management will detect changes via BQ24297 polling
+            BQ24297_SetILim2A();
 
             vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);

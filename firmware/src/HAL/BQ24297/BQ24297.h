@@ -241,6 +241,12 @@ void BQ24297_AutoSetILim( void );
 void BQ24297_SetILim500mA(void);
 
 /*!
+ * Set input current limit to 2A for wall charger operation
+ * Call when VBUS is detected (before knowing if it's USB or charger)
+ */
+void BQ24297_SetILim2A(void);
+
+/*!
  * Enable OTG boost mode
  * @note This will disable charging as OTG and charging are mutually exclusive
  */
