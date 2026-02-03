@@ -314,11 +314,15 @@ static int LogMessageAdd(const char *message) {
 
 
 /**
- * @brief Dumps all log messages to the SCPI interface and resets the buffer.
+ * @brief Dumps all log messages to the SCPI interface and clears the buffer.
+ *        Uses pop-and-print pattern to avoid holding mutex during I/O.
  *
  * @param context SCPI context used to write and flush messages
  */
 void LogMessageDump(scpi_t * context) {
+
+    char tempBuffer[LOG_MESSAGE_SIZE];
+    bool hasMessage;
 
     if (context == NULL || context->interface == NULL || context->interface->write == NULL) {
         return;
@@ -328,28 +332,34 @@ void LogMessageDump(scpi_t * context) {
         return;
     }
 
-    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
-        uint8_t index = logBuffer.tail;
-        for (uint8_t i = 0; i < logBuffer.count; i++) {
+    // Pop-and-print loop: mutex held only during memory copy, not I/O
+    do {
+        hasMessage = false;
 
-            context->interface->write(context, logBuffer.entries[index].message, strlen(logBuffer.entries[index].message));
+        // Critical section: pop one message from buffer
+        if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+            if (logBuffer.count > 0) {
+                // Copy message to local stack buffer
+                strncpy(tempBuffer, logBuffer.entries[logBuffer.tail].message, LOG_MESSAGE_SIZE - 1);
+                tempBuffer[LOG_MESSAGE_SIZE - 1] = '\0';
 
-            // Flush after each message to prevent buffer overflow
-            // This ensures the USB buffer has time to process each message
+                // Advance tail and decrement count
+                logBuffer.tail = (logBuffer.tail + 1) % LOG_MAX_ENTRY_COUNT;
+                logBuffer.count--;
+
+                hasMessage = true;
+            }
+            xSemaphoreGive(logBuffer.mutex);
+        }
+
+        // I/O section: write message (mutex released)
+        if (hasMessage) {
+            context->interface->write(context, tempBuffer, strlen(tempBuffer));
             if (context->interface->flush) {
                 context->interface->flush(context);
             }
-
-            index = (index + 1) % LOG_MAX_ENTRY_COUNT;
         }
-
-        // Reset the log buffer (clear head/tail/count only, mutex already exists)
-        logBuffer.head = 0;
-        logBuffer.tail = 0;
-        logBuffer.count = 0;
-
-        xSemaphoreGive(logBuffer.mutex);
-    }
+    } while (hasMessage);
 }
 
 /**
