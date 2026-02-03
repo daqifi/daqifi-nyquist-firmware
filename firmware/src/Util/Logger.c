@@ -258,7 +258,7 @@ static inline bool LogIsInISR(void) {
  */
 static int LogMessageAdd(const char *message) {
 
-    static volatile bool bInit = false;
+    static volatile bool isLoggerInitialized = false;
     int message_len;
 
     if (message == NULL) {
@@ -279,14 +279,14 @@ static int LogMessageAdd(const char *message) {
     }
 
     // Double-checked locking for thread-safe initialization
-    if (!bInit) {
+    if (!isLoggerInitialized) {
         taskENTER_CRITICAL();
-        if (!bInit) {  // Re-check after acquiring lock
+        if (!isLoggerInitialized) {
             LogMessageInit();
             #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
             InitICSPLogging();
             #endif
-            bInit = true;
+            isLoggerInitialized = true;
         }
         taskEXIT_CRITICAL();
     }
