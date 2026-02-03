@@ -36,8 +36,10 @@
 #include "../sd_card_services/sd_card_manager.h"
 #include "../streaming.h"
 #include "../csv_encoder.h"
+#include "../JSON_Encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
+#include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
 
 //
 #define UNUSED(x) (void)(x)
@@ -396,13 +398,26 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     // Connectivity Section
     const char* connHeader = "[Connectivity]\r\n";
     context->interface->write(context, connHeader, strlen(connHeader));
-    bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER || 
+    bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER ||
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
-    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext power: %s\r\n",
+    bool vbusDetected = UsbCdc_IsVbusDetected();
+    /* Read VBUS level directly from USB hardware register */
+    USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+    const char* vbusLevelStr = "Unknown";
+    switch (vbusLevel) {
+        case USBHS_VBUS_SESSION_END: vbusLevelStr = "None"; break;
+        case USBHS_VBUS_BELOW_AVALID: vbusLevelStr = "Low"; break;
+        case USBHS_VBUS_BELOW_VBUSVALID: vbusLevelStr = "Medium"; break;
+        case USBHS_VBUS_VALID: vbusLevelStr = "Valid"; break;
+        default: break;
+    }
+    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext power: %s | VBUS: %s (HW: %s)\r\n",
         hasUSBPower ? "Connected" : "Disconnected",
-        wifiStatus == WIFI_STATUS_CONNECTED ? "Connected" : 
+        wifiStatus == WIFI_STATUS_CONNECTED ? "Connected" :
         (wifiStatus == WIFI_STATUS_DISCONNECTED ? "Disconnected" : "Disabled"),
-        pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None");
+        pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None",
+        vbusDetected ? "Yes" : "No",
+        vbusLevelStr);
     context->interface->write(context, buffer, strlen(buffer));
     
     // Power Section
@@ -819,8 +834,8 @@ static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
  * @return 
  */
 static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
-    
-    LogMessageInit();
+
+    LogMessageClear();
     context->interface->write(context, "Log cleared\n", 12);
     return SCPI_RES_OK;
 }
@@ -1047,8 +1062,36 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     const tBoardConfig * pBoardConfig = BoardConfig_Get(
             BOARDCONFIG_ALL_CONFIG, 0);
+    // Check power state first - streaming requires powered-up state
+    const tPowerData *pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL) {
+        LOG_E("Streaming command rejected: Power data unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    if (pPowerState->powerState != POWERED_UP && pPowerState->powerState != POWERED_UP_EXT_DOWN) {
+        LOG_E("Streaming command rejected: Device must be powered up (SYST:POW:STAT 1)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+
+    // Validate ADC runtime/config pointers
+    if (pRuntimeAInChannels == NULL || pBoardConfigADC == NULL) {
+        LOG_E("Streaming command rejected: ADC runtime/config unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Defensive bound check to avoid mismatched arrays
+    if (pBoardConfigADC->Size > pRuntimeAInChannels->Size) {
+        LOG_E("Streaming command rejected: ADC config/runtime size mismatch (%u > %u)",
+              pBoardConfigADC->Size, pRuntimeAInChannels->Size);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // timer running frequency
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
@@ -1057,17 +1100,45 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     uint16_t activeType1ChannelCount = 0;
     bool hasActiveAD7609Channels __attribute__((unused)) = false;
     int i;
-    
-    // Count active channels and detect AD7609 usage
-    for (i = 0; i < pBoardConfigADC->Size; i++) {
+    bool hasEnabledChannels = false;
+
+    // Count active PUBLIC ADC channels and detect AD7609 usage
+    // Internal monitoring channels (IsPublic=false) don't count as user channels
+    // Use minimum of both array sizes to prevent out-of-bounds access
+    size_t adcCount = pBoardConfigADC->Size < pRuntimeAInChannels->Size ?
+                      pBoardConfigADC->Size : pRuntimeAInChannels->Size;
+    for (i = 0; i < (int)adcCount; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
+            // Check IsPublic based on channel type (it's in the union)
+            bool isPublic = false;
             if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
-                hasActiveAD7609Channels = true;
-            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC && 
-                       pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
-                activeType1ChannelCount++;
+                isPublic = pBoardConfigADC->Data[i].Config.AD7609.IsPublic;
+                if (isPublic) {
+                    hasEnabledChannels = true;
+                    hasActiveAD7609Channels = true;
+                }
+            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC) {
+                isPublic = pBoardConfigADC->Data[i].Config.MC12b.IsPublic;
+                if (isPublic) {
+                    hasEnabledChannels = true;
+                    if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
+                        activeType1ChannelCount++;
+                    }
+                }
             }
         }
+    }
+
+    // Check if DIO is globally enabled
+    bool *pDIOGlobalEnable = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    if (pDIOGlobalEnable && *pDIOGlobalEnable) {
+        hasEnabledChannels = true;
+    }
+
+    if (!hasEnabledChannels) {
+        LOG_E("Streaming command rejected: No ADC or DIO channels enabled");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        return SCPI_RES_ERR;
     }
 
     if (SCPI_ParamInt32(context, &freq, FALSE)) {
@@ -1145,15 +1216,31 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // Otherwise keep user's explicit setting (e.g., SD or All)
 
     // Check for WiFi+SD conflict (both use SPI bus)
-    sd_card_manager_settings_t* pSdCardSettings =
+    sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    bool sdLoggingRequested = (pRunTimeStreamConfig->ActiveInterface == StreamingInterface_SD ||
+                               pRunTimeStreamConfig->ActiveInterface == StreamingInterface_All) &&
+                              pSDCardSettings != NULL && pSDCardSettings->enable &&
+                              pSDCardSettings->file[0] != '\0';
+
     if ((pRunTimeStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
          pRunTimeStreamConfig->ActiveInterface == StreamingInterface_All) &&
-        pSdCardSettings != NULL &&
-        pSdCardSettings->enable && pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
-        LOG_E("Cannot start WiFi streaming while SD logging is active (SPI bus conflict)");
+        sdLoggingRequested) {
+        LOG_E("Cannot start WiFi streaming while SD logging is configured (SPI bus conflict)");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
+    }
+
+    // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
+    if (sdLoggingRequested) {
+        // Check if SD card is busy with another operation (DELETE, FORMAT, etc.)
+        if (sd_card_manager_IsBusy()) {
+            LOG_E("Cannot start SD logging - SD card busy with another operation");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
+        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
+        sd_card_manager_UpdateSettings(pSDCardSettings);
     }
 
     Streaming_UpdateState();
@@ -1172,18 +1259,19 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     Streaming_UpdateState();
 
     // Close SD card file if logging was enabled
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    if (pSdCardRuntimeConfig != NULL &&
-        pSdCardRuntimeConfig->enable && pSdCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if (pSDCardRuntimeConfig != NULL &&
+        pSDCardRuntimeConfig->enable && pSDCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE) {
         // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
-        pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         // Give SD card manager task time to close the file
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // Reset CSV encoder state so next session gets a fresh header
+    // Reset encoder state so next session gets fresh headers
     csv_ResetEncoder();
+    json_ResetEncoder();
 
     return SCPI_RES_OK;
 }
@@ -1242,23 +1330,23 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    sd_card_manager_settings_t* pSdCardSettings =
+    sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     // Check if SD card is enabled when trying to use SD or All interfaces
     if (param1 == StreamingInterface_SD || param1 == StreamingInterface_All) {
-        if (pSdCardSettings != NULL && !pSdCardSettings->enable) {
+        if (pSDCardSettings != NULL && !pSDCardSettings->enable) {
             LOG_E("Cannot set interface to SD - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
     }
 
-    // Check for WiFi+SD conflict (both use SPI bus)
+    // Check for WiFi+SD conflict (both use SPI bus) - only when SD streaming is actively running
     if (param1 == StreamingInterface_WiFi || param1 == StreamingInterface_All) {
-        if (pSdCardSettings != NULL &&
-            pSdCardSettings->enable && pSdCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
-            LOG_E("Cannot stream to WiFi while SD logging is active (SPI bus conflict). Disable SD logging first.");
+        if (pSDCardSettings != NULL &&
+            pSDCardSettings->enable && pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+            LOG_E("Cannot switch to WiFi while SD streaming is active (SPI bus conflict). Stop streaming first.");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
@@ -1639,6 +1727,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:FORmat", .callback = SCPI_StorageSDFormat},
     {.pattern = "SYSTem:STORage:SD:BENCHmark", .callback = SCPI_StorageSDBenchmark},
     {.pattern = "SYSTem:STORage:SD:BENCHmark?", .callback = SCPI_StorageSDBenchmarkQuery},
+    {.pattern = "SYSTem:STORage:SD:MAXSize", .callback = SCPI_StorageSDMaxSizeSet},
+    {.pattern = "SYSTem:STORage:SD:MAXSize?", .callback = SCPI_StorageSDMaxSizeGet},
     // FreeRTOS
     //{.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

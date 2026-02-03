@@ -60,3 +60,4 @@ __pycache__/
 .claude/COM3
 bq24297.*
 *.ps1
+.pr_agent*

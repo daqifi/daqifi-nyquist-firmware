@@ -131,11 +131,20 @@ static tBoardRuntimeConfig * gpBoardRuntimeConfig;
 static tBoardConfig * gpBoardConfig;
 extern const NanopbFlagsArray fields_discovery;
 
+// USB transfer constants for SD card callback
+// Clamp chunk size to USB buffer capacity with underflow protection
+#define USB_TRANSFER_CHUNK_SIZE_RAW     4000U
+#define USB_TRANSFER_CHUNK_SIZE \
+    ((USBCDC_WBUFFER_SIZE <= 32U) ? 16U : \
+     ((USBCDC_WBUFFER_SIZE < USB_TRANSFER_CHUNK_SIZE_RAW) ? \
+      (USBCDC_WBUFFER_SIZE - 16U) : \
+      USB_TRANSFER_CHUNK_SIZE_RAW))
+#define USB_TRANSFER_MAX_RETRIES        10000U   // Maximum retry attempts (10 second timeout at 1ms per retry)
 
 static void app_SystemInit();
 static void app_USBDeviceTask(void* p_arg);
 static void app_WifiTask(void* p_arg);
-static void app_SdCardTask(void* p_arg);
+static void app_SDCardTask(void* p_arg);
 
 void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSettings, uint8_t *pBuffer, uint16_t *pPacketLen) {
     tBoardData * pBoardData = (tBoardData *) BoardData_Get(
@@ -151,44 +160,65 @@ void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSe
 }
 
 void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
+    // Defensive checks
+    if (pDataBuff == NULL || dataLen == 0) {
+        return;
+    }
+
     size_t transferredLength = 0;
-    int retryCount = 0;
-    const int maxRetries = 100;
+    uint32_t retryCount = 0;
 
     while (transferredLength < dataLen) {
+        size_t remaining = dataLen - transferredLength;
+        size_t toSend = (remaining < USB_TRANSFER_CHUNK_SIZE) ? remaining : USB_TRANSFER_CHUNK_SIZE;
+
         size_t bytesWritten = UsbCdc_WriteToBuffer(
                 NULL,
                 (const char *) pDataBuff + transferredLength,
-                dataLen - transferredLength
+                toSend
                 );
 
         if (bytesWritten > 0) {
             transferredLength += bytesWritten;
             retryCount = 0;
+            // If partial write, yield to let USB drain before retrying
+            if (bytesWritten < toSend) {
+                vTaskDelay(1);
+            }
         } else {
             retryCount++;
-            if (retryCount >= maxRetries) {
+            if (retryCount >= USB_TRANSFER_MAX_RETRIES) {
+                LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
+                      (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
                 break;
             }
-            vTaskDelay(5 / portTICK_PERIOD_MS);
+            vTaskDelay(1);
         }
+    }
+
+    if (transferredLength < dataLen) {
+        LOG_E("[USB] Incomplete transfer: sent %u/%u bytes",
+              (unsigned)transferredLength, (unsigned)dataLen);
     }
 }
 
 static void app_USBDeviceTask(void* p_arg) {
+    // Enable FPU context saving - USB task processes streaming data with voltage conversion
+    portTASK_USES_FLOATING_POINT();
     UsbCdc_Initialize();
-    UsbCdcData_t* pUsbCdcContext = UsbCdc_GetSettings();
+
+    // Boost priority after initialization complete
+    vTaskPrioritySet(NULL, 7);
+
     while (1) {
         UsbCdc_ProcessState();
-        if (pUsbCdcContext->isTransparentModeActive) {
-            taskYIELD();
-        } else {
-            vTaskDelay(5 / portTICK_PERIOD_MS);
-        }
+        vTaskDelay(1);
     }
 }
 
 static void app_WifiTask(void* p_arg) {
+    // Enable FPU context saving - WiFi task processes streaming data with voltage conversion
+    portTASK_USES_FLOATING_POINT();
     enum{
         APP_WIFI_STATE_WAIT_POWER_UP=0,
         APP_WIFI_STATE_PROCESS=1,
@@ -232,7 +262,7 @@ static void app_WifiTask(void* p_arg) {
  * Avoids SD operations during WiFi streaming to prevent SPI bus contention
  * that was causing WiFi streaming failures every ~590 seconds.
  */
-static void app_SdCardTask(void* p_arg) {
+static void app_SDCardTask(void* p_arg) {
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
     while (1) {
         // Critical fix: Prevent SPI bus contention between WiFi streaming/firmware update and SD operations
@@ -498,7 +528,7 @@ static void app_TasksCreate() {
             "PowerAndUITask",
             4096,  // Further increased to prevent stack overflow during disconnect/reconnect
             NULL,
-            2,
+            7,  // Priority 7: UI always responsive (same as USB, above data processing tasks)
             NULL);
     /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
@@ -510,7 +540,7 @@ static void app_TasksCreate() {
             "USBDeviceTask",
             USBDEVICETASK_SIZE,
             NULL,
-            2,
+            2,  // Start at normal priority, self-boosts after init
             NULL);
     /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
@@ -528,15 +558,15 @@ static void app_TasksCreate() {
         LOG_E("FATAL: Failed to create WifiTask (3000 bytes)\r\n");
         while (1);
     }
-    errStatus = xTaskCreate((TaskFunction_t) app_SdCardTask,
-            "SdCardTask",
+    errStatus = xTaskCreate((TaskFunction_t) app_SDCardTask,
+            "SDCardTask",
             5240,
             NULL,
             2,
             NULL);
     /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
-        LOG_E("FATAL: Failed to create SdCardTask (5240 bytes)\r\n");
+        LOG_E("FATAL: Failed to create SDCardTask (5240 bytes)\r\n");
         while (1);
     }
 }

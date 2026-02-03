@@ -132,6 +132,7 @@ int    LogMessage(const char* format, ...) __attribute__((format(printf, 1, 2)))
 size_t LogMessageCount();
 void   LogMessageDump(scpi_t * context);
 void   LogMessageInit(void);
+void   LogMessageClear(void);
 
 // Helper macro to get the log level for the current module
 // Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)

@@ -45,7 +45,7 @@ LogBuffer logBuffer;
 static void InitICSPLogging(void);
 static void LogMessageICSP(const char* buffer, int len);
 #endif
-static bool LogMessageAdd(const char *message);
+static int LogMessageAdd(const char *message);
 
 
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
@@ -223,47 +223,51 @@ void LogMessageInit(void) {
     logBuffer.head = 0;
     logBuffer.tail = 0;
     logBuffer.count = 0;
-    
+
     if(logBuffer.mutex == NULL){
         logBuffer.mutex = xSemaphoreCreateMutex();
-        // Critical failure: halt system
-        __builtin_software_breakpoint();
-        while(logBuffer.mutex == NULL);
+        if(logBuffer.mutex == NULL) {
+            // Critical failure: halt system - mutex creation failed
+            __builtin_software_breakpoint();
+            while(1);
+        }
     }
 }
 
 /**
  * @brief Internal helper to add a message to the log buffer.
  *        Also sends the message over ICSP UART if enabled.
- * 
+ *
  * @param message Null-terminated message string
- * @return true   If the message was added successfully
- * @return false  If the message was invalid or mutex acquisition failed
+ * @return int    Number of characters written, or 0 on failure
  */
-static bool LogMessageAdd(const char *message) {
-    
+static int LogMessageAdd(const char *message) {
+
     static volatile bool bInit = false;
     int message_len = strlen(message);
-    
-    if((message_len == 0) || (message_len>= LOG_MESSAGE_SIZE))
-    return false;
-    
+
+    if((message_len == 0) || (message_len >= LOG_MESSAGE_SIZE))
+        return 0;
+
+    // Double-checked locking for thread-safe initialization
     if(!bInit){
         taskENTER_CRITICAL();
-        LogMessageInit();
-        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
-        InitICSPLogging();
-        #endif
-        bInit = true;
+        if(!bInit) {  // Re-check after acquiring lock
+            LogMessageInit();
+            #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+            InitICSPLogging();
+            #endif
+            bInit = true;
+        }
         taskEXIT_CRITICAL();
     }
-    
+
     #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
     LogMessageICSP(message, message_len);
     #endif
-    
-    if ((xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) 
-    &&  (message_len<LOG_MESSAGE_SIZE)) {
+
+    if ((xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE)
+    &&  (message_len < LOG_MESSAGE_SIZE)) {
         strncpy(logBuffer.entries[logBuffer.head].message, message, message_len);
         logBuffer.entries[logBuffer.head].message[message_len] = '\0';
         logBuffer.head = (logBuffer.head + 1) % LOG_MAX_ENTRY_COUNT;
@@ -275,35 +279,64 @@ static bool LogMessageAdd(const char *message) {
         }
 
         xSemaphoreGive(logBuffer.mutex);
-        return true;
+        return message_len;
     }
-    return false;
+    return 0;
 }
 
 
 /**
  * @brief Dumps all log messages to the SCPI interface and resets the buffer.
- * 
+ *
  * @param context SCPI context used to write and flush messages
  */
 void LogMessageDump(scpi_t * context) {
+
+    if (context == NULL || context->interface == NULL || context->interface->write == NULL) {
+        return;
+    }
+
+    if (logBuffer.mutex == NULL) {
+        return;
+    }
 
     if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
         uint8_t index = logBuffer.tail;
         for (uint8_t i = 0; i < logBuffer.count; i++) {
 
             context->interface->write(context, logBuffer.entries[index].message, strlen(logBuffer.entries[index].message));
-            
+
             // Flush after each message to prevent buffer overflow
             // This ensures the USB buffer has time to process each message
             if (context->interface->flush) {
                 context->interface->flush(context);
             }
-             
+
             index = (index + 1) % LOG_MAX_ENTRY_COUNT;
         }
-        
-        LogMessageInit(); // reset the log buffer 
+
+        // Reset the log buffer (clear head/tail/count only, mutex already exists)
+        logBuffer.head = 0;
+        logBuffer.tail = 0;
+        logBuffer.count = 0;
+
+        xSemaphoreGive(logBuffer.mutex);
+    }
+}
+
+/**
+ * @brief Clears all log messages from the buffer (thread-safe).
+ */
+void LogMessageClear(void) {
+
+    if (logBuffer.mutex == NULL) {
+        return;
+    }
+
+    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+        logBuffer.head = 0;
+        logBuffer.tail = 0;
+        logBuffer.count = 0;
         xSemaphoreGive(logBuffer.mutex);
     }
 }

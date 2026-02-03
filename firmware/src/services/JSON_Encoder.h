@@ -12,11 +12,16 @@ extern "C" {
 
 /*!
  * Encodes board data as JSON
- * @return Number of bytes written 
+ * @return Number of bytes written
  */
-size_t Json_Encode(     tBoardData* state,                                  
-                        NanopbFlagsArray* fields,                           
+size_t Json_Encode(     tBoardData* state,
+                        NanopbFlagsArray* fields,
                         uint8_t* pBffer, size_t buffSize);
+
+/*!
+ * Reset JSON encoder state (call when streaming stops)
+ */
+void json_ResetEncoder(void);
 
 #ifdef	__cplusplus
 }

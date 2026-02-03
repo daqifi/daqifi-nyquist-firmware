@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
     /**
-     * Contains DIO information for a given time
+     * State machine states for analog input task processing
      */
     typedef enum e_AInTaskState {
         AINTASK_INITIALIZING,
@@ -29,7 +29,7 @@ extern "C" {
     ARRAYWRAPPERDEF(AInModDataArray, AInModData, MAX_AIN_MOD);
 
     /**
-     * Contains DIO information for a given time
+     * Contains a single analog input sample with timestamp and value
      */
     typedef struct s_AInSample {
         /**
@@ -54,8 +54,18 @@ extern "C" {
     } AInPublicSampleList_t;
 
     // Define a storage class for analog input channels
-    //#define MAX_AIN_CHANNEL    48
-#define MAX_AIN_SAMPLE_COUNT 50  // Increased for 5kHz streaming support (10ms buffer depth)
+
+    /**
+     * Maximum samples in the streaming queue and object pool.
+     * Single source of truth - used directly in AInSample.c for pool allocation.
+     *
+     * Memory impact: ~208 bytes per sample (16ch × 12 bytes + 16 bools + overhead)
+     *   700 samples = ~146 KB static RAM (current setting)
+     *   1024 samples = ~215 KB static RAM
+     *
+     * Increasing this value requires sufficient free RAM (check memoryfile.xml).
+     */
+#define MAX_AIN_SAMPLE_COUNT 700
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**
@@ -140,6 +150,26 @@ extern "C" {
      * @return True if the queue is empty, false otherwise.
      */
     bool AInSampleList_IsEmpty(void);
+
+    /**
+     * @brief Allocates a sample structure from the pre-allocated object pool.
+     *
+     * Uses O(1) free list allocation to eliminate heap allocation overhead.
+     * The returned structure is zero-initialized.
+     *
+     * @return Pointer to allocated sample, or NULL if pool is exhausted.
+     */
+    AInPublicSampleList_t* AInSampleList_AllocateFromPool(void);
+
+    /**
+     * @brief Returns a sample structure to the object pool.
+     *
+     * Uses O(1) free list deallocation to eliminate heap free overhead.
+     * Safe to call with NULL or non-pool pointers (will be ignored).
+     *
+     * @param pSample Pointer to sample structure to return to pool.
+     */
+    void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample);
 
 #ifdef __cplusplus
 }

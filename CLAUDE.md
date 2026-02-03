@@ -219,15 +219,23 @@ The firmware supports building for different board variants using MPLAB X config
 
 #### Major Heap Allocations
 
-**Circular Buffers** (allocated at runtime via `CircularBuf_Init`):
-- **SD Card Write Buffer**: 64KB (`SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE` in `sd_card_manager.c`)
-  - ⚠️ **LARGEST ALLOCATION** - Reduced from 128KB to address heap pressure
+**Static Buffers** (compile-time allocation, not on heap):
+- **SD Card Shared Buffer**: 32KB (`gSdSharedBuffer` in `sd_card_manager.c`)
+  - Static coherent buffer for all SD operations (write, read, list)
+  - DMA-safe, cache-line aligned
+  - Reduced from 64KB to 32KB to allow larger sample pool
   - Location: `firmware/src/services/sd_card_services/sd_card_manager.c`
-  - **TODO**: Should be dynamically sized based on enabled features (see GitHub issue)
+- **Sample Pool**: ~146KB (700 samples × ~210 bytes)
+  - Static pool for streaming analog input samples
+  - Uses O(1) free-list allocation to avoid heap fragmentation
+  - Location: `firmware/src/state/data/AInSample.c`
+
+**Circular Buffers** (heap-allocated at runtime):
 - **WiFi TCP Write Buffer**: 5.6KB (`WIFI_CIRCULAR_BUFF_SIZE` = 1400 × 4)
   - Location: `firmware/src/services/wifi_services/wifi_tcp_server.c`
-- **USB CDC Write Buffer**: 2.8KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 700 × 4)
+- **USB CDC Write Buffer**: 16KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 4096 × 4)
   - Location: `firmware/src/services/UsbCdc/UsbCdc.c`
+  - Increased from 8KB to improve throughput and reduce buffer-full conditions
 
 **FreeRTOS Task Stacks** (~33KB total):
 - `app_SdCardTask`: 5240 bytes
@@ -244,25 +252,27 @@ The firmware supports building for different board variants using MPLAB X config
 - `AD7609_DeferredInterruptTask`: 512 bytes
 
 **Streaming Sample Queue**:
-- **Queue Depth**: 20 samples (`MAX_AIN_SAMPLE_COUNT`)
+- **Pool Size**: 700 samples (`MAX_AIN_SAMPLE_COUNT` in `AInSample.h`)
 - **Sample Size**: ~208 bytes (`AInPublicSampleList_t` = 16 channels × 12 bytes + 16 bools)
-- **Max Queue Memory**: ~4KB (20 × 208 bytes)
-- **Allocation**: Dynamic (`pvPortCalloc` in streaming interrupt task)
+- **Total Pool Memory**: ~146KB (700 × 208 bytes, statically allocated)
+- **Allocation**: Static pool with O(1) free-list allocation (no heap usage)
 - **Critical**: Old samples must be freed before starting new streaming session
-  - Cleared automatically in `Streaming_Start()` since 2025-01-XX
+  - Cleared automatically in `Streaming_Start()`
 
 #### Heap Usage Summary
 Typical allocations at steady state:
-- Circular buffers: **72.4KB** (SD: 64KB, WiFi: 5.6KB, USB: 2.8KB)
+- Circular buffers: **21.6KB** (WiFi: 5.6KB, USB: 16KB)
 - Task stacks: **~33KB**
-- Streaming queue: **Up to 4KB** (dynamically allocated)
-- **Total**: ~109KB used, ~175KB free (under normal conditions)
+- **Total heap**: ~55KB used, **~229KB free** (under normal conditions)
+- **Static buffers**: ~178KB (32KB SD buffer + 146KB sample pool - not on heap)
 
 #### Memory Pressure Indicators
 If heap allocation fails (`xPortGetFreeHeapSize()` returns low values):
-1. **Check streaming sample queue**: `AInSampleList_Size()` - should be <20
-2. **Further reduce SD buffer**: 64KB → 32KB saves additional 32KB if SD logging unused
+1. **Check streaming sample pool**: `AInSampleList_Size()` - should be <700
+2. **Reduce USB/WiFi buffers**: If SD logging is primary use case, can reduce USB/WiFi buffer sizes
 3. **Monitor with debugger**: Set breakpoint in `pvPortMalloc` failure path
+
+Note: SD buffer and sample pool are now static (not heap), significantly improving heap availability.
 
 #### Other Memory Constraints
 - DMA buffers must be cache-aligned
@@ -361,6 +371,39 @@ A comprehensive technical analysis of the firmware has been completed and is ava
 - **Current ADC**: ~1 kHz → **Optimized**: 10+ kHz sample rates
 
 The report includes detailed technical analysis, code examples, and a prioritized roadmap for optimization. Reference this document before making performance-critical modifications to understand current limitations and optimization opportunities.
+
+### SD Card File Splitting
+
+**Feature:** Automatic file splitting prevents FAT32 4GB file size limit issues during long logging sessions.
+
+**Configuration:**
+```bash
+# Set maximum file size (range: 1000 bytes to 4GB)
+SYST:STOR:SD:MAXSize 2000000000    # 2GB limit
+SYST:STOR:SD:MAXSize 0              # Use filesystem maximum (3.9GB default)
+SYST:STOR:SD:MAXSize?               # Query current setting
+```
+
+**File Naming:**
+- First file: Uses original name (e.g., `experiment.csv`)
+- Split files: Sequential 4-digit numbering (e.g., `experiment-0001.csv`, `experiment-0002.csv`)
+- Supports up to 9999 files per session (~39TB @ 3.9GB each)
+
+**CSV Headers:**
+- First file: Full CSV header (device info, column names with "ain" prefix)
+- Split files: Data rows only (no headers) - simplifies merging
+
+**Safety Features:**
+- Default: 3.9GB limit (100MB below FAT32 maximum)
+- Minimum: 1000 bytes (prevents rapid rotation)
+- Circular buffer draining before rotation (zero data loss)
+- Unconditional filesystem flush before file close
+
+**Python Tools:**
+- `download_sd_files.py` - Auto-detects and groups split files
+- `analyze_split_files.py` - Validates integrity, merges parts
+
+**Implementation:** `firmware/src/services/sd_card_services/sd_card_manager.c`
 
 ## Development Notes
 
@@ -766,3 +809,10 @@ voltage, NTC status, and power-up readiness.
 - pic32 tris convention is 1=input and 0=output
 - when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
 - always verify scpi command syntax - don't guess.
+- we don't need to generate analysis docs or the like unless asked
+- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
+ error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
+error was.
+- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
+ error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
+error was.

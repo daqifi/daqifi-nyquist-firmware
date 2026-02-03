@@ -10,6 +10,7 @@
 #include "Util/Logger.h"
 #include "HAL/BQ24297/BQ24297.h"
 #include "state/data/BoardData.h"
+#include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
 
 #define LOG_LEVEL_LOCAL 'D'
 #define UNUSED(x) (void)(x)
@@ -244,38 +245,48 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
             /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
             gRunTimeUsbSttings.isVbusDetected = true;
-            
+
             // Don't manipulate OTG here - MCU VBUS detection is unreliable
             // Power management will detect changes via BQ24297 polling
-            
+
             vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
 
         case USB_DEVICE_EVENT_POWER_REMOVED:
+        {
+            /* VBUS Sag vs Real Removal Detection:
+             *
+             * Power sag: Internal power rail transitions can cause VBUS to
+             * momentarily sag from ~5V to ~4V, triggering a false removal event.
+             * VBUS recovers within ~20ms for sag events.
+             *
+             * Real removal: The low-pass RC filter on VBUS into the PIC32 causes
+             * the voltage to discharge over 20-50ms when power is unplugged.
+             *
+             * Solution: If VBUS is still elevated, wait 50ms for the RC filter
+             * to discharge and re-check. If VBUS recovered, it was a sag. If
+             * VBUS dropped, it was a real removal. */
+            USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
 
-            /* VBUS is not available any more. Detach the device. */
-            gRunTimeUsbSttings.isVbusDetected = false;
-            
-            // Check if this is a real disconnect or false trigger at startup
-            tPowerData* pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-            if (pPowerData && pPowerData->BQ24297Data.initComplete) {
-                // Only trust this event if BQ24297 is initialized
-                BQ24297_UpdateStatusSafe();
-                if (pPowerData->BQ24297Data.status.pgStat) {
-                    LOG_D("USB: False VBUS removal detected (pgStat=1), ignoring");
+            if (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID) {
+                /* VBUS still elevated - wait for RC filter discharge */
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+
+                if (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID) {
+                    /* VBUS recovered - power sag, not real removal */
                     break;
                 }
             }
-            
-            LOG_E("USB: VBUS removed - USB POWER LOST!");
-            
-            // OTG mode is now controlled manually via SCPI commands only
-            // Automatic OTG transitions have been disabled to prevent unexpected power state changes
-            
-            
-            USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
+
+            /* VBUS truly removed */
+            gRunTimeUsbSttings.isVbusDetected = false;
+            if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
+                USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
+            }
             break;
+        }
 
         case USB_DEVICE_EVENT_SUSPENDED:
             // Transfer handles become invalid during suspend - host stops all transfers
@@ -575,27 +586,33 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     if (client == NULL) {
         client = &gRunTimeUsbSttings;
     }
-    size_t bytesAdded = 0;
 
-    if (len == 0)return 0;
+    if (len == 0) return 0;
 
     // Non-blocking check for buffer space
-    // If buffer is full, return 0 immediately instead of blocking
-    // This prevents the streaming task from stalling during high-rate streaming
-    xSemaphoreTake(client->wMutex, portMAX_DELAY);
-    size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
-    if (currentFree < len) {
-        xSemaphoreGive(client->wMutex);
-        // Only log if buffer is critically full to avoid spam
-        static uint32_t dropCount = 0;
-        if (currentFree < 128 && (++dropCount % 1000) == 0) {
-            LOG_E("USB: Buffer full - dropped %u packets (needed %u bytes, only %u free)",
-                  (unsigned)dropCount, (unsigned)len, (unsigned)currentFree);
-            dropCount = 0;
-        }
-        return 0;  // No space available - return immediately
+    // Use try-lock (timeout=0) to keep function truly non-blocking
+    // If mutex is busy or buffer is full, return 0 immediately
+    if (xSemaphoreTake(client->wMutex, 0) != pdTRUE) {
+        return 0;  // Mutex busy, can't write now
     }
-    bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
+
+    size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
+    if (currentFree == 0) {
+        xSemaphoreGive(client->wMutex);
+        return 0;
+    }
+
+    // Partial write - clamp to chunk size for better flow control
+    // Limit to USBCDC_WBUFFER_SIZE to align with USB driver transfer granularity
+    size_t toWrite = len;
+    if (toWrite > currentFree) {
+        toWrite = currentFree;
+    }
+    if (toWrite > USBCDC_WBUFFER_SIZE) {
+        toWrite = USBCDC_WBUFFER_SIZE;
+    }
+
+    size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, toWrite);
     xSemaphoreGive(client->wMutex);
 
     return bytesAdded;

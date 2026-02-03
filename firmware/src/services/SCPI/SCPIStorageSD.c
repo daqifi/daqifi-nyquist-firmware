@@ -33,6 +33,10 @@
 // SPI coordination handled at operation level when needed
 #include <string.h>
 
+#define SCPI_SD_LIST_TIMEOUT_MS 10000
+#define SCPI_SD_DELETE_TIMEOUT_MS 5000
+#define SCPI_SD_FORMAT_TIMEOUT_MS 30000
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 /* Section: File Scope or Global Data                                         */
@@ -61,29 +65,53 @@
 #define LAN_ACTIVE_ERROR_MSG "\r\nError !! Please Disable LAN\r\n"
 #define SD_CARD_NOT_ENABLED_ERROR_MSG "\r\nError !! Please Enabled SD Card\r\n"
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
+
+// Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency
+#define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy with current operation\r\n")
+
+/**
+ * @brief Check if SD card media is present
+ * @param context SCPI context for error reporting
+ * @return true if present, false if not (error already pushed to context)
+ */
+static bool SCPI_CheckSDCardPresent(scpi_t *context) {
+    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        LOG_E("SD - No SD card detected\r\n");
+        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return false;
+    }
+    return true;
+}
+
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    // Simple enable/disable - no mutex blocking for concurrent operations
-    // SPI coordination handled at operation level, not enable level
+
     if (param1 != 0) {
-        // Don't check for SD card presence here - let the SD card manager task handle it
-        // This prevents blocking the SCPI handler if no card is present
+        // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
-        pSdCardRuntimeConfig->enable = true;
+        pSDCardRuntimeConfig->enable = true;
     } else {
+        // Disable SD card - check if busy first to prevent data loss
+        if (sd_card_manager_IsBusy()) {
+            LOG_SD_BUSY("ENAble");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
-        pSdCardRuntimeConfig->enable = false;
+        pSDCardRuntimeConfig->enable = false;
     }
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
-    result = SCPI_RES_OK;  
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    result = SCPI_RES_OK;
 __exit_point:
     return result;
 }
@@ -92,10 +120,24 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     size_t fileLen = 0;
  
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    if (!pSdCardRuntimeConfig->enable) {
+    if (!pSDCardRuntimeConfig->enable) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("LOGging");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -108,17 +150,16 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
-        pSdCardRuntimeConfig->file[fileLen] = '\0';
+        memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
+        pSDCardRuntimeConfig->file[fileLen] = '\0';
         LOG_D("SD:LOGging - Set filename to '%s' (%d bytes) dir='%s'\r\n",
-              pSdCardRuntimeConfig->file, fileLen, pSdCardRuntimeConfig->directory);
+              pSDCardRuntimeConfig->file, fileLen, pSDCardRuntimeConfig->directory);
     } else {
-        LOG_D("SD:LOGging - No filename provided, using existing: '%s'\r\n", pSdCardRuntimeConfig->file);
+        LOG_D("SD:LOGging - No filename provided, using existing: '%s'\r\n", pSDCardRuntimeConfig->file);
     }
 
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
-
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    // Note: Mode is set to WRITE when streaming actually starts (in SCPI_StartStreaming)
+    // This allows other SD operations (list, delete, etc.) to work after setting filename
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -128,14 +169,28 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
   
-    if (!pSdCardRuntimeConfig->enable) {
+    if (!pSDCardRuntimeConfig->enable) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("GET");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
@@ -143,32 +198,24 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
-        pSdCardRuntimeConfig->file[fileLen] = '\0';
+        memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
+        pSDCardRuntimeConfig->file[fileLen] = '\0';
     }
-
-    if (fileLen > 0) {
-        if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
-            result = SCPI_RES_ERR;
-            goto __exit_point;
-        }
-        memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
-        pSdCardRuntimeConfig->file[fileLen] = '\0';
-    }
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     result = SCPI_RES_OK;
 __exit_point:
     return result;
 }
+
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     const char* pBuff;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
    
 
-    if (!pSdCardRuntimeConfig->enable) {
+    if (!pSDCardRuntimeConfig->enable) {
         LOG_E("SD:LIST? - SD card not enabled\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -176,34 +223,40 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
 
     // Check if SD card is actually present and mounted
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
-        LOG_E("SD:LIST? - No SD card detected\r\n");
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("LISt");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
     // Get optional directory parameter
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
-        if (fileLen >= sizeof(pSdCardRuntimeConfig->directory)) {
+        if (fileLen >= sizeof(pSDCardRuntimeConfig->directory)) {
             LOG_E("SD:LIST? - Directory path too long: %d bytes, max: %d\r\n", 
-                  fileLen, sizeof(pSdCardRuntimeConfig->directory) - 1);
+                  fileLen, sizeof(pSDCardRuntimeConfig->directory) - 1);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        memcpy(pSdCardRuntimeConfig->directory, pBuff, fileLen);
-        pSdCardRuntimeConfig->directory[fileLen] = '\0';
+        memcpy(pSDCardRuntimeConfig->directory, pBuff, fileLen);
+        pSDCardRuntimeConfig->directory[fileLen] = '\0';
     }
     // If no directory specified, the sd_card_manager will use the default from settings
     
     // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
-    if (!sd_card_manager_WaitForCompletion(10000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -244,18 +297,17 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     int32_t testSizeKB = 0;
     int32_t pattern = 0;
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     
     // Check if SD card is enabled
-    if (!pSdCardRuntimeConfig->enable) {
+    if (!pSDCardRuntimeConfig->enable) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
     
     // Double-check that SD card is actually present
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet("/dev/mmcblka1")) {
-        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -304,12 +356,12 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     gSDBenchmarkResults.resultAvailable = false;
     
     // Create test file name
-    snprintf(pSdCardRuntimeConfig->file, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, 
+    snprintf(pSDCardRuntimeConfig->file, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, 
              "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
     
     // Set SD card to write mode
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     
     // Start benchmark timing
     uint32_t startTime = xTaskGetTickCount();
@@ -361,8 +413,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
     
     // Force flush to ensure all data is written
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     vTaskDelay(100); // Wait for flush to complete
     
     // Calculate results
@@ -431,11 +483,25 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    if (!pSdCardRuntimeConfig->enable) {
+    if (!pSDCardRuntimeConfig->enable) {
         LOG_E("SD:DELete - SD card not enabled\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("DELete");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -451,17 +517,24 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Set the filename
-    memcpy(pSdCardRuntimeConfig->file, pBuff, fileLen);
-    pSdCardRuntimeConfig->file[fileLen] = '\0';
-    LOG_D("SD:DELete - Deleting file '%s'\r\n", pSdCardRuntimeConfig->file);
+    memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
+    pSDCardRuntimeConfig->file[fileLen] = '\0';
+    LOG_D("SD:DELete - Deleting file '%s'\r\n", pSDCardRuntimeConfig->file);
 
     // Set mode to DELETE and trigger the operation
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
-    if (!sd_card_manager_WaitForCompletion(5000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
         LOG_E("SD:DELete - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if the operation succeeded
+    if (!sd_card_manager_GetLastOperationResult()) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -481,11 +554,25 @@ __exit_point:
  */
 scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     scpi_result_t result = SCPI_RES_ERR;
-    sd_card_manager_settings_t* pSdCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    if (!pSdCardRuntimeConfig->enable) {
+    if (!pSDCardRuntimeConfig->enable) {
         LOG_E("SD:FORmat - SD card not enabled\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is busy with another operation
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("FORmat");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if SD card is present
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -493,12 +580,19 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     LOG_D("SD:FORmat - Formatting SD card (erasing all files)\r\n");
 
     // Set mode to FORMAT and trigger the operation
-    pSdCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
-    sd_card_manager_UpdateSettings(pSdCardRuntimeConfig);
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
     // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
-    if (!sd_card_manager_WaitForCompletion(30000)) {
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
         LOG_E("SD:FORmat - Operation timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Check if the operation succeeded
+    if (!sd_card_manager_GetLastOperationResult()) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -507,6 +601,79 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     result = SCPI_RES_OK;
 __exit_point:
     return result;
+}
+
+/**
+ * @brief Set maximum file size for automatic file splitting
+ *
+ * Command: SYST:STOR:SD:MAXSize <bytes>
+ * Example: SYST:STOR:SD:MAXSize 4185448858  (3.9GB)
+ *          SYST:STOR:SD:MAXSize 0           (unlimited)
+ */
+scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    int64_t maxSizeBytes;
+    if (!SCPI_ParamInt64(context, &maxSizeBytes, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // Validate range (0 = unlimited, or >= minimum size)
+    if (maxSizeBytes < 0) {
+        LOG_E("SD:MAXSize - Invalid size: %lld (must be >= 0)\r\n", maxSizeBytes);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // Minimum file size protection: Prevent rapid rotation and filesystem stress
+    const uint64_t MIN_FILE_SIZE = 1000;  // 1000 bytes minimum
+    if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes < MIN_FILE_SIZE) {
+        LOG_E("[%s:%d]SD:MAXSize - Size %llu too small (minimum %llu bytes)",
+              __FILE__, __LINE__, (uint64_t)maxSizeBytes, MIN_FILE_SIZE);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // FAT32 filesystem limit protection: 4GB hard limit
+    const uint64_t FAT32_MAX_FILE_SIZE = 4294967295ULL;  // 4GB - 1 byte
+    if (maxSizeBytes > 0 && (uint64_t)maxSizeBytes > FAT32_MAX_FILE_SIZE) {
+        LOG_E("SD:MAXSize - Requested size %lld exceeds FAT32 limit (%llu bytes).\r\n",
+              (long long)maxSizeBytes, (unsigned long long)FAT32_MAX_FILE_SIZE);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
+
+    // If user sets 0, use safe filesystem maximum (3.9GB for FAT32)
+    if (maxSizeBytes == 0) {
+        pSDCardRuntimeConfig->maxFileSizeBytes = SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE;  // 3.9GB safe default
+        LOG_D("SD:MAXSize - Using filesystem maximum: %llu bytes (3.9GB)\r\n",
+              pSDCardRuntimeConfig->maxFileSizeBytes);
+    } else {
+        pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
+        LOG_D("SD:MAXSize - Set max file size to %llu bytes\r\n",
+              pSDCardRuntimeConfig->maxFileSizeBytes);
+    }
+
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    result = SCPI_RES_OK;
+
+__exit_point:
+    return result;
+}
+
+/**
+ * @brief Query maximum file size setting
+ *
+ * Command: SYST:STOR:SD:MAXSize?
+ * Returns: <bytes> (0 = unlimited)
+ */
+scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    SCPI_ResultUInt64(context, pSDCardRuntimeConfig->maxFileSizeBytes);
+    return SCPI_RES_OK;
 }
 
 /* *****************************************************************************

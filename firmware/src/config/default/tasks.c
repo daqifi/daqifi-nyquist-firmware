@@ -63,7 +63,7 @@
 // *****************************************************************************
 // *****************************************************************************
 // WARNING: Task function disabled - DO NOT restore during MCC regeneration
-// This function causes SPI mutex conflicts with app_SdCardTask
+// This function causes SPI mutex conflicts with app_SDCardTask
 //static void lDRV_SDSPI_0_Tasks(  void *pvParameters  )
 //{
 //    while(true)
@@ -75,11 +75,15 @@
 
 static void F_USB_DEVICE_Tasks(  void *pvParameters  )
 {
+    // Boost priority after startup
+    portYIELD();  // Let other tasks initialize first
+    vTaskPrioritySet(NULL, 6);
+
     while(true)
     {
-                /* USB Device layer tasks routine */
+        /* USB Device layer tasks routine */
         USB_DEVICE_Tasks(sysObj.usbDevObject0);
-        vTaskDelay(1U / portTICK_PERIOD_MS);
+        vTaskDelay(1);  // Block to ensure app_USBDeviceTask can run
     }
 }
 
@@ -126,7 +130,7 @@ static void F_DRV_USBHS_Tasks(  void *pvParameters  )
 
 
 // WARNING: Task function disabled - DO NOT restore during MCC regeneration  
-// This function causes SPI mutex conflicts with app_SdCardTask
+// This function causes SPI mutex conflicts with app_SDCardTask
 //static void lSYS_FS_Tasks(  void *pvParameters  )
 //{
 //    while(true)
@@ -164,7 +168,7 @@ void SYS_Tasks ( void )
     // These tasks were accidentally restored by Harmony Configurator update but cause
     // cross-task FreeRTOS mutex violations when multiple tasks try to unlock SPI mutexes
     // that were locked by different tasks. Originally disabled in commit 86d25f91.
-    // SD functionality is handled by app_SdCardTask instead.
+    // SD functionality is handled by app_SDCardTask instead.
     // REJECT MCC MERGE ATTEMPTS TO RE-ENABLE THIS TASK!
 //    (void) xTaskCreate( lSYS_FS_Tasks,
 //        "SYS_FS_TASKS",
@@ -181,7 +185,7 @@ void SYS_Tasks ( void )
     // WARNING: DO NOT RE-ENABLE - MCC will try to restore this during regeneration  
     // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     // IMPORTANT: DRV_SD_0_TASKS disabled to prevent SPI mutex conflicts  
-    // This Harmony internal task competes with app_SdCardTask for SPI bus access,
+    // This Harmony internal task competes with app_SDCardTask for SPI bus access,
     // causing FreeRTOS assert failures: configASSERT( pxTCB == pxCurrentTCB )
     // when different tasks try to unlock mutexes. Originally disabled in commit 86d25f91.
     // REJECT MCC MERGE ATTEMPTS TO RE-ENABLE THIS TASK!
@@ -233,7 +237,7 @@ void SYS_Tasks ( void )
         "USB_DEVICE_TASKS",
         1024,
         (void*)NULL,
-        6,
+        2,  // Start low, self-boosts after delay
         (TaskHandle_t*)NULL
     );
     if (usbDeviceResult != pdPASS) {
@@ -245,7 +249,7 @@ void SYS_Tasks ( void )
         "DRV_USBHS_TASKS",
         1024,
         (void*)NULL,
-        1,
+        2,  // Start low, will be boosted if needed
         (TaskHandle_t*)NULL
     );
     if (usbDriverResult != pdPASS) {

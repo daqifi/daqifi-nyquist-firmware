@@ -16,12 +16,21 @@
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40
 
+// File size limits for automatic splitting (FAT32 protection)
+// FAT32 max: 2^32 - 1 bytes (4GB - 1 byte)
+// Safety margin: 100MB to account for filesystem metadata and overhead
+#define SD_CARD_MANAGER_FAT32_MAX_FILE_SIZE 4294967295ULL  // 4GB - 1 byte
+#define SD_CARD_MANAGER_FAT32_SAFETY_MARGIN (100ULL * 1024ULL * 1024ULL)  // 100MB
+#define SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE (SD_CARD_MANAGER_FAT32_MAX_FILE_SIZE - SD_CARD_MANAGER_FAT32_SAFETY_MARGIN)  // 4GB - 100MB
+
 // Performance tuning parameters
 #define SD_CARD_MANAGER_WRITE_TIMEOUT_MS 2000      // Timeout for WriteToBuffer operation
-#define SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS 10  // Wait interval when buffer is full
+#define SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS 1  // Wait interval when buffer is full
 #define SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE 4     // Max chunks to process per task cycle (4 * 5KB = 20KB)
 #define SD_CARD_MANAGER_TASK_DELAY_MS 1            // Task delay for SD card processing (reduced from 5ms)
 
+// Device paths for SD card operations
+#define SD_CARD_MANAGER_DISK_DEV_NAME      "/dev/mmcblka1"
 
 /* Provide C++ Compatibility */
 #ifdef __cplusplus
@@ -42,6 +51,7 @@ extern "C" {
         sd_card_manager_mode_t mode;
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+        uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
     } sd_card_manager_settings_t;
 
 
@@ -145,6 +155,29 @@ extern "C" {
      * @return true if operation completed, false if timeout occurred
      */
     bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs);
+
+    /**
+     * @brief Gets the result of the last completed operation.
+     *
+     * @return true if last operation succeeded, false if it failed
+     */
+    bool sd_card_manager_GetLastOperationResult(void);
+
+    /**
+     * @brief Checks if the SD card manager is busy with an active operation.
+     *
+     * This should be called before starting any new SD operation to prevent
+     * conflicts. Returns true if:
+     * - Actively writing/logging to SD card
+     * - Delete, format, list, or read operation is in progress
+     *
+     * @note This function is not fully atomic - it checks mode and state separately.
+     *       This is acceptable for the intended use case (pre-operation check) where
+     *       occasional false negatives during state transitions are tolerable.
+     *
+     * @return true if busy, false if available for new operations
+     */
+    bool sd_card_manager_IsBusy(void);
 
     /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
