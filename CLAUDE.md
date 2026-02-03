@@ -405,6 +405,72 @@ SYST:STOR:SD:MAXSize?               # Query current setting
 
 **Implementation:** `firmware/src/services/sd_card_services/sd_card_manager.c`
 
+### Logging System
+
+The firmware includes a compile-time configurable logging system with per-module log level control. Logs are stored in a circular buffer and can be retrieved via SCPI commands.
+
+**Log Levels:**
+
+| Level | Macro | Value | Use Case |
+|-------|-------|-------|----------|
+| NONE | `LOG_LEVEL_NONE` | 0 | Disable all logging for a module |
+| ERROR | `LOG_LEVEL_ERROR` | 1 | Unexpected failures, hardware errors, critical issues |
+| INFO | `LOG_LEVEL_INFO` | 2 | State changes, significant events (connection, mode changes) |
+| DEBUG | `LOG_LEVEL_DEBUG` | 3 | Verbose diagnostics, data flow tracing, development |
+
+**Production Default:** All modules default to `LOG_LEVEL_ERROR`. Only `LOG_E()` calls produce output; `LOG_I()` and `LOG_D()` compile to nothing (zero runtime cost).
+
+**SCPI Commands:**
+```bash
+SYST:LOG?          # Retrieve all log messages (clears buffer after dump)
+SYST:LOG:CLEAR     # Clear log buffer without reading
+SYST:LOG:TEST      # Add test messages (for verification)
+```
+
+**Circular Buffer Behavior:**
+- Capacity: 64 messages, 128 bytes each
+- When full: Oldest message is dropped to make room for new
+- Thread-safe: Protected by FreeRTOS mutex
+- ISR-safe: Detects ISR context and skips buffering (prevents deadlock)
+
+**Enabling Verbose Logging (Development Only):**
+
+To enable INFO or DEBUG logging for a specific module, change its level in `Logger.h`:
+```c
+// Change from:
+#define LOG_LEVEL_WIFI      LOG_LEVEL_ERROR
+
+// To (for debugging):
+#define LOG_LEVEL_WIFI      LOG_LEVEL_DEBUG
+```
+
+Or define in the module's .c file before including Logger.h:
+```c
+#define LOG_LVL LOG_LEVEL_DEBUG  // Enable all logging for this file
+#include "Util/Logger.h"
+```
+
+**Available Module Log Levels:**
+- `LOG_LEVEL_POWER` - Power management (BQ24297, state transitions)
+- `LOG_LEVEL_WIFI` - WiFi manager, TCP server, UDP discovery
+- `LOG_LEVEL_BQ24297` - Battery charger IC
+- `LOG_LEVEL_SD` - SD card operations
+- `LOG_LEVEL_USB` - USB CDC interface
+- `LOG_LEVEL_SCPI` - SCPI command processing
+- `LOG_LEVEL_ADC` - ADC drivers (AD7609, MC12bADC)
+- `LOG_LEVEL_DAC` - DAC7718 driver
+
+**Real-Time UART Logging (Development Only):**
+
+For live debugging without USB, enable ICSP UART output:
+```c
+// In project defines or Logger.h:
+#define ENABLE_ICSP_REALTIME_LOG 1
+```
+This outputs logs via UART4 on ICSP pin 4 (RB0) at 921600 baud. Must be disabled before release.
+
+**Implementation:** `firmware/src/Util/Logger.c`, `firmware/src/Util/Logger.h`
+
 ## Development Notes
 
 ### Building with Linux/WSL
