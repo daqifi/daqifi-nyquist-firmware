@@ -30,12 +30,12 @@
  */
 
 #ifndef min
-    #define min(x,y) x <= y ? x : y
-#endif // min
+    #define min(x,y) (((x) <= (y)) ? (x) : (y))
+#endif
 
 #ifndef max
-    #define max(x,y) x >= y ? x : y
-#endif // min
+    #define max(x,y) (((x) >= (y)) ? (x) : (y))
+#endif
 #define UNUSED(x) (void)(x)
 
 
@@ -206,27 +206,13 @@ int LogMessage(const char* format, ...)
 }
 
 /**
- * @brief Returns the current number of messages in the log buffer (thread-safe).
+ * @brief Returns the current number of messages in the log buffer.
+ *        Note: uint8_t read is atomic on PIC32, no mutex needed.
  *
  * @return size_t Number of stored log messages
  */
-size_t LogMessageCount()
+size_t LogMessageCount(void)
 {
-    size_t count;
-
-    if (logBuffer.mutex == NULL) {
-        // Not yet initialized, return raw value
-        return logBuffer.count;
-    }
-
-    // Try to acquire mutex without blocking
-    if (xSemaphoreTake(logBuffer.mutex, 0) == pdTRUE) {
-        count = logBuffer.count;
-        xSemaphoreGive(logBuffer.mutex);
-        return count;
-    }
-
-    // Mutex contention - return snapshot (may be slightly stale)
     return logBuffer.count;
 }
 
