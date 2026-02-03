@@ -245,41 +245,46 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
             /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
             gRunTimeUsbSttings.isVbusDetected = true;
-            
+
             // Don't manipulate OTG here - MCU VBUS detection is unreliable
             // Power management will detect changes via BQ24297 polling
-            
+
             vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
 
         case USB_DEVICE_EVENT_POWER_REMOVED:
         {
-            /* VBUS Sag Workaround:
-             * When switching power states (e.g., SYST:POW:STAT 1), the internal
-             * power rail transitions cause VBUS voltage to momentarily sag from
-             * "Valid" (~5V) to "Medium" (~4V), triggering a false POWER_REMOVED
-             * event from the USB hardware. However, USB is still physically
-             * connected and VBUS recovers.
+            /* VBUS Sag vs Real Removal Detection:
              *
-             * Fix: Read the actual hardware VBUS level before detaching. If VBUS
-             * is still at Medium (USBHS_VBUS_BELOW_VBUSVALID) or above, ignore
-             * the event. Only detach if VBUS drops to Low or None, indicating
-             * true USB disconnection.
+             * Power sag: Internal power rail transitions can cause VBUS to
+             * momentarily sag from ~5V to ~4V, triggering a false removal event.
+             * VBUS recovers within ~20ms for sag events.
              *
-             * See issue #173 for related I2C/interrupt handling improvements. */
+             * Real removal: The low-pass RC filter on VBUS into the PIC32 causes
+             * the voltage to discharge over 20-50ms when power is unplugged.
+             *
+             * Solution: If VBUS is still elevated, wait 50ms for the RC filter
+             * to discharge and re-check. If VBUS recovered, it was a sag. If
+             * VBUS dropped, it was a real removal. */
             USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
 
             if (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID) {
-                /* VBUS still present at Medium or above - false removal event */
-                LOG_D("USB: False VBUS removal (HW level=%d), ignoring", vbusLevel);
-                break;
+                /* VBUS still elevated - wait for RC filter discharge */
+                vTaskDelay(50 / portTICK_PERIOD_MS);
+                vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+
+                if (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID) {
+                    /* VBUS recovered - power sag, not real removal */
+                    break;
+                }
             }
 
-            /* VBUS truly removed (Low or None) */
+            /* VBUS truly removed */
             gRunTimeUsbSttings.isVbusDetected = false;
-            LOG_D("USB: VBUS removed (HW level=%d) - USB power lost", vbusLevel);
-            USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
+            if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
+                USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
+            }
             break;
         }
 
