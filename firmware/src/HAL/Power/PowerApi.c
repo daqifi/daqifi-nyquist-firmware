@@ -13,6 +13,7 @@
 #include "Util/Logger.h"
 #include "../../services/wifi_services/wifi_manager.h"
 #include "../../services/UsbCdc/UsbCdc.h"
+#include "driver/usb/usbhs/src/plib_usbhs_header.h"
 #include <xc.h>
 //typedef enum
 //{
@@ -337,9 +338,15 @@ static void Power_UpdateStatusFromGPIO(void) {
     /* Update battery voltage and charge percentage from ADC */
     Power_UpdateChgPct();
 
-    /* Update external power status from USB VBUS detection
-     * This replaces BQ24297 pgStat polling */
-    bool hasExternalPower = UsbCdc_IsVbusDetected();
+    /* Update external power status from hardware VBUS detection
+     * Read directly from USB hardware register - more reliable than software events
+     * which may not trigger correctly for wall chargers without USB data lines.
+     *
+     * Use USBHS_VBUS_BELOW_VBUSVALID threshold (~4.0V) instead of USBHS_VBUS_VALID
+     * (~4.75V) to handle wall chargers with minor voltage sag. This aligns better
+     * with BQ24297's pgStat threshold (3.88V) for external power detection. */
+    USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+    bool hasExternalPower = (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
     pData->BQ24297Data.status.pgStat = hasExternalPower;
 
     /* Update vsysStat equivalent from ADC battery voltage

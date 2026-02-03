@@ -158,24 +158,15 @@ void BQ24297_Config_Settings(void) {
     BQ24297_UpdateStatus();
     BQ24297_AutoSetILim();
 
-    // Update battery presence and charge allowed status
+    // Update battery presence status (for reporting only)
     BQ24297_UpdateBatteryStatus();
-    
-    // If charging is not allowed, disable it now
-    if (!pData->chargeAllowed) {
-        BQ24297_ChargeEnable(false);
-        LOG_D("BQ24297_Config_Settings: Charging disabled - battery %s, thermistor %s", 
-              pData->status.batPresent ? "present" : "not present",
-              pData->status.ntcFault == NTC_FAULT_HOT ? "stuck low" : 
-              pData->status.ntcFault == NTC_FAULT_COLD ? "open" : "normal");
-    } else if (pData->chargeAllowed && pData->status.pgStat && !pData->status.otg) {
-        // Charging is allowed, external power present, and not in OTG mode
-        // Enable charging if not already enabled
-        if (!BQ24297_IsChargingEnabled()) {
-            LOG_D("BQ24297_Config_Settings: Enabling charging - battery present, external power available");
-            BQ24297_ChargeEnable(true);
-        }
-    }
+
+    // Charging is always enabled via REG01 configuration above.
+    // The BQ24297 has built-in hardware protection for:
+    // - Battery temperature (NTC monitoring)
+    // - Overvoltage/overcurrent
+    // - Battery presence detection
+    // Let the hardware handle charging decisions autonomously.
 
     // Mark initialization complete
     pData->initComplete = true;
@@ -183,10 +174,9 @@ void BQ24297_Config_Settings(void) {
     LOG_D("BQ24297_Config_Settings: Initialization complete");
 }
 
-/* 
+/*
  * Updates BQ24297 status by reading all registers
- * WARNING: This function reads REG09 which resets fault flags!
- * Use BQ24297_UpdateStatusSafe() if you don't want to reset faults
+ * NOTE: Only called at boot - no I2C polling after init
  */
 void BQ24297_UpdateStatus(void) {
 #ifdef BYPASS_BQ24297
@@ -285,43 +275,6 @@ void BQ24297_UpdateStatus(void) {
     // Check for critical faults
     if (pData->status.bat_fault) {
         LOG_E("BQ24297: BATFET fault - battery disconnected from system!");
-    }
-}
-
-/*
- * Updates BQ24297 status without resetting fault flags
- * Safe to call frequently as it doesn't read REG09
- */
-void BQ24297_UpdateStatusSafe(void) {
-#ifdef BYPASS_BQ24297
-    // Demo board bypass: Don't update status, keep dummy values
-    return;
-#endif
-
-    uint8_t regData = 0;
-    bool hasErrors = false;
-
-    // REG01: Power-On Configuration - Check OTG/CHG status
-    regData = BQ24297_Read_I2C(0x01);
-    if (regData != 0xFF) {
-        pData->status.otg = (bool) (regData & 0b00100000);
-        pData->status.chgEn = (bool) (regData & 0b00010000);
-    } else {
-        hasErrors = true;
-    }
-
-    // REG08: System Status - Check power status
-    regData = BQ24297_Read_I2C(0x08);
-    if (regData != 0xFF) {
-        pData->status.vBusStat = (uint8_t) (regData & 0b11000000) >> 6;
-        pData->status.chgStat = (uint8_t) (regData & 0b00110000) >> 4;
-        pData->status.pgStat = (bool) (regData & 0b00000100);
-    } else {
-        hasErrors = true;
-    }
-    
-    if (hasErrors) {
-        LOG_E("BQ24297_UpdateStatusSafe: I2C communication errors detected");
     }
 }
 
@@ -634,74 +587,39 @@ bool BQ24297_IsBatteryPresent(void) {
 }
 
 void BQ24297_UpdateBatteryStatus(void) {
-    // Update battery presence status
+    // Update battery presence status (for reporting only)
     bool oldBatPresent = pData->status.batPresent;
-    bool oldChargeAllowed = pData->chargeAllowed;
     pData->status.batPresent = BQ24297_IsBatteryPresent();
-    
-    // Update charge allowed flag based on battery and thermistor status
-    if (pData->status.ntcFault == NTC_FAULT_HOT) {
-        // Thermistor stuck low/shorted - disable charging for safety
-        pData->chargeAllowed = false;
-        if (oldBatPresent && !pData->chargeAllowed) {
-            LOG_D("BQ24297: Thermistor fault detected (stuck low), charging disabled");
-        }
-    } else if (pData->status.batPresent) {
-        // Battery present with normal thermistor - allow charging
-        pData->chargeAllowed = true;
-    } else {
-        // No battery detected - disable charging
-        pData->chargeAllowed = false;
-    }
-    
-    // Update charging state based on current conditions
-    if (!pData->chargeAllowed && BQ24297_IsChargingEnabled()) {
-        // Charging not allowed but is enabled - disable it
-        BQ24297_ChargeEnable(false);
-    } else if (pData->chargeAllowed && !pData->status.otg && pData->status.pgStat) {
-        // Charging allowed, not in OTG mode, and external power present
-        // Enable charging if not already enabled
-        if (!BQ24297_IsChargingEnabled()) {
-            LOG_D("BQ24297: Battery present, external power available - enabling charging");
-            BQ24297_ChargeEnable(true);
-        }
-    }
-    
-    // Log status changes
-    if (oldBatPresent != pData->status.batPresent || oldChargeAllowed != pData->chargeAllowed) {
-        LOG_D("BQ24297: Battery status changed - present=%d, chargeAllowed=%d, pgStat=%d, otg=%d",
-              pData->status.batPresent, pData->chargeAllowed, 
-              pData->status.pgStat, pData->status.otg);
+
+    // Note: chargeAllowed is kept for status reporting but no longer controls
+    // actual charging. The BQ24297 hardware handles charging autonomously with
+    // built-in protection for temperature, overvoltage, and battery presence.
+    pData->chargeAllowed = pData->status.batPresent &&
+                           (pData->status.ntcFault != NTC_FAULT_HOT);
+
+    // Log battery presence changes
+    if (oldBatPresent != pData->status.batPresent) {
+        LOG_D("BQ24297: Battery %s",
+              pData->status.batPresent ? "detected" : "not detected");
     }
 }
 
 void BQ24297_SetPowerMode(bool externalPowerPresent) {
     static bool lastExternalPowerState = false;
     static bool initialized = false;
-    
+
     // Only log when state actually changes
     if (!initialized || lastExternalPowerState != externalPowerPresent) {
         if (externalPowerPresent) {
-            LOG_D("BQ24297_SetPowerMode: External power detected, switching to charge mode");
+            LOG_D("BQ24297_SetPowerMode: External power detected");
         } else {
-            LOG_D("BQ24297_SetPowerMode: External power lost, battery power only");
+            LOG_D("BQ24297_SetPowerMode: Battery power only");
         }
         lastExternalPowerState = externalPowerPresent;
         initialized = true;
     }
-    
-    if (externalPowerPresent) {
-        // External power available - disable OTG and enable charging
-        BQ24297_DisableOTG(true);
-        
-        // Update battery status which will enable charging if battery is present
-        BQ24297_UpdateBatteryStatus();
-    } else {
-        // Battery power only - OTG mode is NOT automatically enabled
-        // OTG can only be controlled manually via SCPI commands
-        // Keep current OTG state - manual control only via SCPI
-        
-        // Still update battery status to ensure proper charge state
-        BQ24297_UpdateBatteryStatus();
-    }
+
+    // OTG mode is disabled by default in the BQ24297 and set to disabled at init.
+    // Charging is always enabled and handled autonomously by the hardware.
+    // No action needed here - just logging state changes above.
 }
