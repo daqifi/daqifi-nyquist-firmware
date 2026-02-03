@@ -223,7 +223,7 @@ void Power_Write(void) {
 }
 
 static void Power_Up(bool enableExtPower) {
-    
+
     /* Wait for battery management initialization with timeout
      * Prevents indefinite blocking if BQ24297 fails to initialize
      * Timeout: 5 seconds (50 x 100ms)
@@ -233,9 +233,17 @@ static void Power_Up(bool enableExtPower) {
         vTaskDelay(pdMS_TO_TICKS(100));
         initTimeout--;
     }
-    
+
     if (initTimeout == 0) {
         LOG_E("Power_Up: BQ24297 initialization timeout - proceeding anyway");
+    }
+
+    /* Override DPDM's ILIM setting if external power is present
+     * DPDM auto-detection often incorrectly sets 500mA for wall chargers.
+     * Set to 2A (hardware max) to allow full charging current. */
+    Power_UpdateStatusFromGPIO();
+    if (pData->BQ24297Data.status.pgStat) {
+        BQ24297_SetILim2A();
     }
 
     /* Power sequencing delay - allows voltage regulators to stabilize */
