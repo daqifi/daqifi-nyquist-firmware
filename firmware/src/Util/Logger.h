@@ -8,6 +8,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include "libraries/scpi/libscpi/inc/scpi/types.h"
 
 #ifndef LOGGER_H
 #define	LOGGER_H
@@ -71,11 +74,16 @@ extern "C" {
  */
     
     
-    //Log level definitions (when enabled)
-    #define LOG_LEVEL_NONE      0  // No logging
-    #define LOG_LEVEL_ERROR     1  // Errors only
-    #define LOG_LEVEL_INFO      2  // Errors + Info
-    #define LOG_LEVEL_DEBUG     3  // Errors + Info + Debug (all)
+    /**
+     * @name Log Level Definitions
+     * @brief Compile-time log verbosity levels (higher = more verbose)
+     * @{
+     */
+    #define LOG_LEVEL_NONE      0  /**< No logging - all macros compile to nothing */
+    #define LOG_LEVEL_ERROR     1  /**< Errors only - unexpected failures, hardware errors */
+    #define LOG_LEVEL_INFO      2  /**< Errors + Info - state changes, significant events */
+    #define LOG_LEVEL_DEBUG     3  /**< All logging - verbose diagnostics, data flow tracing */
+    /** @} */
 
     
     //Per-module logging level control
@@ -104,18 +112,72 @@ extern "C" {
         #define LOG_LEVEL_DAC       LOG_LEVEL_ERROR
     #endif
 
+/** @brief Maximum number of log entries in circular buffer */
+#define LOG_MAX_ENTRY_COUNT 64
+
+/** @brief Maximum size of a single log message in bytes (including \r\n\0) */
+#define LOG_MESSAGE_SIZE 128
+
 /**
- * Logs a formatted message
- * @param format The format string
- * @param ... Variable arguments
- * @return The number of characters written
+ * @brief Single log entry in the circular buffer
+ */
+typedef struct {
+    char message[LOG_MESSAGE_SIZE];  /**< Null-terminated log message */
+} LogEntry;
+
+/**
+ * @brief Circular log buffer with thread-safe access
+ *
+ * Implements a fixed-size circular buffer that drops the oldest entry
+ * when full. Protected by a FreeRTOS mutex for thread safety.
+ */
+typedef struct {
+    LogEntry entries[LOG_MAX_ENTRY_COUNT];  /**< Array of log entries */
+    uint8_t head;                            /**< Index for next write */
+    uint8_t tail;                            /**< Index of oldest entry */
+    uint8_t count;                           /**< Current number of entries */
+    SemaphoreHandle_t mutex;                 /**< Mutex for thread safety */
+} LogBuffer;
+
+/**
+ * @brief Logs a formatted message to the circular buffer.
+ *        Messages are automatically terminated with \r\n.
+ *        Thread-safe; can be called from any task context.
+ *        ISR-safe; detects ISR and outputs to ICSP only (if enabled).
+ *
+ * @param format Printf-style format string
+ * @param ...    Variable arguments matching format specifiers
+ * @return int   Number of characters written, or 0 on failure
  */
 int LogMessage(const char* format, ...) __attribute__((format(printf, 1, 2)));
 
-size_t LogMessageCount();
+/**
+ * @brief Returns the current number of messages in the log buffer.
+ *
+ * @return size_t Number of stored log messages (0 to LOG_MAX_ENTRY_COUNT)
+ */
+size_t LogMessageCount(void);
 
-size_t LogMessagePop(uint8_t* buffer, size_t maxSize);
+/**
+ * @brief Dumps all log messages to SCPI interface and clears the buffer.
+ *        Messages are written oldest-first, with flush after each message.
+ *
+ * @param context SCPI context for output (must not be NULL)
+ */
+void LogMessageDump(scpi_t * context);
 
+/**
+ * @brief Initializes the log buffer and mutex (idempotent).
+ *        Called automatically on first log; safe to call multiple times.
+ *        Subsequent calls have no effect (preserves buffered logs).
+ */
+void LogMessageInit(void);
+
+/**
+ * @brief Clears all log messages from the buffer (thread-safe).
+ *        Does not affect the mutex or initialization state.
+ */
+void LogMessageClear(void);
 
 // Helper macro to get the log level for the current module
 // Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)

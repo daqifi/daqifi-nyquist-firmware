@@ -790,33 +790,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
  * @return 
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
-    char buffer[128];
-
-    // Add a test log message to verify logging works  
-    LOG_D("SCPI_SysLogGet called - log count: %d", LogMessageCount());
-    
-    size_t logSize = LogMessageCount();
-    
-    size_t i = 0;
-    for (i = 0; i < logSize; ++i) {
-        size_t messageSize = LogMessagePop((uint8_t*) buffer, 128);
-        if (messageSize > 0) {
-            // Write the message
-            context->interface->write(context, buffer, messageSize);
-            
-            // Flush after each message to prevent buffer overflow
-            // This ensures the USB buffer has time to process each message
-            if (context->interface->flush) {
-                context->interface->flush(context);
-            }
-            
-            // Small delay to allow USB task to process the data
-            // This prevents overwhelming the USB circular buffer
-            // Reduced delay for faster log output
-            // vTaskDelay(1);  // Commented out for maximum speed
-        }
-    }
-
+    LogMessageDump(context);
     return SCPI_RES_OK;
 }
 
@@ -847,15 +821,9 @@ static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
  * @return 
  */
 static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
-    char buffer[128];
-    
-    // Pop all messages to clear the buffer
-    while (LogMessageCount() > 0) {
-        LogMessagePop((uint8_t*) buffer, 128);
-    }
-    
+
+    LogMessageClear();
     context->interface->write(context, "Log cleared\n", 12);
-    
     return SCPI_RES_OK;
 }
 
