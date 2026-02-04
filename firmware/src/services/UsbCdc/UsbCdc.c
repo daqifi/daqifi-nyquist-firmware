@@ -247,12 +247,13 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
-            /* VBUS was detected. Set ILIM to 2A immediately assuming wall charger.
-             * If this is actually a PC, USB enumeration will complete and
-             * USB_DEVICE_EVENT_CONFIGURED will reduce ILIM to 500mA.
-             * This overrides DPDM auto-detection which may limit us to 500mA. */
+            /* VBUS was detected. Don't set ILIM here - it interferes with USB enumeration.
+             * The power management task handles ILIM:
+             *   - Power_Up() sets 2A during power-up sequence
+             *   - Power_HandleStandbyState() sets 2A when external power detected in standby
+             *   - USB_DEVICE_EVENT_CONFIGURED sets 500mA after enumeration (for PCs)
+             */
             gRunTimeUsbSttings.isVbusDetected = true;
-            BQ24297_SetILim2A();
 
             vTaskDelay(100 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
