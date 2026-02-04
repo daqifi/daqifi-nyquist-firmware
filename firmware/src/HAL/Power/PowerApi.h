@@ -88,6 +88,15 @@ typedef struct sPowerConfig{
 /*! @struct sPowerData
  * @brief Power data 
  */
+/*! @enum ePendingIlim
+ * @brief Pending ILIM values for deferred BQ24297 update
+ */
+typedef enum ePendingIlim {
+    PENDING_ILIM_NONE = 0,   /* No pending update */
+    PENDING_ILIM_500MA,      /* Set ILIM to 500mA (USB) */
+    PENDING_ILIM_2A          /* Set ILIM to 2A (wall charger) */
+} tPendingIlim;
+
 typedef struct sPowerData{
 
     uint8_t chargePct;
@@ -102,6 +111,10 @@ typedef struct sPowerData{
     double battVoltage;
     bool pONBattPresent;
     bool autoExtPowerEnabled;  /* Auto-manage external power based on battery level (default: true) */
+
+    /* Deferred ILIM update - set by USB events, processed by Power_Tasks()
+     * This avoids blocking I2C calls in USB event handlers */
+    volatile tPendingIlim pendingIlim;
 
     tBQ24297Data BQ24297Data;
 

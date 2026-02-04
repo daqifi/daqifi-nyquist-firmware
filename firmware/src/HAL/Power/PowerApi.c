@@ -145,6 +145,24 @@ void Power_Tasks(void) {
         BQ24297_Config_Settings();
     }
 
+    /* Process deferred ILIM updates from USB events
+     * This avoids blocking I2C calls in USB event handler context */
+    if (pData->pendingIlim != PENDING_ILIM_NONE && pData->BQ24297Data.initComplete) {
+        tPendingIlim pending = pData->pendingIlim;
+        pData->pendingIlim = PENDING_ILIM_NONE;  /* Clear before I2C to avoid re-entry */
+
+        switch (pending) {
+            case PENDING_ILIM_500MA:
+                BQ24297_SetILim500mA();
+                break;
+            case PENDING_ILIM_2A:
+                BQ24297_SetILim2A();
+                break;
+            default:
+                break;
+        }
+    }
+
     /* Update power state at 1 second intervals */
     static TickType_t lastUpdateTime = 0;
     TickType_t currentTime = xTaskGetTickCount();
