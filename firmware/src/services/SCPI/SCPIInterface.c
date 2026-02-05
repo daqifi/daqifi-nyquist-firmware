@@ -1040,6 +1040,183 @@ static scpi_result_t SCPI_GetVBUSStatus(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * SCPI Callback: Dump all BQ24297 registers for debugging
+ * Command: SYST:POW:BQ:REG?
+ * Returns: All 10 registers (REG00-REG09) in hex format with descriptions
+ */
+static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
+    char buffer[512];
+    char* ptr = buffer;
+    int remaining = sizeof(buffer);
+    int written;
+
+    // Read all registers directly for raw dump
+    uint8_t regs[10];
+    for (int i = 0; i < 10; i++) {
+        regs[i] = BQ24297_Read_I2C(i);
+    }
+
+    // REG00: Input Source Control
+    written = snprintf(ptr, remaining, "REG00=0x%02X HIZ=%d VINDPM=%d ILIM=%d\r\n",
+                      regs[0],
+                      (regs[0] >> 7) & 0x01,
+                      (regs[0] >> 3) & 0x0F,
+                      regs[0] & 0x07);
+    ptr += written; remaining -= written;
+
+    // REG01: Power-On Config
+    written = snprintf(ptr, remaining, "REG01=0x%02X OTG=%d CHG=%d SYS_MIN=%d\r\n",
+                      regs[1],
+                      (regs[1] >> 5) & 0x01,
+                      (regs[1] >> 4) & 0x01,
+                      (regs[1] >> 1) & 0x07);
+    ptr += written; remaining -= written;
+
+    // REG02: Charge Current Control
+    written = snprintf(ptr, remaining, "REG02=0x%02X ICHG=%d BCOLD=%d\r\n",
+                      regs[2],
+                      (regs[2] >> 2) & 0x3F,
+                      regs[2] & 0x01);
+    ptr += written; remaining -= written;
+
+    // REG03: Pre-Charge/Termination Current
+    written = snprintf(ptr, remaining, "REG03=0x%02X IPRECHG=%d ITERM=%d\r\n",
+                      regs[3],
+                      (regs[3] >> 4) & 0x0F,
+                      regs[3] & 0x0F);
+    ptr += written; remaining -= written;
+
+    // REG04: Charge Voltage Control
+    written = snprintf(ptr, remaining, "REG04=0x%02X VREG=%d BATLOWV=%d VRECHG=%d\r\n",
+                      regs[4],
+                      (regs[4] >> 2) & 0x3F,
+                      (regs[4] >> 1) & 0x01,
+                      regs[4] & 0x01);
+    ptr += written; remaining -= written;
+
+    // REG05: Charge Termination/Timer Control
+    written = snprintf(ptr, remaining, "REG05=0x%02X EN_TERM=%d WDOG=%d EN_TIMER=%d\r\n",
+                      regs[5],
+                      (regs[5] >> 7) & 0x01,
+                      (regs[5] >> 4) & 0x03,
+                      (regs[5] >> 3) & 0x01);
+    ptr += written; remaining -= written;
+
+    // REG06: Boost Voltage/Thermal Regulation
+    written = snprintf(ptr, remaining, "REG06=0x%02X BOOSTV=%d BHOT=%d TREG=%d\r\n",
+                      regs[6],
+                      (regs[6] >> 4) & 0x0F,
+                      (regs[6] >> 2) & 0x03,
+                      regs[6] & 0x03);
+    ptr += written; remaining -= written;
+
+    // REG07: Misc Operation Control
+    written = snprintf(ptr, remaining, "REG07=0x%02X DPDM=%d TMR2X=%d BATFET=%d INT=%d\r\n",
+                      regs[7],
+                      (regs[7] >> 7) & 0x01,
+                      (regs[7] >> 6) & 0x01,
+                      (regs[7] >> 5) & 0x01,
+                      regs[7] & 0x03);
+    ptr += written; remaining -= written;
+
+    // REG08: System Status (key register for DPDM result)
+    const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
+    const char* chgStr[] = {"NotChg", "PreChg", "FastChg", "Done"};
+    written = snprintf(ptr, remaining, "REG08=0x%02X VBUS=%s CHG=%s DPM=%d PG=%d THERM=%d VSYS=%d\r\n",
+                      regs[8],
+                      vbusStr[(regs[8] >> 6) & 0x03],
+                      chgStr[(regs[8] >> 4) & 0x03],
+                      (regs[8] >> 3) & 0x01,
+                      (regs[8] >> 2) & 0x01,
+                      (regs[8] >> 1) & 0x01,
+                      regs[8] & 0x01);
+    ptr += written; remaining -= written;
+
+    // REG09: Fault Status
+    written = snprintf(ptr, remaining, "REG09=0x%02X WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
+                      regs[9],
+                      (regs[9] >> 7) & 0x01,
+                      (regs[9] >> 6) & 0x01,
+                      (regs[9] >> 4) & 0x03,
+                      (regs[9] >> 3) & 0x01,
+                      regs[9] & 0x07);
+
+    context->interface->write(context, buffer, strlen(buffer));
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Set BQ24297 ILIM (input current limit)
+ * Command: SYST:POW:BQ:ILIM <value>
+ * Values: 0=100mA, 1=150mA, 2=500mA, 3=900mA, 4=1A, 5=1.5A, 6=2A, 7=3A
+ * For debugging DPDM/current limit issues
+ */
+static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
+    int32_t ilim;
+
+    if (!SCPI_ParamInt32(context, &ilim, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    if (ilim < 0 || ilim > 7) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    // Read current REG00
+    uint8_t reg0 = BQ24297_Read_I2C(0x00);
+
+    // Write new ILIM, preserving VINDPM bits [6:3], clearing HIZ
+    uint8_t newVal = (uint8_t)((reg0 & 0x78) | (ilim & 0x07));
+    bool success = BQ24297_Write_I2C(0x00, newVal);
+
+    // Verify
+    uint8_t readback = BQ24297_Read_I2C(0x00);
+
+    char buffer[80];
+    snprintf(buffer, sizeof(buffer), "Wrote 0x%02X, Readback 0x%02X, ILIM=%d %s\r\n",
+             newVal, readback, readback & 0x07,
+             success ? "OK" : "FAIL");
+    context->interface->write(context, buffer, strlen(buffer));
+
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Force DPDM detection
+ * Command: SYST:POW:BQ:DPDM
+ * Triggers BQ24297 to re-run D+/D- detection
+ */
+static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
+    // Read REG07
+    uint8_t reg7 = BQ24297_Read_I2C(0x07);
+
+    // Set DPDM_EN bit (bit 7) to force detection
+    BQ24297_Write_I2C(0x07, reg7 | 0x80);
+
+    // Wait for detection to complete (poll bit 7)
+    int timeout = 20;  // 2 seconds max
+    uint8_t status;
+    do {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        status = BQ24297_Read_I2C(0x07);
+        timeout--;
+    } while ((status & 0x80) && timeout > 0);
+
+    // Read result from REG08
+    uint8_t reg8 = BQ24297_Read_I2C(0x08);
+    const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
+    uint8_t vbusStat = (reg8 >> 6) & 0x03;
+
+    char buffer[80];
+    snprintf(buffer, sizeof(buffer), "DPDM complete: VBUS=%s (%d), REG08=0x%02X\r\n",
+             vbusStr[vbusStat], vbusStat, reg8);
+    context->interface->write(context, buffer, strlen(buffer));
+
+    return SCPI_RES_OK;
+}
+
 // OTG control functions are disabled - see command table for explanation
 #if 0
 /**
@@ -1655,6 +1832,9 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:POWer:AUTO:EXTernal?", .callback = SCPI_GetAutoExtPower,},
     {.pattern = "SYSTem:POWer:AUTO:EXTernal", .callback = SCPI_SetAutoExtPower,},
     {.pattern = "SYSTem:POWer:VBUS?", .callback = SCPI_GetVBUSStatus,},
+    {.pattern = "SYSTem:POWer:BQ:REGisters?", .callback = SCPI_GetBQRegisters,},
+    {.pattern = "SYSTem:POWer:BQ:ILIM", .callback = SCPI_SetBQILim,},
+    {.pattern = "SYSTem:POWer:BQ:DPDM", .callback = SCPI_ForceDPDM,},
     // OTG commands disabled - OTG mode is managed automatically by the power system
     // When external power is present, OTG is always disabled for safety
     // When on battery power, OTG is controlled by the board configuration

@@ -112,7 +112,7 @@ extern "C" {
         
         /** USB VBUS detection from microcontroller (independent of BQ24297) */
         bool isVbusDetected;
-        
+
         /** Command history for debugging */
         char cmdHistory[SCPI_CMD_HISTORY_SIZE][SCPI_CMD_MAX_LENGTH];
         uint8_t cmdHistoryHead;  // Next write position

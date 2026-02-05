@@ -238,26 +238,16 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
                 /* Mark that the device is now configured */
                 gRunTimeUsbSttings.state = USB_CDC_STATE_WAIT;
-
-                /* Request deferred ILIM update to 500mA for USB operation
-                 * Don't do I2C here - it breaks USB enumeration timing
-                 * Power_Tasks() will process this flag safely */
-                tPowerData * pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-                if (pPowerData != NULL) {
-                    pPowerData->pendingIlim = PENDING_ILIM_500MA;
-                }
             }
             break;
 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
-            /* VBUS was detected. Wait 100ms for battery management to detect USB power source.  Then we can attach the device */
+            /* VBUS was detected. Wait for BQ24297 DPDM detection to complete
+             * before attaching to USB. DPDM takes ~600ms. */
+            
             gRunTimeUsbSttings.isVbusDetected = true;
-
-            // Don't manipulate OTG here - MCU VBUS detection is unreliable
-            // Power management will detect changes via BQ24297 polling
-
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            vTaskDelay(600 / portTICK_PERIOD_MS);
             USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
             break;
 
@@ -788,7 +778,6 @@ UsbCdcData_t* UsbCdc_GetSettings() {
 void UsbCdc_Initialize() {
 
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
-
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
     gRunTimeUsbSttings.isVbusDetected = false;  // Initialize VBUS detection state
 
