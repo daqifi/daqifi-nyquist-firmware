@@ -60,9 +60,9 @@ void BQ24297_InitHardware(
     LOG_I("BQ24297_InitHardware: Demo values - pgStat=%d, vsysStat=%d, batPresent=%d", 
           pData->status.pgStat, pData->status.vsysStat, pData->status.batPresent);
     
-    // Initialize OTG GPIO (even on demo board for consistency)
-    BATT_MAN_OTG_OutputEnable();
-    BATT_MAN_OTG_Clear();  // Set LOW = OTG disabled
+    // Initialize OTG GPIO as input - hardware pullup holds HIGH
+    // OTG HIGH during DPDM detection = 500mA IINLIM (vs 100mA when LOW)
+    BATT_MAN_OTG_InputEnable();
     
     LOG_I("BQ24297_InitHardware: Demo board initialized with good power status");
     return;
@@ -76,12 +76,9 @@ void BQ24297_InitHardware(
                         pConfigBQ24->I2C_Index,                             
                         DRV_IO_INTENT_READWRITE|DRV_IO_INTENT_BLOCKING);
 
-    // Configure OTG GPIO pin (RK5) as output and set LOW
-    // OTG pin is ACTIVE HIGH - HIGH = boost mode enabled, LOW = normal charging
-    BATT_MAN_OTG_OutputEnable();
-    BATT_MAN_OTG_Clear();  // Set LOW = OTG disabled = allow charging
-    
-    LOG_D("BQ24297_InitHardware: OTG GPIO initialized LOW (OTG disabled)");
+    // Configure OTG GPIO as input - hardware pullup holds HIGH
+    // OTG HIGH during DPDM detection = 500mA IINLIM (vs 100mA when LOW)
+    BATT_MAN_OTG_InputEnable();
 }
 
 void BQ24297_Config_Settings(void) {
@@ -114,10 +111,9 @@ void BQ24297_Config_Settings(void) {
     // [3:1] = 000 (SYS_MIN = 3.0V)
     // [0] = 1 (reserved)
     
-    // Set OTG GPIO LOW to disable boost mode
-    BATT_MAN_OTG_OutputEnable();
-    BATT_MAN_OTG_Clear();  // Set LOW for OTG disable
-    
+    // OTG GPIO as input - hardware pullup holds HIGH for 500mA DPDM detection
+    BATT_MAN_OTG_InputEnable();
+
     // Configure for charge mode with SYS_MIN=3.0V to prevent BATFET disable
     BQ24297_Write_I2C(0x01, 0b01010001);  // Watchdog reset, OTG=0, CHG=1, SYS_MIN=3.0V
 
