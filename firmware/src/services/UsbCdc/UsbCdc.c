@@ -246,9 +246,6 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             /* VBUS was detected. Wait 1000ms for BQ24297 DPDM detection to complete before attaching USB device */
             gRunTimeUsbSttings.isVbusDetected = true;
 
-            // Don't manipulate OTG here - MCU VBUS detection is unreliable
-            // Power management will detect changes via BQ24297 polling
-
             vTaskDelay(pdMS_TO_TICKS(1000));
             if (gRunTimeUsbSttings.isVbusDetected &&
                 gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
