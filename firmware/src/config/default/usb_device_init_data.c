@@ -142,7 +142,7 @@ static const uint8_t highSpeedConfigurationDescriptor[]=
     0x01,                                               // Index value of this configuration
     0x00,                                               // Configuration string index
     USB_ATTRIBUTE_DEFAULT | USB_ATTRIBUTE_SELF_POWERED, // Attributes
-    50,                                                 // Maximum Power: 100mA
+    250,                                                // Maximum Power: 500mA
 
     /* Interface Descriptor */
 
@@ -246,7 +246,7 @@ static const uint8_t fullSpeedConfigurationDescriptor[]=
     0x01,                                                   // Index value of this configuration
     0x00,                                                   // Configuration string index
     USB_ATTRIBUTE_DEFAULT | USB_ATTRIBUTE_SELF_POWERED, // Attributes
-    50,                                                 // Maximum Power: 100mA
+    250,                                                // Maximum Power: 500mA
     /* Interface Descriptor */
 
     0x09,                                                   // Size of this descriptor in bytes
