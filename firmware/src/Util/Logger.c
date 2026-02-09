@@ -1,43 +1,52 @@
 #include "Logger.h"
-
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
-
-#include "NullLockProvider.h"
-#include "StackList.h"
 #include <xc.h>
+#include "state/data/BoardData.h"
+
+
+/**
+ * @file Logger.c
+ * @brief Logging buffer implementation using FreeRTOS APIs.
+ *
+ * This module provides a thread-safe logging system for embedded applications.
+ * It maintains a circular buffer of up to LOG_MAX_ENTRY_COUNT messages.
+ *
+ * Key Features:
+ * - Stores up to 64 log entries (defined by LOG_MAX_ENTRY_COUNT)
+ * - Each message is limited to LOG_MESSAGE_SIZE bytes
+ * - Automatically drops the oldest message when the buffer is full
+ * - Ensures all messages end with "\r\n" for terminal compatibility (e.g., PuTTY)
+ * - Supports printf-style formatting via LogMessage()
+ * - Optionally transmits logs over UART4 (ICSP pin) if enabled
+ * - Dumps all stored messages to SCPI interface when LogMessageDump() is called
+ *
+ * Usage:
+ * - Call LogMessageInit() once at startup (automatically handled on first log)
+ * - Use LogMessage("format", ...) to add messages
+ * - Call LogMessageDump(context) to flush and reset the buffer
+ */
+
 #ifndef min
-    #define min(x,y) x <= y ? x : y
-#endif // min
+    #define min(x,y) (((x) <= (y)) ? (x) : (y))
+#endif
 
 #ifndef max
-    #define max(x,y) x >= y ? x : y
-#endif // min
+    #define max(x,y) (((x) >= (y)) ? (x) : (y))
+#endif
 #define UNUSED(x) (void)(x)
 
-static StackList m_Data;
-static StackList* m_ListPtr = NULL;
+
+LogBuffer logBuffer;
+
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
 static void InitICSPLogging(void);
 static void LogMessageICSP(const char* buffer, int len);
 #endif
+static int LogMessageAdd(const char *message);
 
-static void InitList()
-{
-    if (m_ListPtr == NULL)
-    {
-        // Initialize with DropOnOverflow = true to create a circular buffer
-        // This allows new messages to overwrite old ones when the buffer is full
-        StackList_Initialize(&m_Data, true, &g_NullLockProvider);
-        m_ListPtr = &m_Data;
-        
-        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
-        InitICSPLogging();
-        #endif
-    }
-}
 
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
 
@@ -127,116 +136,64 @@ static void LogMessageICSP(const char* buffer, int len)
 }
 #endif /* defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG) */
 
-static int LogMessageImpl(const char* message)
-{
-    //UNUSED(message);
-
-    if (message == NULL)
-    {
-        return 0;
-    }
-    
-    InitList();
-
-    // Check if message needs newline appended
-    int len = strlen(message);
-    if (len > 0 && len < STACK_LIST_NODE_SIZE - 2) {
-        char buffer[STACK_LIST_NODE_SIZE];
-        strcpy(buffer, message);
-        
-        // Ensure message ends with \r\n for PuTTY compatibility
-        if (len >= 2 && buffer[len-2] == '\r' && buffer[len-1] == '\n') {
-            // Already has \r\n, use as-is
-        } else if (len >= 1 && buffer[len-1] == '\n') {
-            // Has just \n, add \r before it
-            if (len < STACK_LIST_NODE_SIZE - 2) {
-                // Shift the \n and add \r
-                buffer[len-1] = '\r';
-                buffer[len] = '\n';
-                buffer[len+1] = '\0';
-                len++;
-            }
-        } else {
-            // No newline, add \r\n
-            if (len < STACK_LIST_NODE_SIZE - 3) {
-                buffer[len] = '\r';
-                buffer[len+1] = '\n';
-                buffer[len+2] = '\0';
-                len += 2;
-            }
-        }
-        
-        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
-        LogMessageICSP(buffer, len);
-        #endif
-        
-        if (StackList_PushBack(m_ListPtr, (const uint8_t*)buffer, (size_t)len))
-        {
-            return len;
-        }
-    } else {
-        // Message too long or empty, use as-is
-        int count = min(len, STACK_LIST_NODE_SIZE);
-        
-        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
-        LogMessageICSP(message, len);
-        #endif
-
-        if (StackList_PushBack(m_ListPtr, (const uint8_t*)message, (size_t)count))
-        {
-            return count;
-        }
-    }
-    
-    return 0;
-}
-
+/**
+ * @brief Internal helper to format a message using va_list and ensure it ends with \r\n.
+ * 
+ * @param format Format string
+ * @param args   va_list of arguments
+ * @return int   Number of characters written, or 0 on failure
+ */
 static int LogMessageFormatImpl(const char* format, va_list args)
 {
-    //UNUSED(format);
-    //UNUSED(args);
-   
-    if (format == NULL)
-    {
+    int size;
+    char buffer[LOG_MESSAGE_SIZE];
+
+    if (format == NULL) {
         return 0;
     }
-    
-    if (strstr(format, "%") == NULL)
-    {
-        // Not actually a format string!
-        return LogMessageImpl(format);
+
+    // Reserve 3 bytes for \r\n\0 - guarantees room to append
+    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);
+    if (size <= 0){
+        size = 0;
+        return size;
     }
-    
-    char buffer[STACK_LIST_NODE_SIZE];
-    int size = vsnprintf(buffer, STACK_LIST_NODE_SIZE-3, format, args);
-    
-    // Ensure message ends with \n (SCPI standard uses LF only)
+
+    // Clamp to actual buffer content (vsnprintf returns what it would have written)
+    size = min((LOG_MESSAGE_SIZE - 3), size);
+
+    // Ensure message ends with \r\n (always have room due to -3 reservation)
+    if (size >= 2 && buffer[size-2] == '\r' && buffer[size-1] == '\n') {
+        // Already has \r\n
+    } else if (size >= 1 && buffer[size-1] == '\n') {
+        // Has \n only, convert to \r\n
+        buffer[size-1] = '\r';
+        buffer[size] = '\n';
+        buffer[size+1] = '\0';
+        size++;
+    } else {
+        // No newline, append \r\n
+        buffer[size] = '\r';
+        buffer[size+1] = '\n';
+        buffer[size+2] = '\0';
+        size += 2;
+    }
+
     if (size > 0) {
-        // Check if message already ends with newline
-        if (size >= 2 && buffer[size-2] == '\r' && buffer[size-1] == '\n') {
-            // Has \r\n, convert to just \n
-            buffer[size-2] = '\n';
-            buffer[size-1] = '\0';
-            size--;
-        } else if (size >= 1 && buffer[size-1] == '\n') {
-            // Already has \n, do nothing
-        } else {
-            // No newline, add \n
-            buffer[size] = '\n';
-            buffer[size+1] = '\0';
-            size++;
-        }
+        return LogMessageAdd(buffer);
     }
-    
-    buffer[size] = '\0';
-    if (size > 0)
-    {
-       return LogMessageImpl(buffer); 
-    }
-    
+
     return size;
 }
 
+/**
+ * @brief Adds a formatted log message to the buffer.
+ *        Accepts printf-style formatting.
+ * 
+ * @param format Format string (printf-style)
+ * @param ...    Variable arguments
+ * @return int   Number of characters written, or 0 on failure
+ */
 int LogMessage(const char* format, ...)
 {
     //UNUSED(format);
@@ -248,19 +205,187 @@ int LogMessage(const char* format, ...)
     return result;
 }
 
-size_t LogMessageCount()
+/**
+ * @brief Returns the current number of messages in the log buffer.
+ *        Note: uint8_t read is atomic on PIC32, no mutex needed.
+ *
+ * @return size_t Number of stored log messages
+ */
+size_t LogMessageCount(void)
 {
-    InitList();
-    return StackList_Size(m_ListPtr);
+    return logBuffer.count;
 }
 
-size_t LogMessagePop(uint8_t* buffer, size_t maxSize)
-{
-    //UNUSED(buffer);
-    //UNUSED(maxSize);
-    
-    InitList();
-    return StackList_PopFront(m_ListPtr, buffer, maxSize);
+/**
+ * @brief Initializes the log buffer and its mutex (idempotent, thread-safe).
+ *        Safe to call multiple times - subsequent calls have no effect.
+ */
+void LogMessageInit(void) {
+    // Fast path: already initialized
+    if (logBuffer.mutex != NULL) {
+        return;
+    }
+
+    // Create mutex outside critical section (FreeRTOS API needs interrupts)
+    SemaphoreHandle_t newMutex = xSemaphoreCreateMutex();
+    if (newMutex == NULL) {
+        // Critical failure: halt system - mutex creation failed
+        __builtin_software_breakpoint();
+        while(1);
+    }
+
+    // Critical section only for pointer assignment and buffer init
+    taskENTER_CRITICAL();
+    if (logBuffer.mutex == NULL) {
+        // We won the race - initialize buffer and assign mutex
+        logBuffer.head = 0;
+        logBuffer.tail = 0;
+        logBuffer.count = 0;
+        logBuffer.mutex = newMutex;
+        taskEXIT_CRITICAL();
+    } else {
+        // Another thread won - discard our mutex
+        taskEXIT_CRITICAL();
+        vSemaphoreDelete(newMutex);
+    }
+}
+
+/**
+ * @brief Check if currently executing in ISR context (MIPS/PIC32).
+ * @return true if in ISR, false otherwise
+ */
+static inline bool LogIsInISR(void) {
+    // MIPS Status register: EXL (bit 1) or ERL (bit 2) set means exception/ISR
+    uint32_t status = __builtin_mfc0(12, 0);
+    return (status & 0x06) != 0;
+}
+
+/**
+ * @brief Internal helper to add a message to the log buffer.
+ *        Also sends the message over ICSP UART if enabled.
+ *        Safe to call from ISR context (logs via ICSP only, buffer skipped).
+ *
+ * @param message Null-terminated message string
+ * @return int    Number of characters written, or 0 on failure
+ */
+static int LogMessageAdd(const char *message) {
+
+    static volatile bool isLoggerInitialized = false;
+    int message_len;
+
+    if (message == NULL) {
+        return 0;
+    }
+
+    message_len = strlen(message);
+
+    if ((message_len == 0) || (message_len >= LOG_MESSAGE_SIZE))
+        return 0;
+
+    // ISR context: cannot use mutex or task APIs - only ICSP output
+    if (LogIsInISR()) {
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+        LogMessageICSP(message, message_len);
+        #endif
+        return 0;  // Cannot buffer from ISR
+    }
+
+    // Thread-safe lazy initialization
+    // Note: LogMessageInit() and InitICSPLogging() are idempotent and handle
+    // their own thread-safety. We avoid calling them inside critical section
+    // because they use FreeRTOS APIs that require interrupts enabled.
+    if (!isLoggerInitialized) {
+        LogMessageInit();
+        #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+        InitICSPLogging();
+        #endif
+        isLoggerInitialized = true;
+    }
+
+    #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+    LogMessageICSP(message, message_len);
+    #endif
+
+    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+        strncpy(logBuffer.entries[logBuffer.head].message, message, message_len);
+        logBuffer.entries[logBuffer.head].message[message_len] = '\0';
+        logBuffer.head = (logBuffer.head + 1) % LOG_MAX_ENTRY_COUNT;
+
+        if (logBuffer.count < LOG_MAX_ENTRY_COUNT) {
+            logBuffer.count++;
+        } else {
+            logBuffer.tail = (logBuffer.tail + 1) % LOG_MAX_ENTRY_COUNT;
+        }
+
+        xSemaphoreGive(logBuffer.mutex);
+        return message_len;
+    }
+    return 0;
 }
 
 
+/**
+ * @brief Dumps all log messages to the SCPI interface and clears the buffer.
+ *        Uses pop-and-print pattern to avoid holding mutex during I/O.
+ *
+ * @param context SCPI context used to write and flush messages
+ */
+void LogMessageDump(scpi_t * context) {
+
+    char tempBuffer[LOG_MESSAGE_SIZE];
+    bool hasMessage;
+
+    if (context == NULL || context->interface == NULL || context->interface->write == NULL) {
+        return;
+    }
+
+    if (logBuffer.mutex == NULL) {
+        return;
+    }
+
+    // Pop-and-print loop: mutex held only during memory copy, not I/O
+    do {
+        hasMessage = false;
+
+        // Critical section: pop one message from buffer
+        if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+            if (logBuffer.count > 0) {
+                // Copy message to local stack buffer
+                strncpy(tempBuffer, logBuffer.entries[logBuffer.tail].message, LOG_MESSAGE_SIZE - 1);
+                tempBuffer[LOG_MESSAGE_SIZE - 1] = '\0';
+
+                // Advance tail and decrement count
+                logBuffer.tail = (logBuffer.tail + 1) % LOG_MAX_ENTRY_COUNT;
+                logBuffer.count--;
+
+                hasMessage = true;
+            }
+            xSemaphoreGive(logBuffer.mutex);
+        }
+
+        // I/O section: write message (mutex released)
+        if (hasMessage) {
+            context->interface->write(context, tempBuffer, strlen(tempBuffer));
+            if (context->interface->flush) {
+                context->interface->flush(context);
+            }
+        }
+    } while (hasMessage);
+}
+
+/**
+ * @brief Clears all log messages from the buffer (thread-safe).
+ */
+void LogMessageClear(void) {
+
+    if (logBuffer.mutex == NULL) {
+        return;
+    }
+
+    if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
+        logBuffer.head = 0;
+        logBuffer.tail = 0;
+        logBuffer.count = 0;
+        xSemaphoreGive(logBuffer.mutex);
+    }
+}
