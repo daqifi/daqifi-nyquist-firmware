@@ -245,9 +245,16 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
-            /* VBUS was detected. Wait 100ms for RC filter settle before attaching USB device.
-             * IINLIM management is now handled by BQ24297_ManageIINLIM() state machine
-             * instead of relying on DPDM detection timing. */
+            /* VBUS was detected. This callback runs in the USB device task context,
+             * so vTaskDelay yields CPU to other tasks (does not block the system).
+             *
+             * 100ms delay: lets the RC low-pass filter on the VBUS sense line
+             * settle before we attach. Previously 1000ms to wait for BQ24297
+             * DPDM detection; reduced now that ManageIINLIM handles IINLIM
+             * independently via I2C.
+             *
+             * Re-check isVbusDetected after the delay in case POWER_REMOVED
+             * fired while we were waiting (cable yanked during settle). */
             gRunTimeUsbSttings.isVbusDetected = true;
             gRunTimeUsbSttings.isConfigured = false;
 
