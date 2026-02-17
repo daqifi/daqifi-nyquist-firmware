@@ -60,10 +60,11 @@ void BQ24297_InitHardware(
     LOG_I("BQ24297_InitHardware: Demo values - pgStat=%d, vsysStat=%d, batPresent=%d", 
           pData->status.pgStat, pData->status.vsysStat, pData->status.batPresent);
     
-    // Initialize OTG GPIO as input - hardware pullup holds HIGH
-    // OTG HIGH during DPDM detection = 500mA IINLIM (vs 100mA when LOW)
-    BATT_MAN_OTG_InputEnable();
-    
+    // Drive OTG LOW — DPDM will set 100mA (conservative).
+    // ManageIINLIM state machine overrides IINLIM via I2C after DPDM completes.
+    BATT_MAN_OTG_OutputEnable();
+    BATT_MAN_OTG_Clear();
+
     LOG_I("BQ24297_InitHardware: Demo board initialized with good power status");
     return;
 #endif
@@ -76,9 +77,10 @@ void BQ24297_InitHardware(
                         pConfigBQ24->I2C_Index,                             
                         DRV_IO_INTENT_READWRITE|DRV_IO_INTENT_BLOCKING);
 
-    // Configure OTG GPIO as input - hardware pullup holds HIGH
-    // OTG HIGH during DPDM detection = 500mA IINLIM (vs 100mA when LOW)
-    BATT_MAN_OTG_InputEnable();
+    // Drive OTG LOW — DPDM will set 100mA (conservative).
+    // ManageIINLIM state machine overrides IINLIM via I2C after DPDM completes.
+    BATT_MAN_OTG_OutputEnable();
+    BATT_MAN_OTG_Clear();
 }
 
 void BQ24297_Config_Settings(void) {
@@ -111,8 +113,9 @@ void BQ24297_Config_Settings(void) {
     // [3:1] = 000 (SYS_MIN = 3.0V)
     // [0] = 1 (reserved)
     
-    // OTG GPIO as input - hardware pullup holds HIGH for 500mA DPDM detection
-    BATT_MAN_OTG_InputEnable();
+    // Drive OTG LOW — DPDM sets 100mA (conservative), ManageIINLIM overrides via I2C
+    BATT_MAN_OTG_OutputEnable();
+    BATT_MAN_OTG_Clear();
 
     // Configure for charge mode with SYS_MIN=3.0V to prevent BATFET disable
     BQ24297_Write_I2C(0x01, 0b01010001);  // Watchdog reset, OTG=0, CHG=1, SYS_MIN=3.0V
@@ -150,9 +153,14 @@ void BQ24297_Config_Settings(void) {
         LOG_D("BQ24297: BATFET re-enabled");
     }
 
-    // Read the current status and set appropriate current limits
+    // Read the current status
     BQ24297_UpdateStatus();
-    BQ24297_AutoSetILim();
+
+    // Start with conservative 500mA IINLIM
+    // BQ24297_ManageIINLIM() state machine will adjust based on USB enumeration
+    BQ24297_SetIINLIM(ILim_500);
+    pData->iinlimState = IINLIM_STATE_IDLE;
+    pData->iinlimLastVbus = false;
 
     // Update battery presence status (for reporting only)
     BQ24297_UpdateBatteryStatus();
@@ -374,12 +382,12 @@ uint8_t BQ24297_Read_I2C(uint8_t reg) {
     if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
         // Perform I2C transfer with error checking
         bool success = DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
-                pConfigBQ24->I2C_Address,                           
-                I2CData,                                        
-                1,                                                  
-                &rxData,                                            
+                pConfigBQ24->I2C_Address,
+                I2CData,
+                1,
+                &rxData,
                 1);
-        
+
         if (!success) {
             LOG_E("BQ24297_Read_I2C: Failed to read register 0x%02X", reg);
             // Return 0xFF to indicate error (distinguishable from valid data)
@@ -408,12 +416,12 @@ bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
 
     if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
         // Write to selected register with error checking
-        bool success = DRV_I2C_WriteTransfer(                       
-                        pData->I2C_Handle,                                  
-                        pConfigBQ24->I2C_Address,                           
-                        I2CData,                                        
+        bool success = DRV_I2C_WriteTransfer(
+                        pData->I2C_Handle,
+                        pConfigBQ24->I2C_Address,
+                        I2CData,
                         2);
-        
+
         if (!success) {
             LOG_E("BQ24297_Write_I2C: Failed to write 0x%02X to register 0x%02X", txData, reg);
             return false;
@@ -423,6 +431,86 @@ bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
         LOG_E("BQ24297_Write_I2C: Invalid I2C handle");
         return false;
     }
+}
+
+bool BQ24297_SetIINLIM(uint8_t iinlimCode) {
+    uint8_t reg = BQ24297_Read_I2C(0x00);
+    if (reg == 0xFF) return false;
+    // Clear HIZ (bit 7) and IINLIM (bits 2:0), preserve VINDPM (bits 6:3)
+    reg = (reg & 0b01111000) | (iinlimCode & 0x07);
+    return BQ24297_Write_I2C(0x00, reg);
+}
+
+void BQ24297_ManageIINLIM(bool vbusPresent) {
+    TickType_t now = xTaskGetTickCount();
+
+    switch (pData->iinlimState) {
+        case IINLIM_STATE_IDLE:
+            if (vbusPresent && !pData->iinlimLastVbus) {
+                // Rising edge — VBUS just appeared
+                LOG_D("IINLIM: VBUS appeared, entering WAIT_DPDM");
+                pData->iinlimTimestamp = now;
+                pData->iinlimState = IINLIM_STATE_WAIT_DPDM;
+            }
+            break;
+
+        case IINLIM_STATE_WAIT_DPDM:
+            if (!vbusPresent) {
+                LOG_D("IINLIM: VBUS lost during WAIT_DPDM, returning to IDLE");
+                pData->iinlimState = IINLIM_STATE_IDLE;
+                break;
+            }
+            {
+                // Check REG07 bit 7 for DPDM in progress
+                uint8_t reg07 = BQ24297_Read_I2C(0x07);
+                bool dpdmDone = (reg07 != 0xFF) && !(reg07 & 0x80);
+                bool timeout = (now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(500);
+
+                if (dpdmDone || timeout) {
+                    // Set conservative 500mA limit
+                    BQ24297_SetIINLIM(ILim_500);
+                    LOG_D("IINLIM: DPDM %s, set 500mA, entering WAIT_USB",
+                          dpdmDone ? "done" : "timeout");
+                    pData->iinlimTimestamp = now;
+                    pData->iinlimState = IINLIM_STATE_WAIT_USB;
+                }
+            }
+            break;
+
+        case IINLIM_STATE_WAIT_USB:
+            if (!vbusPresent) {
+                BQ24297_SetIINLIM(ILim_500);
+                LOG_D("IINLIM: VBUS lost during WAIT_USB, reset to 500mA");
+                pData->iinlimState = IINLIM_STATE_IDLE;
+                break;
+            }
+            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(500)) {
+                if (UsbCdc_IsConfigured()) {
+                    // USB host enumerated — keep 500mA (USB-spec safe)
+                    LOG_D("IINLIM: USB configured, keeping 500mA");
+                } else {
+                    // No USB enumeration — wall charger, bump to 2000mA
+                    BQ24297_SetIINLIM(ILim_2000);
+                    LOG_D("IINLIM: No USB config, set 2000mA (wall charger)");
+                }
+                pData->iinlimState = IINLIM_STATE_SETTLED;
+            }
+            break;
+
+        case IINLIM_STATE_SETTLED:
+            if (!vbusPresent) {
+                BQ24297_SetIINLIM(ILim_500);
+                LOG_D("IINLIM: VBUS lost, reset to 500mA");
+                pData->iinlimState = IINLIM_STATE_IDLE;
+            }
+            break;
+
+        default:
+            pData->iinlimState = IINLIM_STATE_IDLE;
+            break;
+    }
+
+    pData->iinlimLastVbus = vbusPresent;
 }
 
 void BQ24297_EnableOTG(void) {

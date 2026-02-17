@@ -163,8 +163,18 @@ typedef struct
     uint16_t I2C_Address;
  } tBQ24297Config;
 
+/*! @enum eIINLIM_State
+ * @brief State machine for managing IINLIM after VBUS detection
+ */
+typedef enum {
+    IINLIM_STATE_IDLE = 0,       // No VBUS, waiting
+    IINLIM_STATE_WAIT_DPDM,      // VBUS appeared, waiting for DPDM to finish
+    IINLIM_STATE_WAIT_USB,       // DPDM done, IINLIM=500mA, waiting 500ms for USB enumeration
+    IINLIM_STATE_SETTLED          // Final IINLIM set (500mA or 2000mA)
+} eIINLIM_State;
+
  /*! @struct sBQ24297Data
- * @brief Data structure for the BQ24297 
+ * @brief Data structure for the BQ24297
  * @typedef tBQ24297Data
  * @brief Data type associated to the structure sBQ24297Data
  */
@@ -179,6 +189,10 @@ typedef struct
     bool chargeAllowed;
     //! Initialitaion completed
     bool initComplete;
+    //! IINLIM state machine
+    eIINLIM_State iinlimState;
+    TickType_t iinlimTimestamp;
+    bool iinlimLastVbus;
     //! Current status of the module
     BQ24297_STATUS status;
     //I2C handler to this module
@@ -288,6 +302,21 @@ bool BQ24297_Write_I2C(uint8_t reg, uint8_t data);
  * @return true if battery is present, false otherwise
  */
 bool BQ24297_IsBatteryPresent(void);
+
+/*!
+ * Set IINLIM register value on BQ24297
+ * @param[in] iinlimCode IINLIM code (0-7, see eILimit enum)
+ * @return true on success, false on I2C error
+ */
+bool BQ24297_SetIINLIM(uint8_t iinlimCode);
+
+/*!
+ * Manage IINLIM state machine - call periodically from Power_Tasks
+ * Handles VBUS detection, DPDM wait, USB enumeration check, and
+ * sets appropriate IINLIM (500mA for USB host, 2000mA for wall charger)
+ * @param[in] vbusPresent true if VBUS is currently detected
+ */
+void BQ24297_ManageIINLIM(bool vbusPresent);
 
 /*!
  * Update battery status and charging allowed flag

@@ -145,6 +145,14 @@ void Power_Tasks(void) {
         BQ24297_Config_Settings();
     }
 
+    /* Manage IINLIM state machine — runs every Power_Tasks() call (~100ms)
+     * Detects VBUS edges and adjusts IINLIM based on USB enumeration status */
+    if (pData->BQ24297Data.initComplete) {
+        USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+        bool vbusPresent = (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
+        BQ24297_ManageIINLIM(vbusPresent);
+    }
+
     /* Update power state at 1 second intervals */
     static TickType_t lastUpdateTime = 0;
     TickType_t currentTime = xTaskGetTickCount();

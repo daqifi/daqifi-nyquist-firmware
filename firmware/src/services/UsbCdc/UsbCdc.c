@@ -219,6 +219,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
     switch (event) {
         case USB_DEVICE_EVENT_DECONFIGURED:
         case USB_DEVICE_EVENT_RESET:
+            gRunTimeUsbSttings.isConfigured = false;
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             }
@@ -238,15 +239,19 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
                 /* Mark that the device is now configured */
                 gRunTimeUsbSttings.state = USB_CDC_STATE_WAIT;
+                gRunTimeUsbSttings.isConfigured = true;
             }
             break;
 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
-            /* VBUS was detected. Wait 1000ms for BQ24297 DPDM detection to complete before attaching USB device */
+            /* VBUS was detected. Wait 100ms for RC filter settle before attaching USB device.
+             * IINLIM management is now handled by BQ24297_ManageIINLIM() state machine
+             * instead of relying on DPDM detection timing. */
             gRunTimeUsbSttings.isVbusDetected = true;
+            gRunTimeUsbSttings.isConfigured = false;
 
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            vTaskDelay(pdMS_TO_TICKS(100));
             if (gRunTimeUsbSttings.isVbusDetected &&
                 gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 USB_DEVICE_Attach(gRunTimeUsbSttings.deviceHandle);
@@ -282,6 +287,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
             /* VBUS truly removed */
             gRunTimeUsbSttings.isVbusDetected = false;
+            gRunTimeUsbSttings.isConfigured = false;
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             }
@@ -782,7 +788,8 @@ void UsbCdc_Initialize() {
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
-    gRunTimeUsbSttings.isVbusDetected = false;  // Initialize VBUS detection state
+    gRunTimeUsbSttings.isVbusDetected = false;
+    gRunTimeUsbSttings.isConfigured = false;
 
     gRunTimeUsbSttings.deviceLineCodingData.dwDTERate = 9600;
     gRunTimeUsbSttings.deviceLineCodingData.bParityType = 0;
@@ -914,6 +921,10 @@ void UsbCdc_SetTransparentMode(bool value) {
 
 bool UsbCdc_IsVbusDetected(void) {
     return gRunTimeUsbSttings.isVbusDetected;
+}
+
+bool UsbCdc_IsConfigured(void) {
+    return gRunTimeUsbSttings.isConfigured;
 }
 
 tRunTimeUsbSettings* UsbCdc_GetRuntimeSettings(void) {
