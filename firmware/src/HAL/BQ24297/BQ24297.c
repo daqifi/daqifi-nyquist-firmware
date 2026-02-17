@@ -46,7 +46,9 @@ void BQ24297_InitHardware(
     
     // Mark as initialized
     pData->initComplete = true;
-    
+    pData->iinlimState = IINLIM_STATE_IDLE;
+    pData->iinlimLastVbus = false;
+
     // Set "good" power status values for demo board
     pData->status.pgStat = 1;        // External power present
     pData->status.vsysStat = 0;      // Battery voltage good (>3.0V)
@@ -438,7 +440,11 @@ bool BQ24297_SetIINLIM(uint8_t iinlimCode) {
     if (reg == 0xFF) return false;
     // Clear HIZ (bit 7) and IINLIM (bits 2:0), preserve VINDPM (bits 6:3)
     reg = (reg & 0b01111000) | (iinlimCode & 0x07);
-    return BQ24297_Write_I2C(0x00, reg);
+    bool success = BQ24297_Write_I2C(0x00, reg);
+    if (!success) {
+        LOG_E("BQ24297_SetIINLIM: Failed to write IINLIM code %u", iinlimCode);
+    }
+    return success;
 }
 
 void BQ24297_ManageIINLIM(bool vbusPresent) {
@@ -468,11 +474,14 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
 
                 if (dpdmDone || timeout) {
                     // Set conservative 500mA limit
-                    BQ24297_SetIINLIM(ILim_500);
-                    LOG_D("IINLIM: DPDM %s, set 500mA, entering WAIT_USB",
-                          dpdmDone ? "done" : "timeout");
-                    pData->iinlimTimestamp = now;
-                    pData->iinlimState = IINLIM_STATE_WAIT_USB;
+                    if (BQ24297_SetIINLIM(ILim_500)) {
+                        LOG_D("IINLIM: DPDM %s, set 500mA, entering WAIT_USB",
+                              dpdmDone ? "done" : "timeout");
+                        pData->iinlimTimestamp = now;
+                        pData->iinlimState = IINLIM_STATE_WAIT_USB;
+                    } else {
+                        LOG_E("IINLIM: Failed to set 500mA, retrying next cycle");
+                    }
                 }
             }
             break;
@@ -488,12 +497,16 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
                 if (UsbCdc_IsConfigured()) {
                     // USB host enumerated — keep 500mA (USB-spec safe)
                     LOG_D("IINLIM: USB configured, keeping 500mA");
+                    pData->iinlimState = IINLIM_STATE_SETTLED;
                 } else {
                     // No USB enumeration — wall charger, bump to 2000mA
-                    BQ24297_SetIINLIM(ILim_2000);
-                    LOG_D("IINLIM: No USB config, set 2000mA (wall charger)");
+                    if (BQ24297_SetIINLIM(ILim_2000)) {
+                        LOG_D("IINLIM: No USB config, set 2000mA (wall charger)");
+                        pData->iinlimState = IINLIM_STATE_SETTLED;
+                    } else {
+                        LOG_E("IINLIM: Failed to set 2000mA, retrying next cycle");
+                    }
                 }
-                pData->iinlimState = IINLIM_STATE_SETTLED;
             }
             break;
 
