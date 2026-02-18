@@ -1031,7 +1031,7 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
 /**
  * SCPI Callback: Dump all BQ24297 registers for debugging
  * Command: SYST:POW:BQ:REG?
- * Returns: All 10 registers (REG00-REG09) in hex format with descriptions
+ * Returns: All 11 registers (REG00-REG0A) in hex format with decoded fields
  */
 static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
     // Read all registers including REG0A, tracking I2C errors (0xFF = read failure)
@@ -1169,7 +1169,7 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (ilim < 0 || ilim > 7) {
+    if (ilim < 0 || ilim > ILim_3000) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
