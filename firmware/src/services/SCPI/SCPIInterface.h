@@ -29,9 +29,12 @@ extern "C" {
         char buf[128];
         va_list args;
         va_start(args, fmt);
-        vsnprintf(buf, sizeof(buf), fmt, args);
+        int n = vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
-        context->interface->write(context, buf, strlen(buf));
+        if (n > 0) {
+            size_t len = ((size_t)n < sizeof(buf)) ? (size_t)n : sizeof(buf) - 1;
+            context->interface->write(context, buf, len);
+        }
     }
 
 #ifdef	__cplusplus

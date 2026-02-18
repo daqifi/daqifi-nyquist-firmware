@@ -1030,7 +1030,7 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
 
 /**
  * SCPI Callback: Dump all BQ24297 registers for debugging
- * Command: SYST:POW:BQ:REG?
+ * Command: SYSTem:POWer:BQ:REGisters?
  * Returns: All 11 registers (REG00-REG0A) in hex format with decoded fields
  */
 static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
@@ -1159,7 +1159,7 @@ static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
 
 /**
  * SCPI Callback: Set BQ24297 ILIM (input current limit)
- * Command: SYST:POW:BQ:ILIM <value>
+ * Command: SYSTem:POWer:BQ:ILIM <value>
  * Values: 0=100mA, 1=150mA, 2=500mA, 3=900mA, 4=1A, 5=1.5A, 6=2A, 7=3A
  */
 static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
@@ -1191,20 +1191,21 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
     }
 
     uint8_t actual = readback & 0x07;
-    if (actual != (uint8_t)ilim) {
-        scpi_printf(context, "Verify failed: wrote %d, read %d (REG00=0x%02X)\r\n",
-                 (int)ilim, actual, readback);
+    uint8_t hiz = (readback >> 7) & 0x01;
+    if (actual != (uint8_t)ilim || hiz != 0) {
+        scpi_printf(context, "Verify failed: wrote ILIM=%d, read ILIM=%d HIZ=%d (REG00=0x%02X)\r\n",
+                 (int)ilim, actual, hiz, readback);
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
 
-    scpi_printf(context, "ILIM=%d Readback=0x%02X OK\r\n", actual, readback);
+    scpi_printf(context, "ILIM=%d HIZ=%d Readback=0x%02X OK\r\n", actual, hiz, readback);
     return SCPI_RES_OK;
 }
 
 /**
  * SCPI Callback: Force DPDM detection
- * Command: SYST:POW:BQ:DPDM
+ * Command: SYSTem:POWer:BQ:DPDM
  * Triggers BQ24297 to re-run D+/D- detection
  */
 static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
@@ -1240,7 +1241,7 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (timeout <= 0) {
+    if (timeout <= 0 && (status & 0x80)) {
         scpi_printf(context, "DPDM timeout\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
