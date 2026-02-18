@@ -600,6 +600,18 @@ void BQ24297_UpdateBatteryStatus(void) {
     }
 }
 
+bool BQ24297_SetIINLIM(uint8_t iinlimCode) {
+    uint8_t reg = BQ24297_Read_I2C(0x00);
+    if (reg == 0xFF) return false;
+    // Clear HIZ (bit 7) and IINLIM (bits 2:0), preserve VINDPM (bits 6:3)
+    reg = (reg & 0b01111000) | (iinlimCode & 0x07);
+    bool success = BQ24297_Write_I2C(0x00, reg);
+    if (!success) {
+        LOG_E("BQ24297_SetIINLIM: Failed to write IINLIM code %u", iinlimCode);
+    }
+    return success;
+}
+
 void BQ24297_SetPowerMode(bool externalPowerPresent) {
     static bool lastExternalPowerState = false;
     static bool initialized = false;

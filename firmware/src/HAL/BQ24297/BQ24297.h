@@ -297,7 +297,15 @@ bool BQ24297_IsBatteryPresent(void);
  * Disables charging if thermistor is stuck low (HOT) for safety
  */
 void BQ24297_UpdateBatteryStatus(void);
-    
+
+/*!
+ * Set the input current limit (IINLIM) on BQ24297
+ * @param iinlimCode IINLIM code 0-7:
+ *   0=100mA, 1=150mA, 2=500mA, 3=900mA, 4=1A, 5=1.5A, 6=2A, 7=3A
+ * @return true if write succeeded, false on I2C error
+ */
+bool BQ24297_SetIINLIM(uint8_t iinlimCode);
+
 #ifdef	__cplusplus
 }
 #endif
