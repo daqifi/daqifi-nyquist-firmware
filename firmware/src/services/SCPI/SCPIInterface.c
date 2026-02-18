@@ -1199,6 +1199,142 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * SCPI Callback: Comprehensive BQ24297 diagnostics report
+ * Command: SYST:POW:BQ:DIAG?
+ * Returns: Multi-section human-readable diagnostic dump
+ */
+static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
+    char buffer[256];
+    tBoardData* pBoardData = BoardData_Get(
+            BOARDDATA_POWER_DATA,
+            0);
+    tPowerData* pPower = &pBoardData->PowerData;
+    tBQ24297Data* pBQ = &pPower->BQ24297Data;
+
+    // Refresh cached status from hardware
+    BQ24297_UpdateStatus();
+
+    // --- [Battery] ---
+    context->interface->write(context, "[Battery]\r\n", 11);
+    snprintf(buffer, sizeof(buffer),
+        "  Voltage: %.2fV | Charge: %d%% | Low: %s\r\n",
+        pPower->battVoltage, pPower->chargePct,
+        pPower->battLow ? "Yes" : "No");
+    context->interface->write(context, buffer, strlen(buffer));
+    snprintf(buffer, sizeof(buffer),
+        "  Present: %s | Charge allowed: %s\r\n",
+        pBQ->status.batPresent ? "Yes" : "No",
+        pBQ->chargeAllowed ? "Yes" : "No");
+    context->interface->write(context, buffer, strlen(buffer));
+
+    // --- [BQ24297 Registers] ---
+    context->interface->write(context, "[BQ24297 Registers]\r\n", 21);
+
+    // Read raw registers for fields not in status struct
+    uint8_t reg00 = BQ24297_Read_I2C(0x00);
+    uint8_t reg01 = BQ24297_Read_I2C(0x01);
+    uint8_t reg07 = BQ24297_Read_I2C(0x07);
+    uint8_t reg08 = BQ24297_Read_I2C(0x08);
+    uint8_t reg09 = BQ24297_Read_I2C(0x09);
+
+    const char* iinlimStr[] = {"100mA","150mA","500mA","900mA","1A","1.5A","2A","3A"};
+    uint8_t vindpm = (reg00 >> 3) & 0x0F;
+    uint8_t iinlim = reg00 & 0x07;
+    snprintf(buffer, sizeof(buffer),
+        "  REG00=0x%02X (Input):  HIZ=%d | VINDPM=%dmV (%d) | IINLIM=%s (%d)\r\n",
+        reg00, (reg00 >> 7) & 1, 3880 + vindpm * 80, vindpm,
+        iinlimStr[iinlim], iinlim);
+    context->interface->write(context, buffer, strlen(buffer));
+
+    uint8_t sysMin = (reg01 >> 1) & 0x07;
+    snprintf(buffer, sizeof(buffer),
+        "  REG01=0x%02X (Config): OTG=%d | CHG=%d | SYS_MIN=%dmV (%d)\r\n",
+        reg01, (reg01 >> 5) & 1, (reg01 >> 4) & 1, 3000 + sysMin * 100, sysMin);
+    context->interface->write(context, buffer, strlen(buffer));
+
+    snprintf(buffer, sizeof(buffer),
+        "  REG07=0x%02X (Misc):   DPDM=%d | BATFET=%s (%d)\r\n",
+        reg07, (reg07 >> 7) & 1,
+        (reg07 & 0x20) ? "Disabled" : "Enabled", (reg07 >> 5) & 1);
+    context->interface->write(context, buffer, strlen(buffer));
+
+    const char* vbusStr[] = {"Unknown","USB_SDP","Adapter","OTG"};
+    const char* chgStr[] = {"Not charging","Pre-charge","Fast charge","Charge done"};
+    uint8_t vbusStat = (reg08 >> 6) & 0x03;
+    uint8_t chgStat = (reg08 >> 4) & 0x03;
+    snprintf(buffer, sizeof(buffer),
+        "  REG08=0x%02X (Status): VBUS=%s (%d) | Charge=%s (%d) | PG=%d | DPM=%d | THERM=%d | VSYS=%d\r\n",
+        reg08, vbusStr[vbusStat], vbusStat, chgStr[chgStat], chgStat,
+        (reg08 >> 2) & 1, (reg08 >> 3) & 1, (reg08 >> 1) & 1, reg08 & 1);
+    context->interface->write(context, buffer, strlen(buffer));
+
+    const char* chgFaultStr[] = {"Normal","Input fault","Thermal","Timer"};
+    const char* ntcFaultStr[] = {"Ok","Hot","Cold","Hot/Cold"};
+    uint8_t chgFault = (reg09 >> 4) & 0x03;
+    uint8_t ntcFault = reg09 & 0x07;
+    snprintf(buffer, sizeof(buffer),
+        "  REG09=0x%02X (Faults): Watchdog=%d | OTG=%d | CHG=%s (%d) | BAT=%d | NTC=%s (%d)\r\n",
+        reg09, (reg09 >> 7) & 1, (reg09 >> 6) & 1,
+        chgFaultStr[chgFault], chgFault, (reg09 >> 3) & 1,
+        (ntcFault < 4) ? ntcFaultStr[ntcFault] : "Fault", ntcFault);
+    context->interface->write(context, buffer, strlen(buffer));
+
+    // --- [GPIO] ---
+    context->interface->write(context, "[GPIO]\r\n", 8);
+    snprintf(buffer, sizeof(buffer),
+        "  STAT (RH11): %d (%s) [%s]\r\n",
+        (int)BATT_MAN_STAT_Get(),
+        BATT_MAN_STAT_Get() ? "Not charging" : "Charging",
+        (TRISH >> 11) & 1 ? "Input" : "Output");
+    context->interface->write(context, buffer, strlen(buffer));
+    snprintf(buffer, sizeof(buffer),
+        "  OTG  (RK5):  %d (%s) [%s]\r\n",
+        (int)BATT_MAN_OTG_Get(),
+        BATT_MAN_OTG_Get() ? "HIGH" : "LOW",
+        (TRISK >> 5) & 1 ? "Input" : "Output");
+    context->interface->write(context, buffer, strlen(buffer));
+    snprintf(buffer, sizeof(buffer),
+        "  INT  (RA4):  %d [%s]\r\n",
+        (int)BATT_MAN_INT_Get(),
+        (TRISA >> 4) & 1 ? "Input" : "Output");
+    context->interface->write(context, buffer, strlen(buffer));
+
+    // --- [IINLIM State Machine] ---
+    context->interface->write(context, "[IINLIM State Machine]\r\n", 24);
+    const char* iinlimStateStr[] = {"IDLE","WAIT_DPDM","WAIT_USB","SETTLED"};
+    uint8_t stateIdx = (uint8_t)pBQ->iinlimState;
+    snprintf(buffer, sizeof(buffer),
+        "  State: %s (%d) | Last VBUS: %s\r\n",
+        stateIdx < 4 ? iinlimStateStr[stateIdx] : "UNKNOWN", stateIdx,
+        pBQ->iinlimLastVbus ? "Yes" : "No");
+    context->interface->write(context, buffer, strlen(buffer));
+
+    // --- [Power] ---
+    context->interface->write(context, "[Power]\r\n", 9);
+    const char* powerStateStr[] = {"STANDBY","POWERED_UP","POWERED_UP_EXT_DOWN"};
+    const char* extPowerStr[] = {"NONE","UNKNOWN","CHARGER_1A","CHARGER_2A","USB_100MA","USB_500MA"};
+    uint8_t ps = (uint8_t)pPower->powerState;
+    uint8_t ep = (uint8_t)pPower->externalPowerSource;
+    snprintf(buffer, sizeof(buffer),
+        "  State: %s (%d) | Ext power: %s (%d)\r\n",
+        ps < 3 ? powerStateStr[ps] : "UNKNOWN", ps,
+        ep < 6 ? extPowerStr[ep] : "UNKNOWN", ep);
+    context->interface->write(context, buffer, strlen(buffer));
+
+    USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+    const char* vbusLevelStr[] = {"SessionEnd","BelowAValid","BelowVBUSValid","Valid"};
+    snprintf(buffer, sizeof(buffer),
+        "  VBUS: %s | Level: %s (%d) | USB configured: %s\r\n",
+        UsbCdc_IsVbusDetected() ? "Yes" : "No",
+        (uint8_t)vbusLevel < 4 ? vbusLevelStr[(uint8_t)vbusLevel] : "Unknown",
+        (int)vbusLevel,
+        UsbCdc_IsConfigured() ? "Yes" : "No");
+    context->interface->write(context, buffer, strlen(buffer));
+
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     //memset(commTest.stats,0, sizeof(commTest.stats));
     return SCPI_RES_OK;
@@ -1767,6 +1903,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:POWer:BQ:REGisters?", .callback = SCPI_GetBQRegisters,},
     {.pattern = "SYSTem:POWer:BQ:ILIM", .callback = SCPI_SetBQILim,},
     {.pattern = "SYSTem:POWer:BQ:DPDM", .callback = SCPI_ForceDPDM,},
+    {.pattern = "SYSTem:POWer:BQ:DIAGnostics?", .callback = SCPI_GetBQDiagnostics,},
     // OTG commands disabled - OTG mode is managed automatically by the power system
     // When external power is present, OTG is always disabled for safety
     // When on battery power, OTG is controlled by the board configuration
