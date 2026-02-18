@@ -1186,11 +1186,19 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
     uint8_t readback = BQ24297_Read_I2C(0x00);
     if (readback == 0xFF) {
         scpi_printf(context, "Write OK, readback I2C error\r\n");
-    } else {
-        scpi_printf(context, "ILIM=%d Readback=0x%02X OK\r\n",
-                 readback & 0x07, readback);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
     }
 
+    uint8_t actual = readback & 0x07;
+    if (actual != (uint8_t)ilim) {
+        scpi_printf(context, "Verify failed: wrote %d, read %d (REG00=0x%02X)\r\n",
+                 (int)ilim, actual, readback);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    scpi_printf(context, "ILIM=%d Readback=0x%02X OK\r\n", actual, readback);
     return SCPI_RES_OK;
 }
 
