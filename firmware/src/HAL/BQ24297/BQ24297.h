@@ -304,9 +304,11 @@ bool BQ24297_Write_I2C(uint8_t reg, uint8_t data);
 bool BQ24297_IsBatteryPresent(void);
 
 /*!
- * Set IINLIM register value on BQ24297
- * @param[in] iinlimCode IINLIM code (0-7, see eILimit enum)
- * @return true on success, false on I2C error
+ * Set the input current limit (IINLIM) on BQ24297
+ * Also clears HIZ mode (REG00 bit 7) to ensure current flows from VBUS.
+ * @param iinlimCode IINLIM code 0-7 (eILimit enum):
+ *   0=100mA, 1=150mA, 2=500mA, 3=900mA, 4=1A, 5=1.5A, 6=2A, 7=3A
+ * @return true if write succeeded, false on out-of-range or I2C error
  */
 bool BQ24297_SetIINLIM(uint8_t iinlimCode);
 
