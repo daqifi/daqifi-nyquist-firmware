@@ -1034,16 +1034,16 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
  * Returns: All 10 registers (REG00-REG09) in hex format with descriptions
  */
 static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
-    // Read all registers, tracking I2C errors (0xFF = read failure)
-    uint8_t regs[10];
+    // Read all registers including REG0A, tracking I2C errors (0xFF = read failure)
+    uint8_t regs[11];
     int errCount = 0;
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 11; i++) {
         regs[i] = BQ24297_Read_I2C(i);
         if (regs[i] == 0xFF) errCount++;
     }
 
     // If all reads failed, I2C bus is down
-    if (errCount == 10) {
+    if (errCount == 11) {
         scpi_printf(context, "I2C error: all register reads failed (0xFF)\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
@@ -1135,6 +1135,21 @@ static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
             (regs[9] >> 4) & 0x03, (regs[9] >> 3) & 0x01, regs[9] & 0x07);
     }
 
+    // REG0A: Vendor/Part/Revision (read-only)
+    // PN[2:0] bits [7:5]: 001=BQ24296, 011=BQ24297
+    // Rev[2:0] bits [2:0]: device revision
+    if (regs[10] == 0xFF) {
+        scpi_printf(context, "REG0A=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t pn = (regs[10] >> 5) & 0x07;
+        uint8_t rev = regs[10] & 0x07;
+        const char* pnStr = (pn == 3) ? "BQ24297" :
+                             (pn == 1) ? "BQ24296" : "UNKNOWN";
+        scpi_printf(context, "REG0A=0x%02X PN=%d (%s) REV=%d%s\r\n",
+            regs[10], pn, pnStr, rev,
+            (pn != 3) ? " WARNING: expected BQ24297 (PN=3)" : "");
+    }
+
     if (errCount > 0) {
         scpi_printf(context, "WARNING: %d register(s) returned I2C error\r\n", errCount);
     }
@@ -1217,17 +1232,21 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    if (timeout <= 0) {
+        scpi_printf(context, "DPDM timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     // Read result from REG08
     uint8_t reg8 = BQ24297_Read_I2C(0x08);
     const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
 
     if (reg8 == 0xFF) {
-        scpi_printf(context, "DPDM %s but REG08 read failed\r\n",
-                 timeout > 0 ? "complete" : "timeout");
+        scpi_printf(context, "DPDM complete but REG08 read failed\r\n");
     } else {
         uint8_t vbusStat = (reg8 >> 6) & 0x03;
-        scpi_printf(context, "DPDM %s: VBUS=%s (%d), REG08=0x%02X\r\n",
-                 timeout > 0 ? "complete" : "timeout",
+        scpi_printf(context, "DPDM complete: VBUS=%s (%d), REG08=0x%02X\r\n",
                  vbusStr[vbusStat], vbusStat, reg8);
     }
 
