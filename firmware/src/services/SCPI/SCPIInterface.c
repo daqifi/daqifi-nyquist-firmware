@@ -1034,103 +1034,123 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
  * Returns: All 10 registers (REG00-REG09) in hex format with descriptions
  */
 static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
-    char buffer[512];
-    char* ptr = buffer;
-    int remaining = sizeof(buffer);
-    int written;
+    char line[80];
 
-    // Read all registers directly for raw dump
+    // Read all registers, tracking I2C errors (0xFF = read failure)
     uint8_t regs[10];
+    int errCount = 0;
     for (int i = 0; i < 10; i++) {
         regs[i] = BQ24297_Read_I2C(i);
+        if (regs[i] == 0xFF) errCount++;
     }
 
+    // If all reads failed, I2C bus is down
+    if (errCount == 10) {
+        const char* msg = "I2C error: all register reads failed (0xFF)\r\n";
+        context->interface->write(context, msg, strlen(msg));
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Helper macro: write one register line, showing ERR on I2C failure
+    #define WRITE_REG_LINE(fmt, ...) do { \
+        snprintf(line, sizeof(line), fmt, __VA_ARGS__); \
+        context->interface->write(context, line, strlen(line)); \
+    } while(0)
+
     // REG00: Input Source Control
-    written = snprintf(ptr, remaining, "REG00=0x%02X HIZ=%d VINDPM=%d ILIM=%d\r\n",
-                      regs[0],
-                      (regs[0] >> 7) & 0x01,
-                      (regs[0] >> 3) & 0x0F,
-                      regs[0] & 0x07);
-    ptr += written; remaining -= written;
+    if (regs[0] == 0xFF) {
+        WRITE_REG_LINE("REG00=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG00=0x%02X HIZ=%d VINDPM=%d ILIM=%d\r\n",
+            regs[0], (regs[0] >> 7) & 0x01, (regs[0] >> 3) & 0x0F, regs[0] & 0x07);
+    }
 
     // REG01: Power-On Config
-    written = snprintf(ptr, remaining, "REG01=0x%02X OTG=%d CHG=%d SYS_MIN=%d\r\n",
-                      regs[1],
-                      (regs[1] >> 5) & 0x01,
-                      (regs[1] >> 4) & 0x01,
-                      (regs[1] >> 1) & 0x07);
-    ptr += written; remaining -= written;
+    if (regs[1] == 0xFF) {
+        WRITE_REG_LINE("REG01=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG01=0x%02X OTG=%d CHG=%d SYS_MIN=%d\r\n",
+            regs[1], (regs[1] >> 5) & 0x01, (regs[1] >> 4) & 0x01, (regs[1] >> 1) & 0x07);
+    }
 
     // REG02: Charge Current Control
-    written = snprintf(ptr, remaining, "REG02=0x%02X ICHG=%d BCOLD=%d\r\n",
-                      regs[2],
-                      (regs[2] >> 2) & 0x3F,
-                      regs[2] & 0x01);
-    ptr += written; remaining -= written;
+    if (regs[2] == 0xFF) {
+        WRITE_REG_LINE("REG02=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG02=0x%02X ICHG=%d BCOLD=%d\r\n",
+            regs[2], (regs[2] >> 2) & 0x3F, regs[2] & 0x01);
+    }
 
     // REG03: Pre-Charge/Termination Current
-    written = snprintf(ptr, remaining, "REG03=0x%02X IPRECHG=%d ITERM=%d\r\n",
-                      regs[3],
-                      (regs[3] >> 4) & 0x0F,
-                      regs[3] & 0x0F);
-    ptr += written; remaining -= written;
+    if (regs[3] == 0xFF) {
+        WRITE_REG_LINE("REG03=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG03=0x%02X IPRECHG=%d ITERM=%d\r\n",
+            regs[3], (regs[3] >> 4) & 0x0F, regs[3] & 0x0F);
+    }
 
     // REG04: Charge Voltage Control
-    written = snprintf(ptr, remaining, "REG04=0x%02X VREG=%d BATLOWV=%d VRECHG=%d\r\n",
-                      regs[4],
-                      (regs[4] >> 2) & 0x3F,
-                      (regs[4] >> 1) & 0x01,
-                      regs[4] & 0x01);
-    ptr += written; remaining -= written;
+    if (regs[4] == 0xFF) {
+        WRITE_REG_LINE("REG04=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG04=0x%02X VREG=%d BATLOWV=%d VRECHG=%d\r\n",
+            regs[4], (regs[4] >> 2) & 0x3F, (regs[4] >> 1) & 0x01, regs[4] & 0x01);
+    }
 
     // REG05: Charge Termination/Timer Control
-    written = snprintf(ptr, remaining, "REG05=0x%02X EN_TERM=%d WDOG=%d EN_TIMER=%d\r\n",
-                      regs[5],
-                      (regs[5] >> 7) & 0x01,
-                      (regs[5] >> 4) & 0x03,
-                      (regs[5] >> 3) & 0x01);
-    ptr += written; remaining -= written;
+    if (regs[5] == 0xFF) {
+        WRITE_REG_LINE("REG05=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG05=0x%02X EN_TERM=%d WDOG=%d EN_TIMER=%d\r\n",
+            regs[5], (regs[5] >> 7) & 0x01, (regs[5] >> 4) & 0x03, (regs[5] >> 3) & 0x01);
+    }
 
     // REG06: Boost Voltage/Thermal Regulation
-    written = snprintf(ptr, remaining, "REG06=0x%02X BOOSTV=%d BHOT=%d TREG=%d\r\n",
-                      regs[6],
-                      (regs[6] >> 4) & 0x0F,
-                      (regs[6] >> 2) & 0x03,
-                      regs[6] & 0x03);
-    ptr += written; remaining -= written;
+    if (regs[6] == 0xFF) {
+        WRITE_REG_LINE("REG06=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG06=0x%02X BOOSTV=%d BHOT=%d TREG=%d\r\n",
+            regs[6], (regs[6] >> 4) & 0x0F, (regs[6] >> 2) & 0x03, regs[6] & 0x03);
+    }
 
     // REG07: Misc Operation Control
-    written = snprintf(ptr, remaining, "REG07=0x%02X DPDM=%d TMR2X=%d BATFET=%d INT=%d\r\n",
-                      regs[7],
-                      (regs[7] >> 7) & 0x01,
-                      (regs[7] >> 6) & 0x01,
-                      (regs[7] >> 5) & 0x01,
-                      regs[7] & 0x03);
-    ptr += written; remaining -= written;
+    if (regs[7] == 0xFF) {
+        WRITE_REG_LINE("REG07=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG07=0x%02X DPDM=%d TMR2X=%d BATFET=%d INT=%d\r\n",
+            regs[7], (regs[7] >> 7) & 0x01, (regs[7] >> 6) & 0x01,
+            (regs[7] >> 5) & 0x01, regs[7] & 0x03);
+    }
 
     // REG08: System Status (key register for DPDM result)
-    const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
-    const char* chgStr[] = {"NotChg", "PreChg", "FastChg", "Done"};
-    written = snprintf(ptr, remaining, "REG08=0x%02X VBUS=%s CHG=%s DPM=%d PG=%d THERM=%d VSYS=%d\r\n",
-                      regs[8],
-                      vbusStr[(regs[8] >> 6) & 0x03],
-                      chgStr[(regs[8] >> 4) & 0x03],
-                      (regs[8] >> 3) & 0x01,
-                      (regs[8] >> 2) & 0x01,
-                      (regs[8] >> 1) & 0x01,
-                      regs[8] & 0x01);
-    ptr += written; remaining -= written;
+    if (regs[8] == 0xFF) {
+        WRITE_REG_LINE("REG08=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
+        const char* chgStr[] = {"NotChg", "PreChg", "FastChg", "Done"};
+        WRITE_REG_LINE("REG08=0x%02X VBUS=%s CHG=%s DPM=%d PG=%d THERM=%d VSYS=%d\r\n",
+            regs[8], vbusStr[(regs[8] >> 6) & 0x03], chgStr[(regs[8] >> 4) & 0x03],
+            (regs[8] >> 3) & 0x01, (regs[8] >> 2) & 0x01,
+            (regs[8] >> 1) & 0x01, regs[8] & 0x01);
+    }
 
     // REG09: Fault Status
-    snprintf(ptr, remaining, "REG09=0x%02X WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
-                      regs[9],
-                      (regs[9] >> 7) & 0x01,
-                      (regs[9] >> 6) & 0x01,
-                      (regs[9] >> 4) & 0x03,
-                      (regs[9] >> 3) & 0x01,
-                      regs[9] & 0x07);
+    if (regs[9] == 0xFF) {
+        WRITE_REG_LINE("REG09=ERR (I2C read failed)\r\n%s", "");
+    } else {
+        WRITE_REG_LINE("REG09=0x%02X WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
+            regs[9], (regs[9] >> 7) & 0x01, (regs[9] >> 6) & 0x01,
+            (regs[9] >> 4) & 0x03, (regs[9] >> 3) & 0x01, regs[9] & 0x07);
+    }
 
-    context->interface->write(context, buffer, strlen(buffer));
+    #undef WRITE_REG_LINE
+
+    if (errCount > 0) {
+        snprintf(line, sizeof(line), "WARNING: %d register(s) returned I2C error\r\n", errCount);
+        context->interface->write(context, line, strlen(line));
+    }
+
     return SCPI_RES_OK;
 }
 
@@ -1152,14 +1172,23 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
     }
 
     bool success = BQ24297_SetIINLIM((uint8_t)ilim);
+    if (!success) {
+        LOG_E("SCPI_SetBQILim: I2C write failed for ILIM=%d", (int)ilim);
+        const char* msg = "I2C error: write failed\r\n";
+        context->interface->write(context, msg, strlen(msg));
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Verify by reading back
     uint8_t readback = BQ24297_Read_I2C(0x00);
-
     char buffer[80];
-    snprintf(buffer, sizeof(buffer), "ILIM=%d Readback=0x%02X %s\r\n",
-             readback & 0x07, readback,
-             success ? "OK" : "FAIL");
+    if (readback == 0xFF) {
+        snprintf(buffer, sizeof(buffer), "Write OK, readback I2C error\r\n");
+    } else {
+        snprintf(buffer, sizeof(buffer), "ILIM=%d Readback=0x%02X OK\r\n",
+                 readback & 0x07, readback);
+    }
     context->interface->write(context, buffer, strlen(buffer));
 
     return SCPI_RES_OK;
@@ -1173,27 +1202,53 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
 static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
     // Read REG07
     uint8_t reg7 = BQ24297_Read_I2C(0x07);
+    if (reg7 == 0xFF) {
+        const char* msg = "I2C error: cannot read REG07\r\n";
+        context->interface->write(context, msg, strlen(msg));
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Set DPDM_EN bit (bit 7) to force detection
-    BQ24297_Write_I2C(0x07, reg7 | 0x80);
+    if (!BQ24297_Write_I2C(0x07, reg7 | 0x80)) {
+        const char* msg = "I2C error: cannot write REG07\r\n";
+        context->interface->write(context, msg, strlen(msg));
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Wait for detection to complete (poll bit 7)
     int timeout = 20;  // 2 seconds max
     uint8_t status;
+    bool i2cOk = true;
     do {
         vTaskDelay(100 / portTICK_PERIOD_MS);
         status = BQ24297_Read_I2C(0x07);
+        if (status == 0xFF) { i2cOk = false; break; }
         timeout--;
     } while ((status & 0x80) && timeout > 0);
+
+    char buffer[80];
+    if (!i2cOk) {
+        snprintf(buffer, sizeof(buffer), "I2C error during DPDM polling\r\n");
+        context->interface->write(context, buffer, strlen(buffer));
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Read result from REG08
     uint8_t reg8 = BQ24297_Read_I2C(0x08);
     const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
-    uint8_t vbusStat = (reg8 >> 6) & 0x03;
 
-    char buffer[80];
-    snprintf(buffer, sizeof(buffer), "DPDM complete: VBUS=%s (%d), REG08=0x%02X\r\n",
-             vbusStr[vbusStat], vbusStat, reg8);
+    if (reg8 == 0xFF) {
+        snprintf(buffer, sizeof(buffer), "DPDM %s but REG08 read failed\r\n",
+                 timeout > 0 ? "complete" : "timeout");
+    } else {
+        uint8_t vbusStat = (reg8 >> 6) & 0x03;
+        snprintf(buffer, sizeof(buffer), "DPDM %s: VBUS=%s (%d), REG08=0x%02X\r\n",
+                 timeout > 0 ? "complete" : "timeout",
+                 vbusStr[vbusStat], vbusStat, reg8);
+    }
     context->interface->write(context, buffer, strlen(buffer));
 
     return SCPI_RES_OK;
