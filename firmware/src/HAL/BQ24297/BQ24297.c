@@ -684,17 +684,20 @@ bool BQ24297_IsBatteryPresent(void) {
 }
 
 void BQ24297_UpdateBatteryStatus(void) {
-    // Update battery presence status (for reporting only)
     bool oldBatPresent = pData->status.batPresent;
-    pData->status.batPresent = BQ24297_IsBatteryPresent();
+    bool oldChargeAllowed = pData->chargeAllowed;
 
-    // Note: chargeAllowed is kept for status reporting but no longer controls
-    // actual charging. The BQ24297 hardware handles charging autonomously with
-    // built-in protection for temperature, overvoltage, and battery presence.
+    pData->status.batPresent = BQ24297_IsBatteryPresent();
     pData->chargeAllowed = pData->status.batPresent &&
                            (pData->status.ntcFault != NTC_FAULT_HOT);
 
-    // Log battery presence changes
+    // Enforce charge state via I2C when chargeAllowed changes
+    if (pData->chargeAllowed != oldChargeAllowed) {
+        BQ24297_ChargeEnable(pData->chargeAllowed);
+        LOG_D("BQ24297: Charging %s",
+              pData->chargeAllowed ? "enabled" : "disabled");
+    }
+
     if (oldBatPresent != pData->status.batPresent) {
         LOG_D("BQ24297: Battery %s",
               pData->status.batPresent ? "detected" : "not detected");
