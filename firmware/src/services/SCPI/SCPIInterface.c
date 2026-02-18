@@ -1253,12 +1253,13 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
 
     if (reg8 == 0xFF) {
         scpi_printf(context, "DPDM complete but REG08 read failed\r\n");
-    } else {
-        uint8_t vbusStat = (reg8 >> 6) & 0x03;
-        scpi_printf(context, "DPDM complete: VBUS=%s (%d), REG08=0x%02X\r\n",
-                 vbusStr[vbusStat], vbusStat, reg8);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
     }
 
+    uint8_t vbusStat = (reg8 >> 6) & 0x03;
+    scpi_printf(context, "DPDM complete: VBUS=%s (%d), REG08=0x%02X\r\n",
+             vbusStr[vbusStat], vbusStat, reg8);
     return SCPI_RES_OK;
 }
 
