@@ -469,21 +469,36 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
                 break;
             }
             {
+                TickType_t elapsed = now - pData->iinlimTimestamp;
+
+                // Wait at least 1s after VBUS before acting on DPDM result
+                // to ensure BQ24297 hardware has fully settled
+                if (elapsed < pdMS_TO_TICKS(1000)) {
+                    break;
+                }
+
                 // Check REG07 bit 7 for DPDM in progress
                 uint8_t reg07 = BQ24297_Read_I2C(0x07);
                 bool dpdmDone = (reg07 != 0xFF) && !(reg07 & 0x80);
-                bool timeout = (now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(500);
+                bool timeout = elapsed >= pdMS_TO_TICKS(3000);
 
-                if (dpdmDone || timeout) {
-                    // Set conservative 500mA limit
+                if (dpdmDone) {
+                    // DPDM finished — safe to set IINLIM, hardware won't overwrite
                     if (BQ24297_SetIINLIM(ILim_500)) {
-                        LOG_D("IINLIM: DPDM %s, set 500mA, entering WAIT_USB",
-                              dpdmDone ? "done" : "timeout");
+                        LOG_D("IINLIM: DPDM done after %lu ms, set 500mA, entering WAIT_USB",
+                              (unsigned long)(elapsed * portTICK_PERIOD_MS));
                         pData->iinlimTimestamp = now;
                         pData->iinlimState = IINLIM_STATE_WAIT_USB;
                     } else {
                         LOG_E("IINLIM: Failed to set 500mA, retrying next cycle");
                     }
+                } else if (timeout) {
+                    // DPDM stuck after 3s — set IINLIM anyway
+                    LOG_E("IINLIM: DPDM not complete after 3s (REG07=0x%02X), forcing 500mA",
+                          reg07);
+                    BQ24297_SetIINLIM(ILim_500);
+                    pData->iinlimTimestamp = now;
+                    pData->iinlimState = IINLIM_STATE_WAIT_USB;
                 }
             }
             break;
@@ -495,7 +510,7 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
                 pData->iinlimState = IINLIM_STATE_IDLE;
                 break;
             }
-            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(500)) {
+            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(2000)) {
                 if (UsbCdc_IsConfigured()) {
                     // USB host enumerated — keep 500mA (USB-spec safe)
                     LOG_D("IINLIM: USB configured, keeping 500mA");

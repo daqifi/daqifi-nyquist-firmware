@@ -435,6 +435,8 @@ SYST:LOG:TEST      # Add test messages (for verification)
 
 **Enabling Verbose Logging (Development Only):**
 
+**IMPORTANT: Always reset all module log levels back to `LOG_LEVEL_ERROR` in `Logger.h` before release builds.** Debug/info logging adds overhead and fills the circular buffer, masking real errors in production.
+
 To enable INFO or DEBUG logging for a specific module, change its level in `Logger.h`:
 ```c
 // Change from:
