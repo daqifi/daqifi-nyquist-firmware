@@ -162,6 +162,7 @@ void BQ24297_Config_Settings(void) {
     // BQ24297_ManageIINLIM() state machine will adjust based on USB enumeration
     BQ24297_SetIINLIM(ILim_500);
     pData->iinlimState = IINLIM_STATE_IDLE;
+    pData->iinlimTimestamp = 0;
     pData->iinlimLastVbus = false;
 
     // Update battery presence status (for reporting only)
@@ -496,9 +497,12 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
                     // DPDM stuck after 3s — set IINLIM anyway
                     LOG_E("IINLIM: DPDM not complete after 3s (REG07=0x%02X), forcing 500mA",
                           reg07);
-                    BQ24297_SetIINLIM(ILim_500);
-                    pData->iinlimTimestamp = now;
-                    pData->iinlimState = IINLIM_STATE_WAIT_USB;
+                    if (BQ24297_SetIINLIM(ILim_500)) {
+                        pData->iinlimTimestamp = now;
+                        pData->iinlimState = IINLIM_STATE_WAIT_USB;
+                    } else {
+                        LOG_E("IINLIM: Failed to set 500mA on timeout, retrying next cycle");
+                    }
                 }
             }
             break;

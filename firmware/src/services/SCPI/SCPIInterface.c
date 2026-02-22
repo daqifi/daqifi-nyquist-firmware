@@ -1229,7 +1229,7 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
     uint8_t status;
     bool i2cOk = true;
     do {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(100));
         status = BQ24297_Read_I2C(0x07);
         if (status == 0xFF) { i2cOk = false; break; }
         timeout--;
@@ -1298,41 +1298,61 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
     uint8_t reg09 = BQ24297_Read_I2C(0x09);
 
     const char* iinlimStr[] = {"100mA","150mA","500mA","900mA","1A","1.5A","2A","3A"};
-    uint8_t vindpm = (reg00 >> 3) & 0x0F;
-    uint8_t iinlim = reg00 & 0x07;
-    scpi_printf(context,
-        "  REG00=0x%02X (Input):  HIZ=%d | VINDPM=%dmV (%d) | IINLIM=%s (%d)\r\n",
-        reg00, (reg00 >> 7) & 1, 3880 + vindpm * 80, vindpm,
-        iinlimStr[iinlim], iinlim);
+    if (reg00 == 0xFF) {
+        scpi_printf(context, "  REG00=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t vindpm = (reg00 >> 3) & 0x0F;
+        uint8_t iinlim = reg00 & 0x07;
+        scpi_printf(context,
+            "  REG00=0x%02X (Input):  HIZ=%d | VINDPM=%dmV (%d) | IINLIM=%s (%d)\r\n",
+            reg00, (reg00 >> 7) & 1, 3880 + vindpm * 80, vindpm,
+            iinlimStr[iinlim], iinlim);
+    }
 
-    uint8_t sysMin = (reg01 >> 1) & 0x07;
-    scpi_printf(context,
-        "  REG01=0x%02X (Config): OTG=%d | CHG=%d | SYS_MIN=%dmV (%d)\r\n",
-        reg01, (reg01 >> 5) & 1, (reg01 >> 4) & 1, 3000 + sysMin * 100, sysMin);
+    if (reg01 == 0xFF) {
+        scpi_printf(context, "  REG01=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t sysMin = (reg01 >> 1) & 0x07;
+        scpi_printf(context,
+            "  REG01=0x%02X (Config): OTG=%d | CHG=%d | SYS_MIN=%dmV (%d)\r\n",
+            reg01, (reg01 >> 5) & 1, (reg01 >> 4) & 1, 3000 + sysMin * 100, sysMin);
+    }
 
-    scpi_printf(context,
-        "  REG07=0x%02X (Misc):   DPDM=%d | BATFET=%s (%d)\r\n",
-        reg07, (reg07 >> 7) & 1,
-        (reg07 & 0x20) ? "Disabled" : "Enabled", (reg07 >> 5) & 1);
+    if (reg07 == 0xFF) {
+        scpi_printf(context, "  REG07=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context,
+            "  REG07=0x%02X (Misc):   DPDM=%d | BATFET=%s (%d)\r\n",
+            reg07, (reg07 >> 7) & 1,
+            (reg07 & 0x20) ? "Disabled" : "Enabled", (reg07 >> 5) & 1);
+    }
 
     const char* vbusStr[] = {"Unknown","USB_SDP","Adapter","OTG"};
     const char* chgStr[] = {"Not charging","Pre-charge","Fast charge","Charge done"};
-    uint8_t vbusStat = (reg08 >> 6) & 0x03;
-    uint8_t chgStat = (reg08 >> 4) & 0x03;
-    scpi_printf(context,
-        "  REG08=0x%02X (Status): VBUS=%s (%d) | Charge=%s (%d) | PG=%d | DPM=%d | THERM=%d | VSYS=%d\r\n",
-        reg08, vbusStr[vbusStat], vbusStat, chgStr[chgStat], chgStat,
-        (reg08 >> 2) & 1, (reg08 >> 3) & 1, (reg08 >> 1) & 1, reg08 & 1);
+    if (reg08 == 0xFF) {
+        scpi_printf(context, "  REG08=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t vbusStat = (reg08 >> 6) & 0x03;
+        uint8_t chgStat = (reg08 >> 4) & 0x03;
+        scpi_printf(context,
+            "  REG08=0x%02X (Status): VBUS=%s (%d) | Charge=%s (%d) | PG=%d | DPM=%d | THERM=%d | VSYS=%d\r\n",
+            reg08, vbusStr[vbusStat], vbusStat, chgStr[chgStat], chgStat,
+            (reg08 >> 2) & 1, (reg08 >> 3) & 1, (reg08 >> 1) & 1, reg08 & 1);
+    }
 
     const char* chgFaultStr[] = {"Normal","Input fault","Thermal","Timer"};
     const char* ntcFaultStr[] = {"Ok","Hot","Cold","Hot/Cold"};
-    uint8_t chgFault = (reg09 >> 4) & 0x03;
-    uint8_t ntcFault = reg09 & 0x07;
-    scpi_printf(context,
-        "  REG09=0x%02X (Faults): Watchdog=%d | OTG=%d | CHG=%s (%d) | BAT=%d | NTC=%s (%d)\r\n",
-        reg09, (reg09 >> 7) & 1, (reg09 >> 6) & 1,
-        chgFaultStr[chgFault], chgFault, (reg09 >> 3) & 1,
-        (ntcFault < 4) ? ntcFaultStr[ntcFault] : "Fault", ntcFault);
+    if (reg09 == 0xFF) {
+        scpi_printf(context, "  REG09=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t chgFault = (reg09 >> 4) & 0x03;
+        uint8_t ntcFault = reg09 & 0x07;
+        scpi_printf(context,
+            "  REG09=0x%02X (Faults): Watchdog=%d | OTG=%d | CHG=%s (%d) | BAT=%d | NTC=%s (%d)\r\n",
+            reg09, (reg09 >> 7) & 1, (reg09 >> 6) & 1,
+            chgFaultStr[chgFault], chgFault, (reg09 >> 3) & 1,
+            (ntcFault < 4) ? ntcFaultStr[ntcFault] : "Fault", ntcFault);
+    }
 
     // --- [GPIO] ---
     scpi_printf(context, "[GPIO]\r\n");
