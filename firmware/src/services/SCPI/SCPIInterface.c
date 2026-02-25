@@ -1269,10 +1269,9 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
  * Returns: Multi-section human-readable diagnostic dump
  */
 static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
-    tBoardData* pBoardData = BoardData_Get(
+    tPowerData* pPower = (tPowerData*)BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
-    tPowerData* pPower = &pBoardData->PowerData;
     tBQ24297Data* pBQ = &pPower->BQ24297Data;
 
     // Refresh cached status from hardware
@@ -1387,11 +1386,18 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
         ep < 6 ? extPowerStr[ep] : "UNKNOWN", ep);
 
     USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
-    const char* vbusLevelStr[] = {"SessionEnd","BelowAValid","BelowVBUSValid","Valid"};
-    scpi_printf(context, "  VBUS: %s | Level: %s (%d) | USB configured: %s\r\n",
+    const char* vbusLevelName;
+    switch (vbusLevel) {
+        case USBHS_VBUS_SESSION_END:      vbusLevelName = "SessionEnd"; break;
+        case USBHS_VBUS_BELOW_AVALID:     vbusLevelName = "BelowAValid"; break;
+        case USBHS_VBUS_BELOW_VBUSVALID:  vbusLevelName = "BelowVBUSValid"; break;
+        case USBHS_VBUS_VALID:            vbusLevelName = "Valid"; break;
+        default:                          vbusLevelName = "Unknown"; break;
+    }
+    scpi_printf(context, "  VBUS: %s | Level: %s (0x%02X) | USB configured: %s\r\n",
         UsbCdc_IsVbusDetected() ? "Yes" : "No",
-        (uint8_t)vbusLevel < 4 ? vbusLevelStr[(uint8_t)vbusLevel] : "Unknown",
-        (int)vbusLevel,
+        vbusLevelName,
+        (unsigned)vbusLevel,
         UsbCdc_IsConfigured() ? "Yes" : "No");
 
     return SCPI_RES_OK;

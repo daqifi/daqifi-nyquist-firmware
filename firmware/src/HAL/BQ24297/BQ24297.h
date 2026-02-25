@@ -169,7 +169,7 @@ typedef struct
 typedef enum {
     IINLIM_STATE_IDLE = 0,       // No VBUS, waiting
     IINLIM_STATE_WAIT_DPDM,      // VBUS appeared, waiting for DPDM to finish
-    IINLIM_STATE_WAIT_USB,       // DPDM done, IINLIM=500mA, waiting 500ms for USB enumeration
+    IINLIM_STATE_WAIT_USB,       // DPDM done, IINLIM=500mA, waiting 2s for USB enumeration
     IINLIM_STATE_SETTLED          // Final IINLIM set (500mA or 2000mA)
 } eIINLIM_State;
 

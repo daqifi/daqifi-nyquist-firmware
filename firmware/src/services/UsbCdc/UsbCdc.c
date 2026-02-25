@@ -283,7 +283,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
             if (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID) {
                 /* VBUS still elevated - wait for RC filter discharge */
-                vTaskDelay(50 / portTICK_PERIOD_MS);
+                vTaskDelay(pdMS_TO_TICKS(50));
                 vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
 
                 if (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID) {
@@ -315,6 +315,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_ERROR:
             // Some errors may be non-fatal (transient bus errors, CRC errors)
             // but conservative approach is to reset the interface
+            gRunTimeUsbSttings.isConfigured = false;
             gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             break;
         default:
