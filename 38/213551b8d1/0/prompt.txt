@@ -1,0 +1,207 @@
+review claude.md as well as the current pr we are workingon
+
+---
+
+let's address each item. please provide your suggestion for each item.
+
+---
+
+regarding #1, we use USBHS_VBUS_BELOW_VBUSVALID because there is voltage sag i believe which will make us miss power events if we use a higher level. i believe this is documented somewhere? please check.
+
+---
+
+on #2, i assume we still need an i2c write on boot to config the chip, right?
+
+---
+
+apply this modified #2
+
+---
+
+do 3, 5, 6.
+
+---
+
+implement 4 now.
+
+---
+
+commit
+
+---
+
+what istn' installed?
+
+---
+
+how to resume this session after exiting?
+
+---
+
+i've restarted the cli. check if the entire hook works
+
+---
+
+have we pushd?
+
+---
+
+sure
+
+---
+
+[Request interrupted by user]
+
+---
+
+push this pr
+
+---
+
+are these actual probelms:   1. Blocker: invalid BoardData_Get cast causes wrong-memory access in new diagnostics command
+     firmware/src/services/SCPI/SCPIInterface.c:1272
+     firmware/src/state/data/BoardData.c:122
+     BOARDDATA_POWER_DATA returns a tPowerData*, but the new code stores it as tBoardData* and then reads
+     pBoardData->PowerData. That is an invalid offset dereference (undefined behavior, likely garbage output/crash).
+     Suggested fix: read directly as tPowerData* pPower = BoardData_Get(BOARDDATA_POWER_DATA, 0);.
+  2. High: VBUS level decoding in diagnostics is wrong for this enum
+     firmware/src/services/SCPI/SCPIInterface.c:1390
+     firmware/src/config/default/driver/usb/usbhs/src/plib_usbhs_header.h:129
+     USBHS_VBUS_LEVEL values are 0x00/0x08/0x10/0x18, not 0/1/2/3. Current array indexing with < 4 prints "Unknown" for
+     most real states.
+     Suggested fix: use switch (vbusLevel) (like existing logic earlier in same file) or normalize before indexing.
+  3. Medium: isConfigured can stay stale after USB error path
+     firmware/src/services/UsbCdc/UsbCdc.c:315
+     On USB_DEVICE_EVENT_ERROR, state is reset but isConfigured is not cleared. That can mislead IINLIM decisions and
+     diagnostics.
+     Suggested fix: set gRunTimeUsbSttings.isConfigured = false; in the error case too.
+
+---
+
+review this entire list and provide your suggestions.  first check to see if these issues are valid and not already addressed. :   1. Blocker: invalid pointer type in SCPI_GetBQDiagnostics leads to bad memory access
+      - firmware/src/services/SCPI/SCPIInterface.c:1272
+      - firmware/src/state/data/BoardData.c:122
+      - BoardData_Get(BOARDDATA_POWER_DATA, 0) returns tPowerData*, but code treats it as tBoardData* and then
+        dereferences PowerData again.
+      - Suggestion: use tPowerData* pPower = BoardData_Get(BOARDDATA_POWER_DATA, 0); directly.
+  2. High: isConfigured is not cleared on USB error events
+      - firmware/src/services/UsbCdc/UsbCdc.c:315
+      - In USB_DEVICE_EVENT_ERROR, state is reset but isConfigured remains stale true until another event clears it.
+      - Suggestion: set gRunTimeUsbSttings.isConfigured = false; in the error case.
+  3. High: IINLIM decision is one-shot after 2s and may misclassify slow host enumeration
+      - firmware/src/HAL/BQ24297/BQ24297.c:517
+      - After timeout, non-configured path sets 2A and enters SETTLED; later USB configuration does not re-clamp to
+        500mA.
+      - Suggestion: in IINLIM_STATE_SETTLED, if UsbCdc_IsConfigured() becomes true, force IINLIM back to 500mA.
+  4. Medium: VBUS level decoding is incorrect in diagnostics
+      - firmware/src/services/SCPI/SCPIInterface.c:1390
+      - firmware/src/config/default/driver/usb/usbhs/src/plib_usbhs_header.h:129
+      - USBHS_VBUS_LEVEL values are 0x00/0x08/0x10/0x18; array indexing assumes 0..3.
+      - Suggestion: decode with a switch (same pattern already used earlier in SCPIInterface.c).
+  5. Medium: no synchronization around BQ24297 I2C across tasks
+      - firmware/src/HAL/Power/PowerApi.c:153
+      - firmware/src/services/SCPI/SCPIInterface.c:1036
+      - firmware/src/HAL/BQ24297/BQ24297.c:366
+      - firmware/src/HAL/BQ24297/BQ24297.c:406
+      - Power task and SCPI commands can both hit I2C APIs without a lock.
+      - Suggestion: add a BQ24297-level mutex around BQ24297_Read_I2C/BQ24297_Write_I2C.
+  6. Medium: SCPI write callback reports success even when bytes are dropped
+      - firmware/src/services/UsbCdc/UsbCdc.c:657
+      - firmware/src/services/UsbCdc/UsbCdc.c:628
+      - SCPI_USB_Write always returns requested len, but UsbCdc_WriteToBuffer can short-write.
+      - Suggestion: return actual bytes written (or retry/flush) so truncation is detectable.
+  7. Low: charge enable/disable logic is effectively boot-only
+      - firmware/src/HAL/BQ24297/BQ24297.c:169
+      - firmware/src/HAL/BQ24297/BQ24297.c:707
+      - BQ24297_UpdateBatteryStatus() now enforces charging, but it is only called during init in current flow.
+      - Suggestion: either run it periodically (carefully) or document boot-only intent clearly.
+  8. Low: comment drift on WAIT_USB timing
+      - firmware/src/HAL/BQ24297/BQ24297.h:172
+      - firmware/src/HAL/BQ24297/BQ24297.c:517
+      - Header says 500ms wait; implementation uses 2000ms.
+      - Suggestion: update header comments to match code.
+  9. Low: non-portable tick conversion style remains in one path
+      - firmware/src/services/UsbCdc/UsbCdc.c:286
+      - Uses 50 / portTICK_PERIOD_MS instead of pdMS_TO_TICKS(50).
+      - Suggestion: use pdMS_TO_TICKS(50) for consistency and portability.
+  10. Low: diagnostics command has side effect of clearing latched fault flags
+      - firmware/src/HAL/BQ24297/BQ24297.c:262
+      - firmware/src/services/SCPI/SCPIInterface.c:1279
+      - BQ24297_UpdateStatus() reads REG09 in a way that clears latched faults; diagnostics calls it.
+      - Suggestion: document this side effect in the SCPI command help/output.
+
+---
+
+we haven't seemed to crash yet from #1. any idea why? number 2's flag gets updated at usb close? if so, that is likely no issue because from start to close to close is likely only a very shor ttime, right?
+
+---
+
+we can fix 2 but likely 3 is not needed. if it takes 5s to enum, something else is likely an issue. 5 is likely a non issue at this point because the bq chip is the only thing that uses i2c.
+
+---
+
+yes
+
+---
+
+review this pr and ensure the code comments and readme are updaed if needed. then put together a test plan to test all code touched on this pr.
+
+---
+
+[Request interrupted by user]
+
+---
+
+sure. then, you can connect to the device and test yourself.  however, there is one issue, it appears there is a bug in claude that will crash claude when connecting to any serial device. see here: https://github.com/anthropics/claude-code/issues/6237 so, we might need to implement a workaround...
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+you'll need to use powershell to pass com3 through to wsl
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+new plan. use powershell to interact with the device. on com3
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+i mean don't use any scripts. just use powershell interactively to connect to the device and test.
+
+---
+
+the dpdm after usb enumeration will likely disrupt the usb comms and might confuse the pc. good finding. document the situation.
+
+---
+
+it is strange the device became unresponsive. it doesn't appear the windows side is confused - i can still open the port and the device is still in device manager without errors. i will replug and see if that fixes it.
+
+---
+
+go for it
+
+---
+
+yes
+
+---
+
+i assume we've incorporated all we need from pr 190 into 189?
+
+---
+
+that seems fine - then, review pr189 for the bypass bq functionality. we likely will never need to bypass it - we might want to remove the bypass diagnostic code to clean that up.
+
+---
+
+yes please.
