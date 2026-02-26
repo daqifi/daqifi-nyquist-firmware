@@ -1206,7 +1206,12 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
 /**
  * SCPI Callback: Force DPDM detection
  * Command: SYSTem:POWer:BQ:DPDM
- * Triggers BQ24297 to re-run D+/D- detection
+ * Triggers BQ24297 to re-run D+/D- detection.
+ *
+ * WARNING: Forcing DPDM while connected via USB will disrupt communication.
+ * DPDM re-detection temporarily resets IINLIM (potentially to 100mA),
+ * which can cause VBUS sag and USB disconnect on the host side.
+ * This command is intended for wall-charger debugging or pre-enumeration use.
  */
 static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
     // Read REG07

@@ -367,12 +367,14 @@ IDLE → WAIT_DPDM (1s min, 3s timeout) → WAIT_USB (2s) → SETTLED
 ```bash
 SYST:POW:BQ:REGisters?     # Dump all BQ24297 registers (REG00-REG0A hex values)
 SYST:POW:BQ:ILIM <0-7>     # Set IINLIM directly (0=100mA, 2=500mA, 6=2A, 7=3A)
-SYST:POW:BQ:DPDM           # Force DPDM re-detection, polls until complete
+SYST:POW:BQ:DPDM           # Force DPDM re-detection (WARNING: disrupts USB — see below)
 SYST:POW:BQ:DIAGnostics?   # Comprehensive diagnostics dump (battery, registers,
                             # GPIO, IINLIM state machine, power state, VBUS level)
 ```
 
 **Note:** `SYST:POW:BQ:DIAG?` calls `BQ24297_UpdateStatus()` which reads REG09 and clears latched fault flags as a side effect.
+
+**WARNING:** `SYST:POW:BQ:DPDM` forces the BQ24297 to re-run D+/D- detection, which temporarily resets IINLIM (potentially to 100mA). When connected via USB, this causes VBUS sag and disconnects the host. Only use this command when debugging wall charger behavior or before USB enumeration. A physical cable replug is required to recover.
 
 #### Implementation
 - **State machine**: `HAL/BQ24297/BQ24297.c` — `BQ24297_ManageIINLIM()`
