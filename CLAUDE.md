@@ -348,6 +348,38 @@ The DAC7718 uses lazy initialization that:
 3. Checks for POWERED_UP state (provides 10V rail) before hardware access
 4. Gracefully handles power state transitions
 
+### BQ24297 IINLIM Management
+
+The firmware uses a timer-based state machine to manage input current limits (IINLIM) on the BQ24297 battery management IC, replacing the earlier DPDM-dependent approach.
+
+#### State Machine
+```
+IDLE → WAIT_DPDM (1s min, 3s timeout) → WAIT_USB (2s) → SETTLED
+```
+
+- **OTG pin** driven LOW (output) so DPDM starts at conservative 100mA
+- **WAIT_DPDM**: Waits for BQ24297 DPDM detection to complete (REG07 bit 7 clears)
+- **WAIT_USB**: Sets 500mA, waits 2s checking `UsbCdc_IsConfigured()`
+- **SETTLED**: USB host → 500mA; wall charger → 2000mA
+- VBUS loss in any state resets to IDLE
+
+#### SCPI Diagnostic Commands
+```bash
+SYST:POW:BQ:REGisters?     # Dump all BQ24297 registers (REG00-REG0A hex values)
+SYST:POW:BQ:ILIM <0-7>     # Set IINLIM directly (0=100mA, 2=500mA, 6=2A, 7=3A)
+SYST:POW:BQ:DPDM           # Force DPDM re-detection, polls until complete
+SYST:POW:BQ:DIAGnostics?   # Comprehensive diagnostics dump (battery, registers,
+                            # GPIO, IINLIM state machine, power state, VBUS level)
+```
+
+**Note:** `SYST:POW:BQ:DIAG?` calls `BQ24297_UpdateStatus()` which reads REG09 and clears latched fault flags as a side effect.
+
+#### Implementation
+- **State machine**: `HAL/BQ24297/BQ24297.c` — `BQ24297_ManageIINLIM()`
+- **Caller**: `HAL/Power/PowerApi.c` — `Power_Tasks()` (~100ms interval)
+- **USB tracking**: `services/UsbCdc/UsbCdc.c` — `UsbCdc_IsConfigured()`
+- **SCPI commands**: `services/SCPI/SCPIInterface.c`
+
 ## Firmware Analysis Report
 
 A comprehensive technical analysis of the firmware has been completed and is available in `FIRMWARE_ANALYSIS_REPORT.md`. This report provides:
