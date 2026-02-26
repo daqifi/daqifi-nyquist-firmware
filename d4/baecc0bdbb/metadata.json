@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "d4baecc0bdbb",
+  "strategy": "manual-commit",
+  "branch": "feat/timer-based-iinlim",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIInterface.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/d4/baecc0bdbb/0/metadata.json",
+      "transcript": "/d4/baecc0bdbb/0/full.jsonl",
+      "context": "/d4/baecc0bdbb/0/context.md",
+      "content_hash": "/d4/baecc0bdbb/0/content_hash.txt",
+      "prompt": "/d4/baecc0bdbb/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2130,
+    "cache_creation_tokens": 697089,
+    "cache_read_tokens": 10094333,
+    "output_tokens": 5260,
+    "api_call_count": 99
+  }
+}
