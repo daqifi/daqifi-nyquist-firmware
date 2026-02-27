@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "b7bbe931b23a",
+  "session_id": "c86a060f-90d9-4a67-b12b-4a172a6a1127",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-27T04:46:34.213335523Z",
+  "branch": "feat/timer-based-iinlim",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "CLAUDE.md",
+    "firmware/src/HAL/BQ24297/BQ24297.c",
+    "firmware/src/HAL/BQ24297/BQ24297.h"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "46207e169b97",
+  "token_usage": {
+    "input_tokens": 3902,
+    "cache_creation_tokens": 1033833,
+    "cache_read_tokens": 18204466,
+    "output_tokens": 6140,
+    "api_call_count": 181
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-27T04:46:32.503401166Z",
+    "agent_lines": 0,
+    "human_added": 3,
+    "human_modified": 1966,
+    "human_removed": 0,
+    "total_committed": 1969,
+    "agent_percentage": 0
+  }
+}
