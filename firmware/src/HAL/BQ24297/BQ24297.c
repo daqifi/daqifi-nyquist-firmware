@@ -8,6 +8,7 @@
 #include "Util/Logger.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "peripheral/gpio/plib_gpio.h"
+#include "semphr.h"
 
 //! Pointer to the BQ24297 device configuration data structure
 static tBQ24297Config *pConfigBQ24;
@@ -15,6 +16,8 @@ static tBQ24297Config *pConfigBQ24;
 static tBQ24297WriteVars *pWriteVariables;
 //! Pointer to the data structure where the BQ24297 data is
 static tBQ24297Data *pData;
+//! Mutex to synchronize I2C access between PowerAndUITask and USBDeviceTask
+static SemaphoreHandle_t i2cMutex = NULL;
 
 /*! Funtion to read BQ24297 data by I2C communication
  * @param[in] reg Register to read
@@ -35,6 +38,11 @@ void BQ24297_InitHardware(
     pConfigBQ24 = pConfigInit;
     pWriteVariables = pWriteInit;
     pData = pDataInit;
+
+    // Create I2C mutex for cross-task synchronization
+    if (i2cMutex == NULL) {
+        i2cMutex = xSemaphoreCreateMutex();
+    }
 
     // Battery management initialization (hardware interface)
 
@@ -329,54 +337,70 @@ uint8_t BQ24297_Read_I2C(uint8_t reg) {
     uint8_t I2CData[1];
     uint8_t rxData = 0;
 
-    // Build data packet
-    I2CData[0] = reg;
-
-    if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
-        // Perform I2C transfer with error checking
-        bool success = DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
-                pConfigBQ24->I2C_Address,
-                I2CData,
-                1,
-                &rxData,
-                1);
-
-        if (!success) {
-            LOG_E("BQ24297_Read_I2C: Failed to read register 0x%02X", reg);
-            // Return 0xFF to indicate error (distinguishable from valid data)
-            return 0xFF;
-        }
-    } else {
+    if (pData->I2C_Handle == DRV_HANDLE_INVALID) {
         LOG_E("BQ24297_Read_I2C: Invalid I2C handle");
         return 0xFF;
     }
+
+    if (i2cMutex != NULL) {
+        xSemaphoreTake(i2cMutex, portMAX_DELAY);
+    }
+
+    // Build data packet
+    I2CData[0] = reg;
+
+    // Perform I2C transfer with error checking
+    bool success = DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
+            pConfigBQ24->I2C_Address,
+            I2CData,
+            1,
+            &rxData,
+            1);
+
+    if (i2cMutex != NULL) {
+        xSemaphoreGive(i2cMutex);
+    }
+
+    if (!success) {
+        LOG_E("BQ24297_Read_I2C: Failed to read register 0x%02X", reg);
+        return 0xFF;
+    }
+
     return rxData;
 }
 
 bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
     uint8_t I2CData[2];
 
+    if (pData->I2C_Handle == DRV_HANDLE_INVALID) {
+        LOG_E("BQ24297_Write_I2C: Invalid I2C handle");
+        return false;
+    }
+
+    if (i2cMutex != NULL) {
+        xSemaphoreTake(i2cMutex, portMAX_DELAY);
+    }
+
     // Build data packet
     I2CData[0] = reg;
     I2CData[1] = txData;
 
-    if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
-        // Write to selected register with error checking
-        bool success = DRV_I2C_WriteTransfer(
-                        pData->I2C_Handle,
-                        pConfigBQ24->I2C_Address,
-                        I2CData,
-                        2);
+    // Write to selected register with error checking
+    bool success = DRV_I2C_WriteTransfer(
+                    pData->I2C_Handle,
+                    pConfigBQ24->I2C_Address,
+                    I2CData,
+                    2);
 
-        if (!success) {
-            LOG_E("BQ24297_Write_I2C: Failed to write 0x%02X to register 0x%02X", txData, reg);
-            return false;
-        }
-        return true;
-    } else {
-        LOG_E("BQ24297_Write_I2C: Invalid I2C handle");
-        return false;
+    if (i2cMutex != NULL) {
+        xSemaphoreGive(i2cMutex);
     }
+
+    if (!success) {
+        LOG_E("BQ24297_Write_I2C: Failed to write 0x%02X to register 0x%02X", txData, reg);
+    }
+
+    return success;
 }
 
 bool BQ24297_SetIINLIM(uint8_t iinlimCode) {
