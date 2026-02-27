@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "7631d46eabf1",
+  "session_id": "c86a060f-90d9-4a67-b12b-4a172a6a1127",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-27T19:06:10.424288477Z",
+  "branch": "feat/timer-based-iinlim",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "firmware/src/services/UsbCdc/UsbCdc.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "b735630c0f44",
+  "token_usage": {
+    "input_tokens": 3954,
+    "cache_creation_tokens": 1276543,
+    "cache_read_tokens": 22771677,
+    "output_tokens": 7883,
+    "api_call_count": 219
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-27T19:06:08.378021654Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 939,
+    "human_removed": 1,
+    "total_committed": 939,
+    "agent_percentage": 0
+  }
+}
