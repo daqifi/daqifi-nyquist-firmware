@@ -1126,13 +1126,19 @@ static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
             (regs[8] >> 1) & 0x01, regs[8] & 0x01);
     }
 
-    // REG09: Fault Status
+    // REG09: Fault Status — loop read captured latched faults (and cleared them),
+    // re-read to get current active faults
     if (regs[9] == 0xFF) {
         scpi_printf(context, "REG09=ERR (I2C read failed)\r\n");
     } else {
-        scpi_printf(context, "REG09=0x%02X WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
+        uint8_t reg09_cur = BQ24297_Read_I2C(0x09);
+        if (reg09_cur == 0xFF) reg09_cur = 0;
+        scpi_printf(context, "REG09=0x%02X (latched) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
             regs[9], (regs[9] >> 7) & 0x01, (regs[9] >> 6) & 0x01,
             (regs[9] >> 4) & 0x03, (regs[9] >> 3) & 0x01, regs[9] & 0x07);
+        scpi_printf(context, "REG09=0x%02X (current) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
+            reg09_cur, (reg09_cur >> 7) & 0x01, (reg09_cur >> 6) & 0x01,
+            (reg09_cur >> 4) & 0x03, (reg09_cur >> 3) & 0x01, reg09_cur & 0x07);
     }
 
     // REG0A: Vendor/Part/Revision (read-only)
