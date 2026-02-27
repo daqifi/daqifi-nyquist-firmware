@@ -1143,10 +1143,10 @@ static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
     } else {
         scpi_printf(context, "REG09=0x%02X (latched) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
             reg09Latched, (reg09Latched >> 7) & 0x01, (reg09Latched >> 6) & 0x01,
-            (reg09Latched >> 4) & 0x03, (reg09Latched >> 3) & 0x01, reg09Latched & 0x07);
+            (reg09Latched >> 4) & 0x03, (reg09Latched >> 3) & 0x01, reg09Latched & 0x03);
         scpi_printf(context, "REG09=0x%02X (current) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
             reg09Current, (reg09Current >> 7) & 0x01, (reg09Current >> 6) & 0x01,
-            (reg09Current >> 4) & 0x03, (reg09Current >> 3) & 0x01, reg09Current & 0x07);
+            (reg09Current >> 4) & 0x03, (reg09Current >> 3) & 0x01, reg09Current & 0x03);
     }
 
     // REG0A: Vendor/Part/Revision (read-only)
@@ -1381,7 +1381,7 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
         scpi_printf(context, "  REG09=ERR (I2C read failed)\r\n");
     } else {
         uint8_t chgFault = (reg09 >> 4) & 0x03;
-        uint8_t ntcFault = reg09 & 0x07;
+        uint8_t ntcFault = reg09 & 0x03;
         scpi_printf(context,
             "  REG09=0x%02X (Faults): Watchdog=%d | OTG=%d | CHG=%s (%d) | BAT=%d | NTC=%s (%d)\r\n",
             reg09, (reg09 >> 7) & 1, (reg09 >> 6) & 1,

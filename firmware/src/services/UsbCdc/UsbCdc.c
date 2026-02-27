@@ -659,12 +659,14 @@ static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
 
     UNUSED(context);
     size_t written = 0;
-    while (written < len) {
+    int retries = 200;  // 200 * 5ms = 1s max wait
+    while (written < len && retries > 0) {
         size_t n = UsbCdc_WriteToBuffer(&gRunTimeUsbSttings, data + written, len - written);
         written += n;
         if (written >= len) break;
         // Buffer or mutex busy — yield briefly and retry
         vTaskDelay(pdMS_TO_TICKS(5));
+        retries--;
     }
     return written;
 }
