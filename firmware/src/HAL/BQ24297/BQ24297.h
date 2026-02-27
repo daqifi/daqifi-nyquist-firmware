@@ -123,6 +123,12 @@ typedef struct
     bool bat_fault;
     //! NTC Fault code
     enum eNTCFault ntcFault;
+    // Accumulated (sticky) faults — OR'd on every REG09 read, cleared explicitly
+    bool watchdog_faultAccum;
+    bool otg_faultAccum;
+    enum eChargeFault chgFaultAccum;
+    bool bat_faultAccum;
+    enum eNTCFault ntcFaultAccum;
     // Inferred battery status from registers
     bool batPresent;
 } BQ24297_STATUS;
@@ -329,6 +335,22 @@ void BQ24297_ManageIINLIM(bool vbusPresent);
  * Disables charging if thermistor is stuck low (HOT) for safety
  */
 void BQ24297_UpdateBatteryStatus(void);
+
+/*!
+ * Read REG09 with proper double-read protocol and accumulate faults.
+ * First read captures+clears latched faults, second read gets current.
+ * Both reads feed into accumulated fault tracking.
+ * @param[out] latched  Raw latched REG09 value (NULL to skip)
+ * @param[out] current  Raw current REG09 value (NULL to skip)
+ * @return true if at least one read succeeded
+ */
+bool BQ24297_ReadFaultReg(uint8_t *latched, uint8_t *current);
+
+/*!
+ * Clear all accumulated (sticky) fault fields.
+ * Call after handling faults or on demand via SCPI.
+ */
+void BQ24297_ClearAccumulatedFaults(void);
 
 #ifdef	__cplusplus
 }

@@ -31,6 +31,22 @@ uint8_t BQ24297_Read_I2C(uint8_t reg);
  */
 bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData);
 
+/**
+ * OR a raw REG09 value into accumulated (sticky) fault fields.
+ * Called for both latched and current reads so no fault is ever lost.
+ */
+static void AccumulateFaults(uint8_t reg09) {
+    if (reg09 & 0x80) pData->status.watchdog_faultAccum = true;
+    if (reg09 & 0x40) pData->status.otg_faultAccum = true;
+    uint8_t chgF = (reg09 >> 4) & 0x03;
+    if (chgF > (uint8_t)pData->status.chgFaultAccum)
+        pData->status.chgFaultAccum = (enum eChargeFault)chgF;
+    if (reg09 & 0x08) pData->status.bat_faultAccum = true;
+    uint8_t ntcF = reg09 & 0x03;
+    if (ntcF != NTC_FAULT_NORMAL)
+        pData->status.ntcFaultAccum = (enum eNTCFault)ntcF;
+}
+
 void BQ24297_InitHardware(                                                  
                         tBQ24297Config *pConfigInit,                        
                         tBQ24297WriteVars *pWriteInit,                      
@@ -62,6 +78,46 @@ void BQ24297_InitHardware(
     // ManageIINLIM state machine overrides IINLIM via I2C after DPDM completes.
     BATT_MAN_OTG_OutputEnable();
     BATT_MAN_OTG_Clear();
+}
+
+bool BQ24297_ReadFaultReg(uint8_t *latched, uint8_t *current) {
+    uint8_t latchedVal = BQ24297_Read_I2C(0x09);
+    if (latchedVal == 0xFF) {
+        return false;  // First read failed — don't touch any fields
+    }
+
+    // Accumulate faults from the latched read
+    AccumulateFaults(latchedVal);
+    if (latched != NULL) *latched = latchedVal;
+
+    // Second read gets currently active faults
+    uint8_t currentVal = BQ24297_Read_I2C(0x09);
+    if (currentVal == 0xFF) {
+        // Second read failed — use latched value for status fields
+        LOG_E("BQ24297_ReadFaultReg: second REG09 read failed, using latched");
+        currentVal = latchedVal;
+    } else {
+        AccumulateFaults(currentVal);
+    }
+
+    if (current != NULL) *current = currentVal;
+
+    // Decode current value into status fields (existing behavior)
+    pData->status.watchdog_fault = (bool)(currentVal & 0x80);
+    pData->status.otg_fault = (bool)(currentVal & 0x40);
+    pData->status.chgFault = (enum eChargeFault)((currentVal >> 4) & 0x03);
+    pData->status.bat_fault = (bool)(currentVal & 0x08);
+    pData->status.ntcFault = (enum eNTCFault)(currentVal & 0x03);
+
+    return true;
+}
+
+void BQ24297_ClearAccumulatedFaults(void) {
+    pData->status.watchdog_faultAccum = false;
+    pData->status.otg_faultAccum = false;
+    pData->status.chgFaultAccum = CHG_FAULT_NORMAL;
+    pData->status.bat_faultAccum = false;
+    pData->status.ntcFaultAccum = NTC_FAULT_NORMAL;
 }
 
 void BQ24297_Config_Settings(void) {
@@ -146,6 +202,9 @@ void BQ24297_Config_Settings(void) {
 
     // Update battery presence status (for reporting only)
     BQ24297_UpdateBatteryStatus();
+
+    // Clear accumulated faults from init reads — start fresh
+    BQ24297_ClearAccumulatedFaults();
 
     // Charging is always enabled via REG01 configuration above.
     // The BQ24297 has built-in hardware protection for:
@@ -235,19 +294,8 @@ void BQ24297_UpdateStatus(void) {
         hasErrors = true;
     }
 
-    // REG09: Fault Status - Reading resets latched fault flags!
-    // First read clears latched faults, second read gets current status
-    regData = BQ24297_Read_I2C(0x09);
-    if (regData != 0xFF) {
-        regData = BQ24297_Read_I2C(0x09);
-        if (regData != 0xFF) {
-            pData->status.watchdog_fault = (bool) (regData & 0b10000000);
-            pData->status.otg_fault = (bool) (regData & 0b01000000);
-            pData->status.chgFault = (uint8_t) (regData & 0b00110000) >> 4;
-            pData->status.bat_fault = (bool) (regData & 0b00001000);
-            pData->status.ntcFault = (uint8_t) (regData & 0b00000011);
-        }
-    } else {
+    // REG09: Fault Status — use centralized reader that accumulates faults
+    if (!BQ24297_ReadFaultReg(NULL, NULL)) {
         hasErrors = true;
     }
     

@@ -1035,11 +1035,22 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
  */
 static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
     // Read all registers including REG0A, tracking I2C errors (0xFF = read failure)
+    // Skip REG09 in the loop — it's a latched register that needs double-read protocol
     uint8_t regs[11];
     int errCount = 0;
     for (int i = 0; i < 11; i++) {
+        if (i == 9) continue;  // REG09 handled separately below
         regs[i] = BQ24297_Read_I2C(i);
         if (regs[i] == 0xFF) errCount++;
+    }
+
+    // Read REG09 through centralized reader (accumulates faults properly)
+    uint8_t reg09Latched = 0, reg09Current = 0;
+    if (!BQ24297_ReadFaultReg(&reg09Latched, &reg09Current)) {
+        regs[9] = 0xFF;
+        errCount++;
+    } else {
+        regs[9] = reg09Latched;  // Use latched for the "regs" display
     }
 
     // If all reads failed, I2C bus is down
@@ -1126,19 +1137,16 @@ static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
             (regs[8] >> 1) & 0x01, regs[8] & 0x01);
     }
 
-    // REG09: Fault Status — loop read captured latched faults (and cleared them),
-    // re-read to get current active faults
+    // REG09: Fault Status — values from centralized reader (faults accumulated)
     if (regs[9] == 0xFF) {
         scpi_printf(context, "REG09=ERR (I2C read failed)\r\n");
     } else {
-        uint8_t reg09_cur = BQ24297_Read_I2C(0x09);
-        if (reg09_cur == 0xFF) reg09_cur = 0;
         scpi_printf(context, "REG09=0x%02X (latched) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
-            regs[9], (regs[9] >> 7) & 0x01, (regs[9] >> 6) & 0x01,
-            (regs[9] >> 4) & 0x03, (regs[9] >> 3) & 0x01, regs[9] & 0x07);
+            reg09Latched, (reg09Latched >> 7) & 0x01, (reg09Latched >> 6) & 0x01,
+            (reg09Latched >> 4) & 0x03, (reg09Latched >> 3) & 0x01, reg09Latched & 0x07);
         scpi_printf(context, "REG09=0x%02X (current) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
-            reg09_cur, (reg09_cur >> 7) & 0x01, (reg09_cur >> 6) & 0x01,
-            (reg09_cur >> 4) & 0x03, (reg09_cur >> 3) & 0x01, reg09_cur & 0x07);
+            reg09Current, (reg09Current >> 7) & 0x01, (reg09Current >> 6) & 0x01,
+            (reg09Current >> 4) & 0x03, (reg09Current >> 3) & 0x01, reg09Current & 0x07);
     }
 
     // REG0A: Vendor/Part/Revision (read-only)
@@ -1278,6 +1286,16 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
 }
 
 /**
+ * SCPI Callback: Clear accumulated BQ24297 faults
+ * Command: SYSTem:POWer:BQ:FAULTCLear
+ */
+static scpi_result_t SCPI_ClearBQFaults(scpi_t * context) {
+    BQ24297_ClearAccumulatedFaults();
+    scpi_printf(context, "Accumulated faults cleared\r\n");
+    return SCPI_RES_OK;
+}
+
+/**
  * SCPI Callback: Comprehensive BQ24297 diagnostics report
  * Command: SYSTem:POWer:BQ:DIAGnostics?
  * Returns: Multi-section human-readable diagnostic dump
@@ -1308,7 +1326,11 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
     uint8_t reg01 = BQ24297_Read_I2C(0x01);
     uint8_t reg07 = BQ24297_Read_I2C(0x07);
     uint8_t reg08 = BQ24297_Read_I2C(0x08);
-    uint8_t reg09 = BQ24297_Read_I2C(0x09);
+
+    // Read REG09 through centralized reader (accumulates faults properly)
+    uint8_t reg09Latched = 0, reg09Current = 0;
+    bool reg09Ok = BQ24297_ReadFaultReg(&reg09Latched, &reg09Current);
+    uint8_t reg09 = reg09Ok ? reg09Current : 0xFF;
 
     const char* iinlimStr[] = {"100mA","150mA","500mA","900mA","1A","1.5A","2A","3A"};
     if (reg00 == 0xFF) {
@@ -1365,6 +1387,21 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
             reg09, (reg09 >> 7) & 1, (reg09 >> 6) & 1,
             chgFaultStr[chgFault], chgFault, (reg09 >> 3) & 1,
             (ntcFault < 4) ? ntcFaultStr[ntcFault] : "Fault", ntcFault);
+    }
+
+    // --- [Accumulated Faults] ---
+    {
+        const char* chgFaultAccStr[] = {"Normal","Input fault","Thermal","Timer"};
+        const char* ntcFaultAccStr[] = {"Ok","Hot","Cold","Hot/Cold"};
+        uint8_t chgA = (uint8_t)pBQ->status.chgFaultAccum;
+        uint8_t ntcA = (uint8_t)pBQ->status.ntcFaultAccum;
+        scpi_printf(context, "[Accumulated Faults]\r\n");
+        scpi_printf(context, "  Watchdog=%d | OTG=%d | CHG=%s (%d) | BAT=%d | NTC=%s (%d)\r\n",
+            pBQ->status.watchdog_faultAccum ? 1 : 0,
+            pBQ->status.otg_faultAccum ? 1 : 0,
+            (chgA < 4) ? chgFaultAccStr[chgA] : "Unknown", chgA,
+            pBQ->status.bat_faultAccum ? 1 : 0,
+            (ntcA < 4) ? ntcFaultAccStr[ntcA] : "Unknown", ntcA);
     }
 
     // --- [GPIO] ---
@@ -1986,6 +2023,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:POWer:BQ:ILIM", .callback = SCPI_SetBQILim,},
     {.pattern = "SYSTem:POWer:BQ:DPDM", .callback = SCPI_ForceDPDM,},
     {.pattern = "SYSTem:POWer:BQ:DIAGnostics?", .callback = SCPI_GetBQDiagnostics,},
+    {.pattern = "SYSTem:POWer:BQ:FAULTCLear", .callback = SCPI_ClearBQFaults,},
     // OTG commands disabled - OTG mode is managed automatically by the power system
     // When external power is present, OTG is always disabled for safety
     // When on battery power, OTG is controlled by the board configuration
