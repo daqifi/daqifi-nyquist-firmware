@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "f41101c76c84",
+  "strategy": "manual-commit",
+  "branch": "feat/timer-based-iinlim",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "firmware/src/HAL/BQ24297/BQ24297.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f4/1101c76c84/0/metadata.json",
+      "transcript": "/f4/1101c76c84/0/full.jsonl",
+      "context": "/f4/1101c76c84/0/context.md",
+      "content_hash": "/f4/1101c76c84/0/content_hash.txt",
+      "prompt": "/f4/1101c76c84/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2211,
+    "cache_creation_tokens": 1014408,
+    "cache_read_tokens": 16376660,
+    "output_tokens": 5884,
+    "api_call_count": 162
+  }
+}
