@@ -1183,7 +1183,6 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
     bool success = BQ24297_SetIINLIM((uint8_t)ilim);
     if (!success) {
         LOG_E("SCPI_SetBQILim: I2C write failed for ILIM=%d", (int)ilim);
-        scpi_printf(context, "I2C error: write failed\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
@@ -1191,7 +1190,7 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
     // Verify by reading back
     uint8_t readback = BQ24297_Read_I2C(0x00);
     if (readback == 0xFF) {
-        scpi_printf(context, "Write OK, readback I2C error\r\n");
+        LOG_E("SCPI_SetBQILim: readback failed for REG00");
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
@@ -1199,11 +1198,15 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
     uint8_t actual = readback & 0x07;
     uint8_t hiz = (readback >> 7) & 0x01;
     if (actual != (uint8_t)ilim || hiz != 0) {
-        scpi_printf(context, "Verify failed: wrote ILIM=%d, read ILIM=%d HIZ=%d (REG00=0x%02X)\r\n",
+        LOG_E("SCPI_SetBQILim: verify failed: wrote ILIM=%d, read ILIM=%d HIZ=%d (REG00=0x%02X)",
                  (int)ilim, actual, hiz, readback);
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
+
+    // Prevent IINLIM state machine from overriding the manual setting
+    tPowerData* pPower = (tPowerData*)BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    pPower->BQ24297Data.iinlimState = IINLIM_STATE_SETTLED;
 
     scpi_printf(context, "ILIM=%d HIZ=%d Readback=0x%02X OK\r\n", actual, hiz, readback);
     return SCPI_RES_OK;

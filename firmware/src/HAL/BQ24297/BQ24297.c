@@ -42,6 +42,11 @@ void BQ24297_InitHardware(
     // Create I2C mutex for cross-task synchronization
     if (i2cMutex == NULL) {
         i2cMutex = xSemaphoreCreateMutex();
+        if (i2cMutex == NULL) {
+            LOG_E("BQ24297_InitHardware: failed to create I2C mutex");
+            pData->initComplete = false;
+            return;
+        }
     }
 
     // Battery management initialization (hardware interface)
@@ -279,20 +284,38 @@ void BQ24297_ChargeEnable(bool chargeEnable) {
 }
 
 void BQ24297_ForceDPDM(void) {
-    // Temporary value to hold current register value
     uint8_t reg = 0;
     // WARNING: Forcing DPDM while connected via USB will disrupt USB comms
     // and may require physical cable replug. Only safe from wall charger or UART.
 
     reg = BQ24297_Read_I2C(0x07);
+    if (reg == 0xFF) {
+        LOG_E("BQ24297_ForceDPDM: REG07 read failed");
+        return;
+    }
 
-    // Force DPDM detection
-    // REG07: 0b1XXXXXXX
-    BQ24297_Write_I2C(0x07, reg | 0b10000000);
+    // Force DPDM detection — REG07 bit 7
+    if (!BQ24297_Write_I2C(0x07, reg | 0x80)) {
+        LOG_E("BQ24297_ForceDPDM: REG07 write failed");
+        return;
+    }
 
-    BQ24297_UpdateStatus();
-    while (pData->status.iinDet_Read) {
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t timeoutTicks = pdMS_TO_TICKS(2000);
+
+    for (;;) {
         BQ24297_UpdateStatus();
+
+        if (!pData->status.iinDet_Read) {
+            break;
+        }
+
+        if ((xTaskGetTickCount() - start) > timeoutTicks) {
+            LOG_E("BQ24297_ForceDPDM: timeout waiting for DPDM to complete");
+            break;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 

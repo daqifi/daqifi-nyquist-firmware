@@ -149,7 +149,9 @@ void Power_Tasks(void) {
      * Detects VBUS edges and adjusts IINLIM based on USB enumeration status */
     if (pData->BQ24297Data.initComplete) {
         USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
-        bool vbusPresent = (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
+        bool vbusPresent =
+            (vbusLevel == USBHS_VBUS_BELOW_VBUSVALID) ||
+            (vbusLevel == USBHS_VBUS_VALID);
         BQ24297_ManageIINLIM(vbusPresent);
     }
 
