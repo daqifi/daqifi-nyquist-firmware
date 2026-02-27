@@ -3,7 +3,7 @@
   "checkpoint_id": "2fc9149e7154",
   "strategy": "manual-commit",
   "branch": "feat/timer-based-iinlim",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "firmware/src/HAL/BQ24297/BQ24297.c",
     "firmware/src/HAL/BQ24297/BQ24297.h",
@@ -16,13 +16,20 @@
       "context": "/2f/c9149e7154/0/context.md",
       "content_hash": "/2f/c9149e7154/0/content_hash.txt",
       "prompt": "/2f/c9149e7154/0/prompt.txt"
+    },
+    {
+      "metadata": "/2f/c9149e7154/1/metadata.json",
+      "transcript": "/2f/c9149e7154/1/full.jsonl",
+      "context": "/2f/c9149e7154/1/context.md",
+      "content_hash": "/2f/c9149e7154/1/content_hash.txt",
+      "prompt": "/2f/c9149e7154/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 62,
-    "cache_creation_tokens": 68151,
-    "cache_read_tokens": 4043792,
-    "output_tokens": 925,
-    "api_call_count": 56
+    "input_tokens": 9114,
+    "cache_creation_tokens": 1571232,
+    "cache_read_tokens": 36144340,
+    "output_tokens": 11963,
+    "api_call_count": 355
   }
 }
