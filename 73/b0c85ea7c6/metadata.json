@@ -3,9 +3,10 @@
   "checkpoint_id": "73b0c85ea7c6",
   "strategy": "manual-commit",
   "branch": "feat/timer-based-iinlim",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
-    "firmware/src/services/SCPI/SCPIInterface.c"
+    "firmware/src/services/SCPI/SCPIInterface.c",
+    "firmware/src/services/UsbCdc/UsbCdc.c"
   ],
   "sessions": [
     {
@@ -14,13 +15,20 @@
       "context": "/73/b0c85ea7c6/0/context.md",
       "content_hash": "/73/b0c85ea7c6/0/content_hash.txt",
       "prompt": "/73/b0c85ea7c6/0/prompt.txt"
+    },
+    {
+      "metadata": "/73/b0c85ea7c6/1/metadata.json",
+      "transcript": "/73/b0c85ea7c6/1/full.jsonl",
+      "context": "/73/b0c85ea7c6/1/context.md",
+      "content_hash": "/73/b0c85ea7c6/1/content_hash.txt",
+      "prompt": "/73/b0c85ea7c6/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 89,
-    "cache_creation_tokens": 81281,
-    "cache_read_tokens": 6375183,
-    "output_tokens": 1290,
-    "api_call_count": 81
+    "input_tokens": 9141,
+    "cache_creation_tokens": 1584362,
+    "cache_read_tokens": 38475731,
+    "output_tokens": 12328,
+    "api_call_count": 380
   }
 }
