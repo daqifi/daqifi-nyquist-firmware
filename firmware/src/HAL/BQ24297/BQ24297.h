@@ -183,11 +183,11 @@ typedef enum {
 	unsigned char INT_Val;
     //! Status value
 	unsigned char STAT_Val;
-    //! Interruption falg
+    //! Interruption flag
     volatile bool intFlag;
     //! Indicate if charge is allowed
     bool chargeAllowed;
-    //! Initialitaion completed
+    //! Initialization completed
     bool initComplete;
     //! IINLIM state machine
     eIINLIM_State iinlimState;
@@ -213,7 +213,7 @@ typedef enum {
  
 /*!
  * Initializes hardware
- * @param[in] pConfigInit Pointer to initial configuration of BQ23297 module
+ * @param[in] pConfigInit Pointer to initial configuration of BQ24297 module
  * @param[in] pWriteInit Pointer to initial write variables data structure
  * @param[in] pDataInit Pointer to data structure of BQ24297 module
  */
@@ -228,8 +228,9 @@ void BQ24297_InitHardware(                                                  \
 void BQ24297_Config_Settings( void );  
       
 /*!
- * Function to update status by reading all registers
- * NOTE: Only called at boot - no I2C polling after init
+ * Updates BQ24297 status by reading all registers via I2C.
+ * Called at boot, and on-demand by ForceDPDM, DisableOTG,
+ * IsBatteryPresent, and UpdateBatteryStatus.
  */
 void BQ24297_UpdateStatus();
 

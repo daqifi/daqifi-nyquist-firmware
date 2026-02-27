@@ -19,13 +19,13 @@ static tBQ24297Data *pData;
 //! Mutex to synchronize I2C access between PowerAndUITask and USBDeviceTask
 static SemaphoreHandle_t i2cMutex = NULL;
 
-/*! Funtion to read BQ24297 data by I2C communication
+/*! Function to read BQ24297 data by I2C communication
  * @param[in] reg Register to read
  */
 uint8_t BQ24297_Read_I2C(uint8_t reg);
 
-/*! Funtion to write BQ24297 data by I2C communication
- * @param[in] reg Register to read
+/*! Function to write BQ24297 data by I2C communication
+ * @param[in] reg Register to write
  * @param[in] txData Data to write
  * @return true if write succeeded, false on error
  */
@@ -156,8 +156,9 @@ void BQ24297_Config_Settings(void) {
 }
 
 /*
- * Updates BQ24297 status by reading all registers
- * NOTE: Only called at boot - no I2C polling after init
+ * Updates BQ24297 status by reading all registers via I2C.
+ * Called at boot, and on-demand by ForceDPDM, DisableOTG,
+ * IsBatteryPresent, and UpdateBatteryStatus.
  */
 void BQ24297_UpdateStatus(void) {
 
@@ -229,10 +230,10 @@ void BQ24297_UpdateStatus(void) {
         hasErrors = true;
     }
 
-    // REG09: Fault Status - Reading this resets fault flags!
+    // REG09: Fault Status - Reading resets latched fault flags!
+    // First read clears latched faults, second read gets current status
     regData = BQ24297_Read_I2C(0x09);
     if (regData != 0xFF) {
-        // First read resets faults, read again for current status
         regData = BQ24297_Read_I2C(0x09);
         if (regData != 0xFF) {
             pData->status.watchdog_fault = (bool) (regData & 0b10000000);
@@ -280,8 +281,8 @@ void BQ24297_ChargeEnable(bool chargeEnable) {
 void BQ24297_ForceDPDM(void) {
     // Temporary value to hold current register value
     uint8_t reg = 0;
-    // ----Untested implementation!----
-    // Be sure that the USB lines are disconnected ie. USBCSR0bits.SOFTCONN = 0
+    // WARNING: Forcing DPDM while connected via USB will disrupt USB comms
+    // and may require physical cable replug. Only safe from wall charger or UART.
 
     reg = BQ24297_Read_I2C(0x07);
 

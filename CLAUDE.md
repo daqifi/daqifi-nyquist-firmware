@@ -381,6 +381,7 @@ SYST:POW:BQ:DIAGnostics?   # Comprehensive diagnostics dump (battery, registers,
 - **Caller**: `HAL/Power/PowerApi.c` — `Power_Tasks()` (~100ms interval)
 - **USB tracking**: `services/UsbCdc/UsbCdc.c` — `UsbCdc_IsConfigured()`
 - **SCPI commands**: `services/SCPI/SCPIInterface.c`
+- **I2C mutex**: `BQ24297_Read_I2C()` and `BQ24297_Write_I2C()` are protected by a FreeRTOS mutex to synchronize access between PowerAndUITask and USBDeviceTask (both priority 7)
 
 ## Firmware Analysis Report
 
