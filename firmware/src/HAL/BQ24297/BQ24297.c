@@ -200,18 +200,21 @@ void BQ24297_Config_Settings(void) {
     pData->iinlimTimestamp = 0;
     pData->iinlimLastVbus = false;
 
-    // Update battery presence status (for reporting only)
+    // Update battery presence and charging-allowed flag based on NTC status.
+    // NTC_FAULT_COLD = no battery (open thermistor) → chargeAllowed=false
+    // NTC_FAULT_HOT  = unsafe temperature            → chargeAllowed=false
     BQ24297_UpdateBatteryStatus();
+
+    // REG01 was written with CHG=1 above, so unconditionally enforce the
+    // charge-allowed decision — disable charging via I2C if NTC fault present.
+    BQ24297_ChargeEnable(pData->chargeAllowed);
+    if (!pData->chargeAllowed) {
+        LOG_E("BQ24297: Charging disabled at boot (NTC=%d, batPresent=%d)",
+              pData->status.ntcFault, pData->status.batPresent);
+    }
 
     // Clear accumulated faults from init reads — start fresh
     BQ24297_ClearAccumulatedFaults();
-
-    // Charging is always enabled via REG01 configuration above.
-    // The BQ24297 has built-in hardware protection for:
-    // - Battery temperature (NTC monitoring)
-    // - Overvoltage/overcurrent
-    // - Battery presence detection
-    // Let the hardware handle charging decisions autonomously.
 
     // Mark initialization complete
     pData->initComplete = true;
