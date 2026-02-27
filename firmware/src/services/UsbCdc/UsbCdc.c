@@ -658,8 +658,7 @@ static bool UsbCdc_Flush(UsbCdcData_t* client) {
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
 
     UNUSED(context);
-    UsbCdc_WriteToBuffer(&gRunTimeUsbSttings, data, len);
-    return len;
+    return UsbCdc_WriteToBuffer(&gRunTimeUsbSttings, data, len);
 }
 
 /**
