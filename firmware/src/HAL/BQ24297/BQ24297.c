@@ -328,10 +328,12 @@ void BQ24297_ChargeEnable(bool chargeEnable) {
 
     if (pData->chargeAllowed && chargeEnable && pData->status.batPresent) {
         reg = (reg & 0b11101111) | 0b00010000;
-        BQ24297_Write_I2C(0x01, reg);
     } else {
         reg = (reg & 0b11101111);
-        BQ24297_Write_I2C(0x01, reg);
+    }
+
+    if (!BQ24297_Write_I2C(0x01, reg)) {
+        LOG_E("BQ24297_ChargeEnable: REG01 write failed, charge state may be incorrect");
     }
 }
 
