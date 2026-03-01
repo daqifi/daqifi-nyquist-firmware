@@ -288,9 +288,10 @@ void BQ24297_SetPowerMode(bool externalPowerPresent);
 /*!
  * Read a BQ24297 register via I2C
  * @param[in] reg Register address to read
- * @return Register value or 0xFF on error
+ * @param[out] out Pointer to receive register value (unchanged on error)
+ * @return true on success, false on error
  */
-uint8_t BQ24297_Read_I2C(uint8_t reg);
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out);
 
 /*!
  * Write to a BQ24297 register via I2C
