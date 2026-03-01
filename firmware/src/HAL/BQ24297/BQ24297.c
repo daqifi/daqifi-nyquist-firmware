@@ -560,7 +560,7 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
                 pData->iinlimState = IINLIM_STATE_IDLE;
                 break;
             }
-            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(2000)) {
+            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(5000)) {
                 if (UsbCdc_IsConfigured()) {
                     // USB host enumerated — keep 500mA (USB-spec safe)
                     LOG_D("IINLIM: USB configured, keeping 500mA");

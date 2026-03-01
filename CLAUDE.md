@@ -354,12 +354,12 @@ The firmware uses a timer-based state machine to manage input current limits (II
 
 #### State Machine
 ```
-IDLE → WAIT_DPDM (1s min, 3s timeout) → WAIT_USB (2s) → SETTLED
+IDLE → WAIT_DPDM (1s min, 3s timeout) → WAIT_USB (5s) → SETTLED
 ```
 
 - **OTG pin** driven LOW (output) so DPDM starts at conservative 100mA
 - **WAIT_DPDM**: Waits for BQ24297 DPDM detection to complete (REG07 bit 7 clears)
-- **WAIT_USB**: Sets 500mA, waits 2s checking `UsbCdc_IsConfigured()`
+- **WAIT_USB**: Sets 500mA, waits 5s checking `UsbCdc_IsConfigured()`
 - **SETTLED**: USB host → 500mA; wall charger → 2000mA
 - VBUS loss in any state resets to IDLE
 
@@ -374,7 +374,7 @@ SYST:POW:BQ:DIAGnostics?   # Comprehensive diagnostics dump (battery, registers,
 
 **Note:** `SYST:POW:BQ:DIAG?` calls `BQ24297_UpdateStatus()` which reads REG09 and clears latched fault flags as a side effect.
 
-**WARNING:** `SYST:POW:BQ:DPDM` forces the BQ24297 to re-run D+/D- detection, which temporarily resets IINLIM (potentially to 100mA). When connected via USB, this causes VBUS sag and disconnects the host. Only use this command when debugging wall charger behavior or before USB enumeration. A physical cable replug is required to recover.
+**WARNING:** `SYST:POW:BQ:DPDM` is diagnostic-only. It forces the BQ24297 to re-run D+/D- detection and prints the result (VBUS type from REG08), but does **not** update the status struct or reset the IINLIM state machine — no automatic current switching occurs. Use `SYST:POW:BQ:ILIM` to manually set IINLIM after forced DPDM. When connected via USB, DPDM temporarily resets IINLIM (potentially to 100mA), causing VBUS sag and USB disconnect. A physical cable replug is required to recover and restart the IINLIM state machine.
 
 #### Implementation
 - **State machine**: `HAL/BQ24297/BQ24297.c` — `BQ24297_ManageIINLIM()`

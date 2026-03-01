@@ -1235,10 +1235,17 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
  * Command: SYSTem:POWer:BQ:DPDM
  * Triggers BQ24297 to re-run D+/D- detection.
  *
+ * This is a diagnostic-only command. The detection result (VBUS type from
+ * REG08) is printed to the user and then discarded — it does NOT update
+ * the BQ24297 status struct or reset the IINLIM state machine. Therefore
+ * no automatic current switching occurs based on the result. To change
+ * IINLIM after forced DPDM, use SYST:POW:BQ:ILIM manually.
+ *
  * WARNING: Forcing DPDM while connected via USB will disrupt communication.
  * DPDM re-detection temporarily resets IINLIM (potentially to 100mA),
  * which can cause VBUS sag and USB disconnect on the host side.
- * This command is intended for wall-charger debugging or pre-enumeration use.
+ * A physical cable replug is required to recover USB and restart the
+ * IINLIM state machine. Only use when debugging wall charger behavior.
  */
 static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
     // Read REG07
