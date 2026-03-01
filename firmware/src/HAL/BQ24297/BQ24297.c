@@ -496,6 +496,11 @@ bool BQ24297_SetIINLIM(uint8_t iinlimCode) {
     return success;
 }
 
+// IINLIM state machine timing constants (ms)
+#define IINLIM_DPDM_MIN_WAIT_MS   1000  // Minimum wait after VBUS before checking DPDM
+#define IINLIM_DPDM_TIMEOUT_MS    3000  // Max wait for DPDM to complete
+#define IINLIM_USB_WAIT_MS         5000  // Wait for USB enumeration before assuming wall charger
+
 void BQ24297_ManageIINLIM(bool vbusPresent) {
     TickType_t now = xTaskGetTickCount();
 
@@ -520,14 +525,14 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
 
                 // Wait at least 1s after VBUS before acting on DPDM result
                 // to ensure BQ24297 hardware has fully settled
-                if (elapsed < pdMS_TO_TICKS(1000)) {
+                if (elapsed < pdMS_TO_TICKS(IINLIM_DPDM_MIN_WAIT_MS)) {
                     break;
                 }
 
                 // Check REG07 bit 7 for DPDM in progress
                 uint8_t reg07 = 0xFF;
                 bool dpdmDone = BQ24297_Read_I2C(0x07, &reg07) && !(reg07 & 0x80);
-                bool timeout = elapsed >= pdMS_TO_TICKS(3000);
+                bool timeout = elapsed >= pdMS_TO_TICKS(IINLIM_DPDM_TIMEOUT_MS);
 
                 if (dpdmDone) {
                     // DPDM finished — safe to set IINLIM, hardware won't overwrite
@@ -560,7 +565,7 @@ void BQ24297_ManageIINLIM(bool vbusPresent) {
                 pData->iinlimState = IINLIM_STATE_IDLE;
                 break;
             }
-            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(5000)) {
+            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(IINLIM_USB_WAIT_MS)) {
                 if (UsbCdc_IsConfigured()) {
                     // USB host enumerated — keep 500mA (USB-spec safe)
                     LOG_D("IINLIM: USB configured, keeping 500mA");
