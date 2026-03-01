@@ -1,0 +1,217 @@
+Implement the following plan:
+
+# Refactor BQ24297_Read_I2C: Replace 0xFF Sentinel with Bool Return
+
+## Context
+
+`BQ24297_Read_I2C(uint8_t reg)` returns `uint8_t` with `0xFF` as the error sentinel. But `0xFF` is valid register data (e.g. REG00 with HIZ+max VINDPM+3A IINLIM). The underlying I2C driver (`DRV_I2C_WriteReadTransfer`) already returns `bool` for success/failure — we should propagate that instead of collapsing it into a data value. `BQ24297_Write_I2C` already returns `bool` correctly.
+
+Additionally, 6 call sites have **no error check at all** before using the read value for read-modify-write — these are existing bugs that this refactor fixes.
+
+## API Change
+
+```c
+// Old:
+uint8_t BQ24297_Read_I2C(uint8_t reg);           // 0xFF = error (ambiguous)
+// New:
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out); // false = error, *out unchanged
+```
+
+## Files to Modify
+
+| File | Call sites | Changes |
+|------|-----------|---------|
+| `firmware/src/HAL/BQ24297/BQ24297.h` | 1 | Declaration + forward decl |
+| `firmware/src/HAL/BQ24297/BQ24297.c` | 24 | Implementation + all internal callers |
+| `firmware/src/services/SCPI/SCPIInterface.c` | 11 | All SCPI BQ callers |
+
+## Implementation
+
+### Step 1: Change function signature and implementation
+
+**BQ24297.h:289-293** — Update declaration:
+```c
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out);
+```
+
+**BQ24297.c:25** — Update forward declaration.
+
+**BQ24297.c:412-446** — Change body: return `false` on error, `*out = rxData; return true;` on success.
+
+### Step 2: Update BQ24297.c call sites (24 sites)
+
+#### ReadFaultReg (lines 84, 94) — read-only with error return
+```c
+// Old: uint8_t latchedVal = BQ24297_Read_I2C(0x09); if (latchedVal == 0xFF) ...
+// New: uint8_t latchedVal; if (!BQ24297_Read_I2C(0x09, &latchedVal)) ...
+```
+Same pattern for second read (line 94).
+
+#### Config_Settings line 133 — **BUG FIX** (unchecked RMW of REG00)
+```c
+// Old: reg = BQ24297_Read_I2C(0x00); /* no check */ BQ24297_Write_I2C(0x00, reg & 0b00000111);
+// New: if (!BQ24297_Read_I2C(0x00, &reg)) { LOG_E(...); } else { /* HIZ check + write */ }
+```
+Skip this register's RMW on failure, continue init (other registers are independent).
+
+#### Config_Settings line 186 — **BUG FIX** (unchecked RMW of REG07 BATFET)
+```c
+// Old: reg = BQ24297_Read_I2C(0x07); if (reg & 0x20) { /* clear BATFET */ }
+// New: if (!BQ24297_Read_I2C(0x07, &reg)) { LOG_E(...); } else if (reg & 0x20) { ... }
+```
+
+#### UpdateStatus (lines 236, 245, 254, 262, 270) — read-only status decode
+```c
+// Old: regData = BQ24297_Read_I2C(0x00); if (regData != 0xFF) { ... } else { hasErrors = true; }
+// New: if (BQ24297_Read_I2C(0x00, &regData)) { ... } else { hasErrors = true; }
+```
+
+#### ChargeEnable line 316 — RMW with existing error check
+```c
+// Old: uint8_t reg = BQ24297_Read_I2C(0x01); if (reg == 0xFF) { LOG_E(...); return; }
+// New: uint8_t reg; if (!BQ24297_Read_I2C(0x01, &reg)) { LOG_E(...); return; }
+```
+
+#### ForceDPDM line 343 — RMW with error check
+Same pattern as ChargeEnable.
+
+#### AutoSetILim line 378 — **BUG FIX** (unchecked read before switch)
+```c
+// Old: reg0 = BQ24297_Read_I2C(0x00); /* no check, proceeds to write */
+// New: if (!BQ24297_Read_I2C(0x00, &reg0)) { LOG_E(...); return; }
+```
+
+#### SetIINLIM line 485 — RMW with early return
+```c
+// Old: uint8_t reg = BQ24297_Read_I2C(0x00); if (reg == 0xFF) return false;
+// New: uint8_t reg; if (!BQ24297_Read_I2C(0x00, &reg)) return false;
+```
+
+#### ManageIINLIM line 525 — polling read
+```c
+// Old: uint8_t reg07 = BQ24297_Read_I2C(0x07); bool dpdmDone = (reg07 != 0xFF) && !(reg07 & 0x80);
+// New: uint8_t reg07 = 0xFF; bool dpdmDone = BQ24297_Read_I2C(0x07, &reg07) && !(reg07 & 0x80);
+```
+Initialize `reg07 = 0xFF` so the timeout log message still has a value on failure.
+
+#### EnableOTG (lines 595, 600, 614, 627, 643) — **3 BUG FIXES** + 2 existing checks
+
+**Line 595** — **BUG FIX**: REG08 read with no error check. Add `if (!BQ24297_Read_I2C(0x08, &reg08)) { return; }` — can't safely enable OTG without knowing power state.
+
+**Line 600** — **BUG FIX**: REG00 HIZ clear with no error check. Add `if (!BQ24297_Read_I2C(0x00, &reg00)) { return; }`
+
+**Line 614** — **BUG FIX**: REG01 OTG check with no error check. Change to: `if (BQ24297_Read_I2C(0x01, &reg01_check) && (reg01_check & 0x20)) { ... }` — if read fails, fall through to OTG enable attempt.
+
+**Line 627** — Already checks 0xFF, convert to bool pattern.
+
+**Line 643** — Readback verify in retry loop: `if (BQ24297_Read_I2C(0x01, &readback) && ((readback & 0x30) == 0x20)) { success = true; break; }`
+
+#### DisableOTG (lines 663, 676, 698) — RMW with existing checks
+```c
+// Lines 663, 698: if (reg00 != 0xFF && (reg00 & 0x80))  →  if (BQ24297_Read_I2C(0x00, &reg00) && (reg00 & 0x80))
+// Line 676: if (reg == 0xFF) { ... return; }  →  if (!BQ24297_Read_I2C(0x01, &reg)) { ... return; }
+```
+
+#### IsOTGEnabled line 716, IsChargingEnabled line 721 — **BUG FIX** (no error check)
+```c
+// Old: uint8_t reg = BQ24297_Read_I2C(0x01); return (reg & 0x20) != 0; // 0xFF → true!
+// New: uint8_t reg; if (!BQ24297_Read_I2C(0x01, &reg)) return false; return (reg & 0x20) != 0;
+```
+
+### Step 3: Update SCPIInterface.c call sites (11 sites)
+
+#### SCPI_SysInfoTextGet lines 638-639 — display reads, no error check
+```c
+// Old: uint8_t reg01 = BQ24297_Read_I2C(0x01); uint8_t reg07 = BQ24297_Read_I2C(0x07);
+// New: uint8_t reg01 = 0, reg07 = 0;
+//      bool reg01Ok = BQ24297_Read_I2C(0x01, &reg01);
+//      bool reg07Ok = BQ24297_Read_I2C(0x07, &reg07);
+```
+Update snprintf to show "ERR" when `!regOk`.
+
+#### SCPI_GetBQRegisters loop line 1043 — register dump
+```c
+// Old: regs[i] = BQ24297_Read_I2C(i); if (regs[i] == 0xFF) errCount++;
+// New: bool regOk[11]; if (!BQ24297_Read_I2C(i, &regs[i])) { regOk[i] = false; errCount++; }
+```
+Change all `if (regs[N] == 0xFF)` display checks to `if (!regOk[N])`.
+
+#### SCPI_SetBQILim readback line 1199
+```c
+// Old: uint8_t readback = BQ24297_Read_I2C(0x00); if (readback == 0xFF) ...
+// New: uint8_t readback; if (!BQ24297_Read_I2C(0x00, &readback)) ...
+```
+
+#### SCPI_ForceDPDM lines 1235, 1255, 1273 — RMW + polling + result
+```c
+// Line 1235: if (reg7 == 0xFF)  →  uint8_t reg7; if (!BQ24297_Read_I2C(0x07, &reg7))
+// Line 1255: status = ...; if (status == 0xFF)  →  if (!BQ24297_Read_I2C(0x07, &status))
+// Line 1273: if (reg8 == 0xFF)  →  uint8_t reg8; if (!BQ24297_Read_I2C(0x08, &reg8))
+```
+
+#### SCPI_GetBQDiagnostics lines 1325-1328 — multi-register display
+```c
+// Old: uint8_t reg00 = BQ24297_Read_I2C(0x00); ... if (reg00 == 0xFF) { "ERR" }
+// New: uint8_t reg00; bool reg00Ok = BQ24297_Read_I2C(0x00, &reg00); ... if (!reg00Ok) { "ERR" }
+```
+Apply to reg00, reg01, reg07, reg08 (4 reads, 4 display checks).
+
+## Bug Fixes Included
+
+| Location | Line | Bug |
+|----------|------|-----|
+| Config_Settings | 133 | REG00 RMW without error check — writes garbage on I2C failure |
+| Config_Settings | 186 | REG07 BATFET RMW without check — could disable BATFET on failure |
+| AutoSetILim | 378 | REG00 read without check — writes garbage IINLIM |
+| EnableOTG | 595 | REG08 read without check — wrong pgStat/vbusStat on failure |
+| EnableOTG | 600 | REG00 HIZ clear without check — writes garbage |
+| EnableOTG | 614 | REG01 OTG check without check — 0xFF falsely reports OTG active |
+| IsOTGEnabled | 716 | Returns true on I2C failure (0xFF has bit 5 set) |
+| IsChargingEnabled | 721 | Returns true on I2C failure (0xFF has bit 4 set) |
+
+## Verification
+
+1. **Compile-time safety**: Signature change `uint8_t fn(uint8_t)` → `bool fn(uint8_t, uint8_t*)` causes compiler errors at every unconverted site
+2. **grep check**: `grep -rn "== 0xFF\|!= 0xFF" firmware/src/HAL/BQ24297/BQ24297.c` should return 0 hits after refactor
+3. **Build**: `make -f nbproject/Makefile-default.mk CONF=default build`
+4. **Hardware test** via PowerShell COM3:
+   - `*IDN?` — device responds
+   - `SYST:POW:BQ:REG?` — all registers display (especially REG0A=0x60, not flagged as error)
+   - `SYST:POW:BQ:DIAG?` — full diagnostics with accumulated faults
+   - `SYST:POW:BQ:ILIM 2` — set + readback verify works
+   - `SYST:POW:BQ:FAULTCL` — clear faults
+   - `SYST:LOG?` — no unexpected errors from the refactor
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/2818bccb-ce15-41c9-aa46-9954e21738b9.jsonl
+
+---
+
+commit and push
+
+---
+
+<task-notification>
+<task-id>b045eb6</task-id>
+<tool-use-id>toolu_01Lf4Rp8u3M3qGz6rQmjRmu4</tool-use-id>
+<output-file>/tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/b045eb6.output</output-file>
+<status>completed</status>
+<summary>Background command "Stage 3 firmware files, commit, and verify" completed (exit code 0)</summary>
+</task-notification>
+Read the output file to retrieve the result: /tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/b045eb6.output
+
+---
+
+not sure. whare are the implications?
+
+---
+
+i think we will skip it. document that when we use this scpi command what side effects occur. eg. no automatic current switching based on the results. i assume resluts are just printed to the user and are then discarded?
+
+---
+
+The state machine promotes to 2A if UsbCdc_IsConfigured() is still false after a fixed 2s window, let's increase that to a 5s window.
+
+---
+
+yes
