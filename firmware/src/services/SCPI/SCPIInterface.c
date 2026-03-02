@@ -1224,11 +1224,12 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
 
     // Prevent IINLIM state machine from overriding the manual setting
     tPowerData* pPower = (tPowerData*)BoardData_Get(BOARDDATA_POWER_DATA, 0);
-    if (pPower != NULL) {
-        pPower->BQ24297Data.iinlimState = IINLIM_STATE_SETTLED;
-    } else {
+    if (pPower == NULL) {
         LOG_E("SCPI_SetBQILim: power data not available to lock IINLIM state");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
     }
+    pPower->BQ24297Data.iinlimState = IINLIM_STATE_SETTLED;
 
     scpi_printf(context, "ILIM=%d HIZ=%d Readback=0x%02X OK\r\n", actual, hiz, readback);
     return SCPI_RES_OK;
