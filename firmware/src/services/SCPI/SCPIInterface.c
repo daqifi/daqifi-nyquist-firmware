@@ -1044,8 +1044,8 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
 static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
     // Read all registers including REG0A, tracking I2C errors
     // Skip REG09 in the loop — it's a latched register that needs double-read protocol
-    uint8_t regs[11];
-    bool regOk[11];
+    uint8_t regs[11] = {0};
+    bool regOk[11] = {false};
     int errCount = 0;
     for (int i = 0; i < 11; i++) {
         if (i == 9) { regOk[i] = false; continue; }  // REG09 handled separately below
@@ -1326,7 +1326,8 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
             BOARDDATA_POWER_DATA,
             0);
     if (pPower == NULL) {
-        scpi_printf(context, "ERROR: power data not available\r\n");
+        LOG_E("SCPI_GetBQDiagnostics: power data not available");
+        scpi_printf(context, "Power data not available\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
