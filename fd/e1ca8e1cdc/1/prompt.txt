@@ -1,0 +1,540 @@
+Implement the following plan:
+
+# Refactor BQ24297_Read_I2C: Replace 0xFF Sentinel with Bool Return
+
+## Context
+
+`BQ24297_Read_I2C(uint8_t reg)` returns `uint8_t` with `0xFF` as the error sentinel. But `0xFF` is valid register data (e.g. REG00 with HIZ+max VINDPM+3A IINLIM). The underlying I2C driver (`DRV_I2C_WriteReadTransfer`) already returns `bool` for success/failure — we should propagate that instead of collapsing it into a data value. `BQ24297_Write_I2C` already returns `bool` correctly.
+
+Additionally, 6 call sites have **no error check at all** before using the read value for read-modify-write — these are existing bugs that this refactor fixes.
+
+## API Change
+
+```c
+// Old:
+uint8_t BQ24297_Read_I2C(uint8_t reg);           // 0xFF = error (ambiguous)
+// New:
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out); // false = error, *out unchanged
+```
+
+## Files to Modify
+
+| File | Call sites | Changes |
+|------|-----------|---------|
+| `firmware/src/HAL/BQ24297/BQ24297.h` | 1 | Declaration + forward decl |
+| `firmware/src/HAL/BQ24297/BQ24297.c` | 24 | Implementation + all internal callers |
+| `firmware/src/services/SCPI/SCPIInterface.c` | 11 | All SCPI BQ callers |
+
+## Implementation
+
+### Step 1: Change function signature and implementation
+
+**BQ24297.h:289-293** — Update declaration:
+```c
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out);
+```
+
+**BQ24297.c:25** — Update forward declaration.
+
+**BQ24297.c:412-446** — Change body: return `false` on error, `*out = rxData; return true;` on success.
+
+### Step 2: Update BQ24297.c call sites (24 sites)
+
+#### ReadFaultReg (lines 84, 94) — read-only with error return
+```c
+// Old: uint8_t latchedVal = BQ24297_Read_I2C(0x09); if (latchedVal == 0xFF) ...
+// New: uint8_t latchedVal; if (!BQ24297_Read_I2C(0x09, &latchedVal)) ...
+```
+Same pattern for second read (line 94).
+
+#### Config_Settings line 133 — **BUG FIX** (unchecked RMW of REG00)
+```c
+// Old: reg = BQ24297_Read_I2C(0x00); /* no check */ BQ24297_Write_I2C(0x00, reg & 0b00000111);
+// New: if (!BQ24297_Read_I2C(0x00, &reg)) { LOG_E(...); } else { /* HIZ check + write */ }
+```
+Skip this register's RMW on failure, continue init (other registers are independent).
+
+#### Config_Settings line 186 — **BUG FIX** (unchecked RMW of REG07 BATFET)
+```c
+// Old: reg = BQ24297_Read_I2C(0x07); if (reg & 0x20) { /* clear BATFET */ }
+// New: if (!BQ24297_Read_I2C(0x07, &reg)) { LOG_E(...); } else if (reg & 0x20) { ... }
+```
+
+#### UpdateStatus (lines 236, 245, 254, 262, 270) — read-only status decode
+```c
+// Old: regData = BQ24297_Read_I2C(0x00); if (regData != 0xFF) { ... } else { hasErrors = true; }
+// New: if (BQ24297_Read_I2C(0x00, &regData)) { ... } else { hasErrors = true; }
+```
+
+#### ChargeEnable line 316 — RMW with existing error check
+```c
+// Old: uint8_t reg = BQ24297_Read_I2C(0x01); if (reg == 0xFF) { LOG_E(...); return; }
+// New: uint8_t reg; if (!BQ24297_Read_I2C(0x01, &reg)) { LOG_E(...); return; }
+```
+
+#### ForceDPDM line 343 — RMW with error check
+Same pattern as ChargeEnable.
+
+#### AutoSetILim line 378 — **BUG FIX** (unchecked read before switch)
+```c
+// Old: reg0 = BQ24297_Read_I2C(0x00); /* no check, proceeds to write */
+// New: if (!BQ24297_Read_I2C(0x00, &reg0)) { LOG_E(...); return; }
+```
+
+#### SetIINLIM line 485 — RMW with early return
+```c
+// Old: uint8_t reg = BQ24297_Read_I2C(0x00); if (reg == 0xFF) return false;
+// New: uint8_t reg; if (!BQ24297_Read_I2C(0x00, &reg)) return false;
+```
+
+#### ManageIINLIM line 525 — polling read
+```c
+// Old: uint8_t reg07 = BQ24297_Read_I2C(0x07); bool dpdmDone = (reg07 != 0xFF) && !(reg07 & 0x80);
+// New: uint8_t reg07 = 0xFF; bool dpdmDone = BQ24297_Read_I2C(0x07, &reg07) && !(reg07 & 0x80);
+```
+Initialize `reg07 = 0xFF` so the timeout log message still has a value on failure.
+
+#### EnableOTG (lines 595, 600, 614, 627, 643) — **3 BUG FIXES** + 2 existing checks
+
+**Line 595** — **BUG FIX**: REG08 read with no error check. Add `if (!BQ24297_Read_I2C(0x08, &reg08)) { return; }` — can't safely enable OTG without knowing power state.
+
+**Line 600** — **BUG FIX**: REG00 HIZ clear with no error check. Add `if (!BQ24297_Read_I2C(0x00, &reg00)) { return; }`
+
+**Line 614** — **BUG FIX**: REG01 OTG check with no error check. Change to: `if (BQ24297_Read_I2C(0x01, &reg01_check) && (reg01_check & 0x20)) { ... }` — if read fails, fall through to OTG enable attempt.
+
+**Line 627** — Already checks 0xFF, convert to bool pattern.
+
+**Line 643** — Readback verify in retry loop: `if (BQ24297_Read_I2C(0x01, &readback) && ((readback & 0x30) == 0x20)) { success = true; break; }`
+
+#### DisableOTG (lines 663, 676, 698) — RMW with existing checks
+```c
+// Lines 663, 698: if (reg00 != 0xFF && (reg00 & 0x80))  →  if (BQ24297_Read_I2C(0x00, &reg00) && (reg00 & 0x80))
+// Line 676: if (reg == 0xFF) { ... return; }  →  if (!BQ24297_Read_I2C(0x01, &reg)) { ... return; }
+```
+
+#### IsOTGEnabled line 716, IsChargingEnabled line 721 — **BUG FIX** (no error check)
+```c
+// Old: uint8_t reg = BQ24297_Read_I2C(0x01); return (reg & 0x20) != 0; // 0xFF → true!
+// New: uint8_t reg; if (!BQ24297_Read_I2C(0x01, &reg)) return false; return (reg & 0x20) != 0;
+```
+
+### Step 3: Update SCPIInterface.c call sites (11 sites)
+
+#### SCPI_SysInfoTextGet lines 638-639 — display reads, no error check
+```c
+// Old: uint8_t reg01 = BQ24297_Read_I2C(0x01); uint8_t reg07 = BQ24297_Read_I2C(0x07);
+// New: uint8_t reg01 = 0, reg07 = 0;
+//      bool reg01Ok = BQ24297_Read_I2C(0x01, &reg01);
+//      bool reg07Ok = BQ24297_Read_I2C(0x07, &reg07);
+```
+Update snprintf to show "ERR" when `!regOk`.
+
+#### SCPI_GetBQRegisters loop line 1043 — register dump
+```c
+// Old: regs[i] = BQ24297_Read_I2C(i); if (regs[i] == 0xFF) errCount++;
+// New: bool regOk[11]; if (!BQ24297_Read_I2C(i, &regs[i])) { regOk[i] = false; errCount++; }
+```
+Change all `if (regs[N] == 0xFF)` display checks to `if (!regOk[N])`.
+
+#### SCPI_SetBQILim readback line 1199
+```c
+// Old: uint8_t readback = BQ24297_Read_I2C(0x00); if (readback == 0xFF) ...
+// New: uint8_t readback; if (!BQ24297_Read_I2C(0x00, &readback)) ...
+```
+
+#### SCPI_ForceDPDM lines 1235, 1255, 1273 — RMW + polling + result
+```c
+// Line 1235: if (reg7 == 0xFF)  →  uint8_t reg7; if (!BQ24297_Read_I2C(0x07, &reg7))
+// Line 1255: status = ...; if (status == 0xFF)  →  if (!BQ24297_Read_I2C(0x07, &status))
+// Line 1273: if (reg8 == 0xFF)  →  uint8_t reg8; if (!BQ24297_Read_I2C(0x08, &reg8))
+```
+
+#### SCPI_GetBQDiagnostics lines 1325-1328 — multi-register display
+```c
+// Old: uint8_t reg00 = BQ24297_Read_I2C(0x00); ... if (reg00 == 0xFF) { "ERR" }
+// New: uint8_t reg00; bool reg00Ok = BQ24297_Read_I2C(0x00, &reg00); ... if (!reg00Ok) { "ERR" }
+```
+Apply to reg00, reg01, reg07, reg08 (4 reads, 4 display checks).
+
+## Bug Fixes Included
+
+| Location | Line | Bug |
+|----------|------|-----|
+| Config_Settings | 133 | REG00 RMW without error check — writes garbage on I2C failure |
+| Config_Settings | 186 | REG07 BATFET RMW without check — could disable BATFET on failure |
+| AutoSetILim | 378 | REG00 read without check — writes garbage IINLIM |
+| EnableOTG | 595 | REG08 read without check — wrong pgStat/vbusStat on failure |
+| EnableOTG | 600 | REG00 HIZ clear without check — writes garbage |
+| EnableOTG | 614 | REG01 OTG check without check — 0xFF falsely reports OTG active |
+| IsOTGEnabled | 716 | Returns true on I2C failure (0xFF has bit 5 set) |
+| IsChargingEnabled | 721 | Returns true on I2C failure (0xFF has bit 4 set) |
+
+## Verification
+
+1. **Compile-time safety**: Signature change `uint8_t fn(uint8_t)` → `bool fn(uint8_t, uint8_t*)` causes compiler errors at every unconverted site
+2. **grep check**: `grep -rn "== 0xFF\|!= 0xFF" firmware/src/HAL/BQ24297/BQ24297.c` should return 0 hits after refactor
+3. **Build**: `make -f nbproject/Makefile-default.mk CONF=default build`
+4. **Hardware test** via PowerShell COM3:
+   - `*IDN?` — device responds
+   - `SYST:POW:BQ:REG?` — all registers display (especially REG0A=0x60, not flagged as error)
+   - `SYST:POW:BQ:DIAG?` — full diagnostics with accumulated faults
+   - `SYST:POW:BQ:ILIM 2` — set + readback verify works
+   - `SYST:POW:BQ:FAULTCL` — clear faults
+   - `SYST:LOG?` — no unexpected errors from the refactor
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/2818bccb-ce15-41c9-aa46-9954e21738b9.jsonl
+
+---
+
+commit and push
+
+---
+
+<task-notification>
+<task-id>b045eb6</task-id>
+<tool-use-id>toolu_01Lf4Rp8u3M3qGz6rQmjRmu4</tool-use-id>
+<output-file>/tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/b045eb6.output</output-file>
+<status>completed</status>
+<summary>Background command "Stage 3 firmware files, commit, and verify" completed (exit code 0)</summary>
+</task-notification>
+Read the output file to retrieve the result: /tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/b045eb6.output
+
+---
+
+not sure. whare are the implications?
+
+---
+
+i think we will skip it. document that when we use this scpi command what side effects occur. eg. no automatic current switching based on the results. i assume resluts are just printed to the user and are then discarded?
+
+---
+
+The state machine promotes to 2A if UsbCdc_IsConfigured() is still false after a fixed 2s window, let's increase that to a 5s window.
+
+---
+
+yes
+
+---
+
+<task-notification>
+<task-id>ba4718d</task-id>
+<tool-use-id>toolu_01HFNqqUWiBffkyJkuJuVUB6</tool-use-id>
+<output-file>/tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/ba4718d.output</output-file>
+<status>completed</status>
+<summary>Background command "Commit and push DPDM docs + 5s window change" completed (exit code 0)</summary>
+</task-notification>
+Read the output file to retrieve the result: /tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/ba4718d.output
+
+---
+
+check the latest qodo comment and evaluate the suggestions.
+
+---
+
+you've seen thesE: Category    Suggestion                                                                                                                                       Impact
+Incremental [*]    
+Remove blocking waits in writes
+Medium
+Prevent NULL dereference in reads
+Medium
+Possible issue    
+Prevent NULL dereference in handler
+Medium
+Possible issue    
+Use debounced VBUS presence
+High
+Avoid ISR-induced mutex deadlock
+Medium
+Guard against missing power data
+Medium
+
+---
+
+explain 1 again in detail.
+
+---
+
+not a problem. is the usb retry in a good location such that it is/can be used by other usb write tasks?
+
+---
+
+i feel like the retry should be part of any scpi command, no?
+
+---
+
+add that as a ticket in github.
+
+---
+
+sure.
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the conversation:
+
+1. **Initial Request**: User asked to implement a detailed plan for refactoring `BQ24297_Read_I2C` from returning `uint8_t` (with 0xFF sentinel) to returning `bool` with an output parameter. The plan was already written out in detail.
+
+2. **Implementation Phase**: 
+   - Read all 3 files (BQ24297.h, BQ24297.c, SCPIInterface.c)
+   - Created 4 tasks to track progress
+   - Changed function signature in .h, forward decl in .c, and implementation
+   - Updated all ~24 call sites in BQ24297.c
+   - Updated all ~11 call sites in SCPIInterface.c
+   - Fixed 8 unchecked read-modify-write bugs
+   - Built successfully with no errors/warnings
+   - Grep verified zero remaining 0xFF sentinel patterns
+
+3. **Commit and Push**: User asked to commit and push. Done successfully.
+
+4. **DPDM Documentation**: I proactively noticed the DPDM command wasn't integrated with IINLIM state machine. User asked about implications. After discussion, user decided to skip the reset and asked to document the side effects instead. Updated both SCPIInterface.c comment block and CLAUDE.md.
+
+5. **5s Window Change**: User asked to increase WAIT_USB from 2s to 5s. Applied the change.
+
+6. **Commit and Push**: Committed DPDM docs + 5s window change together.
+
+7. **Timing Constants Extraction**: I proactively extracted magic numbers into named #defines. User approved. Committed and pushed.
+
+8. **Stale Comment + ChargeEnable Write Check**: I noticed a stale "2s" comment and unchecked write in ChargeEnable. Fixed both. Committed and pushed.
+
+9. **Qodo Review**: User asked to check latest Qodo comments. Found 6 suggestions:
+   - #1 Remove blocking waits in writes — Skip (intentional backpressure)
+   - #2 NULL check on `out` param — Skip (internal callers only)
+   - #3 NULL check on BoardData_Get in SCPI_SetBQILim — Accept
+   - #4 Use debounced VBUS — Investigate → Skip (UsbCdc_IsVbusDetected won't fire for wall chargers)
+   - #5 ISR mutex deadlock guard — Skip (never called from ISR)
+   - #6 NULL check on BoardData_Get in SCPI_GetBQDiagnostics — Accept
+
+10. **Detailed explanation of #1**: User asked for detail. I explained the retry loop, why it exists, what Qodo suggested, and why removing it would break things.
+
+11. **USB retry location**: User asked if the retry is in a good shared location. I showed it's buried in a static function, only USB SCPI gets it, WiFi SCPI doesn't. Suggested extracting to shared helper.
+
+12. **GitHub Issue**: User asked to create a ticket. Created #194.
+
+13. **Final checks**: User asked to ensure committed/pushed and if anything else before merge. I noted the 2 accepted Qodo suggestions (#3, #6) still needed applying. User said "sure."
+
+14. **Applied Qodo fixes**: Added NULL checks to SCPI_SetBQILim and SCPI_GetBQDiagnostics. Committed and pushed as `96fb0efb`.
+
+15. **Summary request**: User asked for detailed conversation summary.
+
+Key files modified:
+- firmware/src/HAL/BQ24297/BQ24297.h
+- firmware/src/HAL/BQ24297/BQ24297.c
+- firmware/src/services/SCPI/SCPIInterface.c
+- CLAUDE.md
+- memory/MEMORY.md
+
+Build system note: MPLAB X v6.30 (not v6.25 as in CLAUDE.md) was used for building.
+
+Current branch: feat/timer-based-iinlim
+Latest commit: 96fb0efb
+PR: #189
+Created issue: #194
+
+Summary:
+1. Primary Request and Intent:
+   - **Main task**: Implement the refactoring plan to replace `BQ24297_Read_I2C`'s 0xFF error sentinel with a bool return + output parameter pattern. The old API `uint8_t BQ24297_Read_I2C(uint8_t reg)` was changed to `bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out)`.
+   - **Bug fixes**: Fix 8 unchecked read-modify-write operations that would write garbage on I2C failure.
+   - **Documentation**: Document DPDM SCPI command side effects (diagnostic-only, no automatic current switching).
+   - **Timing change**: Increase IINLIM WAIT_USB window from 2s to 5s.
+   - **Code cleanup**: Extract IINLIM timing magic numbers into named constants, fix stale comments, check ChargeEnable write result.
+   - **Qodo review**: Evaluate 6 Qodo suggestions, accept 2 (NULL checks), skip 4 with rationale, create GitHub issue (#194) for shared SCPI write retry logic.
+   - **Commit and push** all changes to `feat/timer-based-iinlim` branch (PR #189).
+
+2. Key Technical Concepts:
+   - BQ24297 battery management IC with I2C register interface
+   - 0xFF sentinel value problem: 0xFF is valid register data (e.g., REG00 with HIZ+max VINDPM+3A IINLIM)
+   - Read-modify-write (RMW) pattern for I2C registers — must check read success before writing
+   - IINLIM state machine: IDLE → WAIT_DPDM (1s min, 3s timeout) → WAIT_USB (5s) → SETTLED
+   - DPDM (D+/D- detection) — BQ24297 hardware feature for USB/charger identification
+   - FreeRTOS mutex for I2C bus synchronization between PowerAndUITask and USBDeviceTask
+   - SCPI command interface with libscpi `.write` callbacks per transport (USB, WiFi TCP)
+   - Circular buffer backpressure — retry loop for SCPI writes when buffer is full
+   - PIC32MZ microcontroller with XC32 compiler, MPLAB X IDE
+   - `UsbCdc_IsVbusDetected()` is USB-event-driven (won't fire for wall chargers), vs `PLIB_USBHS_VBUSLevelGet()` which reads hardware directly
+
+3. Files and Code Sections:
+
+   - **firmware/src/HAL/BQ24297/BQ24297.h**
+     - Contains BQ24297 type definitions, enums, and function declarations
+     - Changed `BQ24297_Read_I2C` declaration from `uint8_t BQ24297_Read_I2C(uint8_t reg)` to `bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out)`
+     - Updated IINLIM_STATE_WAIT_USB comment from "2s" to "5s"
+
+   - **firmware/src/HAL/BQ24297/BQ24297.c**
+     - Core BQ24297 driver with all I2C operations
+     - Changed function implementation to return bool and write to `*out` on success
+     - Updated forward declaration to match new signature
+     - Updated ~24 internal call sites with new pattern
+     - Fixed 8 unchecked RMW bugs:
+       - Config_Settings REG00 (line ~133): Added `if (!BQ24297_Read_I2C(0x00, &reg))` with LOG_E and skip
+       - Config_Settings REG07 (line ~186): Added `if (!BQ24297_Read_I2C(0x07, &reg))` with LOG_E
+       - AutoSetILim (line ~378): Added early return on read failure
+       - EnableOTG REG08 (line ~595): Added early return on read failure
+       - EnableOTG REG00 (line ~600): Changed to `if (BQ24297_Read_I2C(0x00, &reg00) && (reg00 & 0x80))`
+       - EnableOTG REG01 (line ~614): Changed to `if (BQ24297_Read_I2C(0x01, &reg01_check) && (reg01_check & 0x20))`
+       - IsOTGEnabled (line ~716): Added `if (!BQ24297_Read_I2C(0x01, &reg)) return false;`
+       - IsChargingEnabled (line ~721): Added `if (!BQ24297_Read_I2C(0x01, &reg)) return false;`
+     - Extracted timing constants:
+       ```c
+       #define IINLIM_DPDM_MIN_WAIT_MS   1000
+       #define IINLIM_DPDM_TIMEOUT_MS    3000
+       #define IINLIM_USB_WAIT_MS         5000
+       ```
+     - Changed WAIT_USB timeout from 2000 to 5000ms (now via IINLIM_USB_WAIT_MS)
+     - Fixed ChargeEnable to check write result:
+       ```c
+       if (!BQ24297_Write_I2C(0x01, reg)) {
+           LOG_E("BQ24297_ChargeEnable: REG01 write failed, charge state may be incorrect");
+       }
+       ```
+     - Key function implementation:
+       ```c
+       bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out) {
+           uint8_t I2CData[1];
+           uint8_t rxData = 0;
+           if (pData->I2C_Handle == DRV_HANDLE_INVALID) {
+               LOG_E("BQ24297_Read_I2C: Invalid I2C handle");
+               return false;
+           }
+           if (i2cMutex != NULL) {
+               xSemaphoreTake(i2cMutex, portMAX_DELAY);
+           }
+           I2CData[0] = reg;
+           bool success = DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
+                   pConfigBQ24->I2C_Address, I2CData, 1, &rxData, 1);
+           if (i2cMutex != NULL) {
+               xSemaphoreGive(i2cMutex);
+           }
+           if (!success) {
+               LOG_E("BQ24297_Read_I2C: Failed to read register 0x%02X", reg);
+               return false;
+           }
+           *out = rxData;
+           return true;
+       }
+       ```
+
+   - **firmware/src/services/SCPI/SCPIInterface.c**
+     - SCPI command handlers for BQ24297 diagnostics
+     - Updated 11 call sites to new bool pattern
+     - In SCPI_GetBQRegisters: Added `bool regOk[11]` array to track per-register success instead of `== 0xFF` checks
+     - In SCPI_SysInfoTextGet: Added `bool reg01Ok`/`reg07Ok` with fallback "ERR" display
+     - In SCPI_GetBQDiagnostics: Added `bool reg00Ok`/`reg01Ok`/`reg07Ok`/`reg08Ok` flags
+     - Updated SCPI_ForceDPDM documentation:
+       ```c
+       /**
+        * This is a diagnostic-only command. The detection result (VBUS type from
+        * REG08) is printed to the user and then discarded — it does NOT update
+        * the BQ24297 status struct or reset the IINLIM state machine. Therefore
+        * no automatic current switching occurs based on the result. To change
+        * IINLIM after forced DPDM, use SYST:POW:BQ:ILIM manually.
+        * ...
+        */
+       ```
+     - Added NULL checks for Qodo suggestions #3 and #6:
+       ```c
+       // In SCPI_SetBQILim:
+       tPowerData* pPower = (tPowerData*)BoardData_Get(BOARDDATA_POWER_DATA, 0);
+       if (pPower != NULL) {
+           pPower->BQ24297Data.iinlimState = IINLIM_STATE_SETTLED;
+       } else {
+           LOG_E("SCPI_SetBQILim: power data not available to lock IINLIM state");
+       }
+       
+       // In SCPI_GetBQDiagnostics:
+       if (pPower == NULL) {
+           scpi_printf(context, "ERROR: power data not available\r\n");
+           SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+           return SCPI_RES_ERR;
+       }
+       ```
+
+   - **CLAUDE.md**
+     - Updated IINLIM state machine diagram: `WAIT_USB (2s)` → `WAIT_USB (5s)`
+     - Updated WAIT_USB description to say 5s
+     - Expanded DPDM WARNING to document diagnostic-only behavior and lack of automatic current switching
+
+   - **memory/MEMORY.md**
+     - Updated state machine timing from 2s to 5s for WAIT_USB
+
+4. Errors and fixes:
+   - **Build system path**: CLAUDE.md references MPLAB X v6.25, but the actual install had v6.30 at `/mnt/c/Program Files/Microchip/MPLABX/v6.30/`. The v6.25 `make.exe` was missing. Fixed by checking `ls /mnt/c/Program\ Files/Microchip/MPLABX/` and using v6.30 path.
+   - **Initial make attempt**: Running `make` from WSL without the full Windows path dropped into a Windows command prompt instead of building. Fixed by using the full path to `make.exe` in the MPLAB X v6.30 installation.
+   - **No code errors**: The refactoring compiled cleanly with `-Werror -Wall` on first try after all changes.
+
+5. Problem Solving:
+   - **0xFF sentinel ambiguity**: Solved by propagating the bool return from the underlying I2C driver through to all callers.
+   - **8 unchecked RMW bugs**: Each was handled with the appropriate error pattern — LOG_E + skip (Config_Settings), LOG_E + early return (AutoSetILim, EnableOTG), return false (IsOTGEnabled, IsChargingEnabled).
+   - **DPDM state machine integration**: Analyzed all scenarios (USB host, wall charger, mid-evaluation) and determined the current behavior is acceptable — documented rather than changed.
+   - **Qodo review triage**: Evaluated 6 suggestions with technical rationale for each accept/skip decision. Key insight for #4: `UsbCdc_IsVbusDetected()` is event-driven from USB stack, won't fire for wall chargers where IINLIM management matters most.
+   - **SCPI write retry scope**: Identified that USB SCPI gets retry backpressure but WiFi SCPI doesn't. Created issue #194 to extract shared helper.
+
+6. All user messages:
+   - "Implement the following plan: [detailed refactoring plan for BQ24297_Read_I2C]"
+   - "commit and push"
+   - "i think we will skip it. document that when we use this scpi command what side effects occur. eg. no automatic current switching based on the results. i assume resluts are just printed to the user and are then discarded?"
+   - "The state machine promotes to 2A if UsbCdc_IsConfigured() is still false after a fixed 2s window, let's increase that to a 5s window."
+   - "yes" (to commit and push timing constants)
+   - "check the latest qodo comment and evaluate the suggestions."
+   - "you've seen thesE: [table of 6 Qodo suggestions]"
+   - "explain 1 again in detail."
+   - "not a problem. is the usb retry in a good location such that it is/can be used by other usb write tasks?"
+   - "i feel like the retry should be part of any scpi command, no?"
+   - "add that as a ticket in github."
+   - "then, ensure we are committed and pushed. anything else before we merge?"
+   - "sure." (to apply Qodo suggestions #3 and #6)
+
+7. Pending Tasks:
+   - No explicit pending tasks. The branch is ready to merge per user's intent.
+   - GitHub issue #194 tracks the future SCPI write retry extraction work.
+
+8. Current Work:
+   The final action was applying Qodo review suggestions #3 and #6 (NULL checks for `BoardData_Get` in `SCPI_SetBQILim` and `SCPI_GetBQDiagnostics`), committing as `96fb0efb`, and pushing to `origin/feat/timer-based-iinlim`. The user had asked "anything else before we merge?" and after applying the two accepted Qodo fixes, I stated "Ready to merge whenever you are."
+
+   Branch: `feat/timer-based-iinlim`
+   PR: #189
+   Latest commit: `96fb0efb fix(scpi): add NULL checks for BoardData_Get in BQ24297 SCPI commands`
+   All commits on branch (31 total from `fa9ab498` to `96fb0efb`)
+
+9. Optional Next Step:
+   The branch is ready to merge. The user's last substantive request before the summary was confirming everything is committed/pushed and asking about pre-merge readiness. No further code changes are needed unless the user wants to proceed with merging PR #189 into main.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/ea79bbc2-f727-431d-a23f-4fab3cf3adde.jsonl
+
+---
+
+what about this suggestion? One non-blocking behavior edge case remains: SYST:POW:BQ:ILIM can still return success if BoardData_Get(...) is NULL (it logs but does not fail), so the manual ILIM may be applied but state-locking may be
+     skipped.
+     Ref: SCPIInterface.c:1226, SCPIInterface.c:1229
+
+---
+
+commit and push
+
+---
+
+check the latest qodo comment
+
+---
+
+yes. commit and push after.
+
+---
+
+check the qodo comment for an update
+
+---
+
+i've merged it. clear context and get ready for the next ticket.
+
+---
+
+yes.
+
+---
+
+[Request interrupted by user for tool use]

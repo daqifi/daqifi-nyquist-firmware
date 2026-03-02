@@ -3,7 +3,7 @@
   "checkpoint_id": "fde1ca8e1cdc",
   "strategy": "manual-commit",
   "branch": "fix/scpi-write-retry-shared-helper",
-  "checkpoints_count": 0,
+  "checkpoints_count": 1,
   "files_touched": [
     "firmware/src/services/SCPI/SCPIInterface.c",
     "firmware/src/services/SCPI/SCPIInterface.h",
@@ -17,13 +17,20 @@
       "context": "/fd/e1ca8e1cdc/0/context.md",
       "content_hash": "/fd/e1ca8e1cdc/0/content_hash.txt",
       "prompt": "/fd/e1ca8e1cdc/0/prompt.txt"
+    },
+    {
+      "metadata": "/fd/e1ca8e1cdc/1/metadata.json",
+      "transcript": "/fd/e1ca8e1cdc/1/full.jsonl",
+      "context": "/fd/e1ca8e1cdc/1/context.md",
+      "content_hash": "/fd/e1ca8e1cdc/1/content_hash.txt",
+      "prompt": "/fd/e1ca8e1cdc/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 98,
-    "cache_creation_tokens": 58560,
-    "cache_read_tokens": 4715674,
-    "output_tokens": 16378,
-    "api_call_count": 82
+    "input_tokens": 119,
+    "cache_creation_tokens": 79621,
+    "cache_read_tokens": 5833086,
+    "output_tokens": 24396,
+    "api_call_count": 97
   }
 }

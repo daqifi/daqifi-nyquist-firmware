@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "fde1ca8e1cdc",
+  "session_id": "ea79bbc2-f727-431d-a23f-4fab3cf3adde",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-02T05:13:41.838523919Z",
+  "branch": "fix/scpi-write-retry-shared-helper",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIInterface.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "85821fbcb48d",
+  "checkpoint_transcript_start": 1490,
+  "transcript_lines_at_start": 1490,
+  "token_usage": {
+    "input_tokens": 21,
+    "cache_creation_tokens": 21061,
+    "cache_read_tokens": 1117412,
+    "output_tokens": 8018,
+    "api_call_count": 15
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-02T05:13:39.091244745Z",
+    "agent_lines": 0,
+    "human_added": 41,
+    "human_modified": 2260,
+    "human_removed": 0,
+    "total_committed": 2301,
+    "agent_percentage": 0
+  }
+}
