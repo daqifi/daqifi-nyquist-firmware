@@ -649,6 +649,13 @@ static bool UsbCdc_Flush(UsbCdcData_t* client) {
 }
 
 /**
+ * Thin wrapper to match ScpiTransportWriteFn signature.
+ */
+static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
+    return UsbCdc_WriteToBuffer(NULL, data, len);
+}
+
+/**
  * Callback from libscpi: Implements the write operation
  * @param context The scpi context
  * @param data The data to write
@@ -656,19 +663,8 @@ static bool UsbCdc_Flush(UsbCdcData_t* client) {
  * @return The number of characters written
  */
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
-
     UNUSED(context);
-    size_t written = 0;
-    int retries = 200;  // 200 * 5ms = 1s max wait
-    while (written < len && retries > 0) {
-        size_t n = UsbCdc_WriteToBuffer(&gRunTimeUsbSttings, data + written, len - written);
-        written += n;
-        if (written >= len) break;
-        // Buffer or mutex busy — yield briefly and retry
-        vTaskDelay(pdMS_TO_TICKS(5));
-        retries--;
-    }
-    return written;
+    return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
 }
 
 /**

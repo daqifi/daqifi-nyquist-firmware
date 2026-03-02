@@ -19,6 +19,21 @@ extern "C" {
      */
     scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context);
 
+    /*! Function pointer type for transport-level write (no SCPI context) */
+    typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);
+
+    /*!
+     * Write SCPI response data with retry on buffer-full backpressure.
+     * Retries up to 200 times with 5ms between attempts (1s max).
+     * Handles partial writes.
+     * @param writeFn  Transport write function (USB or WiFi buffer write)
+     * @param data     Data to write
+     * @param len      Number of bytes to write
+     * @return Total bytes written (may be < len if retries exhausted)
+     */
+    size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                               const char* data, size_t len);
+
     /**
      * Printf-style helper for writing formatted text to a SCPI response.
      * Uses an internal 192-byte buffer; each call is one write.
