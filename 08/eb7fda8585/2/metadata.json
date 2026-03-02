@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "08eb7fda8585",
+  "session_id": "ea79bbc2-f727-431d-a23f-4fab3cf3adde",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-02T01:12:57.386145736Z",
+  "branch": "feat/timer-based-iinlim",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIInterface.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "61ddad655897",
+  "checkpoint_transcript_start": 895,
+  "transcript_lines_at_start": 895,
+  "token_usage": {
+    "input_tokens": 56,
+    "cache_creation_tokens": 132825,
+    "cache_read_tokens": 5459009,
+    "output_tokens": 8509,
+    "api_call_count": 40
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-02T01:12:54.785226556Z",
+    "agent_lines": 0,
+    "human_added": 9,
+    "human_modified": 2249,
+    "human_removed": 0,
+    "total_committed": 2258,
+    "agent_percentage": 0
+  }
+}
