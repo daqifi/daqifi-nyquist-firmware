@@ -1224,7 +1224,11 @@ static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
 
     // Prevent IINLIM state machine from overriding the manual setting
     tPowerData* pPower = (tPowerData*)BoardData_Get(BOARDDATA_POWER_DATA, 0);
-    pPower->BQ24297Data.iinlimState = IINLIM_STATE_SETTLED;
+    if (pPower != NULL) {
+        pPower->BQ24297Data.iinlimState = IINLIM_STATE_SETTLED;
+    } else {
+        LOG_E("SCPI_SetBQILim: power data not available to lock IINLIM state");
+    }
 
     scpi_printf(context, "ILIM=%d HIZ=%d Readback=0x%02X OK\r\n", actual, hiz, readback);
     return SCPI_RES_OK;
@@ -1320,6 +1324,11 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
     tPowerData* pPower = (tPowerData*)BoardData_Get(
             BOARDDATA_POWER_DATA,
             0);
+    if (pPower == NULL) {
+        scpi_printf(context, "ERROR: power data not available\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
     tBQ24297Data* pBQ = &pPower->BQ24297Data;
 
     // Refresh cached status from hardware
