@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "fde1ca8e1cdc",
+  "session_id": "4f9503c9-313f-4a66-bddd-a3033e58c210",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-02T05:12:57.736577971Z",
+  "branch": "fix/scpi-write-retry-shared-helper",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIInterface.c",
+    "firmware/src/services/SCPI/SCPIInterface.h",
+    "firmware/src/services/UsbCdc/UsbCdc.c",
+    "firmware/src/services/wifi_services/wifi_tcp_server.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "b3f7b188c92d",
+  "token_usage": {
+    "input_tokens": 98,
+    "cache_creation_tokens": 58560,
+    "cache_read_tokens": 4715674,
+    "output_tokens": 16378,
+    "api_call_count": 82
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-02T05:12:57.368199442Z",
+    "agent_lines": 0,
+    "human_added": 27,
+    "human_modified": 3256,
+    "human_removed": 0,
+    "total_committed": 3281,
+    "agent_percentage": 0
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.4.7",
+  "checkpoint_id": "fde1ca8e1cdc",
+  "strategy": "manual-commit",
+  "branch": "fix/scpi-write-retry-shared-helper",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIInterface.c",
+    "firmware/src/services/SCPI/SCPIInterface.h",
+    "firmware/src/services/UsbCdc/UsbCdc.c",
+    "firmware/src/services/wifi_services/wifi_tcp_server.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/fd/e1ca8e1cdc/0/metadata.json",
+      "transcript": "/fd/e1ca8e1cdc/0/full.jsonl",
+      "context": "/fd/e1ca8e1cdc/0/context.md",
+      "content_hash": "/fd/e1ca8e1cdc/0/content_hash.txt",
+      "prompt": "/fd/e1ca8e1cdc/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 98,
+    "cache_creation_tokens": 58560,
+    "cache_read_tokens": 4715674,
+    "output_tokens": 16378,
+    "api_call_count": 82
+  }
+}
