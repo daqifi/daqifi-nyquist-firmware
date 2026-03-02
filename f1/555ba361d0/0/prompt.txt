@@ -1,0 +1,179 @@
+Implement the following plan:
+
+# Extract SCPI Write Retry Logic into Shared Helper (Issue #194)
+
+## Context
+
+The SCPI write retry loop (backpressure when circular buffer is full) only exists for USB in `SCPI_USB_Write` (UsbCdc.c:658). The WiFi SCPI callback `SCPI_TCP_Write` (wifi_tcp_server.c:156) has no retry — if the WiFi circular buffer is full, that chunk of the SCPI response is silently dropped.
+
+| Transport | Callback | Buffer | Retry? |
+|-----------|----------|--------|--------|
+| USB | `SCPI_USB_Write` | 16KB | Yes (200 × 5ms = 1s) |
+| WiFi | `SCPI_TCP_Write` | 14KB | No — data lost |
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `firmware/src/services/SCPI/SCPIInterface.h` | Add typedef + helper declaration |
+| `firmware/src/services/SCPI/SCPIInterface.c` | Add `SCPI_WriteWithRetry()` implementation |
+| `firmware/src/services/UsbCdc/UsbCdc.c` | Replace inline retry loop with helper call |
+| `firmware/src/services/wifi_services/wifi_tcp_server.c` | Replace single call with helper call |
+
+## Implementation
+
+### Step 1: Add shared helper declaration to SCPIInterface.h
+
+```c
+/*! Function pointer type for transport-level write (no SCPI context) */
+typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);
+
+/*!
+ * Write SCPI response data with retry on buffer-full backpressure.
+ * Retries up to SCPI_WRITE_MAX_RETRIES times with SCPI_WRITE_RETRY_DELAY_MS
+ * between attempts. Handles partial writes.
+ * @param writeFn  Transport write function (USB or WiFi buffer write)
+ * @param data     Data to write
+ * @param len      Number of bytes to write
+ * @return Total bytes written (may be < len if retries exhausted)
+ */
+size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                           const char* data, size_t len);
+```
+
+### Step 2: Add implementation to SCPIInterface.c
+
+```c
+#define SCPI_WRITE_MAX_RETRIES      200
+#define SCPI_WRITE_RETRY_DELAY_MS   5
+
+size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                           const char* data, size_t len) {
+    size_t written = 0;
+    int retries = SCPI_WRITE_MAX_RETRIES;
+    while (written < len && retries > 0) {
+        size_t n = writeFn(data + written, len - written);
+        written += n;
+        if (written >= len) break;
+        vTaskDelay(pdMS_TO_TICKS(SCPI_WRITE_RETRY_DELAY_MS));
+        retries--;
+    }
+    return written;
+}
+```
+
+### Step 3: Update UsbCdc.c
+
+Add a thin wrapper to match the `ScpiTransportWriteFn` signature (UsbCdc_WriteToBuffer takes an extra client param):
+
+```c
+static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
+    return UsbCdc_WriteToBuffer(NULL, data, len);  // NULL defaults to gRunTimeUsbSttings
+}
+```
+
+Replace `SCPI_USB_Write` body:
+```c
+static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
+    UNUSED(context);
+    return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
+}
+```
+
+Need to add `#include "services/SCPI/SCPIInterface.h"` if not already included.
+
+### Step 4: Update wifi_tcp_server.c
+
+`wifi_tcp_server_WriteBuffer(const char* data, size_t len)` already matches `ScpiTransportWriteFn` — no wrapper needed.
+
+Replace `SCPI_TCP_Write` body:
+```c
+static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
+    return SCPI_WriteWithRetry(wifi_tcp_server_WriteBuffer, data, len);
+}
+```
+
+Need to add `#include "services/SCPI/SCPIInterface.h"` if not already included.
+
+## Notes
+
+- **WiFi all-or-nothing writes**: `wifi_tcp_server_WriteBuffer` returns 0 if buffer doesn't have `len` bytes free. The retry loop handles this correctly — it retries the same write until space is available or retries are exhausted.
+- **USB partial writes**: `UsbCdc_WriteToBuffer` supports partial writes, clamped to `USBCDC_WBUFFER_SIZE`. The retry loop accumulates partial progress via `data + written, len - written`.
+- **Timeout**: 200 × 5ms = 1 second max. Same as current USB behavior.
+
+## Verification
+
+1. **Build**: `make -f nbproject/Makefile-default.mk CONF=default build`
+2. **grep check**: `grep -rn "retries\|retry" firmware/src/services/UsbCdc/UsbCdc.c` — should have no inline retry loop
+3. **Hardware test** via USB:
+   - `*IDN?` — basic response works
+   - `SYST:POW:BQ:DIAG?` — large response (~2KB) writes fully
+   - `SYST:POW:BQ:REG?` — multi-line response
+4. **WiFi test** (if available): Same SCPI commands over TCP
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/ea79bbc2-f727-431d-a23f-4fab3cf3adde.jsonl
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+it builds. check for proper comments. how can we test the functionality?
+
+---
+
+the usb is connected and flashed. test usb
+
+---
+
+you may connect the device to Tesla with KpMg24259415.
+
+---
+
+try to get wifi module info
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+now try
+
+---
+
+try the 10x rapid-fire stress on tcp.
+
+---
+
+commit push and ill merge
+
+---
+
+[Request interrupted by user]
+
+---
+
+commit and push to a pr
+
+---
+
+how does this hold up when we are sending files from the sd card over scpi? i assume that usecase is the biggest test, right?
+
+---
+
+first check what is on the sd card (D:\DAQiFi) maybe add a bunch more filenames so we might be able to work the buffers so it has to send in multiple writes?
+
+---
+
+you have to set the wifi network for the device to connect to the network.
+
+---
+
+no, the lan ethernet is connect to the same network Tesla is connected to. you need to tell the nyquist to connect to Tesla
+
+---
+
+check the qodo comment onthis pr
