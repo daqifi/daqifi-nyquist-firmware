@@ -1,0 +1,236 @@
+Implement the following plan:
+
+# Robust REG09 Fault Handling for BQ24297
+
+## Context
+
+BQ24297 REG09 is a latched fault register — reading it clears all latched faults. The current firmware has three problems:
+
+1. **Latched faults silently lost**: Every `BQ24297_UpdateStatus()` call does a double-read (clear latched, read current). The latched faults from the first read are discarded. If a transient fault occurred between reads, it vanishes.
+
+2. **SCPI diagnostic commands inconsistent**: `SCPI_GetBQRegisters` reads REG09 once in a loop (clearing latches), then re-reads much later. `SCPI_GetBQDiagnostics` does a single read after `UpdateStatus` already cleared latches.
+
+3. **No runtime NTC monitoring after boot**: `BQ24297_UpdateBatteryStatus()` is called once at init, never again. If a thermistor fault develops at runtime, charging is never disabled. (Future: issue #193 will add INT-pin-driven fault monitoring to address this without I2C polling.)
+
+### Datasheet Reference (BQ24297 REG09, Table 9-16, p41)
+
+```
+Bit 7: WATCHDOG_FAULT    Bit 6: OTG_FAULT
+Bit 5: CHRG_FAULT[1]     Bit 4: CHRG_FAULT[0]
+Bit 3: BAT_FAULT          Bit 2: Reserved (always 0)
+Bit 1: NTC_FAULT[1]      Bit 0: NTC_FAULT[0]
+```
+
+- NTC is 2-bit field [1:0]: 00=Normal, 01=Hot, 10=Cold, 11=Hot+Cold
+- **Footnote (2)**: "All register bits in REG09 are latched fault. First time read clears the previous fault and second read updates fault register to any fault that still presents."
+- Current firmware 2-bit mask `0x03` is CORRECT per datasheet. The SCPI 3-bit mask `0x07` harmlessly includes reserved bit 2.
+
+### User Requirements
+- Never silently clear faults — accumulate them in a global
+- System should act on accumulated faults as needed
+- At boot, check NTC: COLD = no battery (disable charging), HOT = disable charging for safety
+- Runtime NTC re-checking deferred to issue #193 (INT-pin-driven, no I2C polling)
+
+## Approach
+
+### 1. Add accumulated fault fields to `BQ24297_STATUS` struct
+
+**File: `firmware/src/HAL/BQ24297/BQ24297.h`** (after existing fault fields, ~line 125)
+
+Add "sticky" accumulated fault fields that OR in every REG09 read:
+
+```c
+// Accumulated (sticky) faults — OR'd on every REG09 read, cleared explicitly
+bool watchdog_faultAccum;
+bool otg_faultAccum;
+enum eChargeFault chgFaultAccum;
+bool bat_faultAccum;
+enum eNTCFault ntcFaultAccum;
+```
+
+Add a function to clear them:
+```c
+void BQ24297_ClearAccumulatedFaults(void);
+```
+
+### 2. Centralize all REG09 reads through a single function
+
+**File: `firmware/src/HAL/BQ24297/BQ24297.c`**
+
+Create a new internal helper that EVERY REG09 read goes through:
+
+```c
+/**
+ * Read REG09 and accumulate faults.
+ * First read captures+clears latched faults, second read gets current.
+ * Both reads feed into accumulated fault tracking.
+ * @param[out] latched  Raw latched REG09 value (NULL to skip)
+ * @param[out] current  Raw current REG09 value (NULL to skip)
+ * @return true if at least one read succeeded
+ */
+static bool BQ24297_ReadFaultReg(uint8_t *latched, uint8_t *current);
+```
+
+Implementation:
+- Read REG09 → store as `latchedVal`, OR into accumulated faults
+- Read REG09 again → store as `currentVal`, OR into accumulated faults
+- Decode `currentVal` into `pData->status` fields (existing behavior)
+- If first read fails → return false, don't touch fields
+- If second read fails → use latchedVal for status fields, log error
+
+Accumulation logic (applied to BOTH latched and current reads):
+```c
+static void AccumulateFaults(uint8_t reg09) {
+    if (reg09 & 0x80) pData->status.watchdog_faultAccum = true;
+    if (reg09 & 0x40) pData->status.otg_faultAccum = true;
+    uint8_t chgF = (reg09 >> 4) & 0x03;
+    if (chgF > pData->status.chgFaultAccum) pData->status.chgFaultAccum = chgF;
+    if (reg09 & 0x08) pData->status.bat_faultAccum = true;
+    uint8_t ntcF = reg09 & 0x03;
+    if (ntcF != NTC_FAULT_NORMAL) pData->status.ntcFaultAccum = ntcF;
+}
+```
+
+### 3. Update `BQ24297_UpdateStatus()` to use the centralized reader
+
+Replace current REG09 double-read block (lines 238-252) with call to `BQ24297_ReadFaultReg(NULL, NULL)`.
+
+### 4. Update SCPI commands to use centralized reader
+
+**File: `firmware/src/services/SCPI/SCPIInterface.c`**
+
+**SCPI_GetBQRegisters**: Instead of reading REG09 in the loop (which clears latches without accumulating), skip index 9 in the loop and call `BQ24297_ReadFaultReg(&latched, &current)` separately to get both values properly accumulated.
+
+**SCPI_GetBQDiagnostics**: Replace the single `BQ24297_Read_I2C(0x09)` with `BQ24297_ReadFaultReg(&latched, &current)`. Display current faults (since `UpdateStatus` was just called, latched should be clear unless a new fault appeared).
+
+### 5. Expose accumulated faults in SCPI diagnostics
+
+**File: `firmware/src/services/SCPI/SCPIInterface.c`** — `SCPI_GetBQDiagnostics`
+
+Add a section after the current REG09 output showing accumulated faults:
+
+```
+[Accumulated Faults]
+  Watchdog=0 | OTG=0 | CHG=Normal (0) | BAT=0 | NTC=Ok (0)
+```
+
+### 6. Clear accumulated faults at appropriate times
+
+- On `BQ24297_Config_Settings()` (boot): clear all accumulated fields after init
+- Expose via SCPI: Add `SYST:POW:BQ:FAULTCLR` command to manually clear
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `firmware/src/HAL/BQ24297/BQ24297.h` | Add accum fields to struct, declare `BQ24297_ClearAccumulatedFaults()` and `BQ24297_ReadFaultReg()` |
+| `firmware/src/HAL/BQ24297/BQ24297.c` | Add `BQ24297_ReadFaultReg()`, `AccumulateFaults()`, `BQ24297_ClearAccumulatedFaults()`. Refactor `UpdateStatus()` REG09 block. |
+| `firmware/src/services/SCPI/SCPIInterface.c` | Refactor REG09 reads in `GetBQRegisters` and `GetBQDiagnostics` to use centralized reader. Add accumulated faults to diagnostics. Add `FAULTCLR` command. |
+
+**Note:** No changes to `PowerApi.c` — runtime NTC monitoring via INT pin is tracked in issue #193.
+
+## Verification
+
+1. Build with `make -f nbproject/Makefile-default.mk CONF=default build`
+2. Flash to device via IDE
+3. Test via PowerShell COM3:
+   - `SYST:POW:BQ:REG?` — verify REG09 still shows latched + current
+   - `SYST:POW:BQ:DIAG?` — verify accumulated faults section appears
+   - `SYST:POW:BQ:FAULTCLR` — verify clears accumulated faults
+   - Unplug/replug USB → verify CHRG_FAULT accumulates from adapter disconnect
+   - Check `SYST:POW:BQ:DIAG?` after replug → accumulated faults should show the event
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/c86a060f-90d9-4a67-b12b-4a172a6a1127.jsonl
+
+---
+
+the device is connected and flashed. check the device for proper operation. use powershell - perhaps you can use powershell to interact live with the device instead of creating a script?
+
+---
+
+commit and push.
+
+---
+
+check Add timeout to prevent indefinite blocking in USB write loop and Fix fault field bit masking qodo comments
+
+---
+
+<task-notification>
+<task-id>b4b8ba7</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/b4b8ba7.output</output-file>
+<status>completed</status>
+<summary>Background command "Stage, commit, and push the fixes" completed (exit code 0)</summary>
+</task-notification>
+Read the output file to retrieve the result: /tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/b4b8ba7.output
+
+---
+
+device is freshly flashed. please test our changes.
+
+---
+
+commit and push
+
+---
+
+we do need to take action regarding charge enable upon boot. if the battery has a temp lo or temp hi fault, we want to disable charging upon boot.
+
+---
+
+try again
+
+---
+
+flash and test
+
+---
+
+[Request interrupted by user]
+
+---
+
+i programmed so now test.
+
+---
+
+commit and push
+
+---
+
+<task-notification>
+<task-id>bec7189</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/bec7189.output</output-file>
+<status>completed</status>
+<summary>Background command "Stage, commit, and push" completed (exit code 0)</summary>
+</task-notification>
+Read the output file to retrieve the result: /tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/bec7189.output
+
+---
+
+normally, a A disconnected or unpowered BQ24297 will fail to acknowledge (NACK) its 7-bit slave address 0x6B during the initial I2C START condition, meaning the transaction should be aborted by the hardware driver long before any data byte (like 0xFF) is ever clocked in. but what if the bq24297 or i2c bus gets hung after the i2c start? would we still be getting nacks or would we get one before the bus hung?
+
+---
+
+this is related to https://github.com/daqifi/daqifi-nyquist-firmware/issues/192#issuecomment-3977119891 likely, we don't need to check for consutive 0xff but could rely on other error detection means. yes, switching from a blocking to a non blcking implementaiton could be ideal. the bus could sometimes become unresponsive seemlingly when the i2c operation got interrupted by another task during streaming. so, we've stopped i2c polling until we can ensure we can detect i2c bus errors and ensure we don't block the rest of the app. please update the ticket with these recent musings
+
+---
+
+on our current pr, what about this issue: charging control silently no-ops on I2C read failure.
+     BQ24297_ChargeEnable() interprets 0xFF (read error) as OTG-enabled because bit 5 is set, then returns early. That can skip intended charge-disable enforcement paths.
+     Refs: BQ24297.c:319, BQ24297.c:322, BQ24297.c:210, BQ24297.c:758
+
+---
+
+let's review the 0xff comparision for i2c read errors. note, the 0xff test is not really a good method to check for i2c errors. we should monitor the return fro mthe i2c command (and/or any i2c error bits that are worth monitoring). the real verification of a write should be a readback of the written data. if it matches, no issue. if it doesn't match, we got an issue.
+
+---
+
+we can do it on this pr.
+
+---
+
+[Request interrupted by user for tool use]
