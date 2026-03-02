@@ -123,6 +123,12 @@ typedef struct
     bool bat_fault;
     //! NTC Fault code
     enum eNTCFault ntcFault;
+    // Accumulated (sticky) faults — OR'd on every REG09 read, cleared explicitly
+    bool watchdog_faultAccum;
+    bool otg_faultAccum;
+    enum eChargeFault chgFaultAccum;
+    bool bat_faultAccum;
+    enum eNTCFault ntcFaultAccum;
     // Inferred battery status from registers
     bool batPresent;
 } BQ24297_STATUS;
@@ -163,8 +169,18 @@ typedef struct
     uint16_t I2C_Address;
  } tBQ24297Config;
 
+/*! @enum eIINLIM_State
+ * @brief State machine for managing IINLIM after VBUS detection
+ */
+typedef enum {
+    IINLIM_STATE_IDLE = 0,       // No VBUS, waiting
+    IINLIM_STATE_WAIT_DPDM,      // VBUS appeared, waiting for DPDM to finish
+    IINLIM_STATE_WAIT_USB,       // DPDM done, IINLIM=500mA, waiting 5s for USB enumeration
+    IINLIM_STATE_SETTLED          // Final IINLIM set (500mA or 2000mA)
+} eIINLIM_State;
+
  /*! @struct sBQ24297Data
- * @brief Data structure for the BQ24297 
+ * @brief Data structure for the BQ24297
  * @typedef tBQ24297Data
  * @brief Data type associated to the structure sBQ24297Data
  */
@@ -173,12 +189,16 @@ typedef struct
 	unsigned char INT_Val;
     //! Status value
 	unsigned char STAT_Val;
-    //! Interruption falg
+    //! Interruption flag
     volatile bool intFlag;
     //! Indicate if charge is allowed
     bool chargeAllowed;
-    //! Initialitaion completed
+    //! Initialization completed
     bool initComplete;
+    //! IINLIM state machine
+    eIINLIM_State iinlimState;
+    TickType_t iinlimTimestamp;
+    bool iinlimLastVbus;
     //! Current status of the module
     BQ24297_STATUS status;
     //I2C handler to this module
@@ -199,7 +219,7 @@ typedef struct
  
 /*!
  * Initializes hardware
- * @param[in] pConfigInit Pointer to initial configuration of BQ23297 module
+ * @param[in] pConfigInit Pointer to initial configuration of BQ24297 module
  * @param[in] pWriteInit Pointer to initial write variables data structure
  * @param[in] pDataInit Pointer to data structure of BQ24297 module
  */
@@ -214,8 +234,9 @@ void BQ24297_InitHardware(                                                  \
 void BQ24297_Config_Settings( void );  
       
 /*!
- * Function to update status by reading all registers
- * NOTE: Only called at boot - no I2C polling after init
+ * Updates BQ24297 status by reading all registers via I2C.
+ * Called at boot, and on-demand by ForceDPDM, DisableOTG,
+ * IsBatteryPresent, and UpdateBatteryStatus.
  */
 void BQ24297_UpdateStatus();
 
@@ -267,9 +288,10 @@ void BQ24297_SetPowerMode(bool externalPowerPresent);
 /*!
  * Read a BQ24297 register via I2C
  * @param[in] reg Register address to read
- * @return Register value or 0xFF on error
+ * @param[out] out Pointer to receive register value (unchanged on error)
+ * @return true on success, false on error
  */
-uint8_t BQ24297_Read_I2C(uint8_t reg);
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out);
 
 /*!
  * Write to a BQ24297 register via I2C
@@ -290,6 +312,23 @@ bool BQ24297_Write_I2C(uint8_t reg, uint8_t data);
 bool BQ24297_IsBatteryPresent(void);
 
 /*!
+ * Set the input current limit (IINLIM) on BQ24297
+ * Also clears HIZ mode (REG00 bit 7) to ensure current flows from VBUS.
+ * @param iinlimCode IINLIM code 0-7 (eILimit enum):
+ *   0=100mA, 1=150mA, 2=500mA, 3=900mA, 4=1A, 5=1.5A, 6=2A, 7=3A
+ * @return true if write succeeded, false on out-of-range or I2C error
+ */
+bool BQ24297_SetIINLIM(uint8_t iinlimCode);
+
+/*!
+ * Manage IINLIM state machine - call periodically from Power_Tasks
+ * Handles VBUS detection, DPDM wait, USB enumeration check, and
+ * sets appropriate IINLIM (500mA for USB host, 2000mA for wall charger)
+ * @param[in] vbusPresent true if VBUS is currently detected
+ */
+void BQ24297_ManageIINLIM(bool vbusPresent);
+
+/*!
  * Update battery status and charging allowed flag
  * Updates batPresent and chargeAllowed flags based on:
  * - Battery presence detection
@@ -297,7 +336,23 @@ bool BQ24297_IsBatteryPresent(void);
  * Disables charging if thermistor is stuck low (HOT) for safety
  */
 void BQ24297_UpdateBatteryStatus(void);
-    
+
+/*!
+ * Read REG09 with proper double-read protocol and accumulate faults.
+ * First read captures+clears latched faults, second read gets current.
+ * Both reads feed into accumulated fault tracking.
+ * @param[out] latched  Raw latched REG09 value (NULL to skip)
+ * @param[out] current  Raw current REG09 value (NULL to skip)
+ * @return true if at least one read succeeded
+ */
+bool BQ24297_ReadFaultReg(uint8_t *latched, uint8_t *current);
+
+/*!
+ * Clear all accumulated (sticky) fault fields.
+ * Call after handling faults or on demand via SCPI.
+ */
+void BQ24297_ClearAccumulatedFaults(void);
+
 #ifdef	__cplusplus
 }
 #endif

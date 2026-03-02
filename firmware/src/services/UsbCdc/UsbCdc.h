@@ -112,7 +112,10 @@ extern "C" {
         
         /** USB VBUS detection from microcontroller (independent of BQ24297) */
         bool isVbusDetected;
-        
+
+        /** USB host completed enumeration (SET_CONFIGURATION) */
+        bool isConfigured;
+
         /** Command history for debugging */
         char cmdHistory[SCPI_CMD_HISTORY_SIZE][SCPI_CMD_MAX_LENGTH];
         uint8_t cmdHistoryHead;  // Next write position
@@ -172,7 +175,13 @@ extern "C" {
      * @return true if VBUS is detected, false otherwise
      */
     bool UsbCdc_IsVbusDetected(void);
-    
+
+    /**
+     * Returns whether USB host has completed enumeration (SET_CONFIGURATION)
+     * @return true if USB host configured the device, false otherwise
+     */
+    bool UsbCdc_IsConfigured(void);
+
     /**
      * Runtime USB settings structure
      * Used for monitoring USB enumeration state

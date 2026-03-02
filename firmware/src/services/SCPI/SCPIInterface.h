@@ -1,4 +1,7 @@
 #include "libraries/scpi/libscpi/inc/scpi/scpi.h"
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 
 #ifndef SCPIINTERFACE_H
 #define	SCPIINTERFACE_H
@@ -16,6 +19,23 @@ extern "C" {
      */
     scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context);
 
+    /**
+     * Printf-style helper for writing formatted text to a SCPI response.
+     * Uses an internal 192-byte buffer; each call is one write.
+     * @param context SCPI context
+     * @param fmt printf format string
+     */
+    static inline void scpi_printf(scpi_t *context, const char *fmt, ...) {
+        char buf[192];
+        va_list args;
+        va_start(args, fmt);
+        int n = vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        if (n > 0) {
+            size_t len = ((size_t)n < sizeof(buf)) ? (size_t)n : sizeof(buf) - 1;
+            context->interface->write(context, buf, len);
+        }
+    }
 
 #ifdef	__cplusplus
 }

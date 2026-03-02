@@ -635,19 +635,27 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         context->interface->write(context, buffer, strlen(buffer));
         
         // Read REG01 and REG07 for detailed status
-        uint8_t reg01 = BQ24297_Read_I2C(0x01);
-        uint8_t reg07 = BQ24297_Read_I2C(0x07);
-        
+        uint8_t reg01 = 0, reg07 = 0;
+        bool reg01Ok = BQ24297_Read_I2C(0x01, &reg01);
+        bool reg07Ok = BQ24297_Read_I2C(0x07, &reg07);
+
         // BATFET status (REG07 bit 5: 0=enabled, 1=disabled)
-        bool batfetEnabled = !(reg07 & 0x20);
-        
+        bool batfetEnabled = reg07Ok && !(reg07 & 0x20);
+
         // REG01 breakdown: [7:6]=watchdog, [5]=OTG, [4]=CHG_CONFIG, [3:1]=SYS_MIN, [0]=reserved
-        snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: 0x%02X (OTG=%d, CHG=%d) | REG07: 0x%02X\r\n",
-            batfetEnabled ? "Enabled" : "Disabled!",
-            reg01,
-            (reg01 >> 5) & 1,  // OTG bit
-            (reg01 >> 4) & 1,  // Charge enable bit
-            reg07);
+        if (reg01Ok && reg07Ok) {
+            snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: 0x%02X (OTG=%d, CHG=%d) | REG07: 0x%02X\r\n",
+                batfetEnabled ? "Enabled" : "Disabled!",
+                reg01,
+                (reg01 >> 5) & 1,  // OTG bit
+                (reg01 >> 4) & 1,  // Charge enable bit
+                reg07);
+        } else {
+            snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: %s | REG07: %s\r\n",
+                reg07Ok ? (batfetEnabled ? "Enabled" : "Disabled!") : "ERR",
+                reg01Ok ? "OK" : "ERR",
+                reg07Ok ? "OK" : "ERR");
+        }
         context->interface->write(context, buffer, strlen(buffer));
         
         // Power-up readiness - the key diagnostic info
@@ -1027,6 +1035,452 @@ static scpi_result_t SCPI_GetOTGMode(scpi_t * context) {
     return SCPI_RES_OK;
 }
 #endif
+
+/**
+ * SCPI Callback: Dump all BQ24297 registers for debugging
+ * Command: SYSTem:POWer:BQ:REGisters?
+ * Returns: All 11 registers (REG00-REG0A) in hex format with decoded fields
+ */
+static scpi_result_t SCPI_GetBQRegisters(scpi_t * context) {
+    // Read all registers including REG0A, tracking I2C errors
+    // Skip REG09 in the loop — it's a latched register that needs double-read protocol
+    uint8_t regs[11] = {0};
+    bool regOk[11] = {false};
+    int errCount = 0;
+    for (int i = 0; i < 11; i++) {
+        if (i == 9) { regOk[i] = false; continue; }  // REG09 handled separately below
+        regOk[i] = BQ24297_Read_I2C(i, &regs[i]);
+        if (!regOk[i]) errCount++;
+    }
+
+    // Read REG09 through centralized reader (accumulates faults properly)
+    uint8_t reg09Latched = 0, reg09Current = 0;
+    if (!BQ24297_ReadFaultReg(&reg09Latched, &reg09Current)) {
+        regOk[9] = false;
+        errCount++;
+    } else {
+        regOk[9] = true;
+        regs[9] = reg09Latched;  // Use latched for the "regs" display
+    }
+
+    // If all reads failed, I2C bus is down
+    if (errCount == 11) {
+        scpi_printf(context, "I2C error: all register reads failed (0xFF)\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // REG00: Input Source Control
+    if (!regOk[0]) {
+        scpi_printf(context, "REG00=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG00=0x%02X HIZ=%d VINDPM=%d ILIM=%d\r\n",
+            regs[0], (regs[0] >> 7) & 0x01, (regs[0] >> 3) & 0x0F, regs[0] & 0x07);
+    }
+
+    // REG01: Power-On Config
+    if (!regOk[1]) {
+        scpi_printf(context, "REG01=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG01=0x%02X OTG=%d CHG=%d SYS_MIN=%d\r\n",
+            regs[1], (regs[1] >> 5) & 0x01, (regs[1] >> 4) & 0x01, (regs[1] >> 1) & 0x07);
+    }
+
+    // REG02: Charge Current Control
+    if (!regOk[2]) {
+        scpi_printf(context, "REG02=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG02=0x%02X ICHG=%d BCOLD=%d\r\n",
+            regs[2], (regs[2] >> 2) & 0x3F, regs[2] & 0x01);
+    }
+
+    // REG03: Pre-Charge/Termination Current
+    if (!regOk[3]) {
+        scpi_printf(context, "REG03=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG03=0x%02X IPRECHG=%d ITERM=%d\r\n",
+            regs[3], (regs[3] >> 4) & 0x0F, regs[3] & 0x0F);
+    }
+
+    // REG04: Charge Voltage Control
+    if (!regOk[4]) {
+        scpi_printf(context, "REG04=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG04=0x%02X VREG=%d BATLOWV=%d VRECHG=%d\r\n",
+            regs[4], (regs[4] >> 2) & 0x3F, (regs[4] >> 1) & 0x01, regs[4] & 0x01);
+    }
+
+    // REG05: Charge Termination/Timer Control
+    if (!regOk[5]) {
+        scpi_printf(context, "REG05=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG05=0x%02X EN_TERM=%d WDOG=%d EN_TIMER=%d\r\n",
+            regs[5], (regs[5] >> 7) & 0x01, (regs[5] >> 4) & 0x03, (regs[5] >> 3) & 0x01);
+    }
+
+    // REG06: Boost Voltage/Thermal Regulation
+    if (!regOk[6]) {
+        scpi_printf(context, "REG06=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG06=0x%02X BOOSTV=%d BHOT=%d TREG=%d\r\n",
+            regs[6], (regs[6] >> 4) & 0x0F, (regs[6] >> 2) & 0x03, regs[6] & 0x03);
+    }
+
+    // REG07: Misc Operation Control
+    if (!regOk[7]) {
+        scpi_printf(context, "REG07=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG07=0x%02X DPDM=%d TMR2X=%d BATFET=%d INT=%d\r\n",
+            regs[7], (regs[7] >> 7) & 0x01, (regs[7] >> 6) & 0x01,
+            (regs[7] >> 5) & 0x01, regs[7] & 0x03);
+    }
+
+    // REG08: System Status (key register for DPDM result)
+    if (!regOk[8]) {
+        scpi_printf(context, "REG08=ERR (I2C read failed)\r\n");
+    } else {
+        const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
+        const char* chgStr[] = {"NotChg", "PreChg", "FastChg", "Done"};
+        scpi_printf(context, "REG08=0x%02X VBUS=%s CHG=%s DPM=%d PG=%d THERM=%d VSYS=%d\r\n",
+            regs[8], vbusStr[(regs[8] >> 6) & 0x03], chgStr[(regs[8] >> 4) & 0x03],
+            (regs[8] >> 3) & 0x01, (regs[8] >> 2) & 0x01,
+            (regs[8] >> 1) & 0x01, regs[8] & 0x01);
+    }
+
+    // REG09: Fault Status — values from centralized reader (faults accumulated)
+    if (!regOk[9]) {
+        scpi_printf(context, "REG09=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context, "REG09=0x%02X (latched) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
+            reg09Latched, (reg09Latched >> 7) & 0x01, (reg09Latched >> 6) & 0x01,
+            (reg09Latched >> 4) & 0x03, (reg09Latched >> 3) & 0x01, reg09Latched & 0x03);
+        scpi_printf(context, "REG09=0x%02X (current) WDOG_FLT=%d OTG_FLT=%d CHG_FLT=%d BAT_FLT=%d NTC=%d\r\n",
+            reg09Current, (reg09Current >> 7) & 0x01, (reg09Current >> 6) & 0x01,
+            (reg09Current >> 4) & 0x03, (reg09Current >> 3) & 0x01, reg09Current & 0x03);
+    }
+
+    // REG0A: Vendor/Part/Revision (read-only)
+    // PN[2:0] bits [7:5]: 001=BQ24296, 011=BQ24297
+    // Rev[2:0] bits [2:0]: device revision
+    if (!regOk[10]) {
+        scpi_printf(context, "REG0A=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t pn = (regs[10] >> 5) & 0x07;
+        uint8_t rev = regs[10] & 0x07;
+        const char* pnStr = (pn == 3) ? "BQ24297" :
+                             (pn == 1) ? "BQ24296" : "UNKNOWN";
+        scpi_printf(context, "REG0A=0x%02X PN=%d (%s) REV=%d%s\r\n",
+            regs[10], pn, pnStr, rev,
+            (pn != 3) ? " WARNING: expected BQ24297 (PN=3)" : "");
+    }
+
+    if (errCount > 0) {
+        scpi_printf(context, "WARNING: %d register(s) returned I2C error\r\n", errCount);
+    }
+
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Set BQ24297 ILIM (input current limit)
+ * Command: SYSTem:POWer:BQ:ILIM <value>
+ * Values: 0=100mA, 1=150mA, 2=500mA, 3=900mA, 4=1A, 5=1.5A, 6=2A, 7=3A
+ */
+static scpi_result_t SCPI_SetBQILim(scpi_t * context) {
+    int32_t ilim;
+
+    if (!SCPI_ParamInt32(context, &ilim, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    if (ilim < 0 || ilim > ILim_3000) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    bool success = BQ24297_SetIINLIM((uint8_t)ilim);
+    if (!success) {
+        LOG_E("SCPI_SetBQILim: I2C write failed for ILIM=%d", (int)ilim);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Verify by reading back
+    uint8_t readback;
+    if (!BQ24297_Read_I2C(0x00, &readback)) {
+        LOG_E("SCPI_SetBQILim: readback failed for REG00");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    uint8_t actual = readback & 0x07;
+    uint8_t hiz = (readback >> 7) & 0x01;
+    if (actual != (uint8_t)ilim || hiz != 0) {
+        LOG_E("SCPI_SetBQILim: verify failed: wrote ILIM=%d, read ILIM=%d HIZ=%d (REG00=0x%02X)",
+                 (int)ilim, actual, hiz, readback);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Prevent IINLIM state machine from overriding the manual setting
+    tPowerData* pPower = (tPowerData*)BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPower == NULL) {
+        LOG_E("SCPI_SetBQILim: power data not available to lock IINLIM state");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    pPower->BQ24297Data.iinlimState = IINLIM_STATE_SETTLED;
+
+    scpi_printf(context, "ILIM=%d HIZ=%d Readback=0x%02X OK\r\n", actual, hiz, readback);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Force DPDM detection
+ * Command: SYSTem:POWer:BQ:DPDM
+ * Triggers BQ24297 to re-run D+/D- detection.
+ *
+ * This is a diagnostic-only command. The detection result (VBUS type from
+ * REG08) is printed to the user and then discarded — it does NOT update
+ * the BQ24297 status struct or reset the IINLIM state machine. Therefore
+ * no automatic current switching occurs based on the result. To change
+ * IINLIM after forced DPDM, use SYST:POW:BQ:ILIM manually.
+ *
+ * WARNING: Forcing DPDM while connected via USB will disrupt communication.
+ * DPDM re-detection temporarily resets IINLIM (potentially to 100mA),
+ * which can cause VBUS sag and USB disconnect on the host side.
+ * A physical cable replug is required to recover USB and restart the
+ * IINLIM state machine. Only use when debugging wall charger behavior.
+ */
+static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
+    // Read REG07
+    uint8_t reg7;
+    if (!BQ24297_Read_I2C(0x07, &reg7)) {
+        scpi_printf(context, "I2C error: cannot read REG07\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Set DPDM_EN bit (bit 7) to force detection
+    if (!BQ24297_Write_I2C(0x07, reg7 | 0x80)) {
+        scpi_printf(context, "I2C error: cannot write REG07\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Wait for detection to complete (poll bit 7)
+    int timeout = 20;  // 2 seconds max
+    uint8_t status = 0;
+    bool i2cOk = true;
+    do {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (!BQ24297_Read_I2C(0x07, &status)) { i2cOk = false; break; }
+        timeout--;
+    } while ((status & 0x80) && timeout > 0);
+
+    if (!i2cOk) {
+        scpi_printf(context, "I2C error during DPDM polling\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    if (timeout <= 0 && (status & 0x80)) {
+        scpi_printf(context, "DPDM timeout\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Read result from REG08
+    uint8_t reg8;
+    const char* vbusStr[] = {"Unknown", "USB_SDP", "Adapter", "OTG"};
+
+    if (!BQ24297_Read_I2C(0x08, &reg8)) {
+        scpi_printf(context, "DPDM complete but REG08 read failed\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    uint8_t vbusStat = (reg8 >> 6) & 0x03;
+    scpi_printf(context, "DPDM complete: VBUS=%s (%d), REG08=0x%02X\r\n",
+             vbusStr[vbusStat], vbusStat, reg8);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Clear accumulated BQ24297 faults
+ * Command: SYSTem:POWer:BQ:FAULTCLear
+ */
+static scpi_result_t SCPI_ClearBQFaults(scpi_t * context) {
+    BQ24297_ClearAccumulatedFaults();
+    scpi_printf(context, "Accumulated faults cleared\r\n");
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Comprehensive BQ24297 diagnostics report
+ * Command: SYSTem:POWer:BQ:DIAGnostics?
+ * Returns: Multi-section human-readable diagnostic dump
+ */
+static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
+    tPowerData* pPower = (tPowerData*)BoardData_Get(
+            BOARDDATA_POWER_DATA,
+            0);
+    if (pPower == NULL) {
+        LOG_E("SCPI_GetBQDiagnostics: power data not available");
+        scpi_printf(context, "Power data not available\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    tBQ24297Data* pBQ = &pPower->BQ24297Data;
+
+    // Refresh cached status from hardware
+    BQ24297_UpdateStatus();
+
+    // --- [Battery] ---
+    scpi_printf(context, "[Battery]\r\n");
+    scpi_printf(context, "  Voltage: %.2fV | Charge: %d%% | Low: %s\r\n",
+        pPower->battVoltage, pPower->chargePct,
+        pPower->battLow ? "Yes" : "No");
+    scpi_printf(context, "  Present: %s | Charge allowed: %s\r\n",
+        pBQ->status.batPresent ? "Yes" : "No",
+        pBQ->chargeAllowed ? "Yes" : "No");
+
+    // --- [BQ24297 Registers] ---
+    scpi_printf(context, "[BQ24297 Registers]\r\n");
+
+    // Read raw registers for fields not in status struct
+    uint8_t reg00, reg01, reg07, reg08;
+    bool reg00Ok = BQ24297_Read_I2C(0x00, &reg00);
+    bool reg01Ok = BQ24297_Read_I2C(0x01, &reg01);
+    bool reg07Ok = BQ24297_Read_I2C(0x07, &reg07);
+    bool reg08Ok = BQ24297_Read_I2C(0x08, &reg08);
+
+    // Read REG09 through centralized reader (accumulates faults properly)
+    uint8_t reg09Latched = 0, reg09Current = 0;
+    bool reg09Ok = BQ24297_ReadFaultReg(&reg09Latched, &reg09Current);
+    uint8_t reg09 = reg09Ok ? reg09Current : 0xFF;
+
+    const char* iinlimStr[] = {"100mA","150mA","500mA","900mA","1A","1.5A","2A","3A"};
+    if (!reg00Ok) {
+        scpi_printf(context, "  REG00=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t vindpm = (reg00 >> 3) & 0x0F;
+        uint8_t iinlim = reg00 & 0x07;
+        scpi_printf(context,
+            "  REG00=0x%02X (Input):  HIZ=%d | VINDPM=%dmV (%d) | IINLIM=%s (%d)\r\n",
+            reg00, (reg00 >> 7) & 1, 3880 + vindpm * 80, vindpm,
+            iinlimStr[iinlim], iinlim);
+    }
+
+    if (!reg01Ok) {
+        scpi_printf(context, "  REG01=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t sysMin = (reg01 >> 1) & 0x07;
+        scpi_printf(context,
+            "  REG01=0x%02X (Config): OTG=%d | CHG=%d | SYS_MIN=%dmV (%d)\r\n",
+            reg01, (reg01 >> 5) & 1, (reg01 >> 4) & 1, 3000 + sysMin * 100, sysMin);
+    }
+
+    if (!reg07Ok) {
+        scpi_printf(context, "  REG07=ERR (I2C read failed)\r\n");
+    } else {
+        scpi_printf(context,
+            "  REG07=0x%02X (Misc):   DPDM=%d | BATFET=%s (%d)\r\n",
+            reg07, (reg07 >> 7) & 1,
+            (reg07 & 0x20) ? "Disabled" : "Enabled", (reg07 >> 5) & 1);
+    }
+
+    const char* vbusStr[] = {"Unknown","USB_SDP","Adapter","OTG"};
+    const char* chgStr[] = {"Not charging","Pre-charge","Fast charge","Charge done"};
+    if (!reg08Ok) {
+        scpi_printf(context, "  REG08=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t vbusStat = (reg08 >> 6) & 0x03;
+        uint8_t chgStat = (reg08 >> 4) & 0x03;
+        scpi_printf(context,
+            "  REG08=0x%02X (Status): VBUS=%s (%d) | Charge=%s (%d) | PG=%d | DPM=%d | THERM=%d | VSYS=%d\r\n",
+            reg08, vbusStr[vbusStat], vbusStat, chgStr[chgStat], chgStat,
+            (reg08 >> 2) & 1, (reg08 >> 3) & 1, (reg08 >> 1) & 1, reg08 & 1);
+    }
+
+    const char* chgFaultStr[] = {"Normal","Input fault","Thermal","Timer"};
+    const char* ntcFaultStr[] = {"Ok","Hot","Cold","Hot/Cold"};
+    if (!reg09Ok) {
+        scpi_printf(context, "  REG09=ERR (I2C read failed)\r\n");
+    } else {
+        uint8_t chgFault = (reg09 >> 4) & 0x03;
+        uint8_t ntcFault = reg09 & 0x03;
+        scpi_printf(context,
+            "  REG09=0x%02X (Faults): Watchdog=%d | OTG=%d | CHG=%s (%d) | BAT=%d | NTC=%s (%d)\r\n",
+            reg09, (reg09 >> 7) & 1, (reg09 >> 6) & 1,
+            chgFaultStr[chgFault], chgFault, (reg09 >> 3) & 1,
+            (ntcFault < 4) ? ntcFaultStr[ntcFault] : "Fault", ntcFault);
+    }
+
+    // --- [Accumulated Faults] ---
+    {
+        const char* chgFaultAccStr[] = {"Normal","Input fault","Thermal","Timer"};
+        const char* ntcFaultAccStr[] = {"Ok","Hot","Cold","Hot/Cold"};
+        uint8_t chgA = (uint8_t)pBQ->status.chgFaultAccum;
+        uint8_t ntcA = (uint8_t)pBQ->status.ntcFaultAccum;
+        scpi_printf(context, "[Accumulated Faults]\r\n");
+        scpi_printf(context, "  Watchdog=%d | OTG=%d | CHG=%s (%d) | BAT=%d | NTC=%s (%d)\r\n",
+            pBQ->status.watchdog_faultAccum ? 1 : 0,
+            pBQ->status.otg_faultAccum ? 1 : 0,
+            (chgA < 4) ? chgFaultAccStr[chgA] : "Unknown", chgA,
+            pBQ->status.bat_faultAccum ? 1 : 0,
+            (ntcA < 4) ? ntcFaultAccStr[ntcA] : "Unknown", ntcA);
+    }
+
+    // --- [GPIO] ---
+    scpi_printf(context, "[GPIO]\r\n");
+    scpi_printf(context, "  STAT (RH11): %d (%s) [%s]\r\n",
+        (int)BATT_MAN_STAT_Get(),
+        BATT_MAN_STAT_Get() ? "Not charging" : "Charging",
+        (TRISH >> 11) & 1 ? "Input" : "Output");
+    scpi_printf(context, "  OTG  (RK5):  %d (%s) [%s]\r\n",
+        (int)BATT_MAN_OTG_Get(),
+        BATT_MAN_OTG_Get() ? "HIGH" : "LOW",
+        (TRISK >> 5) & 1 ? "Input" : "Output");
+    scpi_printf(context, "  INT  (RA4):  %d [%s]\r\n",
+        (int)BATT_MAN_INT_Get(),
+        (TRISA >> 4) & 1 ? "Input" : "Output");
+
+    // --- [IINLIM State Machine] ---
+    scpi_printf(context, "[IINLIM State Machine]\r\n");
+    const char* iinlimStateStr[] = {"IDLE","WAIT_DPDM","WAIT_USB","SETTLED"};
+    uint8_t stateIdx = (uint8_t)pBQ->iinlimState;
+    scpi_printf(context, "  State: %s (%d) | Last VBUS: %s\r\n",
+        stateIdx < 4 ? iinlimStateStr[stateIdx] : "UNKNOWN", stateIdx,
+        pBQ->iinlimLastVbus ? "Yes" : "No");
+
+    // --- [Power] ---
+    scpi_printf(context, "[Power]\r\n");
+    const char* powerStateStr[] = {"STANDBY","POWERED_UP","POWERED_UP_EXT_DOWN"};
+    const char* extPowerStr[] = {"NONE","UNKNOWN","CHARGER_1A","CHARGER_2A","USB_100MA","USB_500MA"};
+    uint8_t ps = (uint8_t)pPower->powerState;
+    uint8_t ep = (uint8_t)pPower->externalPowerSource;
+    scpi_printf(context, "  State: %s (%d) | Ext power: %s (%d)\r\n",
+        ps < 3 ? powerStateStr[ps] : "UNKNOWN", ps,
+        ep < 6 ? extPowerStr[ep] : "UNKNOWN", ep);
+
+    USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+    const char* vbusLevelName;
+    switch (vbusLevel) {
+        case USBHS_VBUS_SESSION_END:      vbusLevelName = "SessionEnd"; break;
+        case USBHS_VBUS_BELOW_AVALID:     vbusLevelName = "BelowAValid"; break;
+        case USBHS_VBUS_BELOW_VBUSVALID:  vbusLevelName = "BelowVBUSValid"; break;
+        case USBHS_VBUS_VALID:            vbusLevelName = "Valid"; break;
+        default:                          vbusLevelName = "Unknown"; break;
+    }
+    scpi_printf(context, "  VBUS: %s | Level: %s (0x%02X) | USB configured: %s\r\n",
+        UsbCdc_IsVbusDetected() ? "Yes" : "No",
+        vbusLevelName,
+        (unsigned)vbusLevel,
+        UsbCdc_IsConfigured() ? "Yes" : "No");
+
+    return SCPI_RES_OK;
+}
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     //memset(commTest.stats,0, sizeof(commTest.stats));
@@ -1593,6 +2047,11 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
     {.pattern = "SYSTem:POWer:AUTO:EXTernal?", .callback = SCPI_GetAutoExtPower,},
     {.pattern = "SYSTem:POWer:AUTO:EXTernal", .callback = SCPI_SetAutoExtPower,},
+    {.pattern = "SYSTem:POWer:BQ:REGisters?", .callback = SCPI_GetBQRegisters,},
+    {.pattern = "SYSTem:POWer:BQ:ILIM", .callback = SCPI_SetBQILim,},
+    {.pattern = "SYSTem:POWer:BQ:DPDM", .callback = SCPI_ForceDPDM,},
+    {.pattern = "SYSTem:POWer:BQ:DIAGnostics?", .callback = SCPI_GetBQDiagnostics,},
+    {.pattern = "SYSTem:POWer:BQ:FAULTCLear", .callback = SCPI_ClearBQFaults,},
     // OTG commands disabled - OTG mode is managed automatically by the power system
     // When external power is present, OTG is always disabled for safety
     // When on battery power, OTG is controlled by the board configuration

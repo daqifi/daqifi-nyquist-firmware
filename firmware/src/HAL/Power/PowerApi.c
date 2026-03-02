@@ -145,6 +145,16 @@ void Power_Tasks(void) {
         BQ24297_Config_Settings();
     }
 
+    /* Manage IINLIM state machine — runs every Power_Tasks() call (~100ms)
+     * Detects VBUS edges and adjusts IINLIM based on USB enumeration status */
+    if (pData->BQ24297Data.initComplete) {
+        USBHS_VBUS_LEVEL vbusLevel = PLIB_USBHS_VBUSLevelGet(USBHS_ID_0);
+        bool vbusPresent =
+            (vbusLevel == USBHS_VBUS_BELOW_VBUSVALID) ||
+            (vbusLevel == USBHS_VBUS_VALID);
+        BQ24297_ManageIINLIM(vbusPresent);
+    }
+
     /* Update power state at 1 second intervals */
     static TickType_t lastUpdateTime = 0;
     TickType_t currentTime = xTaskGetTickCount();
@@ -492,7 +502,7 @@ static void Power_HandlePoweredUpState(void) {
         Power_UpdateStatusFromGPIO();
 
         if (pData->chargePct < BATT_EXT_DOWN_TH) {
-            LOG_D("Power_UpdateState: Battery at %.1f%%, transitioning to POWERED_UP_EXT_DOWN to conserve power", 
+            LOG_D("Power_UpdateState: Battery at %u%%, transitioning to POWERED_UP_EXT_DOWN to conserve power",
                   pData->chargePct);
             pWriteVariables->EN_5_10V_Val = false;
             Power_Write();
@@ -522,7 +532,7 @@ static void Power_HandlePoweredUpExtDownState(void) {
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Auto-recovery - re-enable external power */
-            LOG_D("Auto-recovery: Enabling external power - %s, battery at %.1f%%",
+            LOG_D("Auto-recovery: Enabling external power - %s, battery at %u%%",
                   hasExternalPower ? "external power present" : "battery recovered", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
@@ -540,21 +550,21 @@ static void Power_HandlePoweredUpExtDownState(void) {
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Manual recovery - re-enable external power */
-            LOG_D("Manual recovery: Enabling external power - %s, battery at %.1f%%",
+            LOG_D("Manual recovery: Enabling external power - %s, battery at %u%%",
                   hasExternalPower ? "external power present" : "battery sufficient", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
             pData->powerState = POWERED_UP;
         } else {
             /* Cannot enable external power due to low battery */
-            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %.1f%%, needs %.1f%%",
-                  pData->chargePct, BATT_EXT_DOWN_TH + BATT_HYST);
+            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %u%%, needs %u%%",
+                  pData->chargePct, (unsigned)(BATT_EXT_DOWN_TH + BATT_HYST));
         }
         pData->requestedPowerState = NO_CHANGE;
     }
     /* Critical battery check - must shut down to prevent damage */
     else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
-        LOG_D("Power_UpdateState: Battery critically low (%.1f%%), transitioning to STANDBY",
+        LOG_D("Power_UpdateState: Battery critically low (%u%%), transitioning to STANDBY",
               pData->chargePct);
 
         /* Explicitly disable all external rails before shutdown */

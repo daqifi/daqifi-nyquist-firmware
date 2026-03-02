@@ -348,6 +348,41 @@ The DAC7718 uses lazy initialization that:
 3. Checks for POWERED_UP state (provides 10V rail) before hardware access
 4. Gracefully handles power state transitions
 
+### BQ24297 IINLIM Management
+
+The firmware uses a timer-based state machine to manage input current limits (IINLIM) on the BQ24297 battery management IC, replacing the earlier DPDM-dependent approach.
+
+#### State Machine
+```
+IDLE → WAIT_DPDM (1s min, 3s timeout) → WAIT_USB (5s) → SETTLED
+```
+
+- **OTG pin** driven LOW (output) so DPDM starts at conservative 100mA
+- **WAIT_DPDM**: Waits for BQ24297 DPDM detection to complete (REG07 bit 7 clears)
+- **WAIT_USB**: Sets 500mA, waits 5s checking `UsbCdc_IsConfigured()`
+- **SETTLED**: USB host → 500mA; wall charger → 2000mA
+- VBUS loss in any state resets to IDLE
+
+#### SCPI Diagnostic Commands
+```bash
+SYST:POW:BQ:REGisters?     # Dump all BQ24297 registers (REG00-REG0A hex values)
+SYST:POW:BQ:ILIM <0-7>     # Set IINLIM directly (0=100mA, 2=500mA, 6=2A, 7=3A)
+SYST:POW:BQ:DPDM           # Force DPDM re-detection (WARNING: disrupts USB — see below)
+SYST:POW:BQ:DIAGnostics?   # Comprehensive diagnostics dump (battery, registers,
+                            # GPIO, IINLIM state machine, power state, VBUS level)
+```
+
+**Note:** `SYST:POW:BQ:DIAG?` calls `BQ24297_UpdateStatus()` which reads REG09 and clears latched fault flags as a side effect.
+
+**WARNING:** `SYST:POW:BQ:DPDM` is diagnostic-only. It forces the BQ24297 to re-run D+/D- detection and prints the result (VBUS type from REG08), but does **not** update the status struct or reset the IINLIM state machine — no automatic current switching occurs. Use `SYST:POW:BQ:ILIM` to manually set IINLIM after forced DPDM. When connected via USB, DPDM temporarily resets IINLIM (potentially to 100mA), causing VBUS sag and USB disconnect. A physical cable replug is required to recover and restart the IINLIM state machine.
+
+#### Implementation
+- **State machine**: `HAL/BQ24297/BQ24297.c` — `BQ24297_ManageIINLIM()`
+- **Caller**: `HAL/Power/PowerApi.c` — `Power_Tasks()` (~100ms interval)
+- **USB tracking**: `services/UsbCdc/UsbCdc.c` — `UsbCdc_IsConfigured()`
+- **SCPI commands**: `services/SCPI/SCPIInterface.c`
+- **I2C mutex**: `BQ24297_Read_I2C()` and `BQ24297_Write_I2C()` are protected by a FreeRTOS mutex to synchronize access between PowerAndUITask and USBDeviceTask (both priority 7)
+
 ## Firmware Analysis Report
 
 A comprehensive technical analysis of the firmware has been completed and is available in `FIRMWARE_ANALYSIS_REPORT.md`. This report provides:
@@ -434,6 +469,8 @@ SYST:LOG:TEST      # Add test messages (for verification)
 - ISR-safe: Detects ISR context and skips buffering (prevents deadlock)
 
 **Enabling Verbose Logging (Development Only):**
+
+**IMPORTANT: Always reset all module log levels back to `LOG_LEVEL_ERROR` in `Logger.h` before release builds.** Debug/info logging adds overhead and fills the circular buffer, masking real errors in production.
 
 To enable INFO or DEBUG logging for a specific module, change its level in `Logger.h`:
 ```c

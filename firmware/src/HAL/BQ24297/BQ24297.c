@@ -8,10 +8,7 @@
 #include "Util/Logger.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "peripheral/gpio/plib_gpio.h"
-
-// BQ24297 bypass for demo boards without BQ24297 populated
-// Uncomment the following line for boards without BQ24297 chip
-// #define BYPASS_BQ24297 1
+#include "semphr.h"
 
 //! Pointer to the BQ24297 device configuration data structure
 static tBQ24297Config *pConfigBQ24;
@@ -19,18 +16,38 @@ static tBQ24297Config *pConfigBQ24;
 static tBQ24297WriteVars *pWriteVariables;
 //! Pointer to the data structure where the BQ24297 data is
 static tBQ24297Data *pData;
+//! Mutex to synchronize I2C access between PowerAndUITask and USBDeviceTask
+static SemaphoreHandle_t i2cMutex = NULL;
 
-/*! Funtion to read BQ24297 data by I2C communication
+/*! Function to read BQ24297 data by I2C communication
  * @param[in] reg Register to read
+ * @param[out] out Pointer to receive register value (unchanged on error)
+ * @return true on success, false on error
  */
-uint8_t BQ24297_Read_I2C(uint8_t reg);
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out);
 
-/*! Funtion to write BQ24297 data by I2C communication
- * @param[in] reg Register to read
+/*! Function to write BQ24297 data by I2C communication
+ * @param[in] reg Register to write
  * @param[in] txData Data to write
  * @return true if write succeeded, false on error
  */
 bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData);
+
+/**
+ * OR a raw REG09 value into accumulated (sticky) fault fields.
+ * Called for both latched and current reads so no fault is ever lost.
+ */
+static void AccumulateFaults(uint8_t reg09) {
+    if (reg09 & 0x80) pData->status.watchdog_faultAccum = true;
+    if (reg09 & 0x40) pData->status.otg_faultAccum = true;
+    uint8_t chgF = (reg09 >> 4) & 0x03;
+    if (chgF > (uint8_t)pData->status.chgFaultAccum)
+        pData->status.chgFaultAccum = (enum eChargeFault)chgF;
+    if (reg09 & 0x08) pData->status.bat_faultAccum = true;
+    uint8_t ntcF = reg09 & 0x03;
+    if (ntcF != NTC_FAULT_NORMAL)
+        pData->status.ntcFaultAccum = (enum eNTCFault)ntcF;
+}
 
 void BQ24297_InitHardware(                                                  
                         tBQ24297Config *pConfigInit,                        
@@ -40,33 +57,16 @@ void BQ24297_InitHardware(
     pWriteVariables = pWriteInit;
     pData = pDataInit;
 
-#ifdef BYPASS_BQ24297
-    // Demo board bypass: Set up dummy "good" status values
-    LOG_I("BQ24297_InitHardware: BYPASS_BQ24297 enabled - simulating working BQ24297");
-    
-    // Mark as initialized
-    pData->initComplete = true;
-    
-    // Set "good" power status values for demo board
-    pData->status.pgStat = 1;        // External power present
-    pData->status.vsysStat = 0;      // Battery voltage good (>3.0V)
-    pData->status.batPresent = 1;    // Battery present
-    pData->status.chgStat = 3;       // Charge complete
-    pData->status.ntcFault = 0;      // NTC normal
-    pData->status.otg = 0;           // OTG disabled
-    pData->status.chgEn = 1;         // Charging enabled
-    pData->chargeAllowed = true;     // Allow charging
-    
-    LOG_I("BQ24297_InitHardware: Demo values - pgStat=%d, vsysStat=%d, batPresent=%d", 
-          pData->status.pgStat, pData->status.vsysStat, pData->status.batPresent);
-    
-    // Initialize OTG GPIO as input - hardware pullup holds HIGH
-    // OTG HIGH during DPDM detection = 500mA IINLIM (vs 100mA when LOW)
-    BATT_MAN_OTG_InputEnable();
-    
-    LOG_I("BQ24297_InitHardware: Demo board initialized with good power status");
-    return;
-#endif
+    // Create I2C mutex for cross-task synchronization
+    if (i2cMutex == NULL) {
+        i2cMutex = xSemaphoreCreateMutex();
+        if (i2cMutex == NULL) {
+            LOG_E("BQ24297_InitHardware: failed to create I2C mutex");
+            pData->initComplete = false;
+            return;
+        }
+    }
+
     // Battery management initialization (hardware interface)
 
     // ***Disable I2C calls*** as Harmony 2.06 doesn't have a working, 
@@ -76,9 +76,50 @@ void BQ24297_InitHardware(
                         pConfigBQ24->I2C_Index,                             
                         DRV_IO_INTENT_READWRITE|DRV_IO_INTENT_BLOCKING);
 
-    // Configure OTG GPIO as input - hardware pullup holds HIGH
-    // OTG HIGH during DPDM detection = 500mA IINLIM (vs 100mA when LOW)
-    BATT_MAN_OTG_InputEnable();
+    // Drive OTG LOW — DPDM will set 100mA (conservative).
+    // ManageIINLIM state machine overrides IINLIM via I2C after DPDM completes.
+    BATT_MAN_OTG_OutputEnable();
+    BATT_MAN_OTG_Clear();
+}
+
+bool BQ24297_ReadFaultReg(uint8_t *latched, uint8_t *current) {
+    uint8_t latchedVal;
+    if (!BQ24297_Read_I2C(0x09, &latchedVal)) {
+        return false;  // First read failed — don't touch any fields
+    }
+
+    // Accumulate faults from the latched read
+    AccumulateFaults(latchedVal);
+    if (latched != NULL) *latched = latchedVal;
+
+    // Second read gets currently active faults
+    uint8_t currentVal;
+    if (!BQ24297_Read_I2C(0x09, &currentVal)) {
+        // Second read failed — use latched value for status fields
+        LOG_E("BQ24297_ReadFaultReg: second REG09 read failed, using latched");
+        currentVal = latchedVal;
+    } else {
+        AccumulateFaults(currentVal);
+    }
+
+    if (current != NULL) *current = currentVal;
+
+    // Decode current value into status fields (existing behavior)
+    pData->status.watchdog_fault = (bool)(currentVal & 0x80);
+    pData->status.otg_fault = (bool)(currentVal & 0x40);
+    pData->status.chgFault = (enum eChargeFault)((currentVal >> 4) & 0x03);
+    pData->status.bat_fault = (bool)(currentVal & 0x08);
+    pData->status.ntcFault = (enum eNTCFault)(currentVal & 0x03);
+
+    return true;
+}
+
+void BQ24297_ClearAccumulatedFaults(void) {
+    pData->status.watchdog_faultAccum = false;
+    pData->status.otg_faultAccum = false;
+    pData->status.chgFaultAccum = CHG_FAULT_NORMAL;
+    pData->status.bat_faultAccum = false;
+    pData->status.ntcFaultAccum = NTC_FAULT_NORMAL;
 }
 
 void BQ24297_Config_Settings(void) {
@@ -91,17 +132,19 @@ void BQ24297_Config_Settings(void) {
     BQ24297_UpdateStatus();
 
     // Read REG00 to preserve current limit settings
-    reg = BQ24297_Read_I2C(0x00);
-    
-    // Clear HIZ mode if set - it can cause power loss
-    if (reg & 0x80) {
-        LOG_D("BQ24297_Config_Settings: Clearing HIZ mode");
-    }
+    if (!BQ24297_Read_I2C(0x00, &reg)) {
+        LOG_E("BQ24297_Config_Settings: REG00 read failed, skipping RMW");
+    } else {
+        // Clear HIZ mode if set - it can cause power loss
+        if (reg & 0x80) {
+            LOG_D("BQ24297_Config_Settings: Clearing HIZ mode");
+        }
 
-    // Set input voltage limit to 3.88V (minimum): VINDPM = 0
-    // This gives maximum headroom before input voltage regulation kicks in
-    // REG00: [7]=0 (CLEAR HIZ), [6:3]=0000 (3.88V min), [2:0]=keep current limit
-    BQ24297_Write_I2C(0x00, reg & 0b00000111);  // This also clears HIZ bit
+        // Set input voltage limit to 3.88V (minimum): VINDPM = 0
+        // This gives maximum headroom before input voltage regulation kicks in
+        // REG00: [7]=0 (CLEAR HIZ), [6:3]=0000 (3.88V min), [2:0]=keep current limit
+        BQ24297_Write_I2C(0x00, reg & 0b00000111);  // This also clears HIZ bit
+    }
 
     // Configure REG01 for charging mode
     // REG01 bits:
@@ -111,8 +154,9 @@ void BQ24297_Config_Settings(void) {
     // [3:1] = 000 (SYS_MIN = 3.0V)
     // [0] = 1 (reserved)
     
-    // OTG GPIO as input - hardware pullup holds HIGH for 500mA DPDM detection
-    BATT_MAN_OTG_InputEnable();
+    // Drive OTG LOW — DPDM sets 100mA (conservative), ManageIINLIM overrides via I2C
+    BATT_MAN_OTG_OutputEnable();
+    BATT_MAN_OTG_Clear();
 
     // Configure for charge mode with SYS_MIN=3.0V to prevent BATFET disable
     BQ24297_Write_I2C(0x01, 0b01010001);  // Watchdog reset, OTG=0, CHG=1, SYS_MIN=3.0V
@@ -143,26 +187,39 @@ void BQ24297_Config_Settings(void) {
     
     // Ensure BATFET is enabled (REG07 bit 5 = 0)
     // Without BATFET, there's no path from battery to system
-    reg = BQ24297_Read_I2C(0x07);
-    if (reg & 0b00100000) {  // Check if bit 5 is set (BATFET disabled)
+    if (!BQ24297_Read_I2C(0x07, &reg)) {
+        LOG_E("BQ24297_Config_Settings: REG07 read failed, cannot check BATFET");
+    } else if (reg & 0b00100000) {  // Check if bit 5 is set (BATFET disabled)
         reg = reg & 0b11011111;  // Clear bit 5 to enable BATFET
         BQ24297_Write_I2C(0x07, reg);
         LOG_D("BQ24297: BATFET re-enabled");
     }
 
-    // Read the current status and set appropriate current limits
+    // Read the current status
     BQ24297_UpdateStatus();
-    BQ24297_AutoSetILim();
 
-    // Update battery presence status (for reporting only)
+    // Start with conservative 500mA IINLIM
+    // BQ24297_ManageIINLIM() state machine will adjust based on USB enumeration
+    BQ24297_SetIINLIM(ILim_500);
+    pData->iinlimState = IINLIM_STATE_IDLE;
+    pData->iinlimTimestamp = 0;
+    pData->iinlimLastVbus = false;
+
+    // Update battery presence and charging-allowed flag based on NTC status.
+    // NTC_FAULT_COLD = no battery (open thermistor) → chargeAllowed=false
+    // NTC_FAULT_HOT  = unsafe temperature            → chargeAllowed=false
     BQ24297_UpdateBatteryStatus();
 
-    // Charging is always enabled via REG01 configuration above.
-    // The BQ24297 has built-in hardware protection for:
-    // - Battery temperature (NTC monitoring)
-    // - Overvoltage/overcurrent
-    // - Battery presence detection
-    // Let the hardware handle charging decisions autonomously.
+    // REG01 was written with CHG=1 above, so unconditionally enforce the
+    // charge-allowed decision — disable charging via I2C if NTC fault present.
+    BQ24297_ChargeEnable(pData->chargeAllowed);
+    if (!pData->chargeAllowed) {
+        LOG_E("BQ24297: Charging disabled at boot (NTC=%d, batPresent=%d)",
+              pData->status.ntcFault, pData->status.batPresent);
+    }
+
+    // Clear accumulated faults from init reads — start fresh
+    BQ24297_ClearAccumulatedFaults();
 
     // Mark initialization complete
     pData->initComplete = true;
@@ -171,21 +228,17 @@ void BQ24297_Config_Settings(void) {
 }
 
 /*
- * Updates BQ24297 status by reading all registers
- * NOTE: Only called at boot - no I2C polling after init
+ * Updates BQ24297 status by reading all registers via I2C.
+ * Called at boot, and on-demand by ForceDPDM, DisableOTG,
+ * IsBatteryPresent, and UpdateBatteryStatus.
  */
 void BQ24297_UpdateStatus(void) {
-#ifdef BYPASS_BQ24297
-    // Demo board bypass: Don't update status, keep dummy values
-    return;
-#endif
 
     uint8_t regData = 0;
     bool hasErrors = false;
 
     // REG00: Input Source Control
-    regData = BQ24297_Read_I2C(0x00);
-    if (regData != 0xFF) {
+    if (BQ24297_Read_I2C(0x00, &regData)) {
         pData->status.hiZ = (bool) (regData & 0b10000000);
         pData->status.inLim = (uint8_t) (regData & 0b00000111);
     } else {
@@ -193,8 +246,7 @@ void BQ24297_UpdateStatus(void) {
     }
 
     // REG01: Power-On Configuration
-    regData = BQ24297_Read_I2C(0x01);
-    if (regData != 0xFF) {
+    if (BQ24297_Read_I2C(0x01, &regData)) {
         pData->status.otg = (bool) (regData & 0b00100000);
         pData->status.chgEn = (bool) (regData & 0b00010000);
     } else {
@@ -202,24 +254,21 @@ void BQ24297_UpdateStatus(void) {
     }
 
     // REG02: Charge Current Control
-    regData = BQ24297_Read_I2C(0x02);
-    if (regData != 0xFF) {
+    if (BQ24297_Read_I2C(0x02, &regData)) {
         pData->status.ichg = (uint8_t) (regData & 0b11111100) >> 2;
     } else {
         hasErrors = true;
     }
 
     // REG07: Misc Operation Control
-    regData = BQ24297_Read_I2C(0x07);
-    if (regData != 0xFF) {
+    if (BQ24297_Read_I2C(0x07, &regData)) {
         pData->status.iinDet_Read = (bool) (regData & 0b10000000);
     } else {
         hasErrors = true;
     }
 
     // REG08: System Status
-    regData = BQ24297_Read_I2C(0x08);
-    if (regData != 0xFF) {
+    if (BQ24297_Read_I2C(0x08, &regData)) {
         pData->status.vBusStat = (uint8_t) (regData & 0b11000000) >> 6;
         pData->status.chgStat = (uint8_t) (regData & 0b00110000) >> 4;
         pData->status.dpmStat = (bool) (regData & 0b00001000);
@@ -248,19 +297,8 @@ void BQ24297_UpdateStatus(void) {
         hasErrors = true;
     }
 
-    // REG09: Fault Status - Reading this resets fault flags!
-    regData = BQ24297_Read_I2C(0x09);
-    if (regData != 0xFF) {
-        // First read resets faults, read again for current status
-        regData = BQ24297_Read_I2C(0x09);
-        if (regData != 0xFF) {
-            pData->status.watchdog_fault = (bool) (regData & 0b10000000);
-            pData->status.otg_fault = (bool) (regData & 0b01000000);
-            pData->status.chgFault = (uint8_t) (regData & 0b00110000) >> 4;
-            pData->status.bat_fault = (bool) (regData & 0b00001000);
-            pData->status.ntcFault = (uint8_t) (regData & 0b00000011);
-        }
-    } else {
+    // REG09: Fault Status — use centralized reader that accumulates faults
+    if (!BQ24297_ReadFaultReg(NULL, NULL)) {
         hasErrors = true;
     }
     
@@ -275,10 +313,13 @@ void BQ24297_UpdateStatus(void) {
 }
 
 void BQ24297_ChargeEnable(bool chargeEnable) {
-    // Temporary value to hold current register value
-    uint8_t reg = 0;
+    uint8_t reg;
 
-    reg = BQ24297_Read_I2C(0x01);
+    if (!BQ24297_Read_I2C(0x01, &reg)) {
+        LOG_E("BQ24297_ChargeEnable: REG01 read failed, cannot %s charging",
+              chargeEnable ? "enable" : "disable");
+        return;
+    }
 
     // OTG and Charge are mutually exclusive
     if (reg & 0x20) {
@@ -286,31 +327,48 @@ void BQ24297_ChargeEnable(bool chargeEnable) {
     }
 
     if (pData->chargeAllowed && chargeEnable && pData->status.batPresent) {
-        // Enable charging, preserve all bits except bit 4 (charge enable)
-        reg = (reg & 0b11101111) | 0b00010000; // Clear bit 4, then set it
-        BQ24297_Write_I2C(0x01, reg);
+        reg = (reg & 0b11101111) | 0b00010000;
     } else {
-        // Disable charging, preserve all bits except bit 4 (charge enable)
-        reg = (reg & 0b11101111); // Just clear bit 4
-        BQ24297_Write_I2C(0x01, reg);
+        reg = (reg & 0b11101111);
+    }
+
+    if (!BQ24297_Write_I2C(0x01, reg)) {
+        LOG_E("BQ24297_ChargeEnable: REG01 write failed, charge state may be incorrect");
     }
 }
 
 void BQ24297_ForceDPDM(void) {
-    // Temporary value to hold current register value
-    uint8_t reg = 0;
-    // ----Untested implementation!----
-    // Be sure that the USB lines are disconnected ie. USBCSR0bits.SOFTCONN = 0
+    uint8_t reg;
+    // WARNING: Forcing DPDM while connected via USB will disrupt USB comms
+    // and may require physical cable replug. Only safe from wall charger or UART.
 
-    reg = BQ24297_Read_I2C(0x07);
+    if (!BQ24297_Read_I2C(0x07, &reg)) {
+        LOG_E("BQ24297_ForceDPDM: REG07 read failed");
+        return;
+    }
 
-    // Force DPDM detection
-    // REG07: 0b1XXXXXXX
-    BQ24297_Write_I2C(0x07, reg | 0b10000000);
+    // Force DPDM detection — REG07 bit 7
+    if (!BQ24297_Write_I2C(0x07, reg | 0x80)) {
+        LOG_E("BQ24297_ForceDPDM: REG07 write failed");
+        return;
+    }
 
-    BQ24297_UpdateStatus();
-    while (pData->status.iinDet_Read) {
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t timeoutTicks = pdMS_TO_TICKS(2000);
+
+    for (;;) {
         BQ24297_UpdateStatus();
+
+        if (!pData->status.iinDet_Read) {
+            break;
+        }
+
+        if ((xTaskGetTickCount() - start) > timeoutTicks) {
+            LOG_E("BQ24297_ForceDPDM: timeout waiting for DPDM to complete");
+            break;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
@@ -318,8 +376,11 @@ void BQ24297_AutoSetILim(void) {
     // Temporary value to hold current register value
     uint8_t reg0;
 
-    reg0 = BQ24297_Read_I2C(0x00);
-    
+    if (!BQ24297_Read_I2C(0x00, &reg0)) {
+        LOG_E("BQ24297_AutoSetILim: REG00 read failed, cannot set IINLIM");
+        return;
+    }
+
     // Log if HIZ mode is detected during AutoSetILim
     if (reg0 & 0x80) {
         LOG_E("BQ24297_AutoSetILim: WARNING - HIZ mode detected (REG00=0x%02X)! Will be cleared.", reg0);
@@ -352,131 +413,249 @@ void BQ24297_AutoSetILim(void) {
     }
 }
 
-uint8_t BQ24297_Read_I2C(uint8_t reg) {
-#ifdef BYPASS_BQ24297
-    // Demo board bypass: Return dummy "good" register values
-    switch (reg) {
-        case 0x00: return 0x7E; // Good charging config, HIZ=0
-        case 0x01: return 0x51; // OTG=0, CHG=1, good config  
-        case 0x07: return 0x0B; // BATFET enabled, good status
-        case 0x08: return 0x23; // External power good, battery good
-        case 0x09: return 0x40; // Battery present, normal fault status
-        default:   return 0x00; // Default good value
-    }
-#endif
-
+bool BQ24297_Read_I2C(uint8_t reg, uint8_t *out) {
     uint8_t I2CData[1];
     uint8_t rxData = 0;
+
+    if (pData->I2C_Handle == DRV_HANDLE_INVALID) {
+        LOG_E("BQ24297_Read_I2C: Invalid I2C handle");
+        return false;
+    }
+
+    if (i2cMutex != NULL) {
+        xSemaphoreTake(i2cMutex, portMAX_DELAY);
+    }
 
     // Build data packet
     I2CData[0] = reg;
 
-    if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
-        // Perform I2C transfer with error checking
-        bool success = DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
-                pConfigBQ24->I2C_Address,                           
-                I2CData,                                        
-                1,                                                  
-                &rxData,                                            
-                1);
-        
-        if (!success) {
-            LOG_E("BQ24297_Read_I2C: Failed to read register 0x%02X", reg);
-            // Return 0xFF to indicate error (distinguishable from valid data)
-            return 0xFF;
-        }
-    } else {
-        LOG_E("BQ24297_Read_I2C: Invalid I2C handle");
-        return 0xFF;
+    // Perform I2C transfer with error checking
+    bool success = DRV_I2C_WriteReadTransfer(pData->I2C_Handle,
+            pConfigBQ24->I2C_Address,
+            I2CData,
+            1,
+            &rxData,
+            1);
+
+    if (i2cMutex != NULL) {
+        xSemaphoreGive(i2cMutex);
     }
-    return rxData;
+
+    if (!success) {
+        LOG_E("BQ24297_Read_I2C: Failed to read register 0x%02X", reg);
+        return false;
+    }
+
+    *out = rxData;
+    return true;
 }
 
 bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
-#ifdef BYPASS_BQ24297
-    // Demo board bypass: Pretend all writes succeed
-    (void)reg;    // Suppress unused warnings
-    (void)txData;
-    return true;  // Always return success
-#endif
-
     uint8_t I2CData[2];
+
+    if (pData->I2C_Handle == DRV_HANDLE_INVALID) {
+        LOG_E("BQ24297_Write_I2C: Invalid I2C handle");
+        return false;
+    }
+
+    if (i2cMutex != NULL) {
+        xSemaphoreTake(i2cMutex, portMAX_DELAY);
+    }
 
     // Build data packet
     I2CData[0] = reg;
     I2CData[1] = txData;
 
-    if (pData->I2C_Handle != DRV_HANDLE_INVALID) {
-        // Write to selected register with error checking
-        bool success = DRV_I2C_WriteTransfer(                       
-                        pData->I2C_Handle,                                  
-                        pConfigBQ24->I2C_Address,                           
-                        I2CData,                                        
-                        2);
-        
-        if (!success) {
-            LOG_E("BQ24297_Write_I2C: Failed to write 0x%02X to register 0x%02X", txData, reg);
-            return false;
-        }
-        return true;
-    } else {
-        LOG_E("BQ24297_Write_I2C: Invalid I2C handle");
-        return false;
+    // Write to selected register with error checking
+    bool success = DRV_I2C_WriteTransfer(
+                    pData->I2C_Handle,
+                    pConfigBQ24->I2C_Address,
+                    I2CData,
+                    2);
+
+    if (i2cMutex != NULL) {
+        xSemaphoreGive(i2cMutex);
     }
+
+    if (!success) {
+        LOG_E("BQ24297_Write_I2C: Failed to write 0x%02X to register 0x%02X", txData, reg);
+    }
+
+    return success;
+}
+
+bool BQ24297_SetIINLIM(uint8_t iinlimCode) {
+    // REG00 IINLIM is 3-bit field (bits 2:0), valid range 0-7 per datasheet Table 9-2
+    if (iinlimCode > ILim_3000) return false;
+    uint8_t reg;
+    if (!BQ24297_Read_I2C(0x00, &reg)) return false;
+    // Clear HIZ (bit 7) and IINLIM (bits 2:0), preserve VINDPM (bits 6:3)
+    reg = (reg & 0b01111000) | (iinlimCode & 0x07);
+    bool success = BQ24297_Write_I2C(0x00, reg);
+    if (!success) {
+        LOG_E("BQ24297_SetIINLIM: Failed to write IINLIM code %u", iinlimCode);
+    }
+    return success;
+}
+
+// IINLIM state machine timing constants (ms)
+#define IINLIM_DPDM_MIN_WAIT_MS   1000  // Minimum wait after VBUS before checking DPDM
+#define IINLIM_DPDM_TIMEOUT_MS    3000  // Max wait for DPDM to complete
+#define IINLIM_USB_WAIT_MS         5000  // Wait for USB enumeration before assuming wall charger
+
+void BQ24297_ManageIINLIM(bool vbusPresent) {
+    TickType_t now = xTaskGetTickCount();
+
+    switch (pData->iinlimState) {
+        case IINLIM_STATE_IDLE:
+            if (vbusPresent && !pData->iinlimLastVbus) {
+                // Rising edge — VBUS just appeared
+                LOG_D("IINLIM: VBUS appeared, entering WAIT_DPDM");
+                pData->iinlimTimestamp = now;
+                pData->iinlimState = IINLIM_STATE_WAIT_DPDM;
+            }
+            break;
+
+        case IINLIM_STATE_WAIT_DPDM:
+            if (!vbusPresent) {
+                LOG_D("IINLIM: VBUS lost during WAIT_DPDM, returning to IDLE");
+                pData->iinlimState = IINLIM_STATE_IDLE;
+                break;
+            }
+            {
+                TickType_t elapsed = now - pData->iinlimTimestamp;
+
+                // Wait at least 1s after VBUS before acting on DPDM result
+                // to ensure BQ24297 hardware has fully settled
+                if (elapsed < pdMS_TO_TICKS(IINLIM_DPDM_MIN_WAIT_MS)) {
+                    break;
+                }
+
+                // Check REG07 bit 7 for DPDM in progress
+                uint8_t reg07 = 0xFF;
+                bool dpdmDone = BQ24297_Read_I2C(0x07, &reg07) && !(reg07 & 0x80);
+                bool timeout = elapsed >= pdMS_TO_TICKS(IINLIM_DPDM_TIMEOUT_MS);
+
+                if (dpdmDone) {
+                    // DPDM finished — safe to set IINLIM, hardware won't overwrite
+                    if (BQ24297_SetIINLIM(ILim_500)) {
+                        LOG_D("IINLIM: DPDM done after %lu ms, set 500mA, entering WAIT_USB",
+                              (unsigned long)(elapsed * portTICK_PERIOD_MS));
+                        pData->iinlimTimestamp = now;
+                        pData->iinlimState = IINLIM_STATE_WAIT_USB;
+                    } else {
+                        LOG_E("IINLIM: Failed to set 500mA, retrying next cycle");
+                    }
+                } else if (timeout) {
+                    // DPDM stuck after 3s — set IINLIM anyway
+                    LOG_E("IINLIM: DPDM not complete after 3s (REG07=0x%02X), forcing 500mA",
+                          reg07);
+                    if (BQ24297_SetIINLIM(ILim_500)) {
+                        pData->iinlimTimestamp = now;
+                        pData->iinlimState = IINLIM_STATE_WAIT_USB;
+                    } else {
+                        LOG_E("IINLIM: Failed to set 500mA on timeout, retrying next cycle");
+                    }
+                }
+            }
+            break;
+
+        case IINLIM_STATE_WAIT_USB:
+            if (!vbusPresent) {
+                BQ24297_SetIINLIM(ILim_500);
+                LOG_D("IINLIM: VBUS lost during WAIT_USB, reset to 500mA");
+                pData->iinlimState = IINLIM_STATE_IDLE;
+                break;
+            }
+            if ((now - pData->iinlimTimestamp) >= pdMS_TO_TICKS(IINLIM_USB_WAIT_MS)) {
+                if (UsbCdc_IsConfigured()) {
+                    // USB host enumerated — keep 500mA (USB-spec safe)
+                    LOG_D("IINLIM: USB configured, keeping 500mA");
+                    pData->iinlimState = IINLIM_STATE_SETTLED;
+                } else {
+                    // No USB enumeration — wall charger, bump to 2000mA
+                    if (BQ24297_SetIINLIM(ILim_2000)) {
+                        LOG_D("IINLIM: No USB config, set 2000mA (wall charger)");
+                        pData->iinlimState = IINLIM_STATE_SETTLED;
+                    } else {
+                        LOG_E("IINLIM: Failed to set 2000mA, retrying next cycle");
+                    }
+                }
+            }
+            break;
+
+        case IINLIM_STATE_SETTLED:
+            if (!vbusPresent) {
+                BQ24297_SetIINLIM(ILim_500);
+                LOG_D("IINLIM: VBUS lost, reset to 500mA");
+                pData->iinlimState = IINLIM_STATE_IDLE;
+            }
+            break;
+
+        default:
+            pData->iinlimState = IINLIM_STATE_IDLE;
+            break;
+    }
+
+    pData->iinlimLastVbus = vbusPresent;
 }
 
 void BQ24297_EnableOTG(void) {
     // Read REG08 for safety checks
-    uint8_t reg08 = BQ24297_Read_I2C(0x08);
+    uint8_t reg08;
+    if (!BQ24297_Read_I2C(0x08, &reg08)) {
+        LOG_E("BQ24297_EnableOTG: REG08 read failed");
+        return;
+    }
     bool pgStat = (reg08 >> 2) & 0x01;
     uint8_t vbusStat = (reg08 >> 6) & 0x03;
-    
+
     // Clear HIZ mode if active
-    uint8_t reg00 = BQ24297_Read_I2C(0x00);
-    if (reg00 & 0x80) {
+    uint8_t reg00;
+    if (BQ24297_Read_I2C(0x00, &reg00) && (reg00 & 0x80)) {
         reg00 &= 0x7F;  // Clear bit 7 (HIZ)
         BQ24297_Write_I2C(0x00, reg00);
         vTaskDelay(5 / portTICK_PERIOD_MS);
     }
-    
+
     // Cannot enable OTG if external power is present
     if (pgStat) {
         return;
     }
-    
+
     // Check if OTG is already active
     if (vbusStat == 0x03) {
-        uint8_t reg01 = BQ24297_Read_I2C(0x01);
-        if (reg01 & 0x20) {
+        uint8_t reg01_check;
+        if (BQ24297_Read_I2C(0x01, &reg01_check) && (reg01_check & 0x20)) {
             pData->status.otg = true;
             pData->status.chgEn = false;
             return;
         }
     }
-    
+
     // Set OTG GPIO HIGH to enable boost mode
     BATT_MAN_OTG_OutputEnable();
     BATT_MAN_OTG_Set();
-    
+
     // Read current REG01 value
-    uint8_t reg01 = BQ24297_Read_I2C(0x01);
-    if (reg01 == 0xFF) {
+    uint8_t reg01;
+    if (!BQ24297_Read_I2C(0x01, &reg01)) {
         return;
     }
-    
+
     // Configure REG01 for OTG mode
     // Bit 5 = 1 (OTG enable), Bit 4 = 0 (charge disable), Bit 6 = 1 (watchdog reset)
     reg01 = (reg01 & 0x0F) | 0x60;
-    
+
     // Write with retry logic
     bool success = false;
     for (int retry = 0; retry < 3; retry++) {
         if (BQ24297_Write_I2C(0x01, reg01)) {
             vTaskDelay(5 / portTICK_PERIOD_MS);
-            
+
             // Verify write
-            uint8_t readback = BQ24297_Read_I2C(0x01);
-            if ((readback & 0x30) == 0x20) {  // Check OTG=1, CHG=0
+            uint8_t readback;
+            if (BQ24297_Read_I2C(0x01, &readback) && ((readback & 0x30) == 0x20)) {
                 success = true;
                 break;
             }
@@ -495,21 +674,21 @@ void BQ24297_EnableOTG(void) {
 
 void BQ24297_DisableOTG(bool enableCharging) {
     // Clear HIZ mode if active
-    uint8_t reg00 = BQ24297_Read_I2C(0x00);
-    if (reg00 != 0xFF && (reg00 & 0x80)) {
+    uint8_t reg00;
+    if (BQ24297_Read_I2C(0x00, &reg00) && (reg00 & 0x80)) {
         reg00 &= 0x7F;  // Clear bit 7
         BQ24297_Write_I2C(0x00, reg00);
         vTaskDelay(2 / portTICK_PERIOD_MS);
     }
-    
+
     // Set GPIO LOW to disable OTG
     BATT_MAN_OTG_OutputEnable();
     BATT_MAN_OTG_Clear();
     vTaskDelay(2 / portTICK_PERIOD_MS);
-    
+
     // Read and modify REG01
-    uint8_t reg = BQ24297_Read_I2C(0x01);
-    if (reg == 0xFF) {
+    uint8_t reg;
+    if (!BQ24297_Read_I2C(0x01, &reg)) {
         pData->status.otg = false;
         return;
     }
@@ -530,8 +709,7 @@ void BQ24297_DisableOTG(bool enableCharging) {
     
     // Check for HIZ mode after REG01 write
     vTaskDelay(5 / portTICK_PERIOD_MS);
-    reg00 = BQ24297_Read_I2C(0x00);
-    if (reg00 != 0xFF && (reg00 & 0x80)) {
+    if (BQ24297_Read_I2C(0x00, &reg00) && (reg00 & 0x80)) {
         reg00 &= 0x7F;
         BQ24297_Write_I2C(0x00, reg00);
     }
@@ -548,12 +726,14 @@ void BQ24297_DisableOTG(bool enableCharging) {
 }
 
 bool BQ24297_IsOTGEnabled(void) {
-    uint8_t reg = BQ24297_Read_I2C(0x01);
+    uint8_t reg;
+    if (!BQ24297_Read_I2C(0x01, &reg)) return false;
     return (reg & 0b00100000) != 0;
 }
 
 bool BQ24297_IsChargingEnabled(void) {
-    uint8_t reg = BQ24297_Read_I2C(0x01);
+    uint8_t reg;
+    if (!BQ24297_Read_I2C(0x01, &reg)) return false;
     return (reg & 0b00010000) != 0;
 }
 
@@ -583,17 +763,20 @@ bool BQ24297_IsBatteryPresent(void) {
 }
 
 void BQ24297_UpdateBatteryStatus(void) {
-    // Update battery presence status (for reporting only)
     bool oldBatPresent = pData->status.batPresent;
-    pData->status.batPresent = BQ24297_IsBatteryPresent();
+    bool oldChargeAllowed = pData->chargeAllowed;
 
-    // Note: chargeAllowed is kept for status reporting but no longer controls
-    // actual charging. The BQ24297 hardware handles charging autonomously with
-    // built-in protection for temperature, overvoltage, and battery presence.
+    pData->status.batPresent = BQ24297_IsBatteryPresent();
     pData->chargeAllowed = pData->status.batPresent &&
                            (pData->status.ntcFault != NTC_FAULT_HOT);
 
-    // Log battery presence changes
+    // Enforce charge state via I2C when chargeAllowed changes
+    if (pData->chargeAllowed != oldChargeAllowed) {
+        BQ24297_ChargeEnable(pData->chargeAllowed);
+        LOG_D("BQ24297: Charging %s",
+              pData->chargeAllowed ? "enabled" : "disabled");
+    }
+
     if (oldBatPresent != pData->status.batPresent) {
         LOG_D("BQ24297: Battery %s",
               pData->status.batPresent ? "detected" : "not detected");
