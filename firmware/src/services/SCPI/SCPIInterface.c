@@ -2233,6 +2233,23 @@ scpi_result_t SCPI_Help(scpi_t* context) {
     return SCPI_RES_OK;
 }
 
+#define SCPI_WRITE_MAX_RETRIES      200
+#define SCPI_WRITE_RETRY_DELAY_MS   5
+
+size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                           const char* data, size_t len) {
+    size_t written = 0;
+    int retries = SCPI_WRITE_MAX_RETRIES;
+    while (written < len && retries > 0) {
+        size_t n = writeFn(data + written, len - written);
+        written += n;
+        if (written >= len) break;
+        vTaskDelay(pdMS_TO_TICKS(SCPI_WRITE_RETRY_DELAY_MS));
+        retries--;
+    }
+    return written;
+}
+
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
     static char modelString[8] = {0};  // Initialize to prevent garbage data

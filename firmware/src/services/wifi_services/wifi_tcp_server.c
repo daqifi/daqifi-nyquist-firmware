@@ -154,8 +154,7 @@ static wifi_tcp_server_clientContext_t* SCPI_TCP_GetClient(scpi_t * context) {
  * @return The number of characters written
  */
 static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
-    //TcpClientData* client = SCPI_TCP_GetClient(context);
-    return wifi_tcp_server_WriteBuffer(data, len);
+    return SCPI_WriteWithRetry(wifi_tcp_server_WriteBuffer, data, len);
 }
 
 /**
