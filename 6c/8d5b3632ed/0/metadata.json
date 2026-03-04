@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "6c8d5b3632ed",
+  "session_id": "3fcfab11-ae13-4a1a-a90a-bcb63fa343ae",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-04T06:27:28.893089059Z",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "firmware/src/services/DaqifiPB/NanoPB_Encoder.c",
+    "firmware/src/services/SCPI/SCPIInterface.c",
+    "firmware/src/services/sd_card_services/sd_card_manager.c",
+    "firmware/src/services/sd_card_services/sd_card_manager.h",
+    "firmware/src/services/streaming.c",
+    "firmware/src/services/streaming.h"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "3e0f3a6d1ac7",
+  "token_usage": {
+    "input_tokens": 415,
+    "cache_creation_tokens": 1545833,
+    "cache_read_tokens": 39221942,
+    "output_tokens": 254592,
+    "api_call_count": 377
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-04T06:27:26.191037957Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 8708,
+    "human_removed": 8518270,
+    "total_committed": 2332,
+    "agent_percentage": 0
+  }
+}
