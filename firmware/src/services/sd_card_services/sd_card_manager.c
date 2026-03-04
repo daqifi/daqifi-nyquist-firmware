@@ -5,6 +5,8 @@
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "services/csv_encoder.h"  // For csv_ResetEncoder on file rotation
+#include "services/JSON_Encoder.h"  // For json_ResetEncoder on file rotation
+#include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (32 * 1024)  // 32KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
@@ -600,9 +602,34 @@ void sd_card_manager_ProcessState() {
                 memset(gSDCardData.writeBuffer, 0, sizeof(gSDCardData.writeBuffer));
                 xSemaphoreGive(gSDCardData.wMutex);
 
+                // Reset write pipeline state for clean start.
+                // Without this, a stale sdCardWritePending=1 from a previous
+                // session causes the zeroed writeBuffer to be written to the
+                // new file (producing junk bytes before real data).
+                gSDCardData.sdCardWritePending = 0;
+                gSDCardData.writeBufferLength = 0;
+                gSDCardData.sdCardWriteBufferOffset = 0;
+
+                // Reset encoder state so each file is self-describing.
+                // MUST happen BEFORE the state transition to WRITE_TO_FILE
+                // below, because the streaming task (same priority) can
+                // preempt via time-slicing immediately after the state
+                // change.  If gSdFileWasReady is still true from the
+                // previous file at that point, the streaming task writes
+                // data without triggering transition detection, pushing
+                // the metadata away from byte 0.
+                csv_ResetEncoder();
+                json_ResetEncoder();
+                Streaming_ResetSdPbMetadata();
+
                 // Use WRITE_PLUS to create/truncate file (overwrite mode)
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
+
+                // Transition to WRITE_TO_FILE — IsWriteReady() becomes
+                // true after this point.  The encoder flags above are
+                // already reset, so the first streaming_Task iteration
+                // will detect the transition and emit metadata at byte 0.
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
                 gSDCardData.totalBytesFlushPending = 0;
                 gSDCardData.currentFileBytes = 0;  // Reset byte counter for new file
@@ -742,6 +769,21 @@ void sd_card_manager_ProcessState() {
                 LOG_D("[SD] File size limit reached (%llu >= %llu), rotating to next file\r\n",
                      gSDCardData.currentFileBytes, gpSDCardSettings->maxFileSizeBytes);
 
+                // Complete any pending write from the chunk processing loop.
+                // The loop can exit with sdCardWritePending=1 (4th chunk read
+                // but not yet written). Flush it to the OLD file before closing.
+                if (gSDCardData.sdCardWritePending == 1) {
+                    int pendingLen = SDCardWrite();
+                    if (pendingLen >= 0) {
+                        gSDCardData.currentFileBytes += pendingLen;
+                    }
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_pending_write");
+                    gSDCardData.sdCardWritePending = 0;
+                    gSDCardData.writeBufferLength = 0;
+                    gSDCardData.sdCardWriteBufferOffset = 0;
+                    xSemaphoreGive(gSDCardData.wMutex);
+                }
+
                 // Drain circular buffer completely before rotation to prevent data loss
                 SD_TakeMutexDebug(gSDCardData.wMutex, "drain_buffer_check");
                 size_t bufferBytes = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
@@ -805,9 +847,9 @@ void sd_card_manager_ProcessState() {
                          gSDCardData.filePath, gSDCardData.currentFileBytes);
                 }
 
-                // DO NOT reset CSV encoder - only first file gets header
-                // Subsequent split files contain data rows only for cleaner merging
-                // and zero latency rotation
+                // Encoder resets are done in OPEN_FILE (after buffer clear +
+                // file open) so the streaming task cannot burn one-shot
+                // header flags before the new file is ready to accept data.
 
                 if (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES) {
                     gSDCardData.fileCounter++;
@@ -1185,6 +1227,14 @@ bool sd_card_manager_IsBusy(void) {
     }
 }
 
+
+bool sd_card_manager_IsWriteReady(void) {
+    return gpSDCardSettings != NULL
+        && gpSDCardSettings->enable
+        && gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE
+        && gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
+        && gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID;
+}
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {
     static bool logged = false;

@@ -32,6 +32,17 @@
 
 //#define TEST_STREAMING
 
+// SD protobuf metadata: emitted as first message in each SD log file
+static bool gSdPbMetadataSent = false;
+
+// Tracks whether the SD file has become ready during this streaming session.
+// Used to reset encoder header flags when SD transitions to ready, since
+// encoding may have already fired (and burned headers) before the file opened.
+static bool gSdFileWasReady = false;
+
+// SD protobuf metadata field tags are added directly to nanopbFlag
+// in streaming_Task() when gSdPbMetadataSent is false (see below).
+
 // Log queue full error every N drops to avoid flooding the log at high rates.
 // At 15kHz this means we log approximately once per 6.7ms during overflow.
 #define LOG_QUEUE_DROP_INTERVAL 100
@@ -215,6 +226,9 @@ static void Streaming_Start(void) {
         // Clear encoding buffer once to prevent stale data artifacts in SD files
         memset(buffer, 0, BUFFER_SIZE);
 
+        gSdPbMetadataSent = false;
+        gSdFileWasReady = false;
+
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
@@ -244,6 +258,11 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
     TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
     gpRuntimeConfigStream->Running = false;
+}
+
+void Streaming_ResetSdPbMetadata(void) {
+    gSdPbMetadataSent = false;
+    gSdFileWasReady = false;
 }
 
 void Streaming_UpdateState(void) {
@@ -292,7 +311,23 @@ void streaming_Task(void) {
        
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
-        sdSize = sd_card_manager_GetWriteBuffFreeSize();
+        // Only check SD buffer size once the file is actually open.
+        // The SD card manager clears the circular buffer during file open,
+        // so writing before that would lose data (including headers).
+        sdSize = sd_card_manager_IsWriteReady()
+               ? sd_card_manager_GetWriteBuffFreeSize()
+               : 0;
+
+        // When SD file first becomes ready, reset all encoder header flags.
+        // Encoding may have already fired (draining the sample queue) before
+        // the file opened, which burns one-shot header flags without the
+        // header data actually reaching the file.
+        if (sdSize > 0 && !gSdFileWasReady) {
+            gSdFileWasReady = true;
+            gSdPbMetadataSent = false;
+            csv_ResetEncoder();
+            json_ResetEncoder();
+        }
 
         // Single-interface streaming: only stream to the interface that initiated streaming
         // This prevents bandwidth overload at high sample rates
@@ -354,8 +389,28 @@ void streaming_Task(void) {
 
         // Cap at BUFFER_SIZE to prevent encoder overflow
         if (maxSize > BUFFER_SIZE) maxSize = BUFFER_SIZE;
-        
+
         nanopbFlag.Size = 0;
+
+        // Merge SD protobuf metadata into the first data encoding.
+        // By adding metadata field tags before data fields, the encoder
+        // includes metadata (timestamp_freq, device_sn, etc.) in every
+        // message of the first batch.  This guarantees metadata is at
+        // byte 0, avoiding the separate-write ordering issue where a
+        // standalone metadata message could be displaced by queued data.
+        bool shouldAddPbMeta = hasSD && !gSdPbMetadataSent
+            && pRunTimeStreamConf->Encoding != Streaming_Csv
+            && pRunTimeStreamConf->Encoding != Streaming_Json;
+
+        if (shouldAddPbMeta) {
+            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_timestamp_freq_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_port_num_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_num_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_sn_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_pn_tag;
+            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_fw_rev_tag;
+        }
+
         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
 
         if (AINDataAvailable) {
@@ -391,7 +446,14 @@ void streaming_Task(void) {
             if (hasWifi) {
                 wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
-            if (hasSD) {
+            if (hasSD && gSdFileWasReady) {
+                // Guard: gSdFileWasReady is reset by the SD task during file
+                // rotation (via Streaming_ResetSdPbMetadata).  If it went
+                // false while we were encoding, a rotation happened and our
+                // buffer belongs to the old file — writing it now would place
+                // non-metadata data at position 0 of the NEW file.  Skipping
+                // the write lets the next iteration detect the new file,
+                // include metadata, and write at position 0.
                 const uint8_t* p = buffer;
                 size_t remaining = packetSize;
                 size_t total_written = 0;
@@ -419,17 +481,11 @@ void streaming_Task(void) {
                           attempts, (unsigned)packetSize, (unsigned)total_written);
                 }
 
-                static bool sd_logged = false;
-                if (!sd_logged) {
-                    LOG_D("SD: Write completed, packetSize=%u, written=%u, attempts=%u",
-                          (unsigned)packetSize, (unsigned)total_written, attempts);
-                    sd_logged = true;
-                }
-            } else {
-                static bool no_sd_logged = false;
-                if (!no_sd_logged) {
-                    LOG_D("SD: Write skipped - hasSD is false");
-                    no_sd_logged = true;
+                // Mark metadata as sent once data reaches the SD buffer.
+                // The metadata fields were baked into the encoded messages,
+                // so any successful write includes them.
+                if (shouldAddPbMeta && total_written > 0) {
+                    gSdPbMetadataSent = true;
                 }
             }
         }

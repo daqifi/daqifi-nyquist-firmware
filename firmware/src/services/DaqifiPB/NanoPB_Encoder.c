@@ -526,7 +526,7 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_timestamp_freq_tag:
                 message.has_timestamp_freq = true;
                 // timestamp timer running frequency
-                message.timestamp_freq = TimerApi_CounterGet(
+                message.timestamp_freq = TimerApi_FrequencyGet(
                         pBoardConfig->StreamingConfig.TSTimerIndex);
                 break;
             case DaqifiOutMessage_analog_in_port_num_tag:

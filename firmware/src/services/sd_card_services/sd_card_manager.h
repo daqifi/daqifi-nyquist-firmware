@@ -180,6 +180,17 @@ extern "C" {
     bool sd_card_manager_IsBusy(void);
 
     /**
+     * @brief Checks if the SD card file is open and ready to accept write data.
+     *
+     * Returns true only after the file has been opened and the write buffer
+     * has been cleared. Use this to defer writes that must land in the file
+     * (e.g., metadata headers) rather than risk being cleared during file open.
+     *
+     * @return true if file is open and in WRITE_TO_FILE state, false otherwise
+     */
+    bool sd_card_manager_IsWriteReady(void);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received
