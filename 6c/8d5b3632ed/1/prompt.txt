@@ -1,0 +1,407 @@
+Implement the following plan:
+
+# Extract SCPI Write Retry Logic into Shared Helper (Issue #194)
+
+## Context
+
+The SCPI write retry loop (backpressure when circular buffer is full) only exists for USB in `SCPI_USB_Write` (UsbCdc.c:658). The WiFi SCPI callback `SCPI_TCP_Write` (wifi_tcp_server.c:156) has no retry — if the WiFi circular buffer is full, that chunk of the SCPI response is silently dropped.
+
+| Transport | Callback | Buffer | Retry? |
+|-----------|----------|--------|--------|
+| USB | `SCPI_USB_Write` | 16KB | Yes (200 × 5ms = 1s) |
+| WiFi | `SCPI_TCP_Write` | 14KB | No — data lost |
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `firmware/src/services/SCPI/SCPIInterface.h` | Add typedef + helper declaration |
+| `firmware/src/services/SCPI/SCPIInterface.c` | Add `SCPI_WriteWithRetry()` implementation |
+| `firmware/src/services/UsbCdc/UsbCdc.c` | Replace inline retry loop with helper call |
+| `firmware/src/services/wifi_services/wifi_tcp_server.c` | Replace single call with helper call |
+
+## Implementation
+
+### Step 1: Add shared helper declaration to SCPIInterface.h
+
+```c
+/*! Function pointer type for transport-level write (no SCPI context) */
+typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);
+
+/*!
+ * Write SCPI response data with retry on buffer-full backpressure.
+ * Retries up to SCPI_WRITE_MAX_RETRIES times with SCPI_WRITE_RETRY_DELAY_MS
+ * between attempts. Handles partial writes.
+ * @param writeFn  Transport write function (USB or WiFi buffer write)
+ * @param data     Data to write
+ * @param len      Number of bytes to write
+ * @return Total bytes written (may be < len if retries exhausted)
+ */
+size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                           const char* data, size_t len);
+```
+
+### Step 2: Add implementation to SCPIInterface.c
+
+```c
+#define SCPI_WRITE_MAX_RETRIES      200
+#define SCPI_WRITE_RETRY_DELAY_MS   5
+
+size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                           const char* data, size_t len) {
+    size_t written = 0;
+    int retries = SCPI_WRITE_MAX_RETRIES;
+    while (written < len && retries > 0) {
+        size_t n = writeFn(data + written, len - written);
+        written += n;
+        if (written >= len) break;
+        vTaskDelay(pdMS_TO_TICKS(SCPI_WRITE_RETRY_DELAY_MS));
+        retries--;
+    }
+    return written;
+}
+```
+
+### Step 3: Update UsbCdc.c
+
+Add a thin wrapper to match the `ScpiTransportWriteFn` signature (UsbCdc_WriteToBuffer takes an extra client param):
+
+```c
+static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
+    return UsbCdc_WriteToBuffer(NULL, data, len);  // NULL defaults to gRunTimeUsbSttings
+}
+```
+
+Replace `SCPI_USB_Write` body:
+```c
+static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
+    UNUSED(context);
+    return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
+}
+```
+
+Need to add `#include "services/SCPI/SCPIInterface.h"` if not already included.
+
+### Step 4: Update wifi_tcp_server.c
+
+`wifi_tcp_server_WriteBuffer(const char* data, size_t len)` already matches `ScpiTransportWriteFn` — no wrapper needed.
+
+Replace `SCPI_TCP_Write` body:
+```c
+static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
+    return SCPI_WriteWithRetry(wifi_tcp_server_WriteBuffer, data, len);
+}
+```
+
+Need to add `#include "services/SCPI/SCPIInterface.h"` if not already included.
+
+## Notes
+
+- **WiFi all-or-nothing writes**: `wifi_tcp_server_WriteBuffer` returns 0 if buffer doesn't have `len` bytes free. The retry loop handles this correctly — it retries the same write until space is available or retries are exhausted.
+- **USB partial writes**: `UsbCdc_WriteToBuffer` supports partial writes, clamped to `USBCDC_WBUFFER_SIZE`. The retry loop accumulates partial progress via `data + written, len - written`.
+- **Timeout**: 200 × 5ms = 1 second max. Same as current USB behavior.
+
+## Verification
+
+1. **Build**: `make -f nbproject/Makefile-default.mk CONF=default build`
+2. **grep check**: `grep -rn "retries\|retry" firmware/src/services/UsbCdc/UsbCdc.c` — should have no inline retry loop
+3. **Hardware test** via USB:
+   - `*IDN?` — basic response works
+   - `SYST:POW:BQ:DIAG?` — large response (~2KB) writes fully
+   - `SYST:POW:BQ:REG?` — multi-line response
+4. **WiFi test** (if available): Same SCPI commands over TCP
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/ea79bbc2-f727-431d-a23f-4fab3cf3adde.jsonl
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+it builds. check for proper comments. how can we test the functionality?
+
+---
+
+the usb is connected and flashed. test usb
+
+---
+
+you may connect the device to Tesla with KpMg24259415.
+
+---
+
+try to get wifi module info
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+now try
+
+---
+
+try the 10x rapid-fire stress on tcp.
+
+---
+
+commit push and ill merge
+
+---
+
+[Request interrupted by user]
+
+---
+
+commit and push to a pr
+
+---
+
+how does this hold up when we are sending files from the sd card over scpi? i assume that usecase is the biggest test, right?
+
+---
+
+first check what is on the sd card (D:\DAQiFi) maybe add a bunch more filenames so we might be able to work the buffers so it has to send in multiple writes?
+
+---
+
+you have to set the wifi network for the device to connect to the network.
+
+---
+
+no, the lan ethernet is connect to the same network Tesla is connected to. you need to tell the nyquist to connect to Tesla
+
+---
+
+check the qodo comment onthis pr
+
+---
+
+redy to merge?
+
+---
+
+merged.
+
+---
+
+[Request interrupted by user]
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the conversation:
+
+1. User provided a detailed plan to extract SCPI write retry logic into a shared helper (Issue #194). The plan specified 4 files to modify and exact implementation details.
+
+2. I read all 4 files to understand current code:
+   - SCPIInterface.h - header file for SCPI interface
+   - SCPIInterface.c - large file, read in sections
+   - UsbCdc.c - had inline retry loop in SCPI_USB_Write (lines 658-672)
+   - wifi_tcp_server.c - had no retry in SCPI_TCP_Write (line 156-158)
+
+3. Key findings from code reading:
+   - Both UsbCdc.c and wifi_tcp_server.c already include SCPIInterface.h
+   - wifi_tcp_server_WriteBuffer signature matches ScpiTransportWriteFn (const char* data, size_t len)
+   - UsbCdc_WriteToBuffer takes extra UsbCdcData_t* parameter, needs wrapper
+   - FreeRTOS.h comes via Logger.h inclusion
+   - vTaskDelay already used in SCPIInterface.c
+
+4. Made 4 edits as planned:
+   - Added typedef and declaration to SCPIInterface.h
+   - Added SCPI_WriteWithRetry implementation to SCPIInterface.c (before CreateSCPIContext)
+   - Replaced inline retry loop in UsbCdc.c with wrapper + helper call
+   - Replaced single call in wifi_tcp_server.c with helper call
+
+5. Build attempts had issues:
+   - Makefile-local-default.mk had SHELL=cmd.exe
+   - Tried overriding SHELL and MKDIR
+   - Windows xc32-gcc paths didn't work from Linux bash
+   - User confirmed build succeeded externally
+
+6. User asked to check comments - I reviewed all files, comments were clean.
+
+7. Testing via USB:
+   - Had to attach device via usbipd (busid 2-4)
+   - *IDN? - PASS
+   - SYST:POW:BQ:DIAG? - PASS (~1.2KB response)
+   - SYST:POW:BQ:REG? - PASS (multi-line)
+   - 10x rapid-fire REG? stress test - PASS (10/10, 140 lines)
+
+8. User asked about WiFi testing - I configured device for Tesla network:
+   - Set NETType to 1 (STA mode)
+   - Set security to 3 (WPA auto)
+   - Set SSID "Tesla" and password
+   - APPLY command initially failed (used APPL abbreviation, needed full APPLY)
+   - WiFi module initially failed to init (m2m_wifi_init_start error)
+   - After power cycle, WiFi module responded with chip info: FW 19.7.7
+   - Device connected to Tesla at 192.168.1.160
+
+9. WiFi TCP testing (initial - PC WiFi was up):
+   - *IDN? over TCP - PASS
+   - DIAG? over TCP - PASS
+   - REG? over TCP - PASS
+   - 10x rapid-fire REG? - PASS (10/10)
+
+10. User asked about SD card file transfer testing:
+    - Investigated SD data path: sd_card_manager_DataReadyCB → UsbCdc_WriteToBuffer directly
+    - SD operations bypass SCPI write entirely - separate code path
+    - SD callback has its own retry loop (10,000 × 1ms = 10s timeout)
+    - WiFi not supported for SD file transfer at all
+
+11. User asked to check SD card contents and add files for buffer stress testing:
+    - SD card at D:\DAQiFi had 17 large CSV files (~500MB each)
+    - Created 200 test files with long names via PowerShell
+    - Listed SD via SCPI: 219 lines, 13.7KB - all complete over USB
+
+12. WiFi stress testing challenges:
+    - PC WiFi adapter powered down - couldn't reach device
+    - User clarified PC is on same network via Ethernet LAN
+    - Device was pingable at 192.168.1.160
+    - TCP port 9760 connected but no data returned
+    - Issue: stale TCP connection after nc disconnect
+    - Fix: power cycle + APPLY to reset WiFi TCP server state
+    - After reset: 10x REG? over WiFi TCP - PASS (10/10, 140 lines)
+    - 20x DIAG? over WiFi TCP - PASS (20/20, 440 lines, 17.5KB through 5.6KB buffer)
+
+13. Committed and pushed to PR #195:
+    - Branch: fix/scpi-write-retry-shared-helper
+    - Created PR with full test results
+
+14. User asked to check Qodo review comment:
+    - Valid bug: retries on disconnect - when WiFi client disconnects, WriteBuffer returns 0, causing 1s wasted retry
+    - Fixed by adding early return check in SCPI_TCP_Write for disconnected client
+    - Pushed fix as second commit
+
+15. User confirmed merge, I switched to main and pulled. Then user sent /compact.
+
+Summary:
+1. Primary Request and Intent:
+   The user asked to implement a plan from Issue #194: extract the SCPI write retry logic from USB's `SCPI_USB_Write` into a shared `SCPI_WriteWithRetry()` helper, and apply it to both USB and WiFi transports. WiFi's `SCPI_TCP_Write` previously had no retry — data was silently dropped when the circular buffer was full. After implementation, the user wanted USB and WiFi TCP testing, Qodo code review feedback addressed, and the PR merged.
+
+2. Key Technical Concepts:
+   - SCPI write backpressure: retry loop (200 × 5ms = 1s) when circular buffer is full
+   - ScpiTransportWriteFn typedef: `size_t (*)(const char* data, size_t len)` for transport-agnostic writes
+   - WiFi TCP circular buffer: 5.6KB (`WIFI_CIRCULAR_BUFF_SIZE` = 1400 × 4), all-or-nothing writes
+   - USB CDC circular buffer: 16KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 4096 × 4), partial writes supported
+   - SD card data path bypasses SCPI write entirely: `sd_card_manager_DataReadyCB` → `UsbCdc_WriteToBuffer` directly, with its own retry loop (10,000 × 1ms)
+   - WINC1500 WiFi module: single TCP client, stale connection issues after nc disconnect, needs APPLY after power cycle
+   - WiFi STA mode = 1, AP mode = 4; WPA security = 3
+   - Device TCP SCPI port: 9760
+
+3. Files and Code Sections:
+   - `firmware/src/services/SCPI/SCPIInterface.h`
+     - Added typedef and shared helper declaration
+     ```c
+     /*! Function pointer type for transport-level write (no SCPI context) */
+     typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);
+
+     size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                                const char* data, size_t len);
+     ```
+
+   - `firmware/src/services/SCPI/SCPIInterface.c`
+     - Added implementation before `CreateSCPIContext` (around line 2236)
+     ```c
+     #define SCPI_WRITE_MAX_RETRIES      200
+     #define SCPI_WRITE_RETRY_DELAY_MS   5
+
+     size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
+                                const char* data, size_t len) {
+         size_t written = 0;
+         int retries = SCPI_WRITE_MAX_RETRIES;
+         while (written < len && retries > 0) {
+             size_t n = writeFn(data + written, len - written);
+             written += n;
+             if (written >= len) break;
+             vTaskDelay(pdMS_TO_TICKS(SCPI_WRITE_RETRY_DELAY_MS));
+             retries--;
+         }
+         return written;
+     }
+     ```
+
+   - `firmware/src/services/UsbCdc/UsbCdc.c`
+     - Replaced inline retry loop with thin wrapper + helper call
+     ```c
+     static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
+         return UsbCdc_WriteToBuffer(NULL, data, len);
+     }
+
+     static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
+         UNUSED(context);
+         return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
+     }
+     ```
+
+   - `firmware/src/services/wifi_services/wifi_tcp_server.c`
+     - Replaced single call with helper + disconnect guard (from Qodo review)
+     ```c
+     static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
+         // Skip retry loop if client is disconnected — no progress possible
+         if (gpServerData == NULL || gpServerData->client.clientSocket < 0) {
+             return 0;
+         }
+         return SCPI_WriteWithRetry(wifi_tcp_server_WriteBuffer, data, len);
+     }
+     ```
+
+   - `firmware/src/app_freertos.c` (read-only, for understanding SD data path)
+     - `sd_card_manager_DataReadyCB` at line 162 - USB-only callback with its own retry loop, bypasses SCPI write
+
+4. Errors and fixes:
+   - **SCPI APPLY command abbreviation**: Used `SYST:COMM:LAN:APPL` which gave error -113. The pattern is `APPLY` (all caps), so abbreviation to `APPL` wasn't valid. Fixed by using full `SYST:COMM:LAN:APPLY`.
+   - **Build system issues**: Makefile-local-default.mk had `SHELL=cmd.exe` and referenced Windows paths for xc32-gcc. Tried overriding SHELL and MKDIR but compiler paths were Windows-only. User confirmed build succeeded externally.
+   - **WiFi module init failure**: `m2m_wifi_init_start failed (device init error)` after first configuration. Fixed by power cycling the device - module came up with FW 19.7.7.
+   - **WiFi TCP stale connection**: After nc disconnects, the WINC thinks a client is still connected. Subsequent nc sessions connect but get no data. Fixed by power cycling + APPLY before each test session.
+   - **PC WiFi adapter powered down**: Couldn't connect PC to Tesla WiFi. User clarified PC is on same network via Ethernet LAN - no WiFi needed.
+   - **Qodo review: retries on disconnect**: `wifi_tcp_server_WriteBuffer` returns 0 for both buffer-full AND disconnected socket. Added early return check for `clientSocket < 0` before calling retry helper.
+
+5. Problem Solving:
+   - Successfully extracted shared retry logic from USB-only to both transports
+   - Verified WiFi TCP now has backpressure handling (previously silently dropped data)
+   - Stress tested: 20x DIAG? = 17.5KB through 5.6KB WiFi buffer, all 20 responses complete
+   - Identified that SD card operations use a separate data path (not through SCPI write)
+   - Addressed Qodo code review finding about disconnect retry waste
+
+6. All user messages:
+   - "Implement the following plan: # Extract SCPI Write Retry Logic into Shared Helper (Issue #194) [full plan details]"
+   - "it builds. check for proper comments. how can we test the functionality?"
+   - "the usb is connected and flashed. test usb"
+   - "you may connect the device to Tesla with KpMg24259415."
+   - "we might need to update the wifi module on this unit."
+   - "the wifi module should now show status"
+   - "try the 10x rapid-fire stress on tcp."
+   - "how does this hold up when we are sending files from the sd card over scpi? i assume that usecase is the biggest test, right?"
+   - "first check what is on the sd card (D:\DAQiFi) maybe add a bunch more filenames so we might be able to work the buffers so it has to send in multiple writes?"
+   - "you have to set the wifi network for the device to connect to the network."
+   - "the pc is connected to lan which is connected to tesla"
+   - "check the qodo comment on this pr"
+   - "redy to merge?"
+   - "merged."
+   - "/compact"
+
+7. Pending Tasks:
+   - None explicitly pending. PR #195 was merged. User sent /compact to summarize.
+   - 200 test files with long names were created on SD card at D:\DAQiFi — may want to clean those up at some point.
+
+8. Current Work:
+   PR #195 was merged to main. I switched to main branch, pulled the merged changes, and deleted the local feature branch. The user then sent `/compact` to summarize the conversation. All tasks from this session are complete.
+
+9. Optional Next Step:
+   No pending tasks. The implementation, testing, code review fix, and merge are all complete.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/4f9503c9-313f-4a66-bddd-a3033e58c210.jsonl
+
+---
+
+let's work on this ticket: https://github.com/daqifi/daqifi-nyquist-firmware/issues/188
+
+---
+
+[Request interrupted by user for tool use]

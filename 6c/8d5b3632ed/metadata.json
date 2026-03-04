@@ -3,7 +3,7 @@
   "checkpoint_id": "6c8d5b3632ed",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 5,
+  "checkpoints_count": 7,
   "files_touched": [
     "firmware/src/services/DaqifiPB/NanoPB_Encoder.c",
     "firmware/src/services/SCPI/SCPIInterface.c",
@@ -19,13 +19,20 @@
       "context": "/6c/8d5b3632ed/0/context.md",
       "content_hash": "/6c/8d5b3632ed/0/content_hash.txt",
       "prompt": "/6c/8d5b3632ed/0/prompt.txt"
+    },
+    {
+      "metadata": "/6c/8d5b3632ed/1/metadata.json",
+      "transcript": "/6c/8d5b3632ed/1/full.jsonl",
+      "context": "/6c/8d5b3632ed/1/context.md",
+      "content_hash": "/6c/8d5b3632ed/1/content_hash.txt",
+      "prompt": "/6c/8d5b3632ed/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 415,
-    "cache_creation_tokens": 1545833,
-    "cache_read_tokens": 39221942,
-    "output_tokens": 254592,
-    "api_call_count": 377
+    "input_tokens": 4248,
+    "cache_creation_tokens": 1732002,
+    "cache_read_tokens": 53321409,
+    "output_tokens": 299160,
+    "api_call_count": 559
   }
 }
