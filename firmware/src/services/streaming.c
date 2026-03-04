@@ -318,15 +318,37 @@ void streaming_Task(void) {
                ? sd_card_manager_GetWriteBuffFreeSize()
                : 0;
 
-        // When SD file first becomes ready, reset all encoder header flags.
-        // Encoding may have already fired (draining the sample queue) before
-        // the file opened, which burns one-shot header flags without the
-        // header data actually reaching the file.
+        // When SD file first becomes ready (new file or rotation), prepare
+        // headers.  Protobuf metadata is merged into the encode flags below.
+        // For CSV/JSON on rotation (header already sent to USB), write an
+        // SD-only header so each file is self-describing without injecting
+        // a duplicate header into the USB/WiFi stream.
         if (sdSize > 0 && !gSdFileWasReady) {
             gSdFileWasReady = true;
             gSdPbMetadataSent = false;
-            csv_ResetEncoder();
-            json_ResetEncoder();
+
+            // On rotation (not first file), write SD-only CSV/JSON header.
+            // First file: encoder flag is false, so the encoder naturally
+            // includes the header for ALL interfaces — no special handling.
+            if (pRunTimeStreamConf->Encoding == Streaming_Csv
+                    && csv_IsHeaderSent()) {
+                size_t hdrLen = csv_GenerateHeaderToBuffer(
+                        (char*)buffer, BUFFER_SIZE);
+                if (hdrLen > 0) {
+                    sd_card_manager_WriteToBuffer(
+                            (const char*)buffer, hdrLen);
+                    memset(buffer, 0, hdrLen);
+                }
+            } else if (pRunTimeStreamConf->Encoding == Streaming_Json
+                    && json_IsHeaderSent()) {
+                size_t hdrLen = json_GenerateHeaderToBuffer(
+                        (char*)buffer, BUFFER_SIZE);
+                if (hdrLen > 0) {
+                    sd_card_manager_WriteToBuffer(
+                            (const char*)buffer, hdrLen);
+                    memset(buffer, 0, hdrLen);
+                }
+            }
         }
 
         // Single-interface streaming: only stream to the interface that initiated streaming

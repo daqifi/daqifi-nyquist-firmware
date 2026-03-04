@@ -4,8 +4,6 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
-#include "services/csv_encoder.h"  // For csv_ResetEncoder on file rotation
-#include "services/JSON_Encoder.h"  // For json_ResetEncoder on file rotation
 #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (32 * 1024)  // 32KB shared buffer for all SD operations
@@ -610,16 +608,14 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.writeBufferLength = 0;
                 gSDCardData.sdCardWriteBufferOffset = 0;
 
-                // Reset encoder state so each file is self-describing.
+                // Reset SD metadata flag so protobuf metadata is emitted
+                // at byte 0 of the new file.  CSV/JSON headers are NOT
+                // reset here — streaming.c handles SD-only headers on
+                // file transition to avoid injecting duplicate headers
+                // into simultaneous USB/WiFi streams.
                 // MUST happen BEFORE the state transition to WRITE_TO_FILE
-                // below, because the streaming task (same priority) can
-                // preempt via time-slicing immediately after the state
-                // change.  If gSdFileWasReady is still true from the
-                // previous file at that point, the streaming task writes
-                // data without triggering transition detection, pushing
-                // the metadata away from byte 0.
-                csv_ResetEncoder();
-                json_ResetEncoder();
+                // because the streaming task (same priority) can preempt
+                // via time-slicing immediately after the state change.
                 Streaming_ResetSdPbMetadata();
 
                 // Use WRITE_PLUS to create/truncate file (overwrite mode)
@@ -627,9 +623,8 @@ void sd_card_manager_ProcessState() {
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
 
                 // Transition to WRITE_TO_FILE — IsWriteReady() becomes
-                // true after this point.  The encoder flags above are
-                // already reset, so the first streaming_Task iteration
-                // will detect the transition and emit metadata at byte 0.
+                // true after this point.  The streaming task detects the
+                // transition and writes SD-only headers at byte 0.
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
                 gSDCardData.totalBytesFlushPending = 0;
                 gSDCardData.currentFileBytes = 0;  // Reset byte counter for new file
@@ -776,6 +771,8 @@ void sd_card_manager_ProcessState() {
                     int pendingLen = SDCardWrite();
                     if (pendingLen >= 0) {
                         gSDCardData.currentFileBytes += pendingLen;
+                    } else {
+                        LOG_E("[SD] Error flushing pending write before rotation");
                     }
                     SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_pending_write");
                     gSDCardData.sdCardWritePending = 0;

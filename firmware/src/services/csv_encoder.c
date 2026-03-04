@@ -279,6 +279,22 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
 
     return (size_t)(q - out);
 }
+
+bool csv_IsHeaderSent(void) {
+    return csvHeaderSent;
+}
+
+size_t csv_GenerateHeaderToBuffer(char* buffer, size_t size) {
+    if (!buffer || size < 2) return 0;
+    AInRuntimeArray* channelConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    if (!channelConfig) return 0;
+    bool* pDioEnable = (bool*)BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
+    bool dioEnabled = (pDioEnable && *pDioEnable);
+    size_t len = generateHeader(buffer, size - 1, channelConfig, dioEnabled);
+    if (len > 0 && len < size) buffer[len] = '\0';
+    return len;
+}
+
 /**
  * @brief Attempts to write one data row to the output buffer.
  *
