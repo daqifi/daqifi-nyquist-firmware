@@ -490,9 +490,6 @@ void streaming_Task(void) {
             }
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
-       
-        
-
     }
 }
 
