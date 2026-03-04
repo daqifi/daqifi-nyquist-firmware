@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "075688730526",
+  "session_id": "3fcfab11-ae13-4a1a-a90a-bcb63fa343ae",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-04T06:55:22.810942724Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "firmware/src/services/streaming.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "92f343e65817",
+  "token_usage": {
+    "input_tokens": 432,
+    "cache_creation_tokens": 1558394,
+    "cache_read_tokens": 41229316,
+    "output_tokens": 258011,
+    "api_call_count": 390
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-04T06:55:20.164259295Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 566,
+    "human_removed": 3,
+    "total_committed": 566,
+    "agent_percentage": 0
+  }
+}

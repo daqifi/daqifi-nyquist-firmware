@@ -1,0 +1,1016 @@
+Implement the following plan:
+
+# Self-Describing SD Logs with Metadata Header (Issue #188)
+
+## Context
+
+SD `.bin` (protobuf) files do not include `TimestampFreq` or device identification metadata. Downstream parsers cannot reconstruct timestamps or identify the device without a live connection. The issue requires every SD log file to be fully parseable offline.
+
+**Current state by format:**
+
+| Format | Metadata header? | TimestampFreq? | Split file headers? |
+|--------|-----------------|----------------|---------------------|
+| CSV | Yes (device, serial, tick rate) | Yes (`TimerApi_FrequencyGet`) | No |
+| JSON | Yes (device, serial, tick_hz) | Yes (`TimerApi_FrequencyGet`) | No |
+| Protobuf | **No** | **Bug**: uses `TimerApi_CounterGet` (counter value, not frequency) | N/A |
+
+## Bug Fix
+
+`NanoPB_Encoder.c:529` — `timestamp_freq` field populated with `TimerApi_CounterGet()` (returns current timer counter value) instead of `TimerApi_FrequencyGet()` (returns clock frequency in Hz). CSV and JSON encoders use the correct function.
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `firmware/src/services/DaqifiPB/NanoPB_Encoder.c` | Fix `TimerApi_CounterGet` → `TimerApi_FrequencyGet` (line 529) |
+| `firmware/src/services/streaming.c` | Add SD metadata flag, fields array, write metadata before first data |
+| `firmware/src/services/streaming.h` | Declare `Streaming_ResetSdPbMetadata()` |
+| `firmware/src/services/SCPI/SCPIInterface.c` | Call `Streaming_ResetSdPbMetadata()` in `SCPI_StopStreaming` |
+| `firmware/src/services/sd_card_services/sd_card_manager.c` | Reset metadata+encoder flags on file rotation for self-describing splits |
+
+## Implementation
+
+### Step 1: Fix timestamp_freq bug in NanoPB_Encoder.c
+
+At line 529, change:
+```c
+message.timestamp_freq = TimerApi_CounterGet(
+        pBoardConfig->StreamingConfig.TSTimerIndex);
+```
+to:
+```c
+message.timestamp_freq = TimerApi_FrequencyGet(
+        pBoardConfig->StreamingConfig.TSTimerIndex);
+```
+
+### Step 2: Add metadata support to streaming.c
+
+Add near the top (after existing includes/statics):
+
+```c
+#include "DaqifiPB/DaqifiOutMessage.pb.h"  // For field tag constants
+
+// SD protobuf metadata: emitted as first message in each SD log file
+static bool gSdPbMetadataSent = false;
+
+static const NanopbFlagsArray fields_sd_metadata = {
+    .Size = 6,
+    .Data = {
+        DaqifiOutMessage_timestamp_freq_tag,
+        DaqifiOutMessage_analog_in_port_num_tag,
+        DaqifiOutMessage_digital_port_num_tag,
+        DaqifiOutMessage_device_sn_tag,
+        DaqifiOutMessage_device_pn_tag,
+        DaqifiOutMessage_device_fw_rev_tag,
+    }
+};
+```
+
+Add reset function:
+```c
+void Streaming_ResetSdPbMetadata(void) {
+    gSdPbMetadataSent = false;
+}
+```
+
+In `Streaming_Start()` (line 205), add reset alongside existing cleanup:
+```c
+gSdPbMetadataSent = false;
+```
+
+In `streaming_Task()`, insert before the existing encoding block (before line 358), after `hasSD` is determined:
+```c
+// Write protobuf metadata header to SD on first pass
+if (hasSD && !gSdPbMetadataSent
+    && pRunTimeStreamConf->Encoding != Streaming_Csv
+    && pRunTimeStreamConf->Encoding != Streaming_Json) {
+    size_t metaSize = Nanopb_Encode(pBoardData,
+        &fields_sd_metadata, buffer, BUFFER_SIZE);
+    if (metaSize > 0) {
+        sd_card_manager_WriteToBuffer((const char*)buffer, metaSize);
+        gSdPbMetadataSent = true;
+        memset(buffer, 0, BUFFER_SIZE);
+    }
+}
+```
+
+This writes metadata ONLY to SD (not USB/WiFi), and ONLY for protobuf encoding (CSV/JSON handle their own headers internally).
+
+### Step 3: Declare in streaming.h
+
+```c
+void Streaming_ResetSdPbMetadata(void);
+```
+
+### Step 4: Reset on stream stop (SCPIInterface.c)
+
+In `SCPI_StopStreaming()` (line 1714), add alongside existing resets:
+```c
+csv_ResetEncoder();
+json_ResetEncoder();
+Streaming_ResetSdPbMetadata();  // NEW
+```
+
+Add `#include "streaming.h"` if not already present.
+
+### Step 5: Self-describing split files (sd_card_manager.c)
+
+On file rotation (around line 808-814), reset ALL encoder flags so each split file gets its own metadata header:
+
+Change from:
+```c
+// DO NOT reset CSV encoder - only first file gets header
+// Subsequent split files contain data rows only for cleaner merging
+// and zero latency rotation
+```
+
+To:
+```c
+// Reset encoder state so each split file is self-describing
+// (per issue #188: each file must be parseable independently)
+csv_ResetEncoder();
+json_ResetEncoder();
+Streaming_ResetSdPbMetadata();
+```
+
+Add include:
+```c
+#include "services/streaming.h"
+```
+
+## Thread Safety
+
+The `gSdPbMetadataSent` bool follows the same pattern as existing `csvHeaderSent` and `jsonHeaderSent`:
+- Set to `true` in streaming task (priority 2)
+- Set to `false` from SCPI commands (priority 7) only when streaming is stopped/restarting
+- `bool` is atomic on PIC32MZ (32-bit aligned word access)
+- Worst case: metadata written twice to a split file (harmless — protobuf decoders take last value)
+
+## Verification
+
+1. **Build**: Verify all configurations compile (default, Nq1, Nq3)
+2. **USB protobuf streaming**: Verify NO metadata message appears (metadata is SD-only)
+3. **SD protobuf test**: Start protobuf streaming to SD → stop → retrieve file → verify first message has `timestamp_freq` ≠ 0
+4. **SD CSV test**: Verify CSV header still present, tick rate correct
+5. **Split file test**: Set small `maxFileSizeBytes`, stream until rotation, verify each split file starts with metadata
+6. **timestamp_freq value**: Should be a fixed frequency (e.g., 12500000 Hz), not a rolling counter
+
+
+If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/4f9503c9-313f-4a66-bddd-a3033e58c210.jsonl
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+board is flashed. test the new changes
+
+---
+
+yes and you can save them to the ticket.
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+programmed. you can test now.
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the conversation:
+
+1. **Initial Request**: User asked to implement a plan for "Self-Describing SD Logs with Metadata Header (Issue #188)". The plan was detailed with 5 steps.
+
+2. **Step 1 - Bug Fix**: Changed `TimerApi_CounterGet` to `TimerApi_FrequencyGet` in NanoPB_Encoder.c line 529.
+
+3. **Step 2 - Metadata support in streaming.c**: Added static variables, metadata fields array, reset function, and metadata write block in streaming_Task().
+
+4. **Step 3 - Header declaration in streaming.h**: Added `Streaming_ResetSdPbMetadata()` declaration.
+
+5. **Step 4 - Reset on stream stop in SCPIInterface.c**: Added `Streaming_ResetSdPbMetadata()` call in SCPI_StopStreaming.
+
+6. **Step 5 - Self-describing split files in sd_card_manager.c**: Changed from "DO NOT reset CSV encoder" to resetting all encoder flags on file rotation. Added includes for JSON_Encoder.h and streaming.h.
+
+7. **Build**: Default configuration built successfully using Windows MPLAB v6.30 make.
+
+8. **User flashed the board and asked to test**.
+
+9. **Testing Phase 1 (100Hz)**: 
+   - Initial SCPI command syntax issues - had to use full command names (e.g., `SYSTem:STReam:FORmat` not abbreviated)
+   - Successfully streamed protobuf to SD at 100Hz
+   - Downloaded test188.bin and verified metadata header present with correct timestamp_freq=50000000 (50MHz)
+
+10. **User asked to also check multi-file stream session**.
+
+11. **Split file test (100Hz)**: Set MAXSize to 5000 bytes, streamed protobuf. Created split188.bin, split188-1.bin, split188-2.bin. Downloaded and verified ALL three files have metadata headers.
+
+12. **User asked to check all formats (json, csv also) and upload header snippets to ticket**.
+
+13. **All format tests (100Hz)**: CSV splits and JSON splits also verified with headers present. Posted comprehensive verification results to GitHub issue #188.
+
+14. **User asked to check streaming of 1 channel at 5000Hz and see if we lose any data**.
+
+15. **5kHz Testing**: Discovered that at 5kHz, metadata headers were MISSING from all formats. Root cause: race condition where SD card manager clears circular buffer during file open (sd_card_manager.c line 598-603), destroying any data written before the file was fully open.
+
+16. **Fix attempt 1**: Added `sd_card_manager_IsWriteReady()` function and gated `sdSize` on it in streaming.c. This fixed protobuf metadata but NOT CSV/JSON headers.
+
+17. **Fix attempt 2 (current)**: Discovered that CSV/JSON encoders set their `headerSent` flags even when encoding for sample queue draining (no output available). Added `gSdFileWasReady` tracking to detect when SD transitions to ready, and reset all encoder flags at that point.
+
+18. **User asked for summary** before the rebuild/test of fix attempt 2.
+
+Key files modified:
+- `firmware/src/services/DaqifiPB/NanoPB_Encoder.c` - bug fix
+- `firmware/src/services/streaming.c` - metadata support + race condition fixes
+- `firmware/src/services/streaming.h` - new function declaration
+- `firmware/src/services/SCPI/SCPIInterface.c` - reset on stop
+- `firmware/src/services/sd_card_services/sd_card_manager.c` - split file resets + IsWriteReady function
+- `firmware/src/services/sd_card_services/sd_card_manager.h` - IsWriteReady declaration
+
+The most recent work was adding the `gSdFileWasReady` transition detection to fix CSV/JSON headers at high sample rates. The code was edited but NOT yet built or tested.
+
+Summary:
+1. Primary Request and Intent:
+   The user asked to implement a detailed plan for GitHub Issue #188: "Self-Describing SD Logs with Metadata Header". The core requirements were:
+   - Fix a bug where protobuf `timestamp_freq` field used `TimerApi_CounterGet()` (rolling counter) instead of `TimerApi_FrequencyGet()` (clock frequency)
+   - Add a protobuf metadata header as the first message in every SD `.bin` log file containing: timestamp_freq, analog_in_port_num, digital_port_num, device_sn, device_pn, device_fw_rev
+   - Make split files self-describing (each split file gets its own header for all formats)
+   - Test all formats (protobuf, CSV, JSON) at various rates including 5kHz
+   - Post verification results to the GitHub issue
+   - Verify no data loss at 5kHz streaming
+
+2. Key Technical Concepts:
+   - PIC32MZ embedded firmware with FreeRTOS
+   - NanoPB (protocol buffers for embedded) encoding with field tag-based selective encoding
+   - `NanopbFlagsArray` struct: `{.Size, .Data[65]}` (from `ARRAYWRAPPERDEF` macro in ArrayWrapper.h)
+   - SD card manager uses a circular buffer for writes; the buffer is cleared during file open (race condition)
+   - CSV and JSON encoders have one-shot `headerSent` flags that burn on first encode call
+   - SCPI command interface for device control (must use exact patterns from SCPIInterface.c)
+   - SD card file operations are asynchronous (file open happens in `app_SdCardTask`, not inline)
+   - `SD:LOGging` only sets filename; file actually opens in `SCPI_StartStreaming` via `sd_card_manager_UpdateSettings()`
+   - Streaming task runs at priority 2, encodes samples regardless of output availability to drain sample queue
+   - `bool` is atomic on PIC32MZ (32-bit aligned word access)
+   - Build uses Windows MPLAB X v6.30 make.exe from WSL
+
+3. Files and Code Sections:
+
+   - **`firmware/src/services/DaqifiPB/NanoPB_Encoder.c`** (line 529)
+     - Bug fix: timestamp_freq was using counter value instead of frequency
+     - Changed from `TimerApi_CounterGet` to `TimerApi_FrequencyGet`
+     ```c
+     message.timestamp_freq = TimerApi_FrequencyGet(
+             pBoardConfig->StreamingConfig.TSTimerIndex);
+     ```
+
+   - **`firmware/src/services/streaming.c`** — Main implementation file for metadata + race condition fix
+     - Added static variables and metadata fields array near top:
+     ```c
+     // SD protobuf metadata: emitted as first message in each SD log file
+     static bool gSdPbMetadataSent = false;
+
+     // Tracks whether the SD file has become ready during this streaming session.
+     // Used to reset encoder header flags when SD transitions to ready, since
+     // encoding may have already fired (and burned headers) before the file opened.
+     static bool gSdFileWasReady = false;
+
+     static const NanopbFlagsArray fields_sd_metadata = {
+         .Size = 6,
+         .Data = {
+             DaqifiOutMessage_timestamp_freq_tag,
+             DaqifiOutMessage_analog_in_port_num_tag,
+             DaqifiOutMessage_digital_port_num_tag,
+             DaqifiOutMessage_device_sn_tag,
+             DaqifiOutMessage_device_pn_tag,
+             DaqifiOutMessage_device_fw_rev_tag,
+         }
+     };
+     ```
+     - Added reset function:
+     ```c
+     void Streaming_ResetSdPbMetadata(void) {
+         gSdPbMetadataSent = false;
+         gSdFileWasReady = false;
+     }
+     ```
+     - In `Streaming_Start()`, added resets:
+     ```c
+     gSdPbMetadataSent = false;
+     gSdFileWasReady = false;
+     ```
+     - In `streaming_Task()`, changed sdSize computation to gate on IsWriteReady:
+     ```c
+     sdSize = sd_card_manager_IsWriteReady()
+            ? sd_card_manager_GetWriteBuffFreeSize()
+            : 0;
+     ```
+     - Added SD-ready transition detection (resets encoder flags when file first opens):
+     ```c
+     // When SD file first becomes ready, reset all encoder header flags.
+     // Encoding may have already fired (draining the sample queue) before
+     // the file opened, which burns one-shot header flags without the
+     // header data actually reaching the file.
+     if (sdSize > 0 && !gSdFileWasReady) {
+         gSdFileWasReady = true;
+         gSdPbMetadataSent = false;
+         csv_ResetEncoder();
+         json_ResetEncoder();
+     }
+     ```
+     - Added protobuf metadata write block before encoding:
+     ```c
+     // Write protobuf metadata header to SD on first pass
+     if (hasSD && !gSdPbMetadataSent
+         && pRunTimeStreamConf->Encoding != Streaming_Csv
+         && pRunTimeStreamConf->Encoding != Streaming_Json) {
+         size_t metaSize = Nanopb_Encode(pBoardData,
+             &fields_sd_metadata, buffer, BUFFER_SIZE);
+         if (metaSize > 0) {
+             sd_card_manager_WriteToBuffer((const char*)buffer, metaSize);
+             gSdPbMetadataSent = true;
+             memset(buffer, 0, BUFFER_SIZE);
+         }
+     }
+     ```
+
+   - **`firmware/src/services/streaming.h`**
+     - Added declaration for the new reset function:
+     ```c
+     /**
+      * Resets the SD protobuf metadata flag so the next SD log file
+      * gets a self-describing metadata header as its first message.
+      */
+     void Streaming_ResetSdPbMetadata(void);
+     ```
+
+   - **`firmware/src/services/SCPI/SCPIInterface.c`** (line ~1714-1716)
+     - Already had `#include "../streaming.h"` at line 37
+     - Added `Streaming_ResetSdPbMetadata()` call in `SCPI_StopStreaming`:
+     ```c
+     csv_ResetEncoder();
+     json_ResetEncoder();
+     Streaming_ResetSdPbMetadata();
+     ```
+
+   - **`firmware/src/services/sd_card_services/sd_card_manager.c`**
+     - Added includes:
+     ```c
+     #include "services/JSON_Encoder.h"  // For json_ResetEncoder on file rotation
+     #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
+     ```
+     - Changed file rotation comment and added encoder resets (around line 810):
+     ```c
+     // Reset encoder state so each split file is self-describing
+     // (per issue #188: each file must be parseable independently)
+     csv_ResetEncoder();
+     json_ResetEncoder();
+     Streaming_ResetSdPbMetadata();
+     ```
+     - Added `sd_card_manager_IsWriteReady()` function:
+     ```c
+     bool sd_card_manager_IsWriteReady(void) {
+         return gpSDCardSettings != NULL
+             && gpSDCardSettings->enable
+             && gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE
+             && gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
+             && gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID;
+     }
+     ```
+
+   - **`firmware/src/services/sd_card_services/sd_card_manager.h`**
+     - Added declaration:
+     ```c
+     bool sd_card_manager_IsWriteReady(void);
+     ```
+
+4. Errors and Fixes:
+   - **SCPI command syntax errors**: Initially used abbreviated commands like `SYST:STRM:FMT`, `ENAB:VOLT:DC`, `SYST:STOR:SD:ENAB` which returned "Undefined header" errors. Fixed by using exact patterns from SCPIInterface.c: `SYSTem:STReam:FORmat`, `ENAble:VOLTage:DC`, `SYSTem:STORage:SD:ENAble`.
+   
+   - **Protobuf streaming flooding USB**: When streaming protobuf to USB+SD, picocom got flooded with binary data and hung. Fixed by setting stream interface to SD-only (`SYSTem:STReam:INTerface 2`).
+   
+   - **SD card busy between rapid GET commands**: Downloading files back-to-back caused "SD card busy" errors. Fixed by re-enabling SD (`SYSTem:STORage:SD:ENAble 1`) between each download with delays.
+   
+   - **Missing metadata headers at 5kHz (race condition)**: At high sample rates, metadata/headers were written to the SD circular buffer before the file opened, then the buffer was cleared during file open (sd_card_manager.c lines 598-603). Fixed in two stages:
+     1. Added `sd_card_manager_IsWriteReady()` to gate `sdSize` — prevents any SD writes before file is open. Fixed protobuf metadata.
+     2. Added `gSdFileWasReady` transition detection — when SD first becomes ready, resets all encoder header flags (csv_ResetEncoder, json_ResetEncoder, gSdPbMetadataSent) since encoding may have already burned one-shot headers while draining sample queue before file opened. This fix for CSV/JSON is NOT YET TESTED.
+   
+   - **Build system**: Linux `make` invoked Windows cmd.exe. Fixed by using Windows MPLAB v6.30 make.exe: `"/mnt/c/Program Files/Microchip/MPLABX/v6.30/gnuBins/GnuWin32/bin/make.exe"`
+
+5. Problem Solving:
+   - **Solved**: Bug fix for timestamp_freq (counter vs frequency) — verified value is now 50000000 Hz (50 MHz)
+   - **Solved**: Protobuf metadata header in SD files — verified at 100Hz and 5kHz
+   - **Solved**: Self-describing split files for protobuf — each split has its own metadata header
+   - **Solved**: Self-describing split files for CSV and JSON at 100Hz — verified headers in splits
+   - **Solved**: Posted verification results to GitHub issue #188
+   - **In Progress**: CSV/JSON headers missing at 5kHz due to race condition with sample queue draining burning one-shot header flags — fix implemented (`gSdFileWasReady` transition detection) but NOT YET BUILT OR TESTED
+   - **Observed**: At 5kHz, sample pool exhaustion occurs (expected at high rates); JSON encoding can only sustain ~1200-2500 Hz to SD; protobuf and CSV can sustain ~5000 Hz
+
+6. All User Messages:
+   - "Implement the following plan: # Self-Describing SD Logs with Metadata Header (Issue #188) [detailed 5-step plan]"
+   - "board is flashed. test the new changes"
+   - "also check a multi-file stream session as well."
+   - "check all formats (json, csv also). we should upload these header file snippets to the ticket to verify the desktop app likes what we've done."
+   - "yes and you can save them to the ticket."
+   - "then check streaming of 1 channel at 5000hz with a few new files on each format. see if we lose any data."
+   - "programmed. you can test now."
+
+7. Pending Tasks:
+   - Build the firmware with the latest `gSdFileWasReady` fix (CSV/JSON header race condition at high rates)
+   - Test all 3 formats at 5kHz to verify metadata headers are present after the fix
+   - Verify data sample counts at 5kHz across formats
+   - User Nq1 and Nq3 build verification was attempted but rejected by user (may need to be done later)
+
+8. Current Work:
+   Working on fixing CSV/JSON metadata headers missing at 5kHz. The root cause was identified: the SD card manager clears its circular buffer when opening a file (sd_card_manager.c:598-603). At high sample rates, the streaming task starts encoding before the file is open, which: (a) writes data to the buffer that gets cleared, and (b) burns one-shot header flags (csvHeaderSent, jsonHeaderSent) permanently.
+
+   The fix was implemented in two parts:
+   1. Gate `sdSize` on `sd_card_manager_IsWriteReady()` — prevents writing to SD buffer before file is open
+   2. Add `gSdFileWasReady` transition detection — when SD first becomes ready, reset ALL encoder header flags
+
+   The code edits are complete in `streaming.c`, `sd_card_manager.c`, and `sd_card_manager.h`. The firmware has NOT been rebuilt or tested yet with this latest fix.
+
+   The previous build (without `gSdFileWasReady`) showed:
+   - Protobuf: METADATA HEADER PRESENT (36540 total, 1 metadata, 36539 data)
+   - CSV: HEADER MISSING (35932 data lines, no # header lines)
+   - JSON: METADATA MISSING (12541 data objects, 0 meta objects)
+
+9. Optional Next Step:
+   Build the firmware with the `gSdFileWasReady` fix and test all 3 formats at 5kHz. The user said "programmed. you can test now." for the previous build iteration. The latest edits adding `gSdFileWasReady` transition detection need to be built and flashed. The exact work in progress was:
+   - Last edit made: Added `gSdFileWasReady` tracking in `streaming.c` with transition detection that resets `csv_ResetEncoder()`, `json_ResetEncoder()`, and `gSdPbMetadataSent` when `sdSize > 0 && !gSdFileWasReady`
+   - Next: `rm -rf build dist && make build`, flash device, reattach USB, run the same 5kHz test across all 3 formats to verify all headers are present
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/3fcfab11-ae13-4a1a-a90a-bcb63fa343ae.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+connected now.
+
+---
+
+check that the meta is properly carried over in split files for csv and json. also "The metadata in split files isn't at byte 0" we want it to be at byte 0 - that should be possible. also, when we send the meta during a split file, do we clear a buffer and lose data?
+
+---
+
+connected now.
+
+---
+
+connected.
+
+---
+
+connected.
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the conversation:
+
+1. **Context from previous session**: The conversation is a continuation of work on GitHub Issue #188: "Self-Describing SD Logs with Metadata Header". Previous work implemented:
+   - Bug fix: `TimerApi_CounterGet` → `TimerApi_FrequencyGet` in NanoPB_Encoder.c
+   - Protobuf metadata header support in streaming.c
+   - Race condition fix with `gSdFileWasReady` for CSV/JSON headers at 5kHz
+   - Self-describing split files
+   - Code was built but the latest `gSdFileWasReady` fix wasn't tested yet
+
+2. **First action**: Built the firmware with `gSdFileWasReady` fix, flashed it, ran 5kHz test across all 3 formats. Results:
+   - Protobuf: PRESENT (metadata at msg#0, freq=50MHz) ✓
+   - CSV: PRESENT (header at line 1) ✓
+   - JSON: PRESENT (meta object first) ✓
+   - One logged error: "SD: Write failed after 0 attempts, expected=137, written=0"
+
+3. **Split file test at 5kHz**: Ran protobuf splits with 50KB max. Downloaded files with wrong naming (used `sp_pb-0001.bin` but actual names were `sp_pb-1.bin`). After fixing filenames:
+   - sp_pb.bin (first): metadata at msg#0 ✓
+   - sp_pb-1.bin: metadata at msg#134, freq=50000000 (NOT at position 0)
+   - sp_pb-2.bin: metadata at msg#134
+   - sp_pb-3.bin: metadata at msg#134
+   - All splits have correct metadata content but not at byte 0
+
+4. **Posted results to GitHub issue #188** with comprehensive verification.
+
+5. **User feedback**: Three requests:
+   - Check that metadata is properly carried over in split files for CSV and JSON
+   - Fix metadata to be at byte 0 in split files (not at position 134)
+   - Investigate whether buffer clear during split file rotation causes data loss
+
+6. **CSV/JSON split file test**: Ran tests at 5kHz with 50KB splits:
+   - CSV splits: Headers PRESENT at byte 0 in all splits ✓
+   - JSON splits: 
+     - First file: metadata present ✓
+     - Split 1: metadata preceded by MASSIVE whitespace (null bytes), parser says Meta=0
+     - Split 2: metadata MISSING, lots of leading whitespace
+
+7. **Root cause analysis**: Found THREE bugs in sd_card_manager.c:
+
+   **Bug 1 - Data loss**: The chunk processing loop (line 693) can exit with `sdCardWritePending=1` (4th chunk read but not written). The drain loop checks `sdCardWritePending != 1` first — if it's 1, it breaks immediately. The 4th chunk (~8KB) is never written to the old file.
+
+   **Bug 2 - Stale write state**: OPEN_FILE zeroes `writeBuffer` but never resets `sdCardWritePending`, `writeBufferLength`, or `sdCardWriteBufferOffset`. When WRITE_TO_FILE starts for new file, `sdCardWritePending=1` makes it write zeroed buffer to new file (junk/whitespace at start).
+
+   **Bug 3 - Encoder resets too early**: Encoder resets in WRITE_ROTATE happen before file is opened. Streaming task burns header flags during OPEN_FILE delay.
+
+8. **Fix attempt 1**: Applied three fixes:
+   - Added pending write completion before drain loop
+   - Reset write state + encoder flags in OPEN_FILE (after state=WRITE_TO_FILE)
+   - Removed encoder resets from WRITE_ROTATE
+   
+   Results: No more junk bytes, CSV splits all PASS, but protobuf still meta@134, CSV split 1 missing header.
+
+9. **Fix attempt 2 - Race condition**: Identified that encoder resets AFTER `state = WRITE_TO_FILE` creates a time-slicing race. If streaming task preempts between state transition and encoder reset, it sees `gSdFileWasReady=true` (from previous file) and writes data without transition detection.
+   
+   Fix: Moved encoder resets + write state resets to BEFORE the state transition to WRITE_TO_FILE.
+   
+   Results: CSV splits ALL PASS now ✓, but protobuf still meta@134. JSON didn't create splits (separate bug: "Failed to open SD Card file: ''").
+
+10. **Fix attempt 3 - WriteToBuffer return value**: Fixed the metadata write block to only set `gSdPbMetadataSent=true` when `WriteToBuffer` returns the full size. But testing showed this didn't change the protobuf behavior — WriteToBuffer IS succeeding.
+
+11. **Current state**: Protobuf splits consistently show metadata at position 134 (not byte 0). The metadata IS present and correct, just not first. 134 messages × 10 bytes = 1340 bytes = ~27ms at 5kHz. This matches the total time for file rotation + open. CSV works correctly because headers are generated inside `csv_Encode()` itself, while protobuf metadata is written separately.
+
+12. **Last action**: Checked `CircularBuf_Reset` implementation — it properly resets insert/remove pointers and totalBytes. Was about to investigate further when summary was requested.
+
+Key files modified across all iterations:
+- `firmware/src/services/DaqifiPB/NanoPB_Encoder.c` - bug fix (from previous session)
+- `firmware/src/services/streaming.c` - metadata support + race condition fixes
+- `firmware/src/services/streaming.h` - new function declaration
+- `firmware/src/services/SCPI/SCPIInterface.c` - reset on stop
+- `firmware/src/services/sd_card_services/sd_card_manager.c` - multiple fixes for split files
+- `firmware/src/services/sd_card_services/sd_card_manager.h` - IsWriteReady declaration
+
+Summary:
+1. Primary Request and Intent:
+   The user is implementing GitHub Issue #188: "Self-Describing SD Logs with Metadata Header". The current session focuses on three specific requests from the user:
+   - **Check metadata in CSV and JSON split files** at 5kHz streaming
+   - **Fix metadata to be at byte 0** in split files (user explicitly said: "we want it to be at byte 0 - that should be possible")
+   - **Investigate data loss during split file rotation**: user asked "when we send the meta during a split file, do we clear a buffer and lose data?"
+   
+   Prior work (from previous sessions) implemented the core feature: protobuf metadata headers, timestamp_freq bug fix, CSV/JSON header support, and initial split file support.
+
+2. Key Technical Concepts:
+   - PIC32MZ embedded firmware with FreeRTOS (preemptive scheduling, time-slicing between same-priority tasks)
+   - SD card circular buffer (32KB `gSdSharedBuffer`) with mutex-protected access
+   - File rotation/splitting: WRITE_TO_FILE → WRITE_ROTATE → OPEN_FILE → WRITE_TO_FILE state machine
+   - Chunk processing loop: reads up to 4 chunks (MAX_CHUNKS_PER_CYCLE=4) per cycle, alternating between READ (into writeBuffer) and WRITE (to SD card via SDCardWrite)
+   - `sdCardWritePending` flag tracks whether writeBuffer has data waiting to be written
+   - Streaming task (priority 2) and SD card task (priority 2) — same priority, time-sliced
+   - `sd_card_manager_IsWriteReady()` gates streaming writes on file being open
+   - `gSdFileWasReady` transition detection resets one-shot encoder flags when SD file first becomes ready
+   - `gSdPbMetadataSent` flag prevents duplicate metadata writes
+   - CSV/JSON encoders have internal `headerSent` flags reset by `csv_ResetEncoder()`/`json_ResetEncoder()`
+   - NanoPB (protocol buffers) field-tag-based selective encoding via `NanopbFlagsArray`
+   - Build system: Windows MPLAB X v6.30 make.exe from WSL, flash via ipecmd.exe v6.30
+
+3. Files and Code Sections:
+
+   - **`firmware/src/services/sd_card_services/sd_card_manager.c`** — Primary file for split file fixes
+     - **Fix 1: Complete pending write before drain loop** (prevents data loss from old file):
+     ```c
+     // Complete any pending write from the chunk processing loop.
+     // The loop can exit with sdCardWritePending=1 (4th chunk read
+     // but not yet written). Flush it to the OLD file before closing.
+     if (gSDCardData.sdCardWritePending == 1) {
+         int pendingLen = SDCardWrite();
+         if (pendingLen >= 0) {
+             gSDCardData.currentFileBytes += pendingLen;
+         }
+         SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_pending_write");
+         gSDCardData.sdCardWritePending = 0;
+         gSDCardData.writeBufferLength = 0;
+         gSDCardData.sdCardWriteBufferOffset = 0;
+         xSemaphoreGive(gSDCardData.wMutex);
+     }
+     ```
+     - **Fix 2: Restructured OPEN_FILE** — moved encoder resets + write state resets BEFORE state transition to prevent race condition:
+     ```c
+     // Clear shared buffer and write buffer to prevent stale data from previous session
+     SD_TakeMutexDebug(gSDCardData.wMutex, "open_file_clear_buffer");
+     CircularBuf_Reset(&gSDCardData.wCirbuf);
+     memset(gSdSharedBuffer, 0, SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
+     memset(gSDCardData.writeBuffer, 0, sizeof(gSDCardData.writeBuffer));
+     xSemaphoreGive(gSDCardData.wMutex);
+
+     // Reset write pipeline state for clean start.
+     gSDCardData.sdCardWritePending = 0;
+     gSDCardData.writeBufferLength = 0;
+     gSDCardData.sdCardWriteBufferOffset = 0;
+
+     // Reset encoder state so each file is self-describing.
+     // MUST happen BEFORE the state transition to WRITE_TO_FILE
+     // below, because the streaming task (same priority) can
+     // preempt via time-slicing immediately after the state change.
+     csv_ResetEncoder();
+     json_ResetEncoder();
+     Streaming_ResetSdPbMetadata();
+
+     // Use WRITE_PLUS to create/truncate file (overwrite mode)
+     gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
+             (SYS_FS_FILE_OPEN_WRITE_PLUS));
+
+     // Transition to WRITE_TO_FILE — IsWriteReady() becomes true after this
+     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+     gSDCardData.totalBytesFlushPending = 0;
+     gSDCardData.currentFileBytes = 0;
+     gSDCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
+     ```
+     - **Fix 3: Removed encoder resets from WRITE_ROTATE** — replaced with comment:
+     ```c
+     // Encoder resets are done in OPEN_FILE (after buffer clear +
+     // file open) so the streaming task cannot burn one-shot
+     // header flags before the new file is ready to accept data.
+     ```
+
+   - **`firmware/src/services/streaming.c`** — Metadata write + transition detection
+     - Static variables and metadata fields array (from previous session):
+     ```c
+     static bool gSdPbMetadataSent = false;
+     static bool gSdFileWasReady = false;
+     static const NanopbFlagsArray fields_sd_metadata = {
+         .Size = 6,
+         .Data = {
+             DaqifiOutMessage_timestamp_freq_tag,
+             DaqifiOutMessage_analog_in_port_num_tag,
+             DaqifiOutMessage_digital_port_num_tag,
+             DaqifiOutMessage_device_sn_tag,
+             DaqifiOutMessage_device_pn_tag,
+             DaqifiOutMessage_device_fw_rev_tag,
+         }
+     };
+     ```
+     - Reset function:
+     ```c
+     void Streaming_ResetSdPbMetadata(void) {
+         gSdPbMetadataSent = false;
+         gSdFileWasReady = false;
+     }
+     ```
+     - SD size gating on IsWriteReady (line ~326):
+     ```c
+     sdSize = sd_card_manager_IsWriteReady()
+            ? sd_card_manager_GetWriteBuffFreeSize()
+            : 0;
+     ```
+     - Transition detection (line ~334):
+     ```c
+     if (sdSize > 0 && !gSdFileWasReady) {
+         gSdFileWasReady = true;
+         gSdPbMetadataSent = false;
+         csv_ResetEncoder();
+         json_ResetEncoder();
+     }
+     ```
+     - **Latest fix** — metadata write with return value check (line ~402):
+     ```c
+     // Write protobuf metadata header to SD on first pass
+     if (hasSD && !gSdPbMetadataSent
+         && pRunTimeStreamConf->Encoding != Streaming_Csv
+         && pRunTimeStreamConf->Encoding != Streaming_Json) {
+         size_t metaSize = Nanopb_Encode(pBoardData,
+             &fields_sd_metadata, buffer, BUFFER_SIZE);
+         if (metaSize > 0) {
+             size_t written = sd_card_manager_WriteToBuffer(
+                 (const char*)buffer, metaSize);
+             if (written == metaSize) {
+                 gSdPbMetadataSent = true;
+             }
+             memset(buffer, 0, BUFFER_SIZE);
+         }
+     }
+     ```
+
+   - **`firmware/src/services/streaming.h`** — Declaration:
+     ```c
+     void Streaming_ResetSdPbMetadata(void);
+     ```
+
+   - **`firmware/src/services/SCPI/SCPIInterface.c`** — Reset in SCPI_StopStreaming:
+     ```c
+     csv_ResetEncoder();
+     json_ResetEncoder();
+     Streaming_ResetSdPbMetadata();
+     ```
+
+   - **`firmware/src/services/sd_card_services/sd_card_manager.h`** — IsWriteReady declaration:
+     ```c
+     bool sd_card_manager_IsWriteReady(void);
+     ```
+
+   - **`firmware/src/services/DaqifiPB/NanoPB_Encoder.c`** — Bug fix (line 529, from previous session):
+     ```c
+     message.timestamp_freq = TimerApi_FrequencyGet(
+             pBoardConfig->StreamingConfig.TSTimerIndex);
+     ```
+
+   - **`firmware/src/Util/CircularBuffer.c`** — CircularBuf_Reset implementation (read, not modified):
+     ```c
+     void CircularBuf_Reset(CircularBuf_t* cirbuf)
+     {
+         if (cirbuf != NULL) {
+             cirbuf->insertPtr = cirbuf->removePtr = cirbuf->buf_ptr;
+             cirbuf->totalBytes = 0;
+         }
+     }
+     ```
+
+4. Errors and Fixes:
+   - **Data loss during file rotation (Bug 1)**: The chunk processing loop exits with `sdCardWritePending=1` when 4 chunks are processed (the 4th read happens, chunksProcessed=4, loop exits before write). The drain loop then sees `sdCardWritePending==1` and breaks immediately — never writing the 4th chunk to the OLD file. Fix: added pending write completion before drain loop.
+   
+   - **Junk bytes at start of split files (Bug 2)**: OPEN_FILE zeroed `writeBuffer` but didn't reset `sdCardWritePending`/`writeBufferLength`/`sdCardWriteBufferOffset`. When WRITE_TO_FILE started, it wrote the zeroed writeBuffer (with stale length) to the new file. For JSON, these null bytes displayed as massive whitespace. Fix: added write state reset in OPEN_FILE.
+   
+   - **Encoder resets race condition (Bug 3)**: Initially placed encoder resets AFTER `state = WRITE_TO_FILE` in OPEN_FILE. A time-slice between the state transition and the resets allowed the streaming task to preempt and write data with `gSdFileWasReady` still true from the previous file. Fix: moved encoder resets BEFORE the state transition.
+   
+   - **WriteToBuffer return value not checked**: The metadata write block set `gSdPbMetadataSent = true` regardless of whether `sd_card_manager_WriteToBuffer` succeeded. Fix: only set flag when `written == metaSize`. However, testing showed this wasn't the root cause of the protobuf position issue.
+   
+   - **JSON splits not created**: Error log showed `Failed to open SD Card file: ''` — empty filename during split rotation for JSON. The 1.5MB JSON file had no splits despite 50KB max. This is a separate unresolved bug (likely in `generateFilename` for JSON splits).
+   
+   - **IPE path**: v6.25 doesn't exist, needed v6.30: `/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe`
+   
+   - **Split file naming**: Files are named `sp_pb-1.bin` not `sp_pb-0001.bin` (the naming convention uses plain counters, not zero-padded).
+
+5. Problem Solving:
+   - **SOLVED**: CSV split files — all splits now have headers at byte 0 ✓
+   - **SOLVED**: Data loss during rotation — pending write now completed before drain ✓
+   - **SOLVED**: Junk bytes at start of split files — write state properly reset ✓
+   - **SOLVED**: Encoder reset race condition for CSV/JSON — resets moved before state transition ✓
+   - **UNSOLVED**: Protobuf metadata at position 134 in split files instead of byte 0. Despite all fixes, 134 data messages consistently appear before the metadata in every protobuf split file. The metadata IS present and correct (freq=50MHz, pn='Nq1', fw='3.4.4'). CSV works (headers at byte 0 in all splits) but protobuf doesn't. The difference: CSV headers are generated inside `csv_Encode()` (called during normal data encoding), while protobuf metadata is written in a separate block before data encoding. Theoretical analysis suggests metadata should be at position 0 (OPEN_FILE clears buffer → encoder resets → state transition → streaming task detects transition → writes metadata first → then data). But empirically, 134 data messages (~1340 bytes, ~27ms at 5kHz) consistently precede the metadata.
+   - **UNSOLVED**: JSON split files not being created at 5kHz (separate bug — empty filename in generateFilename for splits).
+
+6. All User Messages:
+   - "connected now." (after first USB reconnect for initial test)
+   - "connected." (after second reflash)
+   - "check that the meta is properly carried over in split files for csv and json. also 'The metadata in split files isn't at byte 0' we want it to be at byte 0 - that should be possible. also, when we send the meta during a split file, do we clear a buffer and lose data?"
+   - "connected now." (after third reflash - race condition fix)
+   - "connected." (after fourth reflash - reorder fix)
+   - "connected." (after fifth reflash - return value fix)
+
+7. Pending Tasks:
+   - **Fix protobuf metadata to be at byte 0 in split files** — The core unsolved problem. CSV works but protobuf doesn't. Need to understand why 134 data messages consistently appear before metadata despite buffer clear + encoder reset + transition detection all appearing correct theoretically.
+   - **Fix JSON split file creation** — JSON files at 5kHz don't split (separate bug: empty filename during rotation). Error: `Failed to open SD Card file: ''`.
+   - **Verify no data loss during split rotation** — The pending write fix should prevent data loss, but hasn't been explicitly verified with sample continuity analysis.
+
+8. Current Work:
+   Investigating why protobuf metadata appears at message position 134 instead of position 0 in split files at 5kHz. The last action was reading the `CircularBuf_Reset` implementation to verify it properly clears the buffer. The implementation looks correct (resets insert/remove pointers and totalBytes to 0).
+
+   All fixes applied so far:
+   - Pending write completion before drain loop ✓
+   - Write state reset in OPEN_FILE ✓
+   - Encoder resets moved BEFORE state transition ✓
+   - WriteToBuffer return value checked ✓
+   
+   CSV splits work perfectly (headers at byte 0 in all splits). Protobuf splits have correct metadata content but at position 134, not position 0. The 134 data messages = ~1340 bytes = ~27ms at 5kHz, which matches the approximate time for file rotation + open.
+
+   The current firmware on the device has all fixes applied. Build output is at `dist/default/production/daqifi.X.production.hex`.
+
+9. Optional Next Step:
+   Continue debugging why protobuf metadata is at position 134 in split files. The key difference from CSV (which works) is that CSV headers are generated INSIDE `csv_Encode()` during normal data encoding, while protobuf metadata is written in a SEPARATE `Nanopb_Encode` call BEFORE data encoding in the streaming_Task. This suggests the protobuf metadata write block either isn't executing on the first iteration after file open, or the data is being written to the circular buffer before the metadata despite the metadata write being coded first. Need to investigate whether the `sd_card_manager_WriteToBuffer` for metadata is being blocked or delayed, or whether there's another mechanism putting data into the circular buffer first. One approach: integrate the protobuf metadata into the normal `Nanopb_Encode` data path (similar to how CSV handles headers inside `csv_Encode`), which would eliminate the separate write path and the timing dependency.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/3fcfab11-ae13-4a1a-a90a-bcb63fa343ae.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+i flashed it. try now.
+
+---
+
+[Request interrupted by user for tool use]
+
+---
+
+let me program it - i think you are programming it with the bootloader linker and it is choking. ... done. now try
+
+---
+
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Analysis:
+Let me chronologically analyze the conversation:
+
+1. **Context from previous sessions**: This is a continuation of work on GitHub Issue #188: "Self-Describing SD Logs with Metadata Header". Previous work implemented:
+   - Bug fix: `TimerApi_CounterGet` → `TimerApi_FrequencyGet` in NanoPB_Encoder.c
+   - Protobuf metadata header support in streaming.c
+   - Race condition fixes with `gSdFileWasReady` for CSV/JSON headers at 5kHz
+   - Self-describing split files
+   - Multiple fixes for data loss during rotation, junk bytes, encoder reset race conditions
+   - CSV splits working correctly (headers at byte 0)
+   - Protobuf splits have metadata at position 134 instead of position 0 (UNSOLVED)
+
+2. **This session's work**: Continued debugging why protobuf metadata appears at position 134 in split files.
+
+3. **First approach - Theoretical analysis**: Read streaming.c, sd_card_manager.c, NanoPB_Encoder.c extensively to trace the exact code flow. Key discovery about NanoPB_Encoder.c:
+   - The `analog_in_data_tag` case in `Nanopb_Encode` drains the ENTIRE sample queue in a loop, calling `encode_message_to_buffer` for each sample
+   - For metadata-only fields (no analog_in_data), the encode happens at the END of the function (line 1126)
+   - The separate metadata write was a separate `Nanopb_Encode` call followed by `WriteToBuffer`, then data encoding was another call
+
+4. **Solution approach - Merge metadata into data encoding**: Instead of writing metadata as a separate message, merge the metadata field tags into the `nanopbFlag` array used for data encoding. This mirrors how CSV handles headers (inside csv_Encode).
+
+5. **Code change 1**: Modified streaming.c to:
+   - Remove the separate metadata encode+write block (lines 402-416)
+   - Remove the static `fields_sd_metadata` array
+   - Add metadata field tags to `nanopbFlag` when `shouldAddPbMeta` is true
+   - Set `gSdPbMetadataSent = true` after successful SD write
+
+6. **First test result**: Built, flashed, tested. First file PASS (meta=28@0), but split files STILL meta@134. The merge approach works for the first file but not splits.
+
+7. **Debug logging approach 1**: Added debug logging after `shouldAddPbMeta` computation. But the condition `!gSdFileWasReady && sdSize > 0` fires AFTER transition detection sets `gSdFileWasReady = true`, so debug never triggered. Logs filled with "Sample pool exhausted" messages.
+
+8. **Debug logging approach 2**: Fixed to use `dbgTransitionArmed` flag set during transition detection. Only armed on 2nd+ transition (split files). Reduced pool exhausted log noise by increasing `LOG_QUEUE_DROP_INTERVAL` to 50000.
+
+9. **Key debug output**: `S2 hSD=1 ms=1 sm=0 sz=31428 enc=0` and similar at S3, S4. Shows `metaSent=1` (already true) at iteration 2+ after split transition. S0 and S1 pushed out of log buffer.
+
+10. **Current investigation**: Was about to check DaqifiOutMessage struct sizes to verify if `Nanopb_EncodeLength` for combined metadata+data fields exceeds BUFFER_SIZE (8192), which would cause `Nanopb_Encode` to return 0. Found `device_pn[16]` and `device_fw_rev[16]` — small enough that the combined EncodeLength should NOT exceed 8192.
+
+11. **User messages**: 
+    - "connected now." (implied from session continuation)
+    - "let me program it - i think you are programming it with the bootloader linker and it is choking. ... done. now try" — User noted that the IPE programming was failing because the firmware was built with the bootloader linker script, and the user programmed it themselves.
+
+12. **Key files modified in this session**:
+    - `firmware/src/services/streaming.c` - Main changes: merged metadata into data encoding, added debug logging
+    - No other files were modified in this session
+
+13. **Build note**: The firmware builds with `old_hv2_bootld.ld` linker script by default. The user noted this causes issues when programming directly with IPE (without the bootloader present). The user programmed it themselves.
+
+14. **The emerging theory**: The `Nanopb_EncodeLength` for combined metadata+data fields may exceed the buffer size limit (`maxSize` = `BUFFER_SIZE` = 8192), causing `Nanopb_Encode` to return 0 early without consuming samples. This would explain why metadata is delayed — it only succeeds when `AINDataAvailable` is false (no analog_in_data in the fields = smaller EncodeLength). But this needs verification since `device_pn[16]` and `device_fw_rev[16]` are only 16 bytes each, which should keep total EncodeLength well under 8192.
+
+Summary:
+1. Primary Request and Intent:
+   The user is implementing GitHub Issue #188: "Self-Describing SD Logs with Metadata Header". The specific unsolved problem is: **protobuf metadata appears at message position 134 instead of position 0 in split files** during 5kHz streaming with 50KB max file size. CSV split files work correctly (headers at byte 0). The user explicitly stated "we want it to be at byte 0 - that should be possible" in a prior session. This session continues debugging and fixing that specific problem.
+
+2. Key Technical Concepts:
+   - PIC32MZ embedded firmware with FreeRTOS (preemptive scheduling, time-slicing between same-priority tasks)
+   - SD card circular buffer (32KB `gSdSharedBuffer`) with mutex-protected access
+   - File rotation/splitting state machine: WRITE_TO_FILE → size check → drain → close → OPEN_FILE → WRITE_TO_FILE
+   - `Nanopb_Encode` with `analog_in_data_tag` drains ENTIRE sample queue in a loop, calling `encode_message_to_buffer` per sample
+   - `Nanopb_EncodeLength` is a conservative size estimate using `sizeof()` of struct fields — checked BEFORE encoding starts
+   - `NanopbFlagsArray` has max 65 entries (capacity verified)
+   - `BUFFER_SIZE` = `min(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE, SD_CARD_MANAGER_CONF_WBUFFER_SIZE)` = likely 8192
+   - `sd_card_manager_IsWriteReady()` returns true only in WRITE_TO_FILE state
+   - `gSdFileWasReady` transition detection resets encoder flags when SD file first becomes ready
+   - `gSdPbMetadataSent` flag prevents duplicate metadata writes
+   - Build uses `old_hv2_bootld.ld` linker script — requires bootloader for proper programming (user programs device directly)
+
+3. Files and Code Sections:
+
+   - **`firmware/src/services/streaming.c`** — Primary file modified this session
+     - Removed separate metadata encode+write block and `fields_sd_metadata` static array
+     - Added merged metadata approach: metadata field tags added to `nanopbFlag` before data fields
+     - Added debug logging for split transitions
+     - Current state of key section (lines ~390-500):
+     ```c
+     nanopbFlag.Size = 0;
+
+     // Merge SD protobuf metadata into the first data encoding.
+     bool shouldAddPbMeta = hasSD && !gSdPbMetadataSent
+         && pRunTimeStreamConf->Encoding != Streaming_Csv
+         && pRunTimeStreamConf->Encoding != Streaming_Json;
+
+     // DEBUG: Log first 5 iterations after SPLIT transition
+     if (dbgTransitionArmed && dbgPostTransition < 5) {
+         LOG_E("S%u hSD=%d ms=%d sm=%d sz=%u enc=%d",
+               (unsigned)dbgPostTransition, (int)hasSD, (int)gSdPbMetadataSent,
+               (int)shouldAddPbMeta, (unsigned)sdSize, (int)pRunTimeStreamConf->Encoding);
+         dbgPostTransition++;
+         if (dbgPostTransition >= 5) dbgTransitionArmed = false;
+     }
+
+     if (shouldAddPbMeta) {
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_timestamp_freq_tag;
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_port_num_tag;
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_num_tag;
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_sn_tag;
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_pn_tag;
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_fw_rev_tag;
+     }
+
+     nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
+     if (AINDataAvailable) {
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_data_tag;
+     }
+     if (DIODataAvailable) {
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_data_tag;
+         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
+     }
+     ```
+     - After SD write block:
+     ```c
+     // Mark metadata as sent once data reaches the SD buffer.
+     if (shouldAddPbMeta && total_written > 0) {
+         gSdPbMetadataSent = true;
+     }
+     ```
+     - Transition detection with debug arming:
+     ```c
+     static uint32_t dbgPostTransition = 0;
+     static bool dbgTransitionArmed = false;
+     static uint32_t dbgTransitionCount = 0;
+     if (sdSize > 0 && !gSdFileWasReady) {
+         gSdFileWasReady = true;
+         gSdPbMetadataSent = false;
+         csv_ResetEncoder();
+         json_ResetEncoder();
+         dbgTransitionCount++;
+         if (dbgTransitionCount >= 2) {
+             dbgTransitionArmed = true;
+             dbgPostTransition = 0;
+         }
+     }
+     ```
+     - `LOG_QUEUE_DROP_INTERVAL` temporarily set to 50000 (was 100) to reduce log noise
+     - `fields_sd_metadata` replaced with comment: `// SD protobuf metadata field tags are added directly to nanopbFlag`
+
+   - **`firmware/src/services/DaqifiPB/NanoPB_Encoder.c`** — Read extensively, not modified this session
+     - `Nanopb_EncodeLength()` (line 42): Conservative size estimate using `sizeof()` of struct fields
+     - `Nanopb_Encode()` (line 374): Key check at line 390: `if (buffSize < Nanopb_EncodeLength(fields)) return 0;`
+     - `analog_in_data_tag` case (line 404): Drains entire queue, calls `encode_message_to_buffer` per sample
+     - Final encode at line 1126: `encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)` for non-data fields
+     - `encode_message_to_buffer` (line 365): Uses `pb_encode_delimited`
+
+   - **`firmware/src/services/DaqifiPB/DaqifiOutMessage.pb.h`** — Read for struct sizes
+     - `device_pn[16]` (line 162), `device_fw_rev[16]` (line 166)
+     - `DaqifiOutMessage_device_pn_tag = 66`, `DaqifiOutMessage_device_fw_rev_tag = 68`
+
+   - **`firmware/src/services/sd_card_services/sd_card_manager.c`** — Read extensively, not modified this session
+     - OPEN_FILE handler (line 580+): buffer clear, encoder reset, file open, state transition
+     - WRITE_TO_FILE handler (line 710+): chunk processing, file size check, rotation
+     - `sd_card_manager_WriteToBuffer` (line 1115): Waits for buffer space with 2s timeout
+     - `sd_card_manager_IsWriteReady` returns true only in WRITE_TO_FILE state
+
+   - **`firmware/src/Util/ArrayWrapper.h`** — Read for NanopbFlagsArray definition
+     - `ARRAYWRAPPERDEF(NanopbFlagsArray, uint8_t, 65)` — max 65 fields, sufficient
+
+4. Errors and fixes:
+   - **Debug logging not appearing (attempt 1)**: Debug condition `!gSdFileWasReady && sdSize > 0` was checked AFTER transition detection already set `gSdFileWasReady = true`. Fixed by using a `dbgTransitionArmed` flag set inside the transition detection block.
+   - **Debug logs pushed out by "Sample pool exhausted" messages**: The 64-message circular log buffer fills quickly at 5kHz. Fixed by increasing `LOG_QUEUE_DROP_INTERVAL` from 100 to 50000, and only arming debug on 2nd+ transition (skip first file which works).
+   - **First file debug captured instead of split file debug**: Initial debug armed on ALL transitions. Fixed by adding `dbgTransitionCount` and only arming on count >= 2.
+   - **IPE programming failure**: User noted "i think you are programming it with the bootloader linker and it is choking" — the build uses `old_hv2_bootld.ld` linker script. User programmed the device themselves.
+   - **USB device bus ID changed after programming**: After IPE programming, the device appeared at bus 6-2 (Microchip WinUSB Device) instead of 2-4. Had to wait for device to re-enumerate.
+
+5. Problem Solving:
+   - **SOLVED**: Merged metadata approach works for first file (meta=28@0 with freq=50000000)
+   - **UNSOLVED**: Split files still show meta@134. Debug output from split transitions shows `metaSent=1` at iterations S2-S4, meaning metadata flag was already set. S0-S1 logs were pushed out.
+   - **Emerging theory**: The `Nanopb_EncodeLength` for combined metadata+data fields may exceed `BUFFER_SIZE` (8192), causing `Nanopb_Encode` to return 0 without consuming samples. The metadata then only succeeds when `AINDataAvailable` is false (smaller field set = smaller EncodeLength). However, struct sizes found so far (`device_pn[16]`, `device_fw_rev[16]`) suggest the total shouldn't exceed 8192. Need to calculate exact EncodeLength for the combined field set.
+   - **Key test results**: 
+     - `ta_pb.bin: msgs=5090 meta=28@0 data=5090 freq=50000000 [PASS]`
+     - `ta_pb-1.bin: msgs=4986 meta=28@134 data=4986 freq=50000000 [meta@134]`
+     - All split files consistently show exactly 28 metadata messages at position 134
+
+6. All user messages:
+   - "let me program it - i think you are programming it with the bootloader linker and it is choking. ... done. now try" — User programmed the device themselves after IPE failed, told me to proceed with testing.
+
+7. Pending Tasks:
+   - **Fix protobuf metadata to be at byte 0 in split files** — Core unsolved problem
+   - **Remove debug logging** from streaming.c once issue is resolved
+   - **Restore `LOG_QUEUE_DROP_INTERVAL`** back to 100 from temporary 50000
+   - **Fix JSON split file creation** — Separate bug (empty filename during rotation, "Failed to open SD Card file: ''") from prior session
+   - **Verify no data loss during split rotation** — Pending write fix applied in prior session but not explicitly verified
+
+8. Current Work:
+   Was in the middle of investigating why the merged metadata approach still shows meta@134 in split files. Just discovered `device_pn[16]` and `device_fw_rev[16]` sizes in `DaqifiOutMessage.pb.h`. Was about to calculate the exact `Nanopb_EncodeLength` for the combined metadata+data field set to determine if it exceeds `BUFFER_SIZE` (8192). The theory is that if `Nanopb_EncodeLength(combined_fields) > maxSize`, then `Nanopb_Encode` returns 0 at line 390 without consuming samples, causing a deadlock where metadata encoding repeatedly fails until `AINDataAvailable` becomes false (after pool exhaustion), at which point a metadata-only message succeeds — but by then, 134 data-only messages have already been written from iterations where `shouldAddPbMeta` was false (after `gSdPbMetadataSent` was set by the metadata-only success).
+
+   The most recent Grep found: `device_pn[16]` and `device_fw_rev[16]` in DaqifiOutMessage.pb.h — these are only 16 bytes each. Need to check ALL struct field sizes used in EncodeLength calculation to get the total.
+
+9. Optional Next Step:
+   Calculate the exact `Nanopb_EncodeLength` for the combined metadata+data fields by checking all relevant struct sizes in `DaqifiOutMessage.pb.h` (especially `analog_in_data`, `digital_data`, `digital_port_dir`). If the total exceeds 8192, this confirms the root cause: the EncodeLength check at `NanoPB_Encoder.c:390` rejects the combined encoding. The fix would be to either (a) increase BUFFER_SIZE, (b) use a different EncodeLength for the buffer-full check inside the analog_in_data loop vs the initial check, or (c) encode metadata separately but atomically prepend it to the data in the circular buffer. The specific task was checking struct sizes — the last tool call was `Grep` for `device_pn|device_fw_rev|device_sn` in `DaqifiOutMessage.pb.h`.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/user/.claude/projects/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/3fcfab11-ae13-4a1a-a90a-bcb63fa343ae.jsonl
+Please continue the conversation from where we left off without asking the user any further questions. Continue with the last task that you were asked to work on.
+
+---
+
+[Request interrupted by user]
+
+---
+
+flahsed
+
+---
+
+this was done with the 5000hz test and it passed right?
+
+---
+
+so is this ticket solved completely, then?
+
+---
+
+we must test all or we assume it is broken.
+
+---
+
+commit. then write a comment on the ticket confirming our new header format with the desktop team.
+
+---
+
+verify "Previously timestamp_freq was populated with TimerApi_CounterGet() (a rolling counter value) instead of TimerApi_FrequencyGet() (the fixed clock frequency)."  was indeed a real bug.
+
+---
+
+file a pr for this after you've ensured we have clean code and good comments.
