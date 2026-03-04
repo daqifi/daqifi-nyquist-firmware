@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "bf4e2d1c9089",
+  "strategy": "manual-commit",
+  "branch": "feat/188-self-describing-sd-logs",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "firmware/src/services/JSON_Encoder.c",
+    "firmware/src/services/JSON_Encoder.h",
+    "firmware/src/services/csv_encoder.c",
+    "firmware/src/services/csv_encoder.h",
+    "firmware/src/services/sd_card_services/sd_card_manager.c",
+    "firmware/src/services/streaming.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/bf/4e2d1c9089/0/metadata.json",
+      "transcript": "/bf/4e2d1c9089/0/full.jsonl",
+      "context": "/bf/4e2d1c9089/0/context.md",
+      "content_hash": "/bf/4e2d1c9089/0/content_hash.txt",
+      "prompt": "/bf/4e2d1c9089/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 511,
+    "cache_creation_tokens": 1861480,
+    "cache_read_tokens": 47678625,
+    "output_tokens": 284759,
+    "api_call_count": 459
+  }
+}

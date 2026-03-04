@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "bf4e2d1c9089",
+  "session_id": "3fcfab11-ae13-4a1a-a90a-bcb63fa343ae",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-04T08:24:28.802355275Z",
+  "branch": "feat/188-self-describing-sd-logs",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "firmware/src/services/JSON_Encoder.c",
+    "firmware/src/services/JSON_Encoder.h",
+    "firmware/src/services/csv_encoder.c",
+    "firmware/src/services/csv_encoder.h",
+    "firmware/src/services/sd_card_services/sd_card_manager.c",
+    "firmware/src/services/streaming.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "797af8c064b7",
+  "token_usage": {
+    "input_tokens": 511,
+    "cache_creation_tokens": 1861480,
+    "cache_read_tokens": 47678625,
+    "output_tokens": 284759,
+    "api_call_count": 459
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-04T08:24:25.306848947Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 2940,
+    "human_removed": 35831,
+    "total_committed": 2940,
+    "agent_percentage": 0
+  }
+}
