@@ -743,16 +743,16 @@ void sd_card_manager_ProcessState() {
                             gSDCardData.writeBufferLength = 0;
                             gSDCardData.sdCardWriteBufferOffset = 0;
                             xSemaphoreGive(gSDCardData.wMutex);
-                        } else if (writeLen >= 0) {
+                        } else if (writeLen > 0) {
                             // Track partial write
                             gSDCardData.currentFileBytes += writeLen;
 
                             SD_TakeMutexDebug(gSDCardData.wMutex, "partial_write");
                             gSDCardData.writeBufferLength -= writeLen;
-                            gSDCardData.sdCardWriteBufferOffset = writeLen;
+                            gSDCardData.sdCardWriteBufferOffset += writeLen;
                             xSemaphoreGive(gSDCardData.wMutex);
                             break;  // Partial write, don't process more chunks
-                        } else if (writeLen == -1) {
+                        } else if (writeLen <= 0) {
                             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                             LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
                             break;
@@ -772,18 +772,35 @@ void sd_card_manager_ProcessState() {
                 // Complete any pending write from the chunk processing loop.
                 // The loop can exit with sdCardWritePending=1 (4th chunk read
                 // but not yet written). Flush it to the OLD file before closing.
-                if (gSDCardData.sdCardWritePending == 1) {
+                // Loop to handle partial writes (same logic as normal write path).
+                while (gSDCardData.sdCardWritePending == 1) {
                     int pendingLen = SDCardWrite();
-                    if (pendingLen >= 0) {
+                    if (pendingLen >= gSDCardData.writeBufferLength) {
+                        gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
+                        SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_pending_write");
+                        gSDCardData.sdCardWritePending = 0;
+                        gSDCardData.writeBufferLength = 0;
+                        gSDCardData.sdCardWriteBufferOffset = 0;
+                        xSemaphoreGive(gSDCardData.wMutex);
+                    } else if (pendingLen > 0) {
+                        // Partial write — update offset and retry
                         gSDCardData.currentFileBytes += pendingLen;
+                        SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_partial_write");
+                        gSDCardData.writeBufferLength -= pendingLen;
+                        gSDCardData.sdCardWriteBufferOffset += pendingLen;
+                        xSemaphoreGive(gSDCardData.wMutex);
                     } else {
-                        LOG_E("[SD] Error flushing pending write before rotation");
+                        // 0 (no progress) or -1 (error): stop to avoid infinite loop
+                        if (pendingLen < 0) {
+                            LOG_E("[SD] Error flushing pending write before rotation");
+                        } else {
+                            LOG_E("[SD] Zero-byte write during rotation flush");
+                        }
+                        gSDCardData.sdCardWritePending = 0;
+                        gSDCardData.writeBufferLength = 0;
+                        gSDCardData.sdCardWriteBufferOffset = 0;
+                        break;
                     }
-                    SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_pending_write");
-                    gSDCardData.sdCardWritePending = 0;
-                    gSDCardData.writeBufferLength = 0;
-                    gSDCardData.sdCardWriteBufferOffset = 0;
-                    xSemaphoreGive(gSDCardData.wMutex);
                 }
 
                 // Drain circular buffer completely before rotation to prevent data loss
@@ -803,18 +820,28 @@ void sd_card_manager_ProcessState() {
                             gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
                             xSemaphoreGive(gSDCardData.wMutex);
 
-                            // Write immediately
-                            writeLen = SDCardWrite();
-                            if (writeLen >= 0) {
-                                gSDCardData.currentFileBytes += writeLen;
-                                SD_TakeMutexDebug(gSDCardData.wMutex, "drain_complete");
-                                gSDCardData.sdCardWritePending = 0;
-                                gSDCardData.writeBufferLength = 0;
-                                gSDCardData.sdCardWriteBufferOffset = 0;
-                                xSemaphoreGive(gSDCardData.wMutex);
-                            } else {
-                                LOG_E("[%s:%d]Error draining buffer before rotation", __FILE__, __LINE__);
-                                break;
+                            // Write immediately, loop for partial writes
+                            while (gSDCardData.sdCardWritePending == 1) {
+                                writeLen = SDCardWrite();
+                                if (writeLen >= gSDCardData.writeBufferLength) {
+                                    gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
+                                    SD_TakeMutexDebug(gSDCardData.wMutex, "drain_complete");
+                                    gSDCardData.sdCardWritePending = 0;
+                                    gSDCardData.writeBufferLength = 0;
+                                    gSDCardData.sdCardWriteBufferOffset = 0;
+                                    xSemaphoreGive(gSDCardData.wMutex);
+                                } else if (writeLen > 0) {
+                                    gSDCardData.currentFileBytes += writeLen;
+                                    gSDCardData.writeBufferLength -= writeLen;
+                                    gSDCardData.sdCardWriteBufferOffset += writeLen;
+                                } else {
+                                    // 0 (no progress) or -1 (error)
+                                    LOG_E("[%s:%d]Error draining buffer before rotation", __FILE__, __LINE__);
+                                    gSDCardData.sdCardWritePending = 0;
+                                    gSDCardData.writeBufferLength = 0;
+                                    gSDCardData.sdCardWriteBufferOffset = 0;
+                                    break;
+                                }
                             }
                         } else {
                             xSemaphoreGive(gSDCardData.wMutex);
