@@ -40,8 +40,18 @@ static bool gSdPbMetadataSent = false;
 // encoding may have already fired (and burned headers) before the file opened.
 static bool gSdFileWasReady = false;
 
-// SD protobuf metadata field tags are added directly to nanopbFlag
-// in streaming_Task() when gSdPbMetadataSent is false (see below).
+// SD protobuf metadata field tags for standalone metadata message
+static const NanopbFlagsArray fields_sd_metadata = {
+    .Size = 6,
+    .Data = {
+        DaqifiOutMessage_timestamp_freq_tag,
+        DaqifiOutMessage_analog_in_port_num_tag,
+        DaqifiOutMessage_digital_port_num_tag,
+        DaqifiOutMessage_device_sn_tag,
+        DaqifiOutMessage_device_pn_tag,
+        DaqifiOutMessage_device_fw_rev_tag,
+    }
+};
 
 // Log queue full error every N drops to avoid flooding the log at high rates.
 // At 15kHz this means we log approximately once per 6.7ms during overflow.
@@ -318,27 +328,39 @@ void streaming_Task(void) {
                ? sd_card_manager_GetWriteBuffFreeSize()
                : 0;
 
-        // When SD file first becomes ready (new file or rotation), prepare
-        // headers.  Protobuf metadata is merged into the encode flags below.
-        // For CSV/JSON on rotation (header already sent to USB), write an
-        // SD-only header so each file is self-describing without injecting
-        // a duplicate header into the USB/WiFi stream.
+        // When SD file first becomes ready (new file or rotation), write
+        // an SD-only header/metadata so each file is self-describing
+        // without injecting duplicate headers into the USB/WiFi stream.
         if (sdSize > 0 && !gSdFileWasReady) {
             gSdFileWasReady = true;
             gSdPbMetadataSent = false;
 
-            // On rotation (not first file), write SD-only CSV/JSON header.
-            // First file: encoder flag is false, so the encoder naturally
-            // includes the header for ALL interfaces — no special handling.
+            // Write SD-only header/metadata for each new file so every
+            // file is self-describing and independently parseable.
             size_t sdHdrLen = 0;
-            if (pRunTimeStreamConf->Encoding == Streaming_Csv
-                    && csv_IsHeaderSent()) {
-                sdHdrLen = csv_GenerateHeaderToBuffer(
-                        (char*)buffer, BUFFER_SIZE);
-            } else if (pRunTimeStreamConf->Encoding == Streaming_Json
-                    && json_IsHeaderSent()) {
-                sdHdrLen = json_GenerateHeaderToBuffer(
-                        (char*)buffer, BUFFER_SIZE);
+            if (pRunTimeStreamConf->Encoding == Streaming_Csv) {
+                // On rotation (header already sent to USB), generate
+                // SD-only header.  First file: encoder flag is false,
+                // so the encoder naturally includes the header for ALL
+                // interfaces — no special handling needed.
+                if (csv_IsHeaderSent()) {
+                    sdHdrLen = csv_GenerateHeaderToBuffer(
+                            (char*)buffer, BUFFER_SIZE);
+                }
+            } else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
+                if (json_IsHeaderSent()) {
+                    sdHdrLen = json_GenerateHeaderToBuffer(
+                            (char*)buffer, BUFFER_SIZE);
+                }
+            } else {
+                // Protobuf: encode a standalone metadata message for SD
+                tBoardData* pBoardData =
+                    BoardData_Get(BOARDDATA_ALL_DATA, true);
+                sdHdrLen = Nanopb_Encode(pBoardData,
+                    &fields_sd_metadata, (uint8_t*)buffer, BUFFER_SIZE);
+                if (sdHdrLen > 0) {
+                    gSdPbMetadataSent = true;
+                }
             }
             if (sdHdrLen > 0) {
                 size_t written = sd_card_manager_WriteToBuffer(
@@ -414,25 +436,6 @@ void streaming_Task(void) {
 
         nanopbFlag.Size = 0;
 
-        // Merge SD protobuf metadata into the first data encoding.
-        // By adding metadata field tags before data fields, the encoder
-        // includes metadata (timestamp_freq, device_sn, etc.) in every
-        // message of the first batch.  This guarantees metadata is at
-        // byte 0, avoiding the separate-write ordering issue where a
-        // standalone metadata message could be displaced by queued data.
-        bool shouldAddPbMeta = hasSD && !gSdPbMetadataSent
-            && pRunTimeStreamConf->Encoding != Streaming_Csv
-            && pRunTimeStreamConf->Encoding != Streaming_Json;
-
-        if (shouldAddPbMeta) {
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_timestamp_freq_tag;
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_port_num_tag;
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_num_tag;
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_sn_tag;
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_pn_tag;
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_device_fw_rev_tag;
-        }
-
         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
 
         if (AINDataAvailable) {
@@ -503,12 +506,6 @@ void streaming_Task(void) {
                           attempts, (unsigned)packetSize, (unsigned)total_written);
                 }
 
-                // Mark metadata as sent once data reaches the SD buffer.
-                // The metadata fields were baked into the encoded messages,
-                // so any successful write includes them.
-                if (shouldAddPbMeta && total_written > 0) {
-                    gSdPbMetadataSent = true;
-                }
             }
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
