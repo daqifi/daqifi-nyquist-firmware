@@ -593,7 +593,22 @@ void sd_card_manager_ProcessState() {
                      gSDCardData.filePath, gSDCardData.fileCounter,
                      gSDCardData.fileSplittingEnabled ? "enabled" : "disabled");
 
-                // Clear shared buffer and write buffer to prevent stale data from previous session
+                // Reset SD metadata flags FIRST, before clearing the buffer.
+                // This sets gSdFileWasReady = false, which causes the
+                // streaming task's SD write guard (hasSD && gSdFileWasReady)
+                // to fail — preventing non-metadata data from being written
+                // to the freshly-cleared buffer before the new file is ready.
+                //
+                // Race condition without this ordering:
+                //   1. CircularBuf_Reset() clears buffer (space available)
+                //   2. Streaming task sees gSdFileWasReady=true (stale),
+                //      encodes WITHOUT metadata, writes to buffer
+                //   3. Streaming_ResetSdPbMetadata() resets flags (too late)
+                //   => Non-metadata data at byte 0 of new file
+                Streaming_ResetSdPbMetadata();
+
+                // Now clear the buffer — streaming task won't write here
+                // because gSdFileWasReady is already false.
                 SD_TakeMutexDebug(gSDCardData.wMutex, "open_file_clear_buffer");
                 CircularBuf_Reset(&gSDCardData.wCirbuf);
                 memset(gSdSharedBuffer, 0, SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
@@ -607,16 +622,6 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.sdCardWritePending = 0;
                 gSDCardData.writeBufferLength = 0;
                 gSDCardData.sdCardWriteBufferOffset = 0;
-
-                // Reset SD metadata flag so protobuf metadata is emitted
-                // at byte 0 of the new file.  CSV/JSON headers are NOT
-                // reset here — streaming.c handles SD-only headers on
-                // file transition to avoid injecting duplicate headers
-                // into simultaneous USB/WiFi streams.
-                // MUST happen BEFORE the state transition to WRITE_TO_FILE
-                // because the streaming task (same priority) can preempt
-                // via time-slicing immediately after the state change.
-                Streaming_ResetSdPbMetadata();
 
                 // Use WRITE_PLUS to create/truncate file (overwrite mode)
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
