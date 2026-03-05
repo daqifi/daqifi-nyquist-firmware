@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "e132c95d5640",
+  "session_id": "3fcfab11-ae13-4a1a-a90a-bcb63fa343ae",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-05T06:32:50.303045992Z",
+  "branch": "feat/188-self-describing-sd-logs",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "CLAUDE.md"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "570fb486f6bb",
+  "token_usage": {
+    "input_tokens": 608,
+    "cache_creation_tokens": 2537978,
+    "cache_read_tokens": 56237399,
+    "output_tokens": 384129,
+    "api_call_count": 540
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-05T06:32:45.406543436Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 922,
+    "human_removed": 0,
+    "total_committed": 922,
+    "agent_percentage": 0
+  }
+}

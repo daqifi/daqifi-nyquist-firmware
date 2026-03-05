@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "e132c95d5640",
+  "strategy": "manual-commit",
+  "branch": "feat/188-self-describing-sd-logs",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "CLAUDE.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e1/32c95d5640/0/metadata.json",
+      "transcript": "/e1/32c95d5640/0/full.jsonl",
+      "context": "/e1/32c95d5640/0/context.md",
+      "content_hash": "/e1/32c95d5640/0/content_hash.txt",
+      "prompt": "/e1/32c95d5640/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 608,
+    "cache_creation_tokens": 2537978,
+    "cache_read_tokens": 56237399,
+    "output_tokens": 384129,
+    "api_call_count": 540
+  }
+}
