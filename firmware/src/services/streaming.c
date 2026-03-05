@@ -330,24 +330,24 @@ void streaming_Task(void) {
             // On rotation (not first file), write SD-only CSV/JSON header.
             // First file: encoder flag is false, so the encoder naturally
             // includes the header for ALL interfaces — no special handling.
+            size_t sdHdrLen = 0;
             if (pRunTimeStreamConf->Encoding == Streaming_Csv
                     && csv_IsHeaderSent()) {
-                size_t hdrLen = csv_GenerateHeaderToBuffer(
+                sdHdrLen = csv_GenerateHeaderToBuffer(
                         (char*)buffer, BUFFER_SIZE);
-                if (hdrLen > 0) {
-                    sd_card_manager_WriteToBuffer(
-                            (const char*)buffer, hdrLen);
-                    memset(buffer, 0, hdrLen);
-                }
             } else if (pRunTimeStreamConf->Encoding == Streaming_Json
                     && json_IsHeaderSent()) {
-                size_t hdrLen = json_GenerateHeaderToBuffer(
+                sdHdrLen = json_GenerateHeaderToBuffer(
                         (char*)buffer, BUFFER_SIZE);
-                if (hdrLen > 0) {
-                    sd_card_manager_WriteToBuffer(
-                            (const char*)buffer, hdrLen);
-                    memset(buffer, 0, hdrLen);
+            }
+            if (sdHdrLen > 0) {
+                size_t written = sd_card_manager_WriteToBuffer(
+                        (const char*)buffer, sdHdrLen);
+                if (written != sdHdrLen) {
+                    LOG_E("SD: header write failed, expected=%u written=%u",
+                          (unsigned)sdHdrLen, (unsigned)written);
                 }
+                memset(buffer, 0, sdHdrLen);
             }
         }
 
