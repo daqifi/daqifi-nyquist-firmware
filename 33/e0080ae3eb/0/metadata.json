@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "33e0080ae3eb",
+  "session_id": "3fcfab11-ae13-4a1a-a90a-bcb63fa343ae",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-05T08:12:49.455600799Z",
+  "branch": "feat/188-self-describing-sd-logs",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "firmware/src/services/streaming.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "f47334732c3f",
+  "token_usage": {
+    "input_tokens": 927,
+    "cache_creation_tokens": 2658750,
+    "cache_read_tokens": 62696954,
+    "output_tokens": 403179,
+    "api_call_count": 616
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-05T08:12:44.39247404Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 585,
+    "human_removed": 35902,
+    "total_committed": 585,
+    "agent_percentage": 0
+  }
+}

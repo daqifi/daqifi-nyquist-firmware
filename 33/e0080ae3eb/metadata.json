@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "33e0080ae3eb",
+  "strategy": "manual-commit",
+  "branch": "feat/188-self-describing-sd-logs",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "firmware/src/services/streaming.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/33/e0080ae3eb/0/metadata.json",
+      "transcript": "/33/e0080ae3eb/0/full.jsonl",
+      "context": "/33/e0080ae3eb/0/context.md",
+      "content_hash": "/33/e0080ae3eb/0/content_hash.txt",
+      "prompt": "/33/e0080ae3eb/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 927,
+    "cache_creation_tokens": 2658750,
+    "cache_read_tokens": 62696954,
+    "output_tokens": 403179,
+    "api_call_count": 616
+  }
+}
