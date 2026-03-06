@@ -682,27 +682,16 @@ scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
  * Command: SYST:STOR:SD:SPACe?
  * Returns: <free_bytes>,<total_bytes>
  *
- * Returns cached space info from the last SD mount operation.
- * Trigger a mount by enabling SD and performing any operation (e.g. LISt?).
+ * Always queries the SD card directly for fresh values.
+ * Rejected when SD manager is busy (e.g., active streaming session).
  */
 scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     if (!SCPI_CheckSDCardPresent(context)) {
         return SCPI_RES_ERR;
     }
 
-    uint64_t freeBytes = 0;
-    uint64_t totalBytes = 0;
-
-    // Try cached info first (populated during SD card mount)
-    if (sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes)) {
-        SCPI_ResultUInt64(context, freeBytes);
-        SCPI_ResultUInt64(context, totalBytes);
-        return SCPI_RES_OK;
-    }
-
-    // No cached info — do a direct mount/query/unmount
     if (sd_card_manager_IsBusy()) {
-        LOG_E("[SD] Space query failed - SD card busy");
+        LOG_E("[SD] Space query rejected - SD card busy (streaming or other operation active)");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -725,8 +714,8 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    freeBytes = (uint64_t)freeSectors * 512ULL;
-    totalBytes = (uint64_t)totalSectors * 512ULL;
+    uint64_t freeBytes = (uint64_t)freeSectors * 512ULL;
+    uint64_t totalBytes = (uint64_t)totalSectors * 512ULL;
 
     SCPI_ResultUInt64(context, freeBytes);
     SCPI_ResultUInt64(context, totalBytes);
