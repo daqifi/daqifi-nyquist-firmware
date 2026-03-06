@@ -504,9 +504,22 @@ void sd_card_manager_ProcessState() {
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
                     }
                 } else {
-                    /* Mount was successful. */
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE;
-                    gSDCardData.discMounted = true;
+                    /* Mount was successful. Validate filesystem type. */
+                    FATFS *fs = NULL;
+                    uint32_t freeClusters = 0;
+                    if (FATFS_getfree(SD_CARD_MANAGER_DISK_MOUNT_NAME, &freeClusters, &fs) == 0
+                        && fs != NULL
+                        && (fs->fs_type == FS_FAT16 || fs->fs_type == FS_FAT32)) {
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE;
+                        gSDCardData.discMounted = true;
+                    } else {
+                        LOG_E("[SD] Unsupported filesystem (type=%d) - reformat as FAT32",
+                              fs ? fs->fs_type : 0);
+                        gSDCardData.lastOperationSuccess = false;
+                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                        gSDCardData.discMounted = true;  // Mark mounted so ERROR→UNMOUNT can clean up
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    }
                 }
             }
             break;
