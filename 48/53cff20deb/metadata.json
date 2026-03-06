@@ -3,7 +3,7 @@
   "checkpoint_id": "4853cff20deb",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 4,
   "files_touched": [
     "firmware/src/Util/Logger.h",
     "firmware/src/services/UsbCdc/UsbCdc.c",
@@ -17,13 +17,20 @@
       "context": "/48/53cff20deb/0/context.md",
       "content_hash": "/48/53cff20deb/0/content_hash.txt",
       "prompt": "/48/53cff20deb/0/prompt.txt"
+    },
+    {
+      "metadata": "/48/53cff20deb/1/metadata.json",
+      "transcript": "/48/53cff20deb/1/full.jsonl",
+      "context": "/48/53cff20deb/1/context.md",
+      "content_hash": "/48/53cff20deb/1/content_hash.txt",
+      "prompt": "/48/53cff20deb/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 465,
-    "cache_creation_tokens": 131666,
-    "cache_read_tokens": 2489190,
-    "output_tokens": 10083,
-    "api_call_count": 45
+    "input_tokens": 1460,
+    "cache_creation_tokens": 3135458,
+    "cache_read_tokens": 71245680,
+    "output_tokens": 421477,
+    "api_call_count": 709
   }
 }
