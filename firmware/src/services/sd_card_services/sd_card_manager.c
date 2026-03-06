@@ -23,7 +23,8 @@
 // Long timeouts for detecting hangs without perturbing normal operation.
 // These should be many times longer than expected operation duration.
 // Only logs error when timeout is hit, indicating a real problem.
-#define SD_MOUNT_MAX_RETRIES        3       // Max mount attempts before giving up (incompatible FS, etc.)
+#define SD_MOUNT_MAX_RETRIES        10      // Max mount attempts before giving up (incompatible FS, etc.)
+#define SD_MOUNT_RETRY_DELAY_MS     100     // Delay between mount retries (total budget: retries * delay = 1s)
 #define SD_DEBUG_TIMEOUT_MS         60000U  // 60 seconds - filesystem operations
 #define SD_DEBUG_MUTEX_TIMEOUT_MS   30000U  // 30 seconds - mutex acquisition
 
@@ -498,7 +499,8 @@ void sd_card_manager_ProcessState() {
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     } else {
-                        // Retry mount
+                        // Retry mount after delay
+                        vTaskDelay(pdMS_TO_TICKS(SD_MOUNT_RETRY_DELAY_MS));
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
                     }
                 } else {
@@ -1209,6 +1211,8 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     if (pSettings != NULL && gpSDCardSettings != NULL) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
     }
+    // Drain any stale completion token from a previous ERROR state
+    xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
 }
