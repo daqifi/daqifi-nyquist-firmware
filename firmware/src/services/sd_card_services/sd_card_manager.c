@@ -107,6 +107,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR,
     SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_FORMAT,
+    SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE,
     SD_CARD_MANAGER_PROCESS_STATE_DEINIT,
     SD_CARD_MANAGER_PROCESS_STATE_IDLE,
     SD_CARD_MANAGER_PROCESS_STATE_ERROR,
@@ -152,6 +153,11 @@ typedef struct {
 
     // Mount retry tracking
     uint8_t mountRetryCount;     // Number of consecutive mount failures
+
+    // Space query result (populated by GET_SPACE mode)
+    uint64_t spaceResultFreeBytes;
+    uint64_t spaceResultTotalBytes;
+    bool spaceResultValid;
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -450,7 +456,9 @@ void sd_card_manager_ProcessState() {
         case SD_CARD_MANAGER_PROCESS_STATE_INIT:
             // Only initialize if SD is enabled AND has a valid operation mode
             // Just enabling SD without setting a mode (WRITE/READ/LIST) is valid - don't spam errors
-            if (gpSDCardSettings->enable && gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
+            // GET_SPACE is allowed even when disabled (transient read-only query)
+            if ((gpSDCardSettings->enable || gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE)
+                && gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
                 // Validate directory and file settings
                 bool dirValid = strlen(gpSDCardSettings->directory) > 0 &&
                                strlen(gpSDCardSettings->directory) <= SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX;
@@ -463,10 +471,13 @@ void sd_card_manager_ProcessState() {
                                  gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
                                  gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
 
+                // GET_SPACE only needs to mount - no directory or file needed
+                bool needsDir = (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_GET_SPACE);
+
                 // Reset error flag on valid configuration (allows new errors to be logged after fix)
                 static bool errorLogged = false;
 
-                if (dirValid && (!needsFile || fileValid)) {
+                if ((!needsDir || dirValid) && (!needsFile || fileValid)) {
                     errorLogged = false;  // Reset flag on successful validation
                     gSDCardData.mountRetryCount = 0;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
@@ -577,6 +588,8 @@ void sd_card_manager_ProcessState() {
                 /* Error while setting current drive */
                 LOG_E("[%s:%d]Error Setting SD Card drive", __FILE__, __LINE__);
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE) {
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE;
             } else {
                 /* Open a file for reading. */
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
@@ -1153,6 +1166,28 @@ void sd_card_manager_ProcessState() {
         }
             break;
 
+        case SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE:
+        {
+            uint32_t totalSectors = 0;
+            uint32_t freeSectors = 0;
+
+            if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME, &totalSectors, &freeSectors) == SYS_FS_RES_SUCCESS) {
+                gSDCardData.spaceResultFreeBytes = (uint64_t)freeSectors * 512ULL;
+                gSDCardData.spaceResultTotalBytes = (uint64_t)totalSectors * 512ULL;
+                gSDCardData.spaceResultValid = true;
+                gSDCardData.lastOperationSuccess = true;
+            } else {
+                LOG_E("[SD] Failed to query drive space");
+                gSDCardData.spaceResultValid = false;
+                gSDCardData.lastOperationSuccess = false;
+            }
+
+            gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+            gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+            xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+        }
+            break;
+
         case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
 
             break;
@@ -1257,6 +1292,19 @@ bool sd_card_manager_GetLastOperationResult(void) {
         return false;
     }
     return gSDCardData.lastOperationSuccess;
+}
+
+bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {
+    if (!gSDCardData.spaceResultValid) {
+        return false;
+    }
+    if (freeBytes != NULL) {
+        *freeBytes = gSDCardData.spaceResultFreeBytes;
+    }
+    if (totalBytes != NULL) {
+        *totalBytes = gSDCardData.spaceResultTotalBytes;
+    }
+    return true;
 }
 
 bool sd_card_manager_IsBusy(void) {

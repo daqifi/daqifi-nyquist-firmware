@@ -44,6 +44,7 @@ extern "C" {
         SD_CARD_MANAGER_MODE_LIST_DIRECTORY,
         SD_CARD_MANAGER_MODE_DELETE_FILE,
         SD_CARD_MANAGER_MODE_FORMAT,
+        SD_CARD_MANAGER_MODE_GET_SPACE,
     } sd_card_manager_mode_t;
 
     typedef struct {
@@ -189,6 +190,18 @@ extern "C" {
      * @return true if file is open and in WRITE_TO_FILE state, false otherwise
      */
     bool sd_card_manager_IsWriteReady(void);
+
+    /**
+     * @brief Gets the result of the last GET_SPACE operation.
+     *
+     * Call after sd_card_manager_WaitForCompletion() returns true
+     * following a MODE_GET_SPACE request.
+     *
+     * @param[out] freeBytes  Free bytes on the SD card
+     * @param[out] totalBytes Total bytes on the SD card
+     * @return true if valid result available, false otherwise
+     */
+    bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes);
 
     /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
