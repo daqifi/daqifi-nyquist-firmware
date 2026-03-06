@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "63ad13380076",
+  "session_id": "0338193f-63c8-47ff-bff0-39ca79ce0591",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-06T22:31:01.269572348Z",
+  "branch": "feat/sd-space-query",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIStorageSD.c",
+    "firmware/src/services/sd_card_services/sd_card_manager.c",
+    "firmware/src/services/sd_card_services/sd_card_manager.h"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "037b74805ec0",
+  "token_usage": {
+    "input_tokens": 370,
+    "cache_creation_tokens": 552984,
+    "cache_read_tokens": 28314035,
+    "output_tokens": 77806,
+    "api_call_count": 302
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-06T22:30:59.769808301Z",
+    "agent_lines": 0,
+    "human_added": 0,
+    "human_modified": 2269,
+    "human_removed": 49,
+    "total_committed": 2269,
+    "agent_percentage": 0
+  }
+}
