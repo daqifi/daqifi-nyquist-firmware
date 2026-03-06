@@ -1260,7 +1260,9 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
     }
     // Drain any stale completion token from a previous ERROR state
-    xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
+    if (gSDCardData.opCompleteSemaphore != NULL) {
+        xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
+    }
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
 }
