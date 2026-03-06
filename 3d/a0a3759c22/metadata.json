@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "3da0a3759c22",
+  "strategy": "manual-commit",
+  "branch": "fix/sd-mount-retry-limit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "firmware/src/services/sd_card_services/sd_card_manager.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/3d/a0a3759c22/0/metadata.json",
+      "transcript": "/3d/a0a3759c22/0/full.jsonl",
+      "context": "/3d/a0a3759c22/0/context.md",
+      "content_hash": "/3d/a0a3759c22/0/content_hash.txt",
+      "prompt": "/3d/a0a3759c22/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 203,
+    "cache_creation_tokens": 398965,
+    "cache_read_tokens": 13936365,
+    "output_tokens": 40353,
+    "api_call_count": 157
+  }
+}
