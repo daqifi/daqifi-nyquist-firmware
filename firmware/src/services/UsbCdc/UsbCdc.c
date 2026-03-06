@@ -1,3 +1,9 @@
+/* WARNING: LOG_LEVEL_USB must stay at LOG_LEVEL_ERROR (issue #191).
+ * USB event handlers run in ISR context where MIPS EXL/ERL bits are
+ * cleared by the Harmony driver, defeating LogIsInISR().  LOG_I/LOG_D
+ * calls from that path attempt a mutex take inside an ISR, triggering
+ * a FreeRTOS configASSERT crash.  A compile-time guard in Logger.h
+ * enforces this until a deferred-logging fix is implemented. */
 #define LOG_LVL LOG_LEVEL_USB
 #include "UsbCdc.h"
 

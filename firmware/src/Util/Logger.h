@@ -102,6 +102,15 @@ extern "C" {
     #ifndef LOG_LEVEL_USB
         #define LOG_LEVEL_USB       LOG_LEVEL_ERROR
     #endif
+    /* SAFETY: LOG_LEVEL_USB must not exceed LOG_LEVEL_ERROR until issue #191
+     * is resolved.  The USB event handler runs in ISR context where the MIPS
+     * EXL/ERL bits are cleared by the Harmony driver, so LogIsInISR() returns
+     * false.  Any LOG_I()/LOG_D() call from that path takes the mutex inside
+     * an ISR and triggers a FreeRTOS configASSERT crash.
+     * See: https://github.com/daqifi/daqifi-nyquist-firmware/issues/191 */
+    #if LOG_LEVEL_USB > LOG_LEVEL_ERROR
+        #error "LOG_LEVEL_USB above LOG_LEVEL_ERROR causes ISR crash (issue #191). Keep at LOG_LEVEL_ERROR until fixed."
+    #endif
     #ifndef LOG_LEVEL_SCPI
         #define LOG_LEVEL_SCPI      LOG_LEVEL_ERROR
     #endif

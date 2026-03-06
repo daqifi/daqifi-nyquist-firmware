@@ -416,11 +416,11 @@ void streaming_Task(void) {
         }
 
         // Log streaming start info once for debugging
-        static bool firstLog = false;
-        if (!firstLog) {
+        static bool streamingLoggedOnce = false;
+        if (!streamingLoggedOnce) {
             LOG_I("Streaming started: interface=%d, usbSize=%u, wifiSize=%u, sdSize=%u",
                   pRunTimeStreamConf->ActiveInterface, usbSize, wifiSize, sdSize);
-            firstLog = true;
+            streamingLoggedOnce = true;
         }
 
         // CRITICAL: Always encode to drain the sample queue, even if no outputs have space
