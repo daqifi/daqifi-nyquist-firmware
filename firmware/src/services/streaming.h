@@ -35,6 +35,12 @@ void Streaming_Tasks(   StreamingRuntimeConfig* pStreamConfig, tBoardData* board
  */
 void TimestampTimer_Init( void );
 
+/**
+ * Resets the SD protobuf metadata flag so the next SD log file
+ * gets a self-describing metadata header as its first message.
+ */
+void Streaming_ResetSdPbMetadata(void);
+
 #ifdef	__cplusplus
 }
 #endif

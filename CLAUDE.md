@@ -592,7 +592,9 @@ The project can be built using Microchip tools in WSL/Linux:
    (echo -e "SYST:POW:STAT 1\r"; sleep 1) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail-5
    ```
 
-3. **Use Exact SCPI Commands**: Don't guess command syntax. Check the actual command table in `SCPIInterface.c`
+3. **Serial Buffer Timing**: When issuing multiple SCPI commands via picocom (especially `LISt?`, `LOG?`, or other commands that produce large output), wait long enough for the full response to be received before sending the next command. If the previous response hasn't fully drained from the serial buffer, the next command's picocom session will capture stale data mixed with the new response. For large responses (SD file listings, file downloads), use `sleep 5` or longer between commands. The `SYSTem:STORage:SD:GET` command is particularly sensitive — ensure the serial buffer is clean before issuing it.
+
+4. **Use Exact SCPI Commands**: Don't guess command syntax. Check the actual command table in `SCPIInterface.c`
    ```bash
    # Correct commands (from SCPIInterface.c):
    SYST:COMM:LAN:SSIDSTR?    # Signal strength (not SSID:STR)

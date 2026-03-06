@@ -23,6 +23,22 @@ size_t Json_Encode(     tBoardData* state,
  */
 void json_ResetEncoder(void);
 
+/*!
+ * Check if JSON header has already been sent in this streaming session
+ * @return true if header was sent, false if not yet
+ */
+bool json_IsHeaderSent(void);
+
+/*!
+ * Generate JSON metadata header into a caller-provided buffer without
+ * changing encoder state.  Used by streaming.c to write SD-only headers
+ * on file rotation without disturbing USB/WiFi header tracking.
+ * @param buffer  Output buffer
+ * @param size    Size of output buffer
+ * @return Bytes written (0 on failure)
+ */
+size_t json_GenerateHeaderToBuffer(char* buffer, size_t size);
+
 #ifdef	__cplusplus
 }
 #endif

@@ -4,7 +4,7 @@
 #include "Util/Logger.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
-#include "services/csv_encoder.h"  // For csv_ResetEncoder on file rotation
+#include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (32 * 1024)  // 32KB shared buffer for all SD operations
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
@@ -593,16 +593,43 @@ void sd_card_manager_ProcessState() {
                      gSDCardData.filePath, gSDCardData.fileCounter,
                      gSDCardData.fileSplittingEnabled ? "enabled" : "disabled");
 
-                // Clear shared buffer and write buffer to prevent stale data from previous session
+                // Reset SD metadata flags FIRST, before clearing the buffer.
+                // This sets gSdFileWasReady = false, which causes the
+                // streaming task's SD write guard (hasSD && gSdFileWasReady)
+                // to fail — preventing non-metadata data from being written
+                // to the freshly-cleared buffer before the new file is ready.
+                //
+                // Race condition without this ordering:
+                //   1. CircularBuf_Reset() clears buffer (space available)
+                //   2. Streaming task sees gSdFileWasReady=true (stale),
+                //      encodes WITHOUT metadata, writes to buffer
+                //   3. Streaming_ResetSdPbMetadata() resets flags (too late)
+                //   => Non-metadata data at byte 0 of new file
+                Streaming_ResetSdPbMetadata();
+
+                // Now clear the buffer — streaming task won't write here
+                // because gSdFileWasReady is already false.
                 SD_TakeMutexDebug(gSDCardData.wMutex, "open_file_clear_buffer");
                 CircularBuf_Reset(&gSDCardData.wCirbuf);
                 memset(gSdSharedBuffer, 0, SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
                 memset(gSDCardData.writeBuffer, 0, sizeof(gSDCardData.writeBuffer));
                 xSemaphoreGive(gSDCardData.wMutex);
 
+                // Reset write pipeline state for clean start.
+                // Without this, a stale sdCardWritePending=1 from a previous
+                // session causes the zeroed writeBuffer to be written to the
+                // new file (producing junk bytes before real data).
+                gSDCardData.sdCardWritePending = 0;
+                gSDCardData.writeBufferLength = 0;
+                gSDCardData.sdCardWriteBufferOffset = 0;
+
                 // Use WRITE_PLUS to create/truncate file (overwrite mode)
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
+
+                // Transition to WRITE_TO_FILE — IsWriteReady() becomes
+                // true after this point.  The streaming task detects the
+                // transition and writes SD-only headers at byte 0.
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
                 gSDCardData.totalBytesFlushPending = 0;
                 gSDCardData.currentFileBytes = 0;  // Reset byte counter for new file
@@ -716,16 +743,16 @@ void sd_card_manager_ProcessState() {
                             gSDCardData.writeBufferLength = 0;
                             gSDCardData.sdCardWriteBufferOffset = 0;
                             xSemaphoreGive(gSDCardData.wMutex);
-                        } else if (writeLen >= 0) {
+                        } else if (writeLen > 0) {
                             // Track partial write
                             gSDCardData.currentFileBytes += writeLen;
 
                             SD_TakeMutexDebug(gSDCardData.wMutex, "partial_write");
                             gSDCardData.writeBufferLength -= writeLen;
-                            gSDCardData.sdCardWriteBufferOffset = writeLen;
+                            gSDCardData.sdCardWriteBufferOffset += writeLen;
                             xSemaphoreGive(gSDCardData.wMutex);
                             break;  // Partial write, don't process more chunks
-                        } else if (writeLen == -1) {
+                        } else if (writeLen <= 0) {
                             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                             LOG_E("[%s:%d]Error Writing to SD Card", __FILE__, __LINE__);
                             break;
@@ -741,6 +768,40 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentFileBytes >= gpSDCardSettings->maxFileSizeBytes) {
                 LOG_D("[SD] File size limit reached (%llu >= %llu), rotating to next file\r\n",
                      gSDCardData.currentFileBytes, gpSDCardSettings->maxFileSizeBytes);
+
+                // Complete any pending write from the chunk processing loop.
+                // The loop can exit with sdCardWritePending=1 (4th chunk read
+                // but not yet written). Flush it to the OLD file before closing.
+                // Loop to handle partial writes (same logic as normal write path).
+                while (gSDCardData.sdCardWritePending == 1) {
+                    int pendingLen = SDCardWrite();
+                    if (pendingLen >= gSDCardData.writeBufferLength) {
+                        gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
+                        SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_pending_write");
+                        gSDCardData.sdCardWritePending = 0;
+                        gSDCardData.writeBufferLength = 0;
+                        gSDCardData.sdCardWriteBufferOffset = 0;
+                        xSemaphoreGive(gSDCardData.wMutex);
+                    } else if (pendingLen > 0) {
+                        // Partial write — update offset and retry
+                        gSDCardData.currentFileBytes += pendingLen;
+                        SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_partial_write");
+                        gSDCardData.writeBufferLength -= pendingLen;
+                        gSDCardData.sdCardWriteBufferOffset += pendingLen;
+                        xSemaphoreGive(gSDCardData.wMutex);
+                    } else {
+                        // 0 (no progress) or -1 (error): stop to avoid infinite loop
+                        if (pendingLen < 0) {
+                            LOG_E("[SD] Error flushing pending write before rotation");
+                        } else {
+                            LOG_E("[SD] Zero-byte write during rotation flush");
+                        }
+                        gSDCardData.sdCardWritePending = 0;
+                        gSDCardData.writeBufferLength = 0;
+                        gSDCardData.sdCardWriteBufferOffset = 0;
+                        break;
+                    }
+                }
 
                 // Drain circular buffer completely before rotation to prevent data loss
                 SD_TakeMutexDebug(gSDCardData.wMutex, "drain_buffer_check");
@@ -759,18 +820,28 @@ void sd_card_manager_ProcessState() {
                             gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
                             xSemaphoreGive(gSDCardData.wMutex);
 
-                            // Write immediately
-                            writeLen = SDCardWrite();
-                            if (writeLen >= 0) {
-                                gSDCardData.currentFileBytes += writeLen;
-                                SD_TakeMutexDebug(gSDCardData.wMutex, "drain_complete");
-                                gSDCardData.sdCardWritePending = 0;
-                                gSDCardData.writeBufferLength = 0;
-                                gSDCardData.sdCardWriteBufferOffset = 0;
-                                xSemaphoreGive(gSDCardData.wMutex);
-                            } else {
-                                LOG_E("[%s:%d]Error draining buffer before rotation", __FILE__, __LINE__);
-                                break;
+                            // Write immediately, loop for partial writes
+                            while (gSDCardData.sdCardWritePending == 1) {
+                                writeLen = SDCardWrite();
+                                if (writeLen >= gSDCardData.writeBufferLength) {
+                                    gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
+                                    SD_TakeMutexDebug(gSDCardData.wMutex, "drain_complete");
+                                    gSDCardData.sdCardWritePending = 0;
+                                    gSDCardData.writeBufferLength = 0;
+                                    gSDCardData.sdCardWriteBufferOffset = 0;
+                                    xSemaphoreGive(gSDCardData.wMutex);
+                                } else if (writeLen > 0) {
+                                    gSDCardData.currentFileBytes += writeLen;
+                                    gSDCardData.writeBufferLength -= writeLen;
+                                    gSDCardData.sdCardWriteBufferOffset += writeLen;
+                                } else {
+                                    // 0 (no progress) or -1 (error)
+                                    LOG_E("[%s:%d]Error draining buffer before rotation", __FILE__, __LINE__);
+                                    gSDCardData.sdCardWritePending = 0;
+                                    gSDCardData.writeBufferLength = 0;
+                                    gSDCardData.sdCardWriteBufferOffset = 0;
+                                    break;
+                                }
                             }
                         } else {
                             xSemaphoreGive(gSDCardData.wMutex);
@@ -805,9 +876,9 @@ void sd_card_manager_ProcessState() {
                          gSDCardData.filePath, gSDCardData.currentFileBytes);
                 }
 
-                // DO NOT reset CSV encoder - only first file gets header
-                // Subsequent split files contain data rows only for cleaner merging
-                // and zero latency rotation
+                // Encoder resets are done in OPEN_FILE (after buffer clear +
+                // file open) so the streaming task cannot burn one-shot
+                // header flags before the new file is ready to accept data.
 
                 if (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES) {
                     gSDCardData.fileCounter++;
@@ -1185,6 +1256,14 @@ bool sd_card_manager_IsBusy(void) {
     }
 }
 
+
+bool sd_card_manager_IsWriteReady(void) {
+    return gpSDCardSettings != NULL
+        && gpSDCardSettings->enable
+        && gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE
+        && gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
+        && gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID;
+}
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {
     static bool logged = false;

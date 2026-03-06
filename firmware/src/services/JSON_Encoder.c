@@ -98,6 +98,15 @@ static size_t generateJsonHeader(char *out, size_t buffSize) {
     return (size_t)written;
 }
 
+bool json_IsHeaderSent(void) {
+    return jsonHeaderSent;
+}
+
+size_t json_GenerateHeaderToBuffer(char* buffer, size_t size) {
+    if (!buffer || size == 0) return 0;
+    return generateJsonHeader(buffer, size);
+}
+
 size_t Json_Encode(tBoardData* state,
         NanopbFlagsArray* fields,
         uint8_t* pBuffer, size_t buffSize) {

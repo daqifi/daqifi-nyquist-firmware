@@ -32,6 +32,30 @@
 
 //#define TEST_STREAMING
 
+// SD protobuf metadata: emitted as first message in each SD log file.
+// volatile: written by SD card task (via Streaming_ResetSdPbMetadata),
+// read by streaming task — compiler must not cache in registers.
+static volatile bool gSdPbMetadataSent = false;
+
+// Tracks whether the SD file has become ready during this streaming session.
+// Used to reset encoder header flags when SD transitions to ready, since
+// encoding may have already fired (and burned headers) before the file opened.
+// volatile: written by SD card task, read by streaming task.
+static volatile bool gSdFileWasReady = false;
+
+// SD protobuf metadata field tags for standalone metadata message
+static const NanopbFlagsArray fields_sd_metadata = {
+    .Size = 6,
+    .Data = {
+        DaqifiOutMessage_timestamp_freq_tag,
+        DaqifiOutMessage_analog_in_port_num_tag,
+        DaqifiOutMessage_digital_port_num_tag,
+        DaqifiOutMessage_device_sn_tag,
+        DaqifiOutMessage_device_pn_tag,
+        DaqifiOutMessage_device_fw_rev_tag,
+    }
+};
+
 // Log queue full error every N drops to avoid flooding the log at high rates.
 // At 15kHz this means we log approximately once per 6.7ms during overflow.
 #define LOG_QUEUE_DROP_INTERVAL 100
@@ -215,6 +239,9 @@ static void Streaming_Start(void) {
         // Clear encoding buffer once to prevent stale data artifacts in SD files
         memset(buffer, 0, BUFFER_SIZE);
 
+        gSdPbMetadataSent = false;
+        gSdFileWasReady = false;
+
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
@@ -244,6 +271,11 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
     TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
     gpRuntimeConfigStream->Running = false;
+}
+
+void Streaming_ResetSdPbMetadata(void) {
+    gSdPbMetadataSent = false;
+    gSdFileWasReady = false;
 }
 
 void Streaming_UpdateState(void) {
@@ -292,7 +324,57 @@ void streaming_Task(void) {
        
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
-        sdSize = sd_card_manager_GetWriteBuffFreeSize();
+        // Only check SD buffer size once the file is actually open.
+        // The SD card manager clears the circular buffer during file open,
+        // so writing before that would lose data (including headers).
+        sdSize = sd_card_manager_IsWriteReady()
+               ? sd_card_manager_GetWriteBuffFreeSize()
+               : 0;
+
+        // When SD file first becomes ready (new file or rotation), write
+        // an SD-only header/metadata so each file is self-describing
+        // without injecting duplicate headers into the USB/WiFi stream.
+        if (sdSize > 0 && !gSdFileWasReady) {
+            gSdFileWasReady = true;
+            gSdPbMetadataSent = false;
+
+            // Write SD-only header/metadata for each new file so every
+            // file is self-describing and independently parseable.
+            size_t sdHdrLen = 0;
+            if (pRunTimeStreamConf->Encoding == Streaming_Csv) {
+                // On rotation (header already sent to USB), generate
+                // SD-only header.  First file: encoder flag is false,
+                // so the encoder naturally includes the header for ALL
+                // interfaces — no special handling needed.
+                if (csv_IsHeaderSent()) {
+                    sdHdrLen = csv_GenerateHeaderToBuffer(
+                            (char*)buffer, BUFFER_SIZE);
+                }
+            } else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
+                if (json_IsHeaderSent()) {
+                    sdHdrLen = json_GenerateHeaderToBuffer(
+                            (char*)buffer, BUFFER_SIZE);
+                }
+            } else {
+                // Protobuf: encode a standalone metadata message for SD
+                tBoardData* pBoardData =
+                    BoardData_Get(BOARDDATA_ALL_DATA, true);
+                sdHdrLen = Nanopb_Encode(pBoardData,
+                    &fields_sd_metadata, (uint8_t*)buffer, BUFFER_SIZE);
+                if (sdHdrLen > 0) {
+                    gSdPbMetadataSent = true;
+                }
+            }
+            if (sdHdrLen > 0) {
+                size_t written = sd_card_manager_WriteToBuffer(
+                        (const char*)buffer, sdHdrLen);
+                if (written != sdHdrLen) {
+                    LOG_E("SD: header write failed, expected=%u written=%u",
+                          (unsigned)sdHdrLen, (unsigned)written);
+                }
+                memset(buffer, 0, sdHdrLen);
+            }
+        }
 
         // Single-interface streaming: only stream to the interface that initiated streaming
         // This prevents bandwidth overload at high sample rates
@@ -354,8 +436,9 @@ void streaming_Task(void) {
 
         // Cap at BUFFER_SIZE to prevent encoder overflow
         if (maxSize > BUFFER_SIZE) maxSize = BUFFER_SIZE;
-        
+
         nanopbFlag.Size = 0;
+
         nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
 
         if (AINDataAvailable) {
@@ -391,7 +474,14 @@ void streaming_Task(void) {
             if (hasWifi) {
                 wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
             }
-            if (hasSD) {
+            if (hasSD && gSdFileWasReady) {
+                // Guard: gSdFileWasReady is reset by the SD task during file
+                // rotation (via Streaming_ResetSdPbMetadata).  If it went
+                // false while we were encoding, a rotation happened and our
+                // buffer belongs to the old file — writing it now would place
+                // non-metadata data at position 0 of the NEW file.  Skipping
+                // the write lets the next iteration detect the new file,
+                // include metadata, and write at position 0.
                 const uint8_t* p = buffer;
                 size_t remaining = packetSize;
                 size_t total_written = 0;
@@ -419,24 +509,9 @@ void streaming_Task(void) {
                           attempts, (unsigned)packetSize, (unsigned)total_written);
                 }
 
-                static bool sd_logged = false;
-                if (!sd_logged) {
-                    LOG_D("SD: Write completed, packetSize=%u, written=%u, attempts=%u",
-                          (unsigned)packetSize, (unsigned)total_written, attempts);
-                    sd_logged = true;
-                }
-            } else {
-                static bool no_sd_logged = false;
-                if (!no_sd_logged) {
-                    LOG_D("SD: Write skipped - hasSD is false");
-                    no_sd_logged = true;
-                }
             }
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
-       
-        
-
     }
 }
 

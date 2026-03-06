@@ -24,7 +24,7 @@
 #define SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE (SD_CARD_MANAGER_FAT32_MAX_FILE_SIZE - SD_CARD_MANAGER_FAT32_SAFETY_MARGIN)  // 4GB - 100MB
 
 // Performance tuning parameters
-#define SD_CARD_MANAGER_WRITE_TIMEOUT_MS 2000      // Timeout for WriteToBuffer operation
+#define SD_CARD_MANAGER_WRITE_TIMEOUT_MS 5000      // Timeout for WriteToBuffer operation
 #define SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS 1  // Wait interval when buffer is full
 #define SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE 4     // Max chunks to process per task cycle (4 * 5KB = 20KB)
 #define SD_CARD_MANAGER_TASK_DELAY_MS 1            // Task delay for SD card processing (reduced from 5ms)
@@ -178,6 +178,17 @@ extern "C" {
      * @return true if busy, false if available for new operations
      */
     bool sd_card_manager_IsBusy(void);
+
+    /**
+     * @brief Checks if the SD card file is open and ready to accept write data.
+     *
+     * Returns true only after the file has been opened and the write buffer
+     * has been cleared. Use this to defer writes that must land in the file
+     * (e.g., metadata headers) rather than risk being cleared during file open.
+     *
+     * @return true if file is open and in WRITE_TO_FILE state, false otherwise
+     */
+    bool sd_card_manager_IsWriteReady(void);
 
     /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.

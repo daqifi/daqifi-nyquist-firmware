@@ -1713,6 +1713,7 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     // Reset encoder state so next session gets fresh headers
     csv_ResetEncoder();
     json_ResetEncoder();
+    Streaming_ResetSdPbMetadata();
 
     return SCPI_RES_OK;
 }
