@@ -3,7 +3,7 @@
   "checkpoint_id": "8680ec991f88",
   "strategy": "manual-commit",
   "branch": "feat/sd-space-query",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "firmware/src/services/SCPI/SCPIInterface.c",
     "firmware/src/services/SCPI/SCPIStorageSD.c",
@@ -25,13 +25,20 @@
       "context": "/86/80ec991f88/1/context.md",
       "content_hash": "/86/80ec991f88/1/content_hash.txt",
       "prompt": "/86/80ec991f88/1/prompt.txt"
+    },
+    {
+      "metadata": "/86/80ec991f88/2/metadata.json",
+      "transcript": "/86/80ec991f88/2/full.jsonl",
+      "context": "/86/80ec991f88/2/context.md",
+      "content_hash": "/86/80ec991f88/2/content_hash.txt",
+      "prompt": "/86/80ec991f88/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 338,
-    "cache_creation_tokens": 537436,
-    "cache_read_tokens": 24868105,
-    "output_tokens": 71086,
-    "api_call_count": 278
+    "input_tokens": 1333,
+    "cache_creation_tokens": 3541228,
+    "cache_read_tokens": 93624595,
+    "output_tokens": 482480,
+    "api_call_count": 942
   }
 }
