@@ -32,13 +32,16 @@
 
 //#define TEST_STREAMING
 
-// SD protobuf metadata: emitted as first message in each SD log file
-static bool gSdPbMetadataSent = false;
+// SD protobuf metadata: emitted as first message in each SD log file.
+// volatile: written by SD card task (via Streaming_ResetSdPbMetadata),
+// read by streaming task — compiler must not cache in registers.
+static volatile bool gSdPbMetadataSent = false;
 
 // Tracks whether the SD file has become ready during this streaming session.
 // Used to reset encoder header flags when SD transitions to ready, since
 // encoding may have already fired (and burned headers) before the file opened.
-static bool gSdFileWasReady = false;
+// volatile: written by SD card task, read by streaming task.
+static volatile bool gSdFileWasReady = false;
 
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
