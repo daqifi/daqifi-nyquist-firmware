@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "c840e1a5b836",
+  "session_id": "0338193f-63c8-47ff-bff0-39ca79ce0591",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-06T09:14:23.544583651Z",
+  "branch": "fix/sd-mount-retry-limit",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "firmware/src/services/sd_card_services/sd_card_manager.c"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "c6bce41eb488",
+  "token_usage": {
+    "input_tokens": 149,
+    "cache_creation_tokens": 160030,
+    "cache_read_tokens": 9684062,
+    "output_tokens": 30487,
+    "api_call_count": 119
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-06T09:14:22.883674897Z",
+    "agent_lines": 0,
+    "human_added": 13,
+    "human_modified": 1293,
+    "human_removed": 0,
+    "total_committed": 1305,
+    "agent_percentage": 0
+  }
+}
