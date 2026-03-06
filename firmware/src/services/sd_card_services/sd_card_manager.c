@@ -23,6 +23,8 @@
 // Long timeouts for detecting hangs without perturbing normal operation.
 // These should be many times longer than expected operation duration.
 // Only logs error when timeout is hit, indicating a real problem.
+#define SD_MOUNT_MAX_RETRIES        10      // Max mount attempts before giving up (incompatible FS, etc.)
+#define SD_MOUNT_RETRY_DELAY_MS     100     // Delay between mount retries (total budget: retries * delay = 1s)
 #define SD_DEBUG_TIMEOUT_MS         60000U  // 60 seconds - filesystem operations
 #define SD_DEBUG_MUTEX_TIMEOUT_MS   30000U  // 30 seconds - mutex acquisition
 
@@ -147,6 +149,9 @@ typedef struct {
 
     // Operation result tracking
     bool lastOperationSuccess;   // Result of last completed operation
+
+    // Mount retry tracking
+    uint8_t mountRetryCount;     // Number of consecutive mount failures
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -463,6 +468,7 @@ void sd_card_manager_ProcessState() {
 
                 if (dirValid && (!needsFile || fileValid)) {
                     errorLogged = false;  // Reset flag on successful validation
+                    gSDCardData.mountRetryCount = 0;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
                 } else {
                     // Only log error once per enable, not continuously
@@ -485,13 +491,35 @@ void sd_card_manager_ProcessState() {
                 int mountResult = SYS_FS_Mount(SD_CARD_MANAGER_DISK_DEV_NAME, SD_CARD_MANAGER_DISK_MOUNT_NAME, FAT, 0, NULL);
                 SD_CheckFsOpDuration(mountStart, "SYS_FS_Mount", mountResult);
                 if (mountResult != 0) {
-                    /* The disk could not be mounted. Try
-                     * mounting again until success. */
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
+                    gSDCardData.mountRetryCount++;
+                    if (gSDCardData.mountRetryCount >= SD_MOUNT_MAX_RETRIES) {
+                        LOG_E("[SD] Mount failed after %d attempts - check SD card is FAT32 formatted",
+                              gSDCardData.mountRetryCount);
+                        gSDCardData.lastOperationSuccess = false;
+                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    } else {
+                        // Retry mount after delay
+                        vTaskDelay(pdMS_TO_TICKS(SD_MOUNT_RETRY_DELAY_MS));
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK;
+                    }
                 } else {
-                    /* Mount was successful. Unmount the disk, for testing. */
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE;
-                    gSDCardData.discMounted = true;
+                    /* Mount was successful. Validate filesystem type. */
+                    FATFS *fs = NULL;
+                    uint32_t freeClusters = 0;
+                    if (FATFS_getfree(SD_CARD_MANAGER_DISK_MOUNT_NAME, &freeClusters, &fs) == 0
+                        && fs != NULL
+                        && (fs->fs_type == FS_FAT16 || fs->fs_type == FS_FAT32)) {
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE;
+                        gSDCardData.discMounted = true;
+                    } else {
+                        LOG_E("[SD] Unsupported filesystem (type=%d) - reformat as FAT32",
+                              fs ? fs->fs_type : 0);
+                        gSDCardData.lastOperationSuccess = false;
+                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                        gSDCardData.discMounted = true;  // Mark mounted so ERROR→UNMOUNT can clean up
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    }
                 }
             }
             break;
@@ -1132,7 +1160,8 @@ void sd_card_manager_ProcessState() {
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_ERROR:
-            /* The application comes here when the demo has failed. */
+            gSDCardData.lastOperationSuccess = false;
+            xSemaphoreGive(gSDCardData.opCompleteSemaphore);
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             break;
 
@@ -1195,6 +1224,8 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     if (pSettings != NULL && gpSDCardSettings != NULL) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
     }
+    // Drain any stale completion token from a previous ERROR state
+    xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
 }
