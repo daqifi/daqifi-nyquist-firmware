@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "cc2d89530695",
+  "strategy": "manual-commit",
+  "branch": "feat/sd-space-query",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "firmware/src/services/sd_card_services/sd_card_manager.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/cc/2d89530695/0/metadata.json",
+      "transcript": "/cc/2d89530695/0/full.jsonl",
+      "context": "/cc/2d89530695/0/context.md",
+      "content_hash": "/cc/2d89530695/0/content_hash.txt",
+      "prompt": "/cc/2d89530695/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 499,
+    "cache_creation_tokens": 656633,
+    "cache_read_tokens": 37517872,
+    "output_tokens": 100276,
+    "api_call_count": 407
+  }
+}
