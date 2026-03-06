@@ -1,0 +1,98 @@
+let's review our tickets to see what we should be working on next.
+
+---
+
+Tool loaded.
+
+---
+
+let's check issue 174 and see if it is an issue anylonger. similarly, we should review old tickets to see if they are even relevant.
+
+---
+
+Tool loaded.
+
+---
+
+do the hardware test on 174
+
+---
+
+Tool loaded.
+
+---
+
+i've enabled the wifi radio on the pc, you can connect directly.
+
+---
+
+Tool loaded.
+
+---
+
+<task-notification>
+<task-id>burbs0omt</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/burbs0omt.output</output-file>
+<status>completed</status>
+<summary>Background command "Test TCP connection to device data port" completed (exit code 0)</summary>
+</task-notification>
+Read the output file to retrieve the result: /tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/burbs0omt.output
+
+---
+
+tcp failed even on the correct interface?
+
+---
+
+yes plase.
+
+---
+
+keep reviewing the older tickets
+
+---
+
+yes
+
+---
+
+lets pick 178
+
+---
+
+Tool loaded.
+
+---
+
+<task-notification>
+<task-id>bjvk1hbmk</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/bjvk1hbmk.output</output-file>
+<status>completed</status>
+<summary>Background command "Commit the fix" completed (exit code 0)</summary>
+</task-notification>
+Read the output file to retrieve the result: /tmp/claude-1000/-mnt-c-Users-User-Documents-GitHub-daqifi-nyquist-firmware/tasks/bjvk1hbmk.output
+
+---
+
+any qodo comments yet?
+
+---
+
+check qodo now
+
+---
+
+what do you thin about   1. High: retry cap is effectively ~3 ms, which can turn transient mount latency into permanent SD disable
+
+  - Evidence: SD_MOUNT_MAX_RETRIES = 3:26, mount failure loop in MOUNT_DISK:493, SD task cadence is 1 ms in app_freertos.c:290.
+  - Impact: if mount needs more than a few ms after insert/power-up, mode is forced to NONE (sd_card_manager.c:498) and logging won’t resume until re-armed.
+  - Suggestion: switch from count-only retries to time-budget + backoff (example: 500-1000 ms total, 10-20 ms delay between attempts).
+
+  2. Medium: unconditional completion semaphore signal in ERROR can leave stale token
+
+  - Evidence: ERROR always gives opCompleteSemaphore:1149, wait path consumes one token in WaitForCompletion:1229, but no explicit drain before starting a new async
+    operation in UpdateSettings:1212.
+  - Impact: future LIST/DELETE/FORMAT waits can return immediately on an old signal.
+  - Suggestion: drain semaphore before launching a new waited operation, or only signal completion in ERROR for operations that actually use WaitForCompletion.
