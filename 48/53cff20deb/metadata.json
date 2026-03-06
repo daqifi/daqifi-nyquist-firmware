@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "4853cff20deb",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "firmware/src/Util/Logger.h",
+    "firmware/src/services/UsbCdc/UsbCdc.c",
+    "firmware/src/services/streaming.c",
+    "firmware/src/version.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/48/53cff20deb/0/metadata.json",
+      "transcript": "/48/53cff20deb/0/full.jsonl",
+      "context": "/48/53cff20deb/0/context.md",
+      "content_hash": "/48/53cff20deb/0/content_hash.txt",
+      "prompt": "/48/53cff20deb/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 465,
+    "cache_creation_tokens": 131666,
+    "cache_read_tokens": 2489190,
+    "output_tokens": 10083,
+    "api_call_count": 45
+  }
+}
