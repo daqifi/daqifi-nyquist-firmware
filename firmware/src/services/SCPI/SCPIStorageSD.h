@@ -46,6 +46,9 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context);
 scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context);
 scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context);
 
+// SD Card Space Query
+scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

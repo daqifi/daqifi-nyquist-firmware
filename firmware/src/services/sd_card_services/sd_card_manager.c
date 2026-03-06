@@ -152,6 +152,11 @@ typedef struct {
 
     // Mount retry tracking
     uint8_t mountRetryCount;     // Number of consecutive mount failures
+
+    // Cached space info (updated on each mount)
+    uint64_t cachedFreeBytes;
+    uint64_t cachedTotalBytes;
+    bool spaceInfoValid;
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -510,6 +515,12 @@ void sd_card_manager_ProcessState() {
                     if (FATFS_getfree(SD_CARD_MANAGER_DISK_MOUNT_NAME, &freeClusters, &fs) == 0
                         && fs != NULL
                         && (fs->fs_type == FS_FAT16 || fs->fs_type == FS_FAT32)) {
+                        // Cache space info (sectors = clusters * sectors_per_cluster)
+                        uint32_t freeSectors = freeClusters * fs->csize;
+                        uint32_t totalSectors = (fs->n_fatent - 2) * fs->csize;
+                        gSDCardData.cachedFreeBytes = (uint64_t)freeSectors * 512ULL;
+                        gSDCardData.cachedTotalBytes = (uint64_t)totalSectors * 512ULL;
+                        gSDCardData.spaceInfoValid = true;
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE;
                         gSDCardData.discMounted = true;
                     } else {
@@ -1216,6 +1227,7 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
 
 bool sd_card_manager_Deinit() {
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
+    gSDCardData.spaceInfoValid = false;
     gpSDCardSettings->enable = 0;
     return true;
 }
@@ -1257,6 +1269,19 @@ bool sd_card_manager_GetLastOperationResult(void) {
         return false;
     }
     return gSDCardData.lastOperationSuccess;
+}
+
+bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {
+    if (!gSDCardData.spaceInfoValid) {
+        return false;
+    }
+    if (freeBytes != NULL) {
+        *freeBytes = gSDCardData.cachedFreeBytes;
+    }
+    if (totalBytes != NULL) {
+        *totalBytes = gSDCardData.cachedTotalBytes;
+    }
+    return true;
 }
 
 bool sd_card_manager_IsBusy(void) {

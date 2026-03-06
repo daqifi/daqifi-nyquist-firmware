@@ -676,6 +676,64 @@ scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * @brief Query SD card free and total space
+ *
+ * Command: SYST:STOR:SD:SPACe?
+ * Returns: <free_bytes>,<total_bytes>
+ *
+ * Returns cached space info from the last SD mount operation.
+ * Trigger a mount by enabling SD and performing any operation (e.g. LISt?).
+ */
+scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
+    if (!SCPI_CheckSDCardPresent(context)) {
+        return SCPI_RES_ERR;
+    }
+
+    uint64_t freeBytes = 0;
+    uint64_t totalBytes = 0;
+
+    // Try cached info first (populated during SD card mount)
+    if (sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes)) {
+        SCPI_ResultUInt64(context, freeBytes);
+        SCPI_ResultUInt64(context, totalBytes);
+        return SCPI_RES_OK;
+    }
+
+    // No cached info — do a direct mount/query/unmount
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("[SD] Space query failed - SD card busy");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    if (SYS_FS_Mount(SD_CARD_MANAGER_DISK_DEV_NAME, "/mnt/DAQiFi", FAT, 0, NULL) != 0) {
+        LOG_E("[SD] Space query - mount failed");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    uint32_t totalSectors = 0;
+    uint32_t freeSectors = 0;
+    bool ok = (SYS_FS_DriveSectorGet("/mnt/DAQiFi", &totalSectors, &freeSectors) == SYS_FS_RES_SUCCESS);
+
+    SYS_FS_Unmount("/mnt/DAQiFi");
+
+    if (!ok) {
+        LOG_E("[SD] Space query - getfree failed");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    freeBytes = (uint64_t)freeSectors * 512ULL;
+    totalBytes = (uint64_t)totalSectors * 512ULL;
+
+    SCPI_ResultUInt64(context, freeBytes);
+    SCPI_ResultUInt64(context, totalBytes);
+
+    return SCPI_RES_OK;
+}
+
 /* *****************************************************************************
  End of File
  */

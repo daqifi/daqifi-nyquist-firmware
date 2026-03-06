@@ -191,6 +191,19 @@ extern "C" {
     bool sd_card_manager_IsWriteReady(void);
 
     /**
+     * @brief Gets cached SD card space information.
+     *
+     * Returns free and total bytes from the last mount operation.
+     * Space info is cached each time the SD card is mounted and
+     * invalidated when the card is disabled.
+     *
+     * @param[out] freeBytes  Pointer to store free bytes (NULL to skip)
+     * @param[out] totalBytes Pointer to store total bytes (NULL to skip)
+     * @return true if cached space info is valid, false if unavailable
+     */
+    bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received
