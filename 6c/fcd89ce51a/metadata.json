@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "6cfcd89ce51a",
+  "strategy": "manual-commit",
+  "branch": "feat/sd-space-query",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIStorageSD.c",
+    "firmware/src/services/sd_card_services/sd_card_manager.c",
+    "firmware/src/services/sd_card_services/sd_card_manager.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/6c/fcd89ce51a/0/metadata.json",
+      "transcript": "/6c/fcd89ce51a/0/full.jsonl",
+      "context": "/6c/fcd89ce51a/0/context.md",
+      "content_hash": "/6c/fcd89ce51a/0/content_hash.txt",
+      "prompt": "/6c/fcd89ce51a/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 465,
+    "cache_creation_tokens": 640599,
+    "cache_read_tokens": 35061885,
+    "output_tokens": 94954,
+    "api_call_count": 379
+  }
+}
