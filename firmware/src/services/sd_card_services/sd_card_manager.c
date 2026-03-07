@@ -1330,7 +1330,6 @@ bool sd_card_manager_IsBusy(void) {
     switch (gSDCardData.currentProcessState) {
         case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
         case SD_CARD_MANAGER_PROCESS_STATE_INIT:
-        case SD_CARD_MANAGER_PROCESS_STATE_ERROR:
             return false;
         default:
             return true;
