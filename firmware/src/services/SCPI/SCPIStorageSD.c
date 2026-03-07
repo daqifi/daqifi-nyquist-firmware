@@ -683,7 +683,7 @@ scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
  * Command: SYST:STOR:SD:SPACe?
  * Returns: <free_bytes>,<total_bytes>
  *
- * Always queries the SD card directly for fresh values.
+ * Routes through SD card manager state machine for fresh values.
  * Rejected when SD manager is busy (e.g., active streaming session).
  */
 scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
