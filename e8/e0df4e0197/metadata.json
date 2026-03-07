@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "e8e0df4e0197",
+  "strategy": "manual-commit",
+  "branch": "feat/sd-space-query",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "firmware/src/services/SCPI/SCPIStorageSD.c"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e8/e0df4e0197/0/metadata.json",
+      "transcript": "/e8/e0df4e0197/0/full.jsonl",
+      "context": "/e8/e0df4e0197/0/context.md",
+      "content_hash": "/e8/e0df4e0197/0/content_hash.txt",
+      "prompt": "/e8/e0df4e0197/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 521,
+    "cache_creation_tokens": 664194,
+    "cache_read_tokens": 38897796,
+    "output_tokens": 102991,
+    "api_call_count": 421
+  }
+}
