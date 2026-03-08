@@ -1259,8 +1259,9 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     if (pSettings != NULL && gpSDCardSettings != NULL) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
     }
-    // Drain any stale completion token from a previous ERROR state
-    if (gSDCardData.opCompleteSemaphore != NULL) {
+    // Drain any stale completion token, but only when idle to avoid
+    // consuming a signal that an in-flight WaitForCompletion is expecting
+    if (sd_card_manager_IsIdle() && gSDCardData.opCompleteSemaphore != NULL) {
         xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
     }
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
