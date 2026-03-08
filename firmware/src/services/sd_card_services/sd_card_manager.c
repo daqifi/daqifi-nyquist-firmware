@@ -1171,6 +1171,7 @@ void sd_card_manager_ProcessState() {
         {
             uint32_t totalSectors = 0;
             uint32_t freeSectors = 0;
+            gSDCardData.spaceResultValid = false;  // Invalidate before query
 
             if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME, &totalSectors, &freeSectors) == SYS_FS_RES_SUCCESS) {
                 gSDCardData.spaceResultFreeBytes = (uint64_t)freeSectors * SD_SECTOR_SIZE_BYTES;

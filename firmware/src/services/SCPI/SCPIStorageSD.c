@@ -259,6 +259,8 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -529,6 +531,8 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
         LOG_E("SD:DELete - Operation timeout\r\n");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -587,6 +591,8 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
         LOG_E("SD:FORmat - Operation timeout\r\n");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -708,6 +714,8 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
 
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_SPACE_TIMEOUT_MS)) {
         LOG_E("[SD] SPACe? - Operation timeout");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
