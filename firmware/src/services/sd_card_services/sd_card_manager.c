@@ -25,6 +25,7 @@
 // Only logs error when timeout is hit, indicating a real problem.
 #define SD_MOUNT_MAX_RETRIES        10      // Max mount attempts before giving up (incompatible FS, etc.)
 #define SD_MOUNT_RETRY_DELAY_MS     100     // Delay between mount retries (total budget: retries * delay = 1s)
+#define SD_SECTOR_SIZE_BYTES        512U    // FAT sector size (must match ffconf.h FF_MIN_SS/FF_MAX_SS)
 #define SD_DEBUG_TIMEOUT_MS         60000U  // 60 seconds - filesystem operations
 #define SD_DEBUG_MUTEX_TIMEOUT_MS   30000U  // 30 seconds - mutex acquisition
 
@@ -1172,8 +1173,8 @@ void sd_card_manager_ProcessState() {
             uint32_t freeSectors = 0;
 
             if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME, &totalSectors, &freeSectors) == SYS_FS_RES_SUCCESS) {
-                gSDCardData.spaceResultFreeBytes = (uint64_t)freeSectors * 512ULL;
-                gSDCardData.spaceResultTotalBytes = (uint64_t)totalSectors * 512ULL;
+                gSDCardData.spaceResultFreeBytes = (uint64_t)freeSectors * SD_SECTOR_SIZE_BYTES;
+                gSDCardData.spaceResultTotalBytes = (uint64_t)totalSectors * SD_SECTOR_SIZE_BYTES;
                 gSDCardData.spaceResultValid = true;
                 gSDCardData.lastOperationSuccess = true;
             } else {
