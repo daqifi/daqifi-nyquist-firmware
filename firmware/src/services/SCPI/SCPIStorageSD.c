@@ -36,6 +36,7 @@
 #define SCPI_SD_LIST_TIMEOUT_MS 10000
 #define SCPI_SD_DELETE_TIMEOUT_MS 5000
 #define SCPI_SD_FORMAT_TIMEOUT_MS 30000
+#define SCPI_SD_SPACE_TIMEOUT_MS 10000
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -258,6 +259,8 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -528,6 +531,8 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
         LOG_E("SD:DELete - Operation timeout\r\n");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -586,6 +591,8 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
         LOG_E("SD:FORmat - Operation timeout\r\n");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -674,6 +681,68 @@ scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
 
     SCPI_ResultUInt64(context, pSDCardRuntimeConfig->maxFileSizeBytes);
     return SCPI_RES_OK;
+}
+
+/**
+ * @brief Query SD card free and total space
+ *
+ * Command: SYST:STOR:SD:SPACe?
+ * Returns: <free_bytes>,<total_bytes>
+ *
+ * Routes through SD card manager state machine for fresh values.
+ * Rejected when SD manager is busy (e.g., active streaming session).
+ */
+scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
+    scpi_result_t result = SCPI_RES_ERR;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("SPACe");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Set mode to GET_SPACE and let sd_card_manager handle mount/query/unmount
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+
+    if (!sd_card_manager_WaitForCompletion(SCPI_SD_SPACE_TIMEOUT_MS)) {
+        LOG_E("[SD] SPACe? - Operation timeout");
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    if (!sd_card_manager_GetLastOperationResult()) {
+        LOG_E("[SD] SPACe? - Query failed");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    uint64_t freeBytes = 0;
+    uint64_t totalBytes = 0;
+    if (!sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes)) {
+        LOG_E("[SD] SPACe? - No valid result");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    SCPI_ResultUInt64(context, freeBytes);
+    SCPI_ResultUInt64(context, totalBytes);
+    result = SCPI_RES_OK;
+
+__exit_point:
+    return result;
 }
 
 /* *****************************************************************************
