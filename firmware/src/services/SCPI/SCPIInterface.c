@@ -2033,6 +2033,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber,},
 
     // Operation status registers (library-provided, returns 0 until firmware sets condition bits)
+    // Per SCPI standard, bare "STATus:OPERation?" defaults to the Event register (clears on read).
+    // See libscpi test_parser.c: pattern "STATus:OPERation[:EVENt]?" -> SCPI_StatusOperationEventQ
     {.pattern = "STATus:OPERation?", .callback = SCPI_StatusOperationEventQ,},
     {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_StatusOperationEventQ,},
     {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_StatusOperationConditionQ,},
