@@ -189,11 +189,12 @@ static scpi_result_t SCPI_TCP_Flush(scpi_t * context) {
  */
 static int SCPI_TCP_Error(scpi_t * context, int_fast16_t err) {
     char ip[100];
-    // If we wanted to do something in response to an error, we could do so here.
-    // I'm expecting the client to call 'SYSTem:ERRor?' if they want error information
-
-    sprintf(ip, "**ERROR: %d, \"%s\"\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
-    context->interface->write(context, ip, strlen(ip));
+    if (err != 0) {
+        sprintf(ip, "**ERROR: %d, \"%s\"\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
+        context->interface->write(context, ip, strlen(ip));
+        // Also log to our Logger so errors appear in SYST:LOG?
+        LOG_E("SCPI Error %d: %s\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
+    }
     return 0;
 }
 
