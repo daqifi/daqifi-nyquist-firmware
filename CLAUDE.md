@@ -61,6 +61,13 @@ Command options:
 - Release button when LEDs light solid
 - Hold button again until white LED blinks to enter bootloader mode
 
+### Packaging Release Artifacts
+For every prerelease and release, compress the production hex file into a zip labeled with the firmware revision:
+```bash
+zip -j "daqifi-nyquist-firmware-<VERSION>.zip" firmware/daqifi.X/dist/default/production/daqifi.X.production.hex
+```
+Example: `daqifi-nyquist-firmware-3.4.5b1.zip`. The version string comes from `FIRMWARE_REVISION` in `firmware/src/version.h`.
+
 ## Architecture Overview
 
 ### Component Hierarchy
