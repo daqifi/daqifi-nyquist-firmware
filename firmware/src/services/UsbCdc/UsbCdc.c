@@ -698,7 +698,11 @@ static int SCPI_USB_Error(scpi_t * context, int_fast16_t err) {
     char ip[100];
     // Don't print "No error" messages - err code 0 is used internally by SCPI lib
     if (err != 0) {
-        sprintf(ip, "**ERROR: %d, \"%s\"\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
+        const char *err_str = SCPI_ErrorTranslate(err);
+        if (err_str == NULL) {
+            err_str = "Unknown";
+        }
+        snprintf(ip, sizeof(ip), "**ERROR: %d, \"%s\"\r\n", (int32_t) err, err_str);
         size_t len = strlen(ip);
         size_t written = context->interface->write(context, ip, len);
         if (written != len) {
@@ -706,7 +710,7 @@ static int SCPI_USB_Error(scpi_t * context, int_fast16_t err) {
             // The error has been formatted, partial write is better than none
         }
         // Also log to our Logger so errors appear in SYST:LOG?
-        LOG_E("SCPI Error %d: %s\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
+        LOG_E("SCPI Error %d: %s\r\n", (int32_t) err, err_str);
     }
     return 0;
 }

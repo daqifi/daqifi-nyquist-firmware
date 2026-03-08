@@ -190,10 +190,14 @@ static scpi_result_t SCPI_TCP_Flush(scpi_t * context) {
 static int SCPI_TCP_Error(scpi_t * context, int_fast16_t err) {
     char ip[100];
     if (err != 0) {
-        sprintf(ip, "**ERROR: %d, \"%s\"\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
+        const char *err_str = SCPI_ErrorTranslate(err);
+        if (err_str == NULL) {
+            err_str = "Unknown";
+        }
+        snprintf(ip, sizeof(ip), "**ERROR: %d, \"%s\"\r\n", (int32_t) err, err_str);
         context->interface->write(context, ip, strlen(ip));
         // Also log to our Logger so errors appear in SYST:LOG?
-        LOG_E("SCPI Error %d: %s\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
+        LOG_E("SCPI Error %d: %s\r\n", (int32_t) err, err_str);
     }
     return 0;
 }
