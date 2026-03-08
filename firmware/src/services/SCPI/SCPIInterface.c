@@ -2032,13 +2032,16 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:USB:SetTransparentMode", .callback = SCPI_UsbSetTransparentMode},
     {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber,},
 
-    //    // Intentionally(?) not implemented (stubbed out in original firmware))
-    //    {.pattern = "STATus:OPERation?", .callback = SCPI_NotImplemented, },
-    //    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_NotImplemented, },
-    //    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_NotImplemented, },
-    //    {.pattern = "STATus:OPERation:ENABle", .callback = SCPI_NotImplemented, },
-    //    {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_NotImplemented, },
-    //    {.pattern = "STATus:QUEStionable:CONDition?", .callback = SCPI_NotImplemented, },
+    // Operation status registers (library-provided, returns 0 until firmware sets condition bits)
+    // Per SCPI standard, bare "STATus:OPERation?" defaults to the Event register (clears on read).
+    // See libscpi test_parser.c: pattern "STATus:OPERation[:EVENt]?" -> SCPI_StatusOperationEventQ
+    {.pattern = "STATus:OPERation?", .callback = SCPI_StatusOperationEventQ,},
+    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_StatusOperationEventQ,},
+    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_StatusOperationConditionQ,},
+    {.pattern = "STATus:OPERation:ENABle", .callback = SCPI_StatusOperationEnable,},
+    {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_StatusOperationEnableQ,},
+    // Questionable status condition (completes the set already registered above)
+    {.pattern = "STATus:QUEStionable:CONDition?", .callback = SCPI_StatusQuestionableConditionQ,},
     //    {.pattern = "SYSTem:COMMunication:TCPIP:CONTROL?", .callback = SCPI_NotImplemented, },
 
     // Power

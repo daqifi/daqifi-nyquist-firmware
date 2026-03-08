@@ -698,13 +698,19 @@ static int SCPI_USB_Error(scpi_t * context, int_fast16_t err) {
     char ip[100];
     // Don't print "No error" messages - err code 0 is used internally by SCPI lib
     if (err != 0) {
-        sprintf(ip, "**ERROR: %d, \"%s\"\r\n", (int32_t) err, SCPI_ErrorTranslate(err));
+        const char *err_str = SCPI_ErrorTranslate(err);
+        if (err_str == NULL) {
+            err_str = "Unknown";
+        }
+        snprintf(ip, sizeof(ip), "**ERROR: %d, \"%s\"\r\n", (int32_t) err, err_str);
         size_t len = strlen(ip);
         size_t written = context->interface->write(context, ip, len);
         if (written != len) {
             // Write error occurred, but we can't do much about it in error handler
             // The error has been formatted, partial write is better than none
         }
+        // Also log to our Logger so errors appear in SYST:LOG?
+        LOG_E("SCPI Error %d: %s\r\n", (int32_t) err, err_str);
     }
     return 0;
 }
@@ -775,15 +781,6 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
                 &gRunTimeUsbSttings.scpiContext,
                 command,
                 commandLen);
-        
-        // Check for SCPI errors including buffer overrun
-        if (SCPI_ErrorCount(&gRunTimeUsbSttings.scpiContext) > 0) {
-            scpi_error_t error;
-            while (SCPI_ErrorPop(&gRunTimeUsbSttings.scpiContext, &error)) {
-                const char* error_str = SCPI_ErrorTranslate(error.error_code);
-                LOG_E("SCPI Error %d: %s\r\n", error.error_code, error_str ? error_str : "Unknown");
-            }
-        }
         
         // Ensure any SCPI responses are flushed to the USB immediately
         // This prevents the desktop app from hanging when waiting for responses

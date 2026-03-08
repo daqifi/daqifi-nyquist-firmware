@@ -1,0 +1,15 @@
+[pr_reviewer]
+extra_instructions = """\
+When reviewing SCPI interfaces:
+- Treat `**ERROR:` lines returned as part of SCPI command/interactive responses as acceptable existing behavior (USB and TCP).
+- Do NOT flag these as "errors in the data stream" unless the code is in the dedicated data streaming path (continuous/binary/deterministic output stream).
+- Prefer suggesting improvements only if SCPI error handling is inconsistent across interfaces, or if streaming-path payloads are polluted.
+"""
+
+[pr_code_suggestions]
+extra_instructions = """\
+When reviewing SCPI interfaces:
+- Treat `**ERROR:` lines returned as part of SCPI command/interactive responses as acceptable existing behavior (USB and TCP).
+- Do NOT flag these as "errors in the data stream" unless the code is in the dedicated data streaming path (continuous/binary/deterministic output stream).
+- Prefer suggesting improvements only if SCPI error handling is inconsistent across interfaces, or if streaming-path payloads are polluted.
+"""
