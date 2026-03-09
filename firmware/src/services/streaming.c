@@ -515,7 +515,7 @@ void streaming_Task(void) {
                 DIO_TIMING_TEST_WRITE_STATE(0);
             }
         }
-        if (packetSize == 0 && nanopbFlag.Size > 0) {
+        if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
             gStreamStats.encoderFailures++;
             if (!gLoggedEncoderFail) {
                 gLoggedEncoderFail = true;
