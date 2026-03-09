@@ -1242,7 +1242,13 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         gLoggedWriteBufferTimeout = false;
         return 0;
     }
-    
+
+    // Reject writes larger than buffer capacity (would spin until timeout)
+    if (len > gSDCardData.wCirbuf.buf_size) {
+        LOG_E("[SD] WriteToBuffer oversize: len=%u, cap=%u", (unsigned)len, (unsigned)gSDCardData.wCirbuf.buf_size);
+        return 0;
+    }
+
     // Wait for buffer space with mutex protection and timeout
     bool hasSpace = false;
     TickType_t startTime = xTaskGetTickCount();
