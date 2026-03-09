@@ -325,6 +325,7 @@ void Streaming_ClearStats(void) {
     gLoggedWifiDrop = false;
     gLoggedSdDrop = false;
     gLoggedEncoderFail = false;
+    // Intentionally reset: we want "Streaming started" logged once per session
     gStreamingLoggedOnce = false;
 }
 

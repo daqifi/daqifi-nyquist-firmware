@@ -1238,6 +1238,7 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     size_t bytesAdded = 0;
     if (len == 0)return 0;
     if (gpSDCardSettings->enable != 1 || gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+        // Reset so a fresh timeout is logged if SD is re-enabled
         gLoggedWriteBufferTimeout = false;
         return 0;
     }
