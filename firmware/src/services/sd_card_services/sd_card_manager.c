@@ -79,6 +79,7 @@ static __attribute__((coherent, aligned(16))) uint8_t gSdSharedBuffer[SD_CARD_MA
 // Mutex to serialize SD operations (READ, WRITE, LIST) on shared buffer
 // Prevents race conditions from cross-task state changes via UpdateSettings()
 static SemaphoreHandle_t gSDOpMutex = NULL;
+static bool gLoggedUnmountFail = false;
 
 /**
  * Helper function: Wait for USB buffer to drain before EOF/close
@@ -346,7 +347,7 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
     }
 
     if (SYS_FS_DirClose(dirHandle) == SYS_FS_RES_FAILURE) {
-        LOG_E("[SD] ListFiles: Failed to close directory");
+        LOG_E("[SD] ListFiles: Failed to close directory, error=%d", SYS_FS_Error());
     }
 }
 
@@ -565,18 +566,22 @@ void sd_card_manager_ProcessState() {
 
                 LOG_D("[SD] Closing file '%s'\r\n", gSDCardData.filePath);
                 if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
-                    LOG_E("[SD] Failed to close file during unmount: '%s'", gSDCardData.filePath);
+                    LOG_E("[SD] Failed to close file during unmount: '%s', error=%d", gSDCardData.filePath, SYS_FS_Error());
                 }
                 gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
             }
             if (SYS_FS_Unmount(SD_CARD_MANAGER_DISK_MOUNT_NAME) == 0) {
                 gSDCardData.discMounted = false;
+                gLoggedUnmountFail = false;
                 LOG_D("[SD] Unmounted successfully\r\n");
             }
             if (gSDCardData.discMounted == true) {
                 /* The disk could not be un mounted. Try
                  * un mounting again untill success. */
-                LOG_E("[SD] Unmount failed, retrying");
+                if (!gLoggedUnmountFail) {
+                    gLoggedUnmountFail = true;
+                    LOG_E("[SD] Unmount failed, retrying");
+                }
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             } else {
                 // Reset file splitting state for next session
@@ -942,10 +947,10 @@ void sd_card_manager_ProcessState() {
                         int syncResult = SYS_FS_FileSync(gSDCardData.fileHandle);
                         SD_CheckFsOpDuration(syncStart, "FileSync(limit_stop)", syncResult);
                         if (syncResult == -1) {
-                            LOG_E("[SD] Failed to sync file at split limit");
+                            LOG_E("[SD] Failed to sync file at split limit, error=%d", SYS_FS_Error());
                         }
                         if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
-                            LOG_E("[SD] Failed to close file at split limit");
+                            LOG_E("[SD] Failed to close file at split limit, error=%d", SYS_FS_Error());
                         }
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     }
@@ -1047,7 +1052,7 @@ void sd_card_manager_ProcessState() {
 
                     // Close file handle to prevent resource leak
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
-                        LOG_E("[SD] Failed to close file after read error");
+                        LOG_E("[SD] Failed to close file after read error, error=%d", SYS_FS_Error());
                     }
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     totalBytesRead = 0;
@@ -1065,7 +1070,7 @@ void sd_card_manager_ProcessState() {
 
                     // Close file handle
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
-                        LOG_E("[SD] Failed to close file after read complete");
+                        LOG_E("[SD] Failed to close file after read complete, error=%d", SYS_FS_Error());
                     }
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
 
