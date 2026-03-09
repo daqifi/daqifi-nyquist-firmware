@@ -182,22 +182,24 @@ The streaming engine tracks data loss at every stage of the pipeline. Statistics
 
 **SCPI Commands:**
 ```bash
-SYST:STREAM:STATS?       # Query all statistics
-SYST:STREAM:CLEARSTATS   # Reset all counters
+SYSTem:STReam:STATS?       # Query all statistics
+SYSTem:STReam:CLEARSTATS   # Reset all counters
 ```
 
-**Response fields from `SYST:STREAM:STATS?`:**
-| Field | Unit | Description |
+**Response fields from `SYSTem:STReam:STATS?`:**
+| Field | Type | Description |
 |-------|------|-------------|
-| `TotalSamplesStreamed` | samples | Samples successfully queued from ISR |
-| `TotalBytesStreamed` | bytes | Total bytes encoded (offered to outputs) |
-| `QueueDroppedSamples` | samples | Samples lost due to full sample queue (pool=700) |
-| `UsbDroppedBytes` | bytes | Data lost due to USB circular buffer full (16KB) |
-| `WifiDroppedBytes` | bytes | Data lost due to WiFi circular buffer full (14KB) |
-| `SdDroppedBytes` | bytes | Data lost due to SD write timeout/partial (8KB buf, 3 retries) |
-| `EncoderFailures` | count | Encoding attempts that returned 0 bytes |
-| `SampleLossPercent` | % | `QueueDroppedSamples / (Total + Dropped) * 100` |
-| `ByteLossPercent` | % | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
+| `TotalSamplesStreamed` | uint64 | Samples successfully queued from ISR |
+| `TotalBytesStreamed` | uint64 | Total bytes encoded (offered to outputs) |
+| `QueueDroppedSamples` | uint32 | Samples lost due to full sample queue (pool=700) |
+| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
+| `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
+| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8KB buf, 3 retries) |
+| `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
+| `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
+| `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
+
+**Thread safety:** `TotalSamplesStreamed` and `TotalBytesStreamed` are 64-bit counters (safe for week-long sessions) protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ).
 
 **Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
 

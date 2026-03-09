@@ -41,6 +41,9 @@ void TimestampTimer_Init( void );
  */
 void Streaming_ResetSdPbMetadata(void);
 
+// Streaming loss/throughput statistics, accumulated per session.
+// 32-bit fields are atomic on PIC32MZ; 64-bit fields require critical sections.
+// Use Streaming_GetStats() for an atomic snapshot of all fields.
 typedef struct {
     uint32_t queueDroppedSamples;   // Sample queue full (deferred ISR task)
     uint32_t usbDroppedBytes;       // USB circular buffer full
@@ -51,6 +54,7 @@ typedef struct {
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
 } StreamingStats;
 
+// Copies stats into *out inside a critical section (atomic snapshot)
 void Streaming_GetStats(StreamingStats* out);
 void Streaming_ClearStats(void);
 
