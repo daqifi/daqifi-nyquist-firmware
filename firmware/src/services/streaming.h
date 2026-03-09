@@ -41,6 +41,19 @@ void TimestampTimer_Init( void );
  */
 void Streaming_ResetSdPbMetadata(void);
 
+typedef struct {
+    uint32_t queueDroppedSamples;   // Sample queue full (deferred ISR task)
+    uint32_t usbDroppedBytes;       // USB circular buffer full
+    uint32_t wifiDroppedBytes;      // WiFi circular buffer full
+    uint32_t sdDroppedBytes;        // SD write timeout/partial
+    uint32_t encoderFailures;       // Encoder returned 0 with data available
+    uint32_t totalSamplesStreamed;   // Samples successfully queued
+    uint32_t totalBytesStreamed;     // Total bytes encoded (offered to outputs)
+} StreamingStats;
+
+const StreamingStats* Streaming_GetStats(void);
+void Streaming_ClearStats(void);
+
 #ifdef	__cplusplus
 }
 #endif

@@ -43,6 +43,14 @@ static volatile bool gSdPbMetadataSent = false;
 // volatile: written by SD card task, read by streaming task.
 static volatile bool gSdFileWasReady = false;
 
+static StreamingStats gStreamStats = {0};
+static bool gLoggedQueueDrop = false;
+static bool gLoggedUsbDrop = false;
+static bool gLoggedWifiDrop = false;
+static bool gLoggedSdDrop = false;
+static bool gLoggedEncoderFail = false;
+static bool gStreamingLoggedOnce = false;
+
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
     .Size = 6,
@@ -56,9 +64,6 @@ static const NanopbFlagsArray fields_sd_metadata = {
     }
 };
 
-// Log queue full error every N drops to avoid flooding the log at high rates.
-// At 15kHz this means we log approximately once per 6.7ms during overflow.
-#define LOG_QUEUE_DROP_INTERVAL 100
 #define UNUSED(x) (void)(x)
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
@@ -156,12 +161,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
-                static uint32_t queueDropCount = 0;
-                if ((++queueDropCount % LOG_QUEUE_DROP_INTERVAL) == 0) {
-                    LOG_E("Streaming: Sample queue full - dropped %u samples (queue at capacity)",
-                          (unsigned)queueDropCount);
+                gStreamStats.queueDroppedSamples++;
+                if (!gLoggedQueueDrop) {
+                    gLoggedQueueDrop = true;
+                    LOG_E("Streaming: Sample queue overflow detected");
                 }
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
+            } else {
+                gStreamStats.totalSamplesStreamed++;
             }
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
@@ -236,6 +243,13 @@ static void Streaming_Start(void) {
             }
         }
 
+        // Only clear stats when starting a new enabled session.
+        // Streaming_UpdateState() calls Stop→Start even on disable,
+        // and we need stats to survive for post-session query.
+        if (gpRuntimeConfigStream->IsEnabled) {
+            Streaming_ClearStats();
+        }
+
         // Clear encoding buffer once to prevent stale data artifacts in SD files
         memset(buffer, 0, BUFFER_SIZE);
 
@@ -259,6 +273,28 @@ static void Streaming_Stop(void) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
         gpRuntimeConfigStream->Running = false;
+
+        // Log session summary if any data was lost
+        bool hadDrops = gStreamStats.queueDroppedSamples > 0 ||
+                        gStreamStats.usbDroppedBytes > 0 ||
+                        gStreamStats.wifiDroppedBytes > 0 ||
+                        gStreamStats.sdDroppedBytes > 0 ||
+                        gStreamStats.encoderFailures > 0;
+        if (hadDrops) {
+            uint32_t totalAttempted = gStreamStats.totalSamplesStreamed +
+                                     gStreamStats.queueDroppedSamples;
+            uint32_t lossPercent = totalAttempted > 0
+                ? (gStreamStats.queueDroppedSamples * 100) / totalAttempted
+                : 0;
+            LOG_E("Stream end: lost %u/%u samples (%u%%), USB=%u WiFi=%u SD=%u bytes dropped, enc=%u",
+                  (unsigned)gStreamStats.queueDroppedSamples,
+                  (unsigned)totalAttempted,
+                  (unsigned)lossPercent,
+                  (unsigned)gStreamStats.usbDroppedBytes,
+                  (unsigned)gStreamStats.wifiDroppedBytes,
+                  (unsigned)gStreamStats.sdDroppedBytes,
+                  (unsigned)gStreamStats.encoderFailures);
+        }
     }
 }
 
@@ -276,6 +312,20 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
 void Streaming_ResetSdPbMetadata(void) {
     gSdPbMetadataSent = false;
     gSdFileWasReady = false;
+}
+
+const StreamingStats* Streaming_GetStats(void) {
+    return &gStreamStats;
+}
+
+void Streaming_ClearStats(void) {
+    memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
+    gLoggedQueueDrop = false;
+    gLoggedUsbDrop = false;
+    gLoggedWifiDrop = false;
+    gLoggedSdDrop = false;
+    gLoggedEncoderFail = false;
+    gStreamingLoggedOnce = false;
 }
 
 void Streaming_UpdateState(void) {
@@ -416,11 +466,10 @@ void streaming_Task(void) {
         }
 
         // Log streaming start info once for debugging
-        static bool streamingLoggedOnce = false;
-        if (!streamingLoggedOnce) {
+        if (!gStreamingLoggedOnce) {
             LOG_I("Streaming started: interface=%d, usbSize=%u, wifiSize=%u, sdSize=%u",
                   pRunTimeStreamConf->ActiveInterface, usbSize, wifiSize, sdSize);
-            streamingLoggedOnce = true;
+            gStreamingLoggedOnce = true;
         }
 
         // CRITICAL: Always encode to drain the sample queue, even if no outputs have space
@@ -466,13 +515,37 @@ void streaming_Task(void) {
                 DIO_TIMING_TEST_WRITE_STATE(0);
             }
         }
+        if (packetSize == 0 && nanopbFlag.Size > 0) {
+            gStreamStats.encoderFailures++;
+            if (!gLoggedEncoderFail) {
+                gLoggedEncoderFail = true;
+                LOG_E("Streaming: Encoder failure detected");
+            }
+        }
+        if (packetSize > 0) {
+            gStreamStats.totalBytesStreamed += packetSize;
+        }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
             if (hasUsb) {
-                UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
+                size_t written = UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
+                if (written < packetSize) {
+                    gStreamStats.usbDroppedBytes += (packetSize - written);
+                    if (!gLoggedUsbDrop) {
+                        gLoggedUsbDrop = true;
+                        LOG_E("Streaming: USB buffer overflow detected");
+                    }
+                }
             }
             if (hasWifi) {
-                wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
+                size_t written = wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
+                if (written < packetSize) {
+                    gStreamStats.wifiDroppedBytes += (packetSize - written);
+                    if (!gLoggedWifiDrop) {
+                        gLoggedWifiDrop = true;
+                        LOG_E("Streaming: WiFi buffer overflow detected");
+                    }
+                }
             }
             if (hasSD && gSdFileWasReady) {
                 // Guard: gSdFileWasReady is reset by the SD task during file
@@ -505,8 +578,11 @@ void streaming_Task(void) {
                 }
 
                 if (total_written != packetSize) {
-                    LOG_E("SD: Write failed after %u attempts, expected=%u, written=%u",
-                          attempts, (unsigned)packetSize, (unsigned)total_written);
+                    gStreamStats.sdDroppedBytes += (packetSize - total_written);
+                    if (!gLoggedSdDrop) {
+                        gLoggedSdDrop = true;
+                        LOG_E("Streaming: SD write overflow detected");
+                    }
                 }
 
             }
