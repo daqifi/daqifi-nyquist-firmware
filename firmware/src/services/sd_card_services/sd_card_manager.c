@@ -80,6 +80,7 @@ static __attribute__((coherent, aligned(16))) uint8_t gSdSharedBuffer[SD_CARD_MA
 // Prevents race conditions from cross-task state changes via UpdateSettings()
 static SemaphoreHandle_t gSDOpMutex = NULL;
 static bool gLoggedUnmountFail = false;
+static bool gLoggedWriteBufferTimeout = false;
 
 /**
  * Helper function: Wait for USB buffer to drain before EOF/close
@@ -821,6 +822,7 @@ void sd_card_manager_ProcessState() {
             // Check if file size limit reached and rotation is needed
             if (gSDCardData.fileSplittingEnabled &&
                 gSDCardData.currentFileBytes >= gpSDCardSettings->maxFileSizeBytes) {
+                bool rotationDrainErrorLogged = false;
                 LOG_D("[SD] File size limit reached (%llu >= %llu), rotating to next file\r\n",
                      gSDCardData.currentFileBytes, gpSDCardSettings->maxFileSizeBytes);
 
@@ -891,7 +893,10 @@ void sd_card_manager_ProcessState() {
                                     gSDCardData.sdCardWriteBufferOffset += writeLen;
                                 } else {
                                     // 0 (no progress) or -1 (error)
-                                    LOG_E("[%s:%d]Error draining buffer before rotation", __FILE__, __LINE__);
+                                    if (!rotationDrainErrorLogged) {
+                                        rotationDrainErrorLogged = true;
+                                        LOG_E("[SD] Error draining buffer before rotation");
+                                    }
                                     gSDCardData.sdCardWritePending = 0;
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
@@ -1233,6 +1238,7 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     size_t bytesAdded = 0;
     if (len == 0)return 0;
     if (gpSDCardSettings->enable != 1 || gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+        gLoggedWriteBufferTimeout = false;
         return 0;
     }
     
@@ -1250,7 +1256,10 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         if (!hasSpace) {
             // Check for timeout
             if ((xTaskGetTickCount() - startTime) >= timeoutTicks) {
-                LOG_E("SD: WriteToBuffer timeout - buffer full for %u ms", SD_CARD_MANAGER_WRITE_TIMEOUT_MS);
+                if (!gLoggedWriteBufferTimeout) {
+                    gLoggedWriteBufferTimeout = true;
+                    LOG_E("[SD] WriteToBuffer timeout - buffer full for %u ms", SD_CARD_MANAGER_WRITE_TIMEOUT_MS);
+                }
                 return 0;
             }
             vTaskDelay(pdMS_TO_TICKS(SD_CARD_MANAGER_WRITE_WAIT_INTERVAL_MS));
@@ -1261,6 +1270,7 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     SD_TakeMutexDebug(gSDCardData.wMutex, "write_buffer_add");
     bytesAdded = CircularBuf_AddBytes(&gSDCardData.wCirbuf, (uint8_t*) pData, len);
     xSemaphoreGive(gSDCardData.wMutex);
+    gLoggedWriteBufferTimeout = false;
 
     static uint32_t totalWritten = 0;
     static uint32_t writeCount = 0;
