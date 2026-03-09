@@ -1488,25 +1488,26 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
 }
 
 scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
-    const StreamingStats* s = Streaming_GetStats();
-    scpi_printf(context, "TotalSamplesStreamed=%u\r\n", (unsigned)s->totalSamplesStreamed);
-    scpi_printf(context, "TotalBytesStreamed=%u\r\n", (unsigned)s->totalBytesStreamed);
-    scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s->queueDroppedSamples);
-    scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s->usbDroppedBytes);
-    scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s->wifiDroppedBytes);
-    scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s->sdDroppedBytes);
-    scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s->encoderFailures);
+    StreamingStats s;
+    Streaming_GetStats(&s);
+    scpi_printf(context, "TotalSamplesStreamed=%llu\r\n", (unsigned long long)s.totalSamplesStreamed);
+    scpi_printf(context, "TotalBytesStreamed=%llu\r\n", (unsigned long long)s.totalBytesStreamed);
+    scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s.queueDroppedSamples);
+    scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
+    scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
+    scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
+    scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
 
-    // Compute sample loss percentage
-    uint32_t totalSampleAttempts = s->totalSamplesStreamed + s->queueDroppedSamples;
+    // Compute sample loss percentage (64-bit intermediate to avoid overflow)
+    uint64_t totalSampleAttempts = s.totalSamplesStreamed + s.queueDroppedSamples;
     uint32_t sampleLoss = totalSampleAttempts > 0
-        ? (s->queueDroppedSamples * 100) / totalSampleAttempts : 0;
+        ? (uint32_t)((s.queueDroppedSamples * 100ULL) / totalSampleAttempts) : 0;
     scpi_printf(context, "SampleLossPercent=%u\r\n", (unsigned)sampleLoss);
 
     // Compute byte loss percentage (combined across all outputs)
-    uint32_t totalDroppedBytes = s->usbDroppedBytes + s->wifiDroppedBytes + s->sdDroppedBytes;
-    uint32_t byteLoss = s->totalBytesStreamed > 0
-        ? (totalDroppedBytes * 100) / s->totalBytesStreamed : 0;
+    uint64_t totalDroppedBytes = s.usbDroppedBytes + s.wifiDroppedBytes + s.sdDroppedBytes;
+    uint32_t byteLoss = s.totalBytesStreamed > 0
+        ? (uint32_t)((totalDroppedBytes * 100ULL) / s.totalBytesStreamed) : 0;
     scpi_printf(context, "ByteLossPercent=%u\r\n", (unsigned)byteLoss);
     return SCPI_RES_OK;
 }

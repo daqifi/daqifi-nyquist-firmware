@@ -168,7 +168,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
             } else {
+                taskENTER_CRITICAL();
                 gStreamStats.totalSamplesStreamed++;
+                taskEXIT_CRITICAL();
             }
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
@@ -281,14 +283,14 @@ static void Streaming_Stop(void) {
                         gStreamStats.sdDroppedBytes > 0 ||
                         gStreamStats.encoderFailures > 0;
         if (hadDrops) {
-            uint32_t totalAttempted = gStreamStats.totalSamplesStreamed +
+            uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
                                      gStreamStats.queueDroppedSamples;
             uint32_t lossPercent = totalAttempted > 0
-                ? (gStreamStats.queueDroppedSamples * 100) / totalAttempted
+                ? (uint32_t)((gStreamStats.queueDroppedSamples * 100ULL) / totalAttempted)
                 : 0;
-            LOG_E("Stream end: lost %u/%u samples (%u%%), USB=%u WiFi=%u SD=%u bytes dropped, enc=%u",
+            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes dropped, enc=%u",
                   (unsigned)gStreamStats.queueDroppedSamples,
-                  (unsigned)totalAttempted,
+                  (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
                   (unsigned)gStreamStats.usbDroppedBytes,
                   (unsigned)gStreamStats.wifiDroppedBytes,
@@ -314,8 +316,11 @@ void Streaming_ResetSdPbMetadata(void) {
     gSdFileWasReady = false;
 }
 
-const StreamingStats* Streaming_GetStats(void) {
-    return &gStreamStats;
+void Streaming_GetStats(StreamingStats* out) {
+    if (out == NULL) return;
+    taskENTER_CRITICAL();
+    *out = gStreamStats;
+    taskEXIT_CRITICAL();
 }
 
 void Streaming_ClearStats(void) {
@@ -524,7 +529,9 @@ void streaming_Task(void) {
             }
         }
         if (packetSize > 0) {
+            taskENTER_CRITICAL();
             gStreamStats.totalBytesStreamed += packetSize;
+            taskEXIT_CRITICAL();
         }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {

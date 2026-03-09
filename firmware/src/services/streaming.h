@@ -47,11 +47,11 @@ typedef struct {
     uint32_t wifiDroppedBytes;      // WiFi circular buffer full
     uint32_t sdDroppedBytes;        // SD write timeout/partial
     uint32_t encoderFailures;       // Encoder returned 0 with data available
-    uint32_t totalSamplesStreamed;   // Samples successfully queued
-    uint32_t totalBytesStreamed;     // Total bytes encoded (offered to outputs)
+    uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
+    uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
 } StreamingStats;
 
-const StreamingStats* Streaming_GetStats(void);
+void Streaming_GetStats(StreamingStats* out);
 void Streaming_ClearStats(void);
 
 #ifdef	__cplusplus
