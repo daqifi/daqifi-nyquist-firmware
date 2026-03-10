@@ -58,6 +58,35 @@ static bool gLoggedSdDrop = false;
 static bool gLoggedEncoderFail = false;
 static bool gStreamingLoggedOnce = false;
 
+// --- Windowed data flow health tracking ---
+// Forward declarations (defined after Streaming_ClearStats)
+static void Streaming_InitFlowWindow(uint64_t frequency);
+static void Streaming_UpdateFlowWindow(bool dropped);
+// Double-buffer window: tracks sample attempts and drops over a sliding window
+// of N sample periods (where N scales with frequency). Loss percentage is
+// recomputed at each window rotation and drives QUES condition bits.
+//
+// QUES condition bit definitions (must match SCPIInterface.c QUES_* defines):
+#define QUES_BIT_DATA_LOSS    (1 << 4)   // Bit 4: windowed sample loss >= 5%
+#define QUES_BIT_USB_OVERFLOW (1 << 8)   // Bit 8: USB buffer overflow
+#define QUES_BIT_WIFI_OVERFLOW (1 << 9)  // Bit 9: WiFi buffer overflow
+#define QUES_BIT_SD_OVERFLOW  (1 << 10)  // Bit 10: SD write failure
+#define QUES_BIT_ENCODER_FAIL (1 << 11)  // Bit 11: Encoder failure
+
+#define FLOW_WINDOW_MIN   20
+#define FLOW_WINDOW_MAX   1000
+#define FLOW_LOSS_THRESHOLD_PCT  5
+
+typedef struct {
+    uint32_t attempted;
+    uint32_t dropped;
+} FlowWindow;
+
+static FlowWindow gFlowWindow[2] = {{0}}; // [0]=previous, [1]=current
+static uint32_t gFlowWindowCount = 0;      // periods elapsed in current window
+static uint32_t gFlowWindowSize = FLOW_WINDOW_MIN; // N, set at streaming start
+static uint16_t gQuesBits = 0;             // cached questionable condition bits
+
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
     .Size = 6,
@@ -174,10 +203,12 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     LOG_E("Streaming: Sample queue overflow detected");
                 }
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
+                Streaming_UpdateFlowWindow(true);
             } else {
                 taskENTER_CRITICAL();
                 gStreamStats.totalSamplesStreamed++;
                 taskEXIT_CRITICAL();
+                Streaming_UpdateFlowWindow(false);
             }
 
             if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
@@ -257,6 +288,7 @@ static void Streaming_Start(void) {
         // and we need stats to survive for post-session query.
         if (gpRuntimeConfigStream->IsEnabled) {
             Streaming_ClearStats();
+            Streaming_InitFlowWindow(gpRuntimeConfigStream->Frequency);
         }
 
         // Clear encoding buffer once to prevent stale data artifacts in SD files
@@ -339,6 +371,67 @@ void Streaming_ClearStats(void) {
     gLoggedEncoderFail = false;
     // Intentionally reset: we want "Streaming started" logged once per session
     gStreamingLoggedOnce = false;
+    // Reset windowed flow tracking
+    memset(gFlowWindow, 0, sizeof(gFlowWindow));
+    gFlowWindowCount = 0;
+    gQuesBits = 0;
+}
+
+/**
+ * Compute the flow window size based on streaming frequency.
+ * Window = clamp(frequency * 2, FLOW_WINDOW_MIN, FLOW_WINDOW_MAX)
+ * This gives ~2 seconds of history at any rate, with a floor of 20
+ * sample periods for statistical significance at very low rates.
+ */
+static void Streaming_InitFlowWindow(uint64_t frequency) {
+    uint64_t n = frequency * 2;
+    if (n < FLOW_WINDOW_MIN) n = FLOW_WINDOW_MIN;
+    if (n > FLOW_WINDOW_MAX) n = FLOW_WINDOW_MAX;
+    gFlowWindowSize = (uint32_t)n;
+    memset(gFlowWindow, 0, sizeof(gFlowWindow));
+    gFlowWindowCount = 0;
+    gQuesBits = 0;
+}
+
+/**
+ * Called once per sample period from the deferred ISR task.
+ * Updates the windowed flow tracking and recomputes loss percentage.
+ * @param dropped true if this sample was dropped (queue full)
+ */
+static void Streaming_UpdateFlowWindow(bool dropped) {
+    gFlowWindow[1].attempted++;
+    if (dropped) {
+        gFlowWindow[1].dropped++;
+    }
+    gFlowWindowCount++;
+
+    // Rotate window when current half is full
+    if (gFlowWindowCount >= gFlowWindowSize) {
+        gFlowWindow[0] = gFlowWindow[1];
+        memset(&gFlowWindow[1], 0, sizeof(FlowWindow));
+        gFlowWindowCount = 0;
+    }
+
+    // Compute loss over both halves (previous + current)
+    uint32_t totalAttempted = gFlowWindow[0].attempted + gFlowWindow[1].attempted;
+    uint32_t totalDropped = gFlowWindow[0].dropped + gFlowWindow[1].dropped;
+
+    uint32_t lossPct = 0;
+    if (totalAttempted > 0) {
+        lossPct = (totalDropped * 100) / totalAttempted;
+    }
+    gStreamStats.windowLossPercent = lossPct;
+
+    // Update data loss QUES bit
+    if (lossPct >= FLOW_LOSS_THRESHOLD_PCT) {
+        gQuesBits |= QUES_BIT_DATA_LOSS;
+    } else {
+        gQuesBits &= ~QUES_BIT_DATA_LOSS;
+    }
+}
+
+uint16_t Streaming_GetQuesBits(void) {
+    return gQuesBits;
 }
 
 void Streaming_UpdateState(void) {
@@ -530,6 +623,7 @@ void streaming_Task(void) {
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
             gStreamStats.encoderFailures++;
+            gQuesBits |= QUES_BIT_ENCODER_FAIL;
             if (!gLoggedEncoderFail) {
                 gLoggedEncoderFail = true;
                 LOG_E("Streaming: Encoder failure detected");
@@ -546,6 +640,7 @@ void streaming_Task(void) {
                 size_t written = UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
                 if (written < packetSize) {
                     gStreamStats.usbDroppedBytes += (packetSize - written);
+                    gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     if (!gLoggedUsbDrop) {
                         gLoggedUsbDrop = true;
                         LOG_E("Streaming: USB buffer overflow detected");
@@ -556,6 +651,7 @@ void streaming_Task(void) {
                 size_t written = wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
                 if (written < packetSize) {
                     gStreamStats.wifiDroppedBytes += (packetSize - written);
+                    gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     if (!gLoggedWifiDrop) {
                         gLoggedWifiDrop = true;
                         LOG_E("Streaming: WiFi buffer overflow detected");
@@ -594,6 +690,7 @@ void streaming_Task(void) {
 
                 if (total_written != packetSize) {
                     gStreamStats.sdDroppedBytes += (packetSize - total_written);
+                    gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     if (!gLoggedSdDrop) {
                         gLoggedSdDrop = true;
                         LOG_E("Streaming: SD write overflow detected");

@@ -52,11 +52,16 @@ typedef struct {
     uint32_t encoderFailures;       // Encoder returned 0 with data available
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
+    uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)
 } StreamingStats;
 
 // Copies stats into *out inside a critical section (atomic snapshot)
 void Streaming_GetStats(StreamingStats* out);
 void Streaming_ClearStats(void);
+
+// Returns current SCPI questionable condition bits based on streaming health.
+// Bit definitions match QUES_* constants in SCPIInterface.c.
+uint16_t Streaming_GetQuesBits(void);
 
 #ifdef	__cplusplus
 }
