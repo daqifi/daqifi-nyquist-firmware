@@ -1483,16 +1483,33 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
-    //memset(commTest.stats,0, sizeof(commTest.stats));
+    Streaming_ClearStats();
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
-    //    SCPI_ResultInt32(context, commTest.stats[0]);
-    //    SCPI_ResultInt32(context, commTest.stats[1]);
-    //    SCPI_ResultInt32(context, commTest.stats[2]);
-    //    SCPI_ResultInt32(context, commTest.stats[3]);
+    StreamingStats s;
+    Streaming_GetStats(&s);
+    scpi_printf(context, "TotalSamplesStreamed=%llu\r\n", (unsigned long long)s.totalSamplesStreamed);
+    scpi_printf(context, "TotalBytesStreamed=%llu\r\n", (unsigned long long)s.totalBytesStreamed);
+    scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s.queueDroppedSamples);
+    scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
+    scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
+    scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
+    scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
 
+    // Compute sample loss percentage (64-bit intermediate to avoid overflow)
+    uint64_t totalSampleAttempts = s.totalSamplesStreamed + s.queueDroppedSamples;
+    uint32_t sampleLoss = totalSampleAttempts > 0
+        ? (uint32_t)((s.queueDroppedSamples * 100ULL) / totalSampleAttempts) : 0;
+    scpi_printf(context, "SampleLossPercent=%u\r\n", (unsigned)sampleLoss);
+
+    // Compute byte loss percentage (combined across all outputs).
+    // Can exceed 100% when multiple outputs drop simultaneously.
+    uint64_t totalDroppedBytes = s.usbDroppedBytes + s.wifiDroppedBytes + s.sdDroppedBytes;
+    uint32_t byteLoss = s.totalBytesStreamed > 0
+        ? (uint32_t)((totalDroppedBytes * 100ULL) / s.totalBytesStreamed) : 0;
+    scpi_printf(context, "ByteLossPercent=%u\r\n", (unsigned)byteLoss);
     return SCPI_RES_OK;
 }
 

@@ -176,6 +176,35 @@ device._comm.send_command("SYST:StartStreamData 5000")  # Correct!
    - Streaming engine manages buffer flow and encoding
    - Supports multiple simultaneous outputs
 
+#### Streaming Statistics & Buffer Overrun Tracking
+
+The streaming engine tracks data loss at every stage of the pipeline. Statistics are accumulated per streaming session (cleared on `StartStreamData`, preserved after `StopStreamData`).
+
+**SCPI Commands:**
+```bash
+SYSTem:STReam:STATS?       # Query all statistics
+SYSTem:STReam:CLEARSTATS   # Reset all counters
+```
+
+**Response fields from `SYSTem:STReam:STATS?`:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `TotalSamplesStreamed` | uint64 | Samples successfully queued from ISR |
+| `TotalBytesStreamed` | uint64 | Total bytes encoded (offered to outputs) |
+| `QueueDroppedSamples` | uint32 | Samples lost due to full sample queue (pool=700) |
+| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
+| `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
+| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8KB buf, 3 retries) |
+| `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
+| `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
+| `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
+
+**Thread safety:** `TotalSamplesStreamed` and `TotalBytesStreamed` are 64-bit counters (safe for week-long sessions) protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ).
+
+**Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
+
+**Implementation:** `firmware/src/services/streaming.c` (StreamingStats struct), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks)
+
 ### Board Variants
 
 - **NQ1**: Basic variant configuration
@@ -903,6 +932,58 @@ voltage, NTC status, and power-up readiness.
      device_setup
      test_feature && echo "PASS" || echo "FAIL"
      ```
+
+### DAQiFi Test & API Repositories
+
+The DAQiFi GitHub organization (https://github.com/daqifi) hosts companion libraries and test suites useful for firmware validation and regression testing:
+
+#### Python
+- **[daqifi-python-core](https://github.com/daqifi/daqifi-python-core)** — Python API library for DAQiFi Nyquist devices
+  - `daqifi/` package: NyquistDevice class, channels, streaming, discovery, SCPI internals
+  - `examples/`: basic_adc, basic_dac, basic_dio, device_discovery, streaming (async/basic/callback/context)
+  - Dependencies: pyserial>=3.5, Python 3.7+
+
+- **[daqifi-python-test-suite](https://github.com/daqifi/daqifi-python-test-suite)** — Comprehensive firmware test suite
+  - `comprehensive_test.py` — YAML-based full test framework
+  - `test_sd_card.py` — Interactive SD card testing menu
+  - `test_usb_transfer_integrity.py` — USB data corruption testing
+  - `test_5khz_single_channel.py`, `test_high_speed_rates.py` — ADC performance tests
+  - `download_sd_files.py`, `analyze_split_files.py` — SD file split handling/validation
+  - `analyze_csv_integrity_v3.py` — CSV data integrity analysis
+
+#### .NET
+- **[daqifi-core](https://github.com/daqifi/daqifi-core)** — .NET library (net8.0/net9.0) for DAQiFi devices
+  - Communication layer: SCPI, Protobuf message parsing/production, Serial & TCP transport
+  - Device control: DaqifiDevice, DaqifiStreamingDevice
+  - Test project: 16 xUnit test classes (communication, transport, device, integration)
+
+- **[daqifi-desktop](https://github.com/daqifi/daqifi-desktop)** — Windows desktop application (WPF, net8.0)
+  - Full device control UI with live graphing
+  - 4 test projects with xUnit
+
+#### Other
+- **[daqifi-java-api](https://github.com/daqifi/daqifi-java-api)** — Java API
+- **[daqifi-node](https://github.com/daqifi/daqifi-node)** — Node.js package and NodeRED plugin
+- **[daqifi-labview](https://github.com/daqifi/daqifi-labview)** — LabVIEW interface
+- **[daqifi_nyquist_arduino](https://github.com/daqifi/daqifi_nyquist_arduino)** — Arduino interface
+- **[daqifi-core-example-app](https://github.com/daqifi/daqifi-core-example-app)** — .NET example app
+
+#### Using Python Test Suite for PR Validation
+```bash
+# Clone if not already present
+git clone https://github.com/daqifi/daqifi-python-core.git
+git clone https://github.com/daqifi/daqifi-python-test-suite.git
+
+# Install dependencies
+pip install -e ./daqifi-python-core
+
+# Run comprehensive tests
+cd daqifi-python-test-suite
+python comprehensive_test.py
+
+# Run SD card tests specifically
+python test_sd_card.py
+```
 
 ### Known Issues and Workarounds
 
