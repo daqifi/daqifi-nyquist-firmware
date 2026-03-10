@@ -43,7 +43,14 @@ static volatile bool gSdPbMetadataSent = false;
 // volatile: written by SD card task, read by streaming task.
 static volatile bool gSdFileWasReady = false;
 
+// Per-session streaming statistics.
+// Written by: deferred ISR task (queueDroppedSamples, totalSamplesStreamed)
+//             streaming task (all other fields)
+// Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
+
+// Log-once flags: each error condition logs once per session to avoid flooding
+// the 64-message circular log buffer. All reset in Streaming_ClearStats().
 static bool gLoggedQueueDrop = false;
 static bool gLoggedUsbDrop = false;
 static bool gLoggedWifiDrop = false;

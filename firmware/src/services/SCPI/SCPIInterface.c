@@ -1504,7 +1504,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         ? (uint32_t)((s.queueDroppedSamples * 100ULL) / totalSampleAttempts) : 0;
     scpi_printf(context, "SampleLossPercent=%u\r\n", (unsigned)sampleLoss);
 
-    // Compute byte loss percentage (combined across all outputs)
+    // Compute byte loss percentage (combined across all outputs).
+    // Can exceed 100% when multiple outputs drop simultaneously.
     uint64_t totalDroppedBytes = s.usbDroppedBytes + s.wifiDroppedBytes + s.sdDroppedBytes;
     uint32_t byteLoss = s.totalBytesStreamed > 0
         ? (uint32_t)((totalDroppedBytes * 100ULL) / s.totalBytesStreamed) : 0;
