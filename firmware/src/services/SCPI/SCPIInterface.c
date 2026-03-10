@@ -308,19 +308,26 @@ static void SCPI_ClearOperBits(scpi_reg_val_t bits) {
  * Sync QUESC bits from the streaming engine to both SCPI contexts.
  * Called from SCPI_StopStreaming (to clear) and can be called
  * periodically or on-demand to refresh from streaming state.
+ *
+ * Uses a single SCPI_RegSet (read-modify-write) instead of separate
+ * clear+set to avoid a transient 0-state that would latch a spurious
+ * 1→0 event in the QUES event register.
  */
 static void SCPI_SyncQuesBits(void) {
     uint16_t bits = Streaming_GetQuesBits();
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
-    // Replace all streaming-related QUES bits atomically
+    // Replace streaming-related QUES bits in a single write to avoid
+    // spurious event register transitions from a clear+set sequence.
     if (usb) {
-        SCPI_RegClearBits(&usb->scpiContext, SCPI_REG_QUESC, QUES_ALL_BITS);
-        if (bits) SCPI_RegSetBits(&usb->scpiContext, SCPI_REG_QUESC, bits);
+        scpi_reg_val_t val = SCPI_RegGet(&usb->scpiContext, SCPI_REG_QUESC);
+        val = (val & ~QUES_ALL_BITS) | bits;
+        SCPI_RegSet(&usb->scpiContext, SCPI_REG_QUESC, val);
     }
     if (wifi) {
-        SCPI_RegClearBits(&wifi->client.scpiContext, SCPI_REG_QUESC, QUES_ALL_BITS);
-        if (bits) SCPI_RegSetBits(&wifi->client.scpiContext, SCPI_REG_QUESC, bits);
+        scpi_reg_val_t val = SCPI_RegGet(&wifi->client.scpiContext, SCPI_REG_QUESC);
+        val = (val & ~QUES_ALL_BITS) | bits;
+        SCPI_RegSet(&wifi->client.scpiContext, SCPI_REG_QUESC, val);
     }
 }
 
@@ -1778,8 +1785,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         sd_card_manager_UpdateSettings(pSDCardSettings);
     }
 
-    Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;
+    Streaming_UpdateState();
 
     // Update STATus:OPERation condition register
     SCPI_SetOperBits(OPER_MEASURING);

@@ -321,6 +321,10 @@ static void Streaming_Stop(void) {
                         gStreamStats.wifiDroppedBytes > 0 ||
                         gStreamStats.sdDroppedBytes > 0 ||
                         gStreamStats.encoderFailures > 0;
+        // Clear QUES condition bits so they don't persist after streaming ends.
+        // Stats remain available via SYST:STR:STATS? until next session.
+        gQuesBits = 0;
+
         if (hadDrops) {
             uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
                                      gStreamStats.queueDroppedSamples;
@@ -422,12 +426,15 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
     }
     gStreamStats.windowLossPercent = lossPct;
 
-    // Update data loss QUES bit
+    // Update data loss QUES bit (critical section protects RMW on gQuesBits
+    // which is also modified by the streaming task at lower priority)
+    taskENTER_CRITICAL();
     if (lossPct >= FLOW_LOSS_THRESHOLD_PCT) {
         gQuesBits |= QUES_BIT_DATA_LOSS;
     } else {
         gQuesBits &= ~QUES_BIT_DATA_LOSS;
     }
+    taskEXIT_CRITICAL();
 }
 
 uint16_t Streaming_GetQuesBits(void) {
@@ -623,7 +630,9 @@ void streaming_Task(void) {
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
             gStreamStats.encoderFailures++;
+            taskENTER_CRITICAL();
             gQuesBits |= QUES_BIT_ENCODER_FAIL;
+            taskEXIT_CRITICAL();
             if (!gLoggedEncoderFail) {
                 gLoggedEncoderFail = true;
                 LOG_E("Streaming: Encoder failure detected");
@@ -640,7 +649,9 @@ void streaming_Task(void) {
                 size_t written = UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
                 if (written < packetSize) {
                     gStreamStats.usbDroppedBytes += (packetSize - written);
+                    taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
+                    taskEXIT_CRITICAL();
                     if (!gLoggedUsbDrop) {
                         gLoggedUsbDrop = true;
                         LOG_E("Streaming: USB buffer overflow detected");
@@ -651,7 +662,9 @@ void streaming_Task(void) {
                 size_t written = wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
                 if (written < packetSize) {
                     gStreamStats.wifiDroppedBytes += (packetSize - written);
+                    taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
+                    taskEXIT_CRITICAL();
                     if (!gLoggedWifiDrop) {
                         gLoggedWifiDrop = true;
                         LOG_E("Streaming: WiFi buffer overflow detected");
@@ -690,7 +703,9 @@ void streaming_Task(void) {
 
                 if (total_written != packetSize) {
                     gStreamStats.sdDroppedBytes += (packetSize - total_written);
+                    taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
+                    taskEXIT_CRITICAL();
                     if (!gLoggedSdDrop) {
                         gLoggedSdDrop = true;
                         LOG_E("Streaming: SD write overflow detected");
