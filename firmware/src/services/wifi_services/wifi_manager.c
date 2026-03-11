@@ -402,6 +402,49 @@ static bool OpenUdpSocket(SOCKET *pSocket) {
     return returnStatus;
 }
 
+/**
+ * Appends the last 4 hex digits of the MAC address to the default SSID and
+ * hostname ("DAQiFi" → "DAQiFi-95A7") so multiple devices are distinguishable.
+ * Also syncs the result to the runtime config and sets the WINC device name.
+ * The strcmp guard prevents double-appending on repeated calls.
+ */
+static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
+    char macSuffix[6];
+    uint8_t *mac = pInstance->pWifiSettings->macAddr.addr;
+    snprintf(macSuffix, sizeof(macSuffix), "-%02X%02X", mac[4], mac[5]);
+
+    if (strcmp(pInstance->pWifiSettings->ssid, "DAQiFi") == 0) {
+        strncat(pInstance->pWifiSettings->ssid, macSuffix,
+                WDRV_WINC_MAX_SSID_LEN - strlen(pInstance->pWifiSettings->ssid));
+    }
+    if (strcmp(pInstance->pWifiSettings->hostName, "DAQiFi") == 0) {
+        strncat(pInstance->pWifiSettings->hostName, macSuffix,
+                WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN - strlen(pInstance->pWifiSettings->hostName));
+    }
+
+    // Sync runtime config copy so SCPI queries reflect the suffixed values
+    wifi_manager_settings_t *pRtWifi = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    if (pRtWifi != NULL) {
+        strncpy(pRtWifi->ssid, pInstance->pWifiSettings->ssid,
+                WDRV_WINC_MAX_SSID_LEN);
+        pRtWifi->ssid[WDRV_WINC_MAX_SSID_LEN] = '\0';
+        strncpy(pRtWifi->hostName, pInstance->pWifiSettings->hostName,
+                WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
+        pRtWifi->hostName[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN] = '\0';
+    }
+
+    // Set DHCP hostname (truncated to WINC limit)
+    if (pInstance->wdrvHandle != DRV_HANDLE_INVALID) {
+        char devName[M2M_DEVICE_NAME_MAX];
+        strncpy(devName, pInstance->pWifiSettings->hostName, sizeof(devName) - 1);
+        devName[sizeof(devName) - 1] = '\0';
+        if (WDRV_WINC_STATUS_OK != WDRV_WINC_InfoDeviceNameSet(pInstance->wdrvHandle, devName)) {
+            LOG_E("[%s:%d]Warning: Could not set device name", __FILE__, __LINE__);
+        }
+    }
+}
+
 static bool SendEvent(wifi_manager_event_t event) {
     if (gEventQH != NULL) {
         if (xQueueSend(gEventQH, &event, portMAX_DELAY) == pdPASS) {
@@ -511,38 +554,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
-                // Append last 4 hex digits of MAC to default SSID/hostname
-                // so multiple devices are distinguishable (e.g. "DAQiFi-95A7")
-                {
-                    char macSuffix[6];
-                    uint8_t *mac = pInstance->pWifiSettings->macAddr.addr;
-                    snprintf(macSuffix, sizeof(macSuffix), "-%02X%02X",
-                             mac[4], mac[5]);
-                    if (strcmp(pInstance->pWifiSettings->ssid, "DAQiFi") == 0) {
-                        strncat(pInstance->pWifiSettings->ssid, macSuffix,
-                                WDRV_WINC_MAX_SSID_LEN - strlen(pInstance->pWifiSettings->ssid));
-                    }
-                    if (strcmp(pInstance->pWifiSettings->hostName, "DAQiFi") == 0) {
-                        strncat(pInstance->pWifiSettings->hostName, macSuffix,
-                                WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN - strlen(pInstance->pWifiSettings->hostName));
-                    }
-                    // Sync runtime config copy so SCPI queries reflect the suffixed values
-                    wifi_manager_settings_t *pRtWifi = BoardRunTimeConfig_Get(
-                            BOARDRUNTIME_WIFI_SETTINGS);
-                    if (pRtWifi != NULL) {
-                        strncpy(pRtWifi->ssid, pInstance->pWifiSettings->ssid,
-                                WDRV_WINC_MAX_SSID_LEN);
-                        pRtWifi->ssid[WDRV_WINC_MAX_SSID_LEN] = '\0';
-                        strncpy(pRtWifi->hostName, pInstance->pWifiSettings->hostName,
-                                WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
-                        pRtWifi->hostName[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN] = '\0';
-                    }
-                }
             }
-            // Set device name for DHCP hostname (network discovery)
-            if (WDRV_WINC_STATUS_OK != WDRV_WINC_InfoDeviceNameSet(pInstance->wdrvHandle, pInstance->pWifiSettings->hostName)) {
-                LOG_E("[%s:%d]Warning: Could not set device name", __FILE__, __LINE__);
-            }
+            // Apply MAC suffix to default SSID/hostname and set WINC device name
+            ApplyDefaultSuffixAndDeviceName(pInstance);
             if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&pInstance->bssCtx)) {
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
                 LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -866,7 +880,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
             }
             
-            // Now handle reconfiguration within the same mode
+            // Now handle reconfiguration within the same mode.
+            // Apply MAC suffix first — same-mode paths bypass the INIT handler.
+            ApplyDefaultSuffixAndDeviceName(pInstance);
+
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED) &&
                 pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP)
             {
