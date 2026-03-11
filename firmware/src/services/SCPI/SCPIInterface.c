@@ -42,6 +42,20 @@
 #include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
 
 //
+// SCPI STATus:OPERation condition register bit assignments (IEEE 488.2 Sec 11.6.1)
+#define OPER_MEASURING   (1 << 4)   // Bit 4: streaming/measuring active
+#define OPER_SD_LOGGING  (1 << 10)  // Bit 10: SD card logging active
+
+// SCPI STATus:QUEStionable condition register bit assignments
+// These must match the QUES_BIT_* defines in streaming.c
+#define QUES_DATA_LOSS      (1 << 4)   // Bit 4: windowed sample loss >= 5%
+#define QUES_USB_OVERFLOW   (1 << 8)   // Bit 8: USB buffer overflow
+#define QUES_WIFI_OVERFLOW  (1 << 9)   // Bit 9: WiFi buffer overflow
+#define QUES_SD_OVERFLOW    (1 << 10)  // Bit 10: SD write failure
+#define QUES_ENCODER_FAIL   (1 << 11)  // Bit 11: Encoder failure
+#define QUES_ALL_BITS       (QUES_DATA_LOSS | QUES_USB_OVERFLOW | QUES_WIFI_OVERFLOW | \
+                             QUES_SD_OVERFLOW | QUES_ENCODER_FAIL)
+
 #define UNUSED(x) (void)(x)
 //
 #define SCPI_IDN1 "DAQiFi"
@@ -272,7 +286,54 @@ static StreamingInterface SCPI_GetInterface(scpi_t* context) {
 }
 
 /**
- * Triggers a board reset 
+ * Set or clear OPERC bits on both USB and WiFi SCPI contexts.
+ * Device state (streaming, SD logging) is global, so both contexts
+ * must reflect the same condition register values.
+ */
+static void SCPI_SetOperBits(scpi_reg_val_t bits) {
+    UsbCdcData_t* usb = UsbCdc_GetSettings();
+    if (usb) SCPI_RegSetBits(&usb->scpiContext, SCPI_REG_OPERC, bits);
+    wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
+    if (wifi) SCPI_RegSetBits(&wifi->client.scpiContext, SCPI_REG_OPERC, bits);
+}
+
+/** Clear OPERC bits on both USB and WiFi SCPI contexts. */
+static void SCPI_ClearOperBits(scpi_reg_val_t bits) {
+    UsbCdcData_t* usb = UsbCdc_GetSettings();
+    if (usb) SCPI_RegClearBits(&usb->scpiContext, SCPI_REG_OPERC, bits);
+    wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
+    if (wifi) SCPI_RegClearBits(&wifi->client.scpiContext, SCPI_REG_OPERC, bits);
+}
+
+/**
+ * Sync QUESC bits from the streaming engine to both SCPI contexts.
+ * Called from SCPI_StopStreaming (to clear) and can be called
+ * periodically or on-demand to refresh from streaming state.
+ *
+ * Uses a single SCPI_RegSet (read-modify-write) instead of separate
+ * clear+set to avoid a transient 0-state that would latch a spurious
+ * 1→0 event in the QUES event register.
+ */
+static void SCPI_SyncQuesBits(void) {
+    uint32_t bits = Streaming_GetQuesBits();
+    UsbCdcData_t* usb = UsbCdc_GetSettings();
+    wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
+    // Replace streaming-related QUES bits in a single write to avoid
+    // spurious event register transitions from a clear+set sequence.
+    if (usb) {
+        scpi_reg_val_t val = SCPI_RegGet(&usb->scpiContext, SCPI_REG_QUESC);
+        val = (val & ~QUES_ALL_BITS) | bits;
+        SCPI_RegSet(&usb->scpiContext, SCPI_REG_QUESC, val);
+    }
+    if (wifi) {
+        scpi_reg_val_t val = SCPI_RegGet(&wifi->client.scpiContext, SCPI_REG_QUESC);
+        val = (val & ~QUES_ALL_BITS) | bits;
+        SCPI_RegSet(&wifi->client.scpiContext, SCPI_REG_QUESC, val);
+    }
+}
+
+/**
+ * Triggers a board reset
  */
 static scpi_result_t SCPI_Reset(scpi_t * context) {
     // Send notification that reset is occurring
@@ -1484,7 +1545,26 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     Streaming_ClearStats();
+    SCPI_SyncQuesBits();
     return SCPI_RES_OK;
+}
+
+/**
+ * STATus:QUEStionable:CONDition? wrapper that syncs streaming health
+ * bits from the streaming engine before reading the register.
+ */
+static scpi_result_t SCPI_QuesConditionQ(scpi_t * context) {
+    SCPI_SyncQuesBits();
+    return SCPI_StatusQuestionableConditionQ(context);
+}
+
+/**
+ * STATus:QUEStionable[:EVENt]? wrapper that syncs streaming health
+ * bits before reading (and clearing) the event register.
+ */
+static scpi_result_t SCPI_QuesEventQ(scpi_t * context) {
+    SCPI_SyncQuesBits();
+    return SCPI_StatusQuestionableEventQ(context);
 }
 
 scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
@@ -1510,6 +1590,11 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     uint32_t byteLoss = s.totalBytesStreamed > 0
         ? (uint32_t)((totalDroppedBytes * 100ULL) / s.totalBytesStreamed) : 0;
     scpi_printf(context, "ByteLossPercent=%u\r\n", (unsigned)byteLoss);
+    scpi_printf(context, "WindowLossPercent=%u\r\n", (unsigned)s.windowLossPercent);
+
+    // Sync QUES bits from streaming engine to SCPI registers on each stats query
+    SCPI_SyncQuesBits();
+
     return SCPI_RES_OK;
 }
 
@@ -1701,8 +1786,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         sd_card_manager_UpdateSettings(pSDCardSettings);
     }
 
-    Streaming_UpdateState();
     pRunTimeStreamConfig->IsEnabled = true;
+    Streaming_UpdateState();
+
+    // Update STATus:OPERation condition register
+    SCPI_SetOperBits(OPER_MEASURING);
+    if (sdLoggingRequested) {
+        SCPI_SetOperBits(OPER_SD_LOGGING);
+    }
+
     return SCPI_RES_OK;
 }
 
@@ -1731,6 +1823,12 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     csv_ResetEncoder();
     json_ResetEncoder();
     Streaming_ResetSdPbMetadata();
+
+    // Clear STATus:OPERation condition register
+    SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
+
+    // Sync STATus:QUEStionable condition register (streaming health bits cleared in Streaming_Stop)
+    SCPI_SyncQuesBits();
 
     return SCPI_RES_OK;
 }
@@ -2025,8 +2123,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:ERRor:NEXT?", .callback = SCPI_SystemErrorNextQ,},
     {.pattern = "SYSTem:ERRor:COUNt?", .callback = SCPI_SystemErrorCountQ,},
     {.pattern = "SYSTem:VERSion?", .callback = SCPI_SystemVersionQ,},
-    {.pattern = "STATus:QUEStionable?", .callback = SCPI_StatusQuestionableEventQ,},
-    {.pattern = "STATus:QUEStionable:EVENt?", .callback = SCPI_StatusQuestionableEventQ,},
+    {.pattern = "STATus:QUEStionable?", .callback = SCPI_QuesEventQ,},
+    {.pattern = "STATus:QUEStionable:EVENt?", .callback = SCPI_QuesEventQ,},
     {.pattern = "STATus:QUEStionable:ENABle", .callback = SCPI_StatusQuestionableEnable,},
     {.pattern = "STATus:QUEStionable:ENABle?", .callback = SCPI_StatusQuestionableEnableQ,},
     {.pattern = "STATus:PRESet", .callback = SCPI_StatusPreset,},
@@ -2058,7 +2156,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "STATus:OPERation:ENABle", .callback = SCPI_StatusOperationEnable,},
     {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_StatusOperationEnableQ,},
     // Questionable status condition (completes the set already registered above)
-    {.pattern = "STATus:QUEStionable:CONDition?", .callback = SCPI_StatusQuestionableConditionQ,},
+    {.pattern = "STATus:QUEStionable:CONDition?", .callback = SCPI_QuesConditionQ,},
     //    {.pattern = "SYSTem:COMMunication:TCPIP:CONTROL?", .callback = SCPI_NotImplemented, },
 
     // Power

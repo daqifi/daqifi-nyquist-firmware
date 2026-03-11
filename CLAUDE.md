@@ -198,12 +198,56 @@ SYSTem:STReam:CLEARSTATS   # Reset all counters
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
 | `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
+| `WindowLossPercent` | uint32 | Sliding-window sample loss % (0-100), updated every N samples |
 
 **Thread safety:** `TotalSamplesStreamed` and `TotalBytesStreamed` are 64-bit counters (safe for week-long sessions) protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ).
 
 **Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
 
 **Implementation:** `firmware/src/services/streaming.c` (StreamingStats struct), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks)
+
+#### SCPI Status Registers (OPER & QUES)
+
+The firmware populates the IEEE 488.2 `STATus:OPERation` and `STATus:QUEStionable` condition registers to reflect real-time device state during streaming.
+
+**SCPI Commands:**
+```bash
+STATus:OPERation:CONDition?      # Current OPER condition bits (non-destructive)
+STATus:OPERation?                # OPER event register (latched, clears on read)
+STATus:OPERation:ENABle <mask>   # Set OPER event enable mask
+STATus:OPERation:ENABle?         # Query OPER event enable mask
+
+STATus:QUEStionable:CONDition?   # Current QUES condition bits (non-destructive)
+STATus:QUEStionable?             # QUES event register (latched, clears on read)
+STATus:QUEStionable:ENABle <mask>  # Set QUES event enable mask
+STATus:QUEStionable:ENABle?      # Query QUES event enable mask
+
+STATus:PRESet                    # Reset enable masks to default
+```
+
+**OPERation Condition Register Bits:**
+| Bit | Value | Name | Description |
+|-----|-------|------|-------------|
+| 4   | 16    | Measuring | Streaming/measuring is active |
+| 10  | 1024  | SD Logging | SD card logging is active |
+
+Set on `StartStreamData`, cleared on `StopStreamData`.
+
+**QUEStionable Condition Register Bits:**
+| Bit | Value | Name | Description |
+|-----|-------|------|-------------|
+| 4   | 16    | Data Loss | Windowed sample loss >= 5% |
+| 8   | 256   | USB Overflow | USB circular buffer overflow detected |
+| 9   | 512   | WiFi Overflow | WiFi circular buffer overflow detected |
+| 10  | 1024  | SD Overflow | SD write failure detected |
+| 11  | 2048  | Encoder Fail | Encoder returned 0 bytes with data available |
+
+QUES bits are set in real-time during streaming and cleared when streaming stops. The QUES CONDition register reflects the *current* health; the QUES EVENt register latches transitions (clears on read).
+
+**Windowed Data Flow Tracking:**
+The `Data Loss` QUES bit (bit 4) uses a sliding double-buffer window to evaluate pipeline health independently of sample rate. Window size = `clamp(frequency * 2, 20, 1000)` sample periods, giving ~2 seconds of history at any rate. If >= 5% of samples in the window were dropped, the bit is set. The current window loss percentage is also reported as `WindowLossPercent` in `SYST:STR:STATS?`.
+
+**Implementation:** `firmware/src/services/streaming.c` (gQuesBits, flow window), `firmware/src/services/SCPI/SCPIInterface.c` (OPER/QUES helpers, sync)
 
 ### Board Variants
 
@@ -245,6 +289,13 @@ The firmware supports building for different board variants using MPLAB X config
 4. **Variant-Specific Files**:
    - **NQ1**: `NQ1BoardConfig.c`, `NQ1RuntimeDefaults.c`
    - **NQ3**: `NQ3BoardConfig.c`, `NQ3RuntimeDefaults.c`
+
+### Concurrency Rules (PIC32MZ)
+
+- **32-bit reads and writes are atomic** on the PIC32MZ bus. A simple `x = 0` or `return x` on a `uint32_t`/`uint16_t` does NOT need a critical section.
+- **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
+- **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
+- Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
 
 ### Memory Considerations
 
