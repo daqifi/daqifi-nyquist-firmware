@@ -32,7 +32,7 @@
 #define DEFAULT_NETWORK_IP_MASK	"255.255.255.0" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_NETWORK_GATEWAY_IP_ADDRESS	"192.168.1.1" //TODO(Daqifi): Relocate in proper place
 #define DEFAULT_TCP_PORT 9760 //TODO(Daqifi): Relocate in proper place
-#define DEFAULT_NETWORK_HOST_NAME   "NYQUIST1"  //TODO(Daqifi): Relocate in proper place
+#define DEFAULT_NETWORK_HOST_NAME   "DAQiFi"  //TODO(Daqifi): Relocate in proper place
 
 // Version strings moved to version.h (single source of truth)
 #define BOARD_VARIANT       1       //TODO(Daqifi) : Relocate to proper location
