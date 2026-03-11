@@ -59,8 +59,14 @@ typedef struct {
 void Streaming_GetStats(StreamingStats* out);
 void Streaming_ClearStats(void);
 
-// Returns current SCPI questionable condition bits based on streaming health.
-// Bit definitions match QUES_* constants in SCPIInterface.c.
+/**
+ * Returns current SCPI STATus:QUEStionable condition bits for streaming health.
+ * Bit 4 = windowed sample loss >= 5%, Bit 8 = USB overflow,
+ * Bit 9 = WiFi overflow, Bit 10 = SD overflow, Bit 11 = encoder failure.
+ * Definitions match QUES_* constants in SCPIInterface.c.
+ * Called by SCPI_SyncQuesBits() in SCPIInterface.c before register queries.
+ * Bits are cleared automatically when streaming stops.
+ */
 uint16_t Streaming_GetQuesBits(void);
 
 #ifdef	__cplusplus

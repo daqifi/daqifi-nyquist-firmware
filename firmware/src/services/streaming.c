@@ -82,10 +82,16 @@ typedef struct {
     uint32_t dropped;
 } FlowWindow;
 
-static FlowWindow gFlowWindow[2] = {{0}}; // [0]=previous, [1]=current
+// Double-buffer: [0]=previous complete window, [1]=current partial window.
+// Loss is computed over both halves for a sliding-window effect.
+static FlowWindow gFlowWindow[2] = {{0}};
 static uint32_t gFlowWindowCount = 0;      // periods elapsed in current window
 static uint32_t gFlowWindowSize = FLOW_WINDOW_MIN; // N, set at streaming start
-static uint16_t gQuesBits = 0;             // cached questionable condition bits
+// Cached SCPI questionable condition bits.  Modified by both the deferred ISR
+// task (via Streaming_UpdateFlowWindow) and the streaming task (output overflow
+// sites), so all read-modify-write accesses use taskENTER_CRITICAL.
+// Read by SCPI handlers via Streaming_GetQuesBits().  Cleared in Streaming_Stop().
+static uint16_t gQuesBits = 0;
 
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
@@ -630,6 +636,7 @@ void streaming_Task(void) {
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
             gStreamStats.encoderFailures++;
+            // Critical section: gQuesBits is also RMW'd by deferred ISR task
             taskENTER_CRITICAL();
             gQuesBits |= QUES_BIT_ENCODER_FAIL;
             taskEXIT_CRITICAL();
@@ -649,6 +656,7 @@ void streaming_Task(void) {
                 size_t written = UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
                 if (written < packetSize) {
                     gStreamStats.usbDroppedBytes += (packetSize - written);
+                    // Critical section: gQuesBits is also RMW'd by deferred ISR task
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
@@ -662,6 +670,7 @@ void streaming_Task(void) {
                 size_t written = wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
                 if (written < packetSize) {
                     gStreamStats.wifiDroppedBytes += (packetSize - written);
+                    // Critical section: gQuesBits is also RMW'd by deferred ISR task
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
@@ -703,6 +712,7 @@ void streaming_Task(void) {
 
                 if (total_written != packetSize) {
                     gStreamStats.sdDroppedBytes += (packetSize - total_written);
+                    // Critical section: gQuesBits is also RMW'd by deferred ISR task
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();

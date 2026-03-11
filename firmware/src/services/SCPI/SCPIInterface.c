@@ -297,6 +297,7 @@ static void SCPI_SetOperBits(scpi_reg_val_t bits) {
     if (wifi) SCPI_RegSetBits(&wifi->client.scpiContext, SCPI_REG_OPERC, bits);
 }
 
+/** Clear OPERC bits on both USB and WiFi SCPI contexts. */
 static void SCPI_ClearOperBits(scpi_reg_val_t bits) {
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     if (usb) SCPI_RegClearBits(&usb->scpiContext, SCPI_REG_OPERC, bits);
