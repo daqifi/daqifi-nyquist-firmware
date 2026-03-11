@@ -59,7 +59,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "entire hooks claude-code stop"
+            "command": "entire hooks claude-code stop",
+            "async": true
           }
         ]
       }
@@ -70,7 +71,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "entire hooks claude-code user-prompt-submit"
+            "command": "entire hooks claude-code user-prompt-submit",
+            "async": true
           }
         ]
       }

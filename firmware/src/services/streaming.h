@@ -61,13 +61,23 @@ void Streaming_ClearStats(void);
 
 /**
  * Returns current SCPI STATus:QUEStionable condition bits for streaming health.
- * Bit 4 = windowed sample loss >= 5%, Bit 8 = USB overflow,
+ * Bit 4 = windowed sample loss >= threshold, Bit 8 = USB overflow,
  * Bit 9 = WiFi overflow, Bit 10 = SD overflow, Bit 11 = encoder failure.
  * Definitions match QUES_* constants in SCPIInterface.c.
  * Called by SCPI_SyncQuesBits() in SCPIInterface.c before register queries.
  * Bits are cleared automatically when streaming stops.
  */
 uint32_t Streaming_GetQuesBits(void);
+
+// Flow window configuration (configurable via SCPI SYST:STR:LOSS commands).
+// Loss threshold: percentage (1-100) that triggers QUES data loss bit (default 5).
+uint32_t Streaming_GetLossThreshold(void);
+void Streaming_SetLossThreshold(uint32_t pct);
+
+// Flow window size override: 0 = auto (clamp(freq*2, 20, 10000)), >0 = explicit.
+// Takes effect at next streaming start.
+uint32_t Streaming_GetFlowWindowOverride(void);
+void Streaming_SetFlowWindowOverride(uint32_t size);
 
 #ifdef	__cplusplus
 }

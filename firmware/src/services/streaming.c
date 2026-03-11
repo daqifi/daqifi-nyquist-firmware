@@ -74,8 +74,8 @@ static void Streaming_UpdateFlowWindow(bool dropped);
 #define QUES_BIT_ENCODER_FAIL (1 << 11)  // Bit 11: Encoder failure
 
 #define FLOW_WINDOW_MIN   20
-#define FLOW_WINDOW_MAX   1000
-#define FLOW_LOSS_THRESHOLD_PCT  5
+#define FLOW_WINDOW_MAX   10000
+#define FLOW_LOSS_THRESHOLD_DEFAULT  5
 
 typedef struct {
     uint32_t attempted;
@@ -87,6 +87,12 @@ typedef struct {
 static FlowWindow gFlowWindow[2] = {{0}};
 static uint32_t gFlowWindowCount = 0;      // periods elapsed in current window
 static uint32_t gFlowWindowSize = FLOW_WINDOW_MIN; // N, set at streaming start
+
+// User-configurable flow window parameters (set via SCPI, survive across sessions).
+// gLossThresholdPct: loss % that triggers QUES_BIT_DATA_LOSS (1-100, default 5).
+// gFlowWindowOverride: 0 = auto (clamp(freq*2, 20, 10000)), >0 = explicit size.
+static uint32_t gLossThresholdPct = FLOW_LOSS_THRESHOLD_DEFAULT;
+static uint32_t gFlowWindowOverride = 0;  // 0 = auto
 // Cached SCPI questionable condition bits.  Modified by both the deferred ISR
 // task (via Streaming_UpdateFlowWindow) and the streaming task (output overflow
 // sites).  Read-modify-write (|=, &=~) uses taskENTER_CRITICAL; plain writes
@@ -390,15 +396,22 @@ void Streaming_ClearStats(void) {
 
 /**
  * Compute the flow window size based on streaming frequency.
- * Window = clamp(frequency * 2, FLOW_WINDOW_MIN, FLOW_WINDOW_MAX)
- * This gives ~2 seconds of history at any rate, with a floor of 20
- * sample periods for statistical significance at very low rates.
+ * If gFlowWindowOverride > 0, uses that value directly (clamped to MIN..MAX).
+ * Otherwise auto-calculates: clamp(frequency * 2, MIN, MAX), giving ~2 seconds
+ * of history at any rate with a floor for statistical significance.
  */
 static void Streaming_InitFlowWindow(uint64_t frequency) {
-    uint64_t n = frequency * 2;
-    if (n < FLOW_WINDOW_MIN) n = FLOW_WINDOW_MIN;
-    if (n > FLOW_WINDOW_MAX) n = FLOW_WINDOW_MAX;
-    gFlowWindowSize = (uint32_t)n;
+    if (gFlowWindowOverride > 0) {
+        uint32_t n = gFlowWindowOverride;
+        if (n < FLOW_WINDOW_MIN) n = FLOW_WINDOW_MIN;
+        if (n > FLOW_WINDOW_MAX) n = FLOW_WINDOW_MAX;
+        gFlowWindowSize = n;
+    } else {
+        uint64_t n = frequency * 2;
+        if (n < FLOW_WINDOW_MIN) n = FLOW_WINDOW_MIN;
+        if (n > FLOW_WINDOW_MAX) n = FLOW_WINDOW_MAX;
+        gFlowWindowSize = (uint32_t)n;
+    }
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
@@ -436,7 +449,7 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
     // by the streaming task at lower priority)
     taskENTER_CRITICAL();
     gStreamStats.windowLossPercent = lossPct;
-    if (lossPct >= FLOW_LOSS_THRESHOLD_PCT) {
+    if (lossPct >= gLossThresholdPct) {
         gQuesBits |= QUES_BIT_DATA_LOSS;
     } else {
         gQuesBits &= ~QUES_BIT_DATA_LOSS;
@@ -446,6 +459,25 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
 
 uint32_t Streaming_GetQuesBits(void) {
     return gQuesBits;  // 32-bit read is atomic on PIC32MZ
+}
+
+uint32_t Streaming_GetLossThreshold(void) {
+    return gLossThresholdPct;
+}
+
+void Streaming_SetLossThreshold(uint32_t pct) {
+    if (pct < 1) pct = 1;
+    if (pct > 100) pct = 100;
+    gLossThresholdPct = pct;  // takes effect immediately (next flow window check)
+}
+
+uint32_t Streaming_GetFlowWindowOverride(void) {
+    return gFlowWindowOverride;
+}
+
+void Streaming_SetFlowWindowOverride(uint32_t size) {
+    // 0 = auto, otherwise clamped at next streaming start
+    gFlowWindowOverride = size;
 }
 
 void Streaming_UpdateState(void) {
