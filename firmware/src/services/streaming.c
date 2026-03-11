@@ -516,7 +516,13 @@ void streaming_Task(void) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     while(1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
-        
+
+        // Don't process data or update QUES bits after streaming stops.
+        // A notification may already be pending when Stop clears gQuesBits.
+        if (!pRunTimeStreamConf->IsEnabled) {
+            continue;
+        }
+
         AINDataAvailable = !AInSampleList_IsEmpty();
         DIODataAvailable = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
 
