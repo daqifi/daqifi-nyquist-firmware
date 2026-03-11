@@ -607,6 +607,8 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
 
 
 scpi_result_t SCPI_LANHostnameGet(scpi_t * context) {
-    SCPI_LANStringGetImpl(context, DEFAULT_NETWORK_HOST_NAME);
+    wifi_manager_settings_t *pWifi = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    SCPI_LANStringGetImpl(context, pWifi->hostName);
     return SCPI_RES_OK;
 }
