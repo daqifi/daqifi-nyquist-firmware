@@ -92,7 +92,7 @@ static uint32_t gFlowWindowSize = FLOW_WINDOW_MIN; // N, set at streaming start
 // sites).  Read-modify-write (|=, &=~) uses taskENTER_CRITICAL; plain writes
 // (= 0) and reads are atomic on PIC32MZ (32-bit bus) and need no protection.
 // Read by SCPI handlers via Streaming_GetQuesBits().  Cleared in Streaming_Stop().
-static uint16_t gQuesBits = 0;
+static uint32_t gQuesBits = 0;
 
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
@@ -444,7 +444,7 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
     taskEXIT_CRITICAL();
 }
 
-uint16_t Streaming_GetQuesBits(void) {
+uint32_t Streaming_GetQuesBits(void) {
     return gQuesBits;  // 32-bit read is atomic on PIC32MZ
 }
 

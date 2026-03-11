@@ -67,7 +67,7 @@ void Streaming_ClearStats(void);
  * Called by SCPI_SyncQuesBits() in SCPIInterface.c before register queries.
  * Bits are cleared automatically when streaming stops.
  */
-uint16_t Streaming_GetQuesBits(void);
+uint32_t Streaming_GetQuesBits(void);
 
 #ifdef	__cplusplus
 }

@@ -315,7 +315,7 @@ static void SCPI_ClearOperBits(scpi_reg_val_t bits) {
  * 1→0 event in the QUES event register.
  */
 static void SCPI_SyncQuesBits(void) {
-    uint16_t bits = Streaming_GetQuesBits();
+    uint32_t bits = Streaming_GetQuesBits();
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
     // Replace streaming-related QUES bits in a single write to avoid
