@@ -426,12 +426,14 @@ static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
     wifi_manager_settings_t *pRtWifi = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
     if (pRtWifi != NULL) {
+        taskENTER_CRITICAL();
         strncpy(pRtWifi->ssid, pInstance->pWifiSettings->ssid,
                 WDRV_WINC_MAX_SSID_LEN);
         pRtWifi->ssid[WDRV_WINC_MAX_SSID_LEN] = '\0';
         strncpy(pRtWifi->hostName, pInstance->pWifiSettings->hostName,
                 WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN);
         pRtWifi->hostName[WIFI_MANAGER_DNS_CLIENT_MAX_HOSTNAME_LEN] = '\0';
+        taskEXIT_CRITICAL();
     }
 
     // Set DHCP hostname (truncated to WINC limit)
