@@ -155,6 +155,23 @@ device._comm.send_command("SYST:StartStreamData 5000")  # Correct!
 
 **If you use a SCPI command without verifying it first, STOP immediately and verify the syntax.**
 
+#### SCPI Wiki Maintenance
+
+**When adding, modifying, or removing SCPI commands, ALWAYS update the GitHub wiki SCPI reference page.**
+
+The wiki lives in a separate repo:
+```bash
+git clone https://github.com/daqifi/daqifi-nyquist-firmware.wiki.git /tmp/daqifi-wiki
+```
+
+The SCPI command reference is in `01-SCPI-Interface.md`. Update the relevant tables:
+- Command tables (add/remove/modify command rows)
+- Response field tables (e.g., Streaming Statistics Response Fields)
+- Register bit definition tables (OPER/QUES condition bits)
+- Callback function names (must match actual firmware function names)
+
+Commit and push wiki changes after updating.
+
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`
    - Handles command processing and data streaming
@@ -245,7 +262,19 @@ Set on `StartStreamData`, cleared on `StopStreamData`.
 QUES bits are set in real-time during streaming and cleared when streaming stops. The QUES CONDition register reflects the *current* health; the QUES EVENt register latches transitions (clears on read).
 
 **Windowed Data Flow Tracking:**
-The `Data Loss` QUES bit (bit 4) uses a sliding double-buffer window to evaluate pipeline health independently of sample rate. Window size = `clamp(frequency * 2, 20, 1000)` sample periods, giving ~2 seconds of history at any rate. If >= 5% of samples in the window were dropped, the bit is set. The current window loss percentage is also reported as `WindowLossPercent` in `SYST:STR:STATS?`.
+The `Data Loss` QUES bit (bit 4) uses a sliding double-buffer window to evaluate pipeline health independently of sample rate. Window size defaults to `clamp(frequency * 2, 20, 10000)` sample periods (~2 seconds of history). If the configured threshold percentage of samples in the window were dropped, the bit is set. The current window loss percentage is also reported as `WindowLossPercent` in `SYST:STR:STATS?`.
+
+**Flow Window Configuration:**
+```bash
+SYSTem:STReam:LOSS:THREshold <pct>   # Set loss threshold 1-100% (default 5)
+SYSTem:STReam:LOSS:THREshold?        # Query current threshold
+SYSTem:STReam:LOSS:WINDow <samples>  # Set window size (0=auto, 20-10000=explicit)
+SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
+```
+
+- **Threshold** takes effect immediately (next flow window check). Lower values (1-2%) for precision measurement; higher values (10-20%) for best-effort monitoring or noisy transports.
+- **Window size** takes effect at next streaming start. Larger windows smooth out bursty loss; smaller windows detect faults faster. Auto mode (`0`) scales with frequency.
+- Both settings survive across streaming sessions but reset to defaults on device reboot.
 
 **Implementation:** `firmware/src/services/streaming.c` (gQuesBits, flow window), `firmware/src/services/SCPI/SCPIInterface.c` (OPER/QUES helpers, sync)
 

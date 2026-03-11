@@ -1549,6 +1549,42 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetLossThreshold(scpi_t * context) {
+    int32_t pct;
+    if (!SCPI_ParamInt32(context, &pct, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (pct < 1 || pct > 100) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    Streaming_SetLossThreshold((uint32_t)pct);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetLossThreshold(scpi_t * context) {
+    SCPI_ResultInt32(context, (int32_t)Streaming_GetLossThreshold());
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetFlowWindow(scpi_t * context) {
+    int32_t size;
+    if (!SCPI_ParamInt32(context, &size, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (size < 0 || (size > 0 && size < 20) || size > 10000) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    Streaming_SetFlowWindowOverride((uint32_t)size);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetFlowWindow(scpi_t * context) {
+    SCPI_ResultInt32(context, (int32_t)Streaming_GetFlowWindowOverride());
+    return SCPI_RES_OK;
+}
+
 /**
  * STATus:QUEStionable:CONDition? wrapper that syncs streaming health
  * bits from the streaming engine before reading the register.
@@ -2283,6 +2319,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:INTerface?", .callback = SCPI_GetStreamInterface,},
     {.pattern = "SYSTem:STReam:Stats?", .callback = SCPI_GetStreamStats,},
     {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
+    {.pattern = "SYSTem:STReam:LOSS:THREshold", .callback = SCPI_SetLossThreshold,},
+    {.pattern = "SYSTem:STReam:LOSS:THREshold?", .callback = SCPI_GetLossThreshold,},
+    {.pattern = "SYSTem:STReam:LOSS:WINDow", .callback = SCPI_SetFlowWindow,},
+    {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
     //
     {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
