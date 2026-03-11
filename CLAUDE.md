@@ -782,9 +782,11 @@ powershell.exe -Command "netsh wlan show interfaces"
 
 #### DAQiFi WiFi Access Point
 When powered up, the device creates an open WiFi access point:
-- Default SSID: "DAQiFi"
+- Default SSID: "DAQiFi-XXXX" (where XXXX is the last 4 hex digits of the MAC address, e.g. "DAQiFi-95A7")
+- Default Hostname: Same as SSID (used for DHCP Option 12 network discovery)
 - Authentication: Open (no password)
 - The device must be in POWERED_UP state for WiFi to operate
+- The MAC suffix is automatically applied whenever the SSID or hostname equals the bare default "DAQiFi" (including after factory reset and APPLY). User-customized values are preserved without suffix.
 
 ### Automated Testing Notes
 
