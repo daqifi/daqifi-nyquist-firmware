@@ -89,7 +89,8 @@ static uint32_t gFlowWindowCount = 0;      // periods elapsed in current window
 static uint32_t gFlowWindowSize = FLOW_WINDOW_MIN; // N, set at streaming start
 // Cached SCPI questionable condition bits.  Modified by both the deferred ISR
 // task (via Streaming_UpdateFlowWindow) and the streaming task (output overflow
-// sites), so all read-modify-write accesses use taskENTER_CRITICAL.
+// sites).  Read-modify-write (|=, &=~) uses taskENTER_CRITICAL; plain writes
+// (= 0) and reads are atomic on PIC32MZ (32-bit bus) and need no protection.
 // Read by SCPI handlers via Streaming_GetQuesBits().  Cleared in Streaming_Stop().
 static uint16_t gQuesBits = 0;
 
@@ -329,7 +330,7 @@ static void Streaming_Stop(void) {
                         gStreamStats.encoderFailures > 0;
         // Clear QUES condition bits so they don't persist after streaming ends.
         // Stats remain available via SYST:STR:STATS? until next session.
-        gQuesBits = 0;
+        gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
 
         if (hadDrops) {
             uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
@@ -384,7 +385,7 @@ void Streaming_ClearStats(void) {
     // Reset windowed flow tracking
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
-    gQuesBits = 0;
+    gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
 }
 
 /**
@@ -400,7 +401,7 @@ static void Streaming_InitFlowWindow(uint64_t frequency) {
     gFlowWindowSize = (uint32_t)n;
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
-    gQuesBits = 0;
+    gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
 }
 
 /**
@@ -430,11 +431,11 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
     if (totalAttempted > 0) {
         lossPct = (totalDropped * 100) / totalAttempted;
     }
-    gStreamStats.windowLossPercent = lossPct;
-
-    // Update data loss QUES bit (critical section protects RMW on gQuesBits
-    // which is also modified by the streaming task at lower priority)
+    // Critical section: keep windowLossPercent and gQuesBits coherent for
+    // SCPI snapshot reads (also protects RMW on gQuesBits which is modified
+    // by the streaming task at lower priority)
     taskENTER_CRITICAL();
+    gStreamStats.windowLossPercent = lossPct;
     if (lossPct >= FLOW_LOSS_THRESHOLD_PCT) {
         gQuesBits |= QUES_BIT_DATA_LOSS;
     } else {
@@ -444,7 +445,7 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
 }
 
 uint16_t Streaming_GetQuesBits(void) {
-    return gQuesBits;
+    return gQuesBits;  // 32-bit read is atomic on PIC32MZ
 }
 
 void Streaming_UpdateState(void) {

@@ -1827,7 +1827,7 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     // Clear STATus:OPERation condition register
     SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
 
-    // Clear STATus:QUEStionable condition register (per-output bits are session-scoped)
+    // Sync STATus:QUEStionable condition register (streaming health bits cleared in Streaming_Stop)
     SCPI_SyncQuesBits();
 
     return SCPI_RES_OK;

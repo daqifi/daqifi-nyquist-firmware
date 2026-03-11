@@ -290,6 +290,13 @@ The firmware supports building for different board variants using MPLAB X config
    - **NQ1**: `NQ1BoardConfig.c`, `NQ1RuntimeDefaults.c`
    - **NQ3**: `NQ3BoardConfig.c`, `NQ3RuntimeDefaults.c`
 
+### Concurrency Rules (PIC32MZ)
+
+- **32-bit reads and writes are atomic** on the PIC32MZ bus. A simple `x = 0` or `return x` on a `uint32_t`/`uint16_t` does NOT need a critical section.
+- **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
+- **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
+- Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
+
 ### Memory Considerations
 
 #### Heap Configuration
