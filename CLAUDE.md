@@ -155,6 +155,23 @@ device._comm.send_command("SYST:StartStreamData 5000")  # Correct!
 
 **If you use a SCPI command without verifying it first, STOP immediately and verify the syntax.**
 
+#### SCPI Wiki Maintenance
+
+**When adding, modifying, or removing SCPI commands, ALWAYS update the GitHub wiki SCPI reference page.**
+
+The wiki lives in a separate repo:
+```bash
+git clone https://github.com/daqifi/daqifi-nyquist-firmware.wiki.git /tmp/daqifi-wiki
+```
+
+The SCPI command reference is in `01-SCPI-Interface.md`. Update the relevant tables:
+- Command tables (add/remove/modify command rows)
+- Response field tables (e.g., Streaming Statistics Response Fields)
+- Register bit definition tables (OPER/QUES condition bits)
+- Callback function names (must match actual firmware function names)
+
+Commit and push wiki changes after updating.
+
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`
    - Handles command processing and data streaming
