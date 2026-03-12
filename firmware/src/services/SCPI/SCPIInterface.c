@@ -1908,6 +1908,28 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
+    int param1;
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0 || param1 > 10) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    pRunTimeStreamConfig->VoltagePrecision = (uint8_t)param1;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetDataPrecision(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->VoltagePrecision);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     int param1;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
@@ -2290,6 +2312,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad,},
     {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet,},
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
+    //
+    // Data output precision
+    {.pattern = "CONFigure:DATA:PRECision", .callback = SCPI_SetDataPrecision,},
+    {.pattern = "CONFigure:DATA:PRECision?", .callback = SCPI_GetDataPrecision,},
     //
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},

@@ -435,12 +435,27 @@ size_t Json_Encode(tBoardData* state,
                 }
 
 
-                double voltage = ADC_ConvertToVoltage(&data) * 1000; // Convert to millivolts
-                int written = snprintf(charBuffer + startIndex,
-                        buffSize - startIndex,
-                        "{\"ch\":%u, \"val\":%u},\n",
-                        data.Channel,
-                        (int) voltage);
+                StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+                uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+                int written;
+                if (precision == 0) {
+                    // Integer millivolts (backwards compatible)
+                    double voltage = ADC_ConvertToVoltage(&data) * 1000;
+                    written = snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "{\"ch\":%u, \"val\":%d},\n",
+                            data.Channel,
+                            (int) voltage);
+                } else {
+                    // Volts with N decimal places
+                    double voltage = ADC_ConvertToVoltage(&data);
+                    written = snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "{\"ch\":%u, \"val\":%.*f},\n",
+                            data.Channel,
+                            (int)precision, voltage);
+                }
                 if (written < 0 || written >= (int)(buffSize - startIndex)) break;
                 startIndex += written;
             }
