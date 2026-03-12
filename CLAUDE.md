@@ -193,6 +193,28 @@ Commit and push wiki changes after updating.
    - Streaming engine manages buffer flow and encoding
    - Supports multiple simultaneous outputs
 
+#### Voltage Output Precision
+
+CSV and JSON encoders support configurable voltage precision via `StreamingRuntimeConfig.VoltagePrecision`:
+
+**SCPI Commands:**
+```bash
+CONFigure:DATA:PRECision <0-10>   # Set precision (default: 4)
+CONFigure:DATA:PRECision?         # Query current precision
+```
+
+| Value | Output | Example |
+|-------|--------|---------|
+| 0 | Integer millivolts | `1221` (fast path, uses `int_to_str`) |
+| 4 | Volts, 4 decimal places | `1.2207` (default, preserves 12-bit ADC) |
+| 7-10 | Volts, high precision | Reserved for future 32-bit ADC |
+
+- Applies to CSV and JSON only (protobuf unaffected)
+- Runtime-only setting (resets to default 4 on reboot)
+- Can be changed while streaming; takes effect on next sample
+
+**Implementation:** `firmware/src/services/csv_encoder.c`, `firmware/src/services/JSON_Encoder.c`
+
 #### Streaming Statistics & Buffer Overrun Tracking
 
 The streaming engine tracks data loss at every stage of the pipeline. Statistics are accumulated per streaming session (cleared on `StartStreamData`, preserved after `StopStreamData`).
