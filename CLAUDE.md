@@ -195,25 +195,28 @@ Commit and push wiki changes after updating.
 
 #### Voltage Output Precision
 
-CSV and JSON encoders support configurable voltage precision via `StreamingRuntimeConfig.VoltagePrecision`:
+Systemwide configurable voltage precision via `StreamingRuntimeConfig.VoltagePrecision`. Applies to CSV streaming, JSON streaming, and SCPI voltage queries (`MEAS:VOLT:DC?`, `SOUR:VOLT:LEV?`).
 
 **SCPI Commands:**
 ```bash
-CONFigure:DATA:PRECision <0-10>   # Set precision (default: 4)
+CONFigure:DATA:PRECision <0-10>   # Set precision
 CONFigure:DATA:PRECision?         # Query current precision
+CONFigure:DATA:SAVE               # Persist to NVM (survives reboot)
+CONFigure:DATA:LOAD               # Load from NVM
 ```
 
 | Value | Output | Example |
 |-------|--------|---------|
 | 0 | Integer millivolts | `1221` (fast path, uses `int_to_str`) |
-| 4 | Volts, 4 decimal places | `1.2207` (default, preserves 12-bit ADC) |
-| 7-10 | Volts, high precision | Reserved for future 32-bit ADC |
+| 4 | Volts, 4 decimal places | `1.2207` (NQ1 default, 12-bit ADC) |
+| 6 | Volts, 6 decimal places | `1.220703` (NQ3 default, 18-bit AD7609) |
+| 7 | Volts, 7 decimal places | `1.2207031` (NQ2 default, 24-bit AD7173) |
 
-- Applies to CSV and JSON only (protobuf unaffected)
-- Runtime-only setting (resets to default 4 on reboot)
-- Can be changed while streaming; takes effect on next sample
+**Board-specific defaults** (`tBoardConfig.DefaultVoltagePrecision`): NQ1=4, NQ3=6, NQ2=7.
 
-**Implementation:** `firmware/src/services/csv_encoder.c`, `firmware/src/services/JSON_Encoder.c`
+**NVM persistence**: Stored in `TopLevelSettings.voltagePrecision`. Saved via `CONF:DATA:SAVE`, loaded at boot from NVM. Falls back to board config default on first boot.
+
+**Implementation:** `firmware/src/services/csv_encoder.c`, `firmware/src/services/JSON_Encoder.c`, `firmware/src/services/SCPI/SCPIInterface.h` (SCPI_ResultVoltage helper), `firmware/src/services/SCPI/SCPIADC.c`, `firmware/src/services/SCPI/SCPIDAC.c`
 
 #### Streaming Statistics & Buffer Overrun Tracking
 
