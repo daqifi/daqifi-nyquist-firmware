@@ -1,6 +1,7 @@
 #define LOG_LVL LOG_LEVEL_SCPI
 
 #include "SCPIDAC.h"
+#include "SCPIInterface.h"
 
 // General
 #include <stdlib.h>
@@ -233,6 +234,10 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+
     // Note: DAC7718 does not support hardware readback
     // Return last commanded voltage from BoardData
     if (SCPI_ParamInt32(context, &channel, FALSE)) {
@@ -246,18 +251,18 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         // Read last commanded voltage from BoardData
         AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, index);
         if (pSample != NULL) {
-            SCPI_ResultDouble(context, pSample->Voltage);
+            SCPI_ResultVoltage(context, pSample->Voltage, precision);
         } else {
-            SCPI_ResultDouble(context, 0.0);
+            SCPI_ResultVoltage(context, 0.0, precision);
         }
     } else {
         // Get all channels
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
             AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, i);
             if (pSample != NULL) {
-                SCPI_ResultDouble(context, pSample->Voltage);
+                SCPI_ResultVoltage(context, pSample->Voltage, precision);
             } else {
-                SCPI_ResultDouble(context, 0.0);
+                SCPI_ResultVoltage(context, 0.0, precision);
             }
         }
     }

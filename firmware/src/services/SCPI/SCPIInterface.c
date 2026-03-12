@@ -1930,6 +1930,34 @@ static scpi_result_t SCPI_GetDataPrecision(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SaveDataPrecision(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    settings.type = DaqifiSettings_TopLevelSettings;
+    // SaveToNvm captures current precision from runtime config automatically
+    if (!daqifi_settings_SaveToNvm(&settings)) {
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_LoadDataPrecision(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
+        return SCPI_RES_ERR;
+    }
+    uint8_t savedPrec = settings.settings.topLevelSettings.voltagePrecision;
+    if (savedPrec <= 10) {
+        StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+                BOARDRUNTIME_STREAMING_CONFIGURATION);
+        if (pStreamCfg != NULL) {
+            pStreamCfg->VoltagePrecision = savedPrec;
+        }
+    }
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     int param1;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
@@ -2316,6 +2344,8 @@ static const scpi_command_t scpi_commands[] = {
     // Data output precision
     {.pattern = "CONFigure:DATA:PRECision", .callback = SCPI_SetDataPrecision,},
     {.pattern = "CONFigure:DATA:PRECision?", .callback = SCPI_GetDataPrecision,},
+    {.pattern = "CONFigure:DATA:SAVE", .callback = SCPI_SaveDataPrecision,},
+    {.pattern = "CONFigure:DATA:LOAD", .callback = SCPI_LoadDataPrecision,},
     //
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},

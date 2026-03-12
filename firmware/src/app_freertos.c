@@ -347,6 +347,18 @@ void app_SystemInit() {
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     InitializeBoardData(gpBoardData);
 
+    // Apply persisted voltage precision to streaming runtime config
+    {
+        uint8_t savedPrec = tmpTopLevelSettings.settings.topLevelSettings.voltagePrecision;
+        if (savedPrec <= 10) {
+            StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+                    BOARDRUNTIME_STREAMING_CONFIGURATION);
+            if (pStreamCfg != NULL) {
+                pStreamCfg->VoltagePrecision = savedPrec;
+            }
+        }
+    }
+
     // Try to load WiFiSettings from NVM - if this fails, store default 
     // settings to NVM (first run after a program)
 

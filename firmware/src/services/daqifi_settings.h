@@ -89,6 +89,13 @@ extern "C" {
          */
         bool calVals;
 
+        /**
+         * Voltage output precision for CSV/JSON/SCPI encoders.
+         * 0 = integer millivolts, 1-10 = volts with N decimal places.
+         * Default: 4
+         */
+        uint8_t voltagePrecision;
+
     } TopLevelSettings;
 
     

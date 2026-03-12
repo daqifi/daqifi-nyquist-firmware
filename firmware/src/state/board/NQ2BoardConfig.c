@@ -237,7 +237,8 @@ const tBoardConfig NQ2BoardConfig = {
     .UIConfig = COMMON_UI_CONFIG,
     .StreamingConfig = COMMON_STREAMING_CONFIG,
     .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
-    .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT
+    .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT,
+    .DefaultVoltagePrecision = 7  // 24-bit ADC (AD7173): LSB = 0.298µV
 };
 
 /*! This function is used for getting a board configuration parameter
