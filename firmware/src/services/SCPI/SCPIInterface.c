@@ -2341,11 +2341,11 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet,},
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
     //
-    // Data output precision
-    {.pattern = "CONFigure:DATA:PRECision", .callback = SCPI_SetDataPrecision,},
-    {.pattern = "CONFigure:DATA:PRECision?", .callback = SCPI_GetDataPrecision,},
-    {.pattern = "CONFigure:DATA:SAVE", .callback = SCPI_SaveDataPrecision,},
-    {.pattern = "CONFigure:DATA:LOAD", .callback = SCPI_LoadDataPrecision,},
+    // Voltage output precision
+    {.pattern = "CONFigure:VOLTage:PRECision", .callback = SCPI_SetDataPrecision,},
+    {.pattern = "CONFigure:VOLTage:PRECision?", .callback = SCPI_GetDataPrecision,},
+    {.pattern = "CONFigure:VOLTage:SAVE", .callback = SCPI_SaveDataPrecision,},
+    {.pattern = "CONFigure:VOLTage:LOAD", .callback = SCPI_LoadDataPrecision,},
     //
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},

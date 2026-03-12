@@ -199,10 +199,10 @@ Systemwide configurable voltage precision via `StreamingRuntimeConfig.VoltagePre
 
 **SCPI Commands:**
 ```bash
-CONFigure:DATA:PRECision <0-10>   # Set precision
-CONFigure:DATA:PRECision?         # Query current precision
-CONFigure:DATA:SAVE               # Persist to NVM (survives reboot)
-CONFigure:DATA:LOAD               # Load from NVM
+CONFigure:VOLTage:PRECision <0-10>   # Set precision
+CONFigure:VOLTage:PRECision?         # Query current precision
+CONFigure:VOLTage:SAVE               # Persist to NVM (survives reboot)
+CONFigure:VOLTage:LOAD               # Load from NVM
 ```
 
 | Value | Output | Example |
