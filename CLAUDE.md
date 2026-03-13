@@ -352,6 +352,15 @@ The firmware supports building for different board variants using MPLAB X config
 - Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
 - **`BoardRunTimeConfig_Get()` never returns NULL** — it indexes into a static array initialized at boot. Do not add NULL checks on its return value; no existing SCPI callback checks it, and adding guards creates inconsistency for zero safety benefit. Qodo/automated reviewers will repeatedly suggest this — ignore it.
 
+### Hardware FPU (PIC32MZ EF)
+
+The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocessor 1). All floating-point arithmetic (`double` multiply, divide, add, convert) executes in hardware — no software emulation.
+
+- **Compiler**: targeting `PIC32MZ2048EFM144` implicitly sets `__mips_hard_float = 1`
+- **FreeRTOS**: `configUSE_TASK_FPU_SUPPORT = 1` in `FreeRTOSConfig.h`; saves/restores 32×64-bit FPU registers on context switches for tasks that call `portTASK_USES_FLOATING_POINT()`
+- **Registered tasks**: USB, WiFi, PowerAndUI, and streaming tasks use FPU
+- **ADC voltage conversion**: `ADC_ConvertToVoltage()` uses native `mul.d`, `div.d`, `add.d` instructions
+
 ### Memory Considerations
 
 #### Heap Configuration

@@ -367,7 +367,7 @@ static size_t tryWriteRow(
             uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
 
             if (precision == 0) {
-                // Fast path: integer millivolts (backwards compatible)
+                // Integer millivolts (shorter output strings)
                 double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
                 int32_t mv;
                 if (voltage_mv > (double)INT32_MAX) {
