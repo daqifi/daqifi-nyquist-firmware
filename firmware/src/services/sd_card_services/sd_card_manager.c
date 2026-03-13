@@ -1126,6 +1126,8 @@ void sd_card_manager_ProcessState() {
                 xSemaphoreGive(gSDOpMutex);
             }
 
+            // Reset mode so IsBusy() returns false
+            gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
         }
             break;
