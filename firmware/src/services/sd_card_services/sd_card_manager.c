@@ -81,6 +81,7 @@ static __attribute__((coherent, aligned(16))) uint8_t gSdSharedBuffer[SD_CARD_MA
 static SemaphoreHandle_t gSDOpMutex = NULL;
 static bool gLoggedUnmountFail = false;
 static bool gLoggedWriteBufferTimeout = false;
+static volatile bool gTransferAbortRequested = false;
 
 /**
  * Helper function: Wait for USB buffer to drain before EOF/close
@@ -1035,8 +1036,25 @@ void sd_card_manager_ProcessState() {
             // EOF marker as literal constant (safer than sprintf)
             static const char eofMarker[] = "__END_OF_FILE__";
 
+            // Clear abort flag at start of transfer
+            gTransferAbortRequested = false;
+
             // Read entire file in continuous loop
             while (1) {
+                // Check for user-requested abort
+                if (gTransferAbortRequested) {
+                    gTransferAbortRequested = false;
+                    LOG_E("[SD] Transfer ABORTED by user at %u bytes", totalBytesRead);
+                    sd_wait_usb_drain();
+                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                        SYS_FS_FileClose(gSDCardData.fileHandle);
+                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    }
+                    totalBytesRead = 0;
+                    readCount = 0;
+                    break;
+                }
+
                 // Abort if file handle became invalid
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                     LOG_E("[SD] Transfer ABORTED: file handle invalid");
@@ -1108,6 +1126,8 @@ void sd_card_manager_ProcessState() {
                 xSemaphoreGive(gSDOpMutex);
             }
 
+            // Reset mode so IsBusy() returns false
+            gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
         }
             break;
@@ -1385,6 +1405,10 @@ bool sd_card_manager_IsWriteReady(void) {
         && gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE
         && gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
         && gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID;
+}
+
+void sd_card_manager_AbortTransfer(void) {
+    gTransferAbortRequested = true;
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {

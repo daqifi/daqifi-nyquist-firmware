@@ -204,6 +204,15 @@ extern "C" {
     bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes);
 
     /**
+     * @brief Requests abort of an in-progress SD file transfer (GET).
+     *
+     * Sets a flag checked by the read loop. The transfer will stop at the
+     * next iteration, close the file, and return to idle. No-op if no
+     * transfer is active.
+     */
+    void sd_card_manager_AbortTransfer(void);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received
