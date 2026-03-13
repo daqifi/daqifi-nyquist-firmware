@@ -220,6 +220,17 @@ extern "C" {
     int sd_card_manager_GetFormatStatus(void);
 
     /**
+     * @brief Returns estimated format progress as a percentage (0-100).
+     *
+     * Based on sector write counting in the disk I/O layer. Returns 0 when
+     * idle or failed, 0-99 during format, 100 when complete. The estimate
+     * may not be perfectly linear but gives useful progress indication.
+     *
+     * @return 0-100 percentage
+     */
+    int sd_card_manager_GetFormatProgress(void);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received
