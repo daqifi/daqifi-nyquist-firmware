@@ -213,6 +213,13 @@ extern "C" {
     void sd_card_manager_AbortTransfer(void);
 
     /**
+     * @brief Returns the current format operation status.
+     *
+     * @return 0 = idle (no format), 1 = in progress, 2 = completed OK, -1 = failed
+     */
+    int sd_card_manager_GetFormatStatus(void);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received

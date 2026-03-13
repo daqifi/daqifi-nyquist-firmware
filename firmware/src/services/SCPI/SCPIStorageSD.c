@@ -750,6 +750,11 @@ scpi_result_t SCPI_StorageSDAbort(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context) {
+    SCPI_ResultInt32(context, sd_card_manager_GetFormatStatus());
+    return SCPI_RES_OK;
+}
+
 /* *****************************************************************************
  End of File
  */

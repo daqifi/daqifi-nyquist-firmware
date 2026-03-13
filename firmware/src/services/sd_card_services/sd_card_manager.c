@@ -82,6 +82,7 @@ static SemaphoreHandle_t gSDOpMutex = NULL;
 static bool gLoggedUnmountFail = false;
 static bool gLoggedWriteBufferTimeout = false;
 static volatile bool gTransferAbortRequested = false;
+static int gFormatStatus = 0;  // 0=idle, 1=in progress, 2=success, -1=failed
 
 /**
  * Helper function: Wait for USB buffer to drain before EOF/close
@@ -1186,6 +1187,7 @@ void sd_card_manager_ProcessState() {
         case SD_CARD_MANAGER_PROCESS_STATE_FORMAT:
         {
             LOG_D("[SD] Formatting SD card at '%s'\r\n", SD_CARD_MANAGER_DISK_MOUNT_NAME);
+            gFormatStatus = 1;  // In progress
 
             // Format the drive using FAT filesystem
             // Use SYS_FS_FORMAT_ANY to auto-select FAT16/FAT32 based on card size
@@ -1200,10 +1202,12 @@ void sd_card_manager_ProcessState() {
             if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] Format completed successfully\r\n");
                 gSDCardData.lastOperationSuccess = true;
+                gFormatStatus = 2;  // Success
             } else {
                 SYS_FS_ERROR err = SYS_FS_Error();
                 LOG_E("[SD] Format failed, error=%d\r\n", err);
                 gSDCardData.lastOperationSuccess = false;
+                gFormatStatus = -1;  // Failed
             }
 
             // Reset mode to prevent re-triggering
@@ -1409,6 +1413,10 @@ bool sd_card_manager_IsWriteReady(void) {
 
 void sd_card_manager_AbortTransfer(void) {
     gTransferAbortRequested = true;
+}
+
+int sd_card_manager_GetFormatStatus(void) {
+    return gFormatStatus;
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {
