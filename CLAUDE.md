@@ -193,6 +193,31 @@ Commit and push wiki changes after updating.
    - Streaming engine manages buffer flow and encoding
    - Supports multiple simultaneous outputs
 
+#### Voltage Output Precision
+
+Systemwide configurable voltage precision via `StreamingRuntimeConfig.VoltagePrecision`. Applies to CSV streaming, JSON streaming, and SCPI voltage queries (`MEAS:VOLT:DC?`, `SOUR:VOLT:LEV?`).
+
+**SCPI Commands:**
+```bash
+CONFigure:VOLTage:PRECision <0-10>   # Set precision
+CONFigure:VOLTage:PRECision?         # Query current precision
+CONFigure:VOLTage:SAVE               # Persist to NVM (survives reboot)
+CONFigure:VOLTage:LOAD               # Load from NVM
+```
+
+| Value | Output | Example |
+|-------|--------|---------|
+| 0 | Integer millivolts | `1221` (fast path, uses `int_to_str`) |
+| 4 | Volts, 4 decimal places | `1.2207` (NQ1 default, 12-bit ADC) |
+| 6 | Volts, 6 decimal places | `1.220703` (NQ3 default, 18-bit AD7609) |
+| 7 | Volts, 7 decimal places | `1.2207031` (NQ2 default, 24-bit AD7173) |
+
+**Board-specific defaults** (`tBoardConfig.DefaultVoltagePrecision`): NQ1=4, NQ3=6, NQ2=7.
+
+**NVM persistence**: Stored in `TopLevelSettings.voltagePrecision`. Saved via `CONF:DATA:SAVE`, loaded at boot from NVM. Falls back to board config default on first boot.
+
+**Implementation:** `firmware/src/services/csv_encoder.c`, `firmware/src/services/JSON_Encoder.c`, `firmware/src/services/SCPI/SCPIInterface.h` (SCPI_ResultVoltage helper), `firmware/src/services/SCPI/SCPIADC.c`, `firmware/src/services/SCPI/SCPIDAC.c`
+
 #### Streaming Statistics & Buffer Overrun Tracking
 
 The streaming engine tracks data loss at every stage of the pipeline. Statistics are accumulated per streaming session (cleared on `StartStreamData`, preserved after `StopStreamData`).
@@ -325,6 +350,16 @@ The firmware supports building for different board variants using MPLAB X config
 - **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
 - **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
 - Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
+- **`BoardRunTimeConfig_Get()` never returns NULL** — it indexes into a static array initialized at boot. Do not add NULL checks on its return value; no existing SCPI callback checks it, and adding guards creates inconsistency for zero safety benefit. Qodo/automated reviewers will repeatedly suggest this — ignore it.
+
+### Hardware FPU (PIC32MZ EF)
+
+The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocessor 1). All floating-point arithmetic (`double` multiply, divide, add, convert) executes in hardware — no software emulation.
+
+- **Compiler**: targeting `PIC32MZ2048EFM144` implicitly sets `__mips_hard_float = 1`
+- **FreeRTOS**: `configUSE_TASK_FPU_SUPPORT = 1` in `FreeRTOSConfig.h`; saves/restores 32×64-bit FPU registers on context switches for tasks that call `portTASK_USES_FLOATING_POINT()`
+- **Registered tasks**: USB, WiFi, PowerAndUI, and streaming tasks use FPU
+- **ADC voltage conversion**: `ADC_ConvertToVoltage()` uses native `mul.d`, `div.d`, `add.d` instructions
 
 ### Memory Considerations
 

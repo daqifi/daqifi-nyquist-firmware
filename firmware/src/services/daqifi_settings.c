@@ -4,6 +4,7 @@
 #include "version.h"
 #include "state/board/BoardConfig.h"
 #include "state/board/NQ3BoardConfig.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -60,6 +61,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             TopLevelSettings* pTopLevelSettings = &(settings->settings.topLevelSettings);
             const tBoardConfig* pBoardConfig = (const tBoardConfig*)NqBoardConfig_Get();
             pTopLevelSettings->calVals = 0;
+            pTopLevelSettings->voltagePrecision = pBoardConfig->DefaultVoltagePrecision;
             strcpy(pTopLevelSettings->boardHardwareRev, HARDWARE_REVISION);
             strcpy(pTopLevelSettings->boardFirmwareRev, FIRMWARE_REVISION);
             pTopLevelSettings->boardVariant = pBoardConfig->BoardVariant;
@@ -133,6 +135,13 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
             strcpy(settings->settings.topLevelSettings.boardHardwareRev, HARDWARE_REVISION);
             strcpy(settings->settings.topLevelSettings.boardFirmwareRev, FIRMWARE_REVISION);
             settings->settings.topLevelSettings.boardVariant = pBoardConfig->BoardVariant;
+            // Capture current voltage precision from runtime config
+            StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+                    BOARDRUNTIME_STREAMING_CONFIGURATION);
+            if (pStreamCfg != NULL) {
+                settings->settings.topLevelSettings.voltagePrecision =
+                        pStreamCfg->VoltagePrecision;
+            }
             address = TOP_LEVEL_SETTINGS_ADDR;
             dataSize = sizeof (TopLevelSettings);
             break;

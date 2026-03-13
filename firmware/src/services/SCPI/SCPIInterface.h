@@ -2,6 +2,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+#include <limits.h>
 
 #ifndef SCPIINTERFACE_H
 #define	SCPIINTERFACE_H
@@ -49,6 +51,35 @@ extern "C" {
         if (n > 0) {
             size_t len = ((size_t)n < sizeof(buf)) ? (size_t)n : sizeof(buf) - 1;
             context->interface->write(context, buf, len);
+        }
+    }
+
+    /**
+     * Write a voltage value to SCPI output respecting VoltagePrecision.
+     * precision 0: integer millivolts via SCPI_ResultInt32
+     * precision 1-10: volts with N decimal places via SCPI_ResultCharacters
+     * @param context SCPI context
+     * @param voltage_v Voltage in volts
+     * @param precision VoltagePrecision setting (0-10)
+     */
+    static inline void SCPI_ResultVoltage(scpi_t *context,
+                                           double voltage_v,
+                                           uint8_t precision) {
+        if (precision == 0) {
+            double voltage_mv = voltage_v * 1000.0;
+            int32_t mv;
+            if (voltage_mv > (double)INT32_MAX) mv = INT32_MAX;
+            else if (voltage_mv < (double)INT32_MIN) mv = INT32_MIN;
+            else mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
+            SCPI_ResultInt32(context, mv);
+        } else {
+            char buf[32];
+            int len = snprintf(buf, sizeof(buf), "%.*f", (int)precision, voltage_v);
+            if (len > 0 && (size_t)len < sizeof(buf)) {
+                SCPI_ResultCharacters(context, buf, (size_t)len);
+            } else {
+                SCPI_ResultDouble(context, voltage_v);
+            }
         }
     }
 

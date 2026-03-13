@@ -1,4 +1,5 @@
 #include "SCPIADC.h"
+#include "SCPIInterface.h"
 
 // General
 #include <stdlib.h>
@@ -31,6 +32,9 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
             0);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
 
     if (SCPI_ParamInt32(context, &channel, FALSE)) {
         // Get single
@@ -41,7 +45,7 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
         }
 
         if (!pRuntimeAInChannels->Data[index].IsEnabled) {
-            SCPI_ResultDouble(context, 0.0);
+            SCPI_ResultVoltage(context, 0.0, precision);
             return SCPI_RES_OK;
         }
 
@@ -50,12 +54,12 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
                 index);
 
         if (pAInLatest == NULL) {
-            SCPI_ResultDouble(context, 0.0);
+            SCPI_ResultVoltage(context, 0.0, precision);
             return SCPI_RES_OK;
         }
 
         val = ADC_ConvertToVoltage(pAInLatest);
-        SCPI_ResultDouble(context, val);
+        SCPI_ResultVoltage(context, val, precision);
     } else {
         // Get all
         size_t i = 0;
@@ -71,9 +75,10 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
 
             if (!pRuntimeAInChannels->Data[i].IsEnabled ||
                     pAInLatest->Timestamp < 1) {
-                SCPI_ResultDouble(context, 0.0);
+                SCPI_ResultVoltage(context, 0.0, precision);
             } else {
-                SCPI_ResultDouble(context, pAInLatest->Value);
+                double val = ADC_ConvertToVoltage(pAInLatest);
+                SCPI_ResultVoltage(context, val, precision);
             }
         }
     }

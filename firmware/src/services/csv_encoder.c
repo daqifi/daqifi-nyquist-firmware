@@ -346,18 +346,6 @@ static size_t tryWriteRow(
         if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
             AInSample *s = &ainPeek->sampleElement[i];
 
-            // Convert to calibrated millivolts (backwards compatible)
-            double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
-            // Clamp to int32_t range for portability
-            int32_t mv;
-            if (voltage_mv > (double)INT32_MAX) {
-                mv = INT32_MAX;
-            } else if (voltage_mv < (double)INT32_MIN) {
-                mv = INT32_MIN;
-            } else {
-                // Round to nearest instead of truncation
-                mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
-            }
             // First field has no leading comma
             char* p = q;
             size_t space = rem;
@@ -373,8 +361,32 @@ static size_t tryWriteRow(
             if (space == 0) return 0;  // Buffer exhausted
             *p++ = ',';
             space--;
-            p = int_to_str(mv, p, space);
-            if (p == NULL) return 0;  // Buffer exhausted
+
+            StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+                    BOARDRUNTIME_STREAMING_CONFIGURATION);
+            uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+
+            if (precision == 0) {
+                // Integer millivolts (shorter output strings)
+                double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
+                int32_t mv;
+                if (voltage_mv > (double)INT32_MAX) {
+                    mv = INT32_MAX;
+                } else if (voltage_mv < (double)INT32_MIN) {
+                    mv = INT32_MIN;
+                } else {
+                    mv = (int32_t)(voltage_mv >= 0.0 ? voltage_mv + 0.5 : voltage_mv - 0.5);
+                }
+                p = int_to_str(mv, p, space);
+                if (p == NULL) return 0;
+            } else {
+                // Volts with N decimal places
+                double voltage_v = ADC_ConvertToVoltage(s);
+                int n = snprintf(p, space, "%.*f", (int)precision, voltage_v);
+                if (n < 0 || (size_t)n >= space) return 0;
+                p += n;
+            }
+
             w = p - q;
             firstField = false;
         } else {

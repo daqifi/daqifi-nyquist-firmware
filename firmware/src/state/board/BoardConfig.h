@@ -108,6 +108,9 @@ extern "C" {
         //         csvChannelHeadersSubsequent[i] = ",chN_ts,chN_val"
         const char* const* csvChannelHeadersFirst;
         const char* const* csvChannelHeadersSubsequent;
+        //! Default voltage precision for this board's ADC resolution.
+        //! 0 = integer mV, 4 = 12-bit, 6 = 18-bit, 7 = 24-bit
+        uint8_t DefaultVoltagePrecision;
     } tBoardConfig;
 
     /*!

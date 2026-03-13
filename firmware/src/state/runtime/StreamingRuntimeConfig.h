@@ -87,6 +87,15 @@ extern "C" {
          */
         StreamingInterface ActiveInterface;
 
+        /**
+         * Voltage output precision for CSV and JSON encoders.
+         * 0 = integer millivolts (backwards compatible, fast path)
+         * 1-10 = volts with N decimal places (e.g. 4 → "1.2207")
+         * Default: 4 (0.1mV resolution, preserves 12-bit ADC precision)
+         * Higher values (7-10) reserved for future 32-bit ADC support.
+         */
+        uint8_t VoltagePrecision;
+
     } StreamingRuntimeConfig;
 
 

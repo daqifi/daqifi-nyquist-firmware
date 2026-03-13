@@ -1908,6 +1908,60 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
+    int32_t param1;
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0 || param1 > 10) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    pRunTimeStreamConfig->VoltagePrecision = (uint8_t)param1;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetDataPrecision(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    SCPI_ResultInt32(context, (int)pRunTimeStreamConfig->VoltagePrecision);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SaveDataPrecision(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    // Load existing NVM to preserve other fields (e.g. calVals)
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, &settings);
+    }
+    settings.type = DaqifiSettings_TopLevelSettings;
+    // SaveToNvm captures current precision from runtime config automatically
+    if (!daqifi_settings_SaveToNvm(&settings)) {
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_LoadDataPrecision(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
+        return SCPI_RES_ERR;
+    }
+    uint8_t savedPrec = settings.settings.topLevelSettings.voltagePrecision;
+    if (savedPrec <= 10) {
+        StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+                BOARDRUNTIME_STREAMING_CONFIGURATION);
+        if (pStreamCfg != NULL) {
+            pStreamCfg->VoltagePrecision = savedPrec;
+        }
+    }
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     int param1;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
@@ -2290,6 +2344,12 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:LOADFcal", .callback = SCPI_ADCCalFLoad,},
     {.pattern = "CONFigure:ADC:USECal", .callback = SCPI_ADCUseCalSet,},
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
+    //
+    // Voltage output precision
+    {.pattern = "CONFigure:VOLTage:PRECision", .callback = SCPI_SetDataPrecision,},
+    {.pattern = "CONFigure:VOLTage:PRECision?", .callback = SCPI_GetDataPrecision,},
+    {.pattern = "CONFigure:VOLTage:SAVE", .callback = SCPI_SaveDataPrecision,},
+    {.pattern = "CONFigure:VOLTage:LOAD", .callback = SCPI_LoadDataPrecision,},
     //
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},

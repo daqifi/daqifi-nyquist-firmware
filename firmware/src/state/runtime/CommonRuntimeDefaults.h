@@ -98,6 +98,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
         .Encoding = Streaming_ProtoBuffer, \
         .TSClockPeriod = 0xFFFFFFFF,   /* maximum */ \
         .ActiveInterface = StreamingInterface_USB,  /* Default: stream to single interface (USB) */ \
+        .VoltagePrecision = 4,  /* Initial default; overridden by board config at boot */ \
     }
 
 /**
