@@ -1909,9 +1909,13 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
-    int param1;
+    int32_t param1;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pRunTimeStreamConfig == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
@@ -1933,6 +1937,10 @@ static scpi_result_t SCPI_GetDataPrecision(scpi_t * context) {
 static scpi_result_t SCPI_SaveDataPrecision(scpi_t * context) {
     DaqifiSettings settings;
     memset(&settings, 0, sizeof(DaqifiSettings));
+    // Load existing NVM to preserve other fields (e.g. calVals)
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, &settings);
+    }
     settings.type = DaqifiSettings_TopLevelSettings;
     // SaveToNvm captures current precision from runtime config automatically
     if (!daqifi_settings_SaveToNvm(&settings)) {
