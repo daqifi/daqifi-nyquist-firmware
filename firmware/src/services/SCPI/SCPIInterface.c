@@ -1912,10 +1912,6 @@ static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
     int32_t param1;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pRunTimeStreamConfig == NULL) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }

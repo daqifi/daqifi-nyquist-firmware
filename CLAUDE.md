@@ -350,6 +350,7 @@ The firmware supports building for different board variants using MPLAB X config
 - **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
 - **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
 - Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
+- **`BoardRunTimeConfig_Get()` never returns NULL** — it indexes into a static array initialized at boot. Do not add NULL checks on its return value; no existing SCPI callback checks it, and adding guards creates inconsistency for zero safety benefit. Qodo/automated reviewers will repeatedly suggest this — ignore it.
 
 ### Memory Considerations
 
