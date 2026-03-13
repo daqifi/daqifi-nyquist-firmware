@@ -2395,6 +2395,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:MAXSize", .callback = SCPI_StorageSDMaxSizeSet},
     {.pattern = "SYSTem:STORage:SD:MAXSize?", .callback = SCPI_StorageSDMaxSizeGet},
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
+    {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
     // FreeRTOS
     //{.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

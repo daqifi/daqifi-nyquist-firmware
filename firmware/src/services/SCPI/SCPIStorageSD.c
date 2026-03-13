@@ -745,6 +745,11 @@ __exit_point:
     return result;
 }
 
+scpi_result_t SCPI_StorageSDAbort(scpi_t * context) {
+    sd_card_manager_AbortTransfer();
+    return SCPI_RES_OK;
+}
+
 /* *****************************************************************************
  End of File
  */
