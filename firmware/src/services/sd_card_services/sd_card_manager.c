@@ -568,8 +568,10 @@ void sd_card_manager_ProcessState() {
                             xSemaphoreGive(gSDCardData.wMutex);
                         } else if (pendingLen > 0) {
                             gSDCardData.currentFileBytes += pendingLen;
+                            SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_partial_write");
                             gSDCardData.writeBufferLength -= pendingLen;
                             gSDCardData.sdCardWriteBufferOffset += pendingLen;
+                            xSemaphoreGive(gSDCardData.wMutex);
                         } else {
                             if (!unmountDrainErrorLogged) {
                                 unmountDrainErrorLogged = true;
@@ -597,7 +599,8 @@ void sd_card_manager_ProcessState() {
                             xSemaphoreGive(gSDCardData.wMutex);
 
                             // Write immediately, loop for partial writes
-                            while (gSDCardData.sdCardWritePending == 1) {
+                            int innerIter = 0;
+                            while (gSDCardData.sdCardWritePending == 1 && innerIter < 100) {
                                 writeLen = SDCardWrite();
                                 if (writeLen >= gSDCardData.writeBufferLength) {
                                     gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
@@ -608,8 +611,10 @@ void sd_card_manager_ProcessState() {
                                     xSemaphoreGive(gSDCardData.wMutex);
                                 } else if (writeLen > 0) {
                                     gSDCardData.currentFileBytes += writeLen;
+                                    SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_drain_partial");
                                     gSDCardData.writeBufferLength -= writeLen;
                                     gSDCardData.sdCardWriteBufferOffset += writeLen;
+                                    xSemaphoreGive(gSDCardData.wMutex);
                                 } else {
                                     if (!unmountDrainErrorLogged) {
                                         unmountDrainErrorLogged = true;
@@ -620,6 +625,7 @@ void sd_card_manager_ProcessState() {
                                     gSDCardData.sdCardWriteBufferOffset = 0;
                                     break;
                                 }
+                                innerIter++;
                             }
                         } else {
                             xSemaphoreGive(gSDCardData.wMutex);

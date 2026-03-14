@@ -591,6 +591,17 @@ SYST:STOR:SD:MAXSize?               # Query current setting
 
 **Implementation:** `firmware/src/services/sd_card_services/sd_card_manager.c`
 
+### SD Card Sector-Aligned Writes
+
+The WRITE_TO_FILE state extracts data from the circular buffer in 512-byte sector-aligned chunks. This allows FatFS to use its fast path (`disk_write()` directly from the user buffer) instead of the per-sector `memcpy` + dirty-flag path. Measured improvement: ~55% throughput gain on SPI-mode SD cards (~500 KB/s vs ~320 KB/s with same benchmark method).
+
+**Key design rules:**
+- **Normal writes** (WRITE_TO_FILE loop): Wait for ≥512 bytes available, extract in sector multiples up to `WBUFFER_SIZE`
+- **Drain paths** (rotation and UNMOUNT): Do NOT sector-align — must flush all remaining data including sub-sector tails
+- **UNMOUNT_DISK**: Drains both pending writeBuffer and circular buffer before file close to prevent data loss on streaming stop
+
+**Implementation:** `firmware/src/services/sd_card_services/sd_card_manager.c` (search for `SD_SECTOR_SIZE_BYTES`)
+
 ### Logging System
 
 The firmware includes a compile-time configurable logging system with per-module log level control. Logs are stored in a circular buffer and can be retrieved via SCPI commands.
