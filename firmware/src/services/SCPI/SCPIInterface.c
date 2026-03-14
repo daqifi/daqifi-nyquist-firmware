@@ -1851,8 +1851,14 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
         // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-        // Give SD card manager task time to close the file
-        vTaskDelay(pdMS_TO_TICKS(100));
+        // Wait for SD card manager to drain buffer, close file, and go idle
+        {
+            int idleWait = 0;
+            while (!sd_card_manager_IsIdle() && idleWait < 500) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                idleWait++;
+            }
+        }
     }
 
     // Reset encoder state so next session gets fresh headers

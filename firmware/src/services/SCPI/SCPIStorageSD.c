@@ -365,7 +365,22 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Set SD card to write mode
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-    
+
+    // Wait for file to be open and ready before writing
+    {
+        int readyWait = 0;
+        while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            readyWait++;
+        }
+        if (!sd_card_manager_IsWriteReady()) {
+            context->interface->write(context, "\r\nError: SD file not ready\r\n", 28);
+            gSDBenchmarkResults.testInProgress = false;
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
+    }
+
     // Start benchmark timing
     uint32_t startTime = xTaskGetTickCount();
     
@@ -410,17 +425,22 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         }
         
         bytesWritten += written;
-        
-        // Allow other tasks to run
-        vTaskDelay(1);
     }
-    
-    // Force flush to ensure all data is written
+
+    // Trigger flush: set mode to NONE so SD task drains buffer and closes file
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-    vTaskDelay(100); // Wait for flush to complete
-    
-    // Calculate results
+
+    // Wait for SD card manager to fully drain, close file, and go idle
+    {
+        int idleWait = 0;
+        while (!sd_card_manager_IsIdle() && idleWait < 500) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            idleWait++;
+        }
+    }
+
+    // Capture end time after full pipeline completion
     uint32_t endTime = xTaskGetTickCount();
     gSDBenchmarkResults.totalTimeMs = (endTime - startTime) * portTICK_PERIOD_MS;
     gSDBenchmarkResults.totalBytesWritten = bytesWritten;
