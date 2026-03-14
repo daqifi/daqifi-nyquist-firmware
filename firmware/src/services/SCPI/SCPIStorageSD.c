@@ -736,8 +736,13 @@ scpi_result_t SCPI_StorageSDAbort(scpi_t * context) {
 }
 
 scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context) {
-    SCPI_ResultInt32(context, sd_card_manager_GetFormatStatus());
+    int status = sd_card_manager_GetFormatStatus();
+    SCPI_ResultInt32(context, status);
     SCPI_ResultInt32(context, sd_card_manager_GetFormatProgress());
+    // Clear terminal states after reading to avoid stale results
+    if (status == 2 || status == -1) {
+        sd_card_manager_ClearFormatStatus();
+    }
     return SCPI_RES_OK;
 }
 

@@ -228,6 +228,14 @@ extern "C" {
     void sd_card_manager_SetFormatPending(void);
 
     /**
+     * @brief Clears format status back to idle (0).
+     *
+     * Called after FORmat? reads a terminal status (2=success, -1=failed)
+     * to prevent stale results on subsequent queries.
+     */
+    void sd_card_manager_ClearFormatStatus(void);
+
+    /**
      * @brief Returns estimated format progress as a percentage (0-100).
      *
      * Based on sector write counting in the disk I/O layer. Returns 0 when
