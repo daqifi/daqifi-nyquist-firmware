@@ -374,8 +374,11 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
-            context->interface->write(context, "\r\nError: SD file not ready\r\n", 28);
+            LOG_E("SD:BENCH - File not ready after timeout\r\n");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
+            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -413,13 +416,11 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         // Write to SD card (WriteToBuffer has timeout protection)
         size_t written = sd_card_manager_WriteToBuffer((const char*)testBuffer, chunkSize);
         if (written != chunkSize) {
-            // Write failed - likely buffer timeout
-            char errMsg[80];
-            snprintf(errMsg, sizeof(errMsg), 
-                     "\r\nError: Write failed at %u/%u bytes (buffer timeout?)\r\n", 
-                     bytesWritten, bytesToWrite);
-            context->interface->write(context, errMsg, strlen(errMsg));
+            LOG_E("SD:BENCH - Write failed at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
+            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -437,6 +438,9 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         while (!sd_card_manager_IsIdle() && idleWait < 500) {
             vTaskDelay(pdMS_TO_TICKS(10));
             idleWait++;
+        }
+        if (idleWait >= 500) {
+            LOG_E("SD:BENCH - SD idle timeout after 5s\r\n");
         }
     }
 

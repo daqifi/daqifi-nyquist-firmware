@@ -559,7 +559,7 @@ void sd_card_manager_ProcessState() {
                     bool unmountDrainErrorLogged = false;
                     while (gSDCardData.sdCardWritePending == 1 && drainIter < 100) {
                         int pendingLen = SDCardWrite();
-                        if (pendingLen >= gSDCardData.writeBufferLength) {
+                        if (pendingLen > 0 && (size_t)pendingLen >= gSDCardData.writeBufferLength) {
                             gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
                             SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_pending_write");
                             gSDCardData.sdCardWritePending = 0;
@@ -602,7 +602,7 @@ void sd_card_manager_ProcessState() {
                             int innerIter = 0;
                             while (gSDCardData.sdCardWritePending == 1 && innerIter < 100) {
                                 writeLen = SDCardWrite();
-                                if (writeLen >= gSDCardData.writeBufferLength) {
+                                if (writeLen > 0 && (size_t)writeLen >= gSDCardData.writeBufferLength) {
                                     gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
                                     SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_drain_complete");
                                     gSDCardData.sdCardWritePending = 0;

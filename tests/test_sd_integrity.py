@@ -92,7 +92,7 @@ def download_file(ser, filename, timeout=30):
     ser.write(f'SYST:STOR:SD:GET "{filename}"\r'.encode())
 
     data = b""
-    eof_marker = b"<EOF>"
+    eof_marker = b"__END_OF_FILE__"
     end_time = time.time() + timeout
 
     while time.time() < end_time:

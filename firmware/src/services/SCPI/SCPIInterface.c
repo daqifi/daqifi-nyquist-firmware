@@ -1858,6 +1858,9 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 idleWait++;
             }
+            if (idleWait >= 500) {
+                LOG_E("[SD] StopStreaming: SD idle timeout after 5s");
+            }
         }
     }
 
