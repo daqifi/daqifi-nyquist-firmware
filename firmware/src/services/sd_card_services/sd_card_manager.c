@@ -1458,6 +1458,10 @@ int sd_card_manager_GetFormatStatus(void) {
     return gFormatStatus;
 }
 
+void sd_card_manager_SetFormatPending(void) {
+    gFormatStatus = 1;
+}
+
 int sd_card_manager_GetFormatProgress(void) {
     if (gFormatStatus == 2) return 100;
     if (gFormatStatus != 1 || gFormatSectorsEstimate == 0) return 0;

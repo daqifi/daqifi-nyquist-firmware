@@ -586,6 +586,7 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
 
     // Set mode to FORMAT and trigger the operation (non-blocking)
     // Poll SYST:STOR:SD:FORmat? for status and progress percentage
+    sd_card_manager_SetFormatPending();  // Immediately visible to FORmat? queries
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 

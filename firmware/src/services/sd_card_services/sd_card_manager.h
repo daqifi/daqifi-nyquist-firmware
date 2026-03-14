@@ -220,6 +220,14 @@ extern "C" {
     int sd_card_manager_GetFormatStatus(void);
 
     /**
+     * @brief Sets format status to in-progress before the SD task picks it up.
+     *
+     * Call from the SCPI handler immediately before setting MODE_FORMAT
+     * to eliminate the race window where FORmat? would return idle.
+     */
+    void sd_card_manager_SetFormatPending(void);
+
+    /**
      * @brief Returns estimated format progress as a percentage (0-100).
      *
      * Based on sector write counting in the disk I/O layer. Returns 0 when
