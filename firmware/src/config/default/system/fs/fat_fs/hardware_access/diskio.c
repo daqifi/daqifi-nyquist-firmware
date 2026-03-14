@@ -15,6 +15,10 @@
 
 #define CACHE_ALIGN_CHECK  (CACHE_LINE_SIZE - 1)
 
+/* Format progress tracking - read by sd_card_manager via extern */
+volatile uint32_t gDiskFormatSectorsWritten = 0;
+volatile bool gDiskFormatTracking = false;
+
 typedef struct
 {
     uint8_t alignedBuffer[SYS_FS_FAT_ALIGNED_BUFFER_LEN] __ALIGNED(CACHE_LINE_SIZE);
@@ -226,6 +230,10 @@ DRESULT disk_write
     uint32_t count       /* Number of sectors to write (1..128) */
 )
 {
+    if (gDiskFormatTracking) {
+        gDiskFormatSectorsWritten += count;
+    }
+
     DRESULT result = RES_ERROR;
 
     uint32_t bytesToTransfer    = 0;

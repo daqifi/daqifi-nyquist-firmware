@@ -213,6 +213,40 @@ extern "C" {
     void sd_card_manager_AbortTransfer(void);
 
     /**
+     * @brief Returns the current format operation status.
+     *
+     * @return 0 = idle (no format), 1 = in progress, 2 = completed OK, -1 = failed
+     */
+    int sd_card_manager_GetFormatStatus(void);
+
+    /**
+     * @brief Sets format status to in-progress before the SD task picks it up.
+     *
+     * Call from the SCPI handler immediately before setting MODE_FORMAT
+     * to eliminate the race window where FORmat? would return idle.
+     */
+    void sd_card_manager_SetFormatPending(void);
+
+    /**
+     * @brief Clears format status back to idle (0).
+     *
+     * Called after FORmat? reads a terminal status (2=success, -1=failed)
+     * to prevent stale results on subsequent queries.
+     */
+    void sd_card_manager_ClearFormatStatus(void);
+
+    /**
+     * @brief Returns estimated format progress as a percentage (0-100).
+     *
+     * Based on sector write counting in the disk I/O layer. Returns 0 when
+     * idle or failed, 0-99 during format, 100 when complete. The estimate
+     * may not be perfectly linear but gives useful progress indication.
+     *
+     * @return 0-100 percentage
+     */
+    int sd_card_manager_GetFormatProgress(void);
+
+    /**
      * @brief Callback function invoked when data is ready after read or directory listing operations.
      *
      * This weakly linked function should be implemented by the user to handle data received

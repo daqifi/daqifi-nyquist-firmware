@@ -82,6 +82,12 @@ static SemaphoreHandle_t gSDOpMutex = NULL;
 static bool gLoggedUnmountFail = false;
 static bool gLoggedWriteBufferTimeout = false;
 static volatile bool gTransferAbortRequested = false;
+static int gFormatStatus = 0;  // 0=idle, 1=in progress, 2=success, -1=failed
+static uint32_t gFormatSectorsEstimate = 0;  // Estimated total sectors written during format
+
+/* Extern: sector write counter in diskio.c for format progress tracking */
+extern volatile uint32_t gDiskFormatSectorsWritten;
+extern volatile bool gDiskFormatTracking;
 
 /**
  * Helper function: Wait for USB buffer to drain before EOF/close
@@ -1187,6 +1193,39 @@ void sd_card_manager_ProcessState() {
         {
             LOG_D("[SD] Formatting SD card at '%s'\r\n", SD_CARD_MANAGER_DISK_MOUNT_NAME);
 
+            // Estimate total sector writes for progress tracking
+            // f_mkfs writes: VBR + FSINFO (4 sectors) + 1 FAT table + root dir cluster
+            // FatFS defaults to n_fat=1 when SYS_FS_FORMAT_PARAM.n_fat is 0
+            // Cluster size auto-selected by f_mkfs: sz_vol/0x20000 indexes cst32 table
+            {
+                uint32_t totalSec = 0, freeSec = 0;
+                if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME,
+                                           &totalSec, &freeSec) == SYS_FS_RES_SUCCESS
+                    && totalSec > 0) {
+                    // Replicate f_mkfs auto-selection: n = sz_vol / 0x20000
+                    // cst32[] = {1, 2, 4, 8, 16, 32, 0}, pau starts at 1 and doubles
+                    uint32_t n = totalSec / 0x20000;
+                    static const uint32_t cst32[] = {1, 2, 4, 8, 16, 32, 0};
+                    uint32_t spc = 1;
+                    for (int i = 0; cst32[i] && cst32[i] <= n; i++) {
+                        spc <<= 1;
+                    }
+                    uint32_t clusters = totalSec / spc;
+                    uint32_t fatSectors = (clusters * 4 + 8 + 511) / 512;
+                    // reserved(32) + 1 FAT copy + root dir (1 cluster) + VBR/FSINFO (~4)
+                    gFormatSectorsEstimate = 32 + fatSectors + spc + 10;
+                    // Add 10% buffer so progress reaches ~90% before completion
+                    gFormatSectorsEstimate += gFormatSectorsEstimate / 10;
+                } else {
+                    gFormatSectorsEstimate = 0;  // Unknown - progress unavailable
+                }
+            }
+
+            // Enable disk write tracking and start format
+            gDiskFormatSectorsWritten = 0;
+            gDiskFormatTracking = true;
+            gFormatStatus = 1;  // In progress
+
             // Format the drive using FAT filesystem
             // Use SYS_FS_FORMAT_ANY to auto-select FAT16/FAT32 based on card size
             SYS_FS_FORMAT_PARAM opt = {
@@ -1200,11 +1239,15 @@ void sd_card_manager_ProcessState() {
             if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] Format completed successfully\r\n");
                 gSDCardData.lastOperationSuccess = true;
+                gFormatStatus = 2;  // Success
             } else {
                 SYS_FS_ERROR err = SYS_FS_Error();
                 LOG_E("[SD] Format failed, error=%d\r\n", err);
                 gSDCardData.lastOperationSuccess = false;
+                gFormatStatus = -1;  // Failed
             }
+
+            gDiskFormatTracking = false;
 
             // Reset mode to prevent re-triggering
             gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
@@ -1409,6 +1452,27 @@ bool sd_card_manager_IsWriteReady(void) {
 
 void sd_card_manager_AbortTransfer(void) {
     gTransferAbortRequested = true;
+}
+
+int sd_card_manager_GetFormatStatus(void) {
+    return gFormatStatus;
+}
+
+void sd_card_manager_SetFormatPending(void) {
+    gDiskFormatSectorsWritten = 0;
+    gFormatSectorsEstimate = 0;
+    gFormatStatus = 1;
+}
+
+void sd_card_manager_ClearFormatStatus(void) {
+    gFormatStatus = 0;
+}
+
+int sd_card_manager_GetFormatProgress(void) {
+    if (gFormatStatus == 2) return 100;
+    if (gFormatStatus != 1 || gFormatSectorsEstimate == 0) return 0;
+    uint32_t pct = (gDiskFormatSectorsWritten * 100) / gFormatSectorsEstimate;
+    return (pct > 99) ? 99 : (int)pct;  // Cap at 99 until actually complete
 }
 
 size_t sd_card_manager_GetWriteBuffFreeSize() {

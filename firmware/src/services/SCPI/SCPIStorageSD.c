@@ -584,26 +584,11 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
 
     LOG_D("SD:FORmat - Formatting SD card (erasing all files)\r\n");
 
-    // Set mode to FORMAT and trigger the operation
+    // Set mode to FORMAT and trigger the operation (non-blocking)
+    // Poll SYST:STOR:SD:FORmat? for status and progress percentage
+    sd_card_manager_SetFormatPending();  // Immediately visible to FORmat? queries
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-
-    // Wait for sd_card_manager to complete format (up to 30 seconds - formatting can be very slow on large cards)
-    if (!sd_card_manager_WaitForCompletion(SCPI_SD_FORMAT_TIMEOUT_MS)) {
-        LOG_E("SD:FORmat - Operation timeout\r\n");
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
-
-    // Check if the operation succeeded
-    if (!sd_card_manager_GetLastOperationResult()) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
 
     result = SCPI_RES_OK;
 __exit_point:
@@ -747,6 +732,17 @@ __exit_point:
 
 scpi_result_t SCPI_StorageSDAbort(scpi_t * context) {
     sd_card_manager_AbortTransfer();
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context) {
+    int status = sd_card_manager_GetFormatStatus();
+    SCPI_ResultInt32(context, status);
+    SCPI_ResultInt32(context, sd_card_manager_GetFormatProgress());
+    // Clear terminal states after reading to avoid stale results
+    if (status == 2 || status == -1) {
+        sd_card_manager_ClearFormatStatus();
+    }
     return SCPI_RES_OK;
 }
 

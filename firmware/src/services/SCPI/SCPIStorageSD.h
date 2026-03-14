@@ -52,6 +52,9 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context);
 // SD Card Transfer Abort
 scpi_result_t SCPI_StorageSDAbort(scpi_t * context);
 
+// SD Card Format Status Query
+scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }
