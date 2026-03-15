@@ -1334,6 +1334,14 @@ void DRV_SDSPI_Write(
 );
 /* MISRAC 2012 deviation block end */
 
+/* DAQiFi CUSTOM - SD card identification data accessor.
+ * Copies 16 bytes of raw CID register data into caller's buffer.
+ * Returns true on success, false if card not initialized or buffer too small.
+ * If Harmony regenerates this file and removes this prototype, the weak
+ * fallback in SCPIStorageSD.c will be used instead (returns SCPI error). */
+bool DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen);
+/* DAQiFi CUSTOM END */
+
 #include "driver/sdspi/src/drv_sdspi_local.h"
 
 #ifdef __cplusplus

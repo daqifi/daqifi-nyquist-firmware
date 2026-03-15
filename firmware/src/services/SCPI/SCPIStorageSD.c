@@ -32,6 +32,15 @@
 // SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently
 // SPI coordination handled at operation level when needed
 #include <string.h>
+#include "driver/sdspi/drv_sdspi.h"
+
+/* Weak fallback: if Harmony regenerates drv_sdspi.c and removes our custom
+ * DRV_SDSPI_GetCID(), the linker uses this stub instead. The SCPI command
+ * returns an error rather than crashing. */
+bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
+    (void)cidBuffer; (void)bufLen;
+    return false;
+}
 
 #define SCPI_SD_LIST_TIMEOUT_MS 10000
 #define SCPI_SD_DELETE_TIMEOUT_MS 5000
@@ -767,6 +776,69 @@ scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context) {
     if (status == 2 || status == -1) {
         sd_card_manager_ClearFormatStatus();
     }
+    return SCPI_RES_OK;
+}
+
+/**
+ * @brief SCPI handler for SYST:STOR:SD:INFO?
+ *
+ * Returns SD card identification from the CID register:
+ *   MID,OEM,ProductName,Revision,SerialNumber,MfgDate
+ *
+ * Example response: 27,"SM","EC2QT",8.0,1234567890,2023-07
+ */
+scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
+    uint8_t cid[16];
+    if (!DRV_SDSPI_GetCID(cid, sizeof(cid))) {
+        LOG_E("[SD] Card info not available (driver CID support missing or no card)");
+        SCPI_ErrorPush(context, SCPI_ERROR_HARDWARE_MISSING);
+        return SCPI_RES_ERR;
+    }
+
+    /* CID register layout (MSB first as read from card, bytes already in
+     * big-endian order from the driver):
+     *   [0]      Manufacturer ID (MID)
+     *   [1..2]   OEM/Application ID (OID) - 2 ASCII chars
+     *   [3..7]   Product Name (PNM) - 5 ASCII chars
+     *   [8]      Product Revision (PRV) - BCD: high=major, low=minor
+     *   [9..12]  Product Serial Number (PSN) - 32-bit big-endian
+     *   [13..14] Manufacturing Date (MDT) - bits [11:4]=year+2000, [3:0]=month
+     *   [15]     CRC7 + stop bit
+     */
+    uint8_t mid = cid[0];
+
+    char oid[3];
+    oid[0] = (char)cid[1];
+    oid[1] = (char)cid[2];
+    oid[2] = '\0';
+
+    char pnm[6];
+    memcpy(pnm, &cid[3], 5);
+    pnm[5] = '\0';
+
+    uint8_t prv_major = (cid[8] >> 4) & 0x0F;
+    uint8_t prv_minor = cid[8] & 0x0F;
+
+    uint32_t psn = ((uint32_t)cid[9] << 24) | ((uint32_t)cid[10] << 16) |
+                   ((uint32_t)cid[11] << 8) | (uint32_t)cid[12];
+
+    /* MDT: [13] bits 7..4 are reserved, bits 3..0 are year[11:8]
+     *      [14] bits 7..4 are year[7:4], bits 3..0 are month[3:0] */
+    uint16_t mdt_raw = ((uint16_t)(cid[13] & 0x0F) << 8) | (uint16_t)cid[14];
+    uint16_t mdt_year = 2000 + ((mdt_raw >> 4) & 0xFF);
+    uint8_t mdt_month = mdt_raw & 0x0F;
+
+    char result[80];
+    int len = snprintf(result, sizeof(result),
+                       "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u",
+                       mid, oid, pnm,
+                       prv_major, prv_minor,
+                       (unsigned long)psn,
+                       mdt_year, mdt_month);
+
+    context->interface->write(context, result, (size_t)len);
+    context->interface->write(context, "\r\n", 2);
+
     return SCPI_RES_OK;
 }
 

@@ -2771,4 +2771,20 @@ bool DRV_SDSPI_IsWriteProtected( const DRV_HANDLE handle )
     return (bool)dObj->isWriteProtected;
 }
 
+/* DAQiFi CUSTOM - Expose CID raw data for SD card identification.
+ * Feature requested upstream: https://github.com/Microchip-MPLAB-Harmony/core/issues/XXX
+ * If Harmony regenerates this file, re-apply this function or use the weak
+ * fallback stub in SCPIStorageSD.c which returns false gracefully. */
+bool DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen)
+{
+    if (cidBuffer == NULL || bufLen < 16U)
+    {
+        return false;
+    }
+    /* CID raw data is 16 bytes starting after the start token byte */
+    (void) memcpy(cidBuffer, &gDrvSDSPICidData[0][1], 16);
+    return true;
+}
+/* DAQiFi CUSTOM END */
+
 /* MISRAC 2012 deviation block end */

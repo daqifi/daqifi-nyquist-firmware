@@ -55,6 +55,9 @@ scpi_result_t SCPI_StorageSDAbort(scpi_t * context);
 // SD Card Format Status Query
 scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context);
 
+// SD Card Identification Info
+scpi_result_t SCPI_StorageSDInfo(scpi_t * context);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }
