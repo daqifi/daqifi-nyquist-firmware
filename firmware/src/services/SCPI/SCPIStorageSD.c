@@ -836,6 +836,12 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
                        (unsigned long)psn,
                        mdt_year, mdt_month);
 
+    if (len < 0 || (size_t)len >= sizeof(result)) {
+        LOG_E("[SD] CID format error (len=%d)", len);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     context->interface->write(context, result, (size_t)len);
     context->interface->write(context, "\r\n", 2);
 
