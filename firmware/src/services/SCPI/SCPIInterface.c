@@ -1543,6 +1543,24 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetTestPattern(scpi_t * context) {
+    int32_t pattern;
+    if (!SCPI_ParamInt32(context, &pattern, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (pattern < 0 || pattern > 6) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    Streaming_SetTestPattern((uint32_t)pattern);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetTestPattern(scpi_t * context) {
+    SCPI_ResultInt32(context, (int32_t)Streaming_GetTestPattern());
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     Streaming_ClearStats();
     SCPI_SyncQuesBits();
@@ -2392,6 +2410,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:LOSS:THREshold?", .callback = SCPI_GetLossThreshold,},
     {.pattern = "SYSTem:STReam:LOSS:WINDow", .callback = SCPI_SetFlowWindow,},
     {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
+    {.pattern = "SYSTem:STReam:TESTpattern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
+    {.pattern = "SYSTem:STReam:TESTpattern?", .callback = SCPI_GetTestPattern,},
     //
     {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},

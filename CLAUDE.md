@@ -303,6 +303,35 @@ SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
 
 **Implementation:** `firmware/src/services/streaming.c` (gQuesBits, flow window), `firmware/src/services/SCPI/SCPIInterface.c` (OPER/QUES helpers, sync)
 
+#### Test Pattern Streaming Mode
+
+Test pattern mode replaces real ADC values with synthetic data for deterministic regression testing and benchmarking. The real ISR timing, ADC triggering, pool allocation, and full encoding pipeline are preserved — only the sample Value field is overridden.
+
+**SCPI Commands:**
+```bash
+SYSTem:STReam:TESTpattern <pattern>   # Set pattern (0=off, 1-6)
+SYSTem:STReam:TESTpattern?            # Query current pattern (0=disabled)
+```
+
+**Pattern Types:**
+
+| Pattern | Name | Value Generated | Use Case |
+|---------|------|----------------|----------|
+| 0 | Off | Real ADC data | Normal operation |
+| 1 | Counter | `(sampleCount + channelId) % (adcMax+1)` | Integrity verification (PC can predict exact values) |
+| 2 | Midscale | `adcMax / 2` | Consistent encoding size across CSV/JSON/ProtoBuf |
+| 3 | Fullscale | `adcMax` | Worst-case ProtoBuf variable-length encoding |
+| 4 | Walking | `(sampleCount * (channelId+1)) % (adcMax+1)` | Multi-channel visual verification |
+| 5 | Triangle | Ramps 0→adcMax→0, period=2*(adcMax+1) | Realistic waveform, staggered per channel |
+| 6 | Sine | 256-sample sine wave, scaled to [0, adcMax] | Realistic signal testing, 45deg phase offset per channel |
+
+- `adcMax` = module resolution (4096 for MC12bADC, 262144 for AD7609 18-bit)
+- Runtime-only (not persisted to NVM, resets on reboot)
+- Sample counter resets at each `StartStreamData` for deterministic sessions
+- Works with all encoding formats (CSV/JSON/ProtoBuf) and output interfaces (USB/WiFi/SD)
+
+**Implementation:** `firmware/src/services/streaming.c` (gTestPattern, Streaming_GenerateTestValue)
+
 ### Board Variants
 
 - **NQ1**: Basic variant configuration

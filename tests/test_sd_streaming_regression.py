@@ -19,7 +19,7 @@ Hardware requirements:
   - USB serial connection (/dev/ttyACM0)
 
 Usage:
-  python3 -u test_sd_streaming_regression.py [--device /dev/ttyACM0] [--duration 300]
+  python3 -u test_sd_streaming_regression.py [--device /dev/ttyACM0] [--duration 300] [--pattern 1]
 
 Pass criteria:
   - QueueDroppedSamples == 0
@@ -69,9 +69,10 @@ def get_stats(ser):
             stats[k.strip()] = v.strip()
     return stats
 
-def run_test(ser, label, channels, freq, duration_sec):
+def run_test(ser, label, channels, freq, duration_sec, pattern=0):
+    pat_label = f", pattern={pattern}" if pattern else ""
     print(f"\n{'='*60}")
-    print(f"REGRESSION TEST: {label}")
+    print(f"REGRESSION TEST: {label}{pat_label}")
     print(f"  {len(channels)} ch @ {freq} Hz, {duration_sec}s, SD-only")
     print(f"{'='*60}")
 
@@ -85,6 +86,9 @@ def run_test(ser, label, channels, freq, duration_sec):
     if '1' not in resp:
         print("  Powering up...")
         send_cmd(ser, "SYST:POW:STAT 1", 3)
+
+    # Enable test pattern if requested (0=off/real ADC, 1-4=synthetic)
+    send_cmd(ser, f"SYST:STR:TESTpattern {pattern}", 0.5)
 
     send_cmd(ser, "SYST:STOR:SD:ENAble 1", 1)
     send_cmd(ser, "SYST:STR:FORmat 2", 0.5)      # CSV
@@ -122,6 +126,7 @@ def run_test(ser, label, channels, freq, duration_sec):
     # Stop
     print("  Stopping...")
     send_cmd(ser, "SYST:StopStreamData", 3)
+    send_cmd(ser, "SYST:STR:TESTpattern 0", 0.5)  # Disable test pattern
     send_cmd(ser, "SYST:STR:INTerface 0", 0.5)  # Reset to default
 
     # Collect results
@@ -179,14 +184,17 @@ def main():
     parser = argparse.ArgumentParser(description='SD Card Streaming Regression Test')
     parser.add_argument('--device', default='/dev/ttyACM0', help='Serial device path')
     parser.add_argument('--duration', type=int, default=300, help='Test duration in seconds (default: 300)')
+    parser.add_argument('--pattern', type=int, default=0, choices=[0,1,2,3,4],
+                        help='Test pattern: 0=real ADC (default), 1=counter, 2=midscale, 3=fullscale, 4=walking')
     args = parser.parse_args()
 
     ser = serial.Serial(args.device, 115200, timeout=1)
     time.sleep(0.5)
     ser.reset_input_buffer()
 
+    pat_info = f", Pattern: {args.pattern}" if args.pattern else ""
     print("SD Card Streaming Regression Test")
-    print(f"Device: {args.device}, Duration: {args.duration}s per test")
+    print(f"Device: {args.device}, Duration: {args.duration}s per test{pat_info}")
 
     resp = send_cmd(ser, "*IDN?", 0.5)
     for line in resp.split('\n'):
@@ -199,9 +207,9 @@ def main():
         if line and 'DAQIFI>' not in line and '>' not in line and 'SYST:' not in line:
             print(f"Card: {line}")
 
-    r1 = run_test(ser, "1ch @ 5kHz", [4], 5000, args.duration)
+    r1 = run_test(ser, "1ch @ 5kHz", [4], 5000, args.duration, args.pattern)
     time.sleep(5)
-    r2 = run_test(ser, "16ch @ 1kHz", ALL_PUBLIC, 1000, args.duration)
+    r2 = run_test(ser, "16ch @ 1kHz", ALL_PUBLIC, 1000, args.duration, args.pattern)
 
     print(f"\n{'='*60}")
     print(f"REGRESSION SUMMARY")

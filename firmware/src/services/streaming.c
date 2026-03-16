@@ -30,7 +30,12 @@
 #include "HAL/ADC/MC12bADC.h"
 #include "sd_card_services/sd_card_manager.h"
 
-//#define TEST_STREAMING
+// --- Test pattern streaming mode ---
+// When non-zero, overrides ADC sample values with synthetic data patterns.
+// Runtime-only (not persisted to NVM). Set via SCPI SYST:STR:TESTpattern.
+// 32-bit atomic read on PIC32MZ — no critical section needed for reads/writes.
+static volatile uint32_t gTestPattern = 0;       // 0=off, 1-4=pattern type
+static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on start
 
 // SD protobuf metadata: emitted as first message in each SD log file.
 // volatile: written by SD card task (via Streaming_ResetSdPbMetadata),
@@ -136,9 +141,81 @@ static tStreamingConfig* gpStreamingConfig;
 static bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
 static TaskHandle_t gStreamingTaskHandle;
-#if  defined(TEST_STREAMING)
-static void Streaming_StuffDummyData(void);
-#endif
+
+// Sine lookup table: 256 entries, values 0-65535 (half-wave scaled to uint16_t).
+// Full sine: offset by 32768 so output ranges [0, 65535].
+// sin(2*pi*i/256) * 32767 + 32768, stored as uint16_t.
+static const uint16_t gSineLUT[256] = {
+    32768,33572,34376,35178,35980,36779,37576,38370,
+    39161,39947,40730,41507,42280,43046,43807,44561,
+    45307,46047,46778,47500,48214,48919,49614,50298,
+    50972,51636,52287,52927,53555,54171,54773,55362,
+    55938,56499,57047,57579,58097,58600,59087,59558,
+    60013,60451,60873,61278,61666,62036,62389,62724,
+    63041,63339,63620,63881,64124,64348,64553,64739,
+    64907,65055,65184,65294,65385,65457,65510,65535,
+    65535,65535,65510,65457,65385,65294,65184,65055,
+    64907,64739,64553,64348,64124,63881,63620,63339,
+    63041,62724,62389,62036,61666,61278,60873,60451,
+    60013,59558,59087,58600,58097,57579,57047,56499,
+    55938,55362,54773,54171,53555,52927,52287,51636,
+    50972,50298,49614,48919,48214,47500,46778,46047,
+    45307,44561,43807,43046,42280,41507,40730,39947,
+    39161,38370,37576,36779,35980,35178,34376,33572,
+    32768,31964,31160,30358,29556,28757,27960,27166,
+    26375,25589,24806,24029,23256,22490,21729,20975,
+    20229,19489,18758,18036,17322,16617,15922,15238,
+    14564,13900,13249,12609,11981,11365,10763,10174,
+     9598, 9037, 8489, 7957, 7439, 6936, 6449, 5978,
+     5523, 5085, 4663, 4258, 3870, 3500, 3147, 2812,
+     2495, 2197, 1916, 1655, 1412, 1188,  983,  797,
+      629,  481,  352,  242,  151,   79,   26,    0,
+        0,    0,   26,   79,  151,  242,  352,  481,
+      629,  797,  983, 1188, 1412, 1655, 1916, 2197,
+     2495, 2812, 3147, 3500, 3870, 4258, 4663, 5085,
+     5523, 5978, 6449, 6936, 7439, 7957, 8489, 9037,
+     9598,10174,10763,11365,11981,12609,13249,13900,
+    14564,15238,15922,16617,17322,18036,18758,19489,
+    20229,20975,21729,22490,23256,24029,24806,25589,
+    26375,27166,27960,28757,29556,30358,31160,31964,
+};
+
+/**
+ * Generate a synthetic ADC value for test pattern streaming.
+ * @param pattern    Pattern type (1-6, see switch cases)
+ * @param channel    Channel ID (0-based)
+ * @param sampleCount Monotonic sample counter (reset each session)
+ * @param adcMax     ADC resolution (e.g. 4096 for 12-bit, 262144 for 18-bit)
+ * @return Synthetic ADC value in [0, adcMax]
+ */
+static uint32_t Streaming_GenerateTestValue(uint32_t pattern, uint8_t channel,
+                                             uint64_t sampleCount, uint32_t adcMax) {
+    uint32_t range = adcMax + 1;  // Values from 0 to adcMax inclusive
+    switch (pattern) {
+        case 1:  // Counter: predictable sequence for integrity verification
+            return (uint32_t)((sampleCount + channel) % range);
+        case 2:  // Midscale: constant value for consistent encoding size
+            return adcMax / 2;
+        case 3:  // Fullscale: maximum value for worst-case ProtoBuf size
+            return adcMax;
+        case 4:  // Walking: channel-dependent ramp for visual verification
+            return (uint32_t)(((sampleCount * (channel + 1))) % range);
+        case 5: {  // Triangle: ramps up then down, period = 2*adcMax samples
+            // Phase offset per channel so multi-channel view is staggered
+            uint32_t period = 2 * range;
+            uint32_t pos = (uint32_t)((sampleCount + (uint32_t)channel * (range / 4)) % period);
+            return (pos < range) ? pos : (period - 1 - pos);
+        }
+        case 6: {  // Sine: 256-sample period, scaled to [0, adcMax]
+            // Phase offset per channel: channel * 32 (45 degrees apart)
+            uint8_t idx = (uint8_t)((sampleCount + (uint32_t)channel * 32) & 0xFF);
+            // Scale LUT (0-65535) to (0-adcMax)
+            return (uint32_t)(((uint64_t)gSineLUT[idx] * adcMax) >> 16);
+        }
+        default:
+            return 0;
+    }
+}
 
 /**
  * @brief Deferred interrupt handler for sample collection.
@@ -154,7 +231,6 @@ static void Streaming_StuffDummyData(void);
  */
 void _Streaming_Deferred_Interrupt_Task(void) {
     TickType_t xBlockTime = portMAX_DELAY;
-#if  !defined(TEST_STREAMING)
     uint8_t i = 0;
     tBoardData * pBoardData = BoardData_Get(
             BOARDDATA_ALL_DATA,
@@ -169,16 +245,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_MODULES);
     AInRuntimeArray* pAiRunTimeChannelConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    
+
     AInPublicSampleList_t *pPublicSampleList=NULL;
     AInSample *pAiSample;
 
     uint64_t ChannelScanFreqDivCount = 0;
-#endif
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
 
-#if  !defined(TEST_STREAMING)
         if (pRunTimeStreamConf->IsEnabled) {
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
             // No heap check needed - pool uses pre-allocated static memory
@@ -203,6 +277,20 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         taskEXIT_CRITICAL();
 
                         pPublicSampleList->isSampleValid[i]=1;
+
+                        // Test pattern override: replace ADC value with synthetic data
+                        if (gTestPattern != 0) {
+                            uint32_t adcMax;
+                            if (pBoardConfig->AInChannels.Data[i].Type == AIn_AD7609) {
+                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
+                            } else {
+                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
+                            }
+                            pPublicSampleList->sampleElement[i].Value =
+                                Streaming_GenerateTestValue(gTestPattern,
+                                    pPublicSampleList->sampleElement[i].Channel,
+                                    gTestPatternSampleCount, adcMax);
+                        }
                     } else {
                         // Mark as invalid if sample data unavailable
                         pPublicSampleList->isSampleValid[i]=0;
@@ -242,12 +330,16 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 ChannelScanFreqDivCount++;
             }
             DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
+
+            // Increment test pattern counter once per ISR tick (after all channels)
+            if (gTestPattern != 0) {
+                taskENTER_CRITICAL();
+                gTestPatternSampleCount++;
+                taskEXIT_CRITICAL();
+            }
         }
-       
+
         xTaskNotifyGive(gStreamingTaskHandle);
-#else
-        Streaming_StuffDummyData();
-#endif
 
     }
 }
@@ -257,11 +349,6 @@ void Streaming_Defer_Interrupt(void) {
     vTaskNotifyGiveFromISR(gStreamingInterruptHandle, &xHigherPriorityTaskWoken);
     portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
 }
-
-/*!
- *  Function for debugging - fills buffer with dummy data
- */
-//static void Streaming_StuffDummyData(void);
 
 static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
 
@@ -302,6 +389,10 @@ static void Streaming_Start(void) {
         if (gpRuntimeConfigStream->IsEnabled) {
             Streaming_ClearStats();
             Streaming_InitFlowWindow(gpRuntimeConfigStream->Frequency);
+            // Reset test pattern counter so each session starts at 0
+            taskENTER_CRITICAL();
+            gTestPatternSampleCount = 0;
+            taskEXIT_CRITICAL();
         }
 
         // Clear encoding buffer once to prevent stale data artifacts in SD files
@@ -798,44 +889,11 @@ void TimestampTimer_Init(void) {
     TimerApi_Start(gpStreamingConfig->TSTimerIndex);
 
 }
-#if  defined(TEST_STREAMING)
 
-static void Streaming_StuffDummyData(void) {
-    // Stuff stream with some data
-    // Copy dummy samples to the data list
-    uint32_t i = 0;
-    int k = 0;
-    static AInSample data;
-
-    AInSampleList * pAInSamples = BoardData_Get(
-            BOARDDATA_AIN_SAMPLES,
-            0);
-    StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_STREAMING_CONFIGURATION);
-
-    AInModRuntimeArray * pRunTimeAInModules = BoardRunTimeConfig_Get(
-            BOARDRUNTIMECONFIG_AIN_MODULES);
-
-    AInRuntimeArray* pAiRunTimeChannelConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
-
-    AInArray * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_AIN_CHANNELS,
-            0);
-
-    if (!pRunTimeStreamConf->IsEnabled) {
-        return;
-    }
-    data.Timestamp++;
-    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-        for (k = 0; k < pAiRunTimeChannelConfig->Size; k++) {
-            if (pAiRunTimeChannelConfig->Data[k].IsEnabled == 1
-                    && pBoardConfig->Data[k].Config.MC12b.IsPublic == 1) {
-                data.Value = k;
-                data.Channel = k;
-                //AInSampleList_PushBack(pAInSamples, (const AInSample *) &data);
-            }
-        }
-        //ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
-    }
+void Streaming_SetTestPattern(uint32_t pattern) {
+    gTestPattern = pattern;  // 32-bit write is atomic on PIC32MZ
 }
-#endif
+
+uint32_t Streaming_GetTestPattern(void) {
+    return gTestPattern;  // 32-bit read is atomic on PIC32MZ
+}

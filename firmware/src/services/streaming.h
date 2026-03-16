@@ -79,6 +79,13 @@ void Streaming_SetLossThreshold(uint32_t pct);
 uint32_t Streaming_GetFlowWindowOverride(void);
 void Streaming_SetFlowWindowOverride(uint32_t size);
 
+// Test pattern streaming mode.
+// 0=off (real ADC data), 1=counter, 2=midscale, 3=fullscale, 4=walking,
+// 5=triangle, 6=sine. Runtime-only (not persisted to NVM).
+// Counter resets each streaming session.
+void Streaming_SetTestPattern(uint32_t pattern);
+uint32_t Streaming_GetTestPattern(void);
+
 #ifdef	__cplusplus
 }
 #endif
