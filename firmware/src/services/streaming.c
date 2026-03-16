@@ -17,6 +17,7 @@
 
 #include "streaming.h"
 
+#include <math.h>
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
 #include "JSON_Encoder.h"
@@ -142,43 +143,11 @@ static bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
 static TaskHandle_t gStreamingTaskHandle;
 
-// Sine lookup table: 256 entries, values 0-65535 (half-wave scaled to uint16_t).
-// Full sine: offset by 32768 so output ranges [0, 65535].
-// sin(2*pi*i/256) * 32767 + 32768, stored as uint16_t.
-static const uint16_t gSineLUT[256] = {
-    32768,33572,34376,35178,35980,36779,37576,38370,
-    39161,39947,40730,41507,42280,43046,43807,44561,
-    45307,46047,46778,47500,48214,48919,49614,50298,
-    50972,51636,52287,52927,53555,54171,54773,55362,
-    55938,56499,57047,57579,58097,58600,59087,59558,
-    60013,60451,60873,61278,61666,62036,62389,62724,
-    63041,63339,63620,63881,64124,64348,64553,64739,
-    64907,65055,65184,65294,65385,65457,65510,65535,
-    65535,65535,65510,65457,65385,65294,65184,65055,
-    64907,64739,64553,64348,64124,63881,63620,63339,
-    63041,62724,62389,62036,61666,61278,60873,60451,
-    60013,59558,59087,58600,58097,57579,57047,56499,
-    55938,55362,54773,54171,53555,52927,52287,51636,
-    50972,50298,49614,48919,48214,47500,46778,46047,
-    45307,44561,43807,43046,42280,41507,40730,39947,
-    39161,38370,37576,36779,35980,35178,34376,33572,
-    32768,31964,31160,30358,29556,28757,27960,27166,
-    26375,25589,24806,24029,23256,22490,21729,20975,
-    20229,19489,18758,18036,17322,16617,15922,15238,
-    14564,13900,13249,12609,11981,11365,10763,10174,
-     9598, 9037, 8489, 7957, 7439, 6936, 6449, 5978,
-     5523, 5085, 4663, 4258, 3870, 3500, 3147, 2812,
-     2495, 2197, 1916, 1655, 1412, 1188,  983,  797,
-      629,  481,  352,  242,  151,   79,   26,    0,
-        0,    0,   26,   79,  151,  242,  352,  481,
-      629,  797,  983, 1188, 1412, 1655, 1916, 2197,
-     2495, 2812, 3147, 3500, 3870, 4258, 4663, 5085,
-     5523, 5978, 6449, 6936, 7439, 7957, 8489, 9037,
-     9598,10174,10763,11365,11981,12609,13249,13900,
-    14564,15238,15922,16617,17322,18036,18758,19489,
-    20229,20975,21729,22490,23256,24029,24806,25589,
-    26375,27166,27960,28757,29556,30358,31160,31964,
-};
+// Sine wave period for test pattern 6: 256 samples per cycle.
+// Computed at runtime using hardware FPU (PIC32MZ EF double-precision).
+// Requires portTASK_USES_FLOATING_POINT() in the deferred interrupt task.
+#define SINE_PERIOD 256
+#define SINE_TWO_PI_OVER_PERIOD (6.283185307179586 / 256.0)
 
 /**
  * Generate a synthetic ADC value for test pattern streaming.
@@ -206,11 +175,12 @@ static uint32_t Streaming_GenerateTestValue(uint32_t pattern, uint8_t channel,
             uint32_t pos = (uint32_t)((sampleCount + (uint32_t)channel * (range / 4)) % period);
             return (pos < range) ? pos : (period - 1 - pos);
         }
-        case 6: {  // Sine: 256-sample period, scaled to [0, adcMax]
+        case 6: {  // Sine: 256-sample period, computed via hardware FPU
             // Phase offset per channel: channel * 32 (45 degrees apart)
-            uint8_t idx = (uint8_t)((sampleCount + (uint32_t)channel * 32) & 0xFF);
-            // Scale LUT (0-65535) to (0-adcMax)
-            return (uint32_t)(((uint64_t)gSineLUT[idx] * adcMax) >> 16);
+            uint32_t phase = (uint32_t)((sampleCount + (uint32_t)channel * 32) % SINE_PERIOD);
+            // sin() returns [-1, +1]; map to [0, adcMax]
+            double s = sin(phase * SINE_TWO_PI_OVER_PERIOD);
+            return (uint32_t)((s + 1.0) * 0.5 * adcMax);
         }
         default:
             return 0;
@@ -230,6 +200,9 @@ static uint32_t Streaming_GenerateTestValue(uint32_t pattern, uint8_t channel,
  * - Triggers next ADC conversion immediately after sample collection
  */
 void _Streaming_Deferred_Interrupt_Task(void) {
+    // Enable FPU context saving — required for sin() in test pattern mode
+    portTASK_USES_FLOATING_POINT();
+
     TickType_t xBlockTime = portMAX_DELAY;
     uint8_t i = 0;
     tBoardData * pBoardData = BoardData_Get(

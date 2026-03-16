@@ -184,8 +184,8 @@ def main():
     parser = argparse.ArgumentParser(description='SD Card Streaming Regression Test')
     parser.add_argument('--device', default='/dev/ttyACM0', help='Serial device path')
     parser.add_argument('--duration', type=int, default=300, help='Test duration in seconds (default: 300)')
-    parser.add_argument('--pattern', type=int, default=0, choices=[0,1,2,3,4],
-                        help='Test pattern: 0=real ADC (default), 1=counter, 2=midscale, 3=fullscale, 4=walking')
+    parser.add_argument('--pattern', type=int, default=0, choices=[0,1,2,3,4,5,6],
+                        help='Test pattern: 0=real ADC (default), 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine')
     args = parser.parse_args()
 
     ser = serial.Serial(args.device, 115200, timeout=1)
