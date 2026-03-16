@@ -6,17 +6,19 @@ every sample matches the expected synthetic value. This provides 100%
 data integrity verification across the full pipeline:
   ISR → deferred task → pool → queue → encoder → SD write → file read
 
-Usage:
-  # Capture test pattern data, then verify:
-  python3 verify_test_patterns.py testpat_counter.csv --pattern 1 --adc-max 4096
-  python3 verify_test_patterns.py testpat_tri.csv --pattern 5 --adc-max 4096
-  python3 verify_test_patterns.py testpat_sin.csv --pattern 6 --adc-max 4096
+The script sets voltage precision=0 (integer millivolts) on the device
+before streaming, so CSV values are deterministic integers that can be
+computed from the pattern formula: mv = round(raw * range / resolution * 1000).
 
-  # Download from device first (requires pyserial):
+Usage:
+  # Download from device and verify (requires pyserial):
   python3 verify_test_patterns.py --download --device /dev/ttyACM0 --pattern 1
 
   # Verify all patterns in one run:
   python3 verify_test_patterns.py --run-all --device /dev/ttyACM0
+
+  # Verify an existing CSV file (precision=0 millivolt format):
+  python3 verify_test_patterns.py testpat_p1.csv --pattern 1
 
 Pattern Types:
   1 = Counter:   (sampleCount + channelId) % (adcMax+1)
@@ -27,13 +29,11 @@ Pattern Types:
   6 = Sine:      256-sample sine, scaled to [0, adcMax]
 """
 import argparse
-import csv
 import math
-import os
 import sys
 import time
 
-# Sine LUT must match firmware's gSineLUT exactly (256 entries, uint16_t)
+# Sine wave period: must match firmware's SINE_PERIOD (256 samples per cycle)
 SINE_PERIOD = 256
 
 
@@ -64,16 +64,21 @@ def generate_expected_raw(pattern, channel_id, sample_count, adc_max):
         raise ValueError(f"Unknown pattern: {pattern}")
 
 
-def raw_to_voltage(raw_value, adc_max, vref, internal_scale):
-    """Convert raw ADC count to voltage (matching firmware ADC_ConvertToVoltage)."""
-    return (raw_value / adc_max) * vref * internal_scale
+def raw_to_millivolt(raw_value, adc_max, adc_range):
+    """Convert raw ADC count to integer millivolts (matching firmware precision=0).
 
+    Firmware formula: mv = round(raw * range * internalScale * CalM / resolution * 1000 + CalB*1000)
+    With default calibration (CalM=1, CalB=0) and internalScale=1:
+      mv = round(raw * range / resolution * 1000)
 
-def voltage_to_raw(voltage, adc_max, vref, internal_scale):
-    """Convert voltage back to raw ADC count."""
-    if internal_scale == 0 or vref == 0:
-        return 0
-    return round(voltage / (vref * internal_scale) * adc_max)
+    Args:
+        raw_value: Raw ADC count (0 to adc_max)
+        adc_max: ADC resolution (e.g. 4096)
+        adc_range: ADC voltage range in volts (e.g. 5.0 for NQ1)
+    """
+    voltage_mv = raw_value * adc_range / adc_max * 1000.0
+    # Match firmware rounding: (int32_t)(mv + 0.5) for positive values
+    return round(voltage_mv)
 
 
 def parse_csv_file(filepath):
@@ -127,17 +132,66 @@ def parse_csv_file(filepath):
     return metadata, channels, header or [], rows
 
 
-def verify_pattern(filepath, pattern, adc_max, vref=3.3, internal_scale=None,
-                   tolerance=0, verbose=False):
+def detect_sample_offset(rows, channels, pattern, adc_max, adc_range):
+    """Detect the sample counter offset for the first row in the CSV.
+
+    The firmware's gTestPatternSampleCount starts at 0 when streaming begins,
+    but the first sample written to the SD file may arrive after a pipeline
+    delay. This function determines that offset so we can verify all
+    subsequent samples correctly.
+
+    For counter pattern (1): offset = round(actual_mv * adc_max / adc_range / 1000) - channelId
+    For other patterns: try offsets 0..200 and pick the one that matches row 0.
+    """
+    if not rows or not channels:
+        return 0
+
+    ch = channels[0]
+    val_col = f"ain{ch}_val"
+    if val_col not in rows[0]:
+        return 0
+
+    actual_mv = rows[0][val_col]
+
+    if pattern == 1:  # Counter: raw = (sampleCount + ch) % (adcMax+1)
+        # Reverse the millivolt conversion to get raw
+        raw_approx = actual_mv * adc_max / (adc_range * 1000.0)
+        raw = round(raw_approx)
+        offset = (raw - ch) % (adc_max + 1)
+        return offset
+
+    # For other patterns, brute-force search a reasonable offset range
+    for offset in range(500):
+        expected_raw = generate_expected_raw(pattern, ch, offset, adc_max)
+        expected_mv = raw_to_millivolt(expected_raw, adc_max, adc_range)
+        if abs(actual_mv - expected_mv) <= 1:
+            # Verify with second row too (avoid false positives)
+            if len(rows) > 1 and val_col in rows[1]:
+                expected_raw2 = generate_expected_raw(pattern, ch, offset + 1, adc_max)
+                expected_mv2 = raw_to_millivolt(expected_raw2, adc_max, adc_range)
+                if abs(rows[1][val_col] - expected_mv2) <= 1:
+                    return offset
+            else:
+                return offset
+
+    print(f"  WARNING: Could not detect sample offset (first value: {actual_mv})")
+    return 0
+
+
+def verify_pattern(filepath, pattern, adc_max, adc_range=5.0,
+                   tolerance_mv=1, verbose=False):
     """Verify that CSV data matches the expected test pattern.
+
+    Expects precision=0 CSV format (integer millivolts). Auto-detects the
+    pipeline sample offset, then computes expected millivolt values from the
+    pattern formula and compares every sample.
 
     Args:
         filepath: Path to CSV file
         pattern: Pattern type (1-6)
         adc_max: ADC resolution (e.g., 4096)
-        vref: ADC reference voltage
-        internal_scale: Per-channel scale factor (None = auto-detect)
-        tolerance: Allowed deviation in raw ADC counts (0 for exact match)
+        adc_range: ADC voltage range in volts (default 5.0 for NQ1)
+        tolerance_mv: Allowed deviation in millivolts (default 1)
         verbose: Print each sample comparison
 
     Returns:
@@ -155,71 +209,43 @@ def verify_pattern(filepath, pattern, adc_max, vref=3.3, internal_scale=None,
     print(f"  Metadata: {metadata}")
     print(f"  Channels: {channels}")
     print(f"  Rows: {len(rows)}")
-    print(f"  Pattern: {pattern}, ADC max: {adc_max}")
+    print(f"  Pattern: {pattern}, ADC max: {adc_max}, range: {adc_range}V")
 
-    # For voltage-encoded CSV, we need to reverse the voltage conversion.
-    # Try to auto-detect the scale by comparing first few samples.
-    # If internal_scale is provided, use it directly.
-    if internal_scale is None:
-        # Try to detect: generate expected raw for sample 0, compare to actual
-        # This works for patterns with known first values
-        if pattern == 2:  # Midscale - constant, easy to detect
-            expected_raw = adc_max // 2
-            for ch in channels:
-                val_col = f"ain{ch}_val"
-                if val_col in rows[0]:
-                    actual_voltage = rows[0][val_col]
-                    if expected_raw > 0 and isinstance(actual_voltage, (int, float)):
-                        detected_scale = actual_voltage / ((expected_raw / adc_max) * vref)
-                        print(f"  Auto-detected internal_scale for ch{ch}: {detected_scale:.4f}")
-                        internal_scale = detected_scale
-                        break
-
-    # If we still don't have scale, try raw value matching
-    # (assumes precision=0 millivolt output or raw values)
-    if internal_scale is None:
-        print("  WARNING: Could not auto-detect internal_scale.")
-        print("  Attempting raw integer comparison (precision=0 mode)")
-        internal_scale = 0  # Flag for raw mode
+    # Auto-detect pipeline sample offset
+    offset = detect_sample_offset(rows, channels, pattern, adc_max, adc_range)
+    print(f"  Detected sample offset: {offset}")
 
     total_samples = 0
     mismatches = 0
     first_mismatches = []
 
     for sample_idx, row in enumerate(rows):
+        sample_count = offset + sample_idx
         for ch in channels:
             val_col = f"ain{ch}_val"
             if val_col not in row:
                 continue
 
-            actual = row[val_col]
-            expected_raw = generate_expected_raw(pattern, ch, sample_idx, adc_max)
+            actual_mv = row[val_col]
+            expected_raw = generate_expected_raw(pattern, ch, sample_count, adc_max)
+            expected_mv = raw_to_millivolt(expected_raw, adc_max, adc_range)
 
-            if internal_scale == 0:
-                # Raw/millivolt mode: compare integer values directly
-                # The firmware outputs millivolts, need to figure out the conversion
-                expected_val = expected_raw  # Direct comparison attempt
-                match = (abs(actual - expected_val) <= tolerance)
-            else:
-                # Voltage mode: convert expected raw to voltage and compare
-                expected_voltage = raw_to_voltage(expected_raw, adc_max, vref, internal_scale)
-                # Compare with tolerance in voltage units
-                voltage_tol = raw_to_voltage(tolerance, adc_max, vref, internal_scale) if tolerance > 0 else 0.001
-                match = abs(actual - expected_voltage) <= voltage_tol
+            match = (abs(actual_mv - expected_mv) <= tolerance_mv)
 
             total_samples += 1
             if not match:
                 mismatches += 1
-                if len(first_mismatches) < 5:
+                if len(first_mismatches) < 10:
                     first_mismatches.append(
-                        f"  Row {sample_idx}, ch{ch}: expected_raw={expected_raw}, "
-                        f"actual={actual}"
+                        f"  Row {sample_idx} (sample {sample_count}), ch{ch}: "
+                        f"expected_raw={expected_raw}, expected_mv={expected_mv}, "
+                        f"actual_mv={actual_mv}, diff={actual_mv - expected_mv}"
                     )
 
-            if verbose and sample_idx < 10:
+            if verbose and sample_idx < 20:
                 status = "OK" if match else "MISMATCH"
-                print(f"  [{sample_idx}] ch{ch}: expected_raw={expected_raw}, "
-                      f"actual={actual} [{status}]")
+                print(f"  [{sample_idx}] sample={sample_count}, ch{ch}: raw={expected_raw}, "
+                      f"expected_mv={expected_mv}, actual_mv={actual_mv} [{status}]")
 
     details = ""
     if first_mismatches:
@@ -228,8 +254,13 @@ def verify_pattern(filepath, pattern, adc_max, vref=3.3, internal_scale=None,
     return mismatches == 0, total_samples, mismatches, details
 
 
-def download_and_verify(device, pattern, adc_max, duration=5, freq=1000, channel=4):
-    """Run a test pattern session on device, download CSV, and verify."""
+def download_and_verify(device, pattern, adc_max, adc_range=5.0,
+                        duration=5, freq=1000, channel=4):
+    """Run a test pattern session on device, download CSV, and verify.
+
+    Sets voltage precision=0 (integer millivolts) for deterministic output,
+    streams to SD card, downloads the file, and verifies every sample.
+    """
     try:
         import serial
     except ImportError:
@@ -254,10 +285,11 @@ def download_and_verify(device, pattern, adc_max, duration=5, freq=1000, channel
     # Setup
     send_cmd("SYST:StopStreamData", 1)
     send_cmd("SYST:POW:STAT 1", 3)
+    send_cmd("CONF:VOLT:PREC 0", 0.3)             # Integer millivolts
     send_cmd(f"SYST:STR:TESTpattern {pattern}")
     send_cmd("SYST:STOR:SD:ENAble 1", 1)
-    send_cmd("SYST:STR:FORmat 2", 0.3)       # CSV
-    send_cmd("SYST:STR:INTerface 2", 0.3)     # SD-only
+    send_cmd("SYST:STR:FORmat 2", 0.3)             # CSV
+    send_cmd("SYST:STR:INTerface 2", 0.3)          # SD-only
     send_cmd(f'SYST:STOR:SD:LOGging "{fname}"', 0.5)
 
     # Disable all, enable target channel
@@ -273,37 +305,52 @@ def download_and_verify(device, pattern, adc_max, duration=5, freq=1000, channel
     stats_resp = send_cmd("SYST:STR:STATS?", 1.5)
     print(f"  Stats: {stats_resp}")
 
+    # Check for drops
+    has_drops = False
+    for line in stats_resp.split('\n'):
+        if 'Dropped' in line and '=0' not in line:
+            has_drops = True
+        if 'LossPercent' in line and '=0' not in line:
+            has_drops = True
+    if has_drops:
+        print("  WARNING: Data loss detected during streaming!")
+
     send_cmd("SYST:STR:TESTpattern 0")
 
-    # Download file
+    # Download file — read continuously to avoid serial buffer overflow
     print(f"  Downloading {fname}...")
     ser.reset_input_buffer()
     ser.write(f'SYST:STOR:SD:GET "{fname}"\r\n'.encode())
-    time.sleep(2)
 
-    # Read until __END_OF_FILE__
     data = b""
-    timeout_end = time.time() + 30
+    timeout_end = time.time() + 120  # 2 min for large files
     while time.time() < timeout_end:
-        chunk = ser.read(ser.in_waiting or 1)
-        if chunk:
-            data += chunk
+        waiting = ser.in_waiting
+        if waiting > 0:
+            data += ser.read(waiting)
             if b"__END_OF_FILE__" in data:
                 break
-        time.sleep(0.1)
+        else:
+            time.sleep(0.05)
 
     ser.close()
+    print(f"  Downloaded {len(data)} bytes")
 
     # Parse downloaded data
     text = data.decode(errors='replace')
-    # Find CSV start (after DAQIFI> prompt)
     lines = text.split('\n')
     csv_lines = []
     in_csv = False
     for line in lines:
         line = line.strip()
-        if line.startswith('# Device:'):
+        # Strip DAQIFI> prompt prefix if present
+        if line.startswith('DAQIFI>'):
+            line = line[len('DAQIFI>'):].strip()
+        if '# Device:' in line:
             in_csv = True
+            # Extract just the metadata part after any prefix
+            idx = line.index('# Device:')
+            line = line[idx:]
         if in_csv:
             if '__END_OF_FILE__' in line:
                 break
@@ -322,7 +369,7 @@ def download_and_verify(device, pattern, adc_max, duration=5, freq=1000, channel
 
     # Verify
     passed, total, mismatches, details = verify_pattern(
-        local_path, pattern, adc_max, verbose=True)
+        local_path, pattern, adc_max, adc_range, verbose=True)
 
     if passed:
         print(f"  PASS: {total} samples verified, 0 mismatches")
@@ -334,7 +381,7 @@ def download_and_verify(device, pattern, adc_max, duration=5, freq=1000, channel
     return passed
 
 
-def run_all_patterns(device, adc_max, duration=3, freq=1000, channel=4):
+def run_all_patterns(device, adc_max, adc_range=5.0, duration=3, freq=1000, channel=4):
     """Run and verify all 6 patterns sequentially."""
     results = {}
     for p in range(1, 7):
@@ -343,7 +390,8 @@ def run_all_patterns(device, adc_max, duration=3, freq=1000, channel=4):
         print(f"\n{'='*50}")
         print(f"Pattern {p}: {name}")
         print(f"{'='*50}")
-        results[p] = download_and_verify(device, p, adc_max, duration, freq, channel)
+        results[p] = download_and_verify(device, p, adc_max, adc_range,
+                                         duration, freq, channel)
         time.sleep(2)
 
     print(f"\n{'='*50}")
@@ -373,12 +421,10 @@ def main():
                              '4=walking, 5=triangle, 6=sine)')
     parser.add_argument('--adc-max', type=int, default=4096,
                         help='ADC resolution (default: 4096 for NQ1 12-bit)')
-    parser.add_argument('--vref', type=float, default=3.3,
-                        help='ADC reference voltage (default: 3.3)')
-    parser.add_argument('--scale', type=float, default=None,
-                        help='Internal scale factor (auto-detect if omitted)')
+    parser.add_argument('--adc-range', type=float, default=5.0,
+                        help='ADC voltage range in volts (default: 5.0 for NQ1)')
     parser.add_argument('--tolerance', type=int, default=1,
-                        help='Allowed deviation in raw ADC counts (default: 1)')
+                        help='Allowed deviation in millivolts (default: 1)')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Print each sample comparison')
     parser.add_argument('--download', action='store_true',
@@ -396,15 +442,16 @@ def main():
     args = parser.parse_args()
 
     if args.run_all:
-        ok = run_all_patterns(args.device, args.adc_max, args.duration,
-                              args.freq, args.channel)
+        ok = run_all_patterns(args.device, args.adc_max, args.adc_range,
+                              args.duration, args.freq, args.channel)
         sys.exit(0 if ok else 1)
 
     if args.download:
         if args.pattern is None:
             parser.error("--pattern required with --download")
         ok = download_and_verify(args.device, args.pattern, args.adc_max,
-                                 args.duration, args.freq, args.channel)
+                                 args.adc_range, args.duration, args.freq,
+                                 args.channel)
         sys.exit(0 if ok else 1)
 
     if args.filepath is None:
@@ -414,8 +461,8 @@ def main():
         parser.error("--pattern required when verifying a file")
 
     passed, total, mismatches, details = verify_pattern(
-        args.filepath, args.pattern, args.adc_max, args.vref,
-        args.scale, args.tolerance, args.verbose)
+        args.filepath, args.pattern, args.adc_max, args.adc_range,
+        args.tolerance, args.verbose)
 
     if passed:
         print(f"\nPASS: {total} samples verified, 0 mismatches")
