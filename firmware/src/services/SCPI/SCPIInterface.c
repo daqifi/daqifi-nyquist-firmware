@@ -1851,8 +1851,17 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
         // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-        // Give SD card manager task time to close the file
-        vTaskDelay(pdMS_TO_TICKS(100));
+        // Wait for SD card manager to drain buffer, close file, and go idle
+        {
+            int idleWait = 0;
+            while (!sd_card_manager_IsIdle() && idleWait < 500) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                idleWait++;
+            }
+            if (idleWait >= 500) {
+                LOG_E("[SD] StopStreaming: SD idle timeout after 5s");
+            }
+        }
     }
 
     // Reset encoder state so next session gets fresh headers
@@ -2397,6 +2406,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:MAXSize?", .callback = SCPI_StorageSDMaxSizeGet},
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
+    {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},
     // FreeRTOS
     //{.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

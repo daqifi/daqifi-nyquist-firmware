@@ -148,7 +148,7 @@ typedef struct {
 
     bool sdCardWritePending;
     uint16_t sdCardWriteBufferOffset;
-    uint16_t totalBytesFlushPending;
+    uint32_t totalBytesFlushPending;
     uint64_t lastFlushMillis;
     bool discMounted;
 
@@ -552,13 +552,96 @@ void sd_card_manager_ProcessState() {
 
         case SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK:
             if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                // Flush any pending data before closing to prevent data loss
+                // --- Drain all in-flight data before closing file ---
+                // 1. Flush pending writeBuffer (already extracted but not yet written)
+                {
+                    int drainIter = 0;
+                    bool unmountDrainErrorLogged = false;
+                    while (gSDCardData.sdCardWritePending == 1 && drainIter < 100) {
+                        int pendingLen = SDCardWrite();
+                        if (pendingLen > 0 && (size_t)pendingLen >= gSDCardData.writeBufferLength) {
+                            gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
+                            SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_pending_write");
+                            gSDCardData.sdCardWritePending = 0;
+                            gSDCardData.writeBufferLength = 0;
+                            gSDCardData.sdCardWriteBufferOffset = 0;
+                            xSemaphoreGive(gSDCardData.wMutex);
+                        } else if (pendingLen > 0) {
+                            gSDCardData.currentFileBytes += pendingLen;
+                            SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_partial_write");
+                            gSDCardData.writeBufferLength -= pendingLen;
+                            gSDCardData.sdCardWriteBufferOffset += pendingLen;
+                            xSemaphoreGive(gSDCardData.wMutex);
+                        } else {
+                            if (!unmountDrainErrorLogged) {
+                                unmountDrainErrorLogged = true;
+                                LOG_E("[SD] Error flushing pending write before unmount");
+                            }
+                            gSDCardData.sdCardWritePending = 0;
+                            gSDCardData.writeBufferLength = 0;
+                            gSDCardData.sdCardWriteBufferOffset = 0;
+                            break;
+                        }
+                        drainIter++;
+                    }
+
+                    // 2. Drain circular buffer — extract remaining data (NOT sector-aligned)
+                    drainIter = 0;
+                    while (CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0
+                           && drainIter < 100) {
+                        int writeLen = -2;
+                        SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_drain_loop");
+                        if (gSDCardData.sdCardWritePending != 1) {
+                            gSDCardData.sdCardWritePending = 1;
+                            CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL,
+                                SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                            gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
+                            xSemaphoreGive(gSDCardData.wMutex);
+
+                            // Write immediately, loop for partial writes
+                            int innerIter = 0;
+                            while (gSDCardData.sdCardWritePending == 1 && innerIter < 100) {
+                                writeLen = SDCardWrite();
+                                if (writeLen > 0 && (size_t)writeLen >= gSDCardData.writeBufferLength) {
+                                    gSDCardData.currentFileBytes += gSDCardData.writeBufferLength;
+                                    SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_drain_complete");
+                                    gSDCardData.sdCardWritePending = 0;
+                                    gSDCardData.writeBufferLength = 0;
+                                    gSDCardData.sdCardWriteBufferOffset = 0;
+                                    xSemaphoreGive(gSDCardData.wMutex);
+                                } else if (writeLen > 0) {
+                                    gSDCardData.currentFileBytes += writeLen;
+                                    SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_drain_partial");
+                                    gSDCardData.writeBufferLength -= writeLen;
+                                    gSDCardData.sdCardWriteBufferOffset += writeLen;
+                                    xSemaphoreGive(gSDCardData.wMutex);
+                                } else {
+                                    if (!unmountDrainErrorLogged) {
+                                        unmountDrainErrorLogged = true;
+                                        LOG_E("[SD] Error draining buffer before unmount");
+                                    }
+                                    gSDCardData.sdCardWritePending = 0;
+                                    gSDCardData.writeBufferLength = 0;
+                                    gSDCardData.sdCardWriteBufferOffset = 0;
+                                    break;
+                                }
+                                innerIter++;
+                            }
+                        } else {
+                            xSemaphoreGive(gSDCardData.wMutex);
+                            break;
+                        }
+                        drainIter++;
+                    }
+                }
+
+                // Flush filesystem buffers before closing
                 SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_pending_check");
                 bool hasPendingData = gSDCardData.totalBytesFlushPending > 0;
                 xSemaphoreGive(gSDCardData.wMutex);
 
                 if (hasPendingData) {
-                    LOG_D("[SD] Flushing %d bytes before unmount\r\n", (int)gSDCardData.totalBytesFlushPending);
+                    LOG_D("[SD] Flushing %u bytes before unmount\r\n", (unsigned)gSDCardData.totalBytesFlushPending);
                     TickType_t syncStart = xTaskGetTickCount();
                     int syncResult = SYS_FS_FileSync(gSDCardData.fileHandle);
                     SD_CheckFsOpDuration(syncStart, "FileSync(unmount)", syncResult);
@@ -780,10 +863,14 @@ void sd_card_manager_ProcessState() {
             
             while (chunksProcessed < SD_CARD_MANAGER_MAX_CHUNKS_PER_CYCLE) {
                 SD_TakeMutexDebug(gSDCardData.wMutex, "write_loop_check");
-                if (CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0
+                uint32_t availBytes = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
+                if (availBytes >= SD_SECTOR_SIZE_BYTES
                         && gSDCardData.sdCardWritePending != 1) {
+                    uint32_t maxExtract = (availBytes < SD_CARD_MANAGER_CONF_WBUFFER_SIZE)
+                                        ? availBytes : SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
+                    maxExtract = (maxExtract / SD_SECTOR_SIZE_BYTES) * SD_SECTOR_SIZE_BYTES;
                     gSDCardData.sdCardWritePending = 1;
-                    CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                    CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL, maxExtract, &writeLen);
                     gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
                     xSemaphoreGive(gSDCardData.wMutex);
                     chunksProcessed++;
