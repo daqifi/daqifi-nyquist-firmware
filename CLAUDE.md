@@ -387,7 +387,7 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 
 - **Compiler**: targeting `PIC32MZ2048EFM144` implicitly sets `__mips_hard_float = 1`
 - **FreeRTOS**: `configUSE_TASK_FPU_SUPPORT = 1` in `FreeRTOSConfig.h`; saves/restores 32×64-bit FPU registers on context switches for tasks that call `portTASK_USES_FLOATING_POINT()`
-- **Registered tasks**: USB, WiFi, PowerAndUI, and streaming tasks use FPU
+- **Registered tasks**: USB, WiFi, PowerAndUI, streaming, and deferred interrupt tasks use FPU
 - **ADC voltage conversion**: `ADC_ConvertToVoltage()` uses native `mul.d`, `div.d`, `add.d` instructions
 
 ### Memory Considerations
