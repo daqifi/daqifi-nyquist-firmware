@@ -154,7 +154,7 @@ static TaskHandle_t gStreamingTaskHandle;
  * @param pattern    Pattern type (1-6, see switch cases)
  * @param channel    Channel ID (0-based)
  * @param sampleCount Monotonic sample counter (reset each session)
- * @param adcMax     ADC resolution (e.g. 4096 for 12-bit, 262144 for 18-bit)
+ * @param adcMax     Maximum ADC raw code (e.g. 4095 for 12-bit, 262143 for 18-bit)
  * @return Synthetic ADC value in [0, adcMax]
  */
 static uint32_t Streaming_GenerateTestValue(uint32_t pattern, uint8_t channel,
@@ -252,12 +252,13 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         pPublicSampleList->isSampleValid[i]=1;
 
                         // Test pattern override: replace ADC value with synthetic data
+                        // adcMax = Resolution - 1 to match real ADC range (0..4095 for 12-bit)
                         if (gTestPattern != 0) {
                             uint32_t adcMax;
                             if (pBoardConfig->AInChannels.Data[i].Type == AIn_AD7609) {
-                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
+                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution - 1;
                             } else {
-                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution;
+                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution - 1;
                             }
                             pPublicSampleList->sampleElement[i].Value =
                                 Streaming_GenerateTestValue(gTestPattern,

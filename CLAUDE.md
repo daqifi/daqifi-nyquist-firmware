@@ -325,7 +325,7 @@ SYSTem:STReam:TESTpattern?            # Query current pattern (0=disabled)
 | 5 | Triangle | Ramps 0→adcMax→0, period=2*(adcMax+1) | Realistic waveform, staggered per channel |
 | 6 | Sine | 256-sample sine wave, scaled to [0, adcMax] | Realistic signal testing, 45deg phase offset per channel |
 
-- `adcMax` = module resolution (4096 for MC12bADC, 262144 for AD7609 18-bit)
+- `adcMax` = max raw ADC code = Resolution - 1 (4095 for MC12bADC 12-bit, 262143 for AD7609 18-bit)
 - Runtime-only (not persisted to NVM, resets on reboot)
 - Sample counter resets at each `StartStreamData` for deterministic sessions
 - Works with all encoding formats (CSV/JSON/ProtoBuf) and output interfaces (USB/WiFi/SD)
