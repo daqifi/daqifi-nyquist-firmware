@@ -1754,31 +1754,33 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             freq = 1; // Override to 1Hz for internal monitoring when external ADC active
         }
 
-        // Maximum frequency limited to 15kHz pending optimization
-        // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/58
-        if (freq >= 1 && freq <= 15000)
+        // Dual-limit frequency capping (validated via benchmark testing)
+        // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
+        //
+        // Two independent bottlenecks constrain the maximum frequency:
+        //   1. ISR rate ceiling (STREAMING_ISR_MAX_HZ) - fixed per-invocation overhead
+        //      (context switch, task notify, pool alloc, queue push)
+        //   2. Aggregate pipeline ceiling (STREAMING_AGGREGATE_MAX_HZ) - encoder + output
+        //      (scales with total samples/sec across all channels)
+        //
+        // Effective limit: min(ISR_MAX, AGGREGATE_MAX / channels)
+        if (freq >= 1 && freq <= STREAMING_ISR_MAX_HZ)
         {
             /**
-             * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
-             * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
-             *
              * The maximum triggering frequency of non type 1 channel is 1000 hz,
              * which is obtained by dividing Frequency with ChannelScanFreqDiv.
              * Non-Type 1 channels are setup for channel scanning
-             *
              */
             if (activeType1ChannelCount > 0) {
-                // Avoid overflow: compare without multiplying freq * activeType1ChannelCount
-                // Instead of: (freq * activeType1ChannelCount) > 15000
-                // Use: freq > (15000 / activeType1ChannelCount)
-                if (freq > (15000 / activeType1ChannelCount)) {
-                    freq = 15000 / activeType1ChannelCount;
-
-                    // Prevent divide-by-zero: if too many channels active, return error
-                    if (freq == 0) {
-                        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
-                        return SCPI_RES_ERR;
-                    }
+                // Apply aggregate limit: freq * channels <= AGGREGATE_MAX
+                uint32_t aggregateMax = STREAMING_AGGREGATE_MAX_HZ / activeType1ChannelCount;
+                if (aggregateMax == 0) {
+                    SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+                    return SCPI_RES_ERR;
+                }
+                // Clamp to the tighter of ISR limit and aggregate limit
+                if (freq > aggregateMax) {
+                    freq = aggregateMax;
                 }
             }
 

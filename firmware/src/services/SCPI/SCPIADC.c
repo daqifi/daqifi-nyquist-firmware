@@ -18,6 +18,7 @@
 #include "HAL/ADC.h"
 #include "../daqifi_settings.h"
 #include "HAL/TimerApi/TimerApi.h"
+#include "../streaming.h"
 
 // FreeRTOS
 #include "FreeRTOS.h"
@@ -215,18 +216,15 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         }
     }
     
-    // Note: Internal monitoring channels are configured with fixed 1Hz in NQ3 runtime config
-    /**
-     * The maximum aggregate trigger frequency for all active Type 1 ADC channels is 15,000 Hz.
-     * For example, if two Type 1 channels are active, each can trigger at a maximum frequency of 7,500 Hz (15,000 / 2).
-     * 
-     * The maximum triggering frequency of non type 1 channel is 1000 hz, 
-     * which is obtained by dividing Frequency with ChannelScanFreqDiv. 
-     * Non-Type 1 channels are setup for channel scanning
-     * 
-     */
-    if (activeType1ChannelCount > 0 && (freq * activeType1ChannelCount) > 15000) {
-        freq = 15000 / activeType1ChannelCount;
+    // Dual-limit frequency capping: ISR ceiling and aggregate pipeline ceiling
+    // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
+    if (activeType1ChannelCount > 0) {
+        if (freq > STREAMING_ISR_MAX_HZ) {
+            freq = STREAMING_ISR_MAX_HZ;
+        }
+        if ((freq * activeType1ChannelCount) > STREAMING_AGGREGATE_MAX_HZ) {
+            freq = STREAMING_AGGREGATE_MAX_HZ / activeType1ChannelCount;
+        }
     }
 
     // CRITICAL: Always call ADC_WriteChannelStateAll() to enable/disable channel interrupts

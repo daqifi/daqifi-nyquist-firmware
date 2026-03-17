@@ -11,6 +11,14 @@ extern "C" {
 
 //! Buffer size used for streaming purposes
 #define STREAMING_BUFFER_SIZE               ENCODER_BUFFER_SIZE
+
+// Streaming frequency limits (validated via benchmark testing, see issue #215)
+// ISR ceiling: max timer interrupt rate before fixed per-invocation overhead
+// (context switch, task notify, pool alloc, queue push) causes pool exhaustion.
+#define STREAMING_ISR_MAX_HZ        11000
+// Aggregate ceiling: max total samples/sec across all channels before the
+// encoder + output pipeline can't keep up.
+#define STREAMING_AGGREGATE_MAX_HZ  30000
     
 /*! Initializes the streaming component
  * @param[in] pStreamingConfigInit Streaming configuration
