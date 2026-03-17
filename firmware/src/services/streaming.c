@@ -231,7 +231,18 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // No heap check needed - pool uses pre-allocated static memory
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
-                LOG_E("Streaming: Sample pool exhausted\r\n");
+                gStreamStats.queueDroppedSamples++;
+                if (!gLoggedQueueDrop) {
+                    gLoggedQueueDrop = true;
+                    LOG_E("Streaming: Sample pool exhausted");
+                }
+                Streaming_UpdateFlowWindow(true);
+                // Still increment test pattern counter to stay in sync
+                if (gTestPattern != 0) {
+                    taskENTER_CRITICAL();
+                    gTestPatternSampleCount++;
+                    taskEXIT_CRITICAL();
+                }
                 continue;
             }
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
