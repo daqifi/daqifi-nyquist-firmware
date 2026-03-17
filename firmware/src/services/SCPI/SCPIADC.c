@@ -199,31 +199,40 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         // Note: Monitoring channels (>maxUserChannel) are always enabled and not user-controllable
     }
     uint16_t activeType1ChannelCount = 0;
+    uint16_t totalEnabledPublicChannels = 0;
     bool hasActiveAD7609Channels __attribute__((unused)) = false;
     uint64_t freq = pRunTimeStreamConfig->Frequency;
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
     int i;
-    
+
     // Count active channels and detect AD7609 usage
     for (i = 0; i < pBoardConfigAInChannels->Size; i++) {
         if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
+            bool isPublic = false;
             if (pBoardConfigAInChannels->Data[i].Type == AIn_AD7609) {
-                hasActiveAD7609Channels = true;
-            } else if (pBoardConfigAInChannels->Data[i].Type == AIn_MC12bADC && 
-                       pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
-                activeType1ChannelCount++;
+                isPublic = pBoardConfigAInChannels->Data[i].Config.AD7609.IsPublic;
+                if (isPublic) {
+                    hasActiveAD7609Channels = true;
+                    totalEnabledPublicChannels++;
+                }
+            } else if (pBoardConfigAInChannels->Data[i].Type == AIn_MC12bADC) {
+                isPublic = pBoardConfigAInChannels->Data[i].Config.MC12b.IsPublic;
+                if (isPublic) {
+                    totalEnabledPublicChannels++;
+                    if (pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
+                        activeType1ChannelCount++;
+                    }
+                }
             }
         }
     }
-    
-    // Dual-limit frequency capping: ISR ceiling and aggregate pipeline ceiling
-    // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
-    if (activeType1ChannelCount > 0) {
-        if (freq > STREAMING_ISR_MAX_HZ) {
-            freq = STREAMING_ISR_MAX_HZ;
-        }
-        if ((freq * activeType1ChannelCount) > STREAMING_AGGREGATE_MAX_HZ) {
-            freq = STREAMING_AGGREGATE_MAX_HZ / activeType1ChannelCount;
+
+    // Three-constraint frequency capping (see streaming.h)
+    {
+        uint32_t maxFreq = Streaming_ComputeMaxFreq(
+            activeType1ChannelCount, totalEnabledPublicChannels);
+        if (freq > maxFreq) {
+            freq = maxFreq;
         }
     }
 

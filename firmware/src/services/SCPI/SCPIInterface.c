@@ -1695,6 +1695,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     //int i;
     uint16_t activeType1ChannelCount = 0;
+    uint16_t totalEnabledPublicChannels = 0;
     bool hasActiveAD7609Channels __attribute__((unused)) = false;
     int i;
     bool hasEnabledChannels = false;
@@ -1713,11 +1714,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 if (isPublic) {
                     hasEnabledChannels = true;
                     hasActiveAD7609Channels = true;
+                    totalEnabledPublicChannels++;
                 }
             } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC) {
                 isPublic = pBoardConfigADC->Data[i].Config.MC12b.IsPublic;
                 if (isPublic) {
                     hasEnabledChannels = true;
+                    totalEnabledPublicChannels++;
                     if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
                         activeType1ChannelCount++;
                     }
@@ -1754,35 +1757,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             freq = 1; // Override to 1Hz for internal monitoring when external ADC active
         }
 
-        // Dual-limit frequency capping (validated via benchmark testing)
+        // Three-constraint frequency capping (validated via benchmark testing)
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
-        //
-        // Two independent bottlenecks constrain the maximum frequency:
-        //   1. ISR rate ceiling (STREAMING_ISR_MAX_HZ) - fixed per-invocation overhead
-        //      (context switch, task notify, pool alloc, queue push)
-        //   2. Aggregate pipeline ceiling (STREAMING_AGGREGATE_MAX_HZ) - encoder + output
-        //      (scales with total samples/sec across all channels)
-        //
-        // Effective limit: min(ISR_MAX, AGGREGATE_MAX / channels)
-        if (freq >= 1 && freq <= STREAMING_ISR_MAX_HZ)
         {
-            /**
-             * The maximum triggering frequency of non type 1 channel is 1000 hz,
-             * which is obtained by dividing Frequency with ChannelScanFreqDiv.
-             * Non-Type 1 channels are setup for channel scanning
-             */
-            if (activeType1ChannelCount > 0) {
-                // Apply aggregate limit: freq * channels <= AGGREGATE_MAX
-                uint32_t aggregateMax = STREAMING_AGGREGATE_MAX_HZ / activeType1ChannelCount;
-                if (aggregateMax == 0) {
-                    SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
-                    return SCPI_RES_ERR;
-                }
-                // Clamp to the tighter of ISR limit and aggregate limit
-                if (freq > aggregateMax) {
-                    freq = aggregateMax;
-                }
+            uint32_t maxFreq = Streaming_ComputeMaxFreq(
+                activeType1ChannelCount, totalEnabledPublicChannels);
+            if (freq > (int32_t)maxFreq) {
+                freq = (int32_t)maxFreq;
             }
+        }
+
+        if (freq >= 1 && freq <= (int32_t)STREAMING_ISR_MAX_HZ)
+        {
 
             // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
 

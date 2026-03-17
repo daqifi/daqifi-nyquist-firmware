@@ -13,12 +13,53 @@ extern "C" {
 #define STREAMING_BUFFER_SIZE               ENCODER_BUFFER_SIZE
 
 // Streaming frequency limits (validated via benchmark testing, see issue #215)
-// ISR ceiling: max timer interrupt rate before fixed per-invocation overhead
-// (context switch, task notify, pool alloc, queue push) causes pool exhaustion.
+//
+// Three independent constraints limit the maximum streaming frequency:
+//
+// 1. ISR ceiling: hard limit on timer interrupt rate regardless of channel count.
+//    Fixed per-invocation cost (context switch, task notify, pool alloc, queue push).
+//    Benchmark: 1ch@11kHz PASS, 1ch@12kHz FAIL.
+//
+// 2. Type 1 aggregate: dedicated ADC modules convert simultaneously, but the
+//    deferred task channel loop + encoder cost scales with Type 1 count.
+//    Benchmark: 5ch@6kHz PASS (all Type 1), 5ch@6.2kHz FAIL.
+//
+// 3. Per-tick budget: every ISR tick iterates ALL enabled channels (sample copy,
+//    test pattern, encode). More channels = more work per tick = lower max freq.
+//    Benchmark: 16ch@3.5kHz PASS, 16ch@3.75kHz FAIL.
+//
+// Effective limit: min(ISR_MAX, TYPE1_AGG / type1Count, BUDGET / (OVERHEAD + total))
 #define STREAMING_ISR_MAX_HZ        11000
-// Aggregate ceiling: max total samples/sec across all channels before the
-// encoder + output pipeline can't keep up.
-#define STREAMING_AGGREGATE_MAX_HZ  30000
+#define STREAMING_TYPE1_AGG_MAX_HZ  30000
+#define STREAMING_TICK_BUDGET       77000
+#define STREAMING_TICK_OVERHEAD     6
+
+/**
+ * Compute maximum safe streaming frequency for a given channel configuration.
+ * Uses three-constraint model validated against empirical benchmark data.
+ *
+ * @param type1Count            Number of enabled Type 1 (dedicated ADC) channels
+ * @param totalEnabledChannels  Total number of enabled public ADC channels
+ * @return Maximum safe frequency in Hz
+ */
+static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t totalEnabledChannels) {
+    uint32_t maxFreq = STREAMING_ISR_MAX_HZ;
+
+    // Type 1 aggregate constraint
+    if (type1Count > 0) {
+        uint32_t type1Max = STREAMING_TYPE1_AGG_MAX_HZ / type1Count;
+        if (type1Max < maxFreq) maxFreq = type1Max;
+    }
+
+    // Per-tick budget constraint (all enabled channels add per-tick cost)
+    if (totalEnabledChannels > 0) {
+        uint32_t tickMax = STREAMING_TICK_BUDGET / (STREAMING_TICK_OVERHEAD + totalEnabledChannels);
+        if (tickMax < maxFreq) maxFreq = tickMax;
+    }
+
+    if (maxFreq == 0) maxFreq = 1;
+    return maxFreq;
+}
     
 /*! Initializes the streaming component
  * @param[in] pStreamingConfigInit Streaming configuration
