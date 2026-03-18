@@ -901,7 +901,7 @@ void sd_card_manager_ProcessState() {
                             gSDCardData.writeBufferLength = 0;
                             gSDCardData.sdCardWriteBufferOffset = 0;
                             xSemaphoreGive(gSDCardData.wMutex);
-                        } else {
+                        } else if (writeLen > 0) {
                             // Partial write
                             gSDCardData.currentFileBytes += writeLen;
 
@@ -910,6 +910,11 @@ void sd_card_manager_ProcessState() {
                             gSDCardData.sdCardWriteBufferOffset += writeLen;
                             xSemaphoreGive(gSDCardData.wMutex);
                             break;  // Partial write, don't process more chunks
+                        } else {
+                            // writeLen == 0: no progress — error out to avoid infinite retry
+                            gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                            LOG_E("[%s:%d]Zero-byte write to SD Card", __FILE__, __LINE__);
+                            break;
                         }
                     } else {
                         break;  // No more data to process
@@ -932,6 +937,7 @@ void sd_card_manager_ProcessState() {
                     int pendingLen = SDCardWrite();
                     if (pendingLen < 0) {
                         LOG_E("[SD] Error flushing pending write before rotation");
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         gSDCardData.sdCardWritePending = 0;
                         gSDCardData.writeBufferLength = 0;
                         gSDCardData.sdCardWriteBufferOffset = 0;
@@ -952,6 +958,7 @@ void sd_card_manager_ProcessState() {
                         xSemaphoreGive(gSDCardData.wMutex);
                     } else {
                         LOG_E("[SD] Zero-byte write during rotation flush");
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         gSDCardData.sdCardWritePending = 0;
                         gSDCardData.writeBufferLength = 0;
                         gSDCardData.sdCardWriteBufferOffset = 0;
@@ -984,6 +991,7 @@ void sd_card_manager_ProcessState() {
                                         rotationDrainErrorLogged = true;
                                         LOG_E("[SD] Error draining buffer before rotation");
                                     }
+                                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                                     gSDCardData.sdCardWritePending = 0;
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
@@ -1005,6 +1013,7 @@ void sd_card_manager_ProcessState() {
                                         rotationDrainErrorLogged = true;
                                         LOG_E("[SD] Zero-byte write draining buffer before rotation");
                                     }
+                                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                                     gSDCardData.sdCardWritePending = 0;
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
