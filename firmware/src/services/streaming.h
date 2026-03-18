@@ -94,7 +94,7 @@ void Streaming_ResetSdPbMetadata(void);
 // 32-bit fields are atomic on PIC32MZ; 64-bit fields require critical sections.
 // Use Streaming_GetStats() for an atomic snapshot of all fields.
 typedef struct {
-    uint32_t queueDroppedSamples;   // Sample queue full (deferred ISR task)
+    uint32_t queueDroppedSamples;   // Pool exhaustion or queue full (deferred ISR task)
     uint32_t usbDroppedBytes;       // USB circular buffer full
     uint32_t wifiDroppedBytes;      // WiFi circular buffer full
     uint32_t sdDroppedBytes;        // SD write timeout/partial

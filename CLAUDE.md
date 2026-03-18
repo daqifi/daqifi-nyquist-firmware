@@ -233,7 +233,7 @@ SYSTem:STReam:CLEARSTATS   # Reset all counters
 |-------|------|-------------|
 | `TotalSamplesStreamed` | uint64 | Samples successfully queued from ISR |
 | `TotalBytesStreamed` | uint64 | Total bytes encoded (offered to outputs) |
-| `QueueDroppedSamples` | uint32 | Samples lost due to full sample queue (pool=700) |
+| `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool=700) |
 | `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
 | `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8KB buf, 3 retries) |

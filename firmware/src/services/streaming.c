@@ -57,7 +57,8 @@ static StreamingStats gStreamStats = {0};
 
 // Log-once flags: each error condition logs once per session to avoid flooding
 // the 64-message circular log buffer. All reset in Streaming_ClearStats().
-static bool gLoggedQueueDrop = false;
+static bool gLoggedPoolExhaust = false;
+static bool gLoggedQueueOverflow = false;
 static bool gLoggedUsbDrop = false;
 static bool gLoggedWifiDrop = false;
 static bool gLoggedSdDrop = false;
@@ -232,8 +233,8 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
                 gStreamStats.queueDroppedSamples++;
-                if (!gLoggedQueueDrop) {
-                    gLoggedQueueDrop = true;
+                if (!gLoggedPoolExhaust) {
+                    gLoggedPoolExhaust = true;
                     LOG_E("Streaming: Sample pool exhausted");
                 }
                 Streaming_UpdateFlowWindow(true);
@@ -284,8 +285,8 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
                 gStreamStats.queueDroppedSamples++;
-                if (!gLoggedQueueDrop) {
-                    gLoggedQueueDrop = true;
+                if (!gLoggedQueueOverflow) {
+                    gLoggedQueueOverflow = true;
                     LOG_E("Streaming: Sample queue overflow detected");
                 }
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
@@ -457,7 +458,8 @@ void Streaming_GetStats(StreamingStats* out) {
 
 void Streaming_ClearStats(void) {
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
-    gLoggedQueueDrop = false;
+    gLoggedPoolExhaust = false;
+    gLoggedQueueOverflow = false;
     gLoggedUsbDrop = false;
     gLoggedWifiDrop = false;
     gLoggedSdDrop = false;
