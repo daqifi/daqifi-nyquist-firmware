@@ -1763,6 +1763,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             uint32_t maxFreq = Streaming_ComputeMaxFreq(
                 activeType1ChannelCount, totalEnabledPublicChannels);
             if (freq > (int32_t)maxFreq) {
+                LOG_I("Frequency capped: %d Hz -> %u Hz (%u ch, %u type1)",
+                      (int)freq, (unsigned)maxFreq,
+                      (unsigned)totalEnabledPublicChannels,
+                      (unsigned)activeType1ChannelCount);
                 freq = (int32_t)maxFreq;
             }
         }

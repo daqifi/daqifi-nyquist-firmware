@@ -232,6 +232,10 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         uint32_t maxFreq = Streaming_ComputeMaxFreq(
             activeType1ChannelCount, totalEnabledPublicChannels);
         if (freq > maxFreq) {
+            LOG_I("Frequency capped: %u Hz -> %u Hz (%u ch, %u type1)",
+                  (unsigned)freq, (unsigned)maxFreq,
+                  (unsigned)totalEnabledPublicChannels,
+                  (unsigned)activeType1ChannelCount);
             freq = maxFreq;
         }
     }

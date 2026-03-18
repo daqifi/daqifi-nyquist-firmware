@@ -303,6 +303,35 @@ SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
 
 **Implementation:** `firmware/src/services/streaming.c` (gQuesBits, flow window), `firmware/src/services/SCPI/SCPIInterface.c` (OPER/QUES helpers, sync)
 
+#### Streaming Frequency Capping
+
+The firmware automatically caps the requested streaming frequency based on a three-constraint model validated against hardware benchmarks. The cap is applied silently — no SCPI error is returned, but a `LOG_I` message is written to the log buffer (retrievable via `SYST:LOG?`).
+
+**Constraints:**
+| Constraint | Limit | Formula |
+|-----------|-------|---------|
+| ISR ceiling | 11 kHz | Hard per-invocation overhead limit |
+| Type 1 aggregate | 30 kHz total | `30000 / type1ChannelCount` |
+| Per-tick budget | Scales with channels | `77000 / (6 + totalEnabledChannels)` |
+
+**Effective limit:** `min(ISR_MAX, TYPE1_AGG / type1Count, BUDGET / (OVERHEAD + totalEnabled))`
+
+**Example caps (all Type 1 channels):**
+| Channels | Max Frequency |
+|----------|--------------|
+| 1 | 11,000 Hz |
+| 5 | 6,000 Hz |
+| 8 | 5,500 Hz |
+| 16 | 3,500 Hz |
+
+**Where capping is applied:**
+- `SYSTem:StartStreamData <freq>` — caps frequency before starting the timer
+- `CONFigure:ADC:CHANnel` — recalculates cap when channels are enabled/disabled during streaming
+
+**Diagnosing capped frequency:** Check `SYST:LOG?` for `"Frequency capped: X Hz -> Y Hz"` messages. The actual streaming frequency is stored in the runtime config and can be verified by checking sample timestamps.
+
+**Implementation:** `firmware/src/services/streaming.h` (`Streaming_ComputeMaxFreq`), `firmware/src/services/SCPI/SCPIInterface.c`, `firmware/src/services/SCPI/SCPIADC.c`
+
 #### Test Pattern Streaming Mode
 
 Test pattern mode replaces real ADC values with synthetic data for deterministic regression testing and benchmarking. The real ISR timing, ADC triggering, pool allocation, and full encoding pipeline are preserved — only the sample Value field is overridden.
