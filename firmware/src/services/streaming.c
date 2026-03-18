@@ -838,6 +838,32 @@ void streaming_Task(void) {
                 }
 
             }
+
+            // Track packets discarded due to output buffer backpressure.
+            // The streaming task always encodes to drain the sample queue
+            // (preventing queueDroppedSamples), but when an output buffer
+            // is too full (< 128 bytes free), the encoded packet is silently
+            // discarded. Count these drops so SYST:STR:STATS? is accurate.
+            {
+                bool sdExpected = hasSD || (
+                    pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD ||
+                    pRunTimeStreamConf->ActiveInterface == StreamingInterface_All ||
+                    (pSDCardSettings && pSDCardSettings->enable &&
+                     pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE &&
+                     pRunTimeStreamConf->ActiveInterface != StreamingInterface_WiFi));
+                bool sdWritten = hasSD && gSdFileWasReady;
+
+                if (sdExpected && !sdWritten) {
+                    gStreamStats.sdDroppedBytes += packetSize;
+                    taskENTER_CRITICAL();
+                    gQuesBits |= QUES_BIT_SD_OVERFLOW;
+                    taskEXIT_CRITICAL();
+                    if (!gLoggedSdDrop) {
+                        gLoggedSdDrop = true;
+                        LOG_E("Streaming: SD output skipped (buffer full or file not ready)");
+                    }
+                }
+            }
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
     }
