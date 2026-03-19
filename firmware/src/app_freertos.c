@@ -256,38 +256,150 @@ static void app_WifiTask(void* p_arg) {
 }
 
 /**
+ * Gracefully shut down SD card operations from within the SD task context.
+ * Drives the state machine through DEINIT -> UNMOUNT_DISK to drain buffers,
+ * flush filesystem, close files, and unmount the disk.
+ *
+ * Must be called from the SD task (drives DRV_SDSPI_Tasks/ProcessState/SYS_FS_Tasks).
+ *
+ * @param timeoutMs Maximum time to wait for idle (0 = trigger only, don't wait)
+ * @param reason    Human-readable reason for logging
+ * @return true if SD reached idle within timeout, false if timed out
+ */
+static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) {
+    if (sd_card_manager_IsIdle()) {
+        return true;
+    }
+
+    LOG_I("[SD] Graceful shutdown: %s", reason);
+
+    // Trigger DEINIT -> UNMOUNT_DISK path (same mechanism as SCPI_StopStreaming)
+    sd_card_manager_settings_t* pSDSettings =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if (pSDSettings != NULL) {
+        pSDSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDSettings);
+    }
+
+    // Drive the state machine ourselves — we ARE the SD task
+    uint32_t waited = 0;
+    while (!sd_card_manager_IsIdle() && waited < timeoutMs) {
+        DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
+        sd_card_manager_ProcessState();
+        SYS_FS_Tasks();
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited += 10;
+    }
+
+    if (!sd_card_manager_IsIdle()) {
+        LOG_E("[SD] Graceful shutdown timeout after %u ms: %s",
+              (unsigned)timeoutMs, reason);
+        return false;
+    }
+
+    LOG_I("[SD] Graceful shutdown complete: %s", reason);
+    return true;
+}
+
+/**
+ * Check if WiFi needs the SPI bus (streaming to WiFi or firmware update).
+ */
+static bool app_SDCard_IsWifiUsingSPI(void) {
+    StreamingRuntimeConfig* pStreamConfig =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    bool isStreaming = (pStreamConfig != NULL) && pStreamConfig->IsEnabled;
+    bool isWifiStreaming = isStreaming &&
+                          (pStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
+                           pStreamConfig->ActiveInterface == StreamingInterface_All);
+    return isWifiStreaming || wifi_manager_IsWifiFirmwareUpdateActive();
+}
+
+/**
  * SD Card Task
- * 
- * Manages SD card operations with intelligent SPI bus coordination.
- * Avoids SD operations during WiFi streaming to prevent SPI bus contention
- * that was causing WiFi streaming failures every ~590 seconds.
+ *
+ * Power-aware state machine modeled after app_WifiTask.
+ * Three states:
+ *   WAIT_POWER_UP — waits for device to be powered before SD operations
+ *   PROCESS       — normal SD operations; monitors power state and WiFi SPI usage
+ *   SUSPENDED     — SD gracefully unmounted while WiFi owns the SPI bus
  */
 static void app_SDCardTask(void* p_arg) {
+    enum {
+        APP_SD_STATE_WAIT_POWER_UP = 0,
+        APP_SD_STATE_PROCESS = 1,
+        APP_SD_STATE_SUSPENDED = 2,
+    };
+
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
+    const tPowerData* pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    uint8_t state = APP_SD_STATE_WAIT_POWER_UP;
+
     while (1) {
-        // Critical fix: Prevent SPI bus contention between WiFi streaming/firmware update and SD operations
-        // Background: SD operations every 1ms were causing WiFi streaming failures at ~590 seconds
-        // Solution: Suspend SD operations during WiFi streaming AND firmware update mode for exclusive SPI access
-        StreamingRuntimeConfig* pStreamConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-        bool isStreaming = (pStreamConfig != NULL) && pStreamConfig->IsEnabled;
-        bool isWifiFirmwareUpdateMode = wifi_manager_IsWifiFirmwareUpdateActive();
+        switch (state) {
+            case APP_SD_STATE_WAIT_POWER_UP:
+            {
+                if (pPowerState != NULL &&
+                    (pPowerState->powerState == POWERED_UP ||
+                     pPowerState->powerState == POWERED_UP_EXT_DOWN)) {
+                    state = APP_SD_STATE_PROCESS;
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
+                break;
+            }
 
-        // Check if streaming is to WiFi (which uses SPI bus and conflicts with SD)
-        bool isWifiStreaming = isStreaming &&
-                              (pStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
-                               pStreamConfig->ActiveInterface == StreamingInterface_All);
+            case APP_SD_STATE_PROCESS:
+            {
+                // Check power state — shut down SD if device is powering down
+                if (pPowerState != NULL &&
+                    pPowerState->powerState != POWERED_UP &&
+                    pPowerState->powerState != POWERED_UP_EXT_DOWN) {
+                    app_SDCard_GracefulShutdown(3000, "power state dropped");
+                    state = APP_SD_STATE_WAIT_POWER_UP;
+                    break;
+                }
 
-        if (isWifiStreaming || isWifiFirmwareUpdateMode) {
-            // WiFi streaming or firmware update mode active - suspend SD operations to avoid SPI bus contention
-            // This prevents the ~590 second streaming failure and WiFi flash erase failures
-            vTaskDelay(100 / portTICK_PERIOD_MS); // Reduced frequency check when SPI in use
-        } else {
-            // Safe to run SD operations (not streaming, or streaming to USB/SD only)
-            // Normal SD card maintenance: driver tasks, state processing, file system
-            DRV_SDSPI_Tasks(sysObj.drvSDSPI0);      // Harmony SD driver background processing
-            sd_card_manager_ProcessState();         // SD card state management
-            SYS_FS_Tasks();                         // File system maintenance
-            vTaskDelay(SD_CARD_MANAGER_TASK_DELAY_MS / portTICK_PERIOD_MS); // 1ms normal rate
+                // Check if WiFi needs exclusive SPI bus access
+                if (app_SDCard_IsWifiUsingSPI()) {
+                    app_SDCard_GracefulShutdown(3000,
+                        wifi_manager_IsWifiFirmwareUpdateActive()
+                            ? "WiFi firmware update" : "WiFi streaming");
+                    state = APP_SD_STATE_SUSPENDED;
+                    break;
+                }
+
+                // Normal SD operations
+                DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
+                sd_card_manager_ProcessState();
+                SYS_FS_Tasks();
+                vTaskDelay(SD_CARD_MANAGER_TASK_DELAY_MS / portTICK_PERIOD_MS);
+                break;
+            }
+
+            case APP_SD_STATE_SUSPENDED:
+            {
+                // Check if WiFi released the SPI bus
+                if (!app_SDCard_IsWifiUsingSPI()) {
+                    if (pPowerState != NULL &&
+                        (pPowerState->powerState == POWERED_UP ||
+                         pPowerState->powerState == POWERED_UP_EXT_DOWN)) {
+                        LOG_I("[SD] WiFi released SPI bus, resuming SD operations");
+                        state = APP_SD_STATE_PROCESS;
+                    } else {
+                        state = APP_SD_STATE_WAIT_POWER_UP;
+                    }
+                } else {
+                    // Also check power while suspended
+                    if (pPowerState != NULL &&
+                        pPowerState->powerState != POWERED_UP &&
+                        pPowerState->powerState != POWERED_UP_EXT_DOWN) {
+                        // No need to shutdown again — already unmounted
+                        state = APP_SD_STATE_WAIT_POWER_UP;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
+                break;
+            }
         }
     }
 }

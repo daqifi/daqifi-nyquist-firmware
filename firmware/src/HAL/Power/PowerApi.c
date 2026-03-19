@@ -13,6 +13,7 @@
 #include "Util/Logger.h"
 #include "../../services/wifi_services/wifi_manager.h"
 #include "../../services/UsbCdc/UsbCdc.h"
+#include "../../services/sd_card_services/sd_card_manager.h"
 #include "driver/usb/usbhs/src/plib_usbhs_header.h"
 #include <xc.h>
 //typedef enum
@@ -311,7 +312,12 @@ static void Power_Up(bool enableExtPower) {
 }
 
 void Power_Down(void) {
-    
+
+    /* Warn if SD card operations still in progress — data may be lost */
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("[POWER] Power_Down with SD busy - potential data loss");
+    }
+
     /* Disable external power rails */
     pWriteVariables->EN_5_10V_Val = false;   /* 5V/10V off */
     pWriteVariables->EN_12V_Val = true;      /* 12V off (inverted logic) */
