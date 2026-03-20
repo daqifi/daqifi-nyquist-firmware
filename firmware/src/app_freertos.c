@@ -262,7 +262,7 @@ static void app_WifiTask(void* p_arg) {
  *
  * Must be called from the SD task (drives DRV_SDSPI_Tasks/ProcessState/SYS_FS_Tasks).
  *
- * @param timeoutMs Maximum time to wait for idle (0 = trigger only, don't wait)
+ * @param timeoutMs Maximum time to wait for idle
  * @param reason    Human-readable reason for logging
  * @return true if SD reached idle within timeout, false if timed out
  */
@@ -276,10 +276,8 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
     // Trigger DEINIT -> UNMOUNT_DISK path (same mechanism as SCPI_StopStreaming)
     sd_card_manager_settings_t* pSDSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    if (pSDSettings != NULL) {
-        pSDSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-        sd_card_manager_UpdateSettings(pSDSettings);
-    }
+    pSDSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+    sd_card_manager_UpdateSettings(pSDSettings);
 
     // Drive the state machine ourselves — we ARE the SD task
     uint32_t waited = 0;
@@ -307,7 +305,7 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
 static bool app_SDCard_IsWifiUsingSPI(void) {
     StreamingRuntimeConfig* pStreamConfig =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    bool isStreaming = (pStreamConfig != NULL) && pStreamConfig->IsEnabled;
+    bool isStreaming = pStreamConfig->IsEnabled;
     bool isWifiStreaming = isStreaming &&
                           (pStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
                            pStreamConfig->ActiveInterface == StreamingInterface_All);
@@ -383,6 +381,9 @@ static void app_SDCardTask(void* p_arg) {
                     if (pPowerState != NULL &&
                         (pPowerState->powerState == POWERED_UP ||
                          pPowerState->powerState == POWERED_UP_EXT_DOWN)) {
+                        // SD remounts on-demand when a new SCPI command sets the mode
+                        // (LIST, GET, LOG+StartStream, etc.). Logging is NOT auto-resumed
+                        // because the file was closed and the streaming session may have ended.
                         LOG_I("[SD] WiFi released SPI bus, resuming SD operations");
                         state = APP_SD_STATE_PROCESS;
                     } else {
