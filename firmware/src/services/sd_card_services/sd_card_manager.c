@@ -1525,7 +1525,9 @@ bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {
 }
 
 bool sd_card_manager_IsBusy(void) {
-    // If SD manager hasn't been initialized yet, treat as busy/unavailable
+    // If SD manager hasn't been initialized yet, treat as busy/unavailable.
+    // Intentionally true: prevents WiFi FW update or other SPI consumers from
+    // starting before SD init completes during early boot.
     if (gpSDCardSettings == NULL) {
         return true;
     }
