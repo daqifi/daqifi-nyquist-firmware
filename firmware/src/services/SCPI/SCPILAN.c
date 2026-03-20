@@ -19,10 +19,8 @@
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
-// SPI coordination removed from enable level - both WiFi and SD can be enabled concurrently
-// SPI coordination handled at operation level when needed
+#include "services/sd_card_services/sd_card_manager.h"
 
-#define SD_CARD_ACTIVE_ERROR_MSG "\r\nPlease Disable SD Card\r\n"
 
 // WiFi status functions have been moved to wifi_manager
 
@@ -516,6 +514,13 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANFwUpdate(scpi_t * context) {
+    // Block if SD card is actively logging (shared SPI bus)
+    if (sd_card_manager_IsBusy()) {
+        LOG_E("Cannot start WiFi firmware update while SD card is busy (SPI bus conflict)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     // Request WiFi firmware update mode via state machine flag
     // On next APPLY, state machine will transition to WiFi firmware update mode instead of reconfiguring WiFi
     wifi_manager_RequestWifiFirmwareUpdate();

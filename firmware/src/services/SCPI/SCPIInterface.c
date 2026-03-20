@@ -2001,7 +2001,7 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
 
     // Check if SD card is enabled when trying to use SD or All interfaces
     if (param1 == StreamingInterface_SD || param1 == StreamingInterface_All) {
-        if (pSDCardSettings != NULL && !pSDCardSettings->enable) {
+        if (!pSDCardSettings->enable) {
             LOG_E("Cannot set interface to SD - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
@@ -2010,8 +2010,7 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
 
     // Check for WiFi+SD conflict (both use SPI bus) - only when SD streaming is actively running
     if (param1 == StreamingInterface_WiFi || param1 == StreamingInterface_All) {
-        if (pSDCardSettings != NULL &&
-            pSDCardSettings->enable && pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        if (pSDCardSettings->enable && pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
             LOG_E("Cannot switch to WiFi while SD streaming is active (SPI bus conflict). Stop streaming first.");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
