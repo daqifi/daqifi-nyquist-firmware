@@ -33,6 +33,7 @@ scpi_result_t SCPI_StorageSDLoggingGet(scpi_t * context);
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context);
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context);
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context);
+scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context);
 
 // SD Card Benchmarking Commands
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context);

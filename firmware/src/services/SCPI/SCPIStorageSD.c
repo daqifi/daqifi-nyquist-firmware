@@ -125,6 +125,12 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
 __exit_point:
     return result;
 }
+scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    SCPI_ResultInt32(context, pSDCardRuntimeConfig->enable ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
