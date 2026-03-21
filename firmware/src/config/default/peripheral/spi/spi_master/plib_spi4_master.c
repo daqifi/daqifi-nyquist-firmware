@@ -82,7 +82,6 @@ void SPI4_Initialize ( void )
     IFS5CLR = 0x20;
 
     /* BAUD Rate register Setup */
-    /* MCLKSEL=1: source is REFCLK1 (200 MHz), BRG=4: 200/(2*5) = 20 MHz */
     SPI4BRG = 4;
 
     /* CLear the Overflow */
@@ -95,7 +94,7 @@ void SPI4_Initialize ( void )
     MODE<32,16> = 0
     ENHBUF = 1
     MSSEN = 0
-    MCLKSEL = 1 (use REFCLK1 = 200 MHz instead of PBCLK2 = 100 MHz)
+    MCLKSEL = 1
     */
     SPI4CONSET = (SPI4_CON_MSSEN | SPI4_CON_MCLKSEL | SPI4_CON_ENHBUF | SPI4_CON_MODE_32_MODE_16 | SPI4_CON_CKE | SPI4_CON_CKP | SPI4_CON_MSTEN | SPI4_CON_SMP);
 
@@ -126,7 +125,7 @@ bool SPI4_TransferSetup (SPI_TRANSFER_SETUP* setup, uint32_t spiSourceClock )
 
     if(spiSourceClock == 0U)
     {
-        // MCLKSEL=1: SPI4 uses REFCLK1 (200 MHz) instead of PBCLK2
+        // Use Master Clock Frequency set in GUI
         spiSourceClock = 200000000;
     }
 

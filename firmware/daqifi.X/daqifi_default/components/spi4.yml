@@ -1,6 +1,6 @@
 configVersion: 1.0.0
 componentName: spi4
-coreVersion: 5.8.2
+coreVersion: 5.8.4
 device: PIC32MZ2048EFM144
 library: []
 dependency:

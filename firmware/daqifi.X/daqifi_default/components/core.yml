@@ -1,6 +1,6 @@
 configVersion: 1.0.0
 componentName: core
-coreVersion: 5.8.2
+coreVersion: 5.8.4
 device: PIC32MZ2048EFM144
 library: []
 dependency:
@@ -9497,7 +9497,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '100000000'
+            value: '200000000'
           type: Dynamic
         type: Values
       type: Integer
@@ -13034,7 +13034,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0x60200'
+            value: '0x200'
           type: Dynamic
         type: Values
       type: String
@@ -13045,7 +13045,7 @@ data:
       - children:
         - attributes:
             id: core
-            value: '0xaa800000'
+            value: '0x0'
           type: Dynamic
         type: Values
       type: String
@@ -13073,7 +13073,7 @@ data:
         type: Attributes
       - children:
         - attributes:
-            value: '6'
+            value: '0'
           type: User
         type: Values
       type: Integer
@@ -13091,7 +13091,7 @@ data:
         type: Attributes
       - children:
         - attributes:
-            value: '341'
+            value: '0'
           type: User
         type: Values
       type: Integer
