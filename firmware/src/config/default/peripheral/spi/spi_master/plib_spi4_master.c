@@ -56,7 +56,7 @@ static volatile SPI_OBJECT spi4Obj;
 #define SPI4_CON_CKE                        (1UL << _SPI4CON_CKE_POSITION)
 #define SPI4_CON_MODE_32_MODE_16            (0UL << _SPI4CON_MODE16_POSITION)
 #define SPI4_CON_ENHBUF                     (1UL << _SPI4CON_ENHBUF_POSITION)
-#define SPI4_CON_MCLKSEL                    (0UL << _SPI4CON_MCLKSEL_POSITION)
+#define SPI4_CON_MCLKSEL                    (1UL << _SPI4CON_MCLKSEL_POSITION)
 #define SPI4_CON_MSSEN                      (0UL << _SPI4CON_MSSEN_POSITION)
 #define SPI4_CON_SMP                        (0UL << _SPI4CON_SMP_POSITION)
 
@@ -82,7 +82,8 @@ void SPI4_Initialize ( void )
     IFS5CLR = 0x20;
 
     /* BAUD Rate register Setup */
-    SPI4BRG = 2;
+    /* MCLKSEL=1: source is REFCLK1 (200 MHz), BRG=4: 200/(2*5) = 20 MHz */
+    SPI4BRG = 4;
 
     /* CLear the Overflow */
     SPI4STATCLR = _SPI4STAT_SPIROV_MASK;
@@ -94,7 +95,7 @@ void SPI4_Initialize ( void )
     MODE<32,16> = 0
     ENHBUF = 1
     MSSEN = 0
-    MCLKSEL = 0
+    MCLKSEL = 1 (use REFCLK1 = 200 MHz instead of PBCLK2 = 100 MHz)
     */
     SPI4CONSET = (SPI4_CON_MSSEN | SPI4_CON_MCLKSEL | SPI4_CON_ENHBUF | SPI4_CON_MODE_32_MODE_16 | SPI4_CON_CKE | SPI4_CON_CKP | SPI4_CON_MSTEN | SPI4_CON_SMP);
 
@@ -125,8 +126,8 @@ bool SPI4_TransferSetup (SPI_TRANSFER_SETUP* setup, uint32_t spiSourceClock )
 
     if(spiSourceClock == 0U)
     {
-        // Use Master Clock Frequency set in GUI
-        spiSourceClock = 100000000;
+        // MCLKSEL=1: SPI4 uses REFCLK1 (200 MHz) instead of PBCLK2
+        spiSourceClock = 200000000;
     }
 
     t_brg = (((spiSourceClock / (setup->clockFrequency)) / 2u) - 1u);

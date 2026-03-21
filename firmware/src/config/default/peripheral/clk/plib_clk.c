@@ -103,8 +103,14 @@ void CLK_Initialize( void )
 
     CFGCONbits.PMDLOCK = 1;
 
-
-      
+    /* Enable REFCLK1 from SYSCLK (200 MHz) for SPI4 master clock.
+     * This allows SPI4 to run at 20 MHz exactly (BRG=4: 200/(2*5) = 20 MHz)
+     * while PBCLK2 remains at 100 MHz for I2C, UART, and other peripherals.
+     * ROSEL=7 (SPLL/SYSCLK), RODIV=0 (no division), ON=1 */
+    REFO1CON = 0;                         /* Clear first */
+    REFO1CONbits.ROSEL = 7;              /* Source = SPLL (200 MHz) */
+    REFO1CONbits.RODIV = 0;              /* No division (passthrough) */
+    REFO1CONbits.ON = 1;                 /* Enable REFCLK1 output */
 
     /* Lock system since done with clock configuration */
     SYSKEY = 0x33333333U;

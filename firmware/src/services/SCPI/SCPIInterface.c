@@ -1830,6 +1830,17 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
+
+        // Wait for SD file to be open before starting streaming.
+        // Without this, early samples are dropped while SD mounts/opens.
+        int readyWait = 0;
+        while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            readyWait++;
+        }
+        if (!sd_card_manager_IsWriteReady()) {
+            LOG_E("SD file not ready after %d ms - starting streaming anyway", readyWait * 10);
+        }
     }
 
     pRunTimeStreamConfig->IsEnabled = true;

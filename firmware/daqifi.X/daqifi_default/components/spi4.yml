@@ -78,7 +78,7 @@ data:
       - children:
         - attributes:
             id: spi4
-            value: '2'
+            value: '4'
           type: Dynamic
         type: Values
       type: Integer
@@ -136,7 +136,7 @@ data:
       children:
       - children:
         - attributes:
-            value: '1'
+            value: '0'
           type: User
         type: Values
       type: KeyValueSet

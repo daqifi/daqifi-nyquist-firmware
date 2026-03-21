@@ -50,25 +50,14 @@
 // SPI frequency definitions (reserved for coordination framework)
 #include "config/default/configuration.h"
 #define SPI0_WIFI_FREQUENCY_HZ      20000000  // Reserved: WiFi target frequency for benchmarking
-#define SPI0_SD_FREQUENCY_HZ        20000000  // Reserved: SD target frequency for benchmarking
+#define SPI0_SD_FREQUENCY_HZ        20000000  // SD target frequency (BRG=4, actual 20 MHz from 200 MHz REFCLK1)
 
-// Compile-time validation for frequency management
-#if (SPI0_COORDINATION_ENABLED == 0)
-#define SPI0_STANDARDIZED_FREQUENCY_HZ  20000000  // Both clients must use this when coordination disabled
-#if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_STANDARDIZED_FREQUENCY_HZ)
-#error "SPI frequency mismatch detected! When coordination disabled, standardize frequencies or enable coordination (SPI0_COORDINATION_ENABLED=1)."
-#endif
-#else
-// When coordination enabled, validate SD card configuration matches our managed frequency
+// Compile-time validation: DRV_SDSPI_SPEED_HZ_IDX0 must match our managed SD frequency.
+// WiFi and SD never use SPI concurrently (enforced by SD task state machine
+// and SCPI_StartStreaming SPI conflict check), so mismatched WiFi/SD speeds are safe.
 #if (DRV_SDSPI_SPEED_HZ_IDX0 != SPI0_SD_FREQUENCY_HZ)
-#error "SD card frequency mismatch! DRV_SDSPI_SPEED_HZ_IDX0 must match SPI0_SD_FREQUENCY_HZ when coordination enabled."
+#error "SD card frequency mismatch! DRV_SDSPI_SPEED_HZ_IDX0 must match SPI0_SD_FREQUENCY_HZ."
 #endif
-#endif
-
-// Future validation: Add WiFi frequency check when configurable
-// #if defined(DRV_WIFI_SPI_SPEED_HZ) && (DRV_WIFI_SPI_SPEED_HZ != SPI0_STANDARDIZED_FREQUENCY_HZ) && (SPI0_COORDINATION_ENABLED == 0)
-// #error "WiFi SPI frequency mismatch! Enable SPI coordination or standardize frequencies."
-// #endif
 
 // SPI0 bus clients for identification and future coordination
 typedef enum {
