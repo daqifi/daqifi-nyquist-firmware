@@ -1839,7 +1839,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
-            LOG_E("SD file not ready after %d ms - starting streaming anyway", readyWait * 10);
+            LOG_E("SD file not ready after %d ms", readyWait * 10);
+            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSDCardSettings);
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
         }
     }
 
