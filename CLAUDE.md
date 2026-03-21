@@ -1185,6 +1185,16 @@ python test_sd_card.py
    - Keep commands simple
    - Use script files instead of complex one-liners
    - Batch related commands together
+
+4. **wolfSSL Must Stay at v5.4.0**: MCC Content Manager pushes wolfSSL v5.7.0 which **breaks the build** (confirmed Microchip bug — missing `types.h`, `WOLF_ENUM_DUMMY_LAST_ELEMENT` macro errors, `NO_BIG_INT` conflicts). See [Microchip forum thread](https://forum.microchip.com/s/topic/a5CV4000000249BMAQ/t397847). After any MCC session, revert wolfSSL changes:
+   ```bash
+   git checkout -- firmware/src/third_party/wolfssl/
+   git clean -fd -- firmware/src/third_party/wolfssl/
+   git checkout -- firmware/src/config/default/harmony-manifest-success.yml
+   git checkout -- firmware/daqifi.X/nbproject/configurations.xml
+   # Then regenerate Makefiles and remove references to deleted wolf files
+   # (dilithium, kyber, xmss, lms, sphincs, sm2/3/4, hpke)
+   ```
 - pic32 tris convention is 1=input and 0=output
 - when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
 - always verify scpi command syntax - don't guess.
