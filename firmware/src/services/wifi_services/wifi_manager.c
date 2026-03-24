@@ -326,7 +326,16 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         }
         case SOCKET_MSG_SEND:
         {
-            gStateMachineContext.pTcpServerContext->client.tcpSendPending=0;
+            int16_t sentBytes = *(int16_t*)pMessage;
+            gStateMachineContext.pTcpServerContext->client.tcpSendPending = 0;
+            if (sentBytes >= 0) {
+                gStateMachineContext.pTcpServerContext->client.wincBytesConfirmed += (uint16_t)sentBytes;
+            } else {
+                gStateMachineContext.pTcpServerContext->client.wincSendErrors++;
+                if (gStateMachineContext.pTcpServerContext->client.wincSendErrors == 1) {
+                    LOG_E("WINC send error: %d", (int)sentBytes);
+                }
+            }
         }
             break;
         default:

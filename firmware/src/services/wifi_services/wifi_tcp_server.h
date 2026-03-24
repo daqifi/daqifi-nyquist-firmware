@@ -51,6 +51,15 @@ typedef struct s_tcpClientContext
     scpi_t scpiContext;
     
     bool tcpSendPending;
+
+    /** Bytes handed to WINC send() successfully */
+    uint32_t wincBytesSent;
+    /** Bytes confirmed by WINC SOCKET_MSG_SEND callback */
+    uint32_t wincBytesConfirmed;
+    /** WINC send errors (negative s16SentBytes in callback) */
+    uint32_t wincSendErrors;
+    /** Pending send size (to compare against callback confirmation) */
+    uint16_t lastSendSize;
 } wifi_tcp_server_clientContext_t;
 
 /**

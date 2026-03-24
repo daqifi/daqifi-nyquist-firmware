@@ -1563,6 +1563,13 @@ static scpi_result_t SCPI_GetTestPattern(scpi_t * context) {
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     Streaming_ClearStats();
+    // Reset WINC send tracking counters
+    wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
+    if (pTcp != NULL) {
+        pTcp->client.wincBytesSent = 0;
+        pTcp->client.wincBytesConfirmed = 0;
+        pTcp->client.wincSendErrors = 0;
+    }
     SCPI_SyncQuesBits();
     return SCPI_RES_OK;
 }
@@ -1629,6 +1636,14 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s.queueDroppedSamples);
     scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
     scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
+    {
+        wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
+        if (pTcp != NULL) {
+            scpi_printf(context, "WincBytesSent=%u\r\n", (unsigned)pTcp->client.wincBytesSent);
+            scpi_printf(context, "WincBytesConfirmed=%u\r\n", (unsigned)pTcp->client.wincBytesConfirmed);
+            scpi_printf(context, "WincSendErrors=%u\r\n", (unsigned)pTcp->client.wincSendErrors);
+        }
+    }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
 
