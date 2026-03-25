@@ -1611,4 +1611,35 @@ size_t sd_card_manager_GetWriteBuffFreeSize() {
     return freeSize;
 }
 
+// --- SD Write Metrics ---
+static sd_card_write_metrics_t gSdWriteMetrics = {0};
+
+void sd_card_manager_TrackWrite(uint32_t sectors, bool success, uint32_t elapsedMs, bool alignedCopy) {
+    taskENTER_CRITICAL();
+    gSdWriteMetrics.writeCallCount++;
+    gSdWriteMetrics.writeSectorCount += sectors;
+    gSdWriteMetrics.writeBytesTotal += (uint64_t)sectors * 512ULL;
+    if (!success) {
+        gSdWriteMetrics.writeErrors++;
+    }
+    if (elapsedMs > gSdWriteMetrics.writeMaxLatencyMs) {
+        gSdWriteMetrics.writeMaxLatencyMs = elapsedMs;
+    }
+    if (alignedCopy) {
+        gSdWriteMetrics.writeAlignedCopies++;
+    }
+    taskEXIT_CRITICAL();
+}
+
+void sd_card_manager_GetWriteMetricsSnapshot(sd_card_write_metrics_t* out) {
+    taskENTER_CRITICAL();
+    *out = gSdWriteMetrics;
+    taskEXIT_CRITICAL();
+}
+
+void sd_card_manager_ResetWriteMetrics(void) {
+    taskENTER_CRITICAL();
+    memset(&gSdWriteMetrics, 0, sizeof(gSdWriteMetrics));
+    taskEXIT_CRITICAL();
+}
 

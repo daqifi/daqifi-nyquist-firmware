@@ -34,6 +34,8 @@
 #include "services/wifi_services/wifi_manager.h"
 #include "SCPIStorageSD.h"
 #include "../sd_card_services/sd_card_manager.h"
+
+/* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
 #include "../csv_encoder.h"
 #include "../JSON_Encoder.h"
@@ -1574,6 +1576,8 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->client.lastSendSize = 0;
         taskEXIT_CRITICAL();
     }
+    // Reset SD write metrics
+    sd_card_manager_ResetWriteMetrics();
     SCPI_SyncQuesBits();
     return SCPI_RES_OK;
 }
@@ -1660,6 +1664,16 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiTcpPartialSends=%u\r\n", (unsigned)partialSends);
     }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
+    {
+        sd_card_write_metrics_t sdm;
+        sd_card_manager_GetWriteMetricsSnapshot(&sdm);
+        scpi_printf(context, "SdWriteCalls=%u\r\n", (unsigned)sdm.writeCallCount);
+        scpi_printf(context, "SdWriteSectors=%u\r\n", (unsigned)sdm.writeSectorCount);
+        scpi_printf(context, "SdBytesWritten=%llu\r\n", (unsigned long long)sdm.writeBytesTotal);
+        scpi_printf(context, "SdWriteErrors=%u\r\n", (unsigned)sdm.writeErrors);
+        scpi_printf(context, "SdWriteMaxLatencyMs=%u\r\n", (unsigned)sdm.writeMaxLatencyMs);
+        scpi_printf(context, "SdWriteAlignedCopies=%u\r\n", (unsigned)sdm.writeAlignedCopies);
+    }
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
 
     // Compute sample loss percentage (64-bit intermediate to avoid overflow)
@@ -1877,7 +1891,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
-    // Reset WiFi TCP counters for new session (matches Streaming_ClearStats lifecycle)
+    // Reset per-session counters (matches Streaming_ClearStats lifecycle)
+    sd_card_manager_ResetWriteMetrics();
     {
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {

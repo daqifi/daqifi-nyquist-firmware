@@ -10,8 +10,11 @@
 #include <string.h>
 #include "diskio.h"        /* FatFs lower layer API */
 #include "system/fs/sys_fs_media_manager.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include "sys/kmem.h"
+#include "services/sd_card_services/sd_card_manager.h"
 
 #define CACHE_ALIGN_CHECK  (CACHE_LINE_SIZE - 1)
 
@@ -234,16 +237,20 @@ DRESULT disk_write
         gDiskFormatSectorsWritten += count;
     }
 
+    TickType_t writeStart = xTaskGetTickCount();
     DRESULT result = RES_ERROR;
 
     uint32_t bytesToTransfer    = 0;
     uint32_t currentXferLen     = 0;
     uint32_t sectorXferCntr     = 0;
 
+    bool alignedCopy = false;
+
     /* Use Aligned Buffer if input buffer is in Cacheable address space and
      * is not aligned to cache line size */
     if ((IS_KVA0((uint8_t *)buff) == true) && (((uint32_t)buff & CACHE_ALIGN_CHECK) != 0))
     {
+        alignedCopy = true;
         /* When aligned buffer is used the total number of sectors will be divided by the aligned
          * buffer size and will be sent to drivers in iterations.
          * As the total sectors are now divided into chunks it may effect the overall throughput.
@@ -305,6 +312,10 @@ DRESULT disk_write
 
         result = disk_checkCommandStatus(pdrv);
     }
+
+    /* Track write metrics via sd_card_manager hook */
+    sd_card_manager_TrackWrite(count, (result == RES_OK),
+        pdTICKS_TO_MS(xTaskGetTickCount() - writeStart), alignedCopy);
 
     return result;
 }

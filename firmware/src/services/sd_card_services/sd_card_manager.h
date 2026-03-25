@@ -262,6 +262,38 @@ extern "C" {
      */
     void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen);
 
+    /**
+     * @brief SD write metrics for diagnosing performance and errors.
+     */
+    typedef struct {
+        uint32_t writeCallCount;      /**< Total disk_write invocations */
+        uint32_t writeSectorCount;    /**< Total sectors written */
+        uint64_t writeBytesTotal;     /**< Total bytes confirmed written to card */
+        uint32_t writeErrors;         /**< disk_write returned error */
+        uint32_t writeMaxLatencyMs;   /**< Worst-case single write latency */
+        uint32_t writeAlignedCopies;  /**< Writes needing aligned buffer copy */
+    } sd_card_write_metrics_t;
+
+    /**
+     * @brief Hook called from diskio.c after each disk_write().
+     * @param sectors  Number of sectors in this write
+     * @param success  true if write succeeded
+     * @param elapsedMs  Write duration in milliseconds
+     * @param alignedCopy  true if cacheable→aligned buffer copy was needed
+     */
+    void sd_card_manager_TrackWrite(uint32_t sectors, bool success, uint32_t elapsedMs, bool alignedCopy);
+
+    /**
+     * @brief Get atomic snapshot of SD write metrics (for SCPI stats).
+     * @param out  Destination struct to fill with current values.
+     */
+    void sd_card_manager_GetWriteMetricsSnapshot(sd_card_write_metrics_t* out);
+
+    /**
+     * @brief Reset SD write metrics (for session start / ClearStats).
+     */
+    void sd_card_manager_ResetWriteMetrics(void);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }
