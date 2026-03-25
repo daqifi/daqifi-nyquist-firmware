@@ -334,7 +334,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     taskENTER_CRITICAL();
                     client->wifiTcpBytesConfirmed += (uint16_t)sentBytes;
                     taskEXIT_CRITICAL();
-                    // Detect partial send (WINC confirmed fewer bytes than requested)
+                    // Detect partial send (radio confirmed fewer bytes than requested)
                     if (client->lastSendSize > 0 && (uint16_t)sentBytes < client->lastSendSize) {
                         taskENTER_CRITICAL();
                         client->wifiTcpSendErrors++;

@@ -1642,8 +1642,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     {
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {
-            scpi_printf(context, "WifiTcpBytesSent=%u\r\n", (unsigned)pTcp->client.wifiTcpBytesSent);
-            scpi_printf(context, "WifiTcpBytesConfirmed=%u\r\n", (unsigned)pTcp->client.wifiTcpBytesConfirmed);
+            scpi_printf(context, "WifiTcpBytesSent=%llu\r\n", (unsigned long long)pTcp->client.wifiTcpBytesSent);
+            scpi_printf(context, "WifiTcpBytesConfirmed=%llu\r\n", (unsigned long long)pTcp->client.wifiTcpBytesConfirmed);
             scpi_printf(context, "WifiTcpSendErrors=%u\r\n", (unsigned)pTcp->client.wifiTcpSendErrors);
         }
     }

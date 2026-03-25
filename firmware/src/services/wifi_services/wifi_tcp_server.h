@@ -52,10 +52,10 @@ typedef struct s_tcpClientContext
     
     bool tcpSendPending;
 
-    /** Bytes handed to radio send() successfully */
-    uint32_t wifiTcpBytesSent;
-    /** Bytes confirmed by radio send callback */
-    uint32_t wifiTcpBytesConfirmed;
+    /** Bytes handed to radio send() successfully (64-bit for long sessions) */
+    uint64_t wifiTcpBytesSent;
+    /** Bytes confirmed by radio send callback (64-bit for long sessions) */
+    uint64_t wifiTcpBytesConfirmed;
     /** Radio send errors (negative sentBytes or partial sends in callback) */
     uint32_t wifiTcpSendErrors;
     /** Pending send size (to compare against callback confirmation) */
