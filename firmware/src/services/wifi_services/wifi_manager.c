@@ -332,23 +332,23 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 client->tcpSendPending = 0;
                 if (sentBytes >= 0) {
                     taskENTER_CRITICAL();
-                    client->wincBytesConfirmed += (uint16_t)sentBytes;
+                    client->wifiTcpBytesConfirmed += (uint16_t)sentBytes;
                     taskEXIT_CRITICAL();
                     // Detect partial send (WINC confirmed fewer bytes than requested)
                     if (client->lastSendSize > 0 && (uint16_t)sentBytes < client->lastSendSize) {
                         taskENTER_CRITICAL();
-                        client->wincSendErrors++;
+                        client->wifiTcpSendErrors++;
                         taskEXIT_CRITICAL();
-                        if (client->wincSendErrors == 1) {
-                            LOG_E("WINC partial send: %d/%u bytes", (int)sentBytes, (unsigned)client->lastSendSize);
+                        if (client->wifiTcpSendErrors == 1) {
+                            LOG_E("WiFi TCP partial send: %d/%u bytes", (int)sentBytes, (unsigned)client->lastSendSize);
                         }
                     }
                 } else {
                     taskENTER_CRITICAL();
-                    client->wincSendErrors++;
+                    client->wifiTcpSendErrors++;
                     taskEXIT_CRITICAL();
-                    if (client->wincSendErrors == 1) {
-                        LOG_E("WINC send error: %d", (int)sentBytes);
+                    if (client->wifiTcpSendErrors == 1) {
+                        LOG_E("WiFi TCP send error: %d", (int)sentBytes);
                     }
                 }
             }

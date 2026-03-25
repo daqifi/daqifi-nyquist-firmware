@@ -121,7 +121,7 @@ static bool TcpServerFlush() {
         gpServerData->client.tcpSendPending = 1;
         gpServerData->client.lastSendSize = gpServerData->client.writeBufferLength;
         taskENTER_CRITICAL();
-        gpServerData->client.wincBytesSent += gpServerData->client.writeBufferLength;
+        gpServerData->client.wifiTcpBytesSent += gpServerData->client.writeBufferLength;
         taskEXIT_CRITICAL();
         gpServerData->client.writeBufferLength = 0;
         funRet = true;
