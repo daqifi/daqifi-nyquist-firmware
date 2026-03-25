@@ -476,13 +476,23 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 
 **Scheduling implications**: The deferred ISR task (priority 8) preempts everything — it runs immediately when a streaming timer fires. The streaming encoder and all I/O tasks share priority 2, so they round-robin via time-slicing. USB device task starts at priority 2 then self-boosts to 7.
 
-#### Known Silicon Errata (DS80000663, relevant items)
+#### Known Silicon Errata (DS80000663R, all revisions through B3)
 
-- **SPI SRMT bit** (errata #4): The Shift Register Empty bit may falsely indicate transmission complete just before the last block shifts out. **Workaround**: Use the Transmit Buffer Empty interrupt (STXISEL=0) instead of polling SRMT.
-- **DMA half-full interrupt** (errata #15): DMA Channel Destination Half Full interrupt can trigger twice. **Workaround**: Use transfer-complete interrupt instead.
-- **USB no remote wake-up** (errata #6): USB module does not support remote wake-up feature.
-- **Crypto DMA** (errata #20): Cryptographic DMA does not support partial packet processing or zero-length packets. Does not affect our use (wolfSSL runs in software mode on PIC32MZ EF).
-- **Prefetch cache and DMA** (errata #13): Prefetch module may serve stale data when DMA writes to same address range. **Workaround**: Use coherent buffers or invalidate cache before reading DMA-modified data.
+Verified against the actual errata PDF. Only items relevant to our firmware are listed.
+
+| Issue | Module | Summary | Impact | Workaround |
+|-------|--------|---------|--------|------------|
+| #1 | Oscillator | **REFCLK cannot divide inputs >100 MHz** | We use REFCLK1 from 200 MHz SYSCLK with RODIV=0 (passthrough, no division). Passthrough appears unaffected — tested working at 200 MHz. Monitor if REFCLK issues appear. | Use RODIV=0 only (no fractional division of >100 MHz sources) |
+| #6 | I2C | I2C module unreliable under certain conditions | We use I2C5 for BQ24297. Protected by mutex. | I2C mutex in BQ24297 driver |
+| #8 | UART | RX FIFO overflow causes loss of synchronization | Affects debug UART (UART4) if flooded | Avoid flooding debug UART input |
+| #16 | USB | No remote wake-up support | Minor — device is USB device, not host | None needed |
+| #25/#26 | Crypto | Crypto DMA: no partial packets, no zero-length | Not affected — wolfSSL runs in software mode | N/A |
+| #27 | SPI | **SRMT bit falsely indicates transmission complete** before last block shifts out | Could affect SPI polling code | Use Transmit Buffer Empty interrupt (STXISEL=0) instead of polling SRMT |
+| #37 | I2C | **SCL tLOW doesn't meet I2C spec at ≥400 kHz** | BQ24297 uses I2C at 100 kHz — unaffected | Keep I2C ≤100 kHz for reliable operation |
+| #40 | USB | FLUSH bit doesn't flush TX FIFO (USBIENCSRx<19>) | Could affect USB streaming if FIFO flush relied upon | Harmony USB driver works around this |
+| #42 | DMA | **DMA half-full interrupt can fire twice** | Could cause double-processing of DMA data | Use transfer-complete interrupt instead of half-full |
+| #44 | Timer | Timer match + sleep entry may miss interrupt | Could affect streaming timer if device enters sleep during streaming | Don't enter sleep while streaming |
+| #45 | Flash | RTSP (run-time self-programming) of config words broken | Affects NVM settings write if using config word area | Use regular flash pages for NVM settings (current approach) |
 
 ### Memory Considerations
 
