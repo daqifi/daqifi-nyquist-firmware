@@ -118,11 +118,13 @@ static bool TcpServerFlush() {
     if (sockRet == SOCK_ERR_CONN_ABORTED) {
         funRet = false;
     } else if (sockRet == SOCK_ERR_NO_ERROR) {
-        gpServerData->client.tcpSendPending = 1;
-        gpServerData->client.lastSendSize = gpServerData->client.writeBufferLength;
+        // Update stats and lastSendSize BEFORE setting tcpSendPending,
+        // so the callback reads consistent data if it fires immediately.
         taskENTER_CRITICAL();
+        gpServerData->client.lastSendSize = gpServerData->client.writeBufferLength;
         gpServerData->client.wifiTcpBytesSent += gpServerData->client.writeBufferLength;
         taskEXIT_CRITICAL();
+        gpServerData->client.tcpSendPending = 1;  // Signal after data is ready
         gpServerData->client.writeBufferLength = 0;
         funRet = true;
     } else if (sockRet == SOCK_ERR_BUFFER_FULL) {

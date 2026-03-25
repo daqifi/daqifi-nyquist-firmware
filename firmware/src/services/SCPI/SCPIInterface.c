@@ -1640,20 +1640,21 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
     scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
     {
+        uint64_t bytesSent = 0, bytesConfirmed = 0;
+        uint32_t sendErrors = 0;
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {
             // Atomic snapshot of 64-bit counters (not atomic on 32-bit PIC32MZ)
-            uint64_t bytesSent, bytesConfirmed;
-            uint32_t sendErrors;
             taskENTER_CRITICAL();
             bytesSent = pTcp->client.wifiTcpBytesSent;
             bytesConfirmed = pTcp->client.wifiTcpBytesConfirmed;
             sendErrors = pTcp->client.wifiTcpSendErrors;
             taskEXIT_CRITICAL();
-            scpi_printf(context, "WifiTcpBytesSent=%llu\r\n", (unsigned long long)bytesSent);
-            scpi_printf(context, "WifiTcpBytesConfirmed=%llu\r\n", (unsigned long long)bytesConfirmed);
-            scpi_printf(context, "WifiTcpSendErrors=%u\r\n", (unsigned)sendErrors);
         }
+        // Always print for consistent response schema
+        scpi_printf(context, "WifiTcpBytesSent=%llu\r\n", (unsigned long long)bytesSent);
+        scpi_printf(context, "WifiTcpBytesConfirmed=%llu\r\n", (unsigned long long)bytesConfirmed);
+        scpi_printf(context, "WifiTcpSendErrors=%u\r\n", (unsigned)sendErrors);
     }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);

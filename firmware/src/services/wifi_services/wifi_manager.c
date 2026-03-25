@@ -333,6 +333,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
 
                 // Single critical section for all counter updates + lastSendSize read
                 uint16_t sendSize;
+                uint32_t errorCount;
                 bool isPartial = false;
                 bool isError = false;
 
@@ -348,12 +349,13 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     client->wifiTcpSendErrors++;
                     isError = true;
                 }
+                errorCount = client->wifiTcpSendErrors;
                 taskEXIT_CRITICAL();
 
-                // Log outside critical section
-                if (isPartial && client->wifiTcpSendErrors == 1) {
+                // Log outside critical section using snapshotted count
+                if (isPartial && errorCount == 1) {
                     LOG_E("WiFi TCP partial send: %d/%u bytes", (int)sentBytes, (unsigned)sendSize);
-                } else if (isError && client->wifiTcpSendErrors == 1) {
+                } else if (isError && errorCount == 1) {
                     LOG_E("WiFi TCP send error: %d", (int)sentBytes);
                 }
             }
