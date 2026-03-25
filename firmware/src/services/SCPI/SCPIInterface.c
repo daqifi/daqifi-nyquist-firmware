@@ -1563,12 +1563,15 @@ static scpi_result_t SCPI_GetTestPattern(scpi_t * context) {
 
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     Streaming_ClearStats();
-    // Reset WINC send tracking counters
+    // Reset WiFi TCP send tracking counters atomically
     wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
     if (pTcp != NULL) {
+        taskENTER_CRITICAL();
         pTcp->client.wifiTcpBytesSent = 0;
         pTcp->client.wifiTcpBytesConfirmed = 0;
         pTcp->client.wifiTcpSendErrors = 0;
+        pTcp->client.lastSendSize = 0;
+        taskEXIT_CRITICAL();
     }
     SCPI_SyncQuesBits();
     return SCPI_RES_OK;
@@ -1847,13 +1850,16 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         sd_card_manager_UpdateSettings(pSDCardSettings);
     }
 
-    // Reset WINC counters for new session (matches Streaming_ClearStats lifecycle)
+    // Reset WiFi TCP counters for new session (matches Streaming_ClearStats lifecycle)
     {
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {
+            taskENTER_CRITICAL();
             pTcp->client.wifiTcpBytesSent = 0;
             pTcp->client.wifiTcpBytesConfirmed = 0;
             pTcp->client.wifiTcpSendErrors = 0;
+            pTcp->client.lastSendSize = 0;
+            taskEXIT_CRITICAL();
         }
     }
 
