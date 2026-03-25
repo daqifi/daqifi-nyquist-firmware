@@ -1,5 +1,22 @@
+[github_app]
+# Auto-run on every push to PR
+pr_commands = [
+    "/review",
+    "/improve"
+]
+
 [pr_reviewer]
 extra_instructions = """\
+This is a PIC32MZ2048EFM144 (MIPS32, 200 MHz) embedded firmware project with FreeRTOS.
+Key concurrency rules:
+- 32-bit reads/writes are atomic. Do NOT suggest critical sections for plain stores/loads.
+- Read-modify-write (+=, |=, ++, &=~) is NOT atomic — needs taskENTER_CRITICAL.
+- 64-bit operations always need critical sections.
+- BoardRunTimeConfig_Get() never returns NULL — do NOT suggest NULL guards on it.
+- All ISR handlers defer to FreeRTOS tasks via xTaskNotifyGive — socket callbacks and
+  streaming code run in task context, NOT ISR context. Do NOT suggest ISR-safe variants.
+- portTASK_USES_FLOATING_POINT() is required for any task using float/double.
+
 When reviewing SCPI interfaces:
 - Treat `**ERROR:` lines returned as part of SCPI command/interactive responses as acceptable existing behavior (USB and TCP).
 - Do NOT flag these as "errors in the data stream" unless the code is in the dedicated data streaming path (continuous/binary/deterministic output stream).
@@ -8,6 +25,14 @@ When reviewing SCPI interfaces:
 
 [pr_code_suggestions]
 extra_instructions = """\
+This is a PIC32MZ2048EFM144 (MIPS32, 200 MHz) embedded firmware project with FreeRTOS.
+Key concurrency rules:
+- 32-bit reads/writes are atomic. Do NOT suggest critical sections for plain stores/loads.
+- Read-modify-write (+=, |=, ++, &=~) is NOT atomic — needs taskENTER_CRITICAL.
+- 64-bit operations always need critical sections.
+- BoardRunTimeConfig_Get() never returns NULL — do NOT suggest NULL guards on it.
+- All socket callbacks run in task context, NOT ISR context. Do NOT suggest ISR-safe critical sections.
+
 When reviewing SCPI interfaces:
 - Treat `**ERROR:` lines returned as part of SCPI command/interactive responses as acceptable existing behavior (USB and TCP).
 - Do NOT flag these as "errors in the data stream" unless the code is in the dedicated data streaming path (continuous/binary/deterministic output stream).
