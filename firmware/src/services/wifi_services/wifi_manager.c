@@ -339,6 +339,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
 
                 taskENTER_CRITICAL();
                 sendSize = client->lastSendSize;
+                client->lastSendSize = 0;  // One-shot: consumed by callback
                 if (sentBytes >= 0) {
                     client->wifiTcpBytesConfirmed += (uint16_t)sentBytes;
                     if (sendSize > 0 && (uint16_t)sentBytes < sendSize) {
