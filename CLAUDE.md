@@ -402,15 +402,44 @@ The firmware supports building for different board variants using MPLAB X config
    - **NQ1**: `NQ1BoardConfig.c`, `NQ1RuntimeDefaults.c`
    - **NQ3**: `NQ3BoardConfig.c`, `NQ3RuntimeDefaults.c`
 
-### Concurrency Rules (PIC32MZ)
+### MCU Reference: PIC32MZ2048EFM144
+
+**Architecture**: MIPS32 M-Class (microAptiv), 200 MHz, 32-bit data bus
+**Flash**: 2MB | **RAM**: 512KB | **L1 Cache**: 16KB I-cache + 4KB D-cache
+**Package**: 144-pin LQFP
+**Datasheet**: [DS60001320](https://www.microchip.com/en-us/product/PIC32MZ2048EFM144)
+**Errata**: [DS80000663](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU32/ProductDocuments/Errata/PIC32MZ-Embedded-Connectivity-with-Floating-Point-Unit-Family-Silicon-Errata-DS80000663.pdf) (Rev R, silicon A1/A3/B2)
+
+#### Atomicity & Concurrency Rules
 
 - **32-bit reads and writes are atomic** on the PIC32MZ bus. A simple `x = 0` or `return x` on a `uint32_t`/`uint16_t` does NOT need a critical section.
-- **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
+- **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`, `x += n`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
 - **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
+- **`volatile`** is needed when a variable is written by one task/ISR and read by another — it prevents the compiler from caching the value in a register. `volatile` alone does NOT make RMW atomic; you still need critical sections for `+=`, `|=`, etc.
 - Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
 - **`BoardRunTimeConfig_Get()` never returns NULL** — it indexes into a static array initialized at boot. Do not add NULL checks on its return value; no existing SCPI callback checks it, and adding guards creates inconsistency for zero safety benefit. Qodo/automated reviewers will repeatedly suggest this — ignore it.
 
-### Hardware FPU (PIC32MZ EF)
+#### Cache & DMA
+
+- **L1 data cache is write-back** — DMA buffers MUST use `__attribute__((coherent))` or be placed in KSEG1 (uncached) to avoid stale data.
+- **Cache line size**: 16 bytes — DMA buffers sharing a cache line with other data will cause corruption. Use `__attribute__((aligned(16)))`.
+- **No hardware cache coherency** — software must invalidate/flush cache around DMA transfers. Harmony drivers handle this for SPI, USB, etc.
+- **Coherent attribute** (`__attribute__((coherent, aligned(16)))`) maps buffers to uncached address space — simplest solution for DMA buffers.
+
+#### Clock Tree (as configured)
+
+| Clock | Source | Frequency | Peripherals |
+|-------|--------|-----------|-------------|
+| SYSCLK | SPLL (24MHz POSC × 50 / 3 / 2) | 200 MHz | CPU, REFCLK |
+| PBCLK1 | SYSCLK/2 | 100 MHz | Watchdog |
+| PBCLK2 | SYSCLK/2 | 100 MHz | I2C, UART, SPI (default) |
+| PBCLK3 | SYSCLK/2 | 100 MHz | Timers, OC, IC |
+| PBCLK5 | SYSCLK/2 | 100 MHz | Flash, Crypto, USB |
+| REFCLK1 | SYSCLK (passthrough) | 200 MHz | SPI4 master clock (MCLKSEL=1) |
+
+SPI4 BRG formula with REFCLK1: `SPI_CLK = 200MHz / (2 × (BRG + 1))`
+
+#### Hardware FPU
 
 The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocessor 1). All floating-point arithmetic (`double` multiply, divide, add, convert) executes in hardware — no software emulation.
 
@@ -418,6 +447,42 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 - **FreeRTOS**: `configUSE_TASK_FPU_SUPPORT = 1` in `FreeRTOSConfig.h`; saves/restores 32×64-bit FPU registers on context switches for tasks that call `portTASK_USES_FLOATING_POINT()`
 - **Registered tasks**: USB, WiFi, PowerAndUI, streaming, and deferred interrupt tasks use FPU
 - **ADC voltage conversion**: `ADC_ConvertToVoltage()` uses native `mul.d`, `div.d`, `add.d` instructions
+
+#### FreeRTOS Configuration
+
+- **Tick rate**: 1000 Hz (1ms tick)
+- **Preemptive** with time-slicing (equal-priority tasks round-robin)
+- **Max priorities**: 10 (0=lowest, 9=highest)
+- **Heap**: heap_4, 284KB (`configTOTAL_HEAP_SIZE`)
+- **ISR stack**: 8192 bytes
+- **Kernel interrupt priority**: 1 (lowest)
+- **Max syscall interrupt priority**: 4 (ISRs at priority 5+ are never disabled by FreeRTOS)
+
+#### Task Priority Map
+
+| Priority | Task | Stack | Notes |
+|----------|------|-------|-------|
+| 8 | `_Streaming_Deferred_Interrupt_Task` | 4096 | Highest — ISR deferral, sample collection |
+| 7 | `app_PowerAndUITask` | 4096 | UI always responsive |
+| 7 | `app_USBDeviceTask` | 3072 | Self-boosts from 2 after init |
+| 2 | `streaming_Task` | 4096 | Encodes + writes to outputs |
+| 2 | `app_WifiTask` | 3000 | WiFi state machine + TCP transmit |
+| 2 | `app_SDCardTask` | 5240 | SD state machine, mount/write/unmount |
+| 2 | `lWDRV_WINC_Tasks` | 3000 | WINC1500 driver background |
+| 2 | `MC12bADC_EosInterruptTask` | 2048 | ADC end-of-scan deferred interrupt |
+| 1 | `lAPP_FREERTOS_Tasks` | 1500 | App init |
+| 1 | `F_USB_DEVICE_Tasks` | 1024 | USB device stack |
+| 1 | `F_DRV_USBHS_Tasks` | 1024 | USB hardware driver |
+
+**Scheduling implications**: The deferred ISR task (priority 8) preempts everything — it runs immediately when a streaming timer fires. The streaming encoder and all I/O tasks share priority 2, so they round-robin via time-slicing. USB device task starts at priority 2 then self-boosts to 7.
+
+#### Known Silicon Errata (DS80000663, relevant items)
+
+- **SPI SRMT bit** (errata #4): The Shift Register Empty bit may falsely indicate transmission complete just before the last block shifts out. **Workaround**: Use the Transmit Buffer Empty interrupt (STXISEL=0) instead of polling SRMT.
+- **DMA half-full interrupt** (errata #15): DMA Channel Destination Half Full interrupt can trigger twice. **Workaround**: Use transfer-complete interrupt instead.
+- **USB no remote wake-up** (errata #6): USB module does not support remote wake-up feature.
+- **Crypto DMA** (errata #20): Cryptographic DMA does not support partial packet processing or zero-length packets. Does not affect our use (wolfSSL runs in software mode on PIC32MZ EF).
+- **Prefetch cache and DMA** (errata #13): Prefetch module may serve stale data when DMA writes to same address range. **Workaround**: Use coherent buffers or invalidate cache before reading DMA-modified data.
 
 ### Memory Considerations
 
