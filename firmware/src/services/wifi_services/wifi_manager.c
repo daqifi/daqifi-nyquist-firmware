@@ -330,26 +330,31 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 int16_t sentBytes = *(int16_t*)pMessage;
                 wifi_tcp_server_clientContext_t* client = &gStateMachineContext.pTcpServerContext->client;
                 client->tcpSendPending = 0;
+
+                // Single critical section for all counter updates + lastSendSize read
+                uint16_t sendSize;
+                bool isPartial = false;
+                bool isError = false;
+
+                taskENTER_CRITICAL();
+                sendSize = client->lastSendSize;
                 if (sentBytes >= 0) {
-                    taskENTER_CRITICAL();
                     client->wifiTcpBytesConfirmed += (uint16_t)sentBytes;
-                    taskEXIT_CRITICAL();
-                    // Detect partial send (radio confirmed fewer bytes than requested)
-                    if (client->lastSendSize > 0 && (uint16_t)sentBytes < client->lastSendSize) {
-                        taskENTER_CRITICAL();
+                    if (sendSize > 0 && (uint16_t)sentBytes < sendSize) {
                         client->wifiTcpSendErrors++;
-                        taskEXIT_CRITICAL();
-                        if (client->wifiTcpSendErrors == 1) {
-                            LOG_E("WiFi TCP partial send: %d/%u bytes", (int)sentBytes, (unsigned)client->lastSendSize);
-                        }
+                        isPartial = true;
                     }
                 } else {
-                    taskENTER_CRITICAL();
                     client->wifiTcpSendErrors++;
-                    taskEXIT_CRITICAL();
-                    if (client->wifiTcpSendErrors == 1) {
-                        LOG_E("WiFi TCP send error: %d", (int)sentBytes);
-                    }
+                    isError = true;
+                }
+                taskEXIT_CRITICAL();
+
+                // Log outside critical section
+                if (isPartial && client->wifiTcpSendErrors == 1) {
+                    LOG_E("WiFi TCP partial send: %d/%u bytes", (int)sentBytes, (unsigned)sendSize);
+                } else if (isError && client->wifiTcpSendErrors == 1) {
+                    LOG_E("WiFi TCP send error: %d", (int)sentBytes);
                 }
             }
         }

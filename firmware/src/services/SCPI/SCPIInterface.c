@@ -1642,9 +1642,17 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     {
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {
-            scpi_printf(context, "WifiTcpBytesSent=%llu\r\n", (unsigned long long)pTcp->client.wifiTcpBytesSent);
-            scpi_printf(context, "WifiTcpBytesConfirmed=%llu\r\n", (unsigned long long)pTcp->client.wifiTcpBytesConfirmed);
-            scpi_printf(context, "WifiTcpSendErrors=%u\r\n", (unsigned)pTcp->client.wifiTcpSendErrors);
+            // Atomic snapshot of 64-bit counters (not atomic on 32-bit PIC32MZ)
+            uint64_t bytesSent, bytesConfirmed;
+            uint32_t sendErrors;
+            taskENTER_CRITICAL();
+            bytesSent = pTcp->client.wifiTcpBytesSent;
+            bytesConfirmed = pTcp->client.wifiTcpBytesConfirmed;
+            sendErrors = pTcp->client.wifiTcpSendErrors;
+            taskEXIT_CRITICAL();
+            scpi_printf(context, "WifiTcpBytesSent=%llu\r\n", (unsigned long long)bytesSent);
+            scpi_printf(context, "WifiTcpBytesConfirmed=%llu\r\n", (unsigned long long)bytesConfirmed);
+            scpi_printf(context, "WifiTcpSendErrors=%u\r\n", (unsigned)sendErrors);
         }
     }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);

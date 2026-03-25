@@ -58,8 +58,9 @@ typedef struct s_tcpClientContext
     uint64_t wifiTcpBytesConfirmed;
     /** Radio send errors (negative sentBytes or partial sends in callback) */
     uint32_t wifiTcpSendErrors;
-    /** Pending send size (to compare against callback confirmation) */
-    uint16_t lastSendSize;
+    /** Pending send size (to compare against callback confirmation).
+     *  Written by streaming task (TcpServerFlush), read by WiFi task (callback). */
+    volatile uint16_t lastSendSize;
 } wifi_tcp_server_clientContext_t;
 
 /**
