@@ -476,23 +476,27 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 
 **Scheduling implications**: The deferred ISR task (priority 8) preempts everything — it runs immediately when a streaming timer fires. The streaming encoder and all I/O tasks share priority 2, so they round-robin via time-slicing. USB device task starts at priority 2 then self-boosts to 7.
 
-#### Known Silicon Errata (DS80000663R, all revisions through B3)
+#### Known Silicon Errata (DS80000663R, verified against PDF pages 6-15)
 
-Verified against the actual errata PDF. Only items relevant to our firmware are listed.
+All items verified against the actual errata document. Only issues affecting features we use are listed, with exact workaround text from Microchip.
 
-| Issue | Module | Summary | Impact | Workaround |
-|-------|--------|---------|--------|------------|
-| #1 | Oscillator | **REFCLK cannot divide inputs >100 MHz** | We use REFCLK1 from 200 MHz SYSCLK with RODIV=0 (passthrough, no division). Passthrough appears unaffected — tested working at 200 MHz. Monitor if REFCLK issues appear. | Use RODIV=0 only (no fractional division of >100 MHz sources) |
-| #6 | I2C | I2C module unreliable under certain conditions | We use I2C5 for BQ24297. Protected by mutex. | I2C mutex in BQ24297 driver |
-| #8 | UART | RX FIFO overflow causes loss of synchronization | Affects debug UART (UART4) if flooded | Avoid flooding debug UART input |
-| #16 | USB | No remote wake-up support | Minor — device is USB device, not host | None needed |
-| #25/#26 | Crypto | Crypto DMA: no partial packets, no zero-length | Not affected — wolfSSL runs in software mode | N/A |
-| #27 | SPI | **SRMT bit falsely indicates transmission complete** before last block shifts out | Could affect SPI polling code | Use Transmit Buffer Empty interrupt (STXISEL=0) instead of polling SRMT |
-| #37 | I2C | **SCL tLOW doesn't meet I2C spec at ≥400 kHz** | BQ24297 uses I2C at 100 kHz — unaffected | Keep I2C ≤100 kHz for reliable operation |
-| #40 | USB | FLUSH bit doesn't flush TX FIFO (USBIENCSRx<19>) | Could affect USB streaming if FIFO flush relied upon | Harmony USB driver works around this |
-| #42 | DMA | **DMA half-full interrupt can fire twice** | Could cause double-processing of DMA data | Use transfer-complete interrupt instead of half-full |
-| #44 | Timer | Timer match + sleep entry may miss interrupt | Could affect streaming timer if device enters sleep during streaming | Don't enter sleep while streaming |
-| #45 | Flash | RTSP (run-time self-programming) of config words broken | Affects NVM settings write if using config word area | Use regular flash pages for NVM settings (current approach) |
+| Issue | Module | Rev | Summary | Our Status |
+|-------|--------|-----|---------|------------|
+| #1 | Oscillator | All | **REFCLK cannot divide inputs >100 MHz.** | **Safe.** Errata workaround: "do not divide the SYSCLK and allow the destination peripheral (SPI) to divide it. Set RODIV and ROTRIM to 0." This is exactly our PR #219 approach (RODIV=0 passthrough). |
+| #5 | Power-Saving | A1/A3 | Turning off REFCLK via PMD bits causes unpredictable behavior. | **Safe.** We never disable REFCLK via PMD. Not affected on B2/B3. |
+| #6 | I2C | A1/A3 | Indeterminate I2C at >100 kHz and/or >500 bytes continuous. False collision detect, receive overflow, suspended transactions. All recoverable in software. | **Monitor.** I2C5 for BQ24297 at 100 kHz with mutex. Not affected on B2/B3 but good to know. |
+| #8 | UART | All | **RX FIFO overflow → shift registers stop → UART loses sync.** Only recovery: toggle UART OFF/ON multiple times. | **Low risk.** Debug UART4 only. Workaround: ensure UART interrupt priority prevents RX overrun, or set URXISEL for earlier interrupt. |
+| #9 | USB | All | USB won't function if USB PHY off in Sleep (USBSSEN=1). | **Safe.** Keep USBSSEN=0. |
+| #16 | USB | All | No remote wake-up support (USBRIE in USBCRCON). | **N/A.** Inform host via USB descriptors. |
+| #25/#26 | Crypto | All | Crypto DMA: no partial packets, no zero-length hash. | **N/A.** wolfSSL runs in software mode. |
+| #27 | SPI | All | **SRMT bit falsely indicates TX complete** before last block shifts out. Does NOT affect Transmit Buffer Empty Interrupt (STXISEL=0). | **Safe.** Harmony SPI driver uses interrupts, not SRMT polling. |
+| #37 | I2C | All | **SCL tLOW doesn't meet I2C spec at ≥400 kHz.** No workaround. | **Safe.** BQ24297 I2C at 100 kHz. Never use ≥400 kHz on this chip. |
+| #38 | System Bus | B2/B3 | **Flash wait states at SYSCLK >184 MHz with ECC need 3 wait states** (not 2). <2% CPU impact with cache. | **ACTION: Verify flash wait state config.** We run at 200 MHz with ECC — must confirm 3 wait states. |
+| #39 | ADC | All | Excessive current through VREF- when external reference used and VREF- > AVss. | **Monitor.** Workaround: connect VREF- to AVss. Check NQ3 board schematic. |
+| #40 | USB | All | FLUSH bit (USBIENCSRx<19>) doesn't flush TX FIFO properly. | **Safe.** Harmony USB driver: set FLUSH + clear TXPKTRDY simultaneously, repeat twice. |
+| #42 | DMA | All | **DMA half-full interrupt can fire twice** when cleared at n/2 byte, re-triggers at (n/2)+1. | **Safe.** Workaround: clear CHDHIF along with CHBCIF. Harmony DMA driver handles this. |
+| #44 | Timer2-9 | All | Timer match coinciding with sleep entry → interrupt may not fire. No workaround. | **Safe.** We never enter sleep during streaming. |
+| #45 | Flash RTSP | All | Run-Time Self Programming of Configuration Words broken. No workaround. | **Safe.** NVM settings use regular flash pages, not config words. |
 
 ### Memory Considerations
 
