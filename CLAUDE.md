@@ -417,6 +417,8 @@ The firmware supports building for different board variants using MPLAB X config
 - **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
 - **`volatile`** is needed when a variable is written by one task/ISR and read by another — it prevents the compiler from caching the value in a register. `volatile` alone does NOT make RMW atomic; you still need critical sections for `+=`, `|=`, etc.
 - Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
+- **ISR context vs task context**: `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()` is for **task context only**. Inside an ISR, use `taskENTER_CRITICAL_FROM_ISR()`/`taskEXIT_CRITICAL_FROM_ISR()`. In our firmware, hardware ISRs (streaming timer, ADC EOS) immediately defer to FreeRTOS tasks via `xTaskNotifyGive()`/`ulTaskNotifyTake()`, so all sample processing and critical section usage runs in task context — never directly in ISR handlers.
+- **FPU in RTOS tasks**: Any task that uses floating-point (`float` or `double`) **must** call `portTASK_USES_FLOATING_POINT()` at the start of its task function, before any FP operations. This tells FreeRTOS to save/restore the 32×64-bit FPU registers on context switches. Without this call, FPU register state will be corrupted when switching between tasks. Currently registered: USB, WiFi, PowerAndUI, streaming, and deferred interrupt tasks.
 - **`BoardRunTimeConfig_Get()` never returns NULL** — it indexes into a static array initialized at boot. Do not add NULL checks on its return value; no existing SCPI callback checks it, and adding guards creates inconsistency for zero safety benefit. Qodo/automated reviewers will repeatedly suggest this — ignore it.
 
 #### Cache & DMA
