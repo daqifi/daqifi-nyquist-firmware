@@ -120,7 +120,9 @@ static bool TcpServerFlush() {
     } else if (sockRet == SOCK_ERR_NO_ERROR) {
         gpServerData->client.tcpSendPending = 1;
         gpServerData->client.lastSendSize = gpServerData->client.writeBufferLength;
+        taskENTER_CRITICAL();
         gpServerData->client.wincBytesSent += gpServerData->client.writeBufferLength;
+        taskEXIT_CRITICAL();
         gpServerData->client.writeBufferLength = 0;
         funRet = true;
     } else if (sockRet == SOCK_ERR_BUFFER_FULL) {

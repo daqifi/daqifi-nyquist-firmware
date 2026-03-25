@@ -1847,6 +1847,16 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         sd_card_manager_UpdateSettings(pSDCardSettings);
     }
 
+    // Reset WINC counters for new session (matches Streaming_ClearStats lifecycle)
+    {
+        wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
+        if (pTcp != NULL) {
+            pTcp->client.wincBytesSent = 0;
+            pTcp->client.wincBytesConfirmed = 0;
+            pTcp->client.wincSendErrors = 0;
+        }
+    }
+
     pRunTimeStreamConfig->IsEnabled = true;
     Streaming_UpdateState();
 

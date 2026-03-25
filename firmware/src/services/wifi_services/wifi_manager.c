@@ -326,14 +326,28 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         }
         case SOCKET_MSG_SEND:
         {
-            if (gStateMachineContext.pTcpServerContext != NULL) {
+            if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL) {
                 int16_t sentBytes = *(int16_t*)pMessage;
-                gStateMachineContext.pTcpServerContext->client.tcpSendPending = 0;
+                wifi_tcp_server_clientContext_t* client = &gStateMachineContext.pTcpServerContext->client;
+                client->tcpSendPending = 0;
                 if (sentBytes >= 0) {
-                    gStateMachineContext.pTcpServerContext->client.wincBytesConfirmed += (uint16_t)sentBytes;
+                    taskENTER_CRITICAL();
+                    client->wincBytesConfirmed += (uint16_t)sentBytes;
+                    taskEXIT_CRITICAL();
+                    // Detect partial send (WINC confirmed fewer bytes than requested)
+                    if (client->lastSendSize > 0 && (uint16_t)sentBytes < client->lastSendSize) {
+                        taskENTER_CRITICAL();
+                        client->wincSendErrors++;
+                        taskEXIT_CRITICAL();
+                        if (client->wincSendErrors == 1) {
+                            LOG_E("WINC partial send: %d/%u bytes", (int)sentBytes, (unsigned)client->lastSendSize);
+                        }
+                    }
                 } else {
-                    gStateMachineContext.pTcpServerContext->client.wincSendErrors++;
-                    if (gStateMachineContext.pTcpServerContext->client.wincSendErrors == 1) {
+                    taskENTER_CRITICAL();
+                    client->wincSendErrors++;
+                    taskEXIT_CRITICAL();
+                    if (client->wincSendErrors == 1) {
                         LOG_E("WINC send error: %d", (int)sentBytes);
                     }
                 }
