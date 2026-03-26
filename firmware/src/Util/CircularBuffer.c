@@ -62,6 +62,7 @@ void CircularBuf_InitExternal(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t)
         cirbuf->insertPtr = NULL;
         cirbuf->removePtr = NULL;
         cirbuf->totalBytes = 0;
+        cirbuf->process_callback = NULL;
         cirbuf->_ownsMemory = false;
         return;
     }
