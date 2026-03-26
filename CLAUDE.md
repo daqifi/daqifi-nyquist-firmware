@@ -502,73 +502,116 @@ All items verified against the actual errata document. Only issues affecting fea
 
 ### Memory Considerations
 
-#### Heap Configuration
-- **Total FreeRTOS Heap**: 284KB (`configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
-- **Heap Implementation**: heap_4 (best-fit with coalescence)
-- **Critical**: Heap must accommodate circular buffers, task stacks, and streaming sample queue
+#### Three Memory Regions
 
-#### Major Heap Allocations
+The firmware uses three distinct memory regions, each with different properties:
 
-**Static Buffers** (compile-time allocation, not on heap):
-- **SD Card Shared Buffer**: 32KB (`gSdSharedBuffer` in `sd_card_manager.c`)
-  - Static coherent buffer for all SD operations (write, read, list)
-  - DMA-safe, cache-line aligned
-  - Reduced from 64KB to 32KB to allow larger sample pool
-  - Location: `firmware/src/services/sd_card_services/sd_card_manager.c`
-- **Sample Pool**: ~146KB (700 samples × ~210 bytes)
-  - Static pool for streaming analog input samples
-  - Uses O(1) free-list allocation to avoid heap fragmentation
-  - Location: `firmware/src/state/data/AInSample.c`
+1. **Coherent Pool** (41KB static, DMA-safe, `firmware/src/Util/CoherentPool.c`)
+   - Single `__attribute__((coherent, aligned(16)))` array in KSEG1 (uncached)
+   - Bump allocator with named partitions, initialized at boot
+   - Contains: SD circular buffer (32KB) + SD write buffer (8KB)
+   - Query: `SYST:MEM:FREE?` → `CoherentPoolTotal`, `CoherentPoolFree`
 
-**Circular Buffers** (heap-allocated at runtime):
-- **WiFi TCP Write Buffer**: 5.6KB (`WIFI_CIRCULAR_BUFF_SIZE` = 1400 × 4)
-  - Location: `firmware/src/services/wifi_services/wifi_tcp_server.c`
-- **USB CDC Write Buffer**: 16KB (`USBCDC_CIRCULAR_BUFF_SIZE` = 4096 × 4)
-  - Location: `firmware/src/services/UsbCdc/UsbCdc.c`
-  - Increased from 8KB to improve throughput and reduce buffer-full conditions
+2. **FreeRTOS Heap** (284KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
+   - heap_4 (best-fit with coalescence), allocated from `.bss`
+   - Contains: sample pool, circular buffers, task stacks, FreeRTOS internals
+   - Query: `SYST:MEM:FREE?` → `HeapTotal`, `HeapFree`, `HeapMinEverFree`
 
-**FreeRTOS Task Stacks** (~33KB total):
-- `app_SdCardTask`: 5240 bytes
-- `app_PowerAndUITask`: 4096 bytes
-- `streaming_Task`: 4096 bytes
-- `_Streaming_Deferred_Interrupt_Task`: 4096 bytes
-- `app_USBDeviceTask`: 3072 bytes (note: malloc fails with 4096)
-- `app_WifiTask`: 3000 bytes
-- `lWDRV_WINC_Tasks`: 3000 bytes (WiFi driver)
-- `MC12bADC_EosInterruptTask`: 2048 bytes
-- `lAPP_FREERTOS_Tasks`: 1500 bytes
-- `F_USB_DEVICE_Tasks`: 1024 bytes
-- `F_DRV_USBHS_Tasks`: 1024 bytes
-- `AD7609_DeferredInterruptTask`: 512 bytes
+3. **USB Coherent Struct** (~6KB static, `gRunTimeUsbSttings __attribute__((coherent))`)
+   - USB CDC DMA buffers (read 512B + write 4KB) embedded in coherent struct
+   - Must remain coherent for USB hardware driver DMA compatibility
 
-**Streaming Sample Queue**:
-- **Pool Size**: 700 samples (`MAX_AIN_SAMPLE_COUNT` in `AInSample.h`)
-- **Sample Size**: ~208 bytes (`AInPublicSampleList_t` = 16 channels × 12 bytes + 16 bools)
-- **Total Pool Memory**: ~146KB (700 × 208 bytes, statically allocated)
-- **Allocation**: Static pool with O(1) free-list allocation (no heap usage)
-- **Critical**: Old samples must be freed before starting new streaming session
-  - Cleared automatically in `Streaming_Start()`
+#### Heap Allocation Map (284KB total, ~264KB used at boot)
 
-#### Heap Usage Summary
-Typical allocations at steady state:
-- Circular buffers: **21.6KB** (WiFi: 5.6KB, USB: 16KB)
-- Task stacks: **~33KB**
-- **Total heap**: ~55KB used, **~229KB free** (under normal conditions)
-- **Static buffers**: ~178KB (32KB SD buffer + 146KB sample pool - not on heap)
+| Consumer | Bytes | Source |
+|----------|------:|--------|
+| Sample pool (500 × 208) | 104,000 | `pvPortMalloc` in `AInSample.c` |
+| Sample nextFree array (500 × 2) | 1,000 | `pvPortMalloc` in `AInSample.c` |
+| Sample FreeRTOS queue | 2,080 | `xQueueCreate` in `AInSample.c` |
+| USB circular buffer | 16,384 | `OSAL_Malloc` in `CircularBuffer.c` |
+| WiFi circular buffer | 14,000 | `OSAL_Malloc` in `CircularBuffer.c` |
+| Task stacks (13 tasks) | ~133,000 | `xTaskCreate` (see Task Priority Map) |
+| DIO sample queue | ~3,200 | `xQueueCreate` in `DIOSample.c` |
+| WiFi event queue | ~480 | `xQueueCreate` in `wifi_manager.c` |
+| FreeRTOS TCBs, mutexes, kernel | ~5,000 | Kernel internals |
+| **Total used** | **~264,000** | |
+| **Free at boot** | **~20,000** | `xPortGetFreeHeapSize()` |
+
+**Note**: `HeapMinEverFree` (high-water mark) should stay above 0. If it reaches 0, `pvPortMalloc` will return NULL and `configASSERT` will halt the system.
+
+#### Dynamic Sample Pool
+
+The sample pool is allocated from the FreeRTOS heap at boot and can be resized between streaming sessions via SCPI. The O(1) free-list allocation pattern is preserved — only the backing memory is heap-allocated instead of static.
+
+- **Default size**: 500 samples (`DEFAULT_AIN_SAMPLE_COUNT` in `AInSample.h`)
+- **Range**: 100–2000 samples (`MIN_AIN_SAMPLE_COUNT`–`MAX_AIN_SAMPLE_COUNT`)
+- **Memory per sample**: ~208 bytes (`AInPublicSampleList_t`)
+- **Resize**: `AInSampleList_Destroy()` frees old pool, `AInSampleList_Initialize(newSize)` allocates new
+- **When resized**: At `Streaming_Start()` if `MemoryConfig.samplePoolCount` differs from current capacity
+- **Cleared automatically** in `Streaming_Start()` — stale samples freed before new session
+
+#### SCPI Dynamic Memory Configuration
+
+All setters reject changes while streaming is active (`SCPI_ERROR_EXECUTION_ERROR`).
+Settings take effect at next `StartStreamData`. Runtime-only — not NVM-persisted, reset on reboot.
+
+```bash
+SYSTem:MEMory:SD:BUFfer <bytes>       # Set SD circular buffer size
+SYSTem:MEMory:SD:BUFfer?              # Query (default: 32768)
+SYSTem:MEMory:WIFI:BUFfer <bytes>     # Set WiFi circular buffer size
+SYSTem:MEMory:WIFI:BUFfer?            # Query (default: 14000)
+SYSTem:MEMory:USB:BUFfer <bytes>      # Set USB circular buffer size
+SYSTem:MEMory:USB:BUFfer?             # Query (default: 16384)
+SYSTem:MEMory:SAMPle:POOL <count>     # Set sample pool depth (0=auto)
+SYSTem:MEMory:SAMPle:POOL?            # Query (default: 500)
+SYSTem:MEMory:FREE?                   # Full memory diagnostics
+SYSTem:MEMory:AUTO                    # Auto-balance for enabled interfaces
+```
+
+**Setter Bounds:**
+
+| Command | Min | Max | Constraint |
+|---------|----:|----:|------------|
+| `SD:BUFfer` | 4096 | 65536 | Must be multiple of 512 (sector alignment) |
+| `WIFI:BUFfer` | 1400 | 65536 | Min = SOCKET_BUFFER_MAX_LENGTH |
+| `USB:BUFfer` | 4096 | 65536 | Min = USBCDC_WBUFFER_SIZE |
+| `SAMPle:POOL` | 0 or 100 | 2000 | 0 = auto (DEFAULT_AIN_SAMPLE_COUNT) |
+
+**`SYST:MEM:FREE?` Response Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `HeapTotal` | Total FreeRTOS heap (284000) |
+| `HeapFree` | Currently free heap bytes |
+| `HeapUsed` | Currently used heap bytes |
+| `HeapMinEverFree` | Lowest heap free since boot (high-water mark) |
+| `CoherentPoolTotal` | Total coherent pool (41984) |
+| `CoherentPoolFree` | Free coherent pool bytes |
+| `SamplePoolCount` | Current sample pool depth |
+| `SamplePoolBytes` | Sample pool data memory (count × 208) |
+| `SampleNextFreeBytes` | Free-list array memory (count × 2) |
+| `SampleQueueBytes` | FreeRTOS queue overhead estimate |
+
+**`SYST:MEM:AUTO` Algorithm:**
+1. Query enabled interfaces from `StreamingRuntimeConfig.ActiveInterface` and SD enable
+2. Set default buffer sizes for enabled interfaces (SD:32768, WiFi:14000, USB:16384), 0 for disabled
+3. Calculate remaining heap after buffers (with 20KB reserve)
+4. Set sample pool to `remaining / sizeof(AInPublicSampleList_t)`, clamped to 100–2000
+
+**Implementation:** `firmware/src/Util/CoherentPool.c` (pool), `firmware/src/state/data/AInSample.c` (dynamic pool), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct)
 
 #### Memory Pressure Indicators
 If heap allocation fails (`xPortGetFreeHeapSize()` returns low values):
-1. **Check streaming sample pool**: `AInSampleList_Size()` - should be <700
-2. **Reduce USB/WiFi buffers**: If SD logging is primary use case, can reduce USB/WiFi buffer sizes
-3. **Monitor with debugger**: Set breakpoint in `pvPortMalloc` failure path
-
-Note: SD buffer and sample pool are now static (not heap), significantly improving heap availability.
+1. **Query `SYST:MEM:FREE?`** — check `HeapMinEverFree` for high-water mark
+2. **Reduce sample pool**: `SYST:MEM:SAMP:POOL 200` frees ~62KB heap
+3. **Reduce circular buffers**: `SYST:MEM:USB:BUF 4096` or `SYST:MEM:WIFI:BUF 1400`
+4. **Use `SYST:MEM:AUTO`**: auto-sizes based on active interfaces
 
 #### Other Memory Constraints
-- DMA buffers must be cache-aligned
+- DMA buffers must be cache-aligned and in KSEG1 (coherent pool or coherent attribute)
 - Bootloader reserves memory at 0x9D000000
 - Application starts at 0x9D000480 (after bootloader)
-- Sample buffers use coherent attribute for DMA safety
+- USB struct must remain `__attribute__((coherent))` — moving DMA buffers to pool causes boot failure
 
 ### Key Files for Understanding the System
 

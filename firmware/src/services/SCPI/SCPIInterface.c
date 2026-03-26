@@ -2291,12 +2291,38 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
 
 // =============================================================================
 // Dynamic Memory Configuration SCPI Callbacks
+//
+// All setters reject changes while streaming is active (SCPI_ERROR_EXECUTION_ERROR).
+// Settings take effect at next StartStreamData. Runtime-only (not NVM-persisted,
+// reset on reboot to safe defaults).
+//
+// Bounds:
+//   SD buffer:     4096 - 65536 bytes, must be multiple of 512 (sector alignment)
+//   WiFi buffer:   1400 - 65536 bytes (min = SOCKET_BUFFER_MAX_LENGTH)
+//   USB buffer:    4096 - 65536 bytes (min = USBCDC_WBUFFER_SIZE)
+//   Sample pool:   0 (auto = DEFAULT_AIN_SAMPLE_COUNT), or 100 - 2000
 // =============================================================================
 
+/**
+ * @brief Guard: reject memory config changes while streaming is active.
+ * @return true if streaming is active (caller should return SCPI_RES_ERR)
+ */
+static bool SCPI_MemRejectIfStreaming(scpi_t * context) {
+    StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (sc->IsEnabled && sc->Running) {
+        LOG_E("Memory config rejected: streaming is active");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return true;
+    }
+    return false;
+}
+
 static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
+    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
-    if (val < 4096 || val > 65536) {
+    // Must be 4096-65536 and a multiple of 512 (SD sector alignment)
+    if (val < 4096 || val > 65536 || (val % 512) != 0) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
@@ -2313,8 +2339,10 @@ static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
+    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    // Min = SOCKET_BUFFER_MAX_LENGTH (1400), max = 65536
     if (val < 1400 || val > 65536) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -2332,8 +2360,10 @@ static scpi_result_t SCPI_GetMemWifiBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
+    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    // Min = USBCDC_WBUFFER_SIZE (4096), max = 65536
     if (val < 4096 || val > 65536) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -2351,8 +2381,10 @@ static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
+    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    // 0 = auto (DEFAULT_AIN_SAMPLE_COUNT), 100-2000 = explicit
     if (val != 0 && (val < 100 || val > (int32_t)MAX_AIN_SAMPLE_COUNT)) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -2399,6 +2431,7 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
+    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
     StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
     sd_card_manager_settings_t* sd = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
