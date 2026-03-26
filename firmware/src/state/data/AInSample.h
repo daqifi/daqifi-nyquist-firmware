@@ -63,7 +63,7 @@ extern "C" {
      *   700 samples = ~146 KB
      *   1200 samples = ~250 KB
      */
-#define DEFAULT_AIN_SAMPLE_COUNT 500
+#define DEFAULT_AIN_SAMPLE_COUNT 700
 #define MIN_AIN_SAMPLE_COUNT     100
 #define MAX_AIN_SAMPLE_COUNT     2000
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
