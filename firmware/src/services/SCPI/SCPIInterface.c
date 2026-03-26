@@ -2353,7 +2353,7 @@ static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
 static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
-    if (val != 0 && (val < (int32_t)MIN_AIN_SAMPLE_COUNT || val > (int32_t)MAX_AIN_SAMPLE_COUNT)) {
+    if (val != 0 && (val < 100 || val > (int32_t)MAX_AIN_SAMPLE_COUNT)) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
@@ -2374,7 +2374,6 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     size_t heapFree = xPortGetFreeHeapSize();
     uint32_t poolFree = CoherentPool_FreeBytes();
     size_t samplePoolCap = AInSampleList_PoolCapacity();
-
     int len = snprintf(buf, sizeof(buf),
         "HeapFree:%u,CoherentPoolFree:%u,SamplePoolCapacity:%u,SamplePoolBytes:%u",
         (unsigned)heapFree, (unsigned)poolFree,
@@ -2413,7 +2412,7 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     uint32_t poolCount = (uint32_t)(remaining / sizeof(AInPublicSampleList_t));
 
     // Clamp pool
-    if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
+    if (poolCount < 100) poolCount = 100;
     if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
     mc->samplePoolCount = poolCount;
 
