@@ -56,6 +56,15 @@ void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32
 
 void CircularBuf_InitExternal(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint8_t* buf, uint32_t size)
 {
+    if (buf == NULL || size == 0) {
+        cirbuf->buf_ptr = NULL;
+        cirbuf->buf_size = 0;
+        cirbuf->insertPtr = NULL;
+        cirbuf->removePtr = NULL;
+        cirbuf->totalBytes = 0;
+        cirbuf->_ownsMemory = false;
+        return;
+    }
     cirbuf->buf_ptr                = buf;
     cirbuf->process_callback       = fp;
     cirbuf->buf_size               = size;
@@ -84,11 +93,20 @@ bool CircularBuf_Resize(CircularBuf_t* cirbuf, uint32_t newSize)
     if (cirbuf->buf_size == newSize) return true;  // Already correct size
     if (!cirbuf->_ownsMemory) return false;  // Can't resize external buffers
 
-    // Save callback, free old buffer, allocate new
-    int (*cb)(uint8_t*, uint32_t) = cirbuf->process_callback;
-    CircularBuf_Deinit(cirbuf);
-    CircularBuf_Init(cirbuf, cb, newSize);
-    return (cirbuf->buf_ptr != NULL);
+    // Commit-on-success: allocate new buffer before freeing old.
+    // If alloc fails, the old buffer remains usable.
+    uint8_t* newBuf = OSAL_Malloc(newSize);
+    if (newBuf == NULL) {
+        return false;  // Old buffer still valid
+    }
+
+    // Success — swap in the new buffer
+    OSAL_Free(cirbuf->buf_ptr);
+    cirbuf->buf_ptr = newBuf;
+    cirbuf->buf_size = newSize;
+    cirbuf->insertPtr = cirbuf->removePtr = cirbuf->buf_ptr;
+    cirbuf->totalBytes = 0;
+    return true;
 }
 
 /*=============================================================================

@@ -101,6 +101,7 @@ void AInSampleList_Initialize(
     // Initialize object pool mutex
     if (poolMutex == NULL) {
         poolMutex = xSemaphoreCreateMutex();
+        configASSERT(poolMutex != NULL);
     }
 
     // Build free list chain: 0 → 1 → 2 → ... → N-1 → -1
@@ -151,19 +152,23 @@ void AInSampleList_Destroy()
         vQueueDelete(q);
     }
 
-    // Step 5: Free pool memory with proper synchronization
+    // Step 5: Free pool memory with proper synchronization.
+    // Take mutex as barrier if available; free unconditionally either way
+    // to prevent heap leaks if mutex creation failed during init.
     if (poolMutex != NULL) {
         xSemaphoreTake(poolMutex, portMAX_DELAY);
-        if (samplePool != NULL) {
-            vPortFree(samplePool);
-            samplePool = NULL;
-        }
-        if (nextFree != NULL) {
-            vPortFree(nextFree);
-            nextFree = NULL;
-        }
-        poolCapacity = 0;
-        freeHead = -1;
+    }
+    if (samplePool != NULL) {
+        vPortFree(samplePool);
+        samplePool = NULL;
+    }
+    if (nextFree != NULL) {
+        vPortFree(nextFree);
+        nextFree = NULL;
+    }
+    poolCapacity = 0;
+    freeHead = -1;
+    if (poolMutex != NULL) {
         xSemaphoreGive(poolMutex);
     }
 
