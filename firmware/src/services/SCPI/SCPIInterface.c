@@ -2435,35 +2435,45 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi || sc->ActiveInterface == StreamingInterface_All);
     bool hasSd = (sd->enable || sc->ActiveInterface == StreamingInterface_SD || sc->ActiveInterface == StreamingInterface_All);
 
-    // Calculate available heap for reallocation.
-    // Current pool memory will be freed, so add it back to available.
+    // Count active interfaces for sizing strategy
+    int activeCount = (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0) + (hasSd ? 1 : 0);
+
+    // Set buffer sizes based on active interfaces.
+    // Single-interface: maximize that interface's buffer for best throughput.
+    // Multi-interface: use conservative defaults to share resources.
+    // Note: USB/WiFi circular buffers are allocated once at boot and can't
+    // currently be resized. These values set the config for documentation
+    // and potential future resize support. SD buffer is in coherent pool.
+    if (hasSd) {
+        mc->sdCircularBufSize = (activeCount == 1) ? 32768 : 32768;  // coherent pool limited
+    } else {
+        mc->sdCircularBufSize = 0;
+    }
+
+    if (hasWifi) {
+        mc->wifiCircularBufSize = (activeCount == 1) ? 28000 : 14000;
+    } else {
+        mc->wifiCircularBufSize = 1400;  // minimum safe (SOCKET_BUFFER_MAX_LENGTH)
+    }
+
+    if (hasUsb) {
+        mc->usbCircularBufSize = (activeCount == 1) ? 32768 : 16384;
+    } else {
+        mc->usbCircularBufSize = 4096;  // minimum safe (USBCDC_WBUFFER_SIZE)
+    }
+
+    // Calculate available heap for sample pool.
+    // Current pool memory will be freed on resize, so add it back.
+    // Circular buffers are already allocated at boot and don't compete.
     size_t currentPoolBytes = AInSampleList_PoolCapacity()
         * (sizeof(AInPublicSampleList_t) + sizeof(int16_t));
     size_t available = xPortGetFreeHeapSize() + currentPoolBytes;
-    // Reserve 20KB for FreeRTOS internals and WiFi driver
+    // Reserve 20KB for FreeRTOS internals and transient allocations
     if (available > 20480) available -= 20480; else available = 0;
 
-    // Set buffer sizes for enabled interfaces.
-    // Note: USB and WiFi circular buffers are allocated once at boot and
-    // can't be freed, so they don't reduce available heap for pool sizing.
-    // SD circular buffer is in the coherent pool (not heap).
-    // We only set the config values here — they affect future init cycles.
-    if (hasSd)   { mc->sdCircularBufSize = 32768; }
-    else         { mc->sdCircularBufSize = 0; }
-
-    if (hasWifi) { mc->wifiCircularBufSize = 14000; }
-    else         { mc->wifiCircularBufSize = 0; }
-
-    if (hasUsb)  { mc->usbCircularBufSize = 16384; }
-    else         { mc->usbCircularBufSize = 0; }
-
-    // All available heap (minus reserve) goes to sample pool.
-    // Circular buffers are already allocated and don't compete.
-    size_t remaining = available;
-    uint32_t poolCount = (uint32_t)(remaining / sizeof(AInPublicSampleList_t));
-
-    // Clamp pool
-    if (poolCount < 100) poolCount = 100;
+    // Maximize sample pool with remaining heap
+    uint32_t poolCount = (uint32_t)(available / (sizeof(AInPublicSampleList_t) + sizeof(int16_t)));
+    if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
     if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
     mc->samplePoolCount = poolCount;
 
