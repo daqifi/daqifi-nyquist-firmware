@@ -2435,23 +2435,31 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi || sc->ActiveInterface == StreamingInterface_All);
     bool hasSd = (sd->enable || sc->ActiveInterface == StreamingInterface_SD || sc->ActiveInterface == StreamingInterface_All);
 
-    // Start with available heap (leave 20KB reserve for FreeRTOS internals)
-    size_t available = xPortGetFreeHeapSize();
+    // Calculate available heap for reallocation.
+    // Current pool memory will be freed, so add it back to available.
+    size_t currentPoolBytes = AInSampleList_PoolCapacity()
+        * (sizeof(AInPublicSampleList_t) + sizeof(int16_t));
+    size_t available = xPortGetFreeHeapSize() + currentPoolBytes;
+    // Reserve 20KB for FreeRTOS internals and WiFi driver
     if (available > 20480) available -= 20480; else available = 0;
 
-    // Allocate circular buffers for enabled interfaces
-    uint32_t totalCircular = 0;
-    if (hasSd)   { mc->sdCircularBufSize = 32768;  totalCircular += 32768; }
+    // Set buffer sizes for enabled interfaces.
+    // Note: USB and WiFi circular buffers are allocated once at boot and
+    // can't be freed, so they don't reduce available heap for pool sizing.
+    // SD circular buffer is in the coherent pool (not heap).
+    // We only set the config values here — they affect future init cycles.
+    if (hasSd)   { mc->sdCircularBufSize = 32768; }
     else         { mc->sdCircularBufSize = 0; }
 
-    if (hasWifi) { mc->wifiCircularBufSize = 14000; totalCircular += 14000; }
+    if (hasWifi) { mc->wifiCircularBufSize = 14000; }
     else         { mc->wifiCircularBufSize = 0; }
 
-    if (hasUsb)  { mc->usbCircularBufSize = 16384;  totalCircular += 16384; }
+    if (hasUsb)  { mc->usbCircularBufSize = 16384; }
     else         { mc->usbCircularBufSize = 0; }
 
-    // Remaining heap goes to sample pool
-    size_t remaining = (available > totalCircular) ? (available - totalCircular) : 0;
+    // All available heap (minus reserve) goes to sample pool.
+    // Circular buffers are already allocated and don't compete.
+    size_t remaining = available;
     uint32_t poolCount = (uint32_t)(remaining / sizeof(AInPublicSampleList_t));
 
     // Clamp pool
