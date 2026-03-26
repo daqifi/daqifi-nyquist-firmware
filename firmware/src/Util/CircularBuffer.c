@@ -71,6 +71,19 @@ void CircularBuf_Deinit(CircularBuf_t* cirbuf)
     cirbuf->_ownsMemory = false;
 }
 
+bool CircularBuf_Resize(CircularBuf_t* cirbuf, uint32_t newSize)
+{
+    if (cirbuf == NULL || newSize == 0) return false;
+    if (cirbuf->buf_size == newSize) return true;  // Already correct size
+    if (!cirbuf->_ownsMemory) return false;  // Can't resize external buffers
+
+    // Save callback, free old buffer, allocate new
+    int (*cb)(uint8_t*, uint32_t) = cirbuf->process_callback;
+    CircularBuf_Deinit(cirbuf);
+    CircularBuf_Init(cirbuf, cb, newSize);
+    return (cirbuf->buf_ptr != NULL);
+}
+
 /*=============================================================================
  * Function: CircularBuf_GetPendingBytes
  * Execution Level:

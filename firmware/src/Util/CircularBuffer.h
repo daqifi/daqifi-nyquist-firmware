@@ -45,6 +45,7 @@ typedef struct s_CircularBuf
 void     CircularBuf_Init(CircularBuf_t*, int (*fp)(uint8_t*,uint32_t), uint32_t);
 void     CircularBuf_InitExternal(CircularBuf_t*, int (*fp)(uint8_t*,uint32_t), uint8_t* buf, uint32_t size);
 void     CircularBuf_Deinit(CircularBuf_t*);
+bool     CircularBuf_Resize(CircularBuf_t*, uint32_t newSize);
 uint32_t CircularBuf_AddBytes(CircularBuf_t*, uint8_t*, uint32_t);
 uint32_t CircularBuf_NumBytesAvailable(CircularBuf_t*);
 uint32_t CircularBuf_NumBytesFree(CircularBuf_t*);
