@@ -2370,15 +2370,30 @@ static scpi_result_t SCPI_GetMemSamplePool(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
-    char buf[200];
+    char buf[512];
     size_t heapFree = xPortGetFreeHeapSize();
+    size_t heapMinEver = xPortGetMinimumEverFreeHeapSize();
     uint32_t poolFree = CoherentPool_FreeBytes();
+    uint32_t poolTotal = CoherentPool_TotalSize();
     size_t samplePoolCap = AInSampleList_PoolCapacity();
+    size_t samplePoolBytes = samplePoolCap * sizeof(AInPublicSampleList_t);
+    // nextFree array: poolCap * sizeof(int16_t)
+    size_t nextFreeBytes = samplePoolCap * sizeof(int16_t);
+    // Total heap = configTOTAL_HEAP_SIZE
+    size_t heapTotal = configTOTAL_HEAP_SIZE;
+    size_t heapUsed = heapTotal - heapFree;
+
     int len = snprintf(buf, sizeof(buf),
-        "HeapFree:%u,CoherentPoolFree:%u,SamplePoolCapacity:%u,SamplePoolBytes:%u",
-        (unsigned)heapFree, (unsigned)poolFree,
-        (unsigned)samplePoolCap,
-        (unsigned)(samplePoolCap * sizeof(AInPublicSampleList_t)));
+        "HeapTotal:%u,HeapFree:%u,HeapUsed:%u,HeapMinEverFree:%u,"
+        "CoherentPoolTotal:%u,CoherentPoolFree:%u,"
+        "SamplePoolCount:%u,SamplePoolBytes:%u,SampleNextFreeBytes:%u,"
+        "SampleQueueBytes:%u",
+        (unsigned)heapTotal, (unsigned)heapFree, (unsigned)heapUsed,
+        (unsigned)heapMinEver,
+        (unsigned)poolTotal, (unsigned)poolFree,
+        (unsigned)samplePoolCap, (unsigned)samplePoolBytes,
+        (unsigned)nextFreeBytes,
+        (unsigned)(samplePoolCap * sizeof(void*) + 80));  // queue overhead estimate
     context->interface->write(context, buf, (size_t)len);
     return SCPI_RES_OK;
 }
