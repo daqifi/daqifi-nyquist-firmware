@@ -919,19 +919,40 @@ The project can be built using Microchip tools in WSL/Linux:
 ### Device Testing and SCPI Communication
 
 #### Important Testing Notes
-1. **Picocom Usage**: Never use `2>&1` with picocom commands - it doesn't handle stderr redirection properly
+
+1. **Picocom Limitations — Use Python Libraries for Streaming Tests**
+
+   Picocom is suitable ONLY for simple SCPI command/response testing (non-streaming). It has critical limitations that cause device crashes and test failures:
+
+   **Problem 1: `-x` timeout is idle-based, not hard timeout.** When the device is streaming (PB or CSV), picocom receives continuous data and the "exit after N ms of inactivity" condition never triggers. The process hangs indefinitely.
+
+   **Problem 2: Killing picocom during streaming corrupts WSL serial state.** After `kill -9 picocom`, the serial port often becomes unresponsive (opens but no data flows). Requires physical USB cable unplug/replug to recover.
+
+   **Problem 3: Rapid picocom open/close can crash the device.** Each picocom session toggles DTR/RTS. Rapid cycling during streaming or buffer resize can cause USB CDC state corruption (Windows Code 43: "USB device descriptor failed"). Requires reprogramming to recover.
+
+   **Recommended approach for streaming tests:**
+   - Use `daqifi-python-core` library (`pip install -e /tmp/daqifi-python-core`)
+   - `NyquistDevice` class handles binary PB framing, serial buffering, and clean disconnect
+   - For SCPI commands not wrapped by python-core, use `device._comm.send_command("SYST:MEM:FREE?")`
+   - See `daqifi-python-test-suite` for comprehensive test examples
+
+   **Picocom safe usage (non-streaming only):**
    ```bash
-   # Good:
+   # Good: simple command/response
    (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
-   # Bad:
-   (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -5
+
+   # Bad: streaming — picocom will hang
+   (echo -e "SYST:StartStreamData 1000\r"; sleep 5; echo -e "SYST:StopStreamData\r") | picocom ...
+
+   # Never use 2>&1 with picocom
    ```
 
-   **Picocom hangs during ProtoBuf streaming**: The `-x` exit timeout only triggers after an idle period — continuous binary PB data prevents the idle condition, so picocom never exits. **Never use picocom with `-x` timeout during PB streaming.** Instead:
-   - Use CSV format (`SYST:STR:FOR 2`) for picocom-based testing
-   - Or use the Python daqifi-python-core library which handles binary framing properly
-   - If picocom hangs: `pkill -9 picocom; fuser -k /dev/ttyACM0; rm -f /var/lock/LCK..ttyACM0`
-   - If port is unresponsive after killing picocom: physically unplug/replug USB cable
+   **Recovery if picocom hangs or device crashes:**
+   ```bash
+   pkill -9 picocom; fuser -k /dev/ttyACM0; rm -f /var/lock/LCK..ttyACM0
+   # If port unresponsive: physically unplug/replug USB cable
+   # If Windows shows Code 43: reprogram device via IPE
+   ```
 
 2. **Power State Required**: Always power up the device before attempting WiFi or DAC operations
    ```bash

@@ -368,15 +368,14 @@ static void Streaming_Start(void) {
         if (gpRuntimeConfigStream->IsEnabled) {
             MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
 
-            // Resize USB circular buffer if configured differently
-            if (mc && mc->usbCircularBufSize > 0) {
-                UsbCdc_ResizeWriteBuffer(mc->usbCircularBufSize);
-            }
-
-            // Resize WiFi circular buffer if configured differently
-            if (mc && mc->wifiCircularBufSize > 0) {
-                wifi_tcp_server_ResizeWriteBuffer(mc->wifiCircularBufSize);
-            }
+            // NOTE: USB and WiFi circular buffer resize is NOT done here.
+            // The USB/WiFi tasks run concurrently at high priority and may be
+            // actively reading from the circular buffer. Resizing here caused
+            // use-after-free crashes (USB Code 43 descriptor failure).
+            // Circular buffer resize must be done via SCPI commands while
+            // streaming is stopped (the streaming guard enforces this).
+            // Sample pool resize IS safe here because the deferred ISR task
+            // and streaming task are both stopped (Running == false).
 
             // Resize sample pool if configured differently
             uint32_t poolCount = (mc && mc->samplePoolCount > 0)
