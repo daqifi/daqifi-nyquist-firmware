@@ -14,7 +14,6 @@
 // services
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
-#include "Util/CoherentPool.h"
 #include "HAL/BQ24297/BQ24297.h"
 #include "state/data/BoardData.h"
 #include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
@@ -25,7 +24,7 @@
 /**
  * Finalizes a write operation by clearing the buffer for additional content 
  */
-static UsbCdcData_t gRunTimeUsbSttings;
+static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
 /**
@@ -818,13 +817,6 @@ void UsbCdc_Initialize() {
     gRunTimeUsbSttings.writeTransferHandle =
             USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
     gRunTimeUsbSttings.readBufferLength = 0;
-
-    // Allocate USB DMA buffers from coherent pool
-    gRunTimeUsbSttings.readBuffer = CoherentPool_Alloc("USB_read", USBCDC_RBUFFER_SIZE);
-    gRunTimeUsbSttings.writeBuffer = CoherentPool_Alloc("USB_write", USBCDC_WBUFFER_SIZE);
-    if (gRunTimeUsbSttings.readBuffer == NULL || gRunTimeUsbSttings.writeBuffer == NULL) {
-        LOG_E("UsbCdc_Initialize: Failed to allocate DMA buffers from coherent pool");
-    }
 
     microrl_init(&gRunTimeUsbSttings.console, microrl_echo);
     microrl_set_echo(&gRunTimeUsbSttings.console, true);
