@@ -2418,11 +2418,11 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
 
     // Report result
     char buf[200];
-    int len = snprintf(buf, sizeof(buf),
+    snprintf(buf, sizeof(buf),
         "SD:%u,WiFi:%u,USB:%u,Pool:%u",
         (unsigned)mc->sdCircularBufSize, (unsigned)mc->wifiCircularBufSize,
         (unsigned)mc->usbCircularBufSize, (unsigned)mc->samplePoolCount);
-    context->interface->write(context, buf, (size_t)len);
+    SCPI_ResultText(context, buf);
     return SCPI_RES_OK;
 }
 
