@@ -10,6 +10,7 @@
 #include "HAL/DIO.h"
 #include "HAL/DAC7718/DAC7718.h"
 #include "Util/Logger.h"
+#include "Util/CoherentPool.h"
 
 /*
  * SPI Coordination Framework for Future Extensibility
@@ -458,6 +459,7 @@ void app_SystemInit() {
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
+    CoherentPool_Init();
     InitializeBoardData(gpBoardData);
 
     // Apply persisted voltage precision to streaming runtime config

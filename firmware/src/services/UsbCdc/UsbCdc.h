@@ -94,12 +94,11 @@ extern "C" {
         /** The current length of the write buffer */
         size_t writeBufferLength;
 
-        /** Client read buffer */
-        uint8_t readBuffer[USBCDC_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));
-        ;
+        /** Client read buffer (allocated from coherent pool, DMA-safe) */
+        uint8_t* readBuffer;
 
-        /** Client write buffer */
-        uint8_t writeBuffer[USBCDC_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
+        /** Client write buffer (allocated from coherent pool, DMA-safe) */
+        uint8_t* writeBuffer;
 
         CircularBuf_t wCirbuf;
         SemaphoreHandle_t wMutex;

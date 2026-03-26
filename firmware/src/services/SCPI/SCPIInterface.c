@@ -42,6 +42,9 @@
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
 #include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
+#include "Util/CoherentPool.h"
+#include "state/data/AInSample.h"  // For AInSampleList_PoolCapacity
+#include "services/wifi_services/wifi_tcp_server.h"  // For WIFI_CIRCULAR_BUFF_SIZE
 
 //
 // SCPI STATus:OPERation condition register bit assignments (IEEE 488.2 Sec 11.6.1)
@@ -2286,6 +2289,144 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// =============================================================================
+// Dynamic Memory Configuration SCPI Callbacks
+// =============================================================================
+
+static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val < 4096 || val > 65536) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    mc->sdCircularBufSize = (uint32_t)val;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    uint32_t effective = mc->sdCircularBufSize ? mc->sdCircularBufSize : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+    SCPI_ResultInt32(context, (int32_t)effective);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val < 1400 || val > 65536) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    mc->wifiCircularBufSize = (uint32_t)val;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetMemWifiBuf(scpi_t * context) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    uint32_t effective = mc->wifiCircularBufSize ? mc->wifiCircularBufSize : (WIFI_CIRCULAR_BUFF_SIZE);
+    SCPI_ResultInt32(context, (int32_t)effective);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val < 4096 || val > 65536) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    mc->usbCircularBufSize = (uint32_t)val;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    uint32_t effective = mc->usbCircularBufSize ? mc->usbCircularBufSize : USBCDC_CIRCULAR_BUFF_SIZE;
+    SCPI_ResultInt32(context, (int32_t)effective);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val != 0 && (val < (int32_t)MIN_AIN_SAMPLE_COUNT || val > (int32_t)MAX_AIN_SAMPLE_COUNT)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    mc->samplePoolCount = (uint32_t)val;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetMemSamplePool(scpi_t * context) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    uint32_t effective = mc->samplePoolCount ? mc->samplePoolCount : DEFAULT_AIN_SAMPLE_COUNT;
+    SCPI_ResultInt32(context, (int32_t)effective);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
+    char buf[200];
+    size_t heapFree = xPortGetFreeHeapSize();
+    uint32_t poolFree = CoherentPool_FreeBytes();
+    size_t samplePoolCap = AInSampleList_PoolCapacity();
+
+    int len = snprintf(buf, sizeof(buf),
+        "HeapFree:%u,CoherentPoolFree:%u,SamplePoolCapacity:%u,SamplePoolBytes:%u",
+        (unsigned)heapFree, (unsigned)poolFree,
+        (unsigned)samplePoolCap,
+        (unsigned)(samplePoolCap * sizeof(AInPublicSampleList_t)));
+    context->interface->write(context, buf, (size_t)len);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    sd_card_manager_settings_t* sd = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    bool hasUsb = (sc->ActiveInterface == StreamingInterface_USB || sc->ActiveInterface == StreamingInterface_All);
+    bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi || sc->ActiveInterface == StreamingInterface_All);
+    bool hasSd = (sd->enable || sc->ActiveInterface == StreamingInterface_SD || sc->ActiveInterface == StreamingInterface_All);
+
+    // Start with available heap (leave 20KB reserve for FreeRTOS internals)
+    size_t available = xPortGetFreeHeapSize();
+    if (available > 20480) available -= 20480; else available = 0;
+
+    // Allocate circular buffers for enabled interfaces
+    uint32_t totalCircular = 0;
+    if (hasSd)   { mc->sdCircularBufSize = 32768;  totalCircular += 32768; }
+    else         { mc->sdCircularBufSize = 0; }
+
+    if (hasWifi) { mc->wifiCircularBufSize = 14000; totalCircular += 14000; }
+    else         { mc->wifiCircularBufSize = 0; }
+
+    if (hasUsb)  { mc->usbCircularBufSize = 16384;  totalCircular += 16384; }
+    else         { mc->usbCircularBufSize = 0; }
+
+    // Remaining heap goes to sample pool
+    size_t remaining = (available > totalCircular) ? (available - totalCircular) : 0;
+    uint32_t poolCount = (uint32_t)(remaining / sizeof(AInPublicSampleList_t));
+
+    // Clamp pool
+    if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
+    if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
+    mc->samplePoolCount = poolCount;
+
+    // Report result
+    char buf[200];
+    int len = snprintf(buf, sizeof(buf),
+        "SD:%u,WiFi:%u,USB:%u,Pool:%u",
+        (unsigned)mc->sdCircularBufSize, (unsigned)mc->wifiCircularBufSize,
+        (unsigned)mc->usbCircularBufSize, (unsigned)mc->samplePoolCount);
+    context->interface->write(context, buf, (size_t)len);
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -2477,6 +2618,17 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
     {.pattern = "SYSTem:STReam:TESTpattern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
     {.pattern = "SYSTem:STReam:TESTpattern?", .callback = SCPI_GetTestPattern,},
+    // Dynamic memory configuration
+    {.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = SCPI_SetMemSdBuf,},
+    {.pattern = "SYSTem:MEMory:SD:BUFfer?", .callback = SCPI_GetMemSdBuf,},
+    {.pattern = "SYSTem:MEMory:WIFI:BUFfer", .callback = SCPI_SetMemWifiBuf,},
+    {.pattern = "SYSTem:MEMory:WIFI:BUFfer?", .callback = SCPI_GetMemWifiBuf,},
+    {.pattern = "SYSTem:MEMory:USB:BUFfer", .callback = SCPI_SetMemUsbBuf,},
+    {.pattern = "SYSTem:MEMory:USB:BUFfer?", .callback = SCPI_GetMemUsbBuf,},
+    {.pattern = "SYSTem:MEMory:SAMPle:POOL", .callback = SCPI_SetMemSamplePool,},
+    {.pattern = "SYSTem:MEMory:SAMPle:POOL?", .callback = SCPI_GetMemSamplePool,},
+    {.pattern = "SYSTem:MEMory:FREE?", .callback = SCPI_GetMemFree,},
+    {.pattern = "SYSTem:MEMory:AUTO", .callback = SCPI_MemAutoBalance,},
     //
     {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},

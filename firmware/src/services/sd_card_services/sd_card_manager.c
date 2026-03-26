@@ -2,11 +2,12 @@
 
 #include <string.h>
 #include "Util/Logger.h"
+#include "Util/CoherentPool.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
 
-#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE (32 * 1024)  // 32KB shared buffer for all SD operations
+#define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 // SD_CARD_MANAGER_DISK_DEV_NAME is now in header for external use
@@ -72,9 +73,9 @@ static inline void SD_CheckFsOpDuration(TickType_t startTick, const char* operat
 }
 
 // Shared coherent buffer for all SD operations (write, read, list)
-// DMA-safe for SPI transfers. Mutually exclusive operations share this buffer.
-// Cache-line aligned for optimal DMA performance.
-static __attribute__((coherent, aligned(16))) uint8_t gSdSharedBuffer[SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE];
+// Allocated from coherent pool at init (DMA-safe for SPI transfers).
+static uint8_t* gSdSharedBuffer = NULL;
+static uint32_t gSdSharedBufferSize = 0;
 
 // Mutex to serialize SD operations (READ, WRITE, LIST) on shared buffer
 // Prevents race conditions from cross-task state changes via UpdateSettings()
@@ -126,13 +127,16 @@ typedef enum {
 typedef struct {
     sd_card_manager_processState_t currentProcessState;
     /** Control message buffer (for EOF marker, error messages) */
-    uint8_t messageBuffer[SD_CARD_MANAGER_CONF_RBUFFER_SIZE] __attribute__((coherent));
+    uint8_t messageBuffer[SD_CARD_MANAGER_CONF_RBUFFER_SIZE];
 
     /** The current length of the message buffer */
     size_t messageBufferLength;
 
-    /** Client write buffer */
-    uint8_t writeBuffer[SD_CARD_MANAGER_CONF_WBUFFER_SIZE]__attribute__((coherent));
+    /** Client write buffer (allocated from coherent pool, DMA-safe) */
+    uint8_t* writeBuffer;
+
+    /** Size of the write buffer in bytes */
+    uint32_t writeBufferSize;
 
     /** The current length of the write buffer */
     size_t writeBufferLength;
@@ -193,8 +197,8 @@ __exit:
 }
 
 static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
-    if (len>sizeof (gSDCardData.writeBuffer)) {
-        LOG_E("[SD] CircularBufferToSDWrite overflow: len=%u, max=%u", (unsigned)len, (unsigned)sizeof(gSDCardData.writeBuffer));
+    if (len > gSDCardData.writeBufferSize) {
+        LOG_E("[SD] CircularBufferToSDWrite overflow: len=%u, max=%u", (unsigned)len, (unsigned)gSDCardData.writeBufferSize);
         return -1;
     }
     memcpy(gSDCardData.writeBuffer, buf, len);
@@ -362,13 +366,26 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
 bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     static bool isInitDone = false;
     if (!isInitDone) {
-        // Initialize circular buffer using static coherent memory instead of heap
-        gSDCardData.wCirbuf.buf_ptr = gSdSharedBuffer;
-        gSDCardData.wCirbuf.buf_size = SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE;
-        gSDCardData.wCirbuf.process_callback = CircularBufferToSDWrite;
-        gSDCardData.wCirbuf.insertPtr = gSdSharedBuffer;
-        gSDCardData.wCirbuf.removePtr = gSdSharedBuffer;
-        gSDCardData.wCirbuf.totalBytes = 0;
+        // Allocate SD buffers from coherent pool (DMA-safe)
+        gSdSharedBufferSize = SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE;
+        gSdSharedBuffer = CoherentPool_Alloc("SD_circular", gSdSharedBufferSize);
+        if (gSdSharedBuffer == NULL) {
+            LOG_E("[SD] Failed to allocate %u bytes from coherent pool for circular buffer",
+                  (unsigned)gSdSharedBufferSize);
+            return false;
+        }
+
+        gSDCardData.writeBufferSize = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
+        gSDCardData.writeBuffer = CoherentPool_Alloc("SD_write", gSDCardData.writeBufferSize);
+        if (gSDCardData.writeBuffer == NULL) {
+            LOG_E("[SD] Failed to allocate %u bytes from coherent pool for write buffer",
+                  (unsigned)gSDCardData.writeBufferSize);
+            return false;
+        }
+
+        // Initialize circular buffer using pool-allocated coherent memory
+        CircularBuf_InitExternal(&gSDCardData.wCirbuf, CircularBufferToSDWrite,
+                                 gSdSharedBuffer, gSdSharedBufferSize);
 
         gSDCardData.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gSDCardData.wMutex);
@@ -757,8 +774,8 @@ void sd_card_manager_ProcessState() {
                 // because gSdFileWasReady is already false.
                 SD_TakeMutexDebug(gSDCardData.wMutex, "open_file_clear_buffer");
                 CircularBuf_Reset(&gSDCardData.wCirbuf);
-                memset(gSdSharedBuffer, 0, SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE);
-                memset(gSDCardData.writeBuffer, 0, sizeof(gSDCardData.writeBuffer));
+                memset(gSdSharedBuffer, 0, gSdSharedBufferSize);
+                memset(gSDCardData.writeBuffer, 0, gSDCardData.writeBufferSize);
                 xSemaphoreGive(gSDCardData.wMutex);
 
                 // Reset write pipeline state for clean start.
@@ -1133,7 +1150,7 @@ void sd_card_manager_ProcessState() {
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
             // Calculate safe read size based on buffer capacity
-            size_t maxRead = sizeof(gSdSharedBuffer);
+            size_t maxRead = gSdSharedBufferSize;
             if (maxRead > SD_READ_MAX_CHUNK_SIZE) maxRead = SD_READ_MAX_CHUNK_SIZE;
             maxRead = (maxRead / SD_READ_ALIGNMENT_SIZE) * SD_READ_ALIGNMENT_SIZE;
             if (maxRead == 0U) {

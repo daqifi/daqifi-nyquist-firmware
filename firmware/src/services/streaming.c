@@ -30,6 +30,7 @@
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
 #include "sd_card_services/sd_card_manager.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 
 // --- Test pattern streaming mode ---
 // When non-zero, overrides ADC sample values with synthetic data patterns.
@@ -361,11 +362,24 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
-        // Clear any stale samples from previous streaming session to free heap
+        // Re-initialize sample pool with configured size if changed
+        if (gpRuntimeConfigStream->IsEnabled) {
+            MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+            uint32_t poolCount = (mc && mc->samplePoolCount > 0)
+                ? mc->samplePoolCount : DEFAULT_AIN_SAMPLE_COUNT;
+            // Only re-allocate if size changed
+            if (poolCount != AInSampleList_PoolCapacity()) {
+                AInSampleList_Destroy();
+                AInSampleList_Initialize(poolCount, false, NULL);
+                LOG_I("Sample pool resized to %u", (unsigned)AInSampleList_PoolCapacity());
+            }
+        }
+
+        // Clear any stale samples from previous streaming session
         AInPublicSampleList_t* pStale;
         while (AInSampleList_PopFront(&pStale)) {
             if (pStale != NULL) {
-                AInSampleList_FreeToPool(pStale);  // Use pool instead of vPortFree!
+                AInSampleList_FreeToPool(pStale);
             }
         }
 

@@ -136,6 +136,19 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
         .maxFileSizeBytes = SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE, \
     }
 
+/**
+ * Common dynamic memory configuration defaults.
+ * Runtime-only (not persisted to NVM). Reset on reboot.
+ * 0 = use compile-time defaults for that buffer.
+ */
+#define COMMON_MEMORY_RUNTIME_DEFAULTS \
+    .memoryConfig = { \
+        .sdCircularBufSize  = 0, \
+        .wifiCircularBufSize = 0, \
+        .usbCircularBufSize = 0, \
+        .samplePoolCount    = 0, \
+    }
+
 #ifdef __cplusplus
 }
 #endif

@@ -44,6 +44,31 @@ void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32
     cirbuf->buf_size               = size;
     cirbuf->insertPtr              = cirbuf->removePtr = cirbuf->buf_ptr;
     cirbuf->totalBytes             = 0;
+    cirbuf->_ownsMemory            = true;
+}
+
+void CircularBuf_InitExternal(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint8_t* buf, uint32_t size)
+{
+    cirbuf->buf_ptr                = buf;
+    cirbuf->process_callback       = fp;
+    cirbuf->buf_size               = size;
+    cirbuf->insertPtr              = cirbuf->removePtr = cirbuf->buf_ptr;
+    cirbuf->totalBytes             = 0;
+    cirbuf->_ownsMemory            = false;
+}
+
+void CircularBuf_Deinit(CircularBuf_t* cirbuf)
+{
+    if (cirbuf == NULL) return;
+    if (cirbuf->_ownsMemory && cirbuf->buf_ptr != NULL) {
+        OSAL_Free(cirbuf->buf_ptr);
+    }
+    cirbuf->buf_ptr = NULL;
+    cirbuf->insertPtr = NULL;
+    cirbuf->removePtr = NULL;
+    cirbuf->buf_size = 0;
+    cirbuf->totalBytes = 0;
+    cirbuf->_ownsMemory = false;
 }
 
 /*=============================================================================

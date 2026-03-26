@@ -12,6 +12,7 @@
 
 #define SD_CARD_MANAGER_CONF_RBUFFER_SIZE 512   // Small buffer, send directory listings in chunks
 #define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 8192  // Increased to 8KB for 5kHz streaming support
+#define SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE (32U * 1024U)  // Default SD circular buffer size
 
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40

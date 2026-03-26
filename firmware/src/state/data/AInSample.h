@@ -56,16 +56,16 @@ extern "C" {
     // Define a storage class for analog input channels
 
     /**
-     * Maximum samples in the streaming queue and object pool.
-     * Single source of truth - used directly in AInSample.c for pool allocation.
+     * Default sample pool depth.
+     * Used when no runtime override is configured (MemoryConfig.samplePoolCount = 0).
      *
      * Memory impact: ~208 bytes per sample (16ch × 12 bytes + 16 bools + overhead)
-     *   700 samples = ~146 KB static RAM (current setting)
-     *   1024 samples = ~215 KB static RAM
-     *
-     * Increasing this value requires sufficient free RAM (check memoryfile.xml).
+     *   700 samples = ~146 KB
+     *   1200 samples = ~250 KB
      */
-#define MAX_AIN_SAMPLE_COUNT 700
+#define DEFAULT_AIN_SAMPLE_COUNT 700
+#define MIN_AIN_SAMPLE_COUNT     100
+#define MAX_AIN_SAMPLE_COUNT     2000
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**
@@ -170,6 +170,11 @@ extern "C" {
      * @param pSample Pointer to sample structure to return to pool.
      */
     void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample);
+
+    /**
+     * @brief Returns the current pool capacity (number of samples).
+     */
+    size_t AInSampleList_PoolCapacity(void);
 
 #ifdef __cplusplus
 }

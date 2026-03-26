@@ -1013,6 +1013,7 @@
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="Util" displayName="Util" projectFiles="true">
+        <itemPath>../src/Util/CoherentPool.c</itemPath>
         <itemPath>../src/Util/CircularBuffer.c</itemPath>
         <itemPath>../src/Util/Delay.c</itemPath>
         <itemPath>../src/Util/FreeRTOSLockContext.c</itemPath>
@@ -1381,6 +1382,22 @@
         </C32Global>
       </item>
       <item path="../src/Util/ArrayWrapper.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -4048,6 +4065,22 @@
         <C32Global>
         </C32Global>
       </item>
+      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
       <item path="../src/Util/CircularBuffer.c" ex="false" overriding="false">
         <C32>
         </C32>
@@ -6685,6 +6718,22 @@
         </C32Global>
       </item>
       <item path="../src/Util/ArrayWrapper.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

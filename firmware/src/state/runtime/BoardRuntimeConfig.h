@@ -46,8 +46,10 @@ enum eBoardRunTimeParameter{
     BOARDRUNTIME_WIFI_SETTINGS, 
     //! Desired USB settings in runtime 
     BOARDRUNTIME_USB_SETTINGS, 
-    //! Desired SD Card Settings 
+    //! Desired SD Card Settings
     BOARDRUNTIME_SD_CARD_SETTINGS,
+    //! Dynamic memory configuration
+    BOARDRUNTIME_MEMORY_CONFIG,
     //! Number of elements
     BOARDRUNTIMECONFIG_NUM_OF_ELEMENTS
 };
@@ -87,6 +89,8 @@ typedef struct sBoardRuntimeConfig
     UsbCdcData_t usbSettings;
     
     sd_card_manager_settings_t sdCardConfig;
+
+    MemoryConfig memoryConfig;
 } tBoardRuntimeConfig;
 
 /*!

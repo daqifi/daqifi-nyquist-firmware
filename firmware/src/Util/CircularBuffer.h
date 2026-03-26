@@ -38,10 +38,13 @@ typedef struct s_CircularBuf
     uint8_t*    buf_ptr;
     uint32_t    buf_size;
     int        (*process_callback)(uint8_t*, uint32_t);
+    bool        _ownsMemory;  // true if buf_ptr was allocated by CircularBuf_Init
 }CircularBuf_t;
 
 
 void     CircularBuf_Init(CircularBuf_t*, int (*fp)(uint8_t*,uint32_t), uint32_t);
+void     CircularBuf_InitExternal(CircularBuf_t*, int (*fp)(uint8_t*,uint32_t), uint8_t* buf, uint32_t size);
+void     CircularBuf_Deinit(CircularBuf_t*);
 uint32_t CircularBuf_AddBytes(CircularBuf_t*, uint8_t*, uint32_t);
 uint32_t CircularBuf_NumBytesAvailable(CircularBuf_t*);
 uint32_t CircularBuf_NumBytesFree(CircularBuf_t*);

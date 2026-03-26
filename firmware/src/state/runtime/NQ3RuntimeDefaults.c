@@ -61,7 +61,7 @@ const tBoardRuntimeConfig g_NQ3BoardRuntimeConfig = {
     COMMON_STREAMING_RUNTIME_DEFAULTS,
     COMMON_WIFI_RUNTIME_DEFAULTS,
     COMMON_SDCARD_RUNTIME_DEFAULTS,
-
+    COMMON_MEMORY_RUNTIME_DEFAULTS,
 };
 
 /*! This function is used for getting the board runtime configuration defaults

@@ -57,6 +57,8 @@ void *BoardRunTimeConfig_Get(enum eBoardRunTimeParameter parameter)
             return &pBoardRuntimeConfig.usbSettings; 
         case BOARDRUNTIME_SD_CARD_SETTINGS:
             return &pBoardRuntimeConfig.sdCardConfig;
+        case BOARDRUNTIME_MEMORY_CONFIG:
+            return &pBoardRuntimeConfig.memoryConfig;
         case BOARDRUNTIMECONFIG_NUM_OF_ELEMENTS:
         default:
             return NULL;

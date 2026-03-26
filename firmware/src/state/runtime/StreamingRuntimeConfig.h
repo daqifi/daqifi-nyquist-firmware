@@ -98,6 +98,18 @@ extern "C" {
 
     } StreamingRuntimeConfig;
 
+    /**
+     * Dynamic memory configuration for streaming buffers.
+     * Settings take effect at next StartStreamData.
+     * Runtime-only (not persisted to NVM — reset on reboot to safe defaults).
+     */
+    typedef struct sMemoryConfig {
+        uint32_t sdCircularBufSize;    // SD circular buffer (default 32768)
+        uint32_t wifiCircularBufSize;  // WiFi circular buffer (default 14000)
+        uint32_t usbCircularBufSize;   // USB circular buffer (default 16384)
+        uint32_t samplePoolCount;      // Sample pool depth (default 700, 0=auto)
+    } MemoryConfig;
+
 
 #ifdef	__cplusplus
 }
