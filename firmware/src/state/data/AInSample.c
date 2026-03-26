@@ -55,8 +55,9 @@ void AInSampleList_Initialize(
     (void)dropOnOverflow;
     (void)lockPrototype;
 
-    // Free previous pool if re-initializing with different size
-    if (samplePool != NULL && maxSize != poolCapacity) {
+    // Destroy previous resources if re-initializing (any size change or same size).
+    // Must destroy before creating new queue to prevent orphaning the old handle.
+    if (samplePool != NULL) {
         AInSampleList_Destroy();
     }
 

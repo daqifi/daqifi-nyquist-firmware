@@ -378,7 +378,8 @@ static void Streaming_Start(void) {
             // and streaming task are both stopped (Running == false).
 
             // Resize sample pool if configured differently
-            uint32_t poolCount = (mc && mc->samplePoolCount > 0)
+            // BoardRunTimeConfig_Get never returns NULL (static array, initialized at boot)
+            uint32_t poolCount = (mc->samplePoolCount > 0)
                 ? mc->samplePoolCount : DEFAULT_AIN_SAMPLE_COUNT;
             if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
             if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;

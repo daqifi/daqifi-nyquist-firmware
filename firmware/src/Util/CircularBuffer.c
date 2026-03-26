@@ -39,6 +39,13 @@ void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32
     cirbuf->buf_ptr                = OSAL_Malloc(size);
     if (cirbuf->buf_ptr == NULL) {
         LOG_E("CircularBuf_Init: Failed to allocate %u bytes (OSAL_Malloc returned NULL)\r\n", size);
+        // Leave struct in uninitialized state so callers can detect failure
+        cirbuf->buf_size = 0;
+        cirbuf->insertPtr = NULL;
+        cirbuf->removePtr = NULL;
+        cirbuf->totalBytes = 0;
+        cirbuf->_ownsMemory = false;
+        return;
     }
     cirbuf->process_callback       = fp;
     cirbuf->buf_size               = size;
