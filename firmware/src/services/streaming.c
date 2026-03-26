@@ -30,6 +30,7 @@
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
 #include "sd_card_services/sd_card_manager.h"
+#include "wifi_services/wifi_tcp_server.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 
 // --- Test pattern streaming mode ---
@@ -362,15 +363,26 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
-        // Re-initialize sample pool with configured size if changed.
+        // Apply dynamic memory configuration if changed.
         // SCPI validates bounds, but clamp here too for defense-in-depth.
         if (gpRuntimeConfigStream->IsEnabled) {
             MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+
+            // Resize USB circular buffer if configured differently
+            if (mc && mc->usbCircularBufSize > 0) {
+                UsbCdc_ResizeWriteBuffer(mc->usbCircularBufSize);
+            }
+
+            // Resize WiFi circular buffer if configured differently
+            if (mc && mc->wifiCircularBufSize > 0) {
+                wifi_tcp_server_ResizeWriteBuffer(mc->wifiCircularBufSize);
+            }
+
+            // Resize sample pool if configured differently
             uint32_t poolCount = (mc && mc->samplePoolCount > 0)
                 ? mc->samplePoolCount : DEFAULT_AIN_SAMPLE_COUNT;
             if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
             if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
-            // Only re-allocate if size changed
             if (poolCount != AInSampleList_PoolCapacity()) {
                 AInSampleList_Destroy();
                 AInSampleList_Initialize(poolCount, false, NULL);

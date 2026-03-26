@@ -947,3 +947,31 @@ tRunTimeUsbSettings* UsbCdc_GetRuntimeSettings(void) {
     // Return pointer to runtime settings for monitoring USB state
     return (tRunTimeUsbSettings*)&gRunTimeUsbSttings;
 }
+
+bool UsbCdc_ResizeWriteBuffer(uint32_t newSize) {
+    if (newSize < USBCDC_WBUFFER_SIZE) newSize = USBCDC_WBUFFER_SIZE;
+    if (gRunTimeUsbSttings.wCirbuf.buf_size == newSize) return true;
+
+    // Wait for any in-flight USB write to complete before touching the buffer.
+    // This prevents use-after-free if the USB DMA callback fires during resize.
+    TickType_t start = xTaskGetTickCount();
+    while (gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
+            LOG_E("USB resize aborted: write transfer stuck");
+            return false;
+        }
+        vTaskDelay(1);
+    }
+
+    xSemaphoreTake(gRunTimeUsbSttings.wMutex, portMAX_DELAY);
+    CircularBuf_Reset(&gRunTimeUsbSttings.wCirbuf);  // Discard any buffered data
+    bool ok = CircularBuf_Resize(&gRunTimeUsbSttings.wCirbuf, newSize);
+    xSemaphoreGive(gRunTimeUsbSttings.wMutex);
+
+    if (ok) {
+        LOG_I("USB circular buffer resized to %u", (unsigned)newSize);
+    } else {
+        LOG_E("USB circular buffer resize failed (wanted %u)", (unsigned)newSize);
+    }
+    return ok;
+}

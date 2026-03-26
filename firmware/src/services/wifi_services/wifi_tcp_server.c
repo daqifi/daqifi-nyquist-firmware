@@ -435,3 +435,31 @@ bool wifi_tcp_server_TransmitBufferedData() {
     xSemaphoreGive(gpServerData->client.wMutex);
     return true;
 }
+
+bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize) {
+    if (gpServerData == NULL) return false;
+    if (newSize < WIFI_WBUFFER_SIZE) newSize = WIFI_WBUFFER_SIZE;
+    if (gpServerData->client.wCirbuf.buf_size == newSize) return true;
+
+    // Wait for any pending TCP send to complete
+    TickType_t start = xTaskGetTickCount();
+    while (gpServerData->client.tcpSendPending) {
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
+            LOG_E("WiFi resize aborted: TCP send stuck");
+            return false;
+        }
+        vTaskDelay(1);
+    }
+
+    xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    CircularBuf_Reset(&gpServerData->client.wCirbuf);  // Discard buffered data
+    bool ok = CircularBuf_Resize(&gpServerData->client.wCirbuf, newSize);
+    xSemaphoreGive(gpServerData->client.wMutex);
+
+    if (ok) {
+        LOG_I("WiFi circular buffer resized to %u", (unsigned)newSize);
+    } else {
+        LOG_E("WiFi circular buffer resize failed (wanted %u)", (unsigned)newSize);
+    }
+    return ok;
+}

@@ -77,6 +77,13 @@ typedef struct s_tcpServerContext
     wifi_tcp_server_clientContext_t client;
 } wifi_tcp_server_context_t;
 
+/**
+ * Resize the WiFi TCP circular write buffer.
+ * Must only be called when streaming is stopped (no data in flight).
+ * @param newSize New buffer size in bytes (minimum WIFI_WBUFFER_SIZE)
+ * @return true if resized, false if failed or same size
+ */
+bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize);
 
     /* Provide C++ Compatibility */
 #ifdef __cplusplus

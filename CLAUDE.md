@@ -921,11 +921,17 @@ The project can be built using Microchip tools in WSL/Linux:
 #### Important Testing Notes
 1. **Picocom Usage**: Never use `2>&1` with picocom commands - it doesn't handle stderr redirection properly
    ```bash
-   # Good: 
+   # Good:
    (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
    # Bad:
    (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 2>&1 | tail -5
    ```
+
+   **Picocom hangs during ProtoBuf streaming**: The `-x` exit timeout only triggers after an idle period — continuous binary PB data prevents the idle condition, so picocom never exits. **Never use picocom with `-x` timeout during PB streaming.** Instead:
+   - Use CSV format (`SYST:STR:FOR 2`) for picocom-based testing
+   - Or use the Python daqifi-python-core library which handles binary framing properly
+   - If picocom hangs: `pkill -9 picocom; fuser -k /dev/ttyACM0; rm -f /var/lock/LCK..ttyACM0`
+   - If port is unresponsive after killing picocom: physically unplug/replug USB cable
 
 2. **Power State Required**: Always power up the device before attempting WiFi or DAC operations
    ```bash

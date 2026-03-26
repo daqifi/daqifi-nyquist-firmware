@@ -115,16 +115,24 @@ void AInSampleList_Initialize(
 /**
  * @brief Destroys the sample queue and resets the object pool.
  *
- * Teardown sequence (order matters for thread safety):
- * 1. Block new pool operations (poolActive = false)
+ * Thread safety note: We do NOT take poolMutex at the top of this function.
+ * Instead, we use poolActive (32-bit atomic write on PIC32MZ) as a fast-path
+ * guard that immediately blocks new AllocateFromPool/FreeToPool calls without
+ * mutex contention. The mutex is only taken later (step 5) as a synchronization
+ * barrier to ensure in-flight operations complete before freeing memory.
+ * This is safe because Destroy is only called from Streaming_Start (task context,
+ * streaming stopped) when no ISR or task is allocating from the pool.
+ *
+ * Teardown sequence (order matters):
+ * 1. Block new pool operations (poolActive = false — atomic on PIC32MZ)
  * 2. Atomically capture and nullify queue handle
- * 3. Drain remaining samples back to pool
- * 4. Delete FreeRTOS resources
- * 5. Free pool memory
+ * 3. Drain remaining samples
+ * 4. Delete FreeRTOS queue
+ * 5. Take mutex as barrier, free pool memory
  */
 void AInSampleList_Destroy()
 {
-    // Step 1: Block new pool operations first
+    // Step 1: Block new pool operations (atomic 32-bit write, no mutex needed)
     poolActive = false;
 
     // Step 2: Atomically capture and nullify queue handle to prevent further use

@@ -197,7 +197,14 @@ extern "C" {
      * @return Pointer to runtime USB settings structure
      */
     tRunTimeUsbSettings* UsbCdc_GetRuntimeSettings(void);
-   
+
+    /**
+     * Resize the USB CDC circular write buffer.
+     * Must only be called when streaming is stopped (no data in flight).
+     * @param newSize New buffer size in bytes (minimum USBCDC_WBUFFER_SIZE)
+     * @return true if resized, false if failed or same size
+     */
+    bool UsbCdc_ResizeWriteBuffer(uint32_t newSize);
 
 #ifdef	__cplusplus
 }
