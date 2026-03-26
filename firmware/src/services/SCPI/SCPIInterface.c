@@ -2402,31 +2402,26 @@ static scpi_result_t SCPI_GetMemSamplePool(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
-    char buf[512];
     size_t heapFree = xPortGetFreeHeapSize();
     size_t heapMinEver = xPortGetMinimumEverFreeHeapSize();
-    uint32_t poolFree = CoherentPool_FreeBytes();
-    uint32_t poolTotal = CoherentPool_TotalSize();
-    size_t samplePoolCap = AInSampleList_PoolCapacity();
-    size_t samplePoolBytes = samplePoolCap * sizeof(AInPublicSampleList_t);
-    // nextFree array: poolCap * sizeof(int16_t)
-    size_t nextFreeBytes = samplePoolCap * sizeof(int16_t);
-    // Total heap = configTOTAL_HEAP_SIZE
     size_t heapTotal = configTOTAL_HEAP_SIZE;
-    size_t heapUsed = heapTotal - heapFree;
+    uint32_t poolTotal = CoherentPool_TotalSize();
+    uint32_t poolFree = CoherentPool_FreeBytes();
+    size_t samplePoolCap = AInSampleList_PoolCapacity();
 
-    int len = snprintf(buf, sizeof(buf),
-        "HeapTotal:%u,HeapFree:%u,HeapUsed:%u,HeapMinEverFree:%u,"
-        "CoherentPoolTotal:%u,CoherentPoolFree:%u,"
-        "SamplePoolCount:%u,SamplePoolBytes:%u,SampleNextFreeBytes:%u,"
-        "SampleQueueBytes:%u",
-        (unsigned)heapTotal, (unsigned)heapFree, (unsigned)heapUsed,
-        (unsigned)heapMinEver,
-        (unsigned)poolTotal, (unsigned)poolFree,
-        (unsigned)samplePoolCap, (unsigned)samplePoolBytes,
-        (unsigned)nextFreeBytes,
-        (unsigned)(samplePoolCap * sizeof(void*) + 80));  // queue overhead estimate
-    context->interface->write(context, buf, (size_t)len);
+    scpi_printf(context, "HeapTotal=%u\r\n", (unsigned)heapTotal);
+    scpi_printf(context, "HeapFree=%u\r\n", (unsigned)heapFree);
+    scpi_printf(context, "HeapUsed=%u\r\n", (unsigned)(heapTotal - heapFree));
+    scpi_printf(context, "HeapMinEverFree=%u\r\n", (unsigned)heapMinEver);
+    scpi_printf(context, "CoherentPoolTotal=%u\r\n", (unsigned)poolTotal);
+    scpi_printf(context, "CoherentPoolFree=%u\r\n", (unsigned)poolFree);
+    scpi_printf(context, "SamplePoolCount=%u\r\n", (unsigned)samplePoolCap);
+    scpi_printf(context, "SamplePoolBytes=%u\r\n",
+                (unsigned)(samplePoolCap * sizeof(AInPublicSampleList_t)));
+    scpi_printf(context, "SampleNextFreeBytes=%u\r\n",
+                (unsigned)(samplePoolCap * sizeof(int16_t)));
+    scpi_printf(context, "SampleQueueBytes=%u\r\n",
+                (unsigned)(samplePoolCap * sizeof(void*) + 80));
     return SCPI_RES_OK;
 }
 
@@ -2464,13 +2459,10 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
     mc->samplePoolCount = poolCount;
 
-    // Report result
-    char buf[200];
-    snprintf(buf, sizeof(buf),
-        "SD:%u,WiFi:%u,USB:%u,Pool:%u",
-        (unsigned)mc->sdCircularBufSize, (unsigned)mc->wifiCircularBufSize,
-        (unsigned)mc->usbCircularBufSize, (unsigned)mc->samplePoolCount);
-    SCPI_ResultText(context, buf);
+    scpi_printf(context, "SD=%u\r\n", (unsigned)mc->sdCircularBufSize);
+    scpi_printf(context, "WiFi=%u\r\n", (unsigned)mc->wifiCircularBufSize);
+    scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
+    scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);
     return SCPI_RES_OK;
 }
 

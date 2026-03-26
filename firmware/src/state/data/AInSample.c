@@ -68,15 +68,33 @@ void AInSampleList_Initialize(
     analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
     configASSERT(analogInputsQueue != NULL);
 
-    // Allocate pool from heap if not already allocated at this size
+    // Allocate pool from heap if not already allocated at this size.
+    // Total heap cost: maxSize * (sizeof(AInPublicSampleList_t) + sizeof(int16_t))
+    //                = maxSize * (208 + 2) = maxSize * 210 bytes
     if (samplePool == NULL) {
         poolCapacity = maxSize;
         samplePool = (AInPublicSampleList_t*)pvPortMalloc(
             poolCapacity * sizeof(AInPublicSampleList_t));
-        configASSERT(samplePool != NULL);
+        if (samplePool == NULL) {
+            // Cleanup queue before asserting
+            vQueueDelete(analogInputsQueue);
+            analogInputsQueue = NULL;
+            queueSize = 0;
+            configASSERT(0);  // Fatal: insufficient heap for sample pool
+            return;
+        }
 
         nextFree = (int16_t*)pvPortMalloc(poolCapacity * sizeof(int16_t));
-        configASSERT(nextFree != NULL);
+        if (nextFree == NULL) {
+            vPortFree(samplePool);
+            samplePool = NULL;
+            vQueueDelete(analogInputsQueue);
+            analogInputsQueue = NULL;
+            queueSize = 0;
+            poolCapacity = 0;
+            configASSERT(0);  // Fatal: insufficient heap for free list
+            return;
+        }
     }
 
     // Initialize object pool mutex

@@ -362,11 +362,14 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
-        // Re-initialize sample pool with configured size if changed
+        // Re-initialize sample pool with configured size if changed.
+        // SCPI validates bounds, but clamp here too for defense-in-depth.
         if (gpRuntimeConfigStream->IsEnabled) {
             MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
             uint32_t poolCount = (mc && mc->samplePoolCount > 0)
                 ? mc->samplePoolCount : DEFAULT_AIN_SAMPLE_COUNT;
+            if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
+            if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
             // Only re-allocate if size changed
             if (poolCount != AInSampleList_PoolCapacity()) {
                 AInSampleList_Destroy();
