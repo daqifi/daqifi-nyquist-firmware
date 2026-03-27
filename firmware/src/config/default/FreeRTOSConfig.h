@@ -258,7 +258,7 @@
  * or heap_4.c are included in the build.  This value is defaulted to 4096 bytes but
  * it must be tailored to each application.  Note the heap will appear in the .bss
  * section.  See https://www.freertos.org/a00111.html. */
-#define configTOTAL_HEAP_SIZE                   ( ( size_t ) 346000 ) //Daqifi Modified - max that fits with stack
+#define configTOTAL_HEAP_SIZE                   ( ( size_t ) 349000 ) //Daqifi Modified - max that fits with ISR stack
 
 /* Set configAPPLICATION_ALLOCATED_HEAP to 1 to have the application allocate
  * the array used as the FreeRTOS heap.  Set to 0 to have the linker allocate the
