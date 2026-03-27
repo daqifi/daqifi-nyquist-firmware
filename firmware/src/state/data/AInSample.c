@@ -23,6 +23,7 @@
 #include "FreeRTOS.h"
 #include "queue.h"
 #include <string.h>  // For memset
+#include "Util/Logger.h"
 
 //! Ticks to wait for QUEUE OPERATIONS
 #define AINSAMPLE_QUEUE_TICKS_TO_WAIT               0  // No delay
@@ -61,27 +62,48 @@ void AInSampleList_Initialize(
         AInSampleList_Destroy();
     }
 
-    // Clamp pool size
+    // Clamp pool size to compile-time limits
     if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
     if (maxSize > MAX_AIN_SAMPLE_COUNT) maxSize = MAX_AIN_SAMPLE_COUNT;
+
+    // Clamp further to what the heap can actually fit.
+    // Check BEFORE allocating anything so we don't waste heap on an
+    // oversized queue that we'd have to delete and recreate.
+    if (samplePool == NULL) {
+        size_t perSample = sizeof(AInPublicSampleList_t) + sizeof(int16_t);
+        size_t heapAvail = xPortGetFreeHeapSize();
+        // Reserve 10KB for queue + FreeRTOS overhead + alignment padding
+        size_t usable = (heapAvail > 10240) ? (heapAvail - 10240) : 0;
+        uint32_t maxFit = (uint32_t)(usable / perSample);
+
+        if (maxSize > maxFit) {
+            uint32_t original = maxSize;
+            maxSize = maxFit;
+            if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
+            LOG_E("Sample pool clamped: wanted %u, heap fits %u (free=%u)",
+                  (unsigned)original, (unsigned)maxSize, (unsigned)heapAvail);
+        }
+    }
 
     queueSize = maxSize;
     analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
     configASSERT(analogInputsQueue != NULL);
 
-    // Allocate pool from heap if not already allocated at this size.
+    // Allocate pool from heap.
     // Total heap cost: maxSize * (sizeof(AInPublicSampleList_t) + sizeof(int16_t))
     //                = maxSize * (208 + 2) = maxSize * 210 bytes
     if (samplePool == NULL) {
         poolCapacity = maxSize;
+
         samplePool = (AInPublicSampleList_t*)pvPortMalloc(
             poolCapacity * sizeof(AInPublicSampleList_t));
         if (samplePool == NULL) {
-            // Cleanup queue before asserting
             vQueueDelete(analogInputsQueue);
             analogInputsQueue = NULL;
             queueSize = 0;
-            configASSERT(0);  // Fatal: insufficient heap for sample pool
+            poolCapacity = 0;
+            LOG_E("Sample pool alloc failed (%u bytes)", (unsigned)(poolCapacity * sizeof(AInPublicSampleList_t)));
+            configASSERT(0);
             return;
         }
 
@@ -93,7 +115,8 @@ void AInSampleList_Initialize(
             analogInputsQueue = NULL;
             queueSize = 0;
             poolCapacity = 0;
-            configASSERT(0);  // Fatal: insufficient heap for free list
+            LOG_E("Sample pool nextFree alloc failed");
+            configASSERT(0);
             return;
         }
     }
