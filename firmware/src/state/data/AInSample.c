@@ -77,11 +77,7 @@ void AInSampleList_Initialize(
         uint32_t maxFit = (uint32_t)(usable / perSample);
 
         if (maxSize > maxFit) {
-            uint32_t original = maxSize;
-            maxSize = maxFit;
-            if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
-            LOG_E("Sample pool clamped: wanted %u, heap fits %u (free=%u)",
-                  (unsigned)original, (unsigned)maxSize, (unsigned)heapAvail);
+            maxSize = (maxFit >= MIN_AIN_SAMPLE_COUNT) ? maxFit : MIN_AIN_SAMPLE_COUNT;
         }
     }
 
