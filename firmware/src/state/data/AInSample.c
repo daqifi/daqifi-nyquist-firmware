@@ -94,11 +94,13 @@ void AInSampleList_Initialize(
         samplePool = (AInPublicSampleList_t*)pvPortMalloc(
             poolCapacity * sizeof(AInPublicSampleList_t));
         if (samplePool == NULL) {
+            LOG_E("Sample pool alloc failed (%u samples, %u bytes)",
+                  (unsigned)poolCapacity,
+                  (unsigned)(poolCapacity * sizeof(AInPublicSampleList_t)));
             vQueueDelete(analogInputsQueue);
             analogInputsQueue = NULL;
             queueSize = 0;
             poolCapacity = 0;
-            LOG_E("Sample pool alloc failed (%u bytes)", (unsigned)(poolCapacity * sizeof(AInPublicSampleList_t)));
             configASSERT(0);
             return;
         }

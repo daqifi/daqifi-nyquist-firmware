@@ -85,6 +85,7 @@ void CircularBuf_Deinit(CircularBuf_t* cirbuf)
     cirbuf->removePtr = NULL;
     cirbuf->buf_size = 0;
     cirbuf->totalBytes = 0;
+    cirbuf->process_callback = NULL;
     cirbuf->_ownsMemory = false;
 }
 

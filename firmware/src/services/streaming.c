@@ -384,7 +384,10 @@ static void Streaming_Start(void) {
             // and cannot be changed at runtime. SYST:MEM:SAMP:POOL sets the
             // config value but it only takes effect on reboot (via BoardData_Init).
             // TODO: Debug and fix in follow-up PR (issue #229).
-            (void)mc;  // Suppress unused warning
+            if (mc->samplePoolCount > 0 && mc->samplePoolCount != AInSampleList_PoolCapacity()) {
+                LOG_I("Pool resize to %u deferred (runtime resize not yet supported)",
+                      (unsigned)mc->samplePoolCount);
+            }
         }
 
         // Clear any stale samples from previous streaming session
