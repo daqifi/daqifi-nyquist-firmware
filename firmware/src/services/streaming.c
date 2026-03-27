@@ -377,17 +377,14 @@ static void Streaming_Start(void) {
             // Sample pool resize IS safe here because the deferred ISR task
             // and streaming task are both stopped (Running == false).
 
-            // Resize sample pool if configured differently
-            // BoardRunTimeConfig_Get never returns NULL (static array, initialized at boot)
-            uint32_t poolCount = (mc->samplePoolCount > 0)
-                ? mc->samplePoolCount : DEFAULT_AIN_SAMPLE_COUNT;
-            if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
-            if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
-            if (poolCount != AInSampleList_PoolCapacity()) {
-                AInSampleList_Destroy();
-                AInSampleList_Initialize(poolCount, false, NULL);
-                LOG_I("Sample pool resized to %u", (unsigned)AInSampleList_PoolCapacity());
-            }
+            // NOTE: Runtime pool resize is disabled in this PR.
+            // AInSampleList_Destroy + re-Initialize crashes the device due to
+            // an undiagnosed interaction between pool deallocation and the
+            // USB CDC data path. The pool is allocated once at boot (700 samples)
+            // and cannot be changed at runtime. SYST:MEM:SAMP:POOL sets the
+            // config value but it only takes effect on reboot (via BoardData_Init).
+            // TODO: Debug and fix in follow-up PR (issue #229).
+            (void)mc;  // Suppress unused warning
         }
 
         // Clear any stale samples from previous streaming session
