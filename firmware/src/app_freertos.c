@@ -656,7 +656,7 @@ static void app_TasksCreate() {
     // WARNING: If recursive SD directory listing is enabled, SDCardTask needs 10KB+.
     errStatus = xTaskCreate((TaskFunction_t) app_PowerAndUITask,
             "PowerAndUITask",
-            512,   // Profiled: 226 words peak + 64 words FPU context. 2x margin. (was 4096)
+            640,   // Profiled: 226+64 FPU = 290 words peak. 2x margin = 580, rounded to 640. (was 4096)
             NULL,
             7,
             NULL);

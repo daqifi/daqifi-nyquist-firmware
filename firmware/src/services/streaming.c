@@ -914,6 +914,7 @@ void TimestampTimer_Init(void) {
                 1392, NULL, 2, &gStreamingTaskHandle);  // Profiled: 692 words peak. 2x margin. (was 4096)
         if (result != pdPASS) {
             LOG_E("FATAL: Failed to create streaming_Task\r\n");
+            while(1);
         }
     }
     if (gStreamingInterruptHandle == NULL) {
@@ -922,6 +923,7 @@ void TimestampTimer_Init(void) {
                 512, NULL, 8, &gStreamingInterruptHandle);  // Profiled: 214 words peak + FPU. 2x margin. (was 4096)
         if (result != pdPASS) {
             LOG_E("FATAL: Failed to create _Streaming_Deferred_Interrupt_Task\r\n");
+            while(1);
         }
     }
     

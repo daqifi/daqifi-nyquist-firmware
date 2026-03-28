@@ -2496,9 +2496,10 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
 static scpi_result_t SCPI_GetStackStats(scpi_t * context) {
     // uxTaskGetSystemState requires configUSE_TRACE_FACILITY = 1
     UBaseType_t taskCount = uxTaskGetNumberOfTasks();
-    TaskStatus_t* taskStatusArray = (TaskStatus_t*)pvPortMalloc(taskCount * sizeof(TaskStatus_t));
+    TaskStatus_t* taskStatusArray = (TaskStatus_t*)pvPortMalloc((taskCount + 2) * sizeof(TaskStatus_t));
     if (taskStatusArray == NULL) {
-        scpi_printf(context, "Error: malloc failed for %u tasks\r\n", (unsigned)taskCount);
+        LOG_E("SYST:MEM:STACk? malloc failed for %u tasks", (unsigned)taskCount);
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
 
@@ -2516,7 +2517,7 @@ static scpi_result_t SCPI_GetStackStats(scpi_t * context) {
     }
 
     // Also report ISR stack (not tracked by FreeRTOS — would need manual measurement)
-    scpi_printf(context, "ISR_Stack: configured=26400 bytes (not profiled)\r\n");
+    scpi_printf(context, "ISR_Stack: configured=8192 bytes (not profiled)\r\n");
 
     vPortFree(taskStatusArray);
     return SCPI_RES_OK;
