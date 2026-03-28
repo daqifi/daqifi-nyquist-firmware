@@ -499,6 +499,8 @@ void Streaming_ClearStats(void) {
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
+    // NOTE: Pool max-used is NOT reset here — it persists across sessions
+    // so users can check peak usage after stopping. Reset via SYST:STR:ClearStats.
 }
 
 /**

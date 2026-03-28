@@ -38,6 +38,8 @@ static uint32_t queueSize = 0;
 // =============================================================================
 static AInPublicSampleList_t* samplePool = NULL;
 static uint32_t poolCapacity = 0;
+static volatile uint32_t poolAllocCount = 0;     // Currently allocated (in use)
+static volatile uint32_t poolMaxAllocCount = 0;  // High-water mark (max ever in use)
 
 // =============================================================================
 // Free List Data Structures (O(1) allocation/deallocation)
@@ -323,6 +325,11 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
         int idx = freeHead;
         freeHead = nextFree[idx];  // Move head to next free
         result = &samplePool[idx];
+        // Track usage high-water mark (atomic 32-bit RMW under mutex)
+        poolAllocCount++;
+        if (poolAllocCount > poolMaxAllocCount) {
+            poolMaxAllocCount = poolAllocCount;
+        }
         // Clear entire structure to ensure no stale data
         memset(result, 0, sizeof(AInPublicSampleList_t));
     }
@@ -345,9 +352,22 @@ void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
 
     // O(1) deallocation: push to free list head
     xSemaphoreTake(poolMutex, portMAX_DELAY);
+    poolAllocCount--;
     nextFree[index] = freeHead;
     freeHead = (int16_t)index;
     xSemaphoreGive(poolMutex);
+}
+
+uint32_t AInSampleList_PoolInUse(void) {
+    return poolAllocCount;
+}
+
+uint32_t AInSampleList_PoolMaxUsed(void) {
+    return poolMaxAllocCount;
+}
+
+void AInSampleList_PoolResetMaxUsed(void) {
+    poolMaxAllocCount = poolAllocCount;
 }
 
 size_t AInSampleList_PoolCapacity(void) {

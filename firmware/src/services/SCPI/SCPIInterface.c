@@ -1581,6 +1581,7 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     }
     // Reset SD write metrics
     sd_card_manager_ResetWriteMetrics();
+    AInSampleList_PoolResetMaxUsed();
     SCPI_SyncQuesBits();
     return SCPI_RES_OK;
 }
@@ -2422,6 +2423,10 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
                 (unsigned)(samplePoolCap * sizeof(int16_t)));
     scpi_printf(context, "SampleQueueBytes=%u\r\n",
                 (unsigned)(samplePoolCap * sizeof(void*) + 80));
+    scpi_printf(context, "SamplePoolInUse=%u\r\n",
+                (unsigned)AInSampleList_PoolInUse());
+    scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
+                (unsigned)AInSampleList_PoolMaxUsed());
     return SCPI_RES_OK;
 }
 

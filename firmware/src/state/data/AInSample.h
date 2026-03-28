@@ -179,6 +179,21 @@ extern "C" {
      */
     size_t AInSampleList_PoolCapacity(void);
 
+    /**
+     * @brief Returns the number of samples currently allocated (in use).
+     */
+    uint32_t AInSampleList_PoolInUse(void);
+
+    /**
+     * @brief Returns the peak pool usage (max samples ever simultaneously in use).
+     */
+    uint32_t AInSampleList_PoolMaxUsed(void);
+
+    /**
+     * @brief Resets the peak usage counter to current usage.
+     */
+    void AInSampleList_PoolResetMaxUsed(void);
+
 #ifdef __cplusplus
 }
 #endif
