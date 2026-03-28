@@ -2484,6 +2484,39 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// =============================================================================
+// Stack Profiling SCPI Callback
+// =============================================================================
+
+static scpi_result_t SCPI_GetStackStats(scpi_t * context) {
+    // uxTaskGetSystemState requires configUSE_TRACE_FACILITY = 1
+    UBaseType_t taskCount = uxTaskGetNumberOfTasks();
+    TaskStatus_t* taskStatusArray = (TaskStatus_t*)pvPortMalloc(taskCount * sizeof(TaskStatus_t));
+    if (taskStatusArray == NULL) {
+        scpi_printf(context, "Error: malloc failed for %u tasks\r\n", (unsigned)taskCount);
+        return SCPI_RES_ERR;
+    }
+
+    UBaseType_t actualCount = uxTaskGetSystemState(taskStatusArray, taskCount, NULL);
+
+    for (UBaseType_t i = 0; i < actualCount; i++) {
+        // usStackHighWaterMark = minimum free stack WORDS ever (on PIC32MZ, 1 word = 4 bytes)
+        UBaseType_t hwm = taskStatusArray[i].usStackHighWaterMark;
+
+        scpi_printf(context, "%s: prio=%u, hwm=%u words (%u bytes free)\r\n",
+                    taskStatusArray[i].pcTaskName,
+                    (unsigned)taskStatusArray[i].uxCurrentPriority,
+                    (unsigned)hwm,
+                    (unsigned)(hwm * sizeof(StackType_t)));
+    }
+
+    // Also report ISR stack (not tracked by FreeRTOS — would need manual measurement)
+    scpi_printf(context, "ISR_Stack: configured=26400 bytes (not profiled)\r\n");
+
+    vPortFree(taskStatusArray);
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -2686,6 +2719,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:MEMory:SAMPle:POOL?", .callback = SCPI_GetMemSamplePool,},
     {.pattern = "SYSTem:MEMory:FREE?", .callback = SCPI_GetMemFree,},
     {.pattern = "SYSTem:MEMory:AUTO", .callback = SCPI_MemAutoBalance,},
+    {.pattern = "SYSTem:MEMory:STACk?", .callback = SCPI_GetStackStats,},
     //
     {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},

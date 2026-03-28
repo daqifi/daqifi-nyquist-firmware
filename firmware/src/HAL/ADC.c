@@ -145,9 +145,9 @@ void ADC_Init(
     gpBoardData = (tBoardData *) pBoardDataADCInit;
     BaseType_t result = xTaskCreate((TaskFunction_t) MC12bADC_EosInterruptTask,
             "MC12bADC EOS",
-            2048, NULL, 8, &gADCInterruptHandle); // Priority 8 for real-time ADC response
+            160, NULL, 8, &gADCInterruptHandle);  // Profiled: 80 words peak. 2x margin. (was 2048)
     if (result != pdPASS) {
-        LOG_E("FATAL: Failed to create MC12bADC_EosInterruptTask (2048 bytes)\r\n");
+        LOG_E("FATAL: Failed to create MC12bADC_EosInterruptTask\r\n");
     }
 
     // Register ADC EOS interrupt callback using Harmony's callback mechanism

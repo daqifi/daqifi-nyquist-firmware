@@ -1221,7 +1221,7 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     if (pSettings != NULL)
         gStateMachineContext.pWifiSettings = pSettings;
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
-        BaseType_t result = xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);
+        BaseType_t result = xTaskCreate(fwUpdateTask, "fwUpdateTask", 128, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);  // Profiled: 62 words peak. 2x margin. (was 1024)
         if (result != pdPASS) {
             LOG_E("Failed to create fwUpdateTask (1024 bytes)\r\n");
             gStateMachineContext.fwUpdateTaskHandle = NULL;

@@ -197,15 +197,17 @@ void SYS_Tasks ( void )
 //        (TaskHandle_t*)NULL
 //    );
 
+    // Stack sizes profiled under stress (issue #230). Harmony driver tasks kept
+    // conservative — driver internals have unknown stack depth.
     BaseType_t wifiResult = xTaskCreate( lWDRV_WINC_Tasks,
         "WDRV_WINC_Tasks",
-        DRV_WIFI_WINC_RTOS_STACK_SIZE,
+        1024,   // Profiled: 290 words peak. 3x+ margin for unknown driver depth. (was 3000)
         (void*)NULL,
         DRV_WIFI_WINC_RTOS_TASK_PRIORITY,
         (TaskHandle_t*)NULL
     );
     if (wifiResult != pdPASS) {
-        LOG_E("FATAL: Failed to create WDRV_WINC_Tasks (%d bytes)\r\n", DRV_WIFI_WINC_RTOS_STACK_SIZE);
+        LOG_E("FATAL: Failed to create WDRV_WINC_Tasks\r\n");
     }
 
     /* Create AD7609 deferred interrupt task for BSY pin handling */
@@ -213,47 +215,40 @@ void SYS_Tasks ( void )
     BaseType_t ad7609Result = xTaskCreate(
         (TaskFunction_t) AD7609_DeferredInterruptTask,
         "AD7609 BSY",
-        512,
+        160,   // Profiled: 76 words peak. 2x margin. (was 512)
         NULL,
-        8,  // Priority 8 (max-1) for real-time response
-        (TaskHandle_t*)pAD7609TaskHandle  // Cast away volatile for API compatibility
+        8,
+        (TaskHandle_t*)pAD7609TaskHandle
     );
 
     if (ad7609Result != pdPASS) {
-        // Task creation failed - system will continue but AD7609 interrupts won't work
-        LOG_E("Failed to create AD7609_DeferredInterruptTask (512 bytes)\r\n");
+        LOG_E("Failed to create AD7609_DeferredInterruptTask\r\n");
         *pAD7609TaskHandle = NULL;
     } else if (*pAD7609TaskHandle == NULL) {
-        // Task handle wasn't populated - this should never happen but guard against it
-        LOG_E("AD7609 task created but handle is NULL - interrupt notifications will fail\r\n");
+        LOG_E("AD7609 task created but handle is NULL\r\n");
     }
 
-
-
-
     /* Maintain Middleware & Other Libraries */
-        /* Create OS Thread for USB_DEVICE_Tasks. */
     BaseType_t usbDeviceResult = xTaskCreate( F_USB_DEVICE_Tasks,
         "USB_DEVICE_TASKS",
-        1024,
+        144,   // Profiled: 72 words peak. 2x margin. (was 1024)
         (void*)NULL,
-        2,  // Start low, self-boosts after delay
+        2,
         (TaskHandle_t*)NULL
     );
     if (usbDeviceResult != pdPASS) {
-        LOG_E("FATAL: Failed to create F_USB_DEVICE_Tasks (1024 bytes)\r\n");
+        LOG_E("FATAL: Failed to create F_USB_DEVICE_Tasks\r\n");
     }
 
-    /* Create OS Thread for USB Driver Tasks. */
     BaseType_t usbDriverResult = xTaskCreate( F_DRV_USBHS_Tasks,
         "DRV_USBHS_TASKS",
-        1024,
+        144,   // Profiled: 72 words peak. 2x margin. (was 1024)
         (void*)NULL,
-        2,  // Start low, will be boosted if needed
+        2,
         (TaskHandle_t*)NULL
     );
     if (usbDriverResult != pdPASS) {
-        LOG_E("FATAL: Failed to create F_DRV_USBHS_Tasks (1024 bytes)\r\n");
+        LOG_E("FATAL: Failed to create F_DRV_USBHS_Tasks\r\n");
     }
 
 

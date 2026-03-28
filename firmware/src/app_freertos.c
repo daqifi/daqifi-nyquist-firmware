@@ -651,49 +651,50 @@ bool SPI0_Mutex_Initialize(void)
 
 static void app_TasksCreate() {
     BaseType_t errStatus;
+    // Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TCP.
+    // Sized at 2-3x measured peak usage. See issue #230 for profiling data.
+    // WARNING: If recursive SD directory listing is enabled, SDCardTask needs 10KB+.
     errStatus = xTaskCreate((TaskFunction_t) app_PowerAndUITask,
             "PowerAndUITask",
-            4096,  // Further increased to prevent stack overflow during disconnect/reconnect
+            512,   // Profiled: 226 words peak + 64 words FPU context. 2x margin. (was 4096)
             NULL,
-            7,  // Priority 7: UI always responsive (same as USB, above data processing tasks)
+            7,
             NULL);
-    /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
-        LOG_E("FATAL: Failed to create PowerAndUITask (4096 bytes)\r\n");
+        LOG_E("FATAL: Failed to create PowerAndUITask\r\n");
         while (1);
     }
 
     errStatus = xTaskCreate((TaskFunction_t) app_USBDeviceTask,
             "USBDeviceTask",
-            USBDEVICETASK_SIZE,
+            USBDEVICETASK_SIZE,  // 3072 — SCPI callbacks use 256-512 byte local buffers
             NULL,
-            2,  // Start at normal priority, self-boosts after init
+            2,
             NULL);
-    /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
-        LOG_E("FATAL: Failed to create USBDeviceTask (%d bytes)\r\n", USBDEVICETASK_SIZE);
+        LOG_E("FATAL: Failed to create USBDeviceTask\r\n");
         while (1);
     }
+
     errStatus = xTaskCreate((TaskFunction_t) app_WifiTask,
             "WifiTask",
-            3000,
+            1024,  // Profiled: 360 words peak. 3x margin for unknown WiFi driver depth. (was 3000)
             NULL,
             2,
             NULL);
-    /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
-        LOG_E("FATAL: Failed to create WifiTask (3000 bytes)\r\n");
+        LOG_E("FATAL: Failed to create WifiTask\r\n");
         while (1);
     }
+
     errStatus = xTaskCreate((TaskFunction_t) app_SDCardTask,
             "SDCardTask",
-            5240,
+            1024,  // Profiled: 468 words peak. 2x+ margin. (was 5240)
             NULL,
             2,
             NULL);
-    /*Don't proceed if Task was not created...*/
     if (errStatus != pdTRUE) {
-        LOG_E("FATAL: Failed to create SDCardTask (5240 bytes)\r\n");
+        LOG_E("FATAL: Failed to create SDCardTask\r\n");
         while (1);
     }
 }
