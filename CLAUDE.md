@@ -462,19 +462,25 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 
 #### Task Priority Map
 
-| Priority | Task | Stack | Notes |
-|----------|------|-------|-------|
-| 8 | `_Streaming_Deferred_Interrupt_Task` | 4096 | Highest — ISR deferral, sample collection |
-| 7 | `app_PowerAndUITask` | 4096 | UI always responsive |
-| 7 | `app_USBDeviceTask` | 3072 | Self-boosts from 2 after init |
-| 2 | `streaming_Task` | 4096 | Encodes + writes to outputs |
-| 2 | `app_WifiTask` | 3000 | WiFi state machine + TCP transmit |
-| 2 | `app_SDCardTask` | 5240 | SD state machine, mount/write/unmount |
-| 2 | `lWDRV_WINC_Tasks` | 3000 | WINC1500 driver background |
-| 2 | `MC12bADC_EosInterruptTask` | 2048 | ADC end-of-scan deferred interrupt |
-| 1 | `lAPP_FREERTOS_Tasks` | 1500 | App init |
-| 1 | `F_USB_DEVICE_Tasks` | 1024 | USB device stack |
-| 1 | `F_DRV_USBHS_Tasks` | 1024 | USB hardware driver |
+| Priority | Task | Stack (words) | Peak Used | Notes |
+|----------|------|--------------|-----------|-------|
+| 8 | `_Streaming_Deferred_Interrupt_Task` | 512 | 214 | ISR deferral, sample collection, FPU |
+| 8 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
+| 8 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
+| 7 | `app_PowerAndUITask` | 512 | 226 | UI + BQ24297 power, FPU |
+| 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use 512-byte locals |
+| 2 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs |
+| 2 | `app_WifiTask` | 1024 | 360 | WiFi state machine + TCP |
+| 2 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
+| 2 | `lWDRV_WINC_Tasks` | 1024 | 290 | WINC1500 driver background |
+| 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
+| 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
+| 1 | `F_USB_DEVICE_Tasks` | 144 | 72 | USB device stack |
+| 1 | `F_DRV_USBHS_Tasks` | 144 | 72 | USB hardware driver |
+
+Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TCP + power cycles. Sized at 2-3x measured peak. Query at runtime: `SYST:MEM:STACk?`
+
+**WARNING**: If recursive SD directory listing is enabled, `app_SDCardTask` needs 10KB+ (~550 bytes per nesting level).
 
 **Scheduling implications**: The deferred ISR task (priority 8) preempts everything — it runs immediately when a streaming timer fires. The streaming encoder and all I/O tasks share priority 2, so they round-robin via time-slicing. USB device task starts at priority 2 then self-boosts to 7.
 
@@ -521,23 +527,24 @@ The firmware uses three distinct memory regions, each with different properties:
    - USB CDC DMA buffers (read 512B + write 4KB) embedded in coherent struct
    - Must remain coherent for USB hardware driver DMA compatibility
 
-#### Heap Allocation Map (284KB total, ~264KB used at boot)
+#### Heap Allocation Map (349KB total, ~233KB used at boot)
 
 | Consumer | Bytes | Source |
 |----------|------:|--------|
-| Sample pool (500 × 208) | 104,000 | `pvPortMalloc` in `AInSample.c` |
-| Sample nextFree array (500 × 2) | 1,000 | `pvPortMalloc` in `AInSample.c` |
-| Sample FreeRTOS queue | 2,080 | `xQueueCreate` in `AInSample.c` |
+| Sample pool (700 × 208) | 145,600 | `pvPortMalloc` in `AInSample.c` |
+| Sample nextFree array (700 × 2) | 1,400 | `pvPortMalloc` in `AInSample.c` |
+| Sample FreeRTOS queue | 2,880 | `xQueueCreate` in `AInSample.c` |
 | USB circular buffer | 16,384 | `OSAL_Malloc` in `CircularBuffer.c` |
 | WiFi circular buffer | 14,000 | `OSAL_Malloc` in `CircularBuffer.c` |
-| Task stacks (13 tasks) | ~133,000 | `xTaskCreate` (see Task Priority Map) |
+| Task stacks (14 tasks) | ~37,500 | `xTaskCreate` (profiled, see Task Priority Map) |
 | DIO sample queue | ~3,200 | `xQueueCreate` in `DIOSample.c` |
 | WiFi event queue | ~480 | `xQueueCreate` in `wifi_manager.c` |
 | FreeRTOS TCBs, mutexes, kernel | ~5,000 | Kernel internals |
-| **Total used** | **~264,000** | |
-| **Free at boot** | **~20,000** | `xPortGetFreeHeapSize()` |
+| WiFi driver (power-up) | ~18,000 | WINC1500 `OSAL_Malloc` at power-up |
+| **Total used** | **~233,000** | |
+| **Free after power-up** | **~115,000** | `xPortGetFreeHeapSize()` |
 
-**Note**: `HeapMinEverFree` (high-water mark) should stay above 0. If it reaches 0, `pvPortMalloc` will return NULL and `configASSERT` will halt the system.
+**Note**: `HeapMinEverFree` (high-water mark) should stay above 0. Monitor via `SYST:MEM:FREE?`. Task stack health via `SYST:MEM:STACk?`.
 
 #### Dynamic Sample Pool
 
