@@ -1397,22 +1397,6 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <item path="../src/Util/CircularBuffer.c" ex="false" overriding="false">
         <C32>
         </C32>
@@ -1430,6 +1414,22 @@
         </C32Global>
       </item>
       <item path="../src/Util/CircularBuffer.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -2547,7 +2547,7 @@
         <property key="report-memory-usage" value="false"/>
         <property key="serial-length" value=""/>
         <property key="serial-origin" value=""/>
-        <property key="stack-size" value="26384"/>
+        <property key="stack-size" value="8192"/>
         <property key="symbol-stripping" value=""/>
         <property key="trace-symbols" value=""/>
         <property key="warn-section-align" value="false"/>
@@ -4065,22 +4065,6 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <item path="../src/Util/CircularBuffer.c" ex="false" overriding="false">
         <C32>
         </C32>
@@ -4098,6 +4082,22 @@
         </C32Global>
       </item>
       <item path="../src/Util/CircularBuffer.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -5215,7 +5215,7 @@
         <property key="report-memory-usage" value="false"/>
         <property key="serial-length" value=""/>
         <property key="serial-origin" value=""/>
-        <property key="stack-size" value="26384"/>
+        <property key="stack-size" value="8192"/>
         <property key="symbol-stripping" value=""/>
         <property key="trace-symbols" value=""/>
         <property key="warn-section-align" value="false"/>
@@ -6733,22 +6733,6 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
-        <C32>
-        </C32>
-        <C32-AR>
-        </C32-AR>
-        <C32-AS>
-        </C32-AS>
-        <C32-CO>
-        </C32-CO>
-        <C32-LD>
-        </C32-LD>
-        <C32CPP>
-        </C32CPP>
-        <C32Global>
-        </C32Global>
-      </item>
       <item path="../src/Util/CircularBuffer.c" ex="false" overriding="false">
         <C32>
         </C32>
@@ -6766,6 +6750,22 @@
         </C32Global>
       </item>
       <item path="../src/Util/CircularBuffer.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/CoherentPool.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -7883,7 +7883,7 @@
         <property key="report-memory-usage" value="false"/>
         <property key="serial-length" value=""/>
         <property key="serial-origin" value=""/>
-        <property key="stack-size" value="26384"/>
+        <property key="stack-size" value="8192"/>
         <property key="symbol-stripping" value=""/>
         <property key="trace-symbols" value=""/>
         <property key="warn-section-align" value="false"/>
