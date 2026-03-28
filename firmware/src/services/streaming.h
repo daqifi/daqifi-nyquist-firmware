@@ -135,6 +135,14 @@ void Streaming_SetFlowWindowOverride(uint32_t size);
 void Streaming_SetTestPattern(uint32_t pattern);
 uint32_t Streaming_GetTestPattern(void);
 
+// Benchmark mode: when enabled, the deferred ISR task generates test pattern
+// samples as fast as possible (no timer wait), bypassing ADC timing.
+// Use with test patterns (SYST:STR:TESTpattern 1-6) to measure pure
+// encoder + output throughput. Start with SYST:StartStreamData 0 (freq=0).
+// Stop normally with SYST:StopStreamData, then check SYST:STR:STATS?.
+void Streaming_SetBenchmarkMode(bool enabled);
+bool Streaming_GetBenchmarkMode(void);
+
 #ifdef	__cplusplus
 }
 #endif

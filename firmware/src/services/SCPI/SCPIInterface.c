@@ -1566,6 +1566,105 @@ static scpi_result_t SCPI_GetTestPattern(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetBenchmarkMode(scpi_t * context) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    Streaming_SetBenchmarkMode(val != 0);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
+    SCPI_ResultInt32(context, Streaming_GetBenchmarkMode() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+/**
+ * Self-contained throughput benchmark.
+ * Syntax: SYST:STR:THRoughput <freq>,<duration_sec>
+ *
+ * Uses current interface (SYST:STR:INT), format (SYST:STR:FOR), and
+ * enabled channels. Enables benchmark mode (uncapped freq) and test
+ * pattern 2 (midscale) automatically. Streams for <duration_sec>,
+ * stops, and returns all stats in the response.
+ *
+ * Example: SYST:STR:THRoughput 5000,10
+ *   → streams at 5kHz for 10s, returns results
+ */
+static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
+    int32_t freq, duration;
+    if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
+    if (!SCPI_ParamInt32(context, &duration, TRUE)) return SCPI_RES_ERR;
+
+    if (freq < 1 || freq > 100000 || duration < 1 || duration > 60) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+
+    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pStreamCfg->Running) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Enable benchmark mode + test pattern
+    Streaming_SetBenchmarkMode(true);
+    Streaming_SetTestPattern(2);  // midscale
+
+    // Clear stats
+    Streaming_ClearStats();
+    AInSampleList_PoolResetMaxUsed();
+
+    // Set frequency and start (reuses existing start logic)
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
+    pStreamCfg->ClockPeriod = clkFreq / freq;
+    pStreamCfg->Frequency = freq;
+    pStreamCfg->IsEnabled = true;
+    Streaming_UpdateState();
+
+    // Wait for duration
+    vTaskDelay(pdMS_TO_TICKS(duration * 1000));
+
+    // Stop
+    pStreamCfg->IsEnabled = false;
+    Streaming_UpdateState();
+
+    // Restore
+    Streaming_SetBenchmarkMode(false);
+    Streaming_SetTestPattern(0);
+
+    // Collect and report results
+    StreamingStats s;
+    Streaming_GetStats(&s);
+
+    uint32_t durationMs = duration * 1000;
+    uint32_t samplesPerSec = (durationMs > 0) ?
+        (uint32_t)((s.totalSamplesStreamed * 1000ULL) / durationMs) : 0;
+    uint32_t bytesPerSec = (durationMs > 0) ?
+        (uint32_t)((s.totalBytesStreamed * 1000ULL) / durationMs) : 0;
+
+    scpi_printf(context, "Freq=%d\r\n", (int)freq);
+    scpi_printf(context, "Duration=%d\r\n", (int)duration);
+    scpi_printf(context, "TotalSamples=%llu\r\n", (unsigned long long)s.totalSamplesStreamed);
+    scpi_printf(context, "TotalBytes=%llu\r\n", (unsigned long long)s.totalBytesStreamed);
+    scpi_printf(context, "SamplesPerSec=%u\r\n", (unsigned)samplesPerSec);
+    scpi_printf(context, "BytesPerSec=%u\r\n", (unsigned)bytesPerSec);
+    scpi_printf(context, "QueueDropped=%u\r\n", (unsigned)s.queueDroppedSamples);
+    scpi_printf(context, "UsbDropped=%u\r\n", (unsigned)s.usbDroppedBytes);
+    scpi_printf(context, "WifiDropped=%u\r\n", (unsigned)s.wifiDroppedBytes);
+    scpi_printf(context, "SdDropped=%u\r\n", (unsigned)s.sdDroppedBytes);
+    scpi_printf(context, "EncoderFail=%u\r\n", (unsigned)s.encoderFailures);
+
+    uint64_t totalAttempted = s.totalSamplesStreamed + s.queueDroppedSamples;
+    uint32_t lossPct = totalAttempted > 0
+        ? (uint32_t)((s.queueDroppedSamples * 100ULL) / totalAttempted) : 0;
+    scpi_printf(context, "LossPercent=%u\r\n", (unsigned)lossPct);
+    scpi_printf(context, "PoolMaxUsed=%u\r\n", (unsigned)AInSampleList_PoolMaxUsed());
+
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     Streaming_ClearStats();
     // Reset WiFi TCP send tracking counters atomically
@@ -1807,7 +1906,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
         // Three-constraint frequency capping (validated via benchmark testing)
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
-        {
+        // Bypass cap in benchmark mode to measure pure interface throughput.
+        if (!Streaming_GetBenchmarkMode()) {
             uint32_t maxFreq = Streaming_ComputeMaxFreq(
                 activeType1ChannelCount, totalEnabledPublicChannels);
             if (freq > (int32_t)maxFreq) {
@@ -1817,9 +1917,17 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                       (unsigned)activeType1ChannelCount);
                 freq = (int32_t)maxFreq;
             }
+        } else {
+            // Benchmark: no frequency cap. Timer hardware limit is
+            // PBCLK3/2 = 50MHz. Practical limit is when ISR overhead
+            // exceeds the timer period. Let the user push until it breaks.
+            if (freq > 100000) freq = 100000;  // Sanity cap at 100kHz
+            LOG_I("Benchmark mode: uncapped freq=%d Hz (%u ch)",
+                  (int)freq, (unsigned)totalEnabledPublicChannels);
         }
 
-        if (freq >= 1 && freq <= (int32_t)STREAMING_ISR_MAX_HZ)
+        int32_t freqLimit = Streaming_GetBenchmarkMode() ? 100000 : (int32_t)STREAMING_ISR_MAX_HZ;
+        if (freq >= 1 && freq <= freqLimit)
         {
 
             // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
@@ -2714,6 +2822,9 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
     {.pattern = "SYSTem:STReam:TESTpattern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
     {.pattern = "SYSTem:STReam:TESTpattern?", .callback = SCPI_GetTestPattern,},
+    {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 1=enable max-rate mode, 0=normal ADC timing
+    {.pattern = "SYSTem:STReam:BENCHmark?", .callback = SCPI_GetBenchmarkMode,},
+    {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
     // Dynamic memory configuration
     {.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = SCPI_SetMemSdBuf,},
     {.pattern = "SYSTem:MEMory:SD:BUFfer?", .callback = SCPI_GetMemSdBuf,},
