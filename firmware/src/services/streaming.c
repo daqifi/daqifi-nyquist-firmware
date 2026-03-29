@@ -135,7 +135,10 @@ static const NanopbFlagsArray fields_sd_metadata = {
 #define max(x,y) ((x) >= (y) ? (x) : (y))
 #endif // max
 
-#define BUFFER_SIZE min(min(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE), SD_CARD_MANAGER_CONF_WBUFFER_SIZE)  //2048
+// Encode buffer must fit the largest single encode output for any interface.
+// Previously used min() which limited all interfaces to the WiFi buffer size (1400).
+// Using max() allows each interface to use its full capacity when active.
+#define BUFFER_SIZE max(max(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE), SD_CARD_MANAGER_CONF_WBUFFER_SIZE)
 uint8_t buffer[BUFFER_SIZE];
 
 //! Pointer to the board configuration data structure to be set in 
