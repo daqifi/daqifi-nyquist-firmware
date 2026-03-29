@@ -963,21 +963,21 @@ uint32_t Streaming_GetTestPattern(void) {
 }
 
 void Streaming_SetBenchmarkMode(bool enabled) {
-    if (enabled) {
-        // Lower priority BEFORE setting flag to prevent the ISR task
-        // from running uncapped at high priority
+    // Serialize transitions — prevents race if called from USB and WiFi SCPI
+    taskENTER_CRITICAL();
+    if (enabled && gBenchmarkMode == 0) {
         if (gStreamingInterruptHandle != NULL) {
             gSavedIsrPriority = uxTaskPriorityGet(gStreamingInterruptHandle);
             vTaskPrioritySet(gStreamingInterruptHandle, STREAMING_BENCHMARK_PRIORITY);
         }
         gBenchmarkMode = 1;
-    } else {
+    } else if (!enabled && gBenchmarkMode != 0) {
         gBenchmarkMode = 0;
-        // Restore priority AFTER clearing flag
         if (gStreamingInterruptHandle != NULL) {
             vTaskPrioritySet(gStreamingInterruptHandle, gSavedIsrPriority);
         }
     }
+    taskEXIT_CRITICAL();
 }
 
 bool Streaming_GetBenchmarkMode(void) {

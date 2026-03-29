@@ -1611,6 +1611,19 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // Check power state
+    const tPowerData *pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL ||
+        (pPowerState->powerState != POWERED_UP && pPowerState->powerState != POWERED_UP_EXT_DOWN)) {
+        LOG_E("Throughput benchmark rejected: device must be powered up");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    // Save previous state to restore after benchmark
+    bool savedBenchmark = Streaming_GetBenchmarkMode();
+    uint32_t savedPattern = Streaming_GetTestPattern();
+
     // Enable benchmark mode + test pattern
     Streaming_SetBenchmarkMode(true);
     Streaming_SetTestPattern(2);  // midscale
@@ -1619,10 +1632,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     Streaming_ClearStats();
     AInSampleList_PoolResetMaxUsed();
 
-    // Set frequency and start (reuses existing start logic)
+    // Set frequency and start
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
-    pStreamCfg->ClockPeriod = clkFreq / freq;
+    // Ceiling division to prevent actual freq exceeding requested freq
+    pStreamCfg->ClockPeriod = (clkFreq + freq - 1) / freq;
     if (pStreamCfg->ClockPeriod == 0) {
         pStreamCfg->ClockPeriod = 1;
     }
@@ -1637,9 +1651,9 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     pStreamCfg->IsEnabled = false;
     Streaming_UpdateState();
 
-    // Restore
-    Streaming_SetBenchmarkMode(false);
-    Streaming_SetTestPattern(0);
+    // Restore previous state
+    Streaming_SetBenchmarkMode(savedBenchmark);
+    Streaming_SetTestPattern(savedPattern);
 
     // Collect and report results
     StreamingStats s;
@@ -1939,9 +1953,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
             // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
 
-            pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
+            // Ceiling division: ensures actual freq <= requested freq (no overspeed)
+            pRunTimeStreamConfig->ClockPeriod = (clkFreq + freq - 1) / freq;
             if (pRunTimeStreamConfig->ClockPeriod == 0) {
-                pRunTimeStreamConfig->ClockPeriod = 1;  // Prevent zero-period timer lockup
+                pRunTimeStreamConfig->ClockPeriod = 1;
             }
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
