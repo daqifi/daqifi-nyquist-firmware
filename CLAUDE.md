@@ -961,7 +961,26 @@ The project can be built using Microchip tools in WSL/Linux:
    # If Windows shows Code 43: reprogram device via IPE
    ```
 
-2. **Power State Required**: Always power up the device before attempting WiFi or DAC operations
+2. **Always use Python test suite for automated/streaming tests**
+
+   Shell scripts with `dd | strings | grep` or picocom pipes are unreliable for:
+   - Binary ProtoBuf data (corrupts text parsing)
+   - Stats queries after streaming (stale data in serial buffer)
+   - Multi-step test sequences (timing-dependent)
+   - Throughput benchmarking (need precise timing)
+
+   Use `daqifi-python-test-suite` and `daqifi-python-core`:
+   ```bash
+   cd /tmp
+   git clone https://github.com/daqifi/daqifi-python-core.git
+   git clone https://github.com/daqifi/daqifi-python-test-suite.git
+   pip install --break-system-packages -e ./daqifi-python-core
+   ```
+
+   For new SCPI commands not yet in python-core, use `device._comm.send_command()`.
+   Add new test scripts to the test suite when building new features.
+
+3. **Power State Required**: Always power up the device before attempting WiFi or DAC operations
    ```bash
    # Check power state (0=STANDBY, 1=POWERED_UP, 2=POWERED_UP_EXT_DOWN)
    (echo -e "SYST:POW:STAT?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
