@@ -788,9 +788,9 @@ void streaming_Task(void) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
                 packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
                 DIO_TIMING_TEST_WRITE_STATE(0);
-            } else {   
+            } else {
                 DIO_TIMING_TEST_WRITE_STATE(1);
-                packetSize = Nanopb_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
+                packetSize = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
                 DIO_TIMING_TEST_WRITE_STATE(0);
             }
         }
@@ -1081,7 +1081,7 @@ bool Streaming_GetBenchmarkMode(void) {
         } else if (encoding == Streaming_Json) {
             packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t*)buffer, maxEncode);
         } else {
-            packetSize = Nanopb_Encode(pBoardData, &nanopbFlag, (uint8_t*)buffer, maxEncode);
+            packetSize = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, (uint8_t*)buffer, maxEncode);
         }
 
         if (packetSize == 0) {

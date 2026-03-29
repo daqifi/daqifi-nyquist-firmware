@@ -318,7 +318,8 @@ static size_t tryWriteRow(
     AInRuntimeArray* channelConfig,
     bool        dioEnabled,
     bool       *hadAIN,
-    bool       *hadDIO
+    bool       *hadDIO,
+    uint8_t     voltagePrecision
 ) {
     // 1) peek queues
     AInPublicSampleList_t *ainPeek = NULL;
@@ -327,7 +328,6 @@ static size_t tryWriteRow(
     DIOSample dioPeek = {0};
     *hadDIO = DIOSampleList_PeekFront(&state->DIOSamples, &dioPeek);
 
-    
     if (!*hadAIN && !*hadDIO) {
         return 0;
     }
@@ -362,11 +362,7 @@ static size_t tryWriteRow(
             *p++ = ',';
             space--;
 
-            StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
-                    BOARDRUNTIME_STREAMING_CONFIGURATION);
-            uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
-
-            if (precision == 0) {
+            if (voltagePrecision == 0) {
                 // Integer millivolts (shorter output strings)
                 double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
                 int32_t mv;
@@ -382,7 +378,7 @@ static size_t tryWriteRow(
             } else {
                 // Volts with N decimal places
                 double voltage_v = ADC_ConvertToVoltage(s);
-                int n = snprintf(p, space, "%.*f", (int)precision, voltage_v);
+                int n = snprintf(p, space, "%.*f", (int)voltagePrecision, voltage_v);
                 if (n < 0 || (size_t)n >= space) return 0;
                 p += n;
             }
@@ -414,27 +410,44 @@ static size_t tryWriteRow(
     // Write DIO timestamp,value pair only if DIO is enabled
     if (dioEnabled) {
         if (*hadDIO) {
-            if (firstField) {
-                w = snprintf(q, rem, "%u,%u", dioPeek.Timestamp, dioPeek.Values);
-                firstField = false;
-            } else {
-                w = snprintf(q, rem, ",%u,%u", dioPeek.Timestamp, dioPeek.Values);
+            char* p = q;
+            size_t space = rem;
+
+            if (!firstField) {
+                if (space == 0) return 0;
+                *p++ = ',';
+                space--;
             }
+            p = uint32_to_str(dioPeek.Timestamp, p, space);
+            if (p == NULL) return 0;
+            space = rem - (size_t)(p - q);
+            if (space == 0) return 0;
+            *p++ = ',';
+            space--;
+            p = uint32_to_str(dioPeek.Values, p, space);
+            if (p == NULL) return 0;
+
+            w = (int)(p - q);
+            firstField = false;
         } else {
             // Empty DIO: emit two empty fields (ts,val) to match header columns
+            char* p = q;
             if (firstField) {
-                w = snprintf(q, rem, ",");  // [empty_ts],[empty_val] - comma separates the two
-                firstField = false;
+                if (rem < 1) return 0;
+                *p++ = ',';
             } else {
-                w = snprintf(q, rem, ",,");  // [sep],[empty_ts],[empty_val]
+                if (rem < 2) return 0;
+                *p++ = ',';
+                *p++ = ',';
             }
+            w = (int)(p - q);
+            firstField = false;
         }
         if (w < 0 || (size_t)w >= rem) return 0;
         q += w; rem -= w;
     }
     // If DIO disabled, don't output DIO columns at all
 
-  
     if (rem < 1) return 0;
     *q++ = '\n';
 
@@ -476,6 +489,11 @@ size_t csv_Encode(
     bool* pDioEnable = (bool*)BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
     bool dioEnabled = (pDioEnable && *pDioEnable);
 
+    // Hoist voltage precision lookup (was per-channel per-row, now once per call)
+    StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    uint8_t voltagePrecision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+
     char   *p     = (char*)pBuffer;
     size_t  rem   = buffSize - 1;  // reserve 1 byte up front for '\0'
     size_t  total = 0;
@@ -497,7 +515,7 @@ size_t csv_Encode(
     while (1) {
         bool hadAIN, hadDIO;
         // attempt to write the next row in-place
-        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO);
+        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO, voltagePrecision);
         if (rowLen == 0 || rowLen > rem) {
             break;  // no data left or row won?t fit
         }
