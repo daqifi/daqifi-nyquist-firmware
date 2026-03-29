@@ -1573,6 +1573,13 @@ static scpi_result_t SCPI_SetBenchmarkMode(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
+    // Block changes while streaming — priority swap mid-stream is unsafe
+    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pStreamCfg->IsEnabled && pStreamCfg->Running) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     Streaming_SetBenchmarkMode(val != 0);
     return SCPI_RES_OK;
 }
@@ -1643,6 +1650,16 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     pStreamCfg->Frequency = freq;
     pStreamCfg->IsEnabled = true;
     Streaming_UpdateState();
+
+    // Verify streaming actually started
+    if (!pStreamCfg->Running) {
+        LOG_E("Throughput benchmark: streaming failed to start");
+        pStreamCfg->IsEnabled = false;
+        Streaming_SetBenchmarkMode(savedBenchmark);
+        Streaming_SetTestPattern(savedPattern);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     // Wait for duration
     vTaskDelay(pdMS_TO_TICKS(duration * 1000));

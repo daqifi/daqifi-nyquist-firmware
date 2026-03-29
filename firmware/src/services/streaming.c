@@ -241,12 +241,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
     uint64_t ChannelScanFreqDivCount = 0;
     while (1) {
-        if (false) {
-            // Reserved: benchmark mode placeholder (unused — benchmark uses
-            // uncapped timer frequency instead of bypassing the ISR mechanism)
-        } else {
-            ulTaskNotifyTake(pdFALSE, xBlockTime);
-        }
+        ulTaskNotifyTake(pdFALSE, xBlockTime);
 
         if (pRunTimeStreamConf->IsEnabled) {
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
