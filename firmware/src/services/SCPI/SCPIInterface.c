@@ -1569,6 +1569,10 @@ static scpi_result_t SCPI_GetTestPattern(scpi_t * context) {
 static scpi_result_t SCPI_SetBenchmarkMode(scpi_t * context) {
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val != 0 && val != 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
     Streaming_SetBenchmarkMode(val != 0);
     return SCPI_RES_OK;
 }

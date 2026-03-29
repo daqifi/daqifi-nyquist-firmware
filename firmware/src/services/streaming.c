@@ -40,9 +40,16 @@
 static volatile uint32_t gTestPattern = 0;       // 0=off, 1-4=pattern type
 static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on start
 
-// Benchmark mode: deferred ISR task generates samples without timer wait.
-// Set via SCPI SYST:STR:BENCHmark. 32-bit atomic on PIC32MZ.
-static volatile bool gBenchmarkMode = false;
+// Benchmark mode: bypasses frequency cap for throughput testing.
+// Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
+static volatile uint32_t gBenchmarkMode = 0;
+
+// Task priority constants
+#define STREAMING_ISR_TASK_PRIORITY     8
+#define STREAMING_BENCHMARK_PRIORITY    2
+
+// Saved ISR task priority for restore after benchmark
+static UBaseType_t gSavedIsrPriority = STREAMING_ISR_TASK_PRIORITY;
 
 // SD protobuf metadata: emitted as first message in each SD log file.
 // volatile: written by SD card task (via Streaming_ResetSdPbMetadata),
@@ -956,11 +963,25 @@ uint32_t Streaming_GetTestPattern(void) {
 }
 
 void Streaming_SetBenchmarkMode(bool enabled) {
-    gBenchmarkMode = enabled;
+    if (enabled) {
+        // Lower priority BEFORE setting flag to prevent the ISR task
+        // from running uncapped at high priority
+        if (gStreamingInterruptHandle != NULL) {
+            gSavedIsrPriority = uxTaskPriorityGet(gStreamingInterruptHandle);
+            vTaskPrioritySet(gStreamingInterruptHandle, STREAMING_BENCHMARK_PRIORITY);
+        }
+        gBenchmarkMode = 1;
+    } else {
+        gBenchmarkMode = 0;
+        // Restore priority AFTER clearing flag
+        if (gStreamingInterruptHandle != NULL) {
+            vTaskPrioritySet(gStreamingInterruptHandle, gSavedIsrPriority);
+        }
+    }
 }
 
 bool Streaming_GetBenchmarkMode(void) {
-    return gBenchmarkMode;
+    return gBenchmarkMode != 0;
 }
 
 // Removed: Streaming_RunBenchmark — replaced by benchmark mode flag.
