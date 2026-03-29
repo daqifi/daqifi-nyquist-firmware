@@ -405,16 +405,20 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 | Interface | Format | Channels | Max Zero-Loss Rate | KB/s |
 |-----------|--------|----------|------------------:|-----:|
 | USB | CSV | 1 | 13 kHz | 210 |
-| USB | CSV | 16 | 3 kHz | 775 |
-| USB | PB | 1 | 5 kHz | 61 |
-| USB | PB | 16 | 3 kHz | 114 |
+| USB | CSV | 16 | 3 kHz | 766 |
+| USB | PB | 1 | 5 kHz | 62 |
+| USB | PB | 16 | 3 kHz | 136 |
+| SD | CSV | 1 | 5 kHz | 84 |
+| SD | CSV | 16 | 1 kHz | 272 |
+| SD | PB | 1 | 5 kHz | 61 |
+| SD | PB | 16 | 1 kHz | 46 |
 | WiFi | PB | 16 | 1 kHz | 49 |
 | WiFi | CSV | 16 | 1 kHz | 206 |
 | SD | raw write | — | — | 665 |
 
-**Implementation:** `firmware/src/services/streaming.c` (benchmark mode), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks)
+Update this table when new benchmark results are collected. Full benchmark history is version-controlled in `daqifi-python-test-suite/benchmarks/` (CSV files + CHANGELOG.md). Run `python test_throughput_benchmark.py <port> <duration>` and copy the output CSV to that directory.
 
-**Implementation:** `firmware/src/services/streaming.c` (gTestPattern, Streaming_GenerateTestValue)
+**Implementation:** `firmware/src/services/streaming.c` (benchmark mode, gTestPattern, Streaming_GenerateTestValue), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks)
 
 ### Board Variants
 
