@@ -1623,6 +1623,9 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
     pStreamCfg->ClockPeriod = clkFreq / freq;
+    if (pStreamCfg->ClockPeriod == 0) {
+        pStreamCfg->ClockPeriod = 1;
+    }
     pStreamCfg->Frequency = freq;
     pStreamCfg->IsEnabled = true;
     Streaming_UpdateState();
@@ -1937,6 +1940,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
 
             pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
+            if (pRunTimeStreamConfig->ClockPeriod == 0) {
+                pRunTimeStreamConfig->ClockPeriod = 1;  // Prevent zero-period timer lockup
+            }
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
             if (freq > 1000) {
