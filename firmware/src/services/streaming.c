@@ -755,15 +755,13 @@ void streaming_Task(void) {
         // This prevents queue backup which causes the deferred interrupt task to drop samples
         // If no outputs available, sample will be encoded then discarded (better than queue backup)
 
-        // Use maximum available space among all outputs for encoding (not just enabled ones)
-        // This ensures we can always encode even if all outputs are temporarily full
-        maxSize = 128;  // Minimum packet size
-        if (usbSize > maxSize) maxSize = usbSize;
-        if (wifiSize > maxSize) maxSize = wifiSize;
-        if (sdSize > maxSize) maxSize = sdSize;
-
-        // Cap at BUFFER_SIZE to prevent encoder overflow
-        if (maxSize > BUFFER_SIZE) maxSize = BUFFER_SIZE;
+        // Always encode at full buffer capacity. The encoder pops samples
+        // from the queue regardless of output space — this prevents queue
+        // backup and dropped samples. Encoded data is then written to
+        // whichever outputs have space, and discarded if none do.
+        // Previously used min(128, output_free) which caused CSV 16ch
+        // encoder failures when USB buffer was full (128 < row size ~172).
+        maxSize = BUFFER_SIZE;
 
         nanopbFlag.Size = 0;
 
