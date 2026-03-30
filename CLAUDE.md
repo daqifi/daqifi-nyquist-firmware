@@ -406,9 +406,9 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 |-----------|--------|----------|------------------:|-----:|
 | USB | CSV | 1 | 15 kHz | 239 |
 | USB | CSV | 16 | 3 kHz | 720 |
-| USB | PB | 1 | 18 kHz | 201 |
-| USB | PB | 8 | 11 kHz | 270 |
-| USB | PB | 16 | 5 kHz | 253 |
+| USB | PB | 1 | 20 kHz | 51 |
+| USB | PB | 8 | 11 kHz | 195 |
+| USB | PB | 16 | 7 kHz | 211 |
 | SD | CSV | 1 | 5 kHz | 85 |
 | SD | CSV | 16 | 1 kHz | 266 |
 | SD | PB | 1 | 11 kHz | 133 |

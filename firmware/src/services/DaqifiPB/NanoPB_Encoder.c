@@ -19,13 +19,16 @@
 #include "state/board/BoardConfig.h"
 #include "HAL/DIO.h"
 #ifndef min
-#define min(x,y) x <= y ? x : y
+#define min(x,y) ((x) <= (y) ? (x) : (y))
 #endif // min
 
 #ifndef max
-#define max(x,y) x >= y ? x : y
-#endif // min
+#define max(x,y) ((x) >= (y) ? (x) : (y))
+#endif // max
 //! Buffer size used for streaming purposes
+
+//! Maximum batched AIN values: 16 channels × 50 queued sample sets
+#define MAX_BATCH_VALUES (MAX_AIN_PUBLIC_CHANNELS * 50)
 
 /*  TODO: Verify this length calculation is accurate.
  **
@@ -1202,12 +1205,10 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
      * Collect all values from all queued sample sets into a single
      * analog_in_data packed array. This reduces per-message framing
      * overhead and produces fewer, larger USB writes.
-     * Max: 16 channels × ~50 queued samples = 800 values.
-     * Stack usage: 800 × 4 = 3200 bytes (streaming task has 5568 bytes). */
+     * Static: 3200 bytes — too large for streaming task stack (5568 bytes). */
     if (hasAIN) {
-        /* Large batch buffer on stack — streaming task has enough headroom */
-        #define MAX_BATCH_VALUES (MAX_AIN_PUBLIC_CHANNELS * 50)
-        int32_t batchValues[MAX_BATCH_VALUES];
+        /* Static buffer — safe because only called from streaming_Task (single caller) */
+        static int32_t batchValues[MAX_BATCH_VALUES];
         size_t batchCount = 0;
 
         uint32_t queueSize = AInSampleList_Size();
