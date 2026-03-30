@@ -22,6 +22,20 @@
 #ifndef max
 #define max(x,y) ((x) >= (y) ? (x) : (y))
 #endif // max
+/* Worst-case encoded size for one streaming PB message (length-delimited).
+ * Used as a pre-check before popping samples from the queue to avoid
+ * consuming data that can't fit in the output buffer.
+ *
+ * Breakdown (16 channels, all worst-case 5-byte varints):
+ *   Length prefix:    5 bytes (varint)
+ *   Field 1 (ts):    1 (tag) + 5 (varint)           =   6
+ *   Field 2 (AIN):   1 (tag) + 2 (len) + 16*5 (data)=  83
+ *   Field 5 (DIO):   1 (tag) + 1 (len) + 2 (bytes)  =   4
+ *   Field 37 (dir):  2 (tag) + 1 (len) + 2 (bytes)  =   5
+ *   Total:                                             103 bytes
+ */
+#define STREAMING_MSG_MAX_SIZE 103
+
 /**
  * @brief Estimate buffer size needed for encoding selected fields.
  *
@@ -1314,10 +1328,10 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
             dioSize = sizeof(dioValues);
         }
 
-        /* Build port direction bitmap */
+        /* Build port direction bitmap (1=input per channel) */
         uint32_t dirData = 0;
-        for (uint32_t x = 0; x < pBoardConfig->DIOChannels.Size; x++) {
-            dirData |= (pRuntimeDIOChannels->Data[x].IsInput << x);
+        for (uint32_t x = 0; x < pBoardConfig->DIOChannels.Size && x < 32; x++) {
+            dirData |= ((uint32_t)pRuntimeDIOChannels->Data[x].IsInput << x);
         }
         for (size_t y = 0; y < sizeof(dioDir); y++) {
             dioDir[y] = (uint8_t)(dirData >> (y * 8));
@@ -1337,6 +1351,12 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
         bool dioIncluded = false;
 
         while (queueSize > 0) {
+            /* Check buffer space BEFORE consuming a sample from the queue.
+             * If we pop first and then can't encode, the sample is lost. */
+            if (buffSize - bufferOffset < STREAMING_MSG_MAX_SIZE) {
+                break;  /* Leave remaining samples queued for next call */
+            }
+
             if (!AInSampleList_PopFront(&pPublicSampleList)) break;
             if (pPublicSampleList == NULL) break;
             queueSize--;
@@ -1372,11 +1392,6 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
 
                 if (written == 0) return bufferOffset > 0 ? bufferOffset : 0;
                 bufferOffset += written;
-
-                /* Space check for next message */
-                if (bufferOffset + 128 > buffSize) {
-                    return bufferOffset;
-                }
             }
         }
     }
