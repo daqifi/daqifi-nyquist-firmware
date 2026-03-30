@@ -45,7 +45,7 @@
 static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
     int i;
     int len = 0;
-    DaqifiOutMessage* out;
+    DaqifiOutMessage* out = NULL;  // sizeof only — never dereferenced
 
     for (i = 0; i < fields->Size; i++) {
         switch (fields->Data[i]) {
@@ -1085,7 +1085,7 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
     /* Field 2: analog_in_data (packed repeated sint32) */
     if (ainCount > 0) {
         /* Calculate packed payload size using a sizing sub-stream */
-        pb_ostream_t sizestream = {0};
+        pb_ostream_t sizestream = PB_OSTREAM_SIZING;
         for (size_t i = 0; i < ainCount; i++) {
             if (!pb_encode_svarint(&sizestream, (int32_t)ainData[i]))
                 return false;
@@ -1137,7 +1137,7 @@ static size_t encode_streaming_msg_delimited(
         const uint8_t* dioDir, size_t dioDirSize) {
 
     /* Sizing pass */
-    pb_ostream_t sizestream = {0};
+    pb_ostream_t sizestream = PB_OSTREAM_SIZING;
     if (!encode_streaming_fields(&sizestream, timestamp,
             ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
         return 0;
