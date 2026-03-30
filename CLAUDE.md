@@ -892,7 +892,7 @@ SYST:LOG:LEV?              # Dump all modules with levels and ceilings
 SYST:LOG:LEV:ALL 1         # Reset all modules to ERROR (default)
 ```
 
-Each module has a compile-time ceiling that limits the maximum runtime level. USB is capped at ERROR (issue #191 — ISR context crash). All other modules have a ceiling of DEBUG (full runtime control). The response shows the actual level set and the ceiling.
+All modules are compiled at DEBUG ceiling (all LOG_E/LOG_I/LOG_D calls present in binary). USB runtime ceiling is capped at ERROR (issue #191 — ISR context crash). All other modules have full runtime control up to DEBUG. The response shows the actual level set and the ceiling.
 
 Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 
@@ -903,7 +903,7 @@ Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 | POWER | PowerApi.c, BQ24297.c |
 | WIFI | wifi_manager.c, wifi_tcp_server.c, WINC driver |
 | SD | sd_card_manager.c |
-| USB | UsbCdc.c (ceiling: ERROR — issue #191) |
+| USB | UsbCdc.c (runtime ceiling: ERROR — issue #191) |
 | SCPI | SCPIInterface.c, SCPIADC.c, SCPIDAC.c, SCPIDIO.c, SCPILAN.c, SCPIStorageSD.c |
 | ADC | ADC.c, AD7609.c |
 | DAC | DAC7718.c |
@@ -919,7 +919,7 @@ Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 
 **Compile-Time Ceiling Override (Advanced):**
 
-To strip all logging from a module at compile time (zero binary size), override the ceiling in Logger.h or the project defines:
+All modules default to `LOG_LEVEL_DEBUG` compile-time ceiling (all log calls in the binary). To strip all logging from a module at compile time (zero binary size), override in Logger.h or the project defines:
 ```c
 #define LOG_LEVEL_WIFI LOG_LEVEL_NONE  // Strip all WiFi logging from binary
 ```

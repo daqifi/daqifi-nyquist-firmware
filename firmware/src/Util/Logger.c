@@ -59,15 +59,17 @@ volatile uint8_t gLogLevels[LOG_MODULE_COUNT] = {
     [LOG_MODULE_GENERAL] = LOG_LEVEL_ERROR,
 };
 
-/** Compile-time ceilings per module (parallel to LogModule_t order) */
+/** Runtime ceilings per module — Logger_SetLevel() clamps to these.
+ *  USB is capped at ERROR due to ISR context crash (issue #191).
+ *  All others allow full DEBUG via SCPI. */
 static const uint8_t gLogCeilings[LOG_MODULE_COUNT] = {
-    [LOG_MODULE_POWER]   = LOG_LEVEL_POWER,
-    [LOG_MODULE_WIFI]    = LOG_LEVEL_WIFI,
-    [LOG_MODULE_SD]      = LOG_LEVEL_SD,
-    [LOG_MODULE_USB]     = LOG_LEVEL_USB,
-    [LOG_MODULE_SCPI]    = LOG_LEVEL_SCPI,
-    [LOG_MODULE_ADC]     = LOG_LEVEL_ADC,
-    [LOG_MODULE_DAC]     = LOG_LEVEL_DAC,
+    [LOG_MODULE_POWER]   = LOG_LEVEL_DEBUG,
+    [LOG_MODULE_WIFI]    = LOG_LEVEL_DEBUG,
+    [LOG_MODULE_SD]      = LOG_LEVEL_DEBUG,
+    [LOG_MODULE_USB]     = LOG_LEVEL_ERROR,  /* Issue #191: ISR crash */
+    [LOG_MODULE_SCPI]    = LOG_LEVEL_DEBUG,
+    [LOG_MODULE_ADC]     = LOG_LEVEL_DEBUG,
+    [LOG_MODULE_DAC]     = LOG_LEVEL_DEBUG,
     [LOG_MODULE_STREAM]  = LOG_LEVEL_DEBUG,
     [LOG_MODULE_ENCODER] = LOG_LEVEL_DEBUG,
     [LOG_MODULE_GENERAL] = LOG_LEVEL_DEBUG,
