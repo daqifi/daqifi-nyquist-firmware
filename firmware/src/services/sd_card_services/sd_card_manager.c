@@ -1,4 +1,5 @@
 #define LOG_LVL LOG_LEVEL_SD
+#define LOG_MODULE LOG_MODULE_SD
 
 #include <string.h>
 #include "Util/Logger.h"

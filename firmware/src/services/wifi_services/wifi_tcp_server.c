@@ -1,3 +1,5 @@
+#define LOG_LVL LOG_LEVEL_WIFI
+#define LOG_MODULE LOG_MODULE_WIFI
 #include "wifi_tcp_server.h"
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"

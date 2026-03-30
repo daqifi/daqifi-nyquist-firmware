@@ -5,6 +5,7 @@
  * a FreeRTOS configASSERT crash.  A compile-time guard in Logger.h
  * enforces this until a deferred-logging fix is implemented. */
 #define LOG_LVL LOG_LEVEL_USB
+#define LOG_MODULE LOG_MODULE_USB
 #include "UsbCdc.h"
 
 // libraries

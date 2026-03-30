@@ -1,4 +1,5 @@
 #define LOG_LVL LOG_LEVEL_SCPI
+#define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
 
@@ -902,9 +903,110 @@ static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
 }
 
 /**
+ * Sets the runtime log level for a module.
+ * Usage: SYST:LOG:LEVel <module_name>,<level>
+ *   module_name: POWER, WIFI, SD, USB, SCPI, ADC, DAC, STREAM, ENCODER, GENERAL
+ *   level: 0=NONE, 1=ERROR, 2=INFO, 3=DEBUG
+ * Example: SYST:LOG:LEV STREAM,2
+ */
+static scpi_result_t SCPI_SysLogLevelSet(scpi_t * context) {
+    const char* moduleName;
+    size_t moduleLen;
+    int32_t level;
+
+    if (!SCPI_ParamCharacters(context, &moduleName, &moduleLen, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamInt32(context, &level, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    LogModule_t module;
+    if (!Logger_FindModule(moduleName, moduleLen, &module)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    if (level < LOG_LEVEL_NONE || level > LOG_LEVEL_DEBUG) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+
+    uint8_t ceiling = Logger_GetCeiling(module);
+    Logger_SetLevel(module, (uint8_t)level);
+    uint8_t actual = Logger_GetLevel(module);
+
+    char buf[80];
+    int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+                       Logger_GetModuleName(module), actual, ceiling);
+    context->interface->write(context, buf, (size_t)len);
+
+    return SCPI_RES_OK;
+}
+
+/**
+ * Queries the runtime log level for a module.
+ * Usage: SYST:LOG:LEVel? <module_name>
+ *   If no parameter given, dumps all modules.
+ */
+static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
+    const char* moduleName;
+    size_t moduleLen;
+
+    if (SCPI_ParamCharacters(context, &moduleName, &moduleLen, FALSE) && moduleLen > 0) {
+        LogModule_t module;
+        if (!Logger_FindModule(moduleName, moduleLen, &module)) {
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            return SCPI_RES_ERR;
+        }
+        SCPI_ResultInt32(context, Logger_GetLevel(module));
+    } else {
+        /* No parameter — dump all modules */
+        char buf[48];
+        for (int i = 0; i < LOG_MODULE_COUNT; i++) {
+            int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+                               Logger_GetModuleName((LogModule_t)i),
+                               Logger_GetLevel((LogModule_t)i),
+                               Logger_GetCeiling((LogModule_t)i));
+            context->interface->write(context, buf, (size_t)len);
+        }
+    }
+    return SCPI_RES_OK;
+}
+
+/**
+ * Sets all modules to the same runtime log level.
+ * Usage: SYST:LOG:LEVel:ALL <level>
+ *   level: 0=NONE, 1=ERROR, 2=INFO, 3=DEBUG
+ */
+static scpi_result_t SCPI_SysLogLevelAllSet(scpi_t * context) {
+    int32_t level;
+
+    if (!SCPI_ParamInt32(context, &level, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (level < LOG_LEVEL_NONE || level > LOG_LEVEL_DEBUG) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+
+    Logger_SetAllLevels((uint8_t)level);
+
+    /* Echo result showing actual levels (may differ due to ceilings) */
+    char buf[48];
+    for (int i = 0; i < LOG_MODULE_COUNT; i++) {
+        int len = snprintf(buf, sizeof(buf), "%s: %d\r\n",
+                           Logger_GetModuleName((LogModule_t)i),
+                           Logger_GetLevel((LogModule_t)i));
+        context->interface->write(context, buf, (size_t)len);
+    }
+    return SCPI_RES_OK;
+}
+
+/**
  * Gets the external power source type
  * @param context
- * @return 
+ * @return
  */
 static scpi_result_t SCPI_PowerSourceGet(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(
@@ -2706,6 +2808,9 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:LOG?", .callback = SCPI_SysLogGet,},
     {.pattern = "SYSTem:LOG:TEST", .callback = SCPI_SysLogTest,},
     {.pattern = "SYSTem:LOG:CLEar", .callback = SCPI_SysLogClear,},
+    {.pattern = "SYSTem:LOG:LEVel", .callback = SCPI_SysLogLevelSet,},
+    {.pattern = "SYSTem:LOG:LEVel?", .callback = SCPI_SysLogLevelGet,},
+    {.pattern = "SYSTem:LOG:LEVel:ALL", .callback = SCPI_SysLogLevelAllSet,},
     {.pattern = "SYSTem:LOG:CMDHistory?", .callback = SCPI_GetCommandHistory,},
     {.pattern = "SYSTem:ECHO", .callback = SCPI_SetEcho,},
     {.pattern = "SYSTem:ECHO?", .callback = SCPI_GetEcho,},

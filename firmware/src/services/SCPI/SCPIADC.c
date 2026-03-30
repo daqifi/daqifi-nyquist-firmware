@@ -1,3 +1,5 @@
+#define LOG_LVL LOG_LEVEL_SCPI
+#define LOG_MODULE LOG_MODULE_SCPI
 #include "SCPIADC.h"
 #include "SCPIInterface.h"
 

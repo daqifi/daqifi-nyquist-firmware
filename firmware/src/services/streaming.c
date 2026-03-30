@@ -1,3 +1,5 @@
+#define LOG_LVL LOG_LEVEL_DEBUG
+#define LOG_MODULE LOG_MODULE_STREAM
 /*! @file streaming.c
  * @brief Real-time data streaming engine for analog and digital samples.
  *

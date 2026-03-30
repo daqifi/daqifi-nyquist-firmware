@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <xc.h>
 #include "state/data/BoardData.h"
 
@@ -22,11 +23,13 @@
  * - Supports printf-style formatting via LogMessage()
  * - Optionally transmits logs over UART4 (ICSP pin) if enabled
  * - Dumps all stored messages to SCPI interface when LogMessageDump() is called
+ * - Runtime-configurable per-module log levels via SCPI (SYST:LOG:LEV)
  *
  * Usage:
  * - Call LogMessageInit() once at startup (automatically handled on first log)
  * - Use LogMessage("format", ...) to add messages
  * - Call LogMessageDump(context) to flush and reset the buffer
+ * - Use Logger_SetLevel() / SYST:LOG:LEV to change log verbosity at runtime
  */
 
 #ifndef min
@@ -38,6 +41,102 @@
 #endif
 #define UNUSED(x) (void)(x)
 
+/* ── Runtime log levels ──────────────────────────────────────────────
+ * One entry per LogModule_t, initialized to LOG_LEVEL_ERROR (matching
+ * previous compile-time default). Written by SCPI task, read by all
+ * tasks. Single-byte reads/writes are atomic on PIC32MZ.
+ */
+volatile uint8_t gLogLevels[LOG_MODULE_COUNT] = {
+    [LOG_MODULE_POWER]   = LOG_LEVEL_ERROR,
+    [LOG_MODULE_WIFI]    = LOG_LEVEL_ERROR,
+    [LOG_MODULE_SD]      = LOG_LEVEL_ERROR,
+    [LOG_MODULE_USB]     = LOG_LEVEL_ERROR,
+    [LOG_MODULE_SCPI]    = LOG_LEVEL_ERROR,
+    [LOG_MODULE_ADC]     = LOG_LEVEL_ERROR,
+    [LOG_MODULE_DAC]     = LOG_LEVEL_ERROR,
+    [LOG_MODULE_STREAM]  = LOG_LEVEL_ERROR,
+    [LOG_MODULE_ENCODER] = LOG_LEVEL_ERROR,
+    [LOG_MODULE_GENERAL] = LOG_LEVEL_ERROR,
+};
+
+/** Compile-time ceilings per module (parallel to LogModule_t order) */
+static const uint8_t gLogCeilings[LOG_MODULE_COUNT] = {
+    [LOG_MODULE_POWER]   = LOG_LEVEL_POWER,
+    [LOG_MODULE_WIFI]    = LOG_LEVEL_WIFI,
+    [LOG_MODULE_SD]      = LOG_LEVEL_SD,
+    [LOG_MODULE_USB]     = LOG_LEVEL_USB,
+    [LOG_MODULE_SCPI]    = LOG_LEVEL_SCPI,
+    [LOG_MODULE_ADC]     = LOG_LEVEL_ADC,
+    [LOG_MODULE_DAC]     = LOG_LEVEL_DAC,
+    [LOG_MODULE_STREAM]  = LOG_LEVEL_DEBUG,
+    [LOG_MODULE_ENCODER] = LOG_LEVEL_DEBUG,
+    [LOG_MODULE_GENERAL] = LOG_LEVEL_DEBUG,
+};
+
+/** Short names for SCPI display and lookup (must match LogModule_t order) */
+static const char* const gLogModuleNames[LOG_MODULE_COUNT] = {
+    [LOG_MODULE_POWER]   = "POWER",
+    [LOG_MODULE_WIFI]    = "WIFI",
+    [LOG_MODULE_SD]      = "SD",
+    [LOG_MODULE_USB]     = "USB",
+    [LOG_MODULE_SCPI]    = "SCPI",
+    [LOG_MODULE_ADC]     = "ADC",
+    [LOG_MODULE_DAC]     = "DAC",
+    [LOG_MODULE_STREAM]  = "STREAM",
+    [LOG_MODULE_ENCODER] = "ENCODER",
+    [LOG_MODULE_GENERAL] = "GENERAL",
+};
+
+void Logger_SetLevel(LogModule_t module, uint8_t level) {
+    if (module >= LOG_MODULE_COUNT) return;
+    if (level > LOG_LEVEL_DEBUG) level = LOG_LEVEL_DEBUG;
+    /* Clamp to compile-time ceiling */
+    if (level > gLogCeilings[module]) level = gLogCeilings[module];
+    gLogLevels[module] = level;
+}
+
+uint8_t Logger_GetLevel(LogModule_t module) {
+    if (module >= LOG_MODULE_COUNT) return LOG_LEVEL_NONE;
+    return gLogLevels[module];
+}
+
+void Logger_SetAllLevels(uint8_t level) {
+    for (int i = 0; i < LOG_MODULE_COUNT; i++) {
+        Logger_SetLevel((LogModule_t)i, level);
+    }
+}
+
+const char* Logger_GetModuleName(LogModule_t module) {
+    if (module >= LOG_MODULE_COUNT) return "?";
+    return gLogModuleNames[module];
+}
+
+bool Logger_FindModule(const char* name, size_t len, LogModule_t* module) {
+    if (!name || len == 0 || !module) return false;
+    for (int i = 0; i < LOG_MODULE_COUNT; i++) {
+        const char* candidate = gLogModuleNames[i];
+        size_t clen = strlen(candidate);
+        if (clen != len) continue;
+        /* Case-insensitive compare */
+        bool match = true;
+        for (size_t j = 0; j < len; j++) {
+            if (toupper((unsigned char)name[j]) != candidate[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            *module = (LogModule_t)i;
+            return true;
+        }
+    }
+    return false;
+}
+
+uint8_t Logger_GetCeiling(LogModule_t module) {
+    if (module >= LOG_MODULE_COUNT) return LOG_LEVEL_NONE;
+    return gLogCeilings[module];
+}
 
 LogBuffer logBuffer;
 

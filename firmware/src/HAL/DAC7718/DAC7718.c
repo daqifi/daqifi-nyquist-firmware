@@ -4,6 +4,7 @@
  *
  */
 #define LOG_LVL LOG_LEVEL_DAC
+#define LOG_MODULE LOG_MODULE_DAC
 
 #include "DAC7718.h"
 #include "peripheral/gpio/plib_gpio.h"

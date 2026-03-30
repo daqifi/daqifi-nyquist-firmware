@@ -856,7 +856,7 @@ The WRITE_TO_FILE state extracts data from the circular buffer in 512-byte secto
 
 ### Logging System
 
-The firmware includes a compile-time configurable logging system with per-module log level control. Logs are stored in a circular buffer and can be retrieved via SCPI commands.
+The firmware includes a two-layer logging system: compile-time ceilings control which log calls are compiled into the binary, and runtime levels (controllable via SCPI) control which actually execute. Logs are stored in a circular buffer and retrieved via SCPI.
 
 **Log Levels:**
 
@@ -867,14 +867,49 @@ The firmware includes a compile-time configurable logging system with per-module
 | INFO | `LOG_LEVEL_INFO` | 2 | State changes, significant events (connection, mode changes) |
 | DEBUG | `LOG_LEVEL_DEBUG` | 3 | Verbose diagnostics, data flow tracing, development |
 
-**Production Default:** All modules default to `LOG_LEVEL_ERROR`. Only `LOG_E()` calls produce output; `LOG_I()` and `LOG_D()` compile to nothing (zero runtime cost).
+**Runtime Default:** All modules default to `LOG_LEVEL_ERROR` at boot. `LOG_I()` and `LOG_D()` calls are compiled in but gated by the runtime level check (~2 CPU cycles per call when disabled).
 
 **SCPI Commands:**
 ```bash
-SYST:LOG?          # Retrieve all log messages (clears buffer after dump)
-SYST:LOG:CLEAR     # Clear log buffer without reading
-SYST:LOG:TEST      # Add test messages (for verification)
+SYST:LOG?              # Retrieve all log messages (clears buffer after dump)
+SYST:LOG:CLEAR         # Clear log buffer without reading
+SYST:LOG:TEST          # Add test messages (for verification)
+SYST:LOG:LEVel <module>,<level>   # Set module log level at runtime
+SYST:LOG:LEVel? [module]          # Query module level (omit for all modules)
+SYST:LOG:LEVel:ALL <level>        # Set all modules at once
 ```
+
+**Runtime Log Level Commands:**
+
+Module names: `POWER`, `WIFI`, `SD`, `USB`, `SCPI`, `ADC`, `DAC`, `STREAM`, `ENCODER`, `GENERAL`
+Level values: `0`=NONE, `1`=ERROR, `2`=INFO, `3`=DEBUG
+
+```bash
+SYST:LOG:LEV STREAM,2      # Enable INFO logging for streaming engine
+SYST:LOG:LEV ENCODER,3     # Enable DEBUG logging for PB/CSV/JSON encoders
+SYST:LOG:LEV? WIFI         # Query WiFi module level
+SYST:LOG:LEV?              # Dump all modules with levels and ceilings
+SYST:LOG:LEV:ALL 1         # Reset all modules to ERROR (default)
+```
+
+Each module has a compile-time ceiling that limits the maximum runtime level. USB is capped at ERROR (issue #191 — ISR context crash). All other modules have a ceiling of DEBUG (full runtime control). The response shows the actual level set and the ceiling.
+
+Runtime-only — not NVM-persisted, resets to ERROR on reboot.
+
+**Module Mapping:**
+
+| Module | Files |
+|--------|-------|
+| POWER | PowerApi.c, BQ24297.c |
+| WIFI | wifi_manager.c, wifi_tcp_server.c, WINC driver |
+| SD | sd_card_manager.c |
+| USB | UsbCdc.c (ceiling: ERROR — issue #191) |
+| SCPI | SCPIInterface.c, SCPIADC.c, SCPIDAC.c, SCPIDIO.c, SCPILAN.c, SCPIStorageSD.c |
+| ADC | ADC.c, AD7609.c |
+| DAC | DAC7718.c |
+| STREAM | streaming.c |
+| ENCODER | NanoPB_Encoder.c, csv_encoder.c, JSON_Encoder.c |
+| GENERAL | app_freertos.c, AInSample.c, CircularBuffer.c, others |
 
 **Circular Buffer Behavior:**
 - Capacity: 64 messages, 128 bytes each
@@ -882,34 +917,12 @@ SYST:LOG:TEST      # Add test messages (for verification)
 - Thread-safe: Protected by FreeRTOS mutex
 - ISR-safe: Detects ISR context and skips buffering (prevents deadlock)
 
-**Enabling Verbose Logging (Development Only):**
+**Compile-Time Ceiling Override (Advanced):**
 
-**IMPORTANT: Always reset all module log levels back to `LOG_LEVEL_ERROR` in `Logger.h` before release builds.** Debug/info logging adds overhead and fills the circular buffer, masking real errors in production.
-
-To enable INFO or DEBUG logging for a specific module, change its level in `Logger.h`:
+To strip all logging from a module at compile time (zero binary size), override the ceiling in Logger.h or the project defines:
 ```c
-// Change from:
-#define LOG_LEVEL_WIFI      LOG_LEVEL_ERROR
-
-// To (for debugging):
-#define LOG_LEVEL_WIFI      LOG_LEVEL_DEBUG
+#define LOG_LEVEL_WIFI LOG_LEVEL_NONE  // Strip all WiFi logging from binary
 ```
-
-Or define in the module's .c file before including Logger.h:
-```c
-#define LOG_LVL LOG_LEVEL_DEBUG  // Enable all logging for this file
-#include "Util/Logger.h"
-```
-
-**Available Module Log Levels:**
-- `LOG_LEVEL_POWER` - Power management (BQ24297, state transitions)
-- `LOG_LEVEL_WIFI` - WiFi manager, TCP server, UDP discovery
-- `LOG_LEVEL_BQ24297` - Battery charger IC
-- `LOG_LEVEL_SD` - SD card operations
-- `LOG_LEVEL_USB` - USB CDC interface
-- `LOG_LEVEL_SCPI` - SCPI command processing
-- `LOG_LEVEL_ADC` - ADC drivers (AD7609, MC12bADC)
-- `LOG_LEVEL_DAC` - DAC7718 driver
 
 **Real-Time UART Logging (Development Only):**
 

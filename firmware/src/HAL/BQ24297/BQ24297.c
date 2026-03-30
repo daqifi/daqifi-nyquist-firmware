@@ -3,6 +3,7 @@
  * @brief This file manages the BQ24297 module
  */
 #define LOG_LVL LOG_LEVEL_BQ24297
+#define LOG_MODULE LOG_MODULE_POWER
 
 #include "BQ24297.h"
 #include "Util/Logger.h"

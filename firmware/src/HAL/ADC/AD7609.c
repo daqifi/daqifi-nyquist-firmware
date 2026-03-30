@@ -15,6 +15,7 @@
  * - Busy signal monitoring for conversion complete
  */
 #define LOG_LVL LOG_LEVEL_ADC
+#define LOG_MODULE LOG_MODULE_ADC
 
 #include "AD7609.h"
 #include "configuration.h"

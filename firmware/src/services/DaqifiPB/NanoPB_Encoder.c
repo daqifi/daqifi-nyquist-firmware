@@ -1,3 +1,5 @@
+#define LOG_LVL LOG_LEVEL_DEBUG
+#define LOG_MODULE LOG_MODULE_ENCODER
 /*! @file NanoPB_Encoder.c
  *
  * This file implements the functions to manage the NanoPB encoder

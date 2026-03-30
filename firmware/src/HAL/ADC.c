@@ -1,6 +1,8 @@
-/*! @file ADC.c 
- * 
- * This file implements the functions to manage the module ADC. 
+#define LOG_LVL LOG_LEVEL_ADC
+#define LOG_MODULE LOG_MODULE_ADC
+/*! @file ADC.c
+ *
+ * This file implements the functions to manage the module ADC.
  */
 
 #include "ADC.h"

@@ -5,6 +5,7 @@
  * Created on October 5, 2016, 5:56 PM
  */
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -76,7 +77,7 @@ extern "C" {
     
     /**
      * @name Log Level Definitions
-     * @brief Compile-time log verbosity levels (higher = more verbose)
+     * @brief Log verbosity levels (higher = more verbose)
      * @{
      */
     #define LOG_LEVEL_NONE      0  /**< No logging - all macros compile to nothing */
@@ -85,19 +86,95 @@ extern "C" {
     #define LOG_LEVEL_DEBUG     3  /**< All logging - verbose diagnostics, data flow tracing */
     /** @} */
 
-    
-    //Per-module logging level control
+    /**
+     * @name Module IDs for runtime log level control
+     * @brief Each module has a runtime log level in gLogLevels[], controllable
+     *        via SCPI (SYST:LOG:LEV). Compile-time ceiling (LOG_LEVEL_xxx
+     *        defines below) gates which macros are compiled in; runtime level
+     *        controls which actually execute.
+     * @{
+     */
+    typedef enum {
+        LOG_MODULE_POWER = 0,   /**< PowerApi, BQ24297 */
+        LOG_MODULE_WIFI,        /**< wifi_manager, wifi_tcp_server, WINC driver */
+        LOG_MODULE_SD,          /**< sd_card_manager */
+        LOG_MODULE_USB,         /**< UsbCdc */
+        LOG_MODULE_SCPI,        /**< SCPIInterface, SCPILAN, SCPIADC, SCPIDAC, etc. */
+        LOG_MODULE_ADC,         /**< ADC.c, AD7609 */
+        LOG_MODULE_DAC,         /**< DAC7718 */
+        LOG_MODULE_STREAM,      /**< streaming.c */
+        LOG_MODULE_ENCODER,     /**< NanoPB_Encoder, csv_encoder, JSON_Encoder */
+        LOG_MODULE_GENERAL,     /**< app_freertos, tasks, CircularBuffer, etc. */
+        LOG_MODULE_COUNT        /**< Must be last */
+    } LogModule_t;
+    /** @} */
+
+    /**
+     * @brief Runtime log levels array — one entry per LogModule_t.
+     *        Initialized to LOG_LEVEL_ERROR. Volatile: written by SCPI task,
+     *        read by all tasks. Single-word reads are atomic on PIC32MZ.
+     */
+    extern volatile uint8_t gLogLevels[LOG_MODULE_COUNT];
+
+    /**
+     * @brief Set the runtime log level for a specific module.
+     *        Clamps to the module's compile-time ceiling (e.g. USB stays
+     *        at ERROR due to issue #191).
+     * @param module  Module ID (0 to LOG_MODULE_COUNT-1)
+     * @param level   Desired level (LOG_LEVEL_NONE to LOG_LEVEL_DEBUG)
+     */
+    void Logger_SetLevel(LogModule_t module, uint8_t level);
+
+    /**
+     * @brief Get the current runtime log level for a module.
+     */
+    uint8_t Logger_GetLevel(LogModule_t module);
+
+    /**
+     * @brief Set all modules to the same runtime log level.
+     *        Each module is still clamped to its compile-time ceiling.
+     */
+    void Logger_SetAllLevels(uint8_t level);
+
+    /**
+     * @brief Get the short name string for a module ID (e.g. "POWER", "WIFI").
+     * @return Static string, or "?" if invalid.
+     */
+    const char* Logger_GetModuleName(LogModule_t module);
+
+    /**
+     * @brief Look up a module ID by name (case-insensitive).
+     * @param name    Module name string
+     * @param len     Length of name string
+     * @param module  Output: module ID if found
+     * @return true if found, false if unknown name
+     */
+    bool Logger_FindModule(const char* name, size_t len, LogModule_t* module);
+
+    /**
+     * @brief Get the compile-time ceiling for a module.
+     */
+    uint8_t Logger_GetCeiling(LogModule_t module);
+
+    /**
+     * @name Per-module compile-time ceilings
+     * @brief These define which LOG_E/LOG_I/LOG_D calls are compiled into the
+     *        binary. Set to LOG_LEVEL_DEBUG to allow full runtime control.
+     *        Set to LOG_LEVEL_NONE to strip all logging for a module.
+     *        The runtime level (gLogLevels[]) is clamped to this ceiling.
+     * @{
+     */
     #ifndef LOG_LEVEL_POWER
-        #define LOG_LEVEL_POWER     LOG_LEVEL_ERROR
+        #define LOG_LEVEL_POWER     LOG_LEVEL_DEBUG
     #endif
     #ifndef LOG_LEVEL_WIFI
-        #define LOG_LEVEL_WIFI      LOG_LEVEL_ERROR
+        #define LOG_LEVEL_WIFI      LOG_LEVEL_DEBUG
     #endif
     #ifndef LOG_LEVEL_BQ24297
-        #define LOG_LEVEL_BQ24297   LOG_LEVEL_ERROR
+        #define LOG_LEVEL_BQ24297   LOG_LEVEL_DEBUG
     #endif
     #ifndef LOG_LEVEL_SD
-        #define LOG_LEVEL_SD        LOG_LEVEL_ERROR
+        #define LOG_LEVEL_SD        LOG_LEVEL_DEBUG
     #endif
     #ifndef LOG_LEVEL_USB
         #define LOG_LEVEL_USB       LOG_LEVEL_ERROR
@@ -112,14 +189,15 @@ extern "C" {
         #error "LOG_LEVEL_USB above LOG_LEVEL_ERROR causes ISR crash (issue #191). Keep at LOG_LEVEL_ERROR until fixed."
     #endif
     #ifndef LOG_LEVEL_SCPI
-        #define LOG_LEVEL_SCPI      LOG_LEVEL_ERROR
+        #define LOG_LEVEL_SCPI      LOG_LEVEL_DEBUG
     #endif
     #ifndef LOG_LEVEL_ADC
-        #define LOG_LEVEL_ADC       LOG_LEVEL_ERROR
+        #define LOG_LEVEL_ADC       LOG_LEVEL_DEBUG
     #endif
     #ifndef LOG_LEVEL_DAC
-        #define LOG_LEVEL_DAC       LOG_LEVEL_ERROR
+        #define LOG_LEVEL_DAC       LOG_LEVEL_DEBUG
     #endif
+    /** @} */
 
 /** @brief Maximum number of log entries in circular buffer */
 #define LOG_MAX_ENTRY_COUNT 64
@@ -188,33 +266,41 @@ void LogMessageInit(void);
  */
 void LogMessageClear(void);
 
-// Helper macro to get the log level for the current module
-// Each module should define LOG_LVL to its specific level (e.g., #define LOG_LVL LOG_LEVEL_WIFI)
-// If not defined, defaults to ERROR level (safe for production, Harmony compatibility)
+// ── Per-file compile-time ceiling ────────────────────────────────
+// Each .c file defines LOG_LVL to its module's compile-time ceiling
+// BEFORE including Logger.h (e.g. #define LOG_LVL LOG_LEVEL_WIFI).
+// If not defined, defaults to LOG_LEVEL_ERROR (safe for Harmony files).
 #ifndef LOG_LVL
     #define LOG_LVL LOG_LEVEL_ERROR
+#endif
+
+// Each .c file defines LOG_MODULE to its LogModule_t enum value
+// BEFORE including Logger.h (e.g. #define LOG_MODULE LOG_MODULE_WIFI).
+// If not defined, defaults to LOG_MODULE_GENERAL.
+#ifndef LOG_MODULE
+    #define LOG_MODULE LOG_MODULE_GENERAL
 #endif
 
 // Helper to safely discard arguments when logging disabled
 #define LOG_NOOP(...) do { } while(0)
 
-// LOG_E is enabled at ERROR level and above
+// LOG_E: compiled in if compile-time ceiling >= ERROR, checks runtime level
 #if (LOG_LVL >= LOG_LEVEL_ERROR)
-    #define LOG_E(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
+    #define LOG_E(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR) LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
     #define LOG_E(...) LOG_NOOP(__VA_ARGS__)
 #endif
 
-// LOG_I is enabled at INFO level and above
+// LOG_I: compiled in if compile-time ceiling >= INFO, checks runtime level
 #if (LOG_LVL >= LOG_LEVEL_INFO)
-    #define LOG_I(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
+    #define LOG_I(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO) LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
     #define LOG_I(...) LOG_NOOP(__VA_ARGS__)
 #endif
 
-// LOG_D is enabled at DEBUG level
+// LOG_D: compiled in if compile-time ceiling >= DEBUG, checks runtime level
 #if (LOG_LVL >= LOG_LEVEL_DEBUG)
-    #define LOG_D(fmt,...) do { LogMessage(fmt, ##__VA_ARGS__); } while(0)
+    #define LOG_D(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG) LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
     #define LOG_D(...) LOG_NOOP(__VA_ARGS__)
 #endif

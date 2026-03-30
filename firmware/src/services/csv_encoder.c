@@ -1,3 +1,5 @@
+#define LOG_LVL LOG_LEVEL_DEBUG
+#define LOG_MODULE LOG_MODULE_ENCODER
 /*! @file csv_encoder.c
  * @brief CSV encoder for streaming analog and digital samples.
  *
