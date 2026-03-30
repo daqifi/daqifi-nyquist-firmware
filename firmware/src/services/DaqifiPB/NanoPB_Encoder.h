@@ -35,21 +35,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
                         const NanopbFlagsArray* fields,
                         uint8_t* pBuffer, size_t buffSize);
 
-/**
- * Decodes the the nanopb format into the system settings object
- * @param buffer The buffer to hold the result
- * @param bufferLen The size of the buffer
- * @param fields The specific fields to encode (see DaqifiOutMessage_fields)
- * @param state The state object to hold the result
- * @return True on success, false otherwise
- */
-//uint8_array Nanopb_Decode(                                                  
-//                        const uint8_t* buffer,                              
-//                        const size_t bufferLen,                             
-//                        const NanopbFlagsArray* fields,                     
-//                        tBoardRuntimeConfig* state);
-
-void int2PBByteArray(   const size_t integer,                               
+void int2PBByteArray(   const size_t integer,
                         pb_bytes_array_t* byteArray,                        
                         size_t maxArrayLen);
 #ifdef	__cplusplus

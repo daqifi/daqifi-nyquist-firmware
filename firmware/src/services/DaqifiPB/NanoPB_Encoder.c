@@ -4,14 +4,11 @@
  */
 
 #include "libraries/nanopb/pb_encode.h"
-#include "libraries/nanopb/pb_decode.h"
-
 
 #include "state/data/BoardData.h"
 #include "Util/Logger.h"
 
 #include "DaqifiOutMessage.pb.h"
-//#include "state/board/BoardConfig.h"
 #include "encoder.h"
 #include "NanoPB_Encoder.h"
 #include "services/daqifi_settings.h"
@@ -25,18 +22,13 @@
 #ifndef max
 #define max(x,y) ((x) >= (y) ? (x) : (y))
 #endif // max
-//! Buffer size used for streaming purposes
-
-/*  TODO: Verify this length calculation is accurate.
- **
- **  NOTE: Perhaps the most official way to calculate length would be something like:
- **  Person myperson = ...;
- **  pb_ostream_t sizestream = {0};
- **  pb_encode(&sizestream, Person_fields, &myperson);
- **  printf("Encoded size is %d\n", sizestream.bytes_written);
- **  per https://jpa.kapsi.fi/nanopb/docs/concepts.html
- **
- **  However, it would be more expensive.
+/**
+ * @brief Estimate buffer size needed for encoding selected fields.
+ *
+ * Returns a conservative upper bound by summing the C struct sizes of
+ * the selected fields. Used by Nanopb_Encode() (metadata path) to
+ * pre-check buffer capacity before encoding. Overestimates are safe;
+ * the actual encoded protobuf will always be smaller.
  */
 
 static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
@@ -437,7 +429,6 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_analog_out_data_tag:
                 message.analog_out_data_count = 0;
-                //TODO:  message.analog_out_data[8];
                 break;
             case DaqifiOutMessage_device_status_tag:
             {
@@ -473,7 +464,6 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.batt_status = state->PowerData.chargePct;
                 break;
             case DaqifiOutMessage_temp_status_tag:
-                //TODO:  message.temp_status;
                 break;
             case DaqifiOutMessage_timestamp_freq_tag:
                 // timestamp timer running frequency
