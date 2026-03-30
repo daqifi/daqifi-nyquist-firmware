@@ -1,0 +1,22 @@
+# Qodo PR-Agent configuration
+# https://qodo-merge-docs.qodo.ai/tools/improve/#configuration-options
+
+[pr_reviewer]
+# Exclude third-party/vendored libraries from review
+extra_instructions = """\
+Do not review or suggest changes to files under these directories — they are \
+vendored third-party libraries used as-is:
+- firmware/src/libraries/nanopb/ (nanopb 0.4.9.1 protobuf library)
+- firmware/src/third_party/ (wolfSSL, FreeRTOS, zlib)
+- firmware/src/config/default/ (Microchip Harmony generated code)
+"""
+
+[pr_code_suggestions]
+# Same exclusion for /improve suggestions
+extra_instructions = """\
+Do not suggest changes to files under these directories — they are \
+vendored third-party libraries used as-is:
+- firmware/src/libraries/nanopb/ (nanopb 0.4.9.1 protobuf library)
+- firmware/src/third_party/ (wolfSSL, FreeRTOS, zlib)
+- firmware/src/config/default/ (Microchip Harmony generated code)
+"""
