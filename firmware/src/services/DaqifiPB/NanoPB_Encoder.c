@@ -1052,18 +1052,105 @@ void int2PBByteArray(const size_t integer,
 
 /* =========================================================================
  * Fast-path streaming protobuf encoder
+ * =========================================================================
  *
- * Writes wire-format bytes directly for the 2-4 streaming fields,
- * bypassing nanopb's 65-field descriptor iteration (248us -> ~10-30us).
- * Uses nanopb's low-level primitives for correct varint/tag encoding.
+ * WHY THIS EXISTS:
+ * ----------------
+ * DaqifiOutMessage has 65 fields, but streaming only uses 4 of them
+ * (timestamp, analog data, digital data, digital port direction).
+ * The standard nanopb pb_encode_delimited() must iterate ALL 65 field
+ * descriptors twice (sizing pass + encoding pass) even when only 4 have
+ * data. This took 248us per encode on PIC32MZ@200MHz.
+ *
+ * This fast encoder writes protobuf wire-format bytes directly for just
+ * the streaming fields, reducing encode time to ~10-20us (~15x speedup).
+ *
+ * WHY NOT A SEPARATE PROTO MESSAGE:
+ * ---------------------------------
+ * An alternative would be defining a small `DaqifiStreamMessage` with
+ * only the 4 streaming fields. nanopb would iterate 4 descriptors instead
+ * of 65, taking ~30-50us. However:
+ *   - Still requires zero-initializing and populating a struct (~100 bytes)
+ *   - Still has per-field function pointer dispatch overhead
+ *   - Adds a second message type for clients to handle
+ *   - The streaming fields are stable (timestamp + ADC + DIO), so the
+ *     maintenance cost of direct encoding is low
+ * The fast encoder avoids all struct overhead by writing directly from
+ * the sample queue values to the output buffer.
+ *
+ * WIRE FORMAT PRODUCED:
+ * ---------------------
+ * Each call produces one or more length-delimited protobuf messages,
+ * each compatible with DaqifiOutMessage decoders:
+ *
+ *   [varint: inner_message_length]     <- length-delimited framing
+ *   [0x08] [varint: timestamp]         <- field 1: msg_time_stamp (uint32)
+ *   [0x12] [varint: packed_len]        <- field 2: analog_in_data tag + length
+ *     [zigzag varint] [zigzag varint]... <- packed sint32 channel values
+ *   [0x2A] [varint: len] [bytes]       <- field 5: digital_data (optional)
+ *   [0xAA 0x02] [varint: len] [bytes]  <- field 37: digital_port_dir (optional)
+ *
+ * Fields use the same tag numbers as DaqifiOutMessage, so any client
+ * decoding DaqifiOutMessage will correctly parse these messages. Fields
+ * not present (e.g., device_status, network info) are simply absent,
+ * which protobuf handles natively.
+ *
+ * ENCODING APPROACH:
+ * ------------------
+ * Uses nanopb's public low-level encoding API:
+ *   - pb_encode_tag()    : write field tag (field number + wire type)
+ *   - pb_encode_varint() : write unsigned variable-length integer
+ *   - pb_encode_svarint(): write signed zigzag-encoded varint
+ *   - pb_encode_string() : write length-prefixed byte array
+ *   - PB_OSTREAM_SIZING  : null stream that counts bytes without writing
+ *
+ * The two-pass pattern (size then encode) matches how nanopb implements
+ * pb_encode_delimited() internally, but only touches 2-4 fields instead
+ * of 65.
+ *
+ * WHEN TO MODIFY THIS CODE:
+ * -------------------------
+ * If the streaming message format changes (new fields added to the
+ * streaming path, field types changed, or tag numbers reassigned),
+ * update encode_streaming_fields() to match. The field tags are
+ * defined in DaqifiOutMessage.pb.h as DaqifiOutMessage_*_tag macros.
+ *
+ * For metadata/config messages (device info, network config, etc.),
+ * continue using Nanopb_Encode() which handles all 65 fields via the
+ * standard nanopb API.
+ *
+ * THREAD SAFETY:
+ * --------------
+ * Nanopb_EncodeStreamingFast() is called only from streaming_Task
+ * (priority 2). It pops samples from the lock-free sample queue and
+ * DIO queue. No shared mutable state beyond the queues themselves.
+ *
+ * PERFORMANCE (PIC32MZ@200MHz, measured):
+ * ----------------------------------------
+ * Old (nanopb 0.3.9, 65-field iteration): 248us per encode
+ * New (direct wire encoding):              ~10-20us per encode
+ * Throughput ceilings (USB, NQ1):
+ *   1ch:  5kHz -> 18kHz  (3.6x improvement)
+ *   16ch: 3kHz -> 5kHz   (1.7x improvement)
  * ========================================================================= */
 
 /**
  * @brief Encode streaming fields to a pb_ostream_t.
  *
- * Works with both sizing streams (NULL callback) and real buffer streams.
- * Two-pass pattern: call once with sizing stream to get size, then with
- * real stream to write bytes.
+ * Writes the protobuf wire format for streaming-specific fields only.
+ * Works with both sizing streams (PB_OSTREAM_SIZING) and real buffer
+ * streams (pb_ostream_from_buffer). Call once with a sizing stream to
+ * get the encoded size, then again with a real stream to write bytes.
+ *
+ * @param stream    nanopb output stream (sizing or buffer-backed)
+ * @param timestamp Sample set timestamp (ISR trigger time from hardware timer)
+ * @param ainData   Array of raw ADC values (sint32, zigzag-encoded on wire)
+ * @param ainCount  Number of values in ainData (= number of enabled channels)
+ * @param dioData   Digital I/O sample bytes (2 bytes, LSB=ch0), or NULL
+ * @param dioSize   Size of dioData (0 if no DIO data)
+ * @param dioDir    Digital port direction bitmap bytes, or NULL
+ * @param dioDirSize Size of dioDir (0 if no direction data)
+ * @return true on success, false if stream write failed
  */
 static bool encode_streaming_fields(pb_ostream_t *stream,
         uint32_t timestamp,
@@ -1071,7 +1158,8 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
         const uint8_t* dioData, size_t dioSize,
         const uint8_t* dioDir, size_t dioDirSize) {
 
-    /* Field 1: msg_time_stamp (uint32, varint) */
+    /* Field 1: msg_time_stamp (uint32, wire type 0 = varint)
+     * Proto3: zero-valued fields are omitted (not encoded on wire). */
     if (timestamp != 0) {
         if (!pb_encode_tag(stream, PB_WT_VARINT, DaqifiOutMessage_msg_time_stamp_tag))
             return false;
@@ -1079,16 +1167,25 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
             return false;
     }
 
-    /* Field 2: analog_in_data (packed repeated sint32) */
+    /* Field 2: analog_in_data (packed repeated sint32, wire type 2 = length-delimited)
+     *
+     * Proto3 packs repeated scalar fields by default. The packed format is:
+     *   [tag] [varint: total_payload_bytes] [zigzag_val1] [zigzag_val2] ...
+     *
+     * Each sint32 value is zigzag-encoded: (n << 1) ^ (n >> 31), then
+     * varint-encoded. This makes small negative values compact (e.g., -1 = 1 byte).
+     *
+     * We need the packed payload size BEFORE writing it (for the length prefix),
+     * so we use a sizing sub-stream to calculate it first. */
     if (ainCount > 0) {
-        /* Calculate packed payload size using a sizing sub-stream */
+        /* Sub-sizing pass: count bytes for all zigzag varints */
         pb_ostream_t sizestream = PB_OSTREAM_SIZING;
         for (size_t i = 0; i < ainCount; i++) {
             if (!pb_encode_svarint(&sizestream, (int32_t)ainData[i]))
                 return false;
         }
 
-        /* Write tag + length prefix + packed zigzag values */
+        /* Write: [tag 2, wire type 2] [payload length] [zigzag values...] */
         if (!pb_encode_tag(stream, PB_WT_STRING, DaqifiOutMessage_analog_in_data_tag))
             return false;
         if (!pb_encode_varint(stream, (uint32_t)sizestream.bytes_written))
@@ -1099,7 +1196,8 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
         }
     }
 
-    /* Field 5: digital_data (bytes) */
+    /* Field 5: digital_data (bytes, wire type 2 = length-delimited)
+     * 2-byte bitmap: bit N = digital channel N value (LSB = ch0). */
     if (dioData != NULL && dioSize > 0) {
         if (!pb_encode_tag(stream, PB_WT_STRING, DaqifiOutMessage_digital_data_tag))
             return false;
@@ -1107,7 +1205,9 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
             return false;
     }
 
-    /* Field 37: digital_port_dir (bytes) */
+    /* Field 37: digital_port_dir (bytes, wire type 2 = length-delimited)
+     * 2-byte bitmap: bit N = 1 if channel N is input, 0 if output.
+     * Tag 37 requires 2 bytes on wire: (37 << 3 | 2) = 298 = 0xAA 0x02. */
     if (dioDir != NULL && dioDirSize > 0) {
         if (!pb_encode_tag(stream, PB_WT_STRING, DaqifiOutMessage_digital_port_dir_tag))
             return false;
@@ -1119,12 +1219,26 @@ static bool encode_streaming_fields(pb_ostream_t *stream,
 }
 
 /**
- * @brief Encode a single length-delimited streaming message.
+ * @brief Encode a single length-delimited streaming message to a buffer.
  *
- * Two-pass: sizing pass to get inner message length, then encode pass
- * to write varint length prefix + message bytes.
+ * Produces one protobuf message with a varint length prefix, suitable for
+ * concatenation in a stream (the standard protobuf delimited format used
+ * by all DAQiFi clients).
  *
- * @return Bytes written to pBuffer, or 0 on error.
+ * Uses two passes:
+ *   1. Sizing pass (PB_OSTREAM_SIZING) — counts inner message bytes
+ *   2. Encoding pass — writes [varint length] [message bytes] to buffer
+ *
+ * @param pBuffer   Output buffer
+ * @param buffSize  Available space in output buffer
+ * @param timestamp Sample set timestamp
+ * @param ainData   ADC channel values array, or NULL if no AIN data
+ * @param ainCount  Number of AIN values (0 if no AIN data)
+ * @param dioData   Digital I/O sample bytes, or NULL
+ * @param dioSize   Size of dioData
+ * @param dioDir    Digital port direction bytes, or NULL
+ * @param dioDirSize Size of dioDir
+ * @return Bytes written to pBuffer, or 0 on error
  */
 static size_t encode_streaming_msg_delimited(
         uint8_t* pBuffer, size_t buffSize,
@@ -1133,14 +1247,14 @@ static size_t encode_streaming_msg_delimited(
         const uint8_t* dioData, size_t dioSize,
         const uint8_t* dioDir, size_t dioDirSize) {
 
-    /* Sizing pass */
+    /* Pass 1: calculate inner message size without writing */
     pb_ostream_t sizestream = PB_OSTREAM_SIZING;
     if (!encode_streaming_fields(&sizestream, timestamp,
             ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
         return 0;
     }
 
-    /* Encoding pass: varint length prefix + message */
+    /* Pass 2: write [varint length prefix] [message bytes] to buffer */
     pb_ostream_t stream = pb_ostream_from_buffer(pBuffer, buffSize);
     if (!pb_encode_varint(&stream, (uint32_t)sizestream.bytes_written))
         return 0;
@@ -1151,6 +1265,32 @@ static size_t encode_streaming_msg_delimited(
     return stream.bytes_written;
 }
 
+/**
+ * @brief Fast-path protobuf encoder for streaming data.
+ *
+ * Encodes one length-delimited PB message per queued sample set, each with
+ * its own timestamp. This preserves per-ISR-trigger timing fidelity — the
+ * client receives one message per acquisition with the exact hardware
+ * timestamp from the streaming timer.
+ *
+ * Data flow:
+ *   1. Pop all queued AInPublicSampleList_t entries from the sample queue
+ *   2. For each sample set: extract enabled channel values + timestamp
+ *   3. Encode as a length-delimited DaqifiOutMessage (fast wire-format path)
+ *   4. Append to output buffer (may contain multiple delimited messages)
+ *   5. DIO data (if available) is included in the first AIN message
+ *
+ * Called from: streaming_Task (priority 2) in the encode loop.
+ * Replaces: Nanopb_Encode() for the streaming hot path only.
+ *
+ * @param state     Board data (provides DIO sample queue, stream trigger stamp)
+ * @param fields    NanopbFlagsArray indicating which field tags to encode
+ *                  (typically: msg_time_stamp, analog_in_data, digital_data,
+ *                  digital_port_dir — set up in streaming.c)
+ * @param pBuffer   Output buffer for encoded protobuf messages
+ * @param buffSize  Available space in output buffer
+ * @return Total bytes written (may contain multiple delimited messages), or 0 on error
+ */
 size_t Nanopb_EncodeStreamingFast(tBoardData* state,
         const NanopbFlagsArray* fields,
         uint8_t* pBuffer, size_t buffSize) {
