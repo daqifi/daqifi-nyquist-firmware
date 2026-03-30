@@ -1168,7 +1168,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
         }
     }
 
-    /* Prepare DIO data upfront (shared across all encoded messages) */
+    /* Prepare DIO data upfront */
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     DIORuntimeArray* pRuntimeDIOChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
 
@@ -1198,8 +1198,18 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
     uint32_t bufferOffset = 0;
     uint32_t lastTimestamp = state->StreamTrigStamp;
 
-    /* Process AIN samples from queue */
+    /* Batch all queued AIN samples into one message.
+     * Collect all values from all queued sample sets into a single
+     * analog_in_data packed array. This reduces per-message framing
+     * overhead and produces fewer, larger USB writes.
+     * Max: 16 channels × ~50 queued samples = 800 values.
+     * Stack usage: 800 × 4 = 3200 bytes (streaming task has 5568 bytes). */
     if (hasAIN) {
+        /* Large batch buffer on stack — streaming task has enough headroom */
+        #define MAX_BATCH_VALUES (MAX_AIN_PUBLIC_CHANNELS * 50)
+        int32_t batchValues[MAX_BATCH_VALUES];
+        size_t batchCount = 0;
+
         uint32_t queueSize = AInSampleList_Size();
         AInPublicSampleList_t *pPublicSampleList;
 
@@ -1208,52 +1218,40 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
             if (pPublicSampleList == NULL) break;
             queueSize--;
 
-            /* Collect valid sample values */
-            int32_t values[MAX_AIN_PUBLIC_CHANNELS];
-            size_t count = 0;
-
             for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
                 if (!pPublicSampleList->isSampleValid[i])
                     continue;
-                if (count >= MAX_AIN_PUBLIC_CHANNELS)
+                if (batchCount >= MAX_BATCH_VALUES)
                     break;
-                values[count++] = pPublicSampleList->sampleElement[i].Value;
+                batchValues[batchCount++] = pPublicSampleList->sampleElement[i].Value;
                 lastTimestamp = pPublicSampleList->sampleElement[i].Timestamp;
             }
 
             AInSampleList_FreeToPool(pPublicSampleList);
 
-            if (count > 0) {
-                size_t written = encode_streaming_msg_delimited(
-                    pBuffer + bufferOffset, buffSize - bufferOffset,
-                    lastTimestamp, values, count,
-                    NULL, 0, NULL, 0);
-
-                if (written == 0) return 0;
-                bufferOffset += written;
-
-                /* Conservative space check for next message */
-                if (bufferOffset + 128 > buffSize) {
-                    return bufferOffset;
-                }
-            }
+            if (batchCount >= MAX_BATCH_VALUES)
+                break;
         }
-    }
 
-    /* Final message: DIO data and/or timestamp-only
-     * Matches existing Nanopb_Encode behavior which always calls
-     * encode_message_to_buffer at the end of the field loop. */
-    {
+        if (batchCount > 0) {
+            size_t written = encode_streaming_msg_delimited(
+                pBuffer + bufferOffset, buffSize - bufferOffset,
+                lastTimestamp, batchValues, batchCount,
+                dioSize > 0 ? dioValues : NULL, dioSize,
+                dioDirSize > 0 ? dioDir : NULL, dioDirSize);
+
+            if (written == 0) return 0;
+            bufferOffset += written;
+        }
+    } else if (dioSize > 0) {
+        /* DIO-only message (no AIN data available) */
         size_t written = encode_streaming_msg_delimited(
             pBuffer + bufferOffset, buffSize - bufferOffset,
             lastTimestamp, NULL, 0,
-            dioSize > 0 ? dioValues : NULL, dioSize,
-            dioDirSize > 0 ? dioDir : NULL, dioDirSize);
+            dioValues, dioSize, dioDir, dioDirSize);
 
         if (written > 0) {
             bufferOffset += written;
-        } else if (bufferOffset == 0) {
-            return 0;
         }
     }
 
