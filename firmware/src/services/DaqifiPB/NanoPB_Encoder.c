@@ -1361,6 +1361,8 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
             /* Check buffer space BEFORE consuming a sample from the queue.
              * If we pop first and then can't encode, the sample is lost. */
             if (buffSize - bufferOffset < STREAMING_MSG_MAX_SIZE) {
+                LOG_I("[PB] Buffer full at %u/%u bytes, %u samples deferred",
+                      (unsigned)bufferOffset, (unsigned)buffSize, (unsigned)queueSize);
                 break;  /* Leave remaining samples queued for next call */
             }
 
@@ -1397,7 +1399,12 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
                     timestamp, values, count,
                     dioV, dioS, dioD, dioDS);
 
-                if (written == 0) return bufferOffset > 0 ? bufferOffset : 0;
+                if (written == 0) {
+                    LOG_E("[PB] Encode failed: buf=%u off=%u max=%u ch=%u",
+                          (unsigned)buffSize, (unsigned)bufferOffset,
+                          (unsigned)STREAMING_MSG_MAX_SIZE, (unsigned)count);
+                    return bufferOffset > 0 ? bufferOffset : 0;
+                }
                 bufferOffset += written;
             }
         }
