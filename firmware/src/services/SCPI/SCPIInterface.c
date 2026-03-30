@@ -939,7 +939,9 @@ static scpi_result_t SCPI_SysLogLevelSet(scpi_t * context) {
     char buf[80];
     int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
                        Logger_GetModuleName(module), actual, ceiling);
-    context->interface->write(context, buf, (size_t)len);
+    if (len > 0) {
+        context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+    }
 
     return SCPI_RES_OK;
 }
@@ -968,7 +970,9 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
                                Logger_GetModuleName((LogModule_t)i),
                                Logger_GetLevel((LogModule_t)i),
                                Logger_GetCeiling((LogModule_t)i));
-            context->interface->write(context, buf, (size_t)len);
+            if (len > 0) {
+                context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+            }
         }
     }
     return SCPI_RES_OK;
@@ -998,7 +1002,9 @@ static scpi_result_t SCPI_SysLogLevelAllSet(scpi_t * context) {
         int len = snprintf(buf, sizeof(buf), "%s: %d\r\n",
                            Logger_GetModuleName((LogModule_t)i),
                            Logger_GetLevel((LogModule_t)i));
-        context->interface->write(context, buf, (size_t)len);
+        if (len > 0) {
+            context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+        }
     }
     return SCPI_RES_OK;
 }

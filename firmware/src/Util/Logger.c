@@ -117,10 +117,10 @@ bool Logger_FindModule(const char* name, size_t len, LogModule_t* module) {
         const char* candidate = gLogModuleNames[i];
         size_t clen = strlen(candidate);
         if (clen != len) continue;
-        /* Case-insensitive compare */
+        /* Case-insensitive compare (toupper both sides for robustness) */
         bool match = true;
         for (size_t j = 0; j < len; j++) {
-            if (toupper((unsigned char)name[j]) != candidate[j]) {
+            if (toupper((unsigned char)name[j]) != toupper((unsigned char)candidate[j])) {
                 match = false;
                 break;
             }
