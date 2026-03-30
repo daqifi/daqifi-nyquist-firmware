@@ -27,9 +27,6 @@
 #endif // max
 //! Buffer size used for streaming purposes
 
-//! Maximum batched AIN values: 16 channels × 50 queued sample sets
-#define MAX_BATCH_VALUES (MAX_AIN_PUBLIC_CHANNELS * 50)
-
 /*  TODO: Verify this length calculation is accurate.
  **
  **  NOTE: Perhaps the most official way to calculate length would be something like:
@@ -1199,56 +1196,66 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
     }
 
     uint32_t bufferOffset = 0;
-    uint32_t lastTimestamp = state->StreamTrigStamp;
 
-    /* Batch all queued AIN samples into one message.
-     * Collect all values from all queued sample sets into a single
-     * analog_in_data packed array. This reduces per-message framing
-     * overhead and produces fewer, larger USB writes.
-     * Static: 3200 bytes — too large for streaming task stack (5568 bytes). */
+    /* Encode one PB message per sample set (ISR trigger).
+     * Each sample set has its own timestamp that must be preserved.
+     * DIO data is included in the first AIN message if available,
+     * or in a standalone message if no AIN data is present. */
     if (hasAIN) {
-        /* Static buffer — safe because only called from streaming_Task (single caller) */
-        static int32_t batchValues[MAX_BATCH_VALUES];
-        size_t batchCount = 0;
-
         uint32_t queueSize = AInSampleList_Size();
         AInPublicSampleList_t *pPublicSampleList;
+        bool dioIncluded = false;
 
         while (queueSize > 0) {
             if (!AInSampleList_PopFront(&pPublicSampleList)) break;
             if (pPublicSampleList == NULL) break;
             queueSize--;
 
+            /* Collect valid channel values for this sample set */
+            int32_t values[MAX_AIN_PUBLIC_CHANNELS];
+            size_t count = 0;
+            uint32_t timestamp = 0;
+
             for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
                 if (!pPublicSampleList->isSampleValid[i])
                     continue;
-                if (batchCount >= MAX_BATCH_VALUES)
+                if (count >= MAX_AIN_PUBLIC_CHANNELS)
                     break;
-                batchValues[batchCount++] = pPublicSampleList->sampleElement[i].Value;
-                lastTimestamp = pPublicSampleList->sampleElement[i].Timestamp;
+                values[count++] = pPublicSampleList->sampleElement[i].Value;
+                timestamp = pPublicSampleList->sampleElement[i].Timestamp;
             }
 
             AInSampleList_FreeToPool(pPublicSampleList);
 
-            if (batchCount >= MAX_BATCH_VALUES)
-                break;
-        }
+            if (count > 0) {
+                /* Include DIO in the first AIN message only */
+                const uint8_t* dioV = (!dioIncluded && dioSize > 0) ? dioValues : NULL;
+                size_t dioS = (!dioIncluded && dioSize > 0) ? dioSize : 0;
+                const uint8_t* dioD = (!dioIncluded && dioDirSize > 0) ? dioDir : NULL;
+                size_t dioDS = (!dioIncluded && dioDirSize > 0) ? dioDirSize : 0;
+                if (dioS > 0) dioIncluded = true;
 
-        if (batchCount > 0) {
-            size_t written = encode_streaming_msg_delimited(
-                pBuffer + bufferOffset, buffSize - bufferOffset,
-                lastTimestamp, batchValues, batchCount,
-                dioSize > 0 ? dioValues : NULL, dioSize,
-                dioDirSize > 0 ? dioDir : NULL, dioDirSize);
+                size_t written = encode_streaming_msg_delimited(
+                    pBuffer + bufferOffset, buffSize - bufferOffset,
+                    timestamp, values, count,
+                    dioV, dioS, dioD, dioDS);
 
-            if (written == 0) return 0;
-            bufferOffset += written;
+                if (written == 0) return bufferOffset > 0 ? bufferOffset : 0;
+                bufferOffset += written;
+
+                /* Space check for next message */
+                if (bufferOffset + 128 > buffSize) {
+                    return bufferOffset;
+                }
+            }
         }
-    } else if (dioSize > 0) {
-        /* DIO-only message (no AIN data available) */
+    }
+
+    /* DIO-only message if no AIN data consumed the DIO */
+    if (!hasAIN && dioSize > 0) {
         size_t written = encode_streaming_msg_delimited(
             pBuffer + bufferOffset, buffSize - bufferOffset,
-            lastTimestamp, NULL, 0,
+            state->StreamTrigStamp, NULL, 0,
             dioValues, dioSize, dioDir, dioDirSize);
 
         if (written > 0) {
