@@ -404,17 +404,20 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 
 | Interface | Format | Channels | Max Zero-Loss Rate | KB/s |
 |-----------|--------|----------|------------------:|-----:|
-| USB | CSV | 1 | 13 kHz | 210 |
-| USB | CSV | 16 | 3 kHz | 766 |
-| USB | PB | 1 | 5 kHz | 62 |
-| USB | PB | 16 | 3 kHz | 136 |
-| SD | CSV | 1 | 5 kHz | 84 |
-| SD | CSV | 16 | 1 kHz | 272 |
-| SD | PB | 1 | 5 kHz | 61 |
-| SD | PB | 16 | 1 kHz | 46 |
+| USB | CSV | 1 | 15 kHz | 239 |
+| USB | CSV | 16 | 3 kHz | 720 |
+| USB | PB | 1 | 18 kHz | 201 |
+| USB | PB | 8 | 11 kHz | 270 |
+| USB | PB | 16 | 5 kHz | 253 |
+| SD | CSV | 1 | 5 kHz | 85 |
+| SD | CSV | 16 | 1 kHz | 266 |
+| SD | PB | 1 | 11 kHz | 133 |
+| SD | PB | 16 | 7 kHz | 177 |
 | WiFi | PB | 16 | 1 kHz | 49 |
 | WiFi | CSV | 16 | 1 kHz | 206 |
 | SD | raw write | — | — | 665 |
+
+**Benchmark variance:** USB throughput measurements show ~10-15% run-to-run variance (e.g., USB CSV 1ch@5kHz: 4739-5423 sps across 3 consecutive runs). Root cause unknown — likely USB CDC transfer scheduling, WSL USB passthrough jitter, or FreeRTOS task timing. Ceilings in the table above represent the highest zero-loss rate observed across multiple runs. When comparing benchmarks, run at least 3 times and use the average.
 
 Update this table when new benchmark results are collected. Full benchmark history is version-controlled in `daqifi-python-test-suite/benchmarks/` (CSV files + CHANGELOG.md). Run `python test_throughput_benchmark.py <port> <duration>` and copy the output CSV to that directory.
 
