@@ -179,13 +179,11 @@ extern "C" {
     #ifndef LOG_LEVEL_USB
         #define LOG_LEVEL_USB       LOG_LEVEL_DEBUG
     #endif
-    /* SAFETY NOTE (issue #191): The USB event handler runs in ISR context
-     * where the MIPS EXL/ERL bits are cleared by the Harmony driver, so
-     * LogIsInISR() returns false.  LOG_I()/LOG_D() calls from that path
-     * would take the mutex inside an ISR, triggering a FreeRTOS
-     * configASSERT crash.  The compile-time ceiling is now DEBUG (so the
-     * calls exist in the binary), but the runtime default is ERROR and
-     * Logger_SetLevel() clamps USB to ERROR until #191 is fixed. */
+    /* WARNING (issue #191): Never call LOG_E/LOG_I/LOG_D from ISR context.
+     * The Harmony USB driver clears MIPS EXL/ERL bits, defeating
+     * LogIsInISR(). Any LogMessage() call from that path takes the mutex
+     * inside an ISR → FreeRTOS configASSERT crash. Fix: deferred logging
+     * task (#191). Until then, ensure no log calls in true ISR handlers. */
     #ifndef LOG_LEVEL_SCPI
         #define LOG_LEVEL_SCPI      LOG_LEVEL_DEBUG
     #endif

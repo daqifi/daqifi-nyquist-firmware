@@ -892,7 +892,7 @@ SYST:LOG:LEV?              # Dump all modules with levels and ceilings
 SYST:LOG:LEV:ALL 1         # Reset all modules to ERROR (default)
 ```
 
-All modules are compiled at DEBUG ceiling (all LOG_E/LOG_I/LOG_D calls present in binary). USB runtime ceiling is capped at ERROR (issue #191 — ISR context crash). All other modules have full runtime control up to DEBUG. The response shows the actual level set and the ceiling.
+All modules are compiled at DEBUG ceiling (all LOG_E/LOG_I/LOG_D calls present in binary) and have full runtime control up to DEBUG. The response shows the actual level set and the ceiling. WARNING: Never call log macros from ISR context — LogIsInISR() detection fails when Harmony clears MIPS EXL/ERL bits (issue #191). Fix pending: deferred logging task.
 
 Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 
@@ -903,7 +903,7 @@ Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 | POWER | PowerApi.c, BQ24297.c |
 | WIFI | wifi_manager.c, wifi_tcp_server.c, WINC driver |
 | SD | sd_card_manager.c |
-| USB | UsbCdc.c (runtime ceiling: ERROR — issue #191) |
+| USB | UsbCdc.c (no log calls from ISR — issue #191) |
 | SCPI | SCPIInterface.c, SCPIADC.c, SCPIDAC.c, SCPIDIO.c, SCPILAN.c, SCPIStorageSD.c |
 | ADC | ADC.c, AD7609.c |
 | DAC | DAC7718.c |

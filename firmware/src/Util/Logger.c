@@ -60,13 +60,16 @@ volatile uint8_t gLogLevels[LOG_MODULE_COUNT] = {
 };
 
 /** Runtime ceilings per module — Logger_SetLevel() clamps to these.
- *  USB is capped at ERROR due to ISR context crash (issue #191).
- *  All others allow full DEBUG via SCPI. */
+ *  All modules allow full DEBUG via SCPI.
+ *  WARNING: Do not call LOG_E/LOG_I/LOG_D from ISR context — LogIsInISR()
+ *  detection fails when Harmony clears MIPS EXL/ERL (issue #191). The fix
+ *  is a deferred logging task (also #191). Until then, ensure no log calls
+ *  exist in true ISR handlers. */
 static const uint8_t gLogCeilings[LOG_MODULE_COUNT] = {
     [LOG_MODULE_POWER]   = LOG_LEVEL_DEBUG,
     [LOG_MODULE_WIFI]    = LOG_LEVEL_DEBUG,
     [LOG_MODULE_SD]      = LOG_LEVEL_DEBUG,
-    [LOG_MODULE_USB]     = LOG_LEVEL_ERROR,  /* Issue #191: ISR crash */
+    [LOG_MODULE_USB]     = LOG_LEVEL_DEBUG,
     [LOG_MODULE_SCPI]    = LOG_LEVEL_DEBUG,
     [LOG_MODULE_ADC]     = LOG_LEVEL_DEBUG,
     [LOG_MODULE_DAC]     = LOG_LEVEL_DEBUG,
