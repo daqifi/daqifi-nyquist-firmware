@@ -29,18 +29,23 @@
  * varint worst case: 5 bytes for uint32, 5 bytes for sint32 (zigzag)
  * tag sizes: field 1-15 = 1 byte, field 16-2047 = 2 bytes
  */
-#define PB_VARINT_MAX       5   /* max bytes for a 32-bit varint */
-#define PB_TAG1_SIZE        1   /* tag byte for fields 1-15 */
-#define PB_TAG2_SIZE        2   /* tag bytes for fields 16-2047 */
-#define PB_DIO_MAX_BYTES    2   /* digital_data / digital_port_dir max_size */
+#define PB_VARINT32_MAX     5U  /* max bytes for a 32-bit varint */
+#define PB_TAG1_SIZE        1U  /* tag byte for fields 1-15 */
+#define PB_TAG2_SIZE        2U  /* tag bytes for fields 16-2047 */
+
+/* Derive sizes from generated struct to stay in sync with .proto/.options */
+#define PB_DIO_DATA_MAX  (sizeof(((DaqifiOutMessage*)0)->digital_data.bytes))
+#define PB_DIO_DIR_MAX   (sizeof(((DaqifiOutMessage*)0)->digital_port_dir.bytes))
+#define PB_AIN_MAX_COUNT (sizeof(((DaqifiOutMessage*)0)->analog_in_data) / \
+                          sizeof(((DaqifiOutMessage*)0)->analog_in_data[0]))
 
 #define STREAMING_MSG_MAX_SIZE (                                              \
-    PB_VARINT_MAX +                            /* length-delimited prefix */  \
-    PB_TAG1_SIZE + PB_VARINT_MAX +             /* field 1: timestamp */       \
-    PB_TAG1_SIZE + PB_VARINT_MAX +             /* field 2: packed length */   \
-    (MAX_AIN_PUBLIC_CHANNELS * PB_VARINT_MAX) +/* field 2: packed sint32s */ \
-    PB_TAG1_SIZE + 1 + PB_DIO_MAX_BYTES +     /* field 5: digital_data */    \
-    PB_TAG2_SIZE + 1 + PB_DIO_MAX_BYTES       /* field 37: digital_port_dir */ \
+    PB_VARINT32_MAX +                            /* length-delimited prefix */\
+    PB_TAG1_SIZE + PB_VARINT32_MAX +             /* field 1: uint32 ts */     \
+    PB_TAG1_SIZE + PB_VARINT32_MAX +             /* field 2: packed length */ \
+    (PB_AIN_MAX_COUNT * PB_VARINT32_MAX) +       /* field 2: sint32 values */\
+    PB_TAG1_SIZE + 1 + PB_DIO_DATA_MAX +         /* field 5: digital_data */ \
+    PB_TAG2_SIZE + 1 + PB_DIO_DIR_MAX            /* field 37: port_dir */    \
 )
 
 /**
