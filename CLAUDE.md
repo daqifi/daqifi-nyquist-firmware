@@ -419,6 +419,7 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 
 **Benchmark variance:** USB throughput measurements show ~10-15% run-to-run variance (e.g., USB CSV 1ch@5kHz: 4739-5423 sps across 3 consecutive runs). Root cause unknown — likely USB CDC transfer scheduling, WSL USB passthrough jitter, or FreeRTOS task timing. Ceilings in the table above represent the highest zero-loss rate observed across multiple runs. When comparing benchmarks, run at least 3 times and use the average.
 
+
 Update this table when new benchmark results are collected. Full benchmark history is version-controlled in `daqifi-python-test-suite/benchmarks/` (CSV files + CHANGELOG.md). Run `python test_throughput_benchmark.py <port> <duration>` and copy the output CSV to that directory.
 
 **Implementation:** `firmware/src/services/streaming.c` (benchmark mode, gTestPattern, Streaming_GenerateTestValue), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks)
