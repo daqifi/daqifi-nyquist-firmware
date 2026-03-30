@@ -23,18 +23,25 @@
 #define max(x,y) ((x) >= (y) ? (x) : (y))
 #endif // max
 /* Worst-case encoded size for one streaming PB message (length-delimited).
- * Used as a pre-check before popping samples from the queue to avoid
- * consuming data that can't fit in the output buffer.
+ * Computed at compile time from proto constants. Used as a pre-check before
+ * popping samples from the queue to avoid consuming data that can't encode.
  *
- * Breakdown (16 channels, all worst-case 5-byte varints):
- *   Length prefix:    5 bytes (varint)
- *   Field 1 (ts):    1 (tag) + 5 (varint)           =   6
- *   Field 2 (AIN):   1 (tag) + 2 (len) + 16*5 (data)=  83
- *   Field 5 (DIO):   1 (tag) + 1 (len) + 2 (bytes)  =   4
- *   Field 37 (dir):  2 (tag) + 1 (len) + 2 (bytes)  =   5
- *   Total:                                             103 bytes
+ * varint worst case: 5 bytes for uint32, 5 bytes for sint32 (zigzag)
+ * tag sizes: field 1-15 = 1 byte, field 16-2047 = 2 bytes
  */
-#define STREAMING_MSG_MAX_SIZE 103
+#define PB_VARINT_MAX       5   /* max bytes for a 32-bit varint */
+#define PB_TAG1_SIZE        1   /* tag byte for fields 1-15 */
+#define PB_TAG2_SIZE        2   /* tag bytes for fields 16-2047 */
+#define PB_DIO_MAX_BYTES    2   /* digital_data / digital_port_dir max_size */
+
+#define STREAMING_MSG_MAX_SIZE (                                              \
+    PB_VARINT_MAX +                            /* length-delimited prefix */  \
+    PB_TAG1_SIZE + PB_VARINT_MAX +             /* field 1: timestamp */       \
+    PB_TAG1_SIZE + PB_VARINT_MAX +             /* field 2: packed length */   \
+    (MAX_AIN_PUBLIC_CHANNELS * PB_VARINT_MAX) +/* field 2: packed sint32s */ \
+    PB_TAG1_SIZE + 1 + PB_DIO_MAX_BYTES +     /* field 5: digital_data */    \
+    PB_TAG2_SIZE + 1 + PB_DIO_MAX_BYTES       /* field 37: digital_port_dir */ \
+)
 
 /**
  * @brief Estimate buffer size needed for encoding selected fields.
