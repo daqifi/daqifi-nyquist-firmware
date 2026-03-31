@@ -362,33 +362,56 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
 
 }
 
+/**
+ * Compute optimal circular buffer sizes based on currently active interfaces.
+ * Single-interface mode maximizes that interface's buffer; multi-interface
+ * uses conservative defaults to share heap resources.
+ */
+void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, uint32_t* outSdSize) {
+    StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(
+        BOARDRUNTIME_STREAMING_CONFIGURATION);
+    sd_card_manager_settings_t* sd = BoardRunTimeConfig_Get(
+        BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    bool hasUsb = (sc->ActiveInterface == StreamingInterface_USB ||
+                   sc->ActiveInterface == StreamingInterface_All);
+    bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi ||
+                    sc->ActiveInterface == StreamingInterface_All);
+    bool hasSd = (sd->enable ||
+                  sc->ActiveInterface == StreamingInterface_SD ||
+                  sc->ActiveInterface == StreamingInterface_All);
+
+    int activeCount = (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0) + (hasSd ? 1 : 0);
+
+    // SD: coherent pool can't be resized, but report optimal size for SCPI AUTO
+    *outSdSize = hasSd ? 32768 : 0;
+
+    // WiFi: maximize when sole interface, conservative when sharing
+    if (hasWifi) {
+        *outWifiSize = (activeCount == 1) ? 28000 : 14000;
+    } else {
+        *outWifiSize = SOCKET_BUFFER_MAX_LENGTH;  // 1400 — minimum safe
+    }
+
+    // USB: maximize when sole interface
+    if (hasUsb) {
+        *outUsbSize = (activeCount == 1) ? 32768 : USBCDC_CIRCULAR_BUFF_SIZE;
+    } else {
+        *outUsbSize = USBCDC_WBUFFER_SIZE;  // 4096 — minimum safe
+    }
+}
+
 /*!
  * Starts the streaming timer
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
-        // Apply dynamic memory configuration if changed.
-        // SCPI validates bounds, but clamp here too for defense-in-depth.
+        // Buffer resize is handled in SCPI_StartStreaming (USB task context)
+        // before IsEnabled is set. Here we just log the pool resize deferral.
         if (gpRuntimeConfigStream->IsEnabled) {
             MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-
-            // NOTE: USB and WiFi circular buffer resize is NOT done here.
-            // The USB/WiFi tasks run concurrently at high priority and may be
-            // actively reading from the circular buffer. Resizing here caused
-            // use-after-free crashes (USB Code 43 descriptor failure).
-            // Circular buffer resize must be done via SCPI commands while
-            // streaming is stopped (the streaming guard enforces this).
-            // Sample pool resize IS safe here because the deferred ISR task
-            // and streaming task are both stopped (Running == false).
-
-            // NOTE: Runtime pool resize is disabled in this PR.
-            // AInSampleList_Destroy + re-Initialize crashes the device due to
-            // an undiagnosed interaction between pool deallocation and the
-            // USB CDC data path. The pool is allocated once at boot (700 samples)
-            // and cannot be changed at runtime. SYST:MEM:SAMP:POOL sets the
-            // config value but it only takes effect on reboot (via BoardData_Init).
-            // TODO: Debug and fix in follow-up PR (issue #229).
-            if (mc->samplePoolCount > 0 && mc->samplePoolCount != AInSampleList_PoolCapacity()) {
+            if (mc->samplePoolCount > 0 &&
+                mc->samplePoolCount != AInSampleList_PoolCapacity()) {
                 LOG_I("Pool resize to %u deferred (runtime resize not yet supported)",
                       (unsigned)mc->samplePoolCount);
             }

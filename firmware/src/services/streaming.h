@@ -118,6 +118,16 @@ void Streaming_ClearStats(void);
  */
 uint32_t Streaming_GetQuesBits(void);
 
+/**
+ * Compute optimal circular buffer sizes based on currently active interfaces.
+ * Used by auto-balance at stream start and by SYST:MEM:AUTO SCPI command.
+ *
+ * @param[out] outUsbSize   Optimal USB circular buffer size (bytes)
+ * @param[out] outWifiSize  Optimal WiFi circular buffer size (bytes)
+ * @param[out] outSdSize    Optimal SD circular buffer size (bytes, informational — coherent pool can't resize)
+ */
+void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, uint32_t* outSdSize);
+
 // Flow window configuration (configurable via SCPI SYST:STR:LOSS commands).
 // Loss threshold: percentage (1-100) that triggers QUES data loss bit (default 5).
 uint32_t Streaming_GetLossThreshold(void);

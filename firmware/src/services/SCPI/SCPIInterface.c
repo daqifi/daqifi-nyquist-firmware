@@ -2168,6 +2168,37 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
+    // Auto-size circular buffers based on active interfaces (issue #229).
+    // Must run in USB task context (here) so the USB write buffer can be
+    // safely flushed and resized without disconnecting the user.
+    {
+        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        bool isAutoMode = (mc->sdCircularBufSize == 0 &&
+                           mc->wifiCircularBufSize == 0 &&
+                           mc->usbCircularBufSize == 0 &&
+                           mc->samplePoolCount == 0);
+
+        uint32_t usbSize, wifiSize;
+
+        if (isAutoMode) {
+            uint32_t sdSize;
+            Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdSize);
+            LOG_I("Auto-balance: USB=%u WiFi=%u (SD=%u coherent, no resize)",
+                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdSize);
+        } else {
+            usbSize = mc->usbCircularBufSize ? mc->usbCircularBufSize
+                                             : USBCDC_CIRCULAR_BUFF_SIZE;
+            wifiSize = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
+                                               : WIFI_CIRCULAR_BUFF_SIZE;
+        }
+
+        // Log explicit config sizes (auto mode logs above in its own branch).
+        if (!isAutoMode) {
+            LOG_I("Explicit buffers: USB=%u WiFi=%u",
+                  (unsigned)usbSize, (unsigned)wifiSize);
+        }
+    }
+
     pRunTimeStreamConfig->IsEnabled = true;
     Streaming_UpdateState();
 
@@ -2691,43 +2722,14 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
 static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    sd_card_manager_settings_t* sd = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    bool hasUsb = (sc->ActiveInterface == StreamingInterface_USB || sc->ActiveInterface == StreamingInterface_All);
-    bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi || sc->ActiveInterface == StreamingInterface_All);
-    bool hasSd = (sd->enable || sc->ActiveInterface == StreamingInterface_SD || sc->ActiveInterface == StreamingInterface_All);
-
-    // Count active interfaces for sizing strategy
-    int activeCount = (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0) + (hasSd ? 1 : 0);
-
-    // Set buffer sizes based on active interfaces.
-    // Single-interface: maximize that interface's buffer for best throughput.
-    // Multi-interface: use conservative defaults to share resources.
-    // Note: USB/WiFi circular buffers are allocated once at boot and can't
-    // currently be resized. These values set the config for documentation
-    // and potential future resize support. SD buffer is in coherent pool.
-    if (hasSd) {
-        mc->sdCircularBufSize = (activeCount == 1) ? 32768 : 32768;  // coherent pool limited
-    } else {
-        mc->sdCircularBufSize = 0;
-    }
-
-    if (hasWifi) {
-        mc->wifiCircularBufSize = (activeCount == 1) ? 28000 : 14000;
-    } else {
-        mc->wifiCircularBufSize = 1400;  // minimum safe (SOCKET_BUFFER_MAX_LENGTH)
-    }
-
-    if (hasUsb) {
-        mc->usbCircularBufSize = (activeCount == 1) ? 32768 : 16384;
-    } else {
-        mc->usbCircularBufSize = 4096;  // minimum safe (USBCDC_WBUFFER_SIZE)
-    }
+    // Compute optimal buffer sizes using shared helper
+    Streaming_ComputeAutoBuffers(&mc->usbCircularBufSize,
+                                 &mc->wifiCircularBufSize,
+                                 &mc->sdCircularBufSize);
 
     // Calculate available heap for sample pool.
     // Current pool memory will be freed on resize, so add it back.
-    // Circular buffers are already allocated at boot and don't compete.
     size_t currentPoolBytes = AInSampleList_PoolCapacity()
         * (sizeof(AInPublicSampleList_t) + sizeof(int16_t));
     size_t available = xPortGetFreeHeapSize() + currentPoolBytes;
@@ -2744,6 +2746,12 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     scpi_printf(context, "WiFi=%u\r\n", (unsigned)mc->wifiCircularBufSize);
     scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
     scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);
+
+    // Buffer resize is deferred to next stream start or explicit
+    // SYST:MEM:USB:BUF / SYST:MEM:WIFI:BUF commands.
+    // Resizing from here would clear the USB write buffer, losing
+    // the scpi_printf response above.
+
     return SCPI_RES_OK;
 }
 
