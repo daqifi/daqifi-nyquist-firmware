@@ -875,18 +875,22 @@ static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
  * @return 
  */
 static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
-    // Add test messages to the log
+    // Add test messages to the log (task context)
     LOG_D("Test log message 1");
     LOG_E("Test error message");
     LOG_I("Test info message");
-    
+
     // Add some more to test the buffer limits
     for (int i = 0; i < 5; i++) {
         LOG_D("Test message %d", i);
     }
-    
+
+    // Test ISR-safe deferred logging (via queue, not mutex)
+    LOG_E_ISR("Test ISR error message (deferred)");
+    LOG_I_ISR("Test ISR info message (deferred)");
+
     context->interface->write(context, "Added test log messages\n", 24);
-    
+
     return SCPI_RES_OK;
 }
 
