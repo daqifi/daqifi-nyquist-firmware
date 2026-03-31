@@ -544,46 +544,54 @@ void LogIsrInit(void) {
 
 /**
  * @brief ISR-safe logging entry point.
- *        Formats the message and enqueues it for deferred processing.
- *        Works from both ISR and task context.
+ *        In ISR context: only queues via xQueueSendFromISR (no formatting,
+ *        no I/O, no stack-heavy operations). Format string is copied raw.
+ *        In task context: formats with vsnprintf then queues.
+ *        The drain task forwards messages to the main log buffer.
  */
 void LogMessageFromISR(const char* format, ...) {
     if (format == NULL || gIsrLogQueue == NULL) return;
 
     LogEntry entry;
-    va_list args;
-    va_start(args, format);
-
-    /* Format into stack-local entry, reserve room for \r\n\0 */
-    int size = vsnprintf(entry.message, LOG_MESSAGE_SIZE - 2, format, args);
-    va_end(args);
-
-    if (size <= 0) return;
-    if (size > (int)(LOG_MESSAGE_SIZE - 3)) size = LOG_MESSAGE_SIZE - 3;
-
-    /* Ensure \r\n termination */
-    if (size >= 2 && entry.message[size-2] == '\r' && entry.message[size-1] == '\n') {
-        /* already terminated */
-    } else if (size >= 1 && entry.message[size-1] == '\n') {
-        entry.message[size-1] = '\r';
-        entry.message[size] = '\n';
-        entry.message[size+1] = '\0';
-        size++;
-    } else {
-        entry.message[size] = '\r';
-        entry.message[size+1] = '\n';
-        entry.message[size+2] = '\0';
-        size += 2;
-    }
 
     if (LogIsInISR()) {
+        /* ISR path: minimal work only. Copy format string as-is (no
+         * vsnprintf — too heavy for ISR stack). Callers that need
+         * formatted output should pre-format or use static strings. */
+        size_t len = strlen(format);
+        if (len == 0) return;
+        if (len > LOG_MESSAGE_SIZE - 3) len = LOG_MESSAGE_SIZE - 3;
+        memcpy(entry.message, format, len);
+        entry.message[len] = '\r';
+        entry.message[len + 1] = '\n';
+        entry.message[len + 2] = '\0';
+
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         xQueueSendFromISR(gIsrLogQueue, &entry, &xHigherPriorityTaskWoken);
         portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
     } else {
+        /* Task path: full vsnprintf formatting is safe */
+        va_list args;
+        va_start(args, format);
+        int size = vsnprintf(entry.message, LOG_MESSAGE_SIZE - 2, format, args);
+        va_end(args);
+
+        if (size <= 0) return;
+        if (size > (int)(LOG_MESSAGE_SIZE - 3)) size = LOG_MESSAGE_SIZE - 3;
+
+        /* Ensure \r\n termination */
+        if (size >= 2 && entry.message[size-2] == '\r' && entry.message[size-1] == '\n') {
+            /* already terminated */
+        } else if (size >= 1 && entry.message[size-1] == '\n') {
+            entry.message[size-1] = '\r';
+            entry.message[size] = '\n';
+            entry.message[size+1] = '\0';
+        } else {
+            entry.message[size] = '\r';
+            entry.message[size+1] = '\n';
+            entry.message[size+2] = '\0';
+        }
+
         xQueueSend(gIsrLogQueue, &entry, 0);
     }
-
-    /* No ICSP output here — the drain task calls LogMessageAdd which
-     * handles ICSP. Outputting here would cause duplicate UART lines. */
 }

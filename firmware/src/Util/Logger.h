@@ -263,13 +263,17 @@ void LogMessageInit(void);
 void LogMessageClear(void);
 
 /**
- * @brief ISR-safe logging — queues a pre-formatted message for deferred
- *        processing. Safe to call from any context (ISR or task).
- *        Uses xQueueSendFromISR when in ISR, xQueueSend otherwise.
+ * @brief ISR-safe logging — queues a message for deferred processing.
+ *        Safe to call from any context (ISR or task).
+ *
+ *        ISR context: copies format string as-is (no vsnprintf — too
+ *        heavy for ISR stack). Use static strings, not format args.
+ *        Task context: full printf-style formatting via vsnprintf.
+ *
  *        Messages are drained to the main log buffer by a low-priority task.
  *
- * @param format Printf-style format string
- * @param ...    Variable arguments matching format specifiers
+ * @param format Printf-style format string (args ignored in ISR context)
+ * @param ...    Variable arguments (only used from task context)
  */
 void LogMessageFromISR(const char* format, ...) __attribute__((format(printf, 1, 2)));
 
