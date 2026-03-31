@@ -403,13 +403,20 @@ void LogIsrInit(void);
 // LOG_x_ONCE(bit, fmt, ...): like LOG_x but fires only once per bit
 // until reset (SYST:LOG? or SYST:LOG:CLEAR). Intended for ISR context
 // to prevent queue flooding, but works anywhere.
+// ISR guard: skips vararg evaluation in ISR context (use static strings).
+// Bounds check: bit must be < 32 (uint32_t bitmask).
 
 #if (LOG_LVL >= LOG_LEVEL_ERROR)
     #define LOG_E_ONCE(bit, fmt,...) do { \
-        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
+        if ((unsigned)(bit) < 32u && \
+            gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
             !(gLogOneShot & (1u << (bit)))) { \
             gLogOneShot |= (1u << (bit)); \
-            LogMessage(fmt, ##__VA_ARGS__); \
+            if (uxInterruptNesting != 0u) { \
+                LogMessage(fmt); \
+            } else { \
+                LogMessage(fmt, ##__VA_ARGS__); \
+            } \
         } \
     } while(0)
 #else
@@ -418,10 +425,15 @@ void LogIsrInit(void);
 
 #if (LOG_LVL >= LOG_LEVEL_INFO)
     #define LOG_I_ONCE(bit, fmt,...) do { \
-        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
+        if ((unsigned)(bit) < 32u && \
+            gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
             !(gLogOneShot & (1u << (bit)))) { \
             gLogOneShot |= (1u << (bit)); \
-            LogMessage(fmt, ##__VA_ARGS__); \
+            if (uxInterruptNesting != 0u) { \
+                LogMessage(fmt); \
+            } else { \
+                LogMessage(fmt, ##__VA_ARGS__); \
+            } \
         } \
     } while(0)
 #else
@@ -430,10 +442,15 @@ void LogIsrInit(void);
 
 #if (LOG_LVL >= LOG_LEVEL_DEBUG)
     #define LOG_D_ONCE(bit, fmt,...) do { \
-        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
+        if ((unsigned)(bit) < 32u && \
+            gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
             !(gLogOneShot & (1u << (bit)))) { \
             gLogOneShot |= (1u << (bit)); \
-            LogMessage(fmt, ##__VA_ARGS__); \
+            if (uxInterruptNesting != 0u) { \
+                LogMessage(fmt); \
+            } else { \
+                LogMessage(fmt, ##__VA_ARGS__); \
+            } \
         } \
     } while(0)
 #else
@@ -444,10 +461,12 @@ void LogIsrInit(void);
 // LOG_x_SESSION(bit, fmt, ...): like LOG_x but fires only once per
 // streaming session. Reset via Logger_ResetSessionOneShots() at stream
 // start. Uses gSessionOneShot bitmask (separate from gLogOneShot).
+// Task-context only — no ISR guard needed.
 
 #if (LOG_LVL >= LOG_LEVEL_ERROR)
     #define LOG_E_SESSION(bit, fmt,...) do { \
-        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
+        if ((unsigned)(bit) < 32u && \
+            gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
             !(gSessionOneShot & (1u << (bit)))) { \
             gSessionOneShot |= (1u << (bit)); \
             LogMessage(fmt, ##__VA_ARGS__); \
@@ -459,7 +478,8 @@ void LogIsrInit(void);
 
 #if (LOG_LVL >= LOG_LEVEL_INFO)
     #define LOG_I_SESSION(bit, fmt,...) do { \
-        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
+        if ((unsigned)(bit) < 32u && \
+            gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
             !(gSessionOneShot & (1u << (bit)))) { \
             gSessionOneShot |= (1u << (bit)); \
             LogMessage(fmt, ##__VA_ARGS__); \
@@ -471,7 +491,8 @@ void LogIsrInit(void);
 
 #if (LOG_LVL >= LOG_LEVEL_DEBUG)
     #define LOG_D_SESSION(bit, fmt,...) do { \
-        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
+        if ((unsigned)(bit) < 32u && \
+            gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
             !(gSessionOneShot & (1u << (bit)))) { \
             gSessionOneShot |= (1u << (bit)); \
             LogMessage(fmt, ##__VA_ARGS__); \
