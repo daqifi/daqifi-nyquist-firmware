@@ -1250,8 +1250,14 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     snprintf(pChipInfo->frimwareVersion, WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE, "%d.%d.%d", gStateMachineContext.wifiFirmwareVersion.u8FirmwareMajor,
             gStateMachineContext.wifiFirmwareVersion.u8FirmwareMinor,
             gStateMachineContext.wifiFirmwareVersion.u8FirmwarePatch);
-    strncpy(pChipInfo->BuildDate, (char*) gStateMachineContext.wifiFirmwareVersion.BuildDate, sizeof (__DATE__));
-    strncpy(pChipInfo->BuildTime, (char*) gStateMachineContext.wifiFirmwareVersion.BuildTime, sizeof (__DATE__));
+    strncpy(pChipInfo->BuildDate,
+            (const char*)gStateMachineContext.wifiFirmwareVersion.BuildDate,
+            sizeof(pChipInfo->BuildDate) - 1);
+    pChipInfo->BuildDate[sizeof(pChipInfo->BuildDate) - 1] = '\0';
+    strncpy(pChipInfo->BuildTime,
+            (const char*)gStateMachineContext.wifiFirmwareVersion.BuildTime,
+            sizeof(pChipInfo->BuildTime) - 1);
+    pChipInfo->BuildTime[sizeof(pChipInfo->BuildTime) - 1] = '\0';
     return true;
 }
 
