@@ -339,9 +339,13 @@ int LogMessage(const char* format, ...)
     if (LogIsInISR()) {
         if (gIsrLogQueue != NULL) {
             LogEntry entry;
-            size_t len = strlen(format);
+            /* Bounded scan — avoids unbounded strlen in ISR context */
+            const size_t maxLen = LOG_MESSAGE_SIZE - 3;
+            size_t len = 0;
+            while (len < maxLen && format[len] != '\0') {
+                len++;
+            }
             if (len == 0) return 0;
-            if (len > LOG_MESSAGE_SIZE - 3) len = LOG_MESSAGE_SIZE - 3;
             memcpy(entry.message, format, len);
             entry.message[len] = '\r';
             entry.message[len + 1] = '\n';
@@ -593,18 +597,32 @@ static void LogIsrDrainTask(void* pvParameters) {
 }
 
 /**
- * @brief Initialize the ISR log queue and drain task (idempotent).
+ * @brief Initialize the ISR log queue and drain task (idempotent, race-safe).
+ *        Uses create-then-CAS pattern (same as LogMessageInit).
  */
 void LogIsrInit(void) {
     if (gIsrLogQueue != NULL) return;
 
-    gIsrLogQueue = xQueueCreate(LOG_ISR_QUEUE_DEPTH, sizeof(LogEntry));
-    if (gIsrLogQueue == NULL) return;
+    QueueHandle_t newQueue = xQueueCreate(LOG_ISR_QUEUE_DEPTH, sizeof(LogEntry));
+    if (newQueue == NULL) return;
 
+    TaskHandle_t newTaskHandle = NULL;
     if (xTaskCreate(LogIsrDrainTask, "logISR", LOG_ISR_TASK_STACK,
-                    NULL, LOG_ISR_TASK_PRIO, &gIsrLogTaskHandle) != pdPASS) {
-        vQueueDelete(gIsrLogQueue);
-        gIsrLogQueue = NULL;
+                    NULL, LOG_ISR_TASK_PRIO, &newTaskHandle) != pdPASS) {
+        vQueueDelete(newQueue);
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    if (gIsrLogQueue == NULL) {
+        gIsrLogQueue = newQueue;
+        gIsrLogTaskHandle = newTaskHandle;
+        taskEXIT_CRITICAL();
+    } else {
+        /* Another caller won the race */
+        taskEXIT_CRITICAL();
+        vTaskDelete(newTaskHandle);
+        vQueueDelete(newQueue);
     }
 }
 
