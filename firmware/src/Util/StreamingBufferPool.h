@@ -39,19 +39,21 @@ extern "C" {
  * Task stacks are in words (PIC32MZ: 1 word = 4 bytes).
  */
 
-/* tasks.c tasks (created by Harmony/system init) */
-#define _RESERVE_TASKS_C  (1500 + 1024 + 160 + 144 + 144)  /* words: APP_FREERTOS, WDRV_WINC, AD7609, USB_DEV, USB_DRV */
-/* app_freertos.c tasks */
+/* Only tasks created AFTER StreamingBufferPool_Init count.
+ * tasks.c tasks (WDRV_WINC, AD7609, USB_DEV, USB_DRV, APP_FREERTOS)
+ * are already allocated when xPortGetFreeHeapSize() is called. */
+
+/* app_freertos.c app_TasksCreate() */
 #define _RESERVE_APP      (640 + 3072 + 1024 + 1024)        /* words: PowerUI, USB, WiFi, SD */
-/* streaming.c tasks (created at Streaming_Init) */
+/* streaming.c Streaming_Init() */
 #define _RESERVE_STREAM   (1392 + 512)                       /* words: encoder, deferred ISR */
-/* ADC.c + Logger.c tasks */
+/* ADC_Init() + Logger init */
 #define _RESERVE_OTHER    (160 + 128)                        /* words: MC12bADC EOS, logISR drain */
 
-#define _RESERVE_TOTAL_STACK_WORDS (_RESERVE_TASKS_C + _RESERVE_APP + _RESERVE_STREAM + _RESERVE_OTHER)
+#define _RESERVE_TOTAL_STACK_WORDS (_RESERVE_APP + _RESERVE_STREAM + _RESERVE_OTHER)
 #define _RESERVE_TOTAL_STACK_BYTES (_RESERVE_TOTAL_STACK_WORDS * 4U)
 
-#define _RESERVE_TCB_OVERHEAD  (14U * 400U)   /* ~400 bytes per TCB × 14 tasks */
+#define _RESERVE_TCB_OVERHEAD  (9U * 400U)    /* ~400 bytes per TCB × 9 tasks created after pool */
 #define _RESERVE_QUEUES_MISC   (6U * 1024U)   /* FreeRTOS queues, mutexes, kernel */
 #define _RESERVE_WIFI_DRIVER   (18U * 1024U)  /* WINC1500 driver heap at power-up */
 #define _RESERVE_MARGIN        (6U * 1024U)   /* heap_4 metadata + alignment + safety */
