@@ -2171,7 +2171,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
 
     // Auto-size and apply circular buffer sizes via streaming pool (issue #229).
-    // The pool is one contiguous allocation — re-partitioning never fails.
+    // The pool is one contiguous allocation — re-partitioning is pointer
+    // arithmetic within the pool, no malloc needed.
     {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         bool isAutoMode = (mc->sdCircularBufSize == 0 &&

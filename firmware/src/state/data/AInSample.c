@@ -141,6 +141,12 @@ void AInSampleList_Initialize(
 
 void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
                                        size_t maxSize) {
+    if (poolMem == NULL || freeMem == NULL || maxSize == 0) {
+        LOG_E("Sample pool external init: NULL or zero (%p, %p, %u)",
+              poolMem, freeMem, (unsigned)maxSize);
+        return;
+    }
+
     // Destroy previous resources if re-initializing
     if (samplePool != NULL) {
         AInSampleList_Destroy();

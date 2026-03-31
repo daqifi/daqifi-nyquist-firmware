@@ -55,24 +55,33 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
     if (usbSize < STREAMING_USB_MIN) usbSize = STREAMING_USB_MIN;
     if (wifiSize < STREAMING_WIFI_MIN) wifiSize = STREAMING_WIFI_MIN;
 
-    /* Ensure buffers fit in pool */
+    /* Ensure buffers fit in pool — fall back to minimums if needed */
     uint32_t bufTotal = usbSize + wifiSize;
     if (bufTotal > gPoolSize) {
-        /* Scale down proportionally, preserving minimums */
         usbSize = STREAMING_USB_MIN;
         wifiSize = STREAMING_WIFI_MIN;
         bufTotal = usbSize + wifiSize;
     }
 
+    /* Guard against pool too small for even the minimums */
+    if (bufTotal >= gPoolSize) {
+        LOG_E("Pool too small: %u bytes, need %u for minimums",
+              (unsigned)gPoolSize, (unsigned)bufTotal);
+        gUsbSize = 0; gWifiSize = 0; gSampleCount = 0;
+        return;
+    }
+
     /* Remaining space goes to sample pool */
     uint32_t remaining = gPoolSize - bufTotal;
     uint32_t maxSamples = (uint32_t)(remaining / SAMPLE_BYTES);
+    if (maxSamples > MAX_AIN_SAMPLE_COUNT) maxSamples = MAX_AIN_SAMPLE_COUNT;
 
     if (sampleCount == 0 || sampleCount > maxSamples) {
         sampleCount = maxSamples;
     }
-    if (sampleCount > MAX_AIN_SAMPLE_COUNT) sampleCount = MAX_AIN_SAMPLE_COUNT;
-    if (sampleCount < MIN_AIN_SAMPLE_COUNT) sampleCount = MIN_AIN_SAMPLE_COUNT;
+    if (sampleCount < MIN_AIN_SAMPLE_COUNT && maxSamples >= MIN_AIN_SAMPLE_COUNT) {
+        sampleCount = MIN_AIN_SAMPLE_COUNT;
+    }
 
     gUsbSize = usbSize;
     gWifiSize = wifiSize;
