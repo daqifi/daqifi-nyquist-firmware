@@ -487,9 +487,15 @@ bool BQ24297_Write_I2C(uint8_t reg, uint8_t txData) {
 
 bool BQ24297_SetIINLIM(uint8_t iinlimCode) {
     // REG00 IINLIM is 3-bit field (bits 2:0), valid range 0-7 per datasheet Table 9-2
-    if (iinlimCode > ILim_3000) return false;
+    if (iinlimCode > ILim_3000) {
+        LOG_E("BQ24297_SetIINLIM: invalid code %u", iinlimCode);
+        return false;
+    }
     uint8_t reg;
-    if (!BQ24297_Read_I2C(0x00, &reg)) return false;
+    if (!BQ24297_Read_I2C(0x00, &reg)) {
+        LOG_E("BQ24297_SetIINLIM: I2C read failed");
+        return false;
+    }
     // Clear HIZ (bit 7) and IINLIM (bits 2:0), preserve VINDPM (bits 6:3)
     reg = (reg & 0b01111000) | (iinlimCode & 0x07);
     bool success = BQ24297_Write_I2C(0x00, reg);
@@ -728,13 +734,19 @@ void BQ24297_DisableOTG(bool enableCharging) {
 
 bool BQ24297_IsOTGEnabled(void) {
     uint8_t reg;
-    if (!BQ24297_Read_I2C(0x01, &reg)) return false;
+    if (!BQ24297_Read_I2C(0x01, &reg)) {
+        LOG_E("BQ24297_IsOTGEnabled: I2C read failed");
+        return false;
+    }
     return (reg & 0b00100000) != 0;
 }
 
 bool BQ24297_IsChargingEnabled(void) {
     uint8_t reg;
-    if (!BQ24297_Read_I2C(0x01, &reg)) return false;
+    if (!BQ24297_Read_I2C(0x01, &reg)) {
+        LOG_E("BQ24297_IsChargingEnabled: I2C read failed");
+        return false;
+    }
     return (reg & 0b00010000) != 0;
 }
 

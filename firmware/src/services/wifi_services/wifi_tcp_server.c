@@ -104,6 +104,7 @@ static bool TcpServerFlush() {
     int16_t sockRet;
     bool funRet = false;
     if (gpServerData->client.clientSocket < 0) {
+        LOG_D("TCP flush: no client connected");
         return false;
     }
     if (gpServerData->client.writeBufferLength >WIFI_WBUFFER_SIZE) {
@@ -281,12 +282,15 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
 static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
     // Validate context pointer to prevent null dereference
     if (gpServerData == NULL) {
+        LOG_E("TCP: server context NULL");
         return -1;  // Not initialized
     }
 
     // Validate length against buffer size to prevent overflow
-    if (len > sizeof(gpServerData->client.writeBuffer))
+    if (len > sizeof(gpServerData->client.writeBuffer)) {
+        LOG_E("TCP: write length %lu exceeds buffer", (unsigned long)len);
         return -1;  // Error
+    }
     memcpy(gpServerData->client.writeBuffer, buf, len);
     gpServerData->client.writeBufferLength = len;
 

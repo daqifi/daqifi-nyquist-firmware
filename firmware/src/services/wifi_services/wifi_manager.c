@@ -487,6 +487,7 @@ static bool SendEvent(wifi_manager_event_t event) {
         if (xQueueSend(gEventQH, &event, portMAX_DELAY) == pdPASS) {
             return true;
         } else {
+            LOG_E("WiFi SendEvent: queue send failed");
             return false;
         }
 
@@ -1237,9 +1238,11 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
 
 bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     if (!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED)) {
+        LOG_D("WiFi GetChipInfo: not initialized");
         return false;
     }
     if (pChipInfo == NULL) {
+        LOG_E("WiFi GetChipInfo: NULL pointer");
         return false;
     }
     memset(pChipInfo, 0, sizeof (wifi_manager_chipInfo_t));
@@ -1456,6 +1459,7 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
                 *pRssi = gStateMachineContext.pWifiSettings->rssi_percent;
             }
             taskEXIT_CRITICAL();
+            LOG_I("WiFi GetRSSI: timeout");
             return false;
         }
     } else {
@@ -1467,6 +1471,7 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
             *pRssi = gStateMachineContext.pWifiSettings->rssi_percent; // Return last known value
         }
         taskEXIT_CRITICAL();
+        LOG_E("WiFi GetRSSI: WINC driver error");
         return false;
     }
 }

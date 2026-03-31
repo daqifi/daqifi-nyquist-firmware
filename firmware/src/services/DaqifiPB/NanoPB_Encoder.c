@@ -356,6 +356,7 @@ size_t Nanopb_Encode(tBoardData* state,
         uint8_t* pBuffer, size_t buffSize) {
 
     if (pBuffer == NULL || buffSize == 0) {
+        LOG_E("NanoPB: NULL buffer or zero size");
         return 0;
     }
 
@@ -368,9 +369,11 @@ size_t Nanopb_Encode(tBoardData* state,
     uint32_t bufferOffset = 0;
     size_t i = 0;
     if (buffSize < Nanopb_EncodeLength(fields)) {
+        LOG_D("NanoPB: buffer too small (%u < needed)", (unsigned)buffSize);
         return 0;
     }
     if (pBuffer == NULL) {
+        LOG_E("NanoPB: NULL buffer");
         return 0;
     }
 
@@ -417,6 +420,7 @@ size_t Nanopb_Encode(tBoardData* state,
                         //time stamp of all the samples in a list should be same, so using anyone should be fine
                         message.msg_time_stamp = data.Timestamp;
                         if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) { //takes 248 us
+                            LOG_E("NanoPB: encode_message_to_buffer failed");
                             return 0; // Return 0 if encoding fails
                         }
 
@@ -1269,16 +1273,21 @@ static size_t encode_streaming_msg_delimited(
     pb_ostream_t sizestream = PB_OSTREAM_SIZING;
     if (!encode_streaming_fields(&sizestream, timestamp,
             ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
+        LOG_E("NanoPB: streaming size pass failed");
         return 0;
     }
 
     /* Pass 2: write [varint length prefix] [message bytes] to buffer */
     pb_ostream_t stream = pb_ostream_from_buffer(pBuffer, buffSize);
-    if (!pb_encode_varint(&stream, (uint32_t)sizestream.bytes_written))
+    if (!pb_encode_varint(&stream, (uint32_t)sizestream.bytes_written)) {
+        LOG_E("NanoPB: varint encode failed");
         return 0;
+    }
     if (!encode_streaming_fields(&stream, timestamp,
-            ainData, ainCount, dioData, dioSize, dioDir, dioDirSize))
+            ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
+        LOG_E("NanoPB: streaming encode failed");
         return 0;
+    }
 
     return stream.bytes_written;
 }
@@ -1314,6 +1323,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
         uint8_t* pBuffer, size_t buffSize) {
 
     if (pBuffer == NULL || buffSize == 0) {
+        LOG_E("NanoPB: NULL buffer or zero size");
         return 0;
     }
 

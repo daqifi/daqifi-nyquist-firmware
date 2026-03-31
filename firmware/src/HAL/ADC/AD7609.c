@@ -295,6 +295,7 @@ bool AD7609_WriteModuleState(bool isPowered)
     UNUSED(isPowered);
 
     if (pModuleConfigAD7609 == NULL) {
+        LOG_E("AD7609_WriteModuleState: not initialized");
         return false;
     }
 
@@ -334,11 +335,13 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
                         uint32_t triggerTimeStamp)
 {
     if (pModuleConfigAD7609 == NULL || spi_handle == DRV_HANDLE_INVALID) {
+        LOG_E("AD7609_ReadSamples: not initialized");
         return false;
     }
 
     // Check if conversion is ready by reading BSY pin (BSY low = ready)
     if (GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
+        LOG_D("AD7609_ReadSamples: chip busy, skipping");
         return false; // Chip not ready
     }
 
@@ -479,6 +482,7 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
     // Check if the AD7609 is busy
     bool busy = GPIO_PinRead(pModuleConfigAD7609->BSY_Pin);
     if (busy) {
+        LOG_D_SESSION(LOG_SESSION_AD7609_BUSY, "AD7609: conversion busy, skipping");
         return false; // Skip conversion if still busy
     }
 

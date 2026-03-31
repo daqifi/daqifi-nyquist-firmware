@@ -1427,7 +1427,10 @@ void sd_card_manager_ProcessState() {
 
 size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     size_t bytesAdded = 0;
-    if (len == 0)return 0;
+    if (len == 0) {
+        LOG_D("SD WriteToBuffer: zero length");
+        return 0;
+    }
     if (gpSDCardSettings->enable != 1 || gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
         // Reset so a fresh timeout is logged if SD is re-enabled
         gLoggedWriteBufferTimeout = false;
@@ -1524,6 +1527,7 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
 bool sd_card_manager_GetLastOperationResult(void) {
     // If SD manager hasn't been initialized yet, report failure
     if (gpSDCardSettings == NULL) {
+        LOG_D("SD GetLastOperationResult: not initialized");
         return false;
     }
     return gSDCardData.lastOperationSuccess;
@@ -1531,6 +1535,7 @@ bool sd_card_manager_GetLastOperationResult(void) {
 
 bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {
     if (!gSDCardData.spaceResultValid) {
+        LOG_I("SD GetSpaceInfo: result not yet available");
         return false;
     }
     if (freeBytes != NULL) {

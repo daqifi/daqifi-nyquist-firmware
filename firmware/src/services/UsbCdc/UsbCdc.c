@@ -329,16 +329,19 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     // Validate length against buffer size to prevent overflow
     if (len == 0 || len > USBCDC_WBUFFER_SIZE) {
+        LOG_D("USB write: invalid length %lu", (unsigned long)len);
         return -1;  // Invalid length
     }
 
     // Validate buffer pointer to prevent null dereference
     if (buf == NULL) {
+        LOG_E("USB write: NULL buffer");
         return -1;  // Invalid buffer pointer
     }
 
     // Ensure device is configured before attempting write
     if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) {
+        LOG_D("USB write: not ready (state=%d)", gRunTimeUsbSttings.state);
         return -1;  // USB not configured/ready
     }
 
@@ -348,6 +351,7 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     // Check if previous write is still pending to prevent buffer corruption
     if (gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
         taskEXIT_CRITICAL();
+        LOG_D("USB write: previous transfer pending");
         return -1;  // Previous write still in progress
     }
 
@@ -366,6 +370,7 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
             USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
 
     if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
+        LOG_E("USB CDC write API failed");
         // Write failed - ensure handle is invalid (atomic update)
         taskENTER_CRITICAL();
         gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
@@ -388,6 +393,7 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_RESULT_OK;
 
     if (client->state != USB_CDC_STATE_PROCESS) {
+        LOG_D("USB BeginWrite: not in PROCESS state");
         return false;
     }
 
