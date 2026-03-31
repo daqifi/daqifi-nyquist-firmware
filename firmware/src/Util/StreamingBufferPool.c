@@ -4,32 +4,83 @@
 #include "StreamingBufferPool.h"
 #include "Logger.h"
 #include "osal/osal.h"
+#include "state/data/AInSample.h"
 #include <string.h>
 
 static uint8_t* gPool = NULL;
 static uint32_t gPoolSize = 0;
+
+/* Current partition offsets and sizes */
 static uint32_t gUsbSize = 0;
 static uint32_t gWifiSize = 0;
+static uint32_t gSampleCount = 0;
 
-bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize) {
-    if (gPool != NULL) return true;  // Already initialized
+/* Per-sample memory cost: data struct + free-list index */
+#define SAMPLE_BYTES (sizeof(AInPublicSampleList_t) + sizeof(int16_t))
 
-    gPool = (uint8_t*)OSAL_Malloc(STREAMING_POOL_SIZE);
-    if (gPool == NULL) {
-        LOG_E("StreamingBufferPool: failed to allocate %u bytes",
-              (unsigned)STREAMING_POOL_SIZE);
+bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
+                              uint32_t defaultSampleCount) {
+    if (gPool != NULL) return true;
+
+    /* Grab all available heap minus a reserve for task stacks, queues,
+     * FreeRTOS kernel, WiFi driver, and transient allocations. */
+    size_t freeHeap = xPortGetFreeHeapSize();
+    if (freeHeap <= STREAMING_POOL_HEAP_RESERVE) {
+        LOG_E("StreamingBufferPool: insufficient heap (%u free, need > %u)",
+              (unsigned)freeHeap, (unsigned)STREAMING_POOL_HEAP_RESERVE);
         return false;
     }
-    gPoolSize = STREAMING_POOL_SIZE;
-    LOG_I("StreamingBufferPool: %u bytes at %p",
-          (unsigned)gPoolSize, (void*)gPool);
+    uint32_t poolSize = (uint32_t)(freeHeap - STREAMING_POOL_HEAP_RESERVE);
 
-    // Set default partition so USB/WiFi can init before first stream start
-    uint8_t* usbBuf; uint32_t usbLen;
-    uint8_t* wifiBuf; uint32_t wifiLen;
+    gPool = (uint8_t*)OSAL_Malloc(poolSize);
+    if (gPool == NULL) {
+        LOG_E("StreamingBufferPool: alloc %u failed", (unsigned)poolSize);
+        return false;
+    }
+    gPoolSize = poolSize;
+    LOG_I("StreamingBufferPool: %u bytes at %p (heap was %u, reserve %u)",
+          (unsigned)gPoolSize, (void*)gPool,
+          (unsigned)freeHeap, (unsigned)STREAMING_POOL_HEAP_RESERVE);
+
     StreamingBufferPool_Partition(defaultUsbSize, defaultWifiSize,
-                                  &usbBuf, &usbLen, &wifiBuf, &wifiLen);
+                                  defaultSampleCount);
     return true;
+}
+
+void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
+                                   uint32_t sampleCount) {
+    if (gPool == NULL) return;
+
+    /* Clamp buffer minimums */
+    if (usbSize < STREAMING_USB_MIN) usbSize = STREAMING_USB_MIN;
+    if (wifiSize < STREAMING_WIFI_MIN) wifiSize = STREAMING_WIFI_MIN;
+
+    /* Ensure buffers fit in pool */
+    uint32_t bufTotal = usbSize + wifiSize;
+    if (bufTotal > gPoolSize) {
+        /* Scale down proportionally, preserving minimums */
+        usbSize = STREAMING_USB_MIN;
+        wifiSize = STREAMING_WIFI_MIN;
+        bufTotal = usbSize + wifiSize;
+    }
+
+    /* Remaining space goes to sample pool */
+    uint32_t remaining = gPoolSize - bufTotal;
+    uint32_t maxSamples = (uint32_t)(remaining / SAMPLE_BYTES);
+
+    if (sampleCount == 0 || sampleCount > maxSamples) {
+        sampleCount = maxSamples;
+    }
+    if (sampleCount > MAX_AIN_SAMPLE_COUNT) sampleCount = MAX_AIN_SAMPLE_COUNT;
+    if (sampleCount < MIN_AIN_SAMPLE_COUNT) sampleCount = MIN_AIN_SAMPLE_COUNT;
+
+    gUsbSize = usbSize;
+    gWifiSize = wifiSize;
+    gSampleCount = sampleCount;
+
+    LOG_I("Pool partition: USB=%u WiFi=%u samples=%u (of %u max, %u bytes pool)",
+          (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sampleCount,
+          (unsigned)maxSamples, (unsigned)gPoolSize);
 }
 
 void StreamingBufferPool_GetUsb(uint8_t** buf, uint32_t* size) {
@@ -42,48 +93,23 @@ void StreamingBufferPool_GetWifi(uint8_t** buf, uint32_t* size) {
     *size = gWifiSize;
 }
 
-void StreamingBufferPool_Partition(
-    uint32_t usbSize, uint32_t wifiSize,
-    uint8_t** outUsbBuf, uint32_t* outUsbLen,
-    uint8_t** outWifiBuf, uint32_t* outWifiLen)
-{
-    if (gPool == NULL) {
-        *outUsbBuf = NULL; *outUsbLen = 0;
-        *outWifiBuf = NULL; *outWifiLen = 0;
+void StreamingBufferPool_GetSamplePool(void** poolBuf, int16_t** nextFreeBuf,
+                                        uint32_t* count) {
+    if (gPool == NULL || gSampleCount == 0) {
+        *poolBuf = NULL;
+        *nextFreeBuf = NULL;
+        *count = 0;
         return;
     }
-
-    // Clamp minimums
-    if (usbSize < STREAMING_USB_MIN) usbSize = STREAMING_USB_MIN;
-    if (wifiSize < STREAMING_WIFI_MIN) wifiSize = STREAMING_WIFI_MIN;
-
-    // If requested total exceeds pool, scale down proportionally
-    uint32_t total = usbSize + wifiSize;
-    if (total > gPoolSize) {
-        // Give each their minimum, split remaining by request ratio
-        uint32_t remaining = gPoolSize - STREAMING_USB_MIN - STREAMING_WIFI_MIN;
-        uint32_t usbExtra = usbSize - STREAMING_USB_MIN;
-        uint32_t wifiExtra = wifiSize - STREAMING_WIFI_MIN;
-        uint32_t extraTotal = usbExtra + wifiExtra;
-        if (extraTotal > 0) {
-            usbSize = STREAMING_USB_MIN + (uint32_t)((uint64_t)usbExtra * remaining / extraTotal);
-            wifiSize = STREAMING_WIFI_MIN + (remaining - (usbSize - STREAMING_USB_MIN));
-        } else {
-            usbSize = STREAMING_USB_MIN;
-            wifiSize = STREAMING_WIFI_MIN;
-        }
-    }
-
-    gUsbSize = usbSize;
-    gWifiSize = wifiSize;
-
-    // USB at start of pool, WiFi after USB
-    *outUsbBuf = gPool;
-    *outUsbLen = usbSize;
-    *outWifiBuf = gPool + usbSize;
-    *outWifiLen = wifiSize;
+    /* Layout: [USB | WiFi | samplePool[count] | nextFree[count]] */
+    uint32_t offset = gUsbSize + gWifiSize;
+    *poolBuf = gPool + offset;
+    *nextFreeBuf = (int16_t*)(gPool + offset +
+                   gSampleCount * sizeof(AInPublicSampleList_t));
+    *count = gSampleCount;
 }
 
-uint32_t StreamingBufferPool_TotalSize(void) { return gPoolSize; }
-uint32_t StreamingBufferPool_UsbSize(void)   { return gUsbSize; }
-uint32_t StreamingBufferPool_WifiSize(void)  { return gWifiSize; }
+uint32_t StreamingBufferPool_TotalSize(void)  { return gPoolSize; }
+uint32_t StreamingBufferPool_UsbSize(void)    { return gUsbSize; }
+uint32_t StreamingBufferPool_WifiSize(void)   { return gWifiSize; }
+uint32_t StreamingBufferPool_SampleCount(void) { return gSampleCount; }

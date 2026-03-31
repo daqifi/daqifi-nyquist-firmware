@@ -11,6 +11,7 @@
 
 #include "BoardData.h"
 #include "Util/NullLockProvider.h"
+#include "Util/StreamingBufferPool.h"
 #include "state/board/DIOConfig.h"
 #include "../../HAL/ADC.h"
 #include "FreeRTOS.h"
@@ -29,7 +30,19 @@ void InitializeBoardData(tBoardData* boardData) {
 
     memset(&boardData->AInLatest, 0, sizeof (AInSampleArray));
     boardData->AInLatest.Size = MAX_AIN_CHANNEL;
-    AInSampleList_Initialize(DEFAULT_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
+    // Use streaming buffer pool memory for sample pool (no heap fragmentation)
+    {
+        void* poolMem = NULL;
+        int16_t* freeMem = NULL;
+        uint32_t count = 0;
+        StreamingBufferPool_GetSamplePool(&poolMem, &freeMem, &count);
+        if (poolMem != NULL && count > 0) {
+            AInSampleList_InitializeExternal(poolMem, freeMem, count);
+        } else {
+            // Fallback to heap allocation if pool not available
+            AInSampleList_Initialize(DEFAULT_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
+        }
+    }
     boardData->AInState.Size = MAX_AIN_MOD;
 
     memset(&boardData->AOutLatest, 0, sizeof (AOutSampleArray));

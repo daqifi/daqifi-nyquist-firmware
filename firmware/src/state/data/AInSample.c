@@ -49,6 +49,7 @@ static int16_t* nextFree = NULL;
 
 static SemaphoreHandle_t poolMutex = NULL;
 static volatile bool poolActive = false;
+static bool poolOwnsMemory = false;  // false = external (StreamingBufferPool)
 
 void AInSampleList_Initialize(
                             size_t maxSize,
@@ -119,6 +120,7 @@ void AInSampleList_Initialize(
             configASSERT(0);
             return;
         }
+        poolOwnsMemory = true;
     }
 
     // Initialize object pool mutex
@@ -135,6 +137,42 @@ void AInSampleList_Initialize(
     freeHead = 0;  // Start at first entry
 
     poolActive = true;
+}
+
+void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
+                                       size_t maxSize) {
+    // Destroy previous resources if re-initializing
+    if (samplePool != NULL) {
+        AInSampleList_Destroy();
+    }
+
+    if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
+    if (maxSize > MAX_AIN_SAMPLE_COUNT) maxSize = MAX_AIN_SAMPLE_COUNT;
+
+    queueSize = maxSize;
+    analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
+    configASSERT(analogInputsQueue != NULL);
+
+    // Use externally provided memory (from StreamingBufferPool)
+    samplePool = (AInPublicSampleList_t*)poolMem;
+    nextFree = freeMem;
+    poolCapacity = maxSize;
+    poolOwnsMemory = false;
+
+    if (poolMutex == NULL) {
+        poolMutex = xSemaphoreCreateMutex();
+        configASSERT(poolMutex != NULL);
+    }
+
+    // Build free list chain
+    for (uint32_t i = 0; i < poolCapacity - 1; i++) {
+        nextFree[i] = (int16_t)(i + 1);
+    }
+    nextFree[poolCapacity - 1] = -1;
+    freeHead = 0;
+
+    poolActive = true;
+    LOG_I("Sample pool: %u samples (external memory)", (unsigned)poolCapacity);
 }
 
 /**
@@ -181,14 +219,16 @@ void AInSampleList_Destroy()
     if (poolMutex != NULL) {
         xSemaphoreTake(poolMutex, portMAX_DELAY);
     }
-    if (samplePool != NULL) {
-        vPortFree(samplePool);
-        samplePool = NULL;
+    if (poolOwnsMemory) {
+        if (samplePool != NULL) {
+            vPortFree(samplePool);
+        }
+        if (nextFree != NULL) {
+            vPortFree(nextFree);
+        }
     }
-    if (nextFree != NULL) {
-        vPortFree(nextFree);
-        nextFree = NULL;
-    }
+    samplePool = NULL;
+    nextFree = NULL;
     poolCapacity = 0;
     freeHead = -1;
     if (poolMutex != NULL) {

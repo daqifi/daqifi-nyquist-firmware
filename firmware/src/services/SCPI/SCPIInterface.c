@@ -39,6 +39,7 @@
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
 #include "Util/StreamingBufferPool.h"
+#include "state/data/AInSample.h"
 #include "../csv_encoder.h"
 #include "../JSON_Encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
@@ -2204,13 +2205,23 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
         }
 
-        // Re-partition the pool and swap buffer pointers.
+        // Determine sample pool count (0 = maximize with remaining space)
+        uint32_t poolCount = mc->samplePoolCount;
+
+        // Re-partition the unified pool and swap all buffer pointers.
+        StreamingBufferPool_Partition(usbSize, wifiSize, poolCount);
+
         uint8_t *usbBuf, *wifiBuf;
         uint32_t usbLen, wifiLen;
-        StreamingBufferPool_Partition(usbSize, wifiSize,
-                                      &usbBuf, &usbLen, &wifiBuf, &wifiLen);
+        StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
+        StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+
+        // Re-init sample pool with new region from unified pool
+        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
+        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
+        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount);
     }
 
     pRunTimeStreamConfig->IsEnabled = true;
@@ -2742,27 +2753,10 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
                                  &mc->wifiCircularBufSize,
                                  &mc->sdCircularBufSize);
 
-    // Calculate available heap for sample pool.
-    // Current pool memory will be freed on resize, so add it back.
-    size_t currentPoolBytes = AInSampleList_PoolCapacity()
-        * (sizeof(AInPublicSampleList_t) + sizeof(int16_t));
-    size_t available = xPortGetFreeHeapSize() + currentPoolBytes;
-    // Reserve 20KB for FreeRTOS internals and transient allocations
-    if (available > 20480) available -= 20480; else available = 0;
+    // Sample pool count = 0 means maximize with remaining pool space
+    mc->samplePoolCount = 0;
 
-    // Maximize sample pool with remaining heap
-    uint32_t poolCount = (uint32_t)(available / (sizeof(AInPublicSampleList_t) + sizeof(int16_t)));
-    if (poolCount < MIN_AIN_SAMPLE_COUNT) poolCount = MIN_AIN_SAMPLE_COUNT;
-    if (poolCount > MAX_AIN_SAMPLE_COUNT) poolCount = MAX_AIN_SAMPLE_COUNT;
-    mc->samplePoolCount = poolCount;
-
-    scpi_printf(context, "SD=%u\r\n", (unsigned)mc->sdCircularBufSize);
-    scpi_printf(context, "WiFi=%u\r\n", (unsigned)mc->wifiCircularBufSize);
-    scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
-    scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);
-
-    // Apply buffer sizes via streaming pool (no fragmentation risk).
-    // Wait for DMA, then re-partition and swap buffers.
+    // Apply: re-partition unified pool, swap all pointers
     {
         UsbCdcData_t* pUsb = UsbCdc_GetSettings();
         TickType_t t = xTaskGetTickCount();
@@ -2770,13 +2764,27 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
             vTaskDelay(1);
         }
+
+        StreamingBufferPool_Partition(mc->usbCircularBufSize,
+                                      mc->wifiCircularBufSize, 0);
+
         uint8_t *usbBuf, *wifiBuf;
         uint32_t usbLen, wifiLen;
-        StreamingBufferPool_Partition(mc->usbCircularBufSize, mc->wifiCircularBufSize,
-                                      &usbBuf, &usbLen, &wifiBuf, &wifiLen);
+        StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
+        StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+
+        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
+        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
+        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount);
+        mc->samplePoolCount = sCount;
     }
+
+    scpi_printf(context, "SD=%u\r\n", (unsigned)mc->sdCircularBufSize);
+    scpi_printf(context, "WiFi=%u\r\n", (unsigned)mc->wifiCircularBufSize);
+    scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
+    scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);
 
     return SCPI_RES_OK;
 }

@@ -93,6 +93,20 @@ extern "C" {
             const LockProvider* lockPrototype);
 
     /**
+     * @brief Initializes using externally-provided pool memory.
+     *
+     * Like AInSampleList_Initialize but uses caller-provided memory for
+     * the sample pool and free-list arrays (e.g., from StreamingBufferPool).
+     * The FreeRTOS queue is still heap-allocated.
+     *
+     * @param poolMem    Pre-allocated array of AInPublicSampleList_t[maxSize]
+     * @param freeMem    Pre-allocated array of int16_t[maxSize]
+     * @param maxSize    Number of samples the arrays can hold
+     */
+    void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
+                                           size_t maxSize);
+
+    /**
      * @brief Destroys the Analog Input Sample List queue.
      * 
      * This function frees all items in the queue and deletes the queue.

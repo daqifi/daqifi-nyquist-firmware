@@ -406,16 +406,9 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, u
  */
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
-        // Buffer resize is handled in SCPI_StartStreaming (USB task context)
-        // before IsEnabled is set. Here we just log the pool resize deferral.
-        if (gpRuntimeConfigStream->IsEnabled) {
-            MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-            if (mc->samplePoolCount > 0 &&
-                mc->samplePoolCount != AInSampleList_PoolCapacity()) {
-                LOG_I("Pool resize to %u deferred (runtime resize not yet supported)",
-                      (unsigned)mc->samplePoolCount);
-            }
-        }
+        // Buffer and sample pool resize is handled in SCPI_StartStreaming
+        // (USB task context) via StreamingBufferPool_Partition before
+        // IsEnabled is set.
 
         // Clear any stale samples from previous streaming session
         AInPublicSampleList_t* pStale;
