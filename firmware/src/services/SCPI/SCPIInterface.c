@@ -2168,9 +2168,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
-    // Auto-size circular buffers based on active interfaces (issue #229).
-    // Must run in USB task context (here) so the USB write buffer can be
-    // safely flushed and resized without disconnecting the user.
+    // Log optimal buffer sizes based on active interfaces (issue #229).
+    // Actual resize is not done here — resizing USB/WiFi circular buffers
+    // from a SCPI callback corrupts USB CDC state. Use SYST:MEM:USB:BUF
+    // and SYST:MEM:WIFI:BUF to resize explicitly when streaming is stopped.
     {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         bool isAutoMode = (mc->sdCircularBufSize == 0 &&
@@ -2178,24 +2179,17 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                            mc->usbCircularBufSize == 0 &&
                            mc->samplePoolCount == 0);
 
-        uint32_t usbSize, wifiSize;
-
         if (isAutoMode) {
-            uint32_t sdSize;
+            uint32_t usbSize, wifiSize, sdSize;
             Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdSize);
             LOG_I("Auto-balance: USB=%u WiFi=%u (SD=%u coherent, no resize)",
                   (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdSize);
         } else {
-            usbSize = mc->usbCircularBufSize ? mc->usbCircularBufSize
-                                             : USBCDC_CIRCULAR_BUFF_SIZE;
-            wifiSize = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
-                                               : WIFI_CIRCULAR_BUFF_SIZE;
-        }
-
-        // Log explicit config sizes (auto mode logs above in its own branch).
-        if (!isAutoMode) {
             LOG_I("Explicit buffers: USB=%u WiFi=%u",
-                  (unsigned)usbSize, (unsigned)wifiSize);
+                  (unsigned)(mc->usbCircularBufSize ? mc->usbCircularBufSize
+                                                    : USBCDC_CIRCULAR_BUFF_SIZE),
+                  (unsigned)(mc->wifiCircularBufSize ? mc->wifiCircularBufSize
+                                                     : WIFI_CIRCULAR_BUFF_SIZE));
         }
     }
 
@@ -2747,10 +2741,9 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
     scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);
 
-    // Buffer resize is deferred to next stream start or explicit
-    // SYST:MEM:USB:BUF / SYST:MEM:WIFI:BUF commands.
-    // Resizing from here would clear the USB write buffer, losing
-    // the scpi_printf response above.
+    // Buffer resize not applied here — resizing the USB circular buffer
+    // from a SCPI callback clears pending response data. Use the
+    // individual SYST:MEM:USB:BUF / SYST:MEM:WIFI:BUF setters to resize.
 
     return SCPI_RES_OK;
 }
