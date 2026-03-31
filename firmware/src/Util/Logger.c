@@ -584,7 +584,6 @@ void LogMessageFromISR(const char* format, ...) {
         xQueueSend(gIsrLogQueue, &entry, 0);
     }
 
-    #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
-    LogMessageICSP(entry.message, size);
-    #endif
+    /* No ICSP output here — the drain task calls LogMessageAdd which
+     * handles ICSP. Outputting here would cause duplicate UART lines. */
 }
