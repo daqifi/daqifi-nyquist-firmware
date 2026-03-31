@@ -73,8 +73,9 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
         return;
     }
 
-    /* Remaining space goes to sample pool */
-    uint32_t remaining = gPoolSize - bufTotal;
+    /* Remaining space goes to sample pool (minus alignment padding) */
+    uint32_t alignedBufTotal = (bufTotal + 3U) & ~3U;  /* align sample start */
+    uint32_t remaining = gPoolSize - alignedBufTotal;
     uint32_t maxSamples = (uint32_t)(remaining / SAMPLE_BYTES);
     if (maxSamples > MAX_AIN_SAMPLE_COUNT) maxSamples = MAX_AIN_SAMPLE_COUNT;
 
@@ -112,11 +113,26 @@ void StreamingBufferPool_GetSamplePool(void** poolBuf, int16_t** nextFreeBuf,
         *count = 0;
         return;
     }
-    /* Layout: [USB | WiFi | samplePool[count] | nextFree[count]] */
-    uint32_t offset = gUsbSize + gWifiSize;
-    *poolBuf = gPool + offset;
-    *nextFreeBuf = (int16_t*)(gPool + offset +
-                   gSampleCount * sizeof(AInPublicSampleList_t));
+    /* Layout: [USB | WiFi | <align> | samplePool[count] | nextFree[count]] */
+    uintptr_t base = (uintptr_t)gPool;
+    uintptr_t off = (uintptr_t)(gUsbSize + gWifiSize);
+
+    /* Align sample pool start to 4 bytes (uint32_t members in AInSample) */
+    off = (off + 3U) & ~3U;
+
+    uintptr_t nextFreeOff = off + gSampleCount * sizeof(AInPublicSampleList_t);
+    /* int16_t needs 2-byte alignment */
+    nextFreeOff = (nextFreeOff + 1U) & ~1U;
+
+    /* Bounds check */
+    uintptr_t end = nextFreeOff + gSampleCount * sizeof(int16_t);
+    if (end - (uintptr_t)gPool > gPoolSize) {
+        *poolBuf = NULL; *nextFreeBuf = NULL; *count = 0;
+        return;
+    }
+
+    *poolBuf = (void*)(base + off);
+    *nextFreeBuf = (int16_t*)(base + nextFreeOff);
     *count = gSampleCount;
 }
 

@@ -150,7 +150,14 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
     if (maxSize > MAX_AIN_SAMPLE_COUNT) maxSize = MAX_AIN_SAMPLE_COUNT;
 
-    // Block pool operations during reconfiguration
+    // Create mutex if first call (boot-time malloc)
+    if (poolMutex == NULL) {
+        poolMutex = xSemaphoreCreateMutex();
+        configASSERT(poolMutex != NULL);
+    }
+
+    // Serialize reconfiguration — blocks any in-flight alloc/free
+    xSemaphoreTake(poolMutex, portMAX_DELAY);
     poolActive = false;
 
     // Drain existing queue if present (reuse it to avoid runtime malloc)
@@ -192,11 +199,7 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     poolCapacity = maxSize;
     poolOwnsMemory = false;
     poolAllocCount = 0;
-
-    if (poolMutex == NULL) {
-        poolMutex = xSemaphoreCreateMutex();
-        configASSERT(poolMutex != NULL);
-    }
+    poolMaxAllocCount = 0;
 
     // Build free list chain
     for (uint32_t i = 0; i < poolCapacity - 1; i++) {
@@ -206,6 +209,8 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     freeHead = 0;
 
     poolActive = true;
+    xSemaphoreGive(poolMutex);
+
     LOG_I("Sample pool: %u samples (external memory)", (unsigned)poolCapacity);
 }
 

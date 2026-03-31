@@ -464,6 +464,16 @@ bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize) {
 void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     if (gpServerData == NULL || buf == NULL || size == 0) return;
 
+    // Wait for any pending TCP send before swapping buffers
+    TickType_t start = xTaskGetTickCount();
+    while (gpServerData->client.tcpSendPending) {
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
+            LOG_E("WiFi buffer swap: TCP send stuck, proceeding anyway");
+            break;
+        }
+        vTaskDelay(1);
+    }
+
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
 
     uint32_t oldSize = gpServerData->client.wCirbuf.buf_size;
