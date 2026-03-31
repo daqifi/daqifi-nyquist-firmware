@@ -179,11 +179,11 @@ extern "C" {
     #ifndef LOG_LEVEL_USB
         #define LOG_LEVEL_USB       LOG_LEVEL_DEBUG
     #endif
-    /* WARNING (issue #191): Never call LOG_E/LOG_I/LOG_D from ISR context.
-     * The Harmony USB driver clears MIPS EXL/ERL bits, defeating
-     * LogIsInISR(). Any LogMessage() call from that path takes the mutex
-     * inside an ISR → FreeRTOS configASSERT crash. Fix: deferred logging
-     * task (#191). Until then, ensure no log calls in true ISR handlers. */
+    /* NOTE: LOG_E/LOG_I/LOG_D must not be called from ISR context (they
+     * use a mutex). Use LOG_E_ISR/LOG_I_ISR/LOG_D_ISR instead — these
+     * queue via xQueueSendFromISR for deferred processing.
+     * LogIsInISR() uses FreeRTOS uxInterruptNesting (reliable even when
+     * Harmony clears MIPS EXL/ERL bits). See issue #191. */
     #ifndef LOG_LEVEL_SCPI
         #define LOG_LEVEL_SCPI      LOG_LEVEL_DEBUG
     #endif

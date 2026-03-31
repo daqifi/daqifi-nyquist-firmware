@@ -360,13 +360,14 @@ void LogMessageInit(void) {
 }
 
 /**
- * @brief Check if currently executing in ISR context (MIPS/PIC32).
+ * @brief Check if currently executing in ISR context.
+ *        Uses FreeRTOS port's uxInterruptNesting counter, which is
+ *        maintained by the assembly ISR wrapper (ISR_Support.h) and is
+ *        reliable even when Harmony clears MIPS EXL/ERL bits.
  * @return true if in ISR, false otherwise
  */
 static inline bool LogIsInISR(void) {
-    // MIPS Status register: EXL (bit 1) or ERL (bit 2) set means exception/ISR
-    uint32_t status = __builtin_mfc0(12, 0);
-    return (status & 0x06) != 0;
+    return uxInterruptNesting != 0;
 }
 
 /**
@@ -391,7 +392,8 @@ static int LogMessageAdd(const char *message) {
     if ((message_len == 0) || (message_len >= LOG_MESSAGE_SIZE))
         return 0;
 
-    // ISR context: cannot use mutex or task APIs - only ICSP output
+    // ISR context: cannot use mutex — only ICSP output.
+    // Use LOG_E_ISR/LOG_I_ISR/LOG_D_ISR for deferred ISR logging.
     if (LogIsInISR()) {
         #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
         LogMessageICSP(message, message_len);
@@ -574,13 +576,11 @@ void LogMessageFromISR(const char* format, ...) {
         size += 2;
     }
 
-    /* Detect ISR vs task context and use appropriate queue API */
     if (LogIsInISR()) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         xQueueSendFromISR(gIsrLogQueue, &entry, &xHigherPriorityTaskWoken);
         portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
     } else {
-        /* From task context — non-blocking send (drop if full) */
         xQueueSend(gIsrLogQueue, &entry, 0);
     }
 
