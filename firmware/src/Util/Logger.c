@@ -152,6 +152,11 @@ static void InitICSPLogging(void);
 static void LogMessageICSP(const char* buffer, int len);
 #endif
 static int LogMessageAdd(const char *message);
+static inline bool LogIsInISR(void);
+
+/* ISR deferred queue — initialized in LogIsrInit(), used by LogMessage's
+ * ISR-aware early path and the drain task. */
+static QueueHandle_t gIsrLogQueue = NULL;
 
 
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
@@ -294,20 +299,42 @@ static int LogMessageFormatImpl(const char* format, va_list args)
 
 /**
  * @brief Adds a formatted log message to the buffer.
- *        Accepts printf-style formatting.
- * 
- * @param format Format string (printf-style)
- * @param ...    Variable arguments
+ *        ISR-aware: detects context automatically.
+ *        - Task context: full vsnprintf formatting, mutex-protected buffer.
+ *        - ISR context: copies raw format string to deferred queue (no
+ *          vsnprintf — too heavy for ISR stack). Format args are ignored.
+ *
+ * @param format Format string (printf-style; args ignored in ISR context)
+ * @param ...    Variable arguments (only used from task context)
  * @return int   Number of characters written, or 0 on failure
  */
 int LogMessage(const char* format, ...)
 {
-    //UNUSED(format);
+    if (format == NULL) return 0;
+
+    /* ISR path: minimal work — copy string, queue, return */
+    if (LogIsInISR() && gIsrLogQueue != NULL) {
+        LogEntry entry;
+        size_t len = strlen(format);
+        if (len == 0) return 0;
+        if (len > LOG_MESSAGE_SIZE - 3) len = LOG_MESSAGE_SIZE - 3;
+        memcpy(entry.message, format, len);
+        entry.message[len] = '\r';
+        entry.message[len + 1] = '\n';
+        entry.message[len + 2] = '\0';
+
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xQueueSendFromISR(gIsrLogQueue, &entry, &xHigherPriorityTaskWoken);
+        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+        return (int)len;
+    }
+
+    /* Task path: full vsnprintf formatting */
     va_list args;
     va_start(args, format);
     int result = LogMessageFormatImpl(format, args);
     va_end(args);
-    
+
     return result;
 }
 
@@ -507,7 +534,6 @@ void LogMessageClear(void) {
  * This avoids the mutex-in-ISR crash (issue #191).
  */
 
-static QueueHandle_t gIsrLogQueue = NULL;
 static TaskHandle_t  gIsrLogTaskHandle = NULL;
 
 #define LOG_ISR_TASK_STACK  128   /* words (512 bytes — only does queue drain) */
@@ -545,56 +571,5 @@ void LogIsrInit(void) {
     }
 }
 
-/**
- * @brief ISR-safe logging entry point.
- *        In ISR context: only queues via xQueueSendFromISR (no formatting,
- *        no I/O, no stack-heavy operations). Format string is copied raw.
- *        In task context: formats with vsnprintf then queues.
- *        The drain task forwards messages to the main log buffer.
- */
-void LogMessageFromISR(const char* format, ...) {
-    if (format == NULL || gIsrLogQueue == NULL) return;
-
-    LogEntry entry;
-
-    if (LogIsInISR()) {
-        /* ISR path: minimal work only. Copy format string as-is (no
-         * vsnprintf — too heavy for ISR stack). Callers that need
-         * formatted output should pre-format or use static strings. */
-        size_t len = strlen(format);
-        if (len == 0) return;
-        if (len > LOG_MESSAGE_SIZE - 3) len = LOG_MESSAGE_SIZE - 3;
-        memcpy(entry.message, format, len);
-        entry.message[len] = '\r';
-        entry.message[len + 1] = '\n';
-        entry.message[len + 2] = '\0';
-
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        xQueueSendFromISR(gIsrLogQueue, &entry, &xHigherPriorityTaskWoken);
-        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
-    } else {
-        /* Task path: full vsnprintf formatting is safe */
-        va_list args;
-        va_start(args, format);
-        int size = vsnprintf(entry.message, LOG_MESSAGE_SIZE - 2, format, args);
-        va_end(args);
-
-        if (size <= 0) return;
-        if (size > (int)(LOG_MESSAGE_SIZE - 3)) size = LOG_MESSAGE_SIZE - 3;
-
-        /* Ensure \r\n termination */
-        if (size >= 2 && entry.message[size-2] == '\r' && entry.message[size-1] == '\n') {
-            /* already terminated */
-        } else if (size >= 1 && entry.message[size-1] == '\n') {
-            entry.message[size-1] = '\r';
-            entry.message[size] = '\n';
-            entry.message[size+1] = '\0';
-        } else {
-            entry.message[size] = '\r';
-            entry.message[size+1] = '\n';
-            entry.message[size+2] = '\0';
-        }
-
-        xQueueSend(gIsrLogQueue, &entry, 0);
-    }
-}
+/* LogMessageFromISR removed — LogMessage() is now ISR-aware via
+ * uxInterruptNesting check. Use LOG_E/LOG_I/LOG_D from any context. */

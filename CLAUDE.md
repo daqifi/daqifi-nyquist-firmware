@@ -894,7 +894,7 @@ SYST:LOG:LEV:ALL 1         # Reset all modules to ERROR (default)
 
 All modules are compiled at DEBUG ceiling (all LOG_E/LOG_I/LOG_D calls present in binary) and have full runtime control up to DEBUG. The response shows the actual level set and the ceiling.
 
-**ISR-safe logging:** Use `LOG_E_ISR()`, `LOG_I_ISR()`, `LOG_D_ISR()` in ISR context (e.g. USB event handlers). These queue messages via `xQueueSendFromISR` for deferred processing by a low-priority drain task — no mutex, no crash. Regular `LOG_E/LOG_I/LOG_D` must NOT be called from ISR context.
+**ISR-safe logging:** `LOG_E`/`LOG_I`/`LOG_D` are ISR-aware — they detect ISR context via FreeRTOS `uxInterruptNesting` and automatically route through a deferred queue (`xQueueSendFromISR` + drain task). No separate ISR macros needed. Caveat: format args (`%d`, `%u`, etc.) are ignored in ISR context to avoid `vsnprintf` on the ISR stack — use static strings in ISR handlers.
 
 Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 

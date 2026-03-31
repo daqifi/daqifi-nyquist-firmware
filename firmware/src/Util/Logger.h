@@ -179,11 +179,10 @@ extern "C" {
     #ifndef LOG_LEVEL_USB
         #define LOG_LEVEL_USB       LOG_LEVEL_DEBUG
     #endif
-    /* NOTE: LOG_E/LOG_I/LOG_D must not be called from ISR context (they
-     * use a mutex). Use LOG_E_ISR/LOG_I_ISR/LOG_D_ISR instead — these
-     * queue via xQueueSendFromISR for deferred processing.
-     * LogIsInISR() uses FreeRTOS uxInterruptNesting (reliable even when
-     * Harmony clears MIPS EXL/ERL bits). See issue #191. */
+    /* LOG_E/LOG_I/LOG_D are ISR-aware: they detect ISR context via
+     * FreeRTOS uxInterruptNesting and route through a deferred queue
+     * (no mutex, no vsnprintf in ISR). Format args are ignored in ISR
+     * context — use static strings. See issue #191. */
     #ifndef LOG_LEVEL_SCPI
         #define LOG_LEVEL_SCPI      LOG_LEVEL_DEBUG
     #endif
@@ -263,21 +262,6 @@ void LogMessageInit(void);
 void LogMessageClear(void);
 
 /**
- * @brief ISR-safe logging — queues a message for deferred processing.
- *        Safe to call from any context (ISR or task).
- *
- *        ISR context: copies format string as-is (no vsnprintf — too
- *        heavy for ISR stack). Use static strings, not format args.
- *        Task context: full printf-style formatting via vsnprintf.
- *
- *        Messages are drained to the main log buffer by a low-priority task.
- *
- * @param format Printf-style format string (args ignored in ISR context)
- * @param ...    Variable arguments (only used from task context)
- */
-void LogMessageFromISR(const char* format, ...) __attribute__((format(printf, 1, 2)));
-
-/**
  * @brief Initialize the ISR log queue and deferred drain task.
  *        Called from LogMessageInit(). Safe to call multiple times.
  */
@@ -325,26 +309,10 @@ void LogIsrInit(void);
     #define LOG_D(...) LOG_NOOP(__VA_ARGS__)
 #endif
 
-// ISR-safe logging via deferred queue. Use in ISR handlers or callbacks
-// that may run in ISR context (e.g. USB event handlers).
-// Same level gating as LOG_E/LOG_I/LOG_D but routes through xQueueSendFromISR.
-#if (LOG_LVL >= LOG_LEVEL_ERROR)
-    #define LOG_E_ISR(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR) LogMessageFromISR(fmt, ##__VA_ARGS__); } while(0)
-#else
-    #define LOG_E_ISR(...) LOG_NOOP(__VA_ARGS__)
-#endif
-
-#if (LOG_LVL >= LOG_LEVEL_INFO)
-    #define LOG_I_ISR(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO) LogMessageFromISR(fmt, ##__VA_ARGS__); } while(0)
-#else
-    #define LOG_I_ISR(...) LOG_NOOP(__VA_ARGS__)
-#endif
-
-#if (LOG_LVL >= LOG_LEVEL_DEBUG)
-    #define LOG_D_ISR(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG) LogMessageFromISR(fmt, ##__VA_ARGS__); } while(0)
-#else
-    #define LOG_D_ISR(...) LOG_NOOP(__VA_ARGS__)
-#endif
+// NOTE: LOG_E/LOG_I/LOG_D are ISR-aware — they automatically detect ISR
+// context via uxInterruptNesting and route through the deferred queue.
+// No separate ISR macros needed. Format args are ignored in ISR context
+// (raw format string is logged). Use static strings in ISR handlers.
 
 
 #ifdef	__cplusplus

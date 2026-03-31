@@ -885,10 +885,6 @@ static scpi_result_t SCPI_SysLogTest(scpi_t * context) {
         LOG_D("Test message %d", i);
     }
 
-    // Test ISR-safe deferred logging (via queue, not mutex)
-    LOG_E_ISR("Test ISR error message (deferred)");
-    LOG_I_ISR("Test ISR info message (deferred)");
-
     context->interface->write(context, "Added test log messages\n", 24);
 
     return SCPI_RES_OK;
