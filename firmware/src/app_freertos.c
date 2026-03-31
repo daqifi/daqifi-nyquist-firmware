@@ -11,6 +11,9 @@
 #include "HAL/DAC7718/DAC7718.h"
 #include "Util/Logger.h"
 #include "Util/CoherentPool.h"
+#include "Util/StreamingBufferPool.h"
+#include "services/UsbCdc/UsbCdc.h"
+#include "services/wifi_services/wifi_tcp_server.h"
 
 /*
  * SPI Coordination Framework for Future Extensibility
@@ -460,6 +463,7 @@ void app_SystemInit() {
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     CoherentPool_Init();
+    StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE);
     InitializeBoardData(gpBoardData);
 
     // Apply persisted voltage precision to streaming runtime config

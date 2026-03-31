@@ -206,6 +206,15 @@ extern "C" {
      */
     bool UsbCdc_ResizeWriteBuffer(uint32_t newSize);
 
+    /**
+     * Swap the USB CDC circular write buffer to pool-managed memory.
+     * Resets the buffer (discards pending data). Called by StreamingBufferPool
+     * after partitioning.
+     * @param buf Pointer to buffer memory (must remain valid)
+     * @param size Buffer size in bytes
+     */
+    void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size);
+
 #ifdef	__cplusplus
 }
 #endif

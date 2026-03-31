@@ -38,6 +38,7 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#include "Util/StreamingBufferPool.h"
 #include "../csv_encoder.h"
 #include "../JSON_Encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
@@ -2168,10 +2169,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
-    // Log optimal buffer sizes based on active interfaces (issue #229).
-    // Actual resize is not done here — resizing USB/WiFi circular buffers
-    // from a SCPI callback corrupts USB CDC state. Use SYST:MEM:USB:BUF
-    // and SYST:MEM:WIFI:BUF to resize explicitly when streaming is stopped.
+    // Auto-size and apply circular buffer sizes via streaming pool (issue #229).
+    // The pool is one contiguous allocation — re-partitioning never fails.
     {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         bool isAutoMode = (mc->sdCircularBufSize == 0 &&
@@ -2179,18 +2178,39 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                            mc->usbCircularBufSize == 0 &&
                            mc->samplePoolCount == 0);
 
+        uint32_t usbSize, wifiSize;
+
         if (isAutoMode) {
-            uint32_t usbSize, wifiSize, sdSize;
+            uint32_t sdSize;
             Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdSize);
-            LOG_I("Auto-balance: USB=%u WiFi=%u (SD=%u coherent, no resize)",
+            LOG_I("Auto-balance: USB=%u WiFi=%u (SD=%u coherent)",
                   (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdSize);
         } else {
+            usbSize = mc->usbCircularBufSize ? mc->usbCircularBufSize
+                                             : USBCDC_CIRCULAR_BUFF_SIZE;
+            wifiSize = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
+                                               : WIFI_CIRCULAR_BUFF_SIZE;
             LOG_I("Explicit buffers: USB=%u WiFi=%u",
-                  (unsigned)(mc->usbCircularBufSize ? mc->usbCircularBufSize
-                                                    : USBCDC_CIRCULAR_BUFF_SIZE),
-                  (unsigned)(mc->wifiCircularBufSize ? mc->wifiCircularBufSize
-                                                     : WIFI_CIRCULAR_BUFF_SIZE));
+                  (unsigned)usbSize, (unsigned)wifiSize);
         }
+
+        // Wait for any in-flight USB DMA write before swapping buffers.
+        {
+            TickType_t t = xTaskGetTickCount();
+            UsbCdcData_t* pUsb = UsbCdc_GetSettings();
+            while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+                if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
+                vTaskDelay(1);
+            }
+        }
+
+        // Re-partition the pool and swap buffer pointers.
+        uint8_t *usbBuf, *wifiBuf;
+        uint32_t usbLen, wifiLen;
+        StreamingBufferPool_Partition(usbSize, wifiSize,
+                                      &usbBuf, &usbLen, &wifiBuf, &wifiLen);
+        UsbCdc_SetWriteBuffer(usbBuf, usbLen);
+        wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
     }
 
     pRunTimeStreamConfig->IsEnabled = true;
@@ -2741,9 +2761,22 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
     scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);
 
-    // Buffer resize not applied here — resizing the USB circular buffer
-    // from a SCPI callback clears pending response data. Use the
-    // individual SYST:MEM:USB:BUF / SYST:MEM:WIFI:BUF setters to resize.
+    // Apply buffer sizes via streaming pool (no fragmentation risk).
+    // Wait for DMA, then re-partition and swap buffers.
+    {
+        UsbCdcData_t* pUsb = UsbCdc_GetSettings();
+        TickType_t t = xTaskGetTickCount();
+        while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+            if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
+            vTaskDelay(1);
+        }
+        uint8_t *usbBuf, *wifiBuf;
+        uint32_t usbLen, wifiLen;
+        StreamingBufferPool_Partition(mc->usbCircularBufSize, mc->wifiCircularBufSize,
+                                      &usbBuf, &usbLen, &wifiBuf, &wifiLen);
+        UsbCdc_SetWriteBuffer(usbBuf, usbLen);
+        wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+    }
 
     return SCPI_RES_OK;
 }

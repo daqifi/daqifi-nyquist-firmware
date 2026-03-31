@@ -97,6 +97,9 @@ bool CircularBuf_Resize(CircularBuf_t* cirbuf, uint32_t newSize)
 
     // Commit-on-success: allocate new buffer before freeing old.
     // If alloc fails, the old buffer remains usable.
+    // NOTE: On constrained heaps this may fail even if total free > newSize
+    // (fragmentation). Callers needing free-then-alloc should manage the
+    // buffer memory directly and check xPortGetFreeHeapSize() first.
     uint8_t* newBuf = OSAL_Malloc(newSize);
     if (newBuf == NULL) {
         return false;  // Old buffer still valid

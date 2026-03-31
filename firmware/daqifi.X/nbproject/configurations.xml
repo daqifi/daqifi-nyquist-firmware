@@ -1024,6 +1024,7 @@
         <itemPath>../src/Util/NullLockProvider.c</itemPath>
         <itemPath>../src/Util/StackList.c</itemPath>
         <itemPath>../src/Util/StringFormatters.c</itemPath>
+        <itemPath>../src/Util/StreamingBufferPool.c</itemPath>
       </logicalFolder>
       <logicalFolder name="wolfcrypt" displayName="wolfcrypt" projectFiles="true">
         <logicalFolder name="port" displayName="port" projectFiles="true">
@@ -1702,6 +1703,22 @@
         </C32Global>
       </item>
       <item path="../src/Util/StackList.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/StreamingBufferPool.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>
@@ -4385,6 +4402,22 @@
         <C32Global>
         </C32Global>
       </item>
+      <item path="../src/Util/StreamingBufferPool.c" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
       <item path="../src/Util/StringFormatters.c" ex="false" overriding="false">
         <C32>
         </C32>
@@ -7038,6 +7071,22 @@
         </C32Global>
       </item>
       <item path="../src/Util/StackList.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/Util/StreamingBufferPool.c" ex="false" overriding="false">
         <C32>
         </C32>
         <C32-AR>

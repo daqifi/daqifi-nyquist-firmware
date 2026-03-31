@@ -3,6 +3,7 @@
 #include "wifi_tcp_server.h"
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
+#include "Util/StreamingBufferPool.h"
 #include "socket.h"
 
 #ifndef min
@@ -320,9 +321,12 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         microrl_set_echo(&gpServerData->client.console, false);
         microrl_set_execute_callback(&gpServerData->client.console, microrl_commandComplete);
         gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface, &gpServerData->client);
-        CircularBuf_Init(&gpServerData->client.wCirbuf,
-                CircularBufferToTcpWrite,
-                (WIFI_CIRCULAR_BUFF_SIZE));
+        {
+            uint8_t* buf; uint32_t len;
+            StreamingBufferPool_GetWifi(&buf, &len);
+            CircularBuf_InitExternal(&gpServerData->client.wCirbuf,
+                CircularBufferToTcpWrite, buf, len);
+        }
         gpServerData->client.wMutex = xSemaphoreCreateMutex();
         xSemaphoreGive(gpServerData->client.wMutex);
         isInitDone = true;
@@ -453,25 +457,24 @@ bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize) {
     if (newSize < WIFI_WBUFFER_SIZE) newSize = WIFI_WBUFFER_SIZE;
     if (gpServerData->client.wCirbuf.buf_size == newSize) return true;
 
-    // Wait for any pending TCP send to complete
-    TickType_t start = xTaskGetTickCount();
-    while (gpServerData->client.tcpSendPending) {
-        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
-            LOG_E("WiFi resize aborted: TCP send stuck");
-            return false;
-        }
-        vTaskDelay(1);
-    }
+    // Pool-managed — actual swap via wifi_tcp_server_SetWriteBuffer
+    return true;
+}
+
+void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
+    if (gpServerData == NULL || buf == NULL || size == 0) return;
 
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
-    CircularBuf_Reset(&gpServerData->client.wCirbuf);  // Discard buffered data
-    bool ok = CircularBuf_Resize(&gpServerData->client.wCirbuf, newSize);
+
+    uint32_t oldSize = gpServerData->client.wCirbuf.buf_size;
+    gpServerData->client.wCirbuf.buf_ptr = buf;
+    gpServerData->client.wCirbuf.buf_size = size;
+    gpServerData->client.wCirbuf.insertPtr = buf;
+    gpServerData->client.wCirbuf.removePtr = buf;
+    gpServerData->client.wCirbuf.totalBytes = 0;
+    gpServerData->client.wCirbuf._ownsMemory = false;
+
     xSemaphoreGive(gpServerData->client.wMutex);
 
-    if (ok) {
-        LOG_I("WiFi circular buffer resized to %u", (unsigned)newSize);
-    } else {
-        LOG_E("WiFi circular buffer resize failed (wanted %u)", (unsigned)newSize);
-    }
-    return ok;
+    LOG_I("WiFi circular buffer: %u -> %u bytes", (unsigned)oldSize, (unsigned)size);
 }
