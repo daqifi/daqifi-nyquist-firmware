@@ -176,6 +176,10 @@ extern "C" {
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;
 
+    #if (LOG_ONCE_COUNT > 32)
+        #error "LogOnceBit_t exceeds 32 entries; gLogOneShot is uint32_t"
+    #endif
+
     /**
      * @brief One-shot bitmask — bit N set means LOG_x_ONCE(N,...) has
      *        already fired and is suppressed until reset.
@@ -211,6 +215,10 @@ extern "C" {
         /* Add new entries above this line */
         LOG_SESSION_COUNT                  /**< Must be <= 32 */
     } LogSessionBit_t;
+
+    #if (LOG_SESSION_COUNT > 32)
+        #error "LogSessionBit_t exceeds 32 entries; gSessionOneShot is uint32_t"
+    #endif
 
     /**
      * @brief Session-scoped one-shot bitmask — bit N set means
