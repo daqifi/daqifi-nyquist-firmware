@@ -29,8 +29,9 @@ extern "C" {
 #define STREAMING_WIFI_MIN  1400   /* SOCKET_BUFFER_MAX_LENGTH */
 
 /** Reserve for FreeRTOS task stacks, queues, kernel, WiFi driver, etc.
- *  Everything that isn't in the pool. */
-#define STREAMING_POOL_HEAP_RESERVE (68U * 1024U)
+ *  Everything that isn't in the pool. Must leave enough for all task
+ *  creation after pool allocation (~55KB stacks + ~18KB WiFi driver). */
+#define STREAMING_POOL_HEAP_RESERVE (76U * 1024U)
 
 /**
  * Allocate the pool (all available heap minus reserve) and set default
