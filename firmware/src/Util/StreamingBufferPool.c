@@ -30,7 +30,9 @@ bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
               (unsigned)freeHeap, (unsigned)STREAMING_POOL_HEAP_RESERVE);
         return false;
     }
-    uint32_t poolSize = (uint32_t)(freeHeap - STREAMING_POOL_HEAP_RESERVE);
+    /* Subtract reserve + 2KB for heap_4 metadata/alignment overhead.
+     * This ensures pvPortMalloc won't fail and trigger the fatal hook. */
+    uint32_t poolSize = (uint32_t)(freeHeap - STREAMING_POOL_HEAP_RESERVE - 2048);
 
     gPool = (uint8_t*)OSAL_Malloc(poolSize);
     if (gPool == NULL) {

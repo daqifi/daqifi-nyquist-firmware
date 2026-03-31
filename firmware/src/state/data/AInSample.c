@@ -147,23 +147,51 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
         return;
     }
 
-    // Destroy previous resources if re-initializing
-    if (samplePool != NULL) {
-        AInSampleList_Destroy();
-    }
-
     if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
     if (maxSize > MAX_AIN_SAMPLE_COUNT) maxSize = MAX_AIN_SAMPLE_COUNT;
 
-    queueSize = maxSize;
-    analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
-    configASSERT(analogInputsQueue != NULL);
+    // Block pool operations during reconfiguration
+    poolActive = false;
 
-    // Use externally provided memory (from StreamingBufferPool)
+    // Drain existing queue if present (reuse it to avoid runtime malloc)
+    if (analogInputsQueue != NULL) {
+        AInPublicSampleList_t* pStale;
+        while (xQueueReceive(analogInputsQueue, &pStale, 0) == pdTRUE) {
+            // Drain — old pool memory is being replaced
+        }
+
+        // Reuse existing queue when new size fits (avoids runtime malloc).
+        // Only recreate if new size exceeds current capacity — this can only
+        // happen via explicit SYST:MEM:SAMP:POOL > boot default.
+        if (maxSize > queueSize) {
+            size_t needed = maxSize * sizeof(AInPublicSampleList_t*) + 80;
+            size_t freeHeap = xPortGetFreeHeapSize();
+            if (freeHeap < needed + 1024) {
+                LOG_E("Sample queue resize skipped: need %u, heap free %u",
+                      (unsigned)needed, (unsigned)freeHeap);
+                maxSize = queueSize;  // Keep old queue, clamp pool to fit
+            } else {
+                LOG_I("Sample queue resize: %u -> %u slots (heap free %u)",
+                      (unsigned)queueSize, (unsigned)maxSize, (unsigned)freeHeap);
+                vQueueDelete(analogInputsQueue);
+                analogInputsQueue = xQueueCreate(maxSize, sizeof(AInPublicSampleList_t*));
+                configASSERT(analogInputsQueue != NULL);
+                queueSize = maxSize;
+            }
+        }
+    } else {
+        // First init — must create queue (boot-time malloc, heap is fresh)
+        queueSize = maxSize;
+        analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
+        configASSERT(analogInputsQueue != NULL);
+    }
+
+    // Swap to externally provided memory (from StreamingBufferPool)
     samplePool = (AInPublicSampleList_t*)poolMem;
     nextFree = freeMem;
     poolCapacity = maxSize;
     poolOwnsMemory = false;
+    poolAllocCount = 0;
 
     if (poolMutex == NULL) {
         poolMutex = xSemaphoreCreateMutex();
