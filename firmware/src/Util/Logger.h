@@ -262,6 +262,26 @@ void LogMessageInit(void);
  */
 void LogMessageClear(void);
 
+/**
+ * @brief ISR-safe logging — queues a pre-formatted message for deferred
+ *        processing. Safe to call from any context (ISR or task).
+ *        Uses xQueueSendFromISR when in ISR, xQueueSend otherwise.
+ *        Messages are drained to the main log buffer by a low-priority task.
+ *
+ * @param format Printf-style format string
+ * @param ...    Variable arguments matching format specifiers
+ */
+void LogMessageFromISR(const char* format, ...) __attribute__((format(printf, 1, 2)));
+
+/**
+ * @brief Initialize the ISR log queue and deferred drain task.
+ *        Called from LogMessageInit(). Safe to call multiple times.
+ */
+void LogIsrInit(void);
+
+/** @brief Depth of the ISR log queue (number of messages) */
+#define LOG_ISR_QUEUE_DEPTH 8
+
 // ── Per-file compile-time ceiling ────────────────────────────────
 // Each .c file defines LOG_LVL to its module's compile-time ceiling
 // BEFORE including Logger.h (e.g. #define LOG_LVL LOG_LEVEL_WIFI).
@@ -299,6 +319,27 @@ void LogMessageClear(void);
     #define LOG_D(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG) LogMessage(fmt, ##__VA_ARGS__); } while(0)
 #else
     #define LOG_D(...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+// ISR-safe logging via deferred queue. Use in ISR handlers or callbacks
+// that may run in ISR context (e.g. USB event handlers).
+// Same level gating as LOG_E/LOG_I/LOG_D but routes through xQueueSendFromISR.
+#if (LOG_LVL >= LOG_LEVEL_ERROR)
+    #define LOG_E_ISR(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR) LogMessageFromISR(fmt, ##__VA_ARGS__); } while(0)
+#else
+    #define LOG_E_ISR(...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+#if (LOG_LVL >= LOG_LEVEL_INFO)
+    #define LOG_I_ISR(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO) LogMessageFromISR(fmt, ##__VA_ARGS__); } while(0)
+#else
+    #define LOG_I_ISR(...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+#if (LOG_LVL >= LOG_LEVEL_DEBUG)
+    #define LOG_D_ISR(fmt,...) do { if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG) LogMessageFromISR(fmt, ##__VA_ARGS__); } while(0)
+#else
+    #define LOG_D_ISR(...) LOG_NOOP(__VA_ARGS__)
 #endif
 
 

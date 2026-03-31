@@ -892,7 +892,9 @@ SYST:LOG:LEV?              # Dump all modules with levels and ceilings
 SYST:LOG:LEV:ALL 1         # Reset all modules to ERROR (default)
 ```
 
-All modules are compiled at DEBUG ceiling (all LOG_E/LOG_I/LOG_D calls present in binary) and have full runtime control up to DEBUG. The response shows the actual level set and the ceiling. WARNING: Never call log macros from ISR context — LogIsInISR() detection fails when Harmony clears MIPS EXL/ERL bits (issue #191). Fix pending: deferred logging task.
+All modules are compiled at DEBUG ceiling (all LOG_E/LOG_I/LOG_D calls present in binary) and have full runtime control up to DEBUG. The response shows the actual level set and the ceiling.
+
+**ISR-safe logging:** Use `LOG_E_ISR()`, `LOG_I_ISR()`, `LOG_D_ISR()` in ISR context (e.g. USB event handlers). These queue messages via `xQueueSendFromISR` for deferred processing by a low-priority drain task — no mutex, no crash. Regular `LOG_E/LOG_I/LOG_D` must NOT be called from ISR context.
 
 Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 

@@ -1,9 +1,6 @@
-/* WARNING: LOG_LEVEL_USB must stay at LOG_LEVEL_ERROR (issue #191).
- * USB event handlers run in ISR context where MIPS EXL/ERL bits are
- * cleared by the Harmony driver, defeating LogIsInISR().  LOG_I/LOG_D
- * calls from that path attempt a mutex take inside an ISR, triggering
- * a FreeRTOS configASSERT crash.  A compile-time guard in Logger.h
- * enforces this until a deferred-logging fix is implemented. */
+/* USB event handlers run in ISR context — use LOG_FROM_ISR() instead of
+ * LOG_E/LOG_I/LOG_D in UsbCdc_CDCEventHandler and UsbCdc_EventHandler.
+ * See issue #191 for background. */
 #define LOG_LVL LOG_LEVEL_USB
 #define LOG_MODULE LOG_MODULE_USB
 #include "UsbCdc.h"
@@ -202,8 +199,8 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             if (val.handle == pUsbCdcDataObject->writeTransferHandle) {
                 // Log warning if actual transferred length differs from requested
                 if (val.length != pUsbCdcDataObject->writeBufferLength) {
-                    LOG_E("USB write length mismatch: expected %u, got %u",
-                          (unsigned)pUsbCdcDataObject->writeBufferLength, (unsigned)val.length);
+                    LOG_E_ISR("USB write length mismatch: expected %u, got %u",
+                              (unsigned)pUsbCdcDataObject->writeBufferLength, (unsigned)val.length);
                 }
                 // Always finalize to prevent stuck state, even on partial write
                 UsbCdc_FinalizeWrite(pUsbCdcDataObject);

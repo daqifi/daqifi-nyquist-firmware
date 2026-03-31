@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <xc.h>
+#include "queue.h"
+#include "task.h"
 #include "state/data/BoardData.h"
 
 
@@ -347,6 +349,9 @@ void LogMessageInit(void) {
         logBuffer.count = 0;
         logBuffer.mutex = newMutex;
         taskEXIT_CRITICAL();
+
+        // Initialize ISR deferred logging (must be after mutex is set)
+        LogIsrInit();
     } else {
         // Another thread won - discard our mutex
         taskEXIT_CRITICAL();
@@ -492,4 +497,94 @@ void LogMessageClear(void) {
         logBuffer.count = 0;
         xSemaphoreGive(logBuffer.mutex);
     }
+}
+
+/* ── ISR-safe deferred logging ───────────────────────────────────
+ * Messages from ISR context are queued via xQueueSendFromISR and
+ * drained into the main log buffer by a low-priority task.
+ * This avoids the mutex-in-ISR crash (issue #191).
+ */
+
+static QueueHandle_t gIsrLogQueue = NULL;
+static TaskHandle_t  gIsrLogTaskHandle = NULL;
+
+#define LOG_ISR_TASK_STACK  128   /* words (512 bytes — only does queue drain) */
+#define LOG_ISR_TASK_PRIO   1     /* lowest priority, runs when nothing else does */
+
+/**
+ * @brief Deferred ISR log drain task.
+ *        Blocks on the ISR queue and forwards messages to the main log buffer.
+ */
+static void LogIsrDrainTask(void* pvParameters) {
+    (void)pvParameters;
+    LogEntry entry;
+
+    for (;;) {
+        if (xQueueReceive(gIsrLogQueue, &entry, portMAX_DELAY) == pdTRUE) {
+            /* LogMessageAdd handles mutex, ICSP output, etc. */
+            LogMessageAdd(entry.message);
+        }
+    }
+}
+
+/**
+ * @brief Initialize the ISR log queue and drain task (idempotent).
+ */
+void LogIsrInit(void) {
+    if (gIsrLogQueue != NULL) return;
+
+    gIsrLogQueue = xQueueCreate(LOG_ISR_QUEUE_DEPTH, sizeof(LogEntry));
+    if (gIsrLogQueue == NULL) return;
+
+    xTaskCreate(LogIsrDrainTask, "logISR", LOG_ISR_TASK_STACK,
+                NULL, LOG_ISR_TASK_PRIO, &gIsrLogTaskHandle);
+}
+
+/**
+ * @brief ISR-safe logging entry point.
+ *        Formats the message and enqueues it for deferred processing.
+ *        Works from both ISR and task context.
+ */
+void LogMessageFromISR(const char* format, ...) {
+    if (format == NULL || gIsrLogQueue == NULL) return;
+
+    LogEntry entry;
+    va_list args;
+    va_start(args, format);
+
+    /* Format into stack-local entry, reserve room for \r\n\0 */
+    int size = vsnprintf(entry.message, LOG_MESSAGE_SIZE - 2, format, args);
+    va_end(args);
+
+    if (size <= 0) return;
+    if (size > (int)(LOG_MESSAGE_SIZE - 3)) size = LOG_MESSAGE_SIZE - 3;
+
+    /* Ensure \r\n termination */
+    if (size >= 2 && entry.message[size-2] == '\r' && entry.message[size-1] == '\n') {
+        /* already terminated */
+    } else if (size >= 1 && entry.message[size-1] == '\n') {
+        entry.message[size-1] = '\r';
+        entry.message[size] = '\n';
+        entry.message[size+1] = '\0';
+        size++;
+    } else {
+        entry.message[size] = '\r';
+        entry.message[size+1] = '\n';
+        entry.message[size+2] = '\0';
+        size += 2;
+    }
+
+    /* Detect ISR vs task context and use appropriate queue API */
+    if (LogIsInISR()) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xQueueSendFromISR(gIsrLogQueue, &entry, &xHigherPriorityTaskWoken);
+        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+    } else {
+        /* From task context — non-blocking send (drop if full) */
+        xQueueSend(gIsrLogQueue, &entry, 0);
+    }
+
+    #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
+    LogMessageICSP(entry.message, size);
+    #endif
 }
