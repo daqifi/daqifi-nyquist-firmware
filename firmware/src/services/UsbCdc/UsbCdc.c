@@ -1,5 +1,5 @@
-/* USB event handlers run in ISR context — use LOG_FROM_ISR() instead of
- * LOG_E/LOG_I/LOG_D in UsbCdc_CDCEventHandler and UsbCdc_EventHandler.
+/* USB event handlers run in ISR context — use LOG_E_ISR/LOG_I_ISR/LOG_D_ISR
+ * instead of LOG_E/LOG_I/LOG_D in UsbCdc_CDCEventHandler and UsbCdc_EventHandler.
  * See issue #191 for background. */
 #define LOG_LVL LOG_LEVEL_USB
 #define LOG_MODULE LOG_MODULE_USB
