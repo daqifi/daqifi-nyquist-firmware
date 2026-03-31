@@ -227,6 +227,13 @@ extern "C" {
     /** @} */
 
     /**
+     * @brief Get the count of ISR log messages dropped (queue full or
+     *        not initialized). Diagnostic hint — not a precise counter
+     *        due to non-atomic RMW from ISR.
+     */
+    uint32_t Logger_GetIsrDropCount(void);
+
+    /**
      * @name Per-module compile-time ceilings
      * @brief These define which LOG_E/LOG_I/LOG_D calls are compiled into the
      *        binary. Set to LOG_LEVEL_DEBUG to allow full runtime control.

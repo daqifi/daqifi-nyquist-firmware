@@ -171,6 +171,15 @@ static inline bool LogIsInISR(void);
  * ISR-aware early path and the drain task. */
 static QueueHandle_t gIsrLogQueue = NULL;
 
+/* Count of ISR log messages dropped (queue full or not initialized).
+ * 32-bit increment from ISR is not atomic (RMW), but losing a count
+ * is acceptable — this is a diagnostic hint, not a precise counter. */
+static volatile uint32_t gIsrLogDropped = 0;
+
+uint32_t Logger_GetIsrDropCount(void) {
+    return gIsrLogDropped;  /* 32-bit read is atomic on PIC32MZ */
+}
+
 
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)
 
@@ -325,21 +334,30 @@ int LogMessage(const char* format, ...)
 {
     if (format == NULL) return 0;
 
-    /* ISR path: minimal work — copy string, queue, return */
-    if (LogIsInISR() && gIsrLogQueue != NULL) {
-        LogEntry entry;
-        size_t len = strlen(format);
-        if (len == 0) return 0;
-        if (len > LOG_MESSAGE_SIZE - 3) len = LOG_MESSAGE_SIZE - 3;
-        memcpy(entry.message, format, len);
-        entry.message[len] = '\r';
-        entry.message[len + 1] = '\n';
-        entry.message[len + 2] = '\0';
+    /* ISR path: minimal work — copy string, queue, return.
+     * Must NOT fall through to the task path (vsnprintf + mutex). */
+    if (LogIsInISR()) {
+        if (gIsrLogQueue != NULL) {
+            LogEntry entry;
+            size_t len = strlen(format);
+            if (len == 0) return 0;
+            if (len > LOG_MESSAGE_SIZE - 3) len = LOG_MESSAGE_SIZE - 3;
+            memcpy(entry.message, format, len);
+            entry.message[len] = '\r';
+            entry.message[len + 1] = '\n';
+            entry.message[len + 2] = '\0';
 
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        xQueueSendFromISR(gIsrLogQueue, &entry, &xHigherPriorityTaskWoken);
-        portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
-        return (int)len;
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            if (xQueueSendFromISR(gIsrLogQueue, &entry, &xHigherPriorityTaskWoken) != pdTRUE) {
+                gIsrLogDropped++;  /* Queue full — count for diagnostics */
+            }
+            portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+            return (int)len;
+        }
+        /* Queue not yet initialized — drop the message to avoid
+         * calling vsnprintf/mutex from ISR context */
+        gIsrLogDropped++;
+        return 0;
     }
 
     /* Task path: full vsnprintf formatting */
