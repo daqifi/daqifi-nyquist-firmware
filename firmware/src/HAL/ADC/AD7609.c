@@ -341,7 +341,7 @@ bool AD7609_ReadSamples(AInSampleArray* samples,
 
     // Check if conversion is ready by reading BSY pin (BSY low = ready)
     if (GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
-        LOG_D("AD7609_ReadSamples: chip busy, skipping");
+        LOG_D_SESSION(LOG_SESSION_AD7609_BUSY, "AD7609: chip busy, skipping");
         return false; // Chip not ready
     }
 

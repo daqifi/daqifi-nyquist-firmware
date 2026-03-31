@@ -286,6 +286,12 @@ static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
         return -1;  // Not initialized
     }
 
+    // Validate buffer pointer to prevent null dereference
+    if (buf == NULL) {
+        LOG_E("TCP: write with NULL buffer");
+        return -1;
+    }
+
     // Validate length against buffer size to prevent overflow
     if (len > sizeof(gpServerData->client.writeBuffer)) {
         LOG_E("TCP: write length %lu exceeds buffer", (unsigned long)len);

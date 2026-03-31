@@ -213,6 +213,7 @@ extern "C" {
         LOG_SESSION_ENCODER_FAIL,          /**< streaming.c: encoder returned 0 bytes */
         LOG_SESSION_STREAM_STARTED,        /**< streaming.c: "Streaming started" info */
         LOG_SESSION_AD7609_BUSY,           /**< AD7609.c: conversion busy, skipping */
+        LOG_SESSION_NANOPB_FAIL,           /**< NanoPB_Encoder.c: streaming encode failure */
         /* Add new entries above this line */
         LOG_SESSION_COUNT                  /**< Must be <= 32 */
     } LogSessionBit_t;

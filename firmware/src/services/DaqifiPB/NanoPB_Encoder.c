@@ -1273,19 +1273,19 @@ static size_t encode_streaming_msg_delimited(
     pb_ostream_t sizestream = PB_OSTREAM_SIZING;
     if (!encode_streaming_fields(&sizestream, timestamp,
             ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
-        LOG_E("NanoPB: streaming size pass failed");
+        LOG_E_SESSION(LOG_SESSION_NANOPB_FAIL, "NanoPB: streaming size pass failed");
         return 0;
     }
 
     /* Pass 2: write [varint length prefix] [message bytes] to buffer */
     pb_ostream_t stream = pb_ostream_from_buffer(pBuffer, buffSize);
     if (!pb_encode_varint(&stream, (uint32_t)sizestream.bytes_written)) {
-        LOG_E("NanoPB: varint encode failed");
+        LOG_E_SESSION(LOG_SESSION_NANOPB_FAIL, "NanoPB: varint encode failed");
         return 0;
     }
     if (!encode_streaming_fields(&stream, timestamp,
             ainData, ainCount, dioData, dioSize, dioDir, dioDirSize)) {
-        LOG_E("NanoPB: streaming encode failed");
+        LOG_E_SESSION(LOG_SESSION_NANOPB_FAIL, "NanoPB: streaming encode failed");
         return 0;
     }
 
