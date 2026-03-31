@@ -538,8 +538,11 @@ void LogIsrInit(void) {
     gIsrLogQueue = xQueueCreate(LOG_ISR_QUEUE_DEPTH, sizeof(LogEntry));
     if (gIsrLogQueue == NULL) return;
 
-    xTaskCreate(LogIsrDrainTask, "logISR", LOG_ISR_TASK_STACK,
-                NULL, LOG_ISR_TASK_PRIO, &gIsrLogTaskHandle);
+    if (xTaskCreate(LogIsrDrainTask, "logISR", LOG_ISR_TASK_STACK,
+                    NULL, LOG_ISR_TASK_PRIO, &gIsrLogTaskHandle) != pdPASS) {
+        vQueueDelete(gIsrLogQueue);
+        gIsrLogQueue = NULL;
+    }
 }
 
 /**
