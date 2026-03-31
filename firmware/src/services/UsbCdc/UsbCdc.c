@@ -199,7 +199,7 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             if (val.handle == pUsbCdcDataObject->writeTransferHandle) {
                 // Log warning if actual transferred length differs from requested
                 if (val.length != pUsbCdcDataObject->writeBufferLength) {
-                    LOG_E("USB write length mismatch");
+                    LOG_E_ONCE(LOG_ONCE_USB_WRITE_MISMATCH, "USB write length mismatch");
                 }
                 // Always finalize to prevent stuck state, even on partial write
                 UsbCdc_FinalizeWrite(pUsbCdcDataObject);

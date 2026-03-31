@@ -157,6 +157,76 @@ extern "C" {
     uint8_t Logger_GetCeiling(LogModule_t module);
 
     /**
+     * @name One-shot log suppression
+     * @brief Bit indices for LOG_x_ONCE macros. Each index represents a
+     *        unique log call site that fires at most once until reset.
+     *        Primary use: ISR context where a high-frequency error would
+     *        flood the 8-entry deferred queue. Also works from task context.
+     *        Reset automatically on SYST:LOG? (dump) and SYST:LOG:CLEAR.
+     *
+     *        The RMW on gLogOneShot (|=) is not protected by a critical
+     *        section. On PIC32MZ, a higher-priority ISR could race and
+     *        lose a bit — worst case is one extra duplicate message per
+     *        race. Acceptable for a logging system.
+     * @{
+     */
+    typedef enum {
+        LOG_ONCE_USB_WRITE_MISMATCH = 0,  /**< UsbCdc.c: USB CDC write length mismatch */
+        /* Add new entries above this line */
+        LOG_ONCE_COUNT                     /**< Must be <= 32 */
+    } LogOnceBit_t;
+
+    /**
+     * @brief One-shot bitmask — bit N set means LOG_x_ONCE(N,...) has
+     *        already fired and is suppressed until reset.
+     */
+    extern volatile uint32_t gLogOneShot;
+
+    /**
+     * @brief Clear all one-shot suppression bits.
+     *        Called automatically from LogMessageDump() and LogMessageClear().
+     *        32-bit write is atomic on PIC32MZ.
+     */
+    void Logger_ResetOneShots(void);
+    /** @} */
+
+    /**
+     * @name Session-scoped one-shot log suppression
+     * @brief Bit indices for LOG_x_SESSION macros. Each index represents a
+     *        unique log call site that fires at most once per streaming session.
+     *        Reset at streaming start via Logger_ResetSessionOneShots().
+     *        Used by the streaming engine to prevent flooding the 64-message
+     *        log buffer with repeated per-sample errors (pool exhaustion,
+     *        buffer overflows, encoder failures, etc.).
+     * @{
+     */
+    typedef enum {
+        LOG_SESSION_POOL_EXHAUST = 0,     /**< streaming.c: sample pool exhausted */
+        LOG_SESSION_QUEUE_OVERFLOW,        /**< streaming.c: sample queue full */
+        LOG_SESSION_USB_DROP,              /**< streaming.c: USB buffer overflow */
+        LOG_SESSION_WIFI_DROP,             /**< streaming.c: WiFi buffer overflow */
+        LOG_SESSION_SD_DROP,               /**< streaming.c: SD write overflow */
+        LOG_SESSION_ENCODER_FAIL,          /**< streaming.c: encoder returned 0 bytes */
+        LOG_SESSION_STREAM_STARTED,        /**< streaming.c: "Streaming started" info */
+        /* Add new entries above this line */
+        LOG_SESSION_COUNT                  /**< Must be <= 32 */
+    } LogSessionBit_t;
+
+    /**
+     * @brief Session-scoped one-shot bitmask — bit N set means
+     *        LOG_x_SESSION(N,...) has already fired this session.
+     */
+    extern volatile uint32_t gSessionOneShot;
+
+    /**
+     * @brief Clear all session one-shot bits.
+     *        Called from Streaming_ClearStats() at streaming start.
+     *        32-bit write is atomic on PIC32MZ.
+     */
+    void Logger_ResetSessionOneShots(void);
+    /** @} */
+
+    /**
      * @name Per-module compile-time ceilings
      * @brief These define which LOG_E/LOG_I/LOG_D calls are compiled into the
      *        binary. Set to LOG_LEVEL_DEBUG to allow full runtime control.
@@ -313,6 +383,88 @@ void LogIsrInit(void);
 // context via uxInterruptNesting and route through the deferred queue.
 // No separate ISR macros needed. Format args are ignored in ISR context
 // (raw format string is logged). Use static strings in ISR handlers.
+
+// ── One-shot variants ───────────────────────────────────────────────
+// LOG_x_ONCE(bit, fmt, ...): like LOG_x but fires only once per bit
+// until reset (SYST:LOG? or SYST:LOG:CLEAR). Intended for ISR context
+// to prevent queue flooding, but works anywhere.
+
+#if (LOG_LVL >= LOG_LEVEL_ERROR)
+    #define LOG_E_ONCE(bit, fmt,...) do { \
+        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
+            !(gLogOneShot & (1u << (bit)))) { \
+            gLogOneShot |= (1u << (bit)); \
+            LogMessage(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+#else
+    #define LOG_E_ONCE(bit, ...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+#if (LOG_LVL >= LOG_LEVEL_INFO)
+    #define LOG_I_ONCE(bit, fmt,...) do { \
+        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
+            !(gLogOneShot & (1u << (bit)))) { \
+            gLogOneShot |= (1u << (bit)); \
+            LogMessage(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+#else
+    #define LOG_I_ONCE(bit, ...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+#if (LOG_LVL >= LOG_LEVEL_DEBUG)
+    #define LOG_D_ONCE(bit, fmt,...) do { \
+        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
+            !(gLogOneShot & (1u << (bit)))) { \
+            gLogOneShot |= (1u << (bit)); \
+            LogMessage(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+#else
+    #define LOG_D_ONCE(bit, ...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+// ── Session-scoped one-shot variants ────────────────────────────────
+// LOG_x_SESSION(bit, fmt, ...): like LOG_x but fires only once per
+// streaming session. Reset via Logger_ResetSessionOneShots() at stream
+// start. Uses gSessionOneShot bitmask (separate from gLogOneShot).
+
+#if (LOG_LVL >= LOG_LEVEL_ERROR)
+    #define LOG_E_SESSION(bit, fmt,...) do { \
+        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
+            !(gSessionOneShot & (1u << (bit)))) { \
+            gSessionOneShot |= (1u << (bit)); \
+            LogMessage(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+#else
+    #define LOG_E_SESSION(bit, ...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+#if (LOG_LVL >= LOG_LEVEL_INFO)
+    #define LOG_I_SESSION(bit, fmt,...) do { \
+        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
+            !(gSessionOneShot & (1u << (bit)))) { \
+            gSessionOneShot |= (1u << (bit)); \
+            LogMessage(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+#else
+    #define LOG_I_SESSION(bit, ...) LOG_NOOP(__VA_ARGS__)
+#endif
+
+#if (LOG_LVL >= LOG_LEVEL_DEBUG)
+    #define LOG_D_SESSION(bit, fmt,...) do { \
+        if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
+            !(gSessionOneShot & (1u << (bit)))) { \
+            gSessionOneShot |= (1u << (bit)); \
+            LogMessage(fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+#else
+    #define LOG_D_SESSION(bit, ...) LOG_NOOP(__VA_ARGS__)
+#endif
 
 
 #ifdef	__cplusplus

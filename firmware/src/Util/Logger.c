@@ -48,6 +48,12 @@
  * previous compile-time default). Written by SCPI task, read by all
  * tasks. Single-byte reads/writes are atomic on PIC32MZ.
  */
+/* One-shot suppression bitmask for LOG_x_ONCE macros.
+ * Written by ISR and task contexts (|= to set bits), cleared atomically
+ * by Logger_ResetOneShots() (single 32-bit write). */
+volatile uint32_t gLogOneShot = 0;
+volatile uint32_t gSessionOneShot = 0;
+
 volatile uint8_t gLogLevels[LOG_MODULE_COUNT] = {
     [LOG_MODULE_POWER]   = LOG_LEVEL_ERROR,
     [LOG_MODULE_WIFI]    = LOG_LEVEL_ERROR,
@@ -63,10 +69,9 @@ volatile uint8_t gLogLevels[LOG_MODULE_COUNT] = {
 
 /** Runtime ceilings per module — Logger_SetLevel() clamps to these.
  *  All modules allow full DEBUG via SCPI.
- *  WARNING: Do not call LOG_E/LOG_I/LOG_D from ISR context — LogIsInISR()
- *  detection fails when Harmony clears MIPS EXL/ERL (issue #191). The fix
- *  is a deferred logging task (also #191). Until then, ensure no log calls
- *  exist in true ISR handlers. */
+ *  LOG_E/LOG_I/LOG_D are ISR-aware — they detect ISR context via
+ *  uxInterruptNesting and route through a deferred queue (issue #191).
+ *  Format args are ignored in ISR context; use static strings. */
 static const uint8_t gLogCeilings[LOG_MODULE_COUNT] = {
     [LOG_MODULE_POWER]   = LOG_LEVEL_DEBUG,
     [LOG_MODULE_WIFI]    = LOG_LEVEL_DEBUG,
@@ -143,6 +148,14 @@ bool Logger_FindModule(const char* name, size_t len, LogModule_t* module) {
 uint8_t Logger_GetCeiling(LogModule_t module) {
     if (module >= LOG_MODULE_COUNT) return LOG_LEVEL_NONE;
     return gLogCeilings[module];
+}
+
+void Logger_ResetOneShots(void) {
+    gLogOneShot = 0;  /* 32-bit write is atomic on PIC32MZ */
+}
+
+void Logger_ResetSessionOneShots(void) {
+    gSessionOneShot = 0;  /* 32-bit write is atomic on PIC32MZ */
 }
 
 LogBuffer logBuffer;
@@ -509,6 +522,9 @@ void LogMessageDump(scpi_t * context) {
             }
         }
     } while (hasMessage);
+
+    /* Allow one-shot log sites to fire again after user reads the log */
+    Logger_ResetOneShots();
 }
 
 /**
@@ -526,6 +542,9 @@ void LogMessageClear(void) {
         logBuffer.count = 0;
         xSemaphoreGive(logBuffer.mutex);
     }
+
+    /* Allow one-shot log sites to fire again after user clears the log */
+    Logger_ResetOneShots();
 }
 
 /* ── ISR-safe deferred logging ───────────────────────────────────

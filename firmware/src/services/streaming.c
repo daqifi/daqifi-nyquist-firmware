@@ -70,15 +70,9 @@ static volatile bool gSdFileWasReady = false;
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
 
-// Log-once flags: each error condition logs once per session to avoid flooding
-// the 64-message circular log buffer. All reset in Streaming_ClearStats().
-static bool gLoggedPoolExhaust = false;
-static bool gLoggedQueueOverflow = false;
-static bool gLoggedUsbDrop = false;
-static bool gLoggedWifiDrop = false;
-static bool gLoggedSdDrop = false;
-static bool gLoggedEncoderFail = false;
-static bool gStreamingLoggedOnce = false;
+// Log-once flags: each error condition logs once per session via
+// LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
+// All reset in Streaming_ClearStats() via Logger_ResetSessionOneShots().
 
 // --- Windowed data flow health tracking ---
 // Forward declarations (defined after Streaming_ClearStats)
@@ -251,10 +245,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
                 gStreamStats.queueDroppedSamples++;
-                if (!gLoggedPoolExhaust) {
-                    gLoggedPoolExhaust = true;
-                    LOG_E("Streaming: Sample pool exhausted");
-                }
+                LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
                 Streaming_UpdateFlowWindow(true);
                 // Still increment test pattern counter to stay in sync
                 if (gTestPattern != 0) {
@@ -303,10 +294,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
                 gStreamStats.queueDroppedSamples++;
-                if (!gLoggedQueueOverflow) {
-                    gLoggedQueueOverflow = true;
-                    LOG_E("Streaming: Sample queue overflow detected");
-                }
+                LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
                 Streaming_UpdateFlowWindow(true);
             } else {
@@ -503,14 +491,7 @@ void Streaming_GetStats(StreamingStats* out) {
 
 void Streaming_ClearStats(void) {
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
-    gLoggedPoolExhaust = false;
-    gLoggedQueueOverflow = false;
-    gLoggedUsbDrop = false;
-    gLoggedWifiDrop = false;
-    gLoggedSdDrop = false;
-    gLoggedEncoderFail = false;
-    // Intentionally reset: we want "Streaming started" logged once per session
-    gStreamingLoggedOnce = false;
+    Logger_ResetSessionOneShots();
     // Reset windowed flow tracking
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
@@ -749,11 +730,9 @@ void streaming_Task(void) {
         }
 
         // Log streaming start info once for debugging
-        if (!gStreamingLoggedOnce) {
-            LOG_I("Streaming started: interface=%d, usbSize=%u, wifiSize=%u, sdSize=%u",
-                  pRunTimeStreamConf->ActiveInterface, usbSize, wifiSize, sdSize);
-            gStreamingLoggedOnce = true;
-        }
+        LOG_I_SESSION(LOG_SESSION_STREAM_STARTED,
+            "Streaming started: interface=%d, usbSize=%u, wifiSize=%u, sdSize=%u",
+            pRunTimeStreamConf->ActiveInterface, usbSize, wifiSize, sdSize);
 
         // CRITICAL: Always encode to drain the sample queue, even if no outputs have space
         // This prevents queue backup which causes the deferred interrupt task to drop samples
@@ -802,10 +781,7 @@ void streaming_Task(void) {
             taskENTER_CRITICAL();
             gQuesBits |= QUES_BIT_ENCODER_FAIL;
             taskEXIT_CRITICAL();
-            if (!gLoggedEncoderFail) {
-                gLoggedEncoderFail = true;
-                LOG_E("Streaming: Encoder failure detected");
-            }
+            LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
         }
         if (packetSize > 0) {
             taskENTER_CRITICAL();
@@ -822,10 +798,7 @@ void streaming_Task(void) {
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    if (!gLoggedUsbDrop) {
-                        gLoggedUsbDrop = true;
-                        LOG_E("Streaming: USB buffer overflow detected");
-                    }
+                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB buffer overflow detected");
                 }
             }
             if (hasWifi) {
@@ -836,10 +809,7 @@ void streaming_Task(void) {
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    if (!gLoggedWifiDrop) {
-                        gLoggedWifiDrop = true;
-                        LOG_E("Streaming: WiFi buffer overflow detected");
-                    }
+                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi buffer overflow detected");
                 }
             }
             if (hasSD && gSdFileWasReady) {
@@ -878,10 +848,7 @@ void streaming_Task(void) {
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    if (!gLoggedSdDrop) {
-                        gLoggedSdDrop = true;
-                        LOG_E("Streaming: SD write overflow detected");
-                    }
+                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD write overflow detected");
                 }
 
             }
@@ -905,10 +872,7 @@ void streaming_Task(void) {
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    if (!gLoggedSdDrop) {
-                        gLoggedSdDrop = true;
-                        LOG_E("Streaming: SD output skipped (buffer full or file not ready)");
-                    }
+                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
                 }
             }
         }

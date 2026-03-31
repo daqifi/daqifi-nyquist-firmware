@@ -896,6 +896,15 @@ All modules are compiled at DEBUG ceiling (all LOG_E/LOG_I/LOG_D calls present i
 
 **ISR-safe logging:** `LOG_E`/`LOG_I`/`LOG_D` are ISR-aware — they detect ISR context via FreeRTOS `uxInterruptNesting` and automatically route through a deferred queue (`xQueueSendFromISR` + drain task). No separate ISR macros needed. Caveat: format args (`%d`, `%u`, etc.) are ignored in ISR context to avoid `vsnprintf` on the ISR stack — use static strings in ISR handlers.
 
+**One-shot suppression:** Two bitmask-based one-shot systems prevent log flooding from high-frequency errors:
+
+| Macro | Bitmask | Reset When | Use Case |
+|-------|---------|-----------|----------|
+| `LOG_E_ONCE(bit, ...)` | `gLogOneShot` | `SYST:LOG?` / `SYST:LOG:CLEAR` | ISR context (8-entry deferred queue) |
+| `LOG_E_SESSION(bit, ...)` | `gSessionOneShot` | `Streaming_ClearStats()` at stream start | Streaming engine per-sample errors |
+
+Both use `volatile uint32_t` bitmasks (up to 32 call sites each). Bit indices defined in `LogOnceBit_t` and `LogSessionBit_t` enums in `Logger.h`. The `|=` is not critical-section-protected — worst case is one extra duplicate message per priority-crossing race. Also available: `LOG_I_ONCE`, `LOG_D_ONCE`, `LOG_I_SESSION`, `LOG_D_SESSION`.
+
 Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 
 **Module Mapping:**
@@ -905,7 +914,7 @@ Runtime-only — not NVM-persisted, resets to ERROR on reboot.
 | POWER | PowerApi.c, BQ24297.c |
 | WIFI | wifi_manager.c, wifi_tcp_server.c, WINC driver |
 | SD | sd_card_manager.c |
-| USB | UsbCdc.c (no log calls from ISR — issue #191) |
+| USB | UsbCdc.c |
 | SCPI | SCPIInterface.c, SCPIADC.c, SCPIDAC.c, SCPIDIO.c, SCPILAN.c, SCPIStorageSD.c |
 | ADC | ADC.c, AD7609.c |
 | DAC | DAC7718.c |
