@@ -146,6 +146,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
         .sdCircularBufSize  = 0, \
         .wifiCircularBufSize = 0, \
         .usbCircularBufSize = 0, \
+        .encoderBufSize     = 0, \
         .samplePoolCount    = 0, \
     }
 

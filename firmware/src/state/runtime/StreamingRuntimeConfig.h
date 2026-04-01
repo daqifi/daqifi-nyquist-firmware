@@ -107,6 +107,7 @@ extern "C" {
         uint32_t sdCircularBufSize;    // SD circular buffer (default 32768)
         uint32_t wifiCircularBufSize;  // WiFi circular buffer (default 14000)
         uint32_t usbCircularBufSize;   // USB circular buffer (default 16384)
+        uint32_t encoderBufSize;       // Encoder buffer (default 8192, 0=auto)
         uint32_t samplePoolCount;      // Sample pool depth (default 700, 0=auto)
     } MemoryConfig;
 

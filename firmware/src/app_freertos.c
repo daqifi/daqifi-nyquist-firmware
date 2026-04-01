@@ -465,7 +465,7 @@ void app_SystemInit() {
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     CoherentPool_Init();
     StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE,
-                             DEFAULT_AIN_SAMPLE_COUNT);
+                             ENCODER_BUFFER_DEFAULT, DEFAULT_AIN_SAMPLE_COUNT);
     InitializeBoardData(gpBoardData);
 
     // Apply persisted voltage precision to streaming runtime config

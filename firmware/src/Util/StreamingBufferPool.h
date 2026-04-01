@@ -17,7 +17,7 @@ extern "C" {
  * based on active interfaces — no malloc, no fragmentation.
  *
  * Layout after partition:
- *   [USB circular buf | WiFi circular buf | <align> | samplePool[] | nextFree[]]
+ *   [USB circular | WiFi circular | encoder buf | <align> | samplePool[] | nextFree[]]
  *
  * Boot:   StreamingBufferPool_Init() sets default partition.
  * Start:  StreamingBufferPool_Partition() re-carves all regions.
@@ -28,8 +28,10 @@ extern "C" {
  */
 
 /** Minimum buffer sizes (from module constraints) */
-#define STREAMING_USB_MIN   4096   /* USBCDC_WBUFFER_SIZE */
-#define STREAMING_WIFI_MIN  1400   /* SOCKET_BUFFER_MAX_LENGTH */
+#define STREAMING_USB_MIN       4096   /* USBCDC_WBUFFER_SIZE */
+#define STREAMING_WIFI_MIN      1400   /* SOCKET_BUFFER_MAX_LENGTH */
+#define ENCODER_BUFFER_MIN      1024   /* Must fit at least one encoded sample set */
+#define ENCODER_BUFFER_DEFAULT  8192   /* Optimal for USB; SD benefits from 16384 */
 
 /**
  * Initialize the pool and set default partition.
@@ -41,7 +43,7 @@ extern "C" {
  * @return true (always succeeds — static memory)
  */
 bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
-                              uint32_t defaultSampleCount);
+                              uint32_t defaultEncoderSize, uint32_t defaultSampleCount);
 
 /**
  * Re-partition the pool.  All regions are reset (empty).
@@ -52,13 +54,16 @@ bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
  * @param sampleCount Desired sample pool depth (0 = maximize with remaining space)
  */
 void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
-                                   uint32_t sampleCount);
+                                   uint32_t encoderSize, uint32_t sampleCount);
 
 /** Get current USB buffer region */
 void StreamingBufferPool_GetUsb(uint8_t** buf, uint32_t* size);
 
 /** Get current WiFi buffer region */
 void StreamingBufferPool_GetWifi(uint8_t** buf, uint32_t* size);
+
+/** Get current encoder buffer region */
+void StreamingBufferPool_GetEncoder(uint8_t** buf, uint32_t* size);
 
 /** Get current sample pool region and count */
 void StreamingBufferPool_GetSamplePool(void** poolBuf, int16_t** nextFreeBuf,
@@ -70,6 +75,8 @@ uint32_t StreamingBufferPool_TotalSize(void);
 uint32_t StreamingBufferPool_UsbSize(void);
 /** Query current WiFi partition size */
 uint32_t StreamingBufferPool_WifiSize(void);
+/** Query current encoder buffer size */
+uint32_t StreamingBufferPool_EncoderSize(void);
 /** Query current sample pool count */
 uint32_t StreamingBufferPool_SampleCount(void);
 

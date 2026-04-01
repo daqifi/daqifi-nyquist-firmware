@@ -2178,6 +2178,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         bool isAutoMode = (mc->sdCircularBufSize == 0 &&
                            mc->wifiCircularBufSize == 0 &&
                            mc->usbCircularBufSize == 0 &&
+                           mc->encoderBufSize == 0 &&
                            mc->samplePoolCount == 0);
 
         uint32_t usbSize, wifiSize;
@@ -2206,18 +2207,22 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
         }
 
-        // Determine sample pool count (0 = maximize with remaining space)
+        // Determine encoder and sample pool sizes (0 = use default/maximize)
+        uint32_t encSize = mc->encoderBufSize ? mc->encoderBufSize
+                                              : ENCODER_BUFFER_DEFAULT;
         uint32_t poolCount = mc->samplePoolCount;
 
         // Re-partition the unified pool and swap all buffer pointers.
-        StreamingBufferPool_Partition(usbSize, wifiSize, poolCount);
+        StreamingBufferPool_Partition(usbSize, wifiSize, encSize, poolCount);
 
-        uint8_t *usbBuf, *wifiBuf;
-        uint32_t usbLen, wifiLen;
+        uint8_t *usbBuf, *wifiBuf, *encBuf;
+        uint32_t usbLen, wifiLen, encLen;
         StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
         StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
+        StreamingBufferPool_GetEncoder(&encBuf, &encLen);
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+        Streaming_SetEncoderBuffer(encBuf, encLen);
 
         // Re-init sample pool with new region from unified pool
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
@@ -2717,6 +2722,27 @@ static scpi_result_t SCPI_GetMemSamplePool(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetMemEncoderBuf(scpi_t * context) {
+    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    // 0 = auto (ENCODER_BUFFER_DEFAULT), 1024-65536 = explicit
+    if (val != 0 && (val < (int32_t)ENCODER_BUFFER_MIN || val > 65536)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    mc->encoderBufSize = (uint32_t)val;
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetMemEncoderBuf(scpi_t * context) {
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    uint32_t effective = mc->encoderBufSize ? mc->encoderBufSize : ENCODER_BUFFER_DEFAULT;
+    SCPI_ResultInt32(context, (int32_t)effective);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     size_t heapFree = xPortGetFreeHeapSize();
     size_t heapMinEver = xPortGetMinimumEverFreeHeapSize();
@@ -2767,14 +2793,17 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
         }
 
         StreamingBufferPool_Partition(mc->usbCircularBufSize,
-                                      mc->wifiCircularBufSize, 0);
+                                      mc->wifiCircularBufSize,
+                                      ENCODER_BUFFER_DEFAULT, 0);
 
-        uint8_t *usbBuf, *wifiBuf;
-        uint32_t usbLen, wifiLen;
+        uint8_t *usbBuf, *wifiBuf, *encBuf;
+        uint32_t usbLen, wifiLen, encLen;
         StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
         StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
+        StreamingBufferPool_GetEncoder(&encBuf, &encLen);
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+        Streaming_SetEncoderBuffer(encBuf, encLen);
 
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
         StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
@@ -3030,6 +3059,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:MEMory:USB:BUFfer?", .callback = SCPI_GetMemUsbBuf,},
     {.pattern = "SYSTem:MEMory:SAMPle:POOL", .callback = SCPI_SetMemSamplePool,},
     {.pattern = "SYSTem:MEMory:SAMPle:POOL?", .callback = SCPI_GetMemSamplePool,},
+    {.pattern = "SYSTem:MEMory:ENCoder:BUFfer", .callback = SCPI_SetMemEncoderBuf,},
+    {.pattern = "SYSTem:MEMory:ENCoder:BUFfer?", .callback = SCPI_GetMemEncoderBuf,},
     {.pattern = "SYSTem:MEMory:FREE?", .callback = SCPI_GetMemFree,},
     {.pattern = "SYSTem:MEMory:AUTO", .callback = SCPI_MemAutoBalance,},
     {.pattern = "SYSTem:MEMory:STACk?", .callback = SCPI_GetStackStats,},

@@ -28,6 +28,7 @@
 #include "DaqifiPB/NanoPB_Encoder.h"
 #include "Util/Logger.h"
 #include "Util/CircularBuffer.h"
+#include "Util/StreamingBufferPool.h"
 #include "UsbCdc/UsbCdc.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
@@ -138,17 +139,16 @@ static const NanopbFlagsArray fields_sd_metadata = {
 #define max(x,y) ((x) >= (y) ? (x) : (y))
 #endif // max
 
-// Encode buffer must fit the largest single encode output for any interface.
-// Previously used min() which limited all interfaces to the WiFi buffer size (1400).
-// Using max() allows each interface to use its full capacity when active.
-// Override ENCODER_BUFFER_OVERRIDE in project defines to test larger sizes.
-// Encode buffer must fit the largest single encode output for any interface.
+// Encoder buffer — allocated from StreamingBufferPool, runtime-adjustable.
 // Benchmark results (encoder buffer sweep, issue #229):
 //   8KB (default): best for USB CSV throughput
 //   16KB: +16% SD throughput, -16% USB CSV — tradeoff
-// Keeping 8KB as default; SD-heavy workloads could benefit from 16KB.
-#define BUFFER_SIZE max(max(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE), SD_CARD_MANAGER_CONF_WBUFFER_SIZE)
-uint8_t buffer[BUFFER_SIZE];
+// Default size used when MemoryConfig.encoderBufSize == 0.
+#define ENCODER_BUFFER_DEFAULT 8192
+#define ENCODER_BUFFER_MIN     1024
+
+static uint8_t* buffer = NULL;
+static uint32_t bufferSize = 0;
 
 //! Pointer to the board configuration data structure to be set in 
 //! initialization
@@ -368,6 +368,13 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
 
 }
 
+void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
+    if (buf == NULL || size < ENCODER_BUFFER_MIN) return;
+    buffer = buf;
+    bufferSize = size;
+    LOG_I("Encoder buffer: %u bytes", (unsigned)size);
+}
+
 /**
  * Compute optimal circular buffer sizes based on currently active interfaces.
  * Single-interface mode maximizes that interface's buffer; multi-interface
@@ -437,7 +444,7 @@ static void Streaming_Start(void) {
         }
 
         // Clear encoding buffer once to prevent stale data artifacts in SD files
-        memset(buffer, 0, BUFFER_SIZE);
+        if (buffer != NULL) memset(buffer, 0, bufferSize);
 
         gSdPbMetadataSent = false;
         gSdFileWasReady = false;
@@ -492,6 +499,17 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
         StreamingRuntimeConfig* pStreamingRuntimeConfigInit) {
     gpStreamingConfig = pStreamingConfigInit;
     gpRuntimeConfigStream = pStreamingRuntimeConfigInit;
+
+    // Set encoder buffer from pool (partitioned at boot)
+    if (buffer == NULL) {
+        uint8_t* encBuf; uint32_t encLen;
+        StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+        if (encBuf != NULL && encLen > 0) {
+            buffer = encBuf;
+            bufferSize = encLen;
+        }
+    }
+
     TimestampTimer_Init();
     TimerApi_Stop(gpStreamingConfig->TimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
@@ -684,19 +702,19 @@ void streaming_Task(void) {
                 // interfaces — no special handling needed.
                 if (csv_IsHeaderSent()) {
                     sdHdrLen = csv_GenerateHeaderToBuffer(
-                            (char*)buffer, BUFFER_SIZE);
+                            (char*)buffer, bufferSize);
                 }
             } else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
                 if (json_IsHeaderSent()) {
                     sdHdrLen = json_GenerateHeaderToBuffer(
-                            (char*)buffer, BUFFER_SIZE);
+                            (char*)buffer, bufferSize);
                 }
             } else {
                 // Protobuf: encode a standalone metadata message for SD
                 tBoardData* pBoardData =
                     BoardData_Get(BOARDDATA_ALL_DATA, true);
                 sdHdrLen = Nanopb_Encode(pBoardData,
-                    &fields_sd_metadata, (uint8_t*)buffer, BUFFER_SIZE);
+                    &fields_sd_metadata, (uint8_t*)buffer, bufferSize);
                 if (sdHdrLen > 0) {
                     gSdPbMetadataSent = true;
                 }
@@ -766,7 +784,7 @@ void streaming_Task(void) {
         // whichever outputs have space, and discarded if none do.
         // Previously used min(128, output_free) which caused CSV 16ch
         // encoder failures when USB buffer was full (128 < row size ~172).
-        maxSize = BUFFER_SIZE;
+        maxSize = bufferSize;
 
         nanopbFlag.Size = 0;
 
@@ -1061,7 +1079,7 @@ bool Streaming_GetBenchmarkMode(void) {
         }
 
         // Encode
-        size_t maxEncode = (outSize > BUFFER_SIZE) ? BUFFER_SIZE : outSize;
+        size_t maxEncode = (outSize > bufferSize) ? bufferSize : outSize;
         size_t packetSize = 0;
 
         if (encoding == Streaming_Csv) {

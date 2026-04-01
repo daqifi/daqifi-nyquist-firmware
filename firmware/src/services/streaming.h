@@ -128,6 +128,12 @@ uint32_t Streaming_GetQuesBits(void);
  */
 void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, uint32_t* outSdSize);
 
+/**
+ * Set the encoder buffer to pool-managed memory.
+ * Must be called before streaming starts.
+ */
+void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size);
+
 // Flow window configuration (configurable via SCPI SYST:STR:LOSS commands).
 // Loss threshold: percentage (1-100) that triggers QUES data loss bit (default 5).
 uint32_t Streaming_GetLossThreshold(void);
