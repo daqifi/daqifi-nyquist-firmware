@@ -56,7 +56,7 @@ extern "C" {
 #define _RESERVE_TCB_OVERHEAD  (9U * 400U)    /* ~400 bytes per TCB × 9 tasks created after pool */
 #define _RESERVE_QUEUES_MISC   (6U * 1024U)   /* FreeRTOS queues, mutexes, kernel */
 #define _RESERVE_WIFI_DRIVER   (18U * 1024U)  /* WINC1500 driver heap at power-up */
-#define _RESERVE_MARGIN        (6U * 1024U)   /* heap_4 metadata + alignment + safety */
+#define _RESERVE_MARGIN        (20U * 1024U)  /* heap_4 metadata + alignment + FreeRTOS queue internals */
 
 #define STREAMING_POOL_HEAP_RESERVE ( \
     _RESERVE_TOTAL_STACK_BYTES + \

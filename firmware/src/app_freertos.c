@@ -464,11 +464,12 @@ void app_SystemInit() {
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     CoherentPool_Init();
-    // Temporarily skip pool to measure exact heap budget
     LOG_I("HEAP BEFORE POOL: %u free", (unsigned)xPortGetFreeHeapSize());
-    // Pool allocation disabled for heap measurement — will re-enable
-    // StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE,
-    //                          DEFAULT_AIN_SAMPLE_COUNT);
+    if (!StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE,
+                                  DEFAULT_AIN_SAMPLE_COUNT)) {
+        LOG_E("StreamingBufferPool_Init failed — falling back to heap allocation");
+    }
+    LOG_I("HEAP AFTER POOL: %u free", (unsigned)xPortGetFreeHeapSize());
     InitializeBoardData(gpBoardData);
 
     // Apply persisted voltage precision to streaming runtime config
