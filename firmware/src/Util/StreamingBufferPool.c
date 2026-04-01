@@ -25,12 +25,13 @@ static uint32_t gSampleCount = 0;
 
 bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
                               uint32_t defaultSampleCount) {
-    /* Static array — no heap allocation, no fragmentation, no fatal hook. */
+    if (gPool != NULL) return true;
+
+    /* Static array — no heap allocation, no fragmentation, no fatal hook.
+     * Lives in BSS alongside FreeRTOS heap and coherent pool. */
     gPool = gPoolStorage;
     gPoolSize = STATIC_POOL_SIZE;
-    gUsbSize = 0;
-    gWifiSize = 0;
-    gSampleCount = 0;
+    LOG_I("StreamingBufferPool: %u bytes (static)", (unsigned)gPoolSize);
 
     StreamingBufferPool_Partition(defaultUsbSize, defaultWifiSize,
                                   defaultSampleCount);

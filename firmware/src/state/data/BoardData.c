@@ -36,6 +36,17 @@ void InitializeBoardData(tBoardData* boardData) {
         int16_t* freeMem = NULL;
         uint32_t count = 0;
         StreamingBufferPool_GetSamplePool(&poolMem, &freeMem, &count);
+
+        // Debug: inspect these at breakpoint on the if() line below
+        volatile void* dbg_poolMem = poolMem;
+        volatile int16_t* dbg_freeMem = freeMem;
+        volatile uint32_t dbg_count = count;
+        volatile uint32_t dbg_poolTotal = StreamingBufferPool_TotalSize();
+        volatile uint32_t dbg_poolSamples = StreamingBufferPool_SampleCount();
+        volatile uint32_t dbg_heapNow = xPortGetFreeHeapSize();
+        (void)dbg_poolMem; (void)dbg_freeMem; (void)dbg_count;
+        (void)dbg_poolTotal; (void)dbg_poolSamples; (void)dbg_heapNow;
+
         if (poolMem != NULL && count > 0) {
             AInSampleList_InitializeExternal(poolMem, freeMem, count);
         } else {
