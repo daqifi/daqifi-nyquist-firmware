@@ -141,6 +141,12 @@ static const NanopbFlagsArray fields_sd_metadata = {
 // Encode buffer must fit the largest single encode output for any interface.
 // Previously used min() which limited all interfaces to the WiFi buffer size (1400).
 // Using max() allows each interface to use its full capacity when active.
+// Override ENCODER_BUFFER_OVERRIDE in project defines to test larger sizes.
+// Encode buffer must fit the largest single encode output for any interface.
+// Benchmark results (encoder buffer sweep, issue #229):
+//   8KB (default): best for USB CSV throughput
+//   16KB: +16% SD throughput, -16% USB CSV — tradeoff
+// Keeping 8KB as default; SD-heavy workloads could benefit from 16KB.
 #define BUFFER_SIZE max(max(USBCDC_WBUFFER_SIZE, WIFI_WBUFFER_SIZE), SD_CARD_MANAGER_CONF_WBUFFER_SIZE)
 uint8_t buffer[BUFFER_SIZE];
 
