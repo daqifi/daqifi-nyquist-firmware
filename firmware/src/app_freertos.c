@@ -730,6 +730,14 @@ void APP_FREERTOS_Tasks(void) {
     volatile uint32_t dbg_heap_before_tasks = xPortGetFreeHeapSize();
     volatile uint32_t dbg_heap_total = configTOTAL_HEAP_SIZE;
     volatile uint32_t dbg_pool_size = StreamingBufferPool_TotalSize();
+    (void)dbg_heap_before_pool;
+    (void)dbg_heap_after_pool;
+    (void)dbg_heap_after_boarddata;
+    (void)dbg_heap_before_streaming;
+    (void)dbg_heap_after_streaming;
+    (void)dbg_heap_before_tasks;
+    (void)dbg_heap_total;
+    (void)dbg_pool_size;
     app_TasksCreate();
     while (true) {
         ADC_Tasks();
