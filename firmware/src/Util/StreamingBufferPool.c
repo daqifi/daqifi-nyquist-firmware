@@ -30,14 +30,23 @@ bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
               (unsigned)freeHeap, (unsigned)STREAMING_POOL_HEAP_RESERVE);
         return false;
     }
-    /* Allocate a conservative fixed size for now — the heap measurement
-     * logs will tell us how much is actually available. */
-    uint32_t poolSize = 48U * 1024U;  // Known-good from earlier testing
-    if (freeHeap < poolSize + 10240) {
-        LOG_E("StreamingBufferPool: only %u free, need %u + margin",
-              (unsigned)freeHeap, (unsigned)poolSize);
+    /* Measured heap budget (see issue #229 debug logs):
+     *   Before pool:         332440 free
+     *   Before TasksCreate:   34024 free (need for task stacks)
+     *   After all tasks:      10184 free
+     *   After WiFi driver:     5456 free
+     *
+     * Between pool alloc and task creation: streaming/ADC/logger inits
+     * consume ~16KB for queues and tasks (sample pool is IN the pool).
+     * Reserve = 16KB inits + 34KB task stacks + 5KB final margin = 55KB.
+     */
+    uint32_t reserve = 55U * 1024U;
+    if (freeHeap <= reserve) {
+        LOG_E("StreamingBufferPool: only %u free, need > %u reserve",
+              (unsigned)freeHeap, (unsigned)reserve);
         return false;
     }
+    uint32_t poolSize = (uint32_t)(freeHeap - reserve);
 
     gPool = (uint8_t*)OSAL_Malloc(poolSize);
     if (gPool == NULL) {
