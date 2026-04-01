@@ -113,9 +113,9 @@ void StreamingBufferPool_GetSamplePool(void** poolBuf, int16_t** nextFreeBuf,
     /* int16_t needs 2-byte alignment */
     nextFreeOff = (nextFreeOff + 1U) & ~1U;
 
-    /* Bounds check */
+    /* Bounds check (all values are offsets from pool start, not addresses) */
     uintptr_t end = nextFreeOff + gSampleCount * sizeof(int16_t);
-    if (end - (uintptr_t)gPool > gPoolSize) {
+    if (end > gPoolSize) {
         *poolBuf = NULL; *nextFreeBuf = NULL; *count = 0;
         return;
     }
