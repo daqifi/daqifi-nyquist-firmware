@@ -464,12 +464,8 @@ void app_SystemInit() {
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     CoherentPool_Init();
-    LOG_E("HEAP BEFORE POOL: %u free", (unsigned)xPortGetFreeHeapSize());
-    if (!StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE,
-                                  DEFAULT_AIN_SAMPLE_COUNT)) {
-        LOG_E("StreamingBufferPool_Init failed — falling back to heap allocation");
-    }
-    LOG_E("HEAP AFTER POOL: %u free", (unsigned)xPortGetFreeHeapSize());
+    StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE,
+                             DEFAULT_AIN_SAMPLE_COUNT);
     InitializeBoardData(gpBoardData);
 
     // Apply persisted voltage precision to streaming runtime config
@@ -719,9 +715,7 @@ void APP_FREERTOS_Initialize(void) {
 
 void APP_FREERTOS_Tasks(void) {
     app_SystemInit();
-    LOG_E("HEAP BEFORE app_TasksCreate: %u free", (unsigned)xPortGetFreeHeapSize());
     app_TasksCreate();
-    LOG_E("HEAP AFTER ALL TASKS: %u free", (unsigned)xPortGetFreeHeapSize());
     while (true) {
         ADC_Tasks();
         vTaskDelay(1 / portTICK_PERIOD_MS);

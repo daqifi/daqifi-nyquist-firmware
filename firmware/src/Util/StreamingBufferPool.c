@@ -3,9 +3,14 @@
 
 #include "StreamingBufferPool.h"
 #include "Logger.h"
-#include "osal/osal.h"
 #include "state/data/AInSample.h"
 #include <string.h>
+
+/* Static pool array — lives in BSS, not heap. No fragmentation risk,
+ * no malloc, no fatal hook. Size must fit in RAM alongside .data,
+ * FreeRTOS heap (349KB), and coherent pool (42KB). */
+#define STATIC_POOL_SIZE (280U * 1024U)
+static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 static uint8_t* gPool = NULL;
 static uint32_t gPoolSize = 0;
@@ -22,41 +27,11 @@ bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
                               uint32_t defaultSampleCount) {
     if (gPool != NULL) return true;
 
-    /* Grab all available heap minus a reserve for task stacks, queues,
-     * FreeRTOS kernel, WiFi driver, and transient allocations. */
-    size_t freeHeap = xPortGetFreeHeapSize();
-    if (freeHeap <= STREAMING_POOL_HEAP_RESERVE) {
-        LOG_E("StreamingBufferPool: insufficient heap (%u free, need > %u)",
-              (unsigned)freeHeap, (unsigned)STREAMING_POOL_HEAP_RESERVE);
-        return false;
-    }
-    /* Measured heap budget (see issue #229 debug logs):
-     *   Before pool:         332440 free
-     *   Before TasksCreate:   34024 free (need for task stacks)
-     *   After all tasks:      10184 free
-     *   After WiFi driver:     5456 free
-     *
-     * Between pool alloc and task creation: streaming/ADC/logger inits
-     * consume ~16KB for queues and tasks (sample pool is IN the pool).
-     * Reserve = 16KB inits + 34KB task stacks + 5KB final margin = 55KB.
-     */
-    uint32_t reserve = 60U * 1024U;
-    if (freeHeap <= reserve) {
-        LOG_E("StreamingBufferPool: only %u free, need > %u reserve",
-              (unsigned)freeHeap, (unsigned)reserve);
-        return false;
-    }
-    uint32_t poolSize = (uint32_t)(freeHeap - reserve);
-
-    gPool = (uint8_t*)OSAL_Malloc(poolSize);
-    if (gPool == NULL) {
-        LOG_E("StreamingBufferPool: alloc %u failed", (unsigned)poolSize);
-        return false;
-    }
-    gPoolSize = poolSize;
-    LOG_I("StreamingBufferPool: %u bytes at %p (heap was %u, reserve %u)",
-          (unsigned)gPoolSize, (void*)gPool,
-          (unsigned)freeHeap, (unsigned)STREAMING_POOL_HEAP_RESERVE);
+    /* Static array — no heap allocation, no fragmentation, no fatal hook.
+     * Lives in BSS alongside FreeRTOS heap and coherent pool. */
+    gPool = gPoolStorage;
+    gPoolSize = STATIC_POOL_SIZE;
+    LOG_I("StreamingBufferPool: %u bytes (static)", (unsigned)gPoolSize);
 
     StreamingBufferPool_Partition(defaultUsbSize, defaultWifiSize,
                                   defaultSampleCount);

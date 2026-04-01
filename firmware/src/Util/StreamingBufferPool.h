@@ -11,17 +11,20 @@ extern "C" {
 /**
  * Unified Streaming Memory Pool
  *
- * A single contiguous heap allocation that holds ALL streaming-related
- * memory: USB circular buffer, WiFi circular buffer, sample pool array,
- * and sample free-list array.  Partitioned at each stream start based on
- * active interfaces — no runtime malloc, no fragmentation.
+ * A static BSS array that holds ALL streaming-related memory:
+ * USB circular buffer, WiFi circular buffer, sample pool array,
+ * and sample free-list array.  Partitioned at each stream start
+ * based on active interfaces — no malloc, no fragmentation.
  *
  * Layout after partition:
- *   [USB circular buf | WiFi circular buf | samplePool[] | nextFree[]]
+ *   [USB circular buf | WiFi circular buf | <align> | samplePool[] | nextFree[]]
  *
- * Boot:   StreamingBufferPool_Init() allocates the pool, sets defaults.
+ * Boot:   StreamingBufferPool_Init() sets default partition.
  * Start:  StreamingBufferPool_Partition() re-carves all regions.
  * Run:    Each module uses its region via external pointers.
+ *
+ * RAM budget: PIC32MZ has 512KB. This pool (280KB) + FreeRTOS heap (100KB)
+ * + coherent pool (42KB) + BSS/data (~20KB) + ISR stack (8KB) = ~450KB.
  */
 
 /** Minimum buffer sizes (from module constraints) */
@@ -29,51 +32,13 @@ extern "C" {
 #define STREAMING_WIFI_MIN  1400   /* SOCKET_BUFFER_MAX_LENGTH */
 
 /**
- * Heap reserved for everything outside the pool.
- *
- * Sum of all FreeRTOS task stacks created AFTER pool allocation
- * (words × 4), plus per-task TCB overhead, plus WiFi driver heap,
- * plus safety margin. If any task stack size changes, this
- * automatically stays correct.
- *
- * Task stacks are in words (PIC32MZ: 1 word = 4 bytes).
- */
-
-/* Only tasks created AFTER StreamingBufferPool_Init count.
- * tasks.c tasks (WDRV_WINC, AD7609, USB_DEV, USB_DRV, APP_FREERTOS)
- * are already allocated when xPortGetFreeHeapSize() is called. */
-
-/* app_freertos.c app_TasksCreate() */
-#define _RESERVE_APP      (640 + 3072 + 1024 + 1024)        /* words: PowerUI, USB, WiFi, SD */
-/* streaming.c Streaming_Init() */
-#define _RESERVE_STREAM   (1392 + 512)                       /* words: encoder, deferred ISR */
-/* ADC_Init() + Logger init */
-#define _RESERVE_OTHER    (160 + 128)                        /* words: MC12bADC EOS, logISR drain */
-
-#define _RESERVE_TOTAL_STACK_WORDS (_RESERVE_APP + _RESERVE_STREAM + _RESERVE_OTHER)
-#define _RESERVE_TOTAL_STACK_BYTES (_RESERVE_TOTAL_STACK_WORDS * 4U)
-
-#define _RESERVE_TCB_OVERHEAD  (9U * 400U)    /* ~400 bytes per TCB × 9 tasks created after pool */
-#define _RESERVE_QUEUES_MISC   (6U * 1024U)   /* FreeRTOS queues, mutexes, kernel */
-#define _RESERVE_WIFI_DRIVER   (18U * 1024U)  /* WINC1500 driver heap at power-up */
-#define _RESERVE_MARGIN        (40U * 1024U)  /* sample queue, other queues/mutexes, heap_4 metadata */
-
-#define STREAMING_POOL_HEAP_RESERVE ( \
-    _RESERVE_TOTAL_STACK_BYTES + \
-    _RESERVE_TCB_OVERHEAD + \
-    _RESERVE_QUEUES_MISC + \
-    _RESERVE_WIFI_DRIVER + \
-    _RESERVE_MARGIN \
-)
-
-/**
- * Allocate the pool (all available heap minus reserve) and set default
- * partition.  Call once at boot before USB/WiFi/sample pool init.
+ * Initialize the pool and set default partition.
+ * Call once at boot before USB/WiFi/sample pool init.
  *
  * @param defaultUsbSize   Initial USB buffer size
  * @param defaultWifiSize  Initial WiFi buffer size
  * @param defaultSampleCount Initial sample pool depth
- * @return true if allocation succeeded
+ * @return true (always succeeds — static memory)
  */
 bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
                               uint32_t defaultSampleCount);
