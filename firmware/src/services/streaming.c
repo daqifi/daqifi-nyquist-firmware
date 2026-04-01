@@ -669,6 +669,11 @@ void streaming_Task(void) {
             continue;
         }
 
+        // Encoder buffer must be set (from pool) before encoding
+        if (buffer == NULL || bufferSize == 0) {
+            continue;
+        }
+
         AINDataAvailable = !AInSampleList_IsEmpty();
         DIODataAvailable = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
 
