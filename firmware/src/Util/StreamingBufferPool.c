@@ -9,7 +9,7 @@
 /* Static pool array — lives in BSS, not heap. No fragmentation risk,
  * no malloc, no fatal hook. Size must fit in RAM alongside .data,
  * FreeRTOS heap (349KB), and coherent pool (42KB). */
-#define STATIC_POOL_SIZE (100U * 1024U)
+#define STATIC_POOL_SIZE (240U * 1024U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 static uint8_t* gPool = NULL;
