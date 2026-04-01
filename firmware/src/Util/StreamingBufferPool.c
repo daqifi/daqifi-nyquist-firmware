@@ -40,7 +40,7 @@ bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
      * consume ~16KB for queues and tasks (sample pool is IN the pool).
      * Reserve = 16KB inits + 34KB task stacks + 5KB final margin = 55KB.
      */
-    uint32_t reserve = 55U * 1024U;
+    uint32_t reserve = 60U * 1024U;
     if (freeHeap <= reserve) {
         LOG_E("StreamingBufferPool: only %u free, need > %u reserve",
               (unsigned)freeHeap, (unsigned)reserve);
