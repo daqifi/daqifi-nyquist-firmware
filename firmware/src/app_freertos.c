@@ -464,20 +464,9 @@ void app_SystemInit() {
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     CoherentPool_Init();
-    // Debug: capture heap at every stage
-    volatile uint32_t dbg_heap_before_pool = xPortGetFreeHeapSize();
-    (void)dbg_heap_before_pool;
-
     StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE,
                              DEFAULT_AIN_SAMPLE_COUNT);
-
-    volatile uint32_t dbg_heap_after_pool = xPortGetFreeHeapSize();
-    (void)dbg_heap_after_pool;
-
     InitializeBoardData(gpBoardData);
-
-    volatile uint32_t dbg_heap_after_boarddata = xPortGetFreeHeapSize();
-    (void)dbg_heap_after_boarddata;
 
     // Apply persisted voltage precision to streaming runtime config
     {
@@ -542,15 +531,9 @@ void app_SystemInit() {
     // Write initial values
     DIO_WriteStateAll();
     DIO_TIMING_TEST_INIT();
-    volatile uint32_t dbg_heap_before_streaming = xPortGetFreeHeapSize();
-    (void)dbg_heap_before_streaming;
-
     Streaming_Init(&gpBoardConfig->StreamingConfig,
             &gpBoardRuntimeConfig->StreamingConfig);
     Streaming_UpdateState();
-
-    volatile uint32_t dbg_heap_after_streaming = xPortGetFreeHeapSize();
-    (void)dbg_heap_after_streaming;
 
     ADC_Init(
             gpBoardConfig,
@@ -732,12 +715,6 @@ void APP_FREERTOS_Initialize(void) {
 
 void APP_FREERTOS_Tasks(void) {
     app_SystemInit();
-    volatile uint32_t dbg_heap_before_tasks = xPortGetFreeHeapSize();
-    volatile uint32_t dbg_heap_total = configTOTAL_HEAP_SIZE;
-    volatile uint32_t dbg_pool_size = StreamingBufferPool_TotalSize();
-    (void)dbg_heap_before_tasks;
-    (void)dbg_heap_total;
-    (void)dbg_pool_size;
     app_TasksCreate();
     while (true) {
         ADC_Tasks();
