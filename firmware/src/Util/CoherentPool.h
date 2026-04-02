@@ -9,9 +9,10 @@
 extern "C" {
 #endif
 
-// Default coherent pool size: 41KB
-// Must accommodate DMA-safe buffers: SD circular (32KB) + SD write (8KB) + headroom
-#define COHERENT_POOL_DEFAULT_SIZE  (41U * 1024U)
+// Default coherent pool size: 68KB
+// Must accommodate DMA-safe buffers: SD write (64KB) + headroom
+// SD circular buffer moved to StreamingBufferPool (CPU-only, no DMA)
+#define COHERENT_POOL_DEFAULT_SIZE  (68U * 1024U)
 
 // Alignment for all pool allocations (cache line size on PIC32MZ)
 #define COHERENT_POOL_ALIGNMENT     16U

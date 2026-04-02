@@ -2190,20 +2190,25 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                            mc->encoderBufSize == 0 &&
                            mc->samplePoolCount == 0);
 
-        uint32_t usbSize, wifiSize;
+        uint32_t usbSize, wifiSize, sdCircSize, sdDmaSize;
 
         if (isAutoMode) {
-            uint32_t sdSize;
-            Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdSize);
-            LOG_I("Auto-balance: USB=%u WiFi=%u (SD=%u coherent)",
-                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdSize);
+            Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
+                                          &sdDmaSize);
+            LOG_I("Auto-balance: USB=%u WiFi=%u sdCirc=%u sdDma=%u",
+                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdCircSize,
+                  (unsigned)sdDmaSize);
         } else {
             usbSize = mc->usbCircularBufSize ? mc->usbCircularBufSize
                                              : USBCDC_CIRCULAR_BUFF_SIZE;
             wifiSize = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
                                                : WIFI_CIRCULAR_BUFF_SIZE;
-            LOG_I("Explicit buffers: USB=%u WiFi=%u",
-                  (unsigned)usbSize, (unsigned)wifiSize);
+            sdCircSize = mc->sdCircularBufSize ? mc->sdCircularBufSize
+                                               : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+            sdDmaSize = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
+            LOG_I("Explicit buffers: USB=%u WiFi=%u sdCirc=%u sdDma=%u",
+                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdCircSize,
+                  (unsigned)sdDmaSize);
         }
 
         // Wait for any in-flight USB DMA write before swapping buffers.
@@ -2222,16 +2227,26 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         uint32_t poolCount = mc->samplePoolCount;
 
         // Re-partition the unified pool and swap all buffer pointers.
-        StreamingBufferPool_Partition(usbSize, wifiSize, encSize, poolCount);
+        StreamingBufferPool_Partition(usbSize, wifiSize, encSize, sdCircSize,
+                                      poolCount);
 
-        uint8_t *usbBuf, *wifiBuf, *encBuf;
-        uint32_t usbLen, wifiLen, encLen;
+        uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
+        uint32_t usbLen, wifiLen, encLen, sdCircLen;
         StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
         StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
         StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+        StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
         Streaming_SetEncoderBuffer(encBuf, encLen);
+        sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
+
+        // Re-partition coherent pool for SD DMA write buffer
+        CoherentPool_Reset();
+        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
+        if (sdDmaBuf != NULL) {
+            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+        }
 
         // Re-init sample pool with new region from unified pool
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
@@ -2766,6 +2781,8 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     scpi_printf(context, "HeapMinEverFree=%u\r\n", (unsigned)heapMinEver);
     scpi_printf(context, "CoherentPoolTotal=%u\r\n", (unsigned)poolTotal);
     scpi_printf(context, "CoherentPoolFree=%u\r\n", (unsigned)poolFree);
+    scpi_printf(context, "SdCircularSize=%u\r\n",
+                (unsigned)StreamingBufferPool_SdCircularSize());
     scpi_printf(context, "SamplePoolCount=%u\r\n", (unsigned)samplePoolCap);
     scpi_printf(context, "SamplePoolBytes=%u\r\n",
                 (unsigned)(samplePoolCap * sizeof(AInPublicSampleList_t)));
@@ -2785,9 +2802,11 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
 
     // Compute optimal buffer sizes using shared helper
+    uint32_t sdDmaSize;
     Streaming_ComputeAutoBuffers(&mc->usbCircularBufSize,
                                  &mc->wifiCircularBufSize,
-                                 &mc->sdCircularBufSize);
+                                 &mc->sdCircularBufSize,
+                                 &sdDmaSize);
 
     // Sample pool count = 0 means maximize with remaining pool space
     mc->samplePoolCount = 0;
@@ -2803,16 +2822,26 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
 
         StreamingBufferPool_Partition(mc->usbCircularBufSize,
                                       mc->wifiCircularBufSize,
-                                      ENCODER_BUFFER_DEFAULT, 0);
+                                      ENCODER_BUFFER_DEFAULT,
+                                      mc->sdCircularBufSize, 0);
 
-        uint8_t *usbBuf, *wifiBuf, *encBuf;
-        uint32_t usbLen, wifiLen, encLen;
+        uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
+        uint32_t usbLen, wifiLen, encLen, sdCircLen;
         StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
         StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
         StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+        StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
         Streaming_SetEncoderBuffer(encBuf, encLen);
+        sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
+
+        // Re-partition coherent pool for SD DMA write buffer
+        CoherentPool_Reset();
+        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
+        if (sdDmaBuf != NULL) {
+            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+        }
 
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
         StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
@@ -2821,6 +2850,7 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     }
 
     scpi_printf(context, "SD=%u\r\n", (unsigned)mc->sdCircularBufSize);
+    scpi_printf(context, "SdDma=%u\r\n", (unsigned)sdDmaSize);
     scpi_printf(context, "WiFi=%u\r\n", (unsigned)mc->wifiCircularBufSize);
     scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
     scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);

@@ -11,7 +11,8 @@
 #include "Util/CircularBuffer.h"
 
 #define SD_CARD_MANAGER_CONF_RBUFFER_SIZE 512   // Small buffer, send directory listings in chunks
-#define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 8192  // Increased to 8KB for 5kHz streaming support
+#define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 65536  // 64KB DMA write buffer max (coherent, sector-aligned)
+#define SD_CARD_MANAGER_MIN_WBUFFER_SIZE  8192  // 8KB DMA write buffer min (when SD not streaming)
 #define SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE (32U * 1024U)  // Default SD circular buffer size
 
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
@@ -142,6 +143,29 @@ extern "C" {
      *       to write data using sd_card_manager_WriteToBuffer().
      */
     size_t sd_card_manager_GetWriteBuffFreeSize(void);
+
+    /**
+     * @brief Reinitialize the SD circular buffer with a new memory region.
+     *
+     * Called at each stream start after StreamingBufferPool re-partition.
+     * Must only be called when streaming is stopped (no concurrent writes).
+     *
+     * @param buf   Pointer to new buffer memory (from StreamingBufferPool)
+     * @param size  Buffer size in bytes
+     */
+    void sd_card_manager_SetCircularBuffer(uint8_t* buf, uint32_t size);
+
+    /**
+     * @brief Reinitialize the SD DMA write buffer with a new size.
+     *
+     * The buffer pointer comes from CoherentPool (DMA-safe).
+     * Called at each stream start to optimize DMA size for active interfaces.
+     * Must only be called when streaming is stopped and SD is idle.
+     *
+     * @param buf   Pointer to coherent buffer memory
+     * @param size  Buffer size in bytes
+     */
+    void sd_card_manager_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
     /**
      * @brief Checks if the SD card manager is currently idle (not processing any operation).

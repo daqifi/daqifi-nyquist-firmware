@@ -124,9 +124,11 @@ uint32_t Streaming_GetQuesBits(void);
  *
  * @param[out] outUsbSize   Optimal USB circular buffer size (bytes)
  * @param[out] outWifiSize  Optimal WiFi circular buffer size (bytes)
- * @param[out] outSdSize    Optimal SD circular buffer size (bytes, informational — coherent pool can't resize)
+ * @param[out] outSdSize    Optimal SD circular buffer size (bytes)
+ * @param[out] outSdDmaSize Optimal SD DMA write buffer size (bytes, coherent pool)
  */
-void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, uint32_t* outSdSize);
+void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
+                                   uint32_t* outSdSize, uint32_t* outSdDmaSize);
 
 /**
  * Set the encoder buffer to pool-managed memory.

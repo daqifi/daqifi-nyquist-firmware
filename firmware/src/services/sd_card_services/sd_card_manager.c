@@ -4,6 +4,7 @@
 #include <string.h>
 #include "Util/Logger.h"
 #include "Util/CoherentPool.h"
+#include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
@@ -367,15 +368,14 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
 bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     static bool isInitDone = false;
     if (!isInitDone) {
-        // Allocate SD buffers from coherent pool (DMA-safe)
-        gSdSharedBufferSize = SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE;
-        gSdSharedBuffer = CoherentPool_Alloc("SD_circular", gSdSharedBufferSize);
+        // Get SD circular buffer from streaming pool (CPU-only, no DMA needed)
+        StreamingBufferPool_GetSdCircular(&gSdSharedBuffer, &gSdSharedBufferSize);
         if (gSdSharedBuffer == NULL) {
-            LOG_E("[SD] Failed to allocate %u bytes from coherent pool for circular buffer",
-                  (unsigned)gSdSharedBufferSize);
+            LOG_E("[SD] Failed to get SD circular buffer from streaming pool");
             return false;
         }
 
+        // Allocate SD DMA write buffer from coherent pool (DMA-safe for SPI/FatFS)
         gSDCardData.writeBufferSize = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
         gSDCardData.writeBuffer = CoherentPool_Alloc("SD_write", gSDCardData.writeBufferSize);
         if (gSDCardData.writeBuffer == NULL) {
@@ -384,7 +384,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
             return false;
         }
 
-        // Initialize circular buffer using pool-allocated coherent memory
+        // Initialize circular buffer using streaming pool memory
         CircularBuf_InitExternal(&gSDCardData.wCirbuf, CircularBufferToSDWrite,
                                  gSdSharedBuffer, gSdSharedBufferSize);
 
@@ -1423,6 +1423,28 @@ void sd_card_manager_ProcessState() {
         default:
             break;
     }
+}
+
+void sd_card_manager_SetWriteBuffer(uint8_t* buf, uint32_t size) {
+    if (buf == NULL || size == 0) return;
+
+    SD_TakeMutexDebug(gSDCardData.wMutex, "set_write_buffer");
+    gSDCardData.writeBuffer = buf;
+    gSDCardData.writeBufferSize = size;
+    gSDCardData.writeBufferLength = 0;
+    gSDCardData.sdCardWriteBufferOffset = 0;
+    xSemaphoreGive(gSDCardData.wMutex);
+}
+
+void sd_card_manager_SetCircularBuffer(uint8_t* buf, uint32_t size) {
+    if (buf == NULL || size == 0) return;
+
+    SD_TakeMutexDebug(gSDCardData.wMutex, "set_circular_buffer");
+    gSdSharedBuffer = buf;
+    gSdSharedBufferSize = size;
+    CircularBuf_InitExternal(&gSDCardData.wCirbuf, CircularBufferToSDWrite,
+                             gSdSharedBuffer, gSdSharedBufferSize);
+    xSemaphoreGive(gSDCardData.wMutex);
 }
 
 size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {

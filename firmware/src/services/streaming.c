@@ -381,7 +381,8 @@ void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
  * Strategy: give active interfaces their compile-time defaults (proven sufficient),
  * minimize inactive interfaces. All remaining pool space goes to sample depth.
  */
-void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, uint32_t* outSdSize) {
+void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
+                                   uint32_t* outSdSize, uint32_t* outSdDmaSize) {
     StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(
         BOARDRUNTIME_STREAMING_CONFIGURATION);
     sd_card_manager_settings_t* sd = BoardRunTimeConfig_Get(
@@ -395,8 +396,16 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, u
                   sc->ActiveInterface == StreamingInterface_SD ||
                   sc->ActiveInterface == StreamingInterface_All);
 
-    // SD: coherent pool (separate from streaming pool), report for informational purposes
-    *outSdSize = hasSd ? 32768 : 0;
+    // SD circular now lives in streaming pool (CPU-only, no DMA).
+    // Active: full default size. Inactive: minimum (pool needs valid pointer).
+    *outSdSize = hasSd ? SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE
+                       : STREAMING_SD_CIRCULAR_MIN;
+
+    // SD DMA write buffer: maximize when SD active, minimize when not.
+    // Coherent pool is statically allocated so unused bytes are committed
+    // but not accessed — the auto-balance controls effective write size.
+    *outSdDmaSize = hasSd ? SD_CARD_MANAGER_CONF_WBUFFER_SIZE
+                          : SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
 
     // Active interfaces get compile-time defaults (benchmarked as sufficient).
     // Inactive interfaces get minimums to maximize sample pool depth.
