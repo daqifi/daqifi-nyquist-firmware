@@ -371,9 +371,15 @@ void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
 }
 
 /**
- * Compute optimal circular buffer sizes based on currently active interfaces.
- * Single-interface mode maximizes that interface's buffer; multi-interface
- * uses conservative defaults to share heap resources.
+ * Compute optimal circular buffer sizes based on active interfaces.
+ *
+ * Benchmark findings (issue #229, buffer sweep):
+ * - USB buffer 4KB-64KB: no throughput difference (USB CDC scheduling is bottleneck)
+ * - WiFi buffer 1.4KB-28KB: no throughput difference (WINC1500 SPI frame is bottleneck)
+ * - Encoder buffer: 8KB optimal across all formats
+ *
+ * Strategy: give active interfaces their compile-time defaults (proven sufficient),
+ * minimize inactive interfaces. All remaining pool space goes to sample depth.
  */
 void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, uint32_t* outSdSize) {
     StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(
@@ -389,24 +395,13 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize, u
                   sc->ActiveInterface == StreamingInterface_SD ||
                   sc->ActiveInterface == StreamingInterface_All);
 
-    int activeCount = (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0) + (hasSd ? 1 : 0);
-
-    // SD: coherent pool can't be resized, but report optimal size for SCPI AUTO
+    // SD: coherent pool (separate from streaming pool), report for informational purposes
     *outSdSize = hasSd ? 32768 : 0;
 
-    // WiFi: maximize when sole interface, conservative when sharing
-    if (hasWifi) {
-        *outWifiSize = (activeCount == 1) ? 28000 : 14000;
-    } else {
-        *outWifiSize = SOCKET_BUFFER_MAX_LENGTH;  // 1400 — minimum safe
-    }
-
-    // USB: maximize when sole interface
-    if (hasUsb) {
-        *outUsbSize = (activeCount == 1) ? 32768 : USBCDC_CIRCULAR_BUFF_SIZE;
-    } else {
-        *outUsbSize = USBCDC_WBUFFER_SIZE;  // 4096 — minimum safe
-    }
+    // Active interfaces get compile-time defaults (benchmarked as sufficient).
+    // Inactive interfaces get minimums to maximize sample pool depth.
+    *outWifiSize = hasWifi ? WIFI_CIRCULAR_BUFF_SIZE : STREAMING_WIFI_MIN;
+    *outUsbSize  = hasUsb  ? USBCDC_CIRCULAR_BUFF_SIZE : STREAMING_USB_MIN;
 }
 
 /*!
