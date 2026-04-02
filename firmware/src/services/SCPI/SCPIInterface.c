@@ -2170,6 +2170,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
+    // Stop streaming before re-partitioning. If called from WiFi task
+    // (priority 2, same as streaming task), the streaming task could
+    // round-robin mid-swap and use partially-swapped buffer pointers.
+    // Stopping first ensures no task is using the old buffers.
+    if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
+        pRunTimeStreamConfig->IsEnabled = false;
+        Streaming_UpdateState();  // Stop timer + streaming task
+    }
+
     // Auto-size and apply circular buffer sizes via streaming pool (issue #229).
     // The pool is one contiguous allocation — re-partitioning is pointer
     // arithmetic within the pool, no malloc needed.
