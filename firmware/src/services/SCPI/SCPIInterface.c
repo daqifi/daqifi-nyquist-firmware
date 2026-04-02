@@ -2241,15 +2241,16 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         Streaming_SetEncoderBuffer(encBuf, encLen);
         sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
 
-        // Re-partition coherent pool for SD DMA write buffer
+        // Re-partition coherent pool for SD DMA write buffer.
+        // Clamp to pool capacity so alloc cannot fail after reset.
+        uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
+        if (sdDmaSize > maxDma) {
+            LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
+            sdDmaSize = maxDma;
+        }
         CoherentPool_Reset();
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        if (sdDmaBuf != NULL) {
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-        } else {
-            LOG_E("CoherentPool_Alloc failed for SD_write (%u bytes)",
-                  (unsigned)sdDmaSize);
-        }
+        sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
 
         // Re-init sample pool with new region from unified pool
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
@@ -2839,15 +2840,16 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
         Streaming_SetEncoderBuffer(encBuf, encLen);
         sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
 
-        // Re-partition coherent pool for SD DMA write buffer
+        // Re-partition coherent pool for SD DMA write buffer.
+        // Clamp to pool capacity so alloc cannot fail after reset.
+        uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
+        if (sdDmaSize > maxDma) {
+            LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
+            sdDmaSize = maxDma;
+        }
         CoherentPool_Reset();
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        if (sdDmaBuf != NULL) {
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-        } else {
-            LOG_E("CoherentPool_Alloc failed for SD_write (%u bytes)",
-                  (unsigned)sdDmaSize);
-        }
+        sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
 
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
         StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
