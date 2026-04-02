@@ -17,6 +17,9 @@ extern "C" {
 // Alignment for all pool allocations (cache line size on PIC32MZ)
 #define COHERENT_POOL_ALIGNMENT     16U
 
+_Static_assert((COHERENT_POOL_DEFAULT_SIZE % COHERENT_POOL_ALIGNMENT) == 0,
+               "Coherent pool size must be multiple of COHERENT_POOL_ALIGNMENT");
+
 // Maximum number of named partitions for debugging
 #define COHERENT_POOL_MAX_PARTITIONS 8
 

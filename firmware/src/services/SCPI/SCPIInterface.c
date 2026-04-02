@@ -2244,6 +2244,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // Re-partition coherent pool for SD DMA write buffer.
         // Clamp to pool capacity so alloc cannot fail after reset.
         uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
+        maxDma &= ~(COHERENT_POOL_ALIGNMENT - 1);  // round down to alignment
+        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
         if (sdDmaSize > maxDma) {
             LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
             sdDmaSize = maxDma;
@@ -2843,6 +2845,8 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
         // Re-partition coherent pool for SD DMA write buffer.
         // Clamp to pool capacity so alloc cannot fail after reset.
         uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
+        maxDma &= ~(COHERENT_POOL_ALIGNMENT - 1);  // round down to alignment
+        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
         if (sdDmaSize > maxDma) {
             LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
             sdDmaSize = maxDma;
