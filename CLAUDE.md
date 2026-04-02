@@ -694,12 +694,25 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 1. Detect active interfaces via `Streaming_ComputeAutoBuffers()` (USB, WiFi, SD)
 2. Single-interface mode: maximize that interface's buffer (e.g., USB-only → USB=32KB, WiFi=1.4KB min)
 3. Multi-interface mode: conservative defaults (USB=16KB, WiFi=14KB)
-4. Encoder buffer: 8KB default
+4. Encoder buffer: 16KB when SD active (larger writes reduce SPI overhead), 8KB otherwise
 5. Re-partition streaming pool with computed sizes; sample pool gets all remaining space
 6. SD DMA write buffer: 64KB when SD active, 8KB when inactive (CoherentPool reset + re-alloc)
 7. Apply immediately: swap buffer pointers + re-init sample pool
 
-**Auto-balance at stream start:** When all `MemoryConfig` fields are zero (boot default), auto-balance runs automatically at each `StartStreamData`. Setting any field to non-zero disables auto mode. The `SYST:MEM:AUTO` response includes `SdDma=<n>` showing the SD DMA write buffer size selected by auto-balance.
+**Auto-balance at stream start:** When all `MemoryConfig` fields are zero (boot default), auto-balance runs automatically at each `StartStreamData`. Setting any field to non-zero disables auto mode. The `SYST:MEM:AUTO` response includes `SdDma=<n>` and `Encoder=<n>` showing the auto-balanced sizes.
+
+**Auto-Balance Buffer Sizing by Active Interface:**
+
+| Buffer | USB only | WiFi only | SD only | USB+WiFi | USB+SD | WiFi+SD | All |
+|--------|---:|---:|---:|---:|---:|---:|---:|
+| USB circular | 16,384 | 4,096 | 4,096 | 16,384 | 16,384 | 4,096 | 16,384 |
+| WiFi circular | 1,400 | 14,000 | 1,400 | 14,000 | 1,400 | 14,000 | 14,000 |
+| SD circular | 4,096 | 4,096 | 32,768 | 4,096 | 32,768 | 32,768 | 32,768 |
+| Encoder | 8,192 | 8,192 | 16,384 | 8,192 | 16,384 | 16,384 | 16,384 |
+| SD DMA write | 8,192 | 8,192 | 65,536 | 8,192 | 65,536 | 65,536 | 65,536 |
+| Sample pool | ~1,020 | ~1,020 | ~900 | ~960 | ~890 | ~890 | ~830 |
+
+Fixed buffers (not auto-balanced): USB CDC DMA writeBuffer (4KB, protocol-limited), WiFi SPI staging (2KB, Harmony driver).
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct)
 
