@@ -140,13 +140,8 @@ static const NanopbFlagsArray fields_sd_metadata = {
 #endif // max
 
 // Encoder buffer — allocated from StreamingBufferPool, runtime-adjustable.
-// Benchmark results (encoder buffer sweep, issue #229):
-//   8KB (default): best for USB CSV throughput
-//   16KB: +16% SD throughput, -16% USB CSV — tradeoff
-// Default size used when MemoryConfig.encoderBufSize == 0.
-#define ENCODER_BUFFER_DEFAULT 8192
-#define ENCODER_BUFFER_MIN     1024
-
+// ENCODER_BUFFER_DEFAULT (8192) and ENCODER_BUFFER_MIN (1024) defined in
+// StreamingBufferPool.h. Benchmark: 8KB optimal for USB, 16KB helps SD.
 static uint8_t* buffer = NULL;
 static uint32_t bufferSize = 0;
 
