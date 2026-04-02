@@ -2246,6 +2246,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
         if (sdDmaBuf != NULL) {
             sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+        } else {
+            LOG_E("CoherentPool_Alloc failed for SD_write (%u bytes)",
+                  (unsigned)sdDmaSize);
         }
 
         // Re-init sample pool with new region from unified pool
@@ -2841,6 +2844,9 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
         if (sdDmaBuf != NULL) {
             sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+        } else {
+            LOG_E("CoherentPool_Alloc failed for SD_write (%u bytes)",
+                  (unsigned)sdDmaSize);
         }
 
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
