@@ -571,54 +571,74 @@ All items verified against the actual errata document. Only issues affecting fea
 
 ### Memory Considerations
 
-#### Three Memory Regions
+#### Four Memory Regions
 
-The firmware uses three distinct memory regions, each with different properties:
+The firmware uses four distinct memory regions, each with different properties:
 
-1. **Coherent Pool** (41KB static, DMA-safe, `firmware/src/Util/CoherentPool.c`)
+1. **Streaming Buffer Pool** (276KB static BSS, `firmware/src/Util/StreamingBufferPool.c`)
+   - Single `static uint8_t gPoolStorage[]` array, partitioned at each stream start
+   - Contains: USB circular buffer + WiFi circular buffer + encoder buffer + sample pool + free-list
+   - Layout: `[USB circ | WiFi circ | encoder | <align> | samplePool[] | nextFree[]]`
+   - Re-partitioned at each `StartStreamData` based on active interfaces
+   - Zero runtime malloc — all resizing is pointer arithmetic within the pool
+   - Auto-balance: USB-only → USB=32KB, WiFi=min, ~1144 samples
+   - Query: `SYST:MEM:FREE?` → `SamplePoolCount`, `SamplePoolBytes`
+
+2. **Coherent Pool** (42KB static, DMA-safe, `firmware/src/Util/CoherentPool.c`)
    - Single `__attribute__((coherent, aligned(16)))` array in KSEG1 (uncached)
    - Bump allocator with named partitions, initialized at boot
    - Contains: SD circular buffer (32KB) + SD write buffer (8KB)
    - Query: `SYST:MEM:FREE?` → `CoherentPoolTotal`, `CoherentPoolFree`
 
-2. **FreeRTOS Heap** (284KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
+3. **FreeRTOS Heap** (75KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
    - heap_4 (best-fit with coalescence), allocated from `.bss`
-   - Contains: sample pool, circular buffers, task stacks, FreeRTOS internals
+   - Contains: task stacks, FreeRTOS TCBs/queues/mutexes, sample FreeRTOS queue
+   - Streaming buffers and sample pool are NOT in heap (moved to Streaming Buffer Pool)
    - Query: `SYST:MEM:FREE?` → `HeapTotal`, `HeapFree`, `HeapMinEverFree`
 
-3. **USB Coherent Struct** (~6KB static, `gRunTimeUsbSttings __attribute__((coherent))`)
+4. **USB Coherent Struct** (~6KB static, `gRunTimeUsbSttings __attribute__((coherent))`)
    - USB CDC DMA buffers (read 512B + write 4KB) embedded in coherent struct
    - Must remain coherent for USB hardware driver DMA compatibility
 
-#### Heap Allocation Map (349KB total, ~233KB used at boot)
+#### RAM Budget (PIC32MZ 512KB)
+
+| Region | Bytes | Source |
+|--------|------:|--------|
+| Streaming Buffer Pool | 282,624 | Static BSS (276KB) |
+| FreeRTOS Heap | 75,000 | Static BSS |
+| Coherent Pool | 41,984 | Static coherent (KSEG1) |
+| USB coherent struct | ~6,000 | Static coherent |
+| Other BSS/data (globals) | ~30,000 | Static BSS |
+| ISR stack | 8,192 | Linker-allocated |
+| **Total used** | **~444,000** | |
+| **Free (linker headroom)** | **~80,000** | |
+
+#### Heap Allocation Map (75KB total, ~62KB used at boot)
 
 | Consumer | Bytes | Source |
 |----------|------:|--------|
-| Sample pool (700 × 208) | 145,600 | `pvPortMalloc` in `AInSample.c` |
-| Sample nextFree array (700 × 2) | 1,400 | `pvPortMalloc` in `AInSample.c` |
-| Sample FreeRTOS queue | 2,880 | `xQueueCreate` in `AInSample.c` |
-| USB circular buffer | 16,384 | `OSAL_Malloc` in `CircularBuffer.c` |
-| WiFi circular buffer | 14,000 | `OSAL_Malloc` in `CircularBuffer.c` |
 | Task stacks (14 tasks) | ~37,500 | `xTaskCreate` (profiled, see Task Priority Map) |
+| FreeRTOS TCBs, mutexes, kernel | ~5,000 | Kernel internals |
+| Sample FreeRTOS queue | ~4,500 | `xQueueCreate` in `AInSample.c` |
 | DIO sample queue | ~3,200 | `xQueueCreate` in `DIOSample.c` |
 | WiFi event queue | ~480 | `xQueueCreate` in `wifi_manager.c` |
-| FreeRTOS TCBs, mutexes, kernel | ~5,000 | Kernel internals |
-| WiFi driver (power-up) | ~18,000 | WINC1500 `OSAL_Malloc` at power-up |
-| **Total used** | **~233,000** | |
-| **Free after power-up** | **~115,000** | `xPortGetFreeHeapSize()` |
+| Other queues/mutexes | ~3,000 | Various modules |
+| **Total used** | **~62,000** | |
+| **Free after boot** | **~13,000** | `xPortGetFreeHeapSize()` |
 
-**Note**: `HeapMinEverFree` (high-water mark) should stay above 0. Monitor via `SYST:MEM:FREE?`. Task stack health via `SYST:MEM:STACk?`.
+**Note**: Sample pool and circular buffers are in the Streaming Buffer Pool, NOT heap. `HeapMinEverFree` should stay above 0. Monitor via `SYST:MEM:FREE?`. Task stack health via `SYST:MEM:STACk?`.
 
 #### Dynamic Sample Pool
 
-The sample pool is allocated from the FreeRTOS heap at boot and can be resized between streaming sessions via SCPI. The O(1) free-list allocation pattern is preserved — only the backing memory is heap-allocated instead of static.
+The sample pool lives inside the Streaming Buffer Pool (static BSS). It is re-partitioned at each `StartStreamData` — the pool depth adjusts automatically based on how much space remains after USB/WiFi/encoder buffers are carved out. O(1) free-list allocation is preserved.
 
-- **Default size**: 500 samples (`DEFAULT_AIN_SAMPLE_COUNT` in `AInSample.h`)
+- **Default size**: 1100 samples (`DEFAULT_AIN_SAMPLE_COUNT` in `AInSample.h`)
 - **Range**: 100–2000 samples (`MIN_AIN_SAMPLE_COUNT`–`MAX_AIN_SAMPLE_COUNT`)
-- **Memory per sample**: ~208 bytes (`AInPublicSampleList_t`)
-- **Resize**: `AInSampleList_Destroy()` frees old pool, `AInSampleList_Initialize(newSize)` allocates new
-- **When resized**: At `Streaming_Start()` if `MemoryConfig.samplePoolCount` differs from current capacity
-- **Cleared automatically** in `Streaming_Start()` — stale samples freed before new session
+- **Memory per sample**: ~210 bytes (208 `AInPublicSampleList_t` + 2 `int16_t` free-list)
+- **Resize**: `StreamingBufferPool_Partition()` re-carves the pool, then `AInSampleList_InitializeExternal()` swaps the memory pointers. FreeRTOS queue is reused (not reallocated) across sessions.
+- **When resized**: At each `StartStreamData` via `SCPI_StartStreaming`
+- **Typical values**: Boot=1100, USB-only auto-balance=1144, USB-32KB+encoder-16KB=~1100
+- **Peak usage**: Typically 2-4 samples (at 3kHz 16ch). Pool depth provides burst absorption headroom.
 
 #### SCPI Dynamic Memory Configuration
 
@@ -632,26 +652,31 @@ SYSTem:MEMory:WIFI:BUFfer <bytes>     # Set WiFi circular buffer size
 SYSTem:MEMory:WIFI:BUFfer?            # Query (default: 14000)
 SYSTem:MEMory:USB:BUFfer <bytes>      # Set USB circular buffer size
 SYSTem:MEMory:USB:BUFfer?             # Query (default: 16384)
+SYSTem:MEMory:ENCoder:BUFfer <bytes>  # Set encoder buffer size
+SYSTem:MEMory:ENCoder:BUFfer?         # Query (default: 8192)
 SYSTem:MEMory:SAMPle:POOL <count>     # Set sample pool depth (0=auto)
-SYSTem:MEMory:SAMPle:POOL?            # Query (default: 500)
+SYSTem:MEMory:SAMPle:POOL?            # Query (default: 1100)
 SYSTem:MEMory:FREE?                   # Full memory diagnostics
 SYSTem:MEMory:AUTO                    # Auto-balance for enabled interfaces
 ```
+
+All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming Buffer Pool (276KB static BSS). Setting any value carves it from the pool; remaining space goes to the sample pool. Setting any field to a non-zero value disables auto-balance for all fields.
 
 **Setter Bounds:**
 
 | Command | Min | Max | Constraint |
 |---------|----:|----:|------------|
-| `SD:BUFfer` | 4096 | 65536 | Must be multiple of 512 (sector alignment) |
+| `SD:BUFfer` | 4096 | 65536 | Must be multiple of 512 (sector alignment). SD uses coherent pool, not streaming pool. |
 | `WIFI:BUFfer` | 1400 | 65536 | Min = SOCKET_BUFFER_MAX_LENGTH |
 | `USB:BUFfer` | 4096 | 65536 | Min = USBCDC_WBUFFER_SIZE |
-| `SAMPle:POOL` | 0 or 100 | 2000 | 0 = auto (DEFAULT_AIN_SAMPLE_COUNT) |
+| `ENCoder:BUFfer` | 1024 | 65536 | Encoder staging buffer. 8KB optimal for USB, 16KB helps SD throughput. |
+| `SAMPle:POOL` | 0 or 100 | 2000 | 0 = maximize with remaining pool space |
 
 **`SYST:MEM:FREE?` Response Fields:**
 
 | Field | Description |
 |-------|-------------|
-| `HeapTotal` | Total FreeRTOS heap (284000) |
+| `HeapTotal` | Total FreeRTOS heap (75000) |
 | `HeapFree` | Currently free heap bytes |
 | `HeapUsed` | Currently used heap bytes |
 | `HeapMinEverFree` | Lowest heap free since boot (high-water mark) |
@@ -663,19 +688,16 @@ SYSTem:MEMory:AUTO                    # Auto-balance for enabled interfaces
 | `SampleQueueBytes` | FreeRTOS queue overhead estimate |
 
 **`SYST:MEM:AUTO` Algorithm:**
-1. Query enabled interfaces from `StreamingRuntimeConfig.ActiveInterface` and SD enable
-2. Set default buffer sizes for enabled interfaces (SD:32768, WiFi:14000, USB:16384), 0 for disabled
-3. Calculate remaining heap after buffers (with 20KB reserve)
-4. Set sample pool to `remaining / sizeof(AInPublicSampleList_t)`, clamped to 100–2000
+1. Detect active interfaces via `Streaming_ComputeAutoBuffers()` (USB, WiFi, SD)
+2. Single-interface mode: maximize that interface's buffer (e.g., USB-only → USB=32KB, WiFi=1.4KB min)
+3. Multi-interface mode: conservative defaults (USB=16KB, WiFi=14KB)
+4. Encoder buffer: 8KB default
+5. Re-partition streaming pool with computed sizes; sample pool gets all remaining space
+6. Apply immediately: swap buffer pointers + re-init sample pool
 
-**Implementation:** `firmware/src/Util/CoherentPool.c` (pool), `firmware/src/state/data/AInSample.c` (dynamic pool), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct)
+**Auto-balance at stream start:** When all `MemoryConfig` fields are zero (boot default), auto-balance runs automatically at each `StartStreamData`. Setting any field to non-zero disables auto mode.
 
-#### Memory Pressure Indicators
-If heap allocation fails (`xPortGetFreeHeapSize()` returns low values):
-1. **Query `SYST:MEM:FREE?`** — check `HeapMinEverFree` for high-water mark
-2. **Reduce sample pool**: `SYST:MEM:SAMP:POOL 200` frees ~62KB heap
-3. **Reduce circular buffers**: `SYST:MEM:USB:BUF 4096` or `SYST:MEM:WIFI:BUF 1400`
-4. **Use `SYST:MEM:AUTO`**: auto-sizes based on active interfaces
+**Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct)
 
 #### Other Memory Constraints
 - DMA buffers must be cache-aligned and in KSEG1 (coherent pool or coherent attribute)

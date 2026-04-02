@@ -2,18 +2,19 @@
  * @brief Analog input sample queue and object pool implementation.
  *
  * Implements a FreeRTOS queue for streaming analog input samples between the
- * ADC interrupt handler and the streaming task. Uses a dynamically allocated
- * object pool with O(1) free list allocation to eliminate heap overhead at
- * high sample rates.
+ * ADC interrupt handler and the streaming task. Uses an object pool with O(1)
+ * free list allocation to eliminate heap overhead at high sample rates.
  *
- * The pool is allocated from the FreeRTOS heap at AInSampleList_Initialize()
- * and freed at AInSampleList_Destroy(). Pool size is configurable via the
- * maxSize parameter (clamped to MIN/MAX_AIN_SAMPLE_COUNT).
+ * Two initialization paths:
+ * - AInSampleList_InitializeExternal(): Pool memory from StreamingBufferPool
+ *   (static BSS, zero fragmentation). Used at boot and re-partitioned at each
+ *   stream start. FreeRTOS queue is reused across sessions.
+ * - AInSampleList_Initialize(): Legacy heap allocation path (fallback only).
  *
  * Performance characteristics:
  * - Queue: Standard FreeRTOS queue (thread-safe, ISR-safe)
  * - Pool allocation: O(1) via free list (no fragmentation, deterministic timing)
- * - Pool size: Configurable (default DEFAULT_AIN_SAMPLE_COUNT = 700)
+ * - Pool size: Configurable (default DEFAULT_AIN_SAMPLE_COUNT = 1100)
  *
  * @author Javier Longares Abaiz - When Technology becomes art.
  * @web www.javierlongares.com
@@ -34,7 +35,7 @@ static QueueHandle_t analogInputsQueue;
 static uint32_t queueSize = 0;
 
 // =============================================================================
-// Object Pool (dynamically allocated from FreeRTOS heap)
+// Object Pool (from StreamingBufferPool static BSS, or FreeRTOS heap fallback)
 // =============================================================================
 static AInPublicSampleList_t* samplePool = NULL;
 static uint32_t poolCapacity = 0;
