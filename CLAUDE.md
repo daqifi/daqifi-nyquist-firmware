@@ -236,7 +236,7 @@ SYSTem:STReam:CLEARSTATS   # Reset all counters
 | `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool=700) |
 | `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
-| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8KB buf, 3 retries) |
+| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries) |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
 | `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
@@ -409,10 +409,12 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 | USB | PB | 1 | 20 kHz | 51 |
 | USB | PB | 8 | 11 kHz | 195 |
 | USB | PB | 16 | 7 kHz | 211 |
-| SD | CSV | 1 | 5 kHz | 85 |
-| SD | CSV | 16 | 1 kHz | 266 |
-| SD | PB | 1 | 11 kHz | 133 |
-| SD | PB | 16 | 7 kHz | 177 |
+| SD | CSV | 1 | 11 kHz | 172 |
+| SD | CSV | 8 | 3 kHz | 408 |
+| SD | CSV | 16 | 2 kHz | 546 |
+| SD | PB | 1 | 13 kHz | 148 |
+| SD | PB | 8 | 7 kHz | 185 |
+| SD | PB | 16 | 7 kHz | 199 |
 | WiFi | PB | 16 | 1 kHz | 49 |
 | WiFi | CSV | 16 | 1 kHz | 206 |
 | SD | raw write | — | — | 665 |
@@ -575,19 +577,19 @@ All items verified against the actual errata document. Only issues affecting fea
 
 The firmware uses four distinct memory regions, each with different properties:
 
-1. **Streaming Buffer Pool** (276KB static BSS, `firmware/src/Util/StreamingBufferPool.c`)
+1. **Streaming Buffer Pool** (242KB static BSS, `firmware/src/Util/StreamingBufferPool.c`)
    - Single `static uint8_t gPoolStorage[]` array, partitioned at each stream start
-   - Contains: USB circular buffer + WiFi circular buffer + encoder buffer + sample pool + free-list
-   - Layout: `[USB circ | WiFi circ | encoder | <align> | samplePool[] | nextFree[]]`
+   - Contains: USB circular buffer + WiFi circular buffer + encoder buffer + SD circular buffer + sample pool + free-list
+   - Layout: `[USB circ | WiFi circ | encoder | SD circ | <align> | samplePool[] | nextFree[]]`
    - Re-partitioned at each `StartStreamData` based on active interfaces
    - Zero runtime malloc — all resizing is pointer arithmetic within the pool
    - Auto-balance: USB-only → USB=32KB, WiFi=min, ~1144 samples
    - Query: `SYST:MEM:FREE?` → `SamplePoolCount`, `SamplePoolBytes`
 
-2. **Coherent Pool** (42KB static, DMA-safe, `firmware/src/Util/CoherentPool.c`)
+2. **Coherent Pool** (68KB static, DMA-safe, `firmware/src/Util/CoherentPool.c`)
    - Single `__attribute__((coherent, aligned(16)))` array in KSEG1 (uncached)
    - Bump allocator with named partitions, initialized at boot
-   - Contains: SD circular buffer (32KB) + SD write buffer (8KB)
+   - Contains: SD DMA write buffer (64KB, auto-balanced 8-64KB at stream start)
    - Query: `SYST:MEM:FREE?` → `CoherentPoolTotal`, `CoherentPoolFree`
 
 3. **FreeRTOS Heap** (75KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
@@ -604,14 +606,14 @@ The firmware uses four distinct memory regions, each with different properties:
 
 | Region | Bytes | Source |
 |--------|------:|--------|
-| Streaming Buffer Pool | 282,624 | Static BSS (276KB) |
+| Streaming Buffer Pool | 247,808 | Static BSS (242KB) |
 | FreeRTOS Heap | 75,000 | Static BSS |
-| Coherent Pool | 41,984 | Static coherent (KSEG1) |
+| Coherent Pool | 69,632 | Static coherent (KSEG1) |
 | USB coherent struct | ~6,000 | Static coherent |
 | Other BSS/data (globals) | ~30,000 | Static BSS |
 | ISR stack | 8,192 | Linker-allocated |
-| **Total used** | **~444,000** | |
-| **Free (linker headroom)** | **~80,000** | |
+| **Total used** | **~437,000** | |
+| **Free (linker headroom)** | **~75,000** | |
 
 #### Heap Allocation Map (75KB total, ~62KB used at boot)
 
@@ -660,13 +662,13 @@ SYSTem:MEMory:FREE?                   # Full memory diagnostics
 SYSTem:MEMory:AUTO                    # Auto-balance for enabled interfaces
 ```
 
-All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming Buffer Pool (276KB static BSS). Setting any value carves it from the pool; remaining space goes to the sample pool. Setting any field to a non-zero value disables auto-balance for all fields.
+All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming Buffer Pool (242KB static BSS). Setting any value carves it from the pool; remaining space goes to the sample pool. Setting any field to a non-zero value disables auto-balance for all fields.
 
 **Setter Bounds:**
 
 | Command | Min | Max | Constraint |
 |---------|----:|----:|------------|
-| `SD:BUFfer` | 4096 | 65536 | Must be multiple of 512 (sector alignment). SD uses coherent pool, not streaming pool. |
+| `SD:BUFfer` | 4096 | 65536 | Must be multiple of 512 (sector alignment). SD circular buffer is in streaming pool. |
 | `WIFI:BUFfer` | 1400 | 65536 | Min = SOCKET_BUFFER_MAX_LENGTH |
 | `USB:BUFfer` | 4096 | 65536 | Min = USBCDC_WBUFFER_SIZE |
 | `ENCoder:BUFfer` | 1024 | 65536 | Encoder staging buffer. 8KB optimal for USB, 16KB helps SD throughput. |
@@ -680,8 +682,9 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 | `HeapFree` | Currently free heap bytes |
 | `HeapUsed` | Currently used heap bytes |
 | `HeapMinEverFree` | Lowest heap free since boot (high-water mark) |
-| `CoherentPoolTotal` | Total coherent pool (41984) |
+| `CoherentPoolTotal` | Total coherent pool (69632) |
 | `CoherentPoolFree` | Free coherent pool bytes |
+| `SdCircularSize` | Current SD circular buffer partition size |
 | `SamplePoolCount` | Current sample pool depth |
 | `SamplePoolBytes` | Sample pool data memory (count × 208) |
 | `SampleNextFreeBytes` | Free-list array memory (count × 2) |
@@ -693,9 +696,10 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 3. Multi-interface mode: conservative defaults (USB=16KB, WiFi=14KB)
 4. Encoder buffer: 8KB default
 5. Re-partition streaming pool with computed sizes; sample pool gets all remaining space
-6. Apply immediately: swap buffer pointers + re-init sample pool
+6. SD DMA write buffer: 64KB when SD active, 8KB when inactive (CoherentPool reset + re-alloc)
+7. Apply immediately: swap buffer pointers + re-init sample pool
 
-**Auto-balance at stream start:** When all `MemoryConfig` fields are zero (boot default), auto-balance runs automatically at each `StartStreamData`. Setting any field to non-zero disables auto mode.
+**Auto-balance at stream start:** When all `MemoryConfig` fields are zero (boot default), auto-balance runs automatically at each `StartStreamData`. Setting any field to non-zero disables auto mode. The `SYST:MEM:AUTO` response includes `SdDma=<n>` showing the SD DMA write buffer size selected by auto-balance.
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct)
 
