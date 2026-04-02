@@ -2235,6 +2235,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
         StreamingBufferPool_GetEncoder(&encBuf, &encLen);
         StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
+
+        if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
+            LOG_E("Pool partition failed: USB=%u WiFi=%u enc=%u sdCirc=%u",
+                  (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen,
+                  (unsigned)sdCircLen);
+            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+            return SCPI_RES_ERR;
+        }
+
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
         Streaming_SetEncoderBuffer(encBuf, encLen);
@@ -2242,16 +2251,20 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
         // Re-partition coherent pool for SD DMA write buffer.
         // Clamp to pool capacity so alloc cannot fail after reset.
-        uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
-        maxDma &= ~(COHERENT_POOL_ALIGNMENT - 1);  // round down to alignment
-        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        if (sdDmaSize > maxDma) {
-            LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
-            sdDmaSize = maxDma;
+        if (!sd_card_manager_IsIdle()) {
+            LOG_E("SD busy during buffer resize — skipping DMA re-partition");
+        } else {
+            uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
+            maxDma &= ~(COHERENT_POOL_ALIGNMENT - 1);
+            sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+            if (sdDmaSize > maxDma) {
+                LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
+                sdDmaSize = maxDma;
+            }
+            CoherentPool_Reset();
+            uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
+            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
         }
-        CoherentPool_Reset();
-        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
 
         // Re-init sample pool with new region from unified pool
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
@@ -2837,23 +2850,35 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
         StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
         StreamingBufferPool_GetEncoder(&encBuf, &encLen);
         StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
+
+        if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
+            LOG_E("Pool partition failed: USB=%u WiFi=%u enc=%u sdCirc=%u",
+                  (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen,
+                  (unsigned)sdCircLen);
+            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+            return SCPI_RES_ERR;
+        }
+
         UsbCdc_SetWriteBuffer(usbBuf, usbLen);
         wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
         Streaming_SetEncoderBuffer(encBuf, encLen);
         sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
 
         // Re-partition coherent pool for SD DMA write buffer.
-        // Clamp to pool capacity so alloc cannot fail after reset.
-        uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
-        maxDma &= ~(COHERENT_POOL_ALIGNMENT - 1);  // round down to alignment
-        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        if (sdDmaSize > maxDma) {
-            LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
-            sdDmaSize = maxDma;
+        if (!sd_card_manager_IsIdle()) {
+            LOG_E("SD busy during buffer resize — skipping DMA re-partition");
+        } else {
+            uint32_t maxDma = CoherentPool_TotalSize() - COHERENT_POOL_ALIGNMENT;
+            maxDma &= ~(COHERENT_POOL_ALIGNMENT - 1);
+            sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+            if (sdDmaSize > maxDma) {
+                LOG_I("SD DMA clamped: %u -> %u", (unsigned)sdDmaSize, (unsigned)maxDma);
+                sdDmaSize = maxDma;
+            }
+            CoherentPool_Reset();
+            uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
+            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
         }
-        CoherentPool_Reset();
-        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
 
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
         StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
