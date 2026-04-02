@@ -382,7 +382,8 @@ void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
  * minimize inactive interfaces. All remaining pool space goes to sample depth.
  */
 void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
-                                   uint32_t* outSdSize, uint32_t* outSdDmaSize) {
+                                   uint32_t* outSdSize, uint32_t* outSdDmaSize,
+                                   uint32_t* outEncoderSize) {
     StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(
         BOARDRUNTIME_STREAMING_CONFIGURATION);
     sd_card_manager_settings_t* sd = BoardRunTimeConfig_Get(
@@ -406,6 +407,10 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
     // but not accessed — the auto-balance controls effective write size.
     *outSdDmaSize = hasSd ? SD_CARD_MANAGER_CONF_WBUFFER_SIZE
                           : SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
+
+    // Encoder buffer: 16KB when SD active (larger writes reduce SPI overhead),
+    // 8KB default otherwise (sufficient for USB/WiFi).
+    *outEncoderSize = hasSd ? (ENCODER_BUFFER_DEFAULT * 2) : ENCODER_BUFFER_DEFAULT;
 
     // Active interfaces get compile-time defaults (benchmarked as sufficient).
     // Inactive interfaces get minimums to maximize sample pool depth.

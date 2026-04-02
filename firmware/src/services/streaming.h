@@ -122,13 +122,15 @@ uint32_t Streaming_GetQuesBits(void);
  * Compute optimal circular buffer sizes based on currently active interfaces.
  * Used by auto-balance at stream start and by SYST:MEM:AUTO SCPI command.
  *
- * @param[out] outUsbSize   Optimal USB circular buffer size (bytes)
- * @param[out] outWifiSize  Optimal WiFi circular buffer size (bytes)
- * @param[out] outSdSize    Optimal SD circular buffer size (bytes)
- * @param[out] outSdDmaSize Optimal SD DMA write buffer size (bytes, coherent pool)
+ * @param[out] outUsbSize    Optimal USB circular buffer size (bytes)
+ * @param[out] outWifiSize   Optimal WiFi circular buffer size (bytes)
+ * @param[out] outSdSize     Optimal SD circular buffer size (bytes)
+ * @param[out] outSdDmaSize  Optimal SD DMA write buffer size (bytes, coherent pool)
+ * @param[out] outEncoderSize Optimal encoder buffer size (bytes)
  */
 void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
-                                   uint32_t* outSdSize, uint32_t* outSdDmaSize);
+                                   uint32_t* outSdSize, uint32_t* outSdDmaSize,
+                                   uint32_t* outEncoderSize);
 
 /**
  * Set the encoder buffer to pool-managed memory.
