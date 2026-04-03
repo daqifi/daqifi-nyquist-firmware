@@ -2261,15 +2261,14 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
             usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
         }
-        if (!sd_card_manager_IsIdle()) {
-            LOG_E("SD busy during buffer resize — skipping DMA re-partition");
-        } else {
-            CoherentPool_Reset();
-            uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-            uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-        }
+        // Re-partition coherent pool for DMA write buffers.
+        // Safe: streaming is stopped (no DMA in flight), even though
+        // SD task may be in WRITE_TO_FILE state (file open, idle).
+        CoherentPool_Reset();
+        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
+        sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+        uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
+        UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
 
         // Re-init sample pool with new region from unified pool
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
@@ -2877,15 +2876,13 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
             usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
         }
-        if (!sd_card_manager_IsIdle()) {
-            LOG_E("SD busy during buffer resize — skipping DMA re-partition");
-        } else {
-            CoherentPool_Reset();
-            uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-            uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-        }
+        // SYST:MEM:AUTO rejects while streaming (checked above), so
+        // no DMA transfers are in flight. Safe to reset coherent pool.
+        CoherentPool_Reset();
+        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
+        sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+        uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
+        UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
 
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
         StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);

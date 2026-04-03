@@ -521,7 +521,10 @@ static void Streaming_Start(void) {
         if (buffer != NULL) memset(buffer, 0, bufferSize);
 
         gSdPbMetadataSent = false;
-        gSdFileWasReady = false;
+        // If SD file is already open and ready (SCPI_StartStreaming waited
+        // for it), start with true to avoid dropping packets while the
+        // encoder waits for the first sdSize > 0 detection.
+        gSdFileWasReady = sd_card_manager_IsWriteReady();
 
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
