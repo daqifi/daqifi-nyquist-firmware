@@ -372,6 +372,58 @@ void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
 }
 
 /**
+ * Write encoded data to an output buffer with adaptive retry.
+ * Fast spin retries first (handles transient fullness), then increasing
+ * backoff, up to 1 second total before giving up.
+ *
+ * @param writeFn   Function pointer: writes buf[len] → returns bytes written
+ * @param buf       Encoded data to write
+ * @param len       Total bytes to write
+ * @return          Total bytes successfully written
+ */
+typedef size_t (*StreamWriteFn)(const char* buf, size_t len);
+
+static size_t Streaming_UsbWrite(const char* buf, size_t len) {
+    return UsbCdc_WriteToBuffer(NULL, buf, len);
+}
+
+// sd_card_manager_WriteToBuffer matches StreamWriteFn directly — no wrapper needed
+
+static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
+                                        const uint8_t* buf, size_t len) {
+    const uint8_t* p = buf;
+    size_t remaining = len;
+    size_t total = 0;
+
+    // Phase 1: quick spin (no delay) — catch in-progress DMA completions
+    for (int i = 0; i < 10 && remaining > 0; i++) {
+        size_t w = writeFn((const char*)p, remaining);
+        if (w > 0) { total += w; p += w; remaining -= w; }
+    }
+    if (remaining == 0) return total;
+
+    // Phase 2: yield-based retry — let output tasks (same priority) drain
+    for (int i = 0; i < 50 && remaining > 0; i++) {
+        taskYIELD();
+        size_t w = writeFn((const char*)p, remaining);
+        if (w > 0) { total += w; p += w; remaining -= w; }
+    }
+    if (remaining == 0) return total;
+
+    // Phase 3: tick-based backoff — 1ms sleeps, up to 100ms total
+    // Beyond this the output is genuinely overwhelmed; accept the byte drop
+    // rather than stalling the encoder long enough to cause sample drops.
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(100);
+    while (remaining > 0 && xTaskGetTickCount() < deadline) {
+        vTaskDelay(1);
+        size_t w = writeFn((const char*)p, remaining);
+        if (w > 0) { total += w; p += w; remaining -= w; }
+    }
+
+    return total;
+}
+
+/**
  * Compute optimal circular buffer sizes based on active interfaces.
  *
  * Benchmark findings (issue #229, buffer sweep):
@@ -863,10 +915,10 @@ void streaming_Task(void) {
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
             if (hasUsb) {
-                size_t written = UsbCdc_WriteToBuffer(NULL, (const char *) buffer, packetSize);
-                if (written < packetSize) {
+                size_t written = Streaming_WriteWithRetry(Streaming_UsbWrite,
+                                                          buffer, packetSize);
+                if (written != packetSize) {
                     gStreamStats.usbDroppedBytes += (packetSize - written);
-                    // Critical section: gQuesBits is also RMW'd by deferred ISR task
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
@@ -874,10 +926,10 @@ void streaming_Task(void) {
                 }
             }
             if (hasWifi) {
-                size_t written = wifi_manager_WriteToBuffer((const char *) buffer, packetSize);
-                if (written < packetSize) {
+                size_t written = Streaming_WriteWithRetry(wifi_manager_WriteToBuffer,
+                                                          buffer, packetSize);
+                if (written != packetSize) {
                     gStreamStats.wifiDroppedBytes += (packetSize - written);
-                    // Critical section: gQuesBits is also RMW'd by deferred ISR task
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
@@ -892,27 +944,8 @@ void streaming_Task(void) {
                 // non-metadata data at position 0 of the NEW file.  Skipping
                 // the write lets the next iteration detect the new file,
                 // include metadata, and write at position 0.
-                const uint8_t* p = buffer;
-                size_t remaining = packetSize;
-                size_t total_written = 0;
-                unsigned int attempts = 0;
-                const unsigned int max_attempts = 3;
-
-                while (remaining > 0 && attempts < max_attempts) {
-                    size_t w = sd_card_manager_WriteToBuffer((const char *)p, remaining);
-                    if (w == 0) {
-                        // No progress, break to avoid tight loop
-                        break;
-                    }
-                    total_written += w;
-                    p += w;
-                    remaining -= w;
-                    attempts++;
-                    if (remaining > 0) {
-                        // Partial write, yield to give SD task a chance
-                        taskYIELD();
-                    }
-                }
+                size_t total_written = Streaming_WriteWithRetry(
+                        sd_card_manager_WriteToBuffer, buffer, packetSize);
 
                 if (total_written != packetSize) {
                     gStreamStats.sdDroppedBytes += (packetSize - total_written);
@@ -1133,16 +1166,19 @@ bool Streaming_GetBenchmarkMode(void) {
         totalBytes += packetSize;
         totalSamples++;
 
-        // Write to output
-        size_t written = 0;
-        switch (interface) {
-            case 0: written = UsbCdc_WriteToBuffer(NULL, (const char*)buffer, packetSize); break;
-            case 1: written = wifi_tcp_server_WriteBuffer((const char*)buffer, packetSize); break;
-            case 2: written = sd_card_manager_WriteToBuffer((const char*)buffer, packetSize); break;
-        }
+        // Write to output with adaptive retry
+        {
+            StreamWriteFn fn = NULL;
+            switch (interface) {
+                case 0: fn = Streaming_UsbWrite; break;
+                case 1: fn = wifi_manager_WriteToBuffer; break;
+                case 2: fn = sd_card_manager_WriteToBuffer; break;
+            }
+            size_t total_written = fn ? Streaming_WriteWithRetry(fn, (const uint8_t*)buffer, packetSize) : 0;
 
-        if (written < packetSize) {
-            outputDrops += (packetSize - written);
+            if (total_written < packetSize) {
+                outputDrops += (packetSize - total_written);
+            }
         }
 
         // Yield periodically to let output tasks drain
