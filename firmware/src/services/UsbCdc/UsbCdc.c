@@ -13,6 +13,7 @@
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
 #include "Util/StreamingBufferPool.h"
+#include "Util/CoherentPool.h"
 #include "HAL/BQ24297/BQ24297.h"
 #include "state/data/BoardData.h"
 #include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
@@ -329,7 +330,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
 int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     // Validate length against buffer size to prevent overflow
-    if (len == 0 || len > USBCDC_WBUFFER_SIZE) {
+    if (len == 0 || len > gRunTimeUsbSttings.dmaWriteBufferSize) {
         LOG_D("USB write: invalid length %lu", (unsigned long)len);
         return -1;  // Invalid length
     }
@@ -357,7 +358,7 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     }
 
     // Prepare buffer while in atomic section to prevent another task from corrupting it
-    memcpy(gRunTimeUsbSttings.writeBuffer, buf, (size_t)len);
+    memcpy(gRunTimeUsbSttings.dmaWriteBuffer, buf, (size_t)len);
     gRunTimeUsbSttings.writeBufferLength = len;
     gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
 
@@ -366,7 +367,7 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     // Call USB driver outside critical section (may block/take time)
     USB_DEVICE_CDC_RESULT writeResult = USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
             &gRunTimeUsbSttings.writeTransferHandle,
-            gRunTimeUsbSttings.writeBuffer,
+            gRunTimeUsbSttings.dmaWriteBuffer,
             len,
             USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
 
@@ -402,7 +403,7 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
     if (client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
         if (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0) {
-            CircularBuf_ProcessBytes(&client->wCirbuf, NULL, USBCDC_WBUFFER_SIZE, &writeResult);
+            CircularBuf_ProcessBytes(&client->wCirbuf, NULL, client->dmaWriteBufferSize, &writeResult);
         } else {
             // No data to write, return true (success - nothing to do)
             xSemaphoreGive(client->wMutex);
@@ -627,13 +628,13 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     }
 
     // Partial write - clamp to chunk size for better flow control
-    // Limit to USBCDC_WBUFFER_SIZE to align with USB driver transfer granularity
+    // Limit to DMA staging buffer size for USB driver transfer granularity
     size_t toWrite = len;
     if (toWrite > currentFree) {
         toWrite = currentFree;
     }
-    if (toWrite > USBCDC_WBUFFER_SIZE) {
-        toWrite = USBCDC_WBUFFER_SIZE;
+    if (toWrite > client->dmaWriteBufferSize) {
+        toWrite = client->dmaWriteBufferSize;
     }
 
     size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, toWrite);
@@ -829,6 +830,14 @@ void UsbCdc_Initialize() {
             microrl_commandComplete);
     gRunTimeUsbSttings.scpiContext = CreateSCPIContext(&scpi_interface, &gRunTimeUsbSttings);
 
+    // Allocate DMA write staging buffer from coherent pool (auto-sized at stream start)
+    gRunTimeUsbSttings.dmaWriteBufferSize = USBCDC_DMA_WBUFFER_MAX;
+    gRunTimeUsbSttings.dmaWriteBuffer = CoherentPool_Alloc("USB_write",
+                                            gRunTimeUsbSttings.dmaWriteBufferSize);
+    if (gRunTimeUsbSttings.dmaWriteBuffer == NULL) {
+        LOG_E("[USB] Failed to allocate DMA write buffer from coherent pool");
+    }
+
     // Initialize circular buffer from streaming buffer pool (partitioned at boot).
     // Re-partitioned at each stream start via UsbCdc_SetWriteBuffer.
     {
@@ -992,4 +1001,10 @@ void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     xSemaphoreGive(gRunTimeUsbSttings.wMutex);
 
     LOG_I("USB circular buffer: %u -> %u bytes", (unsigned)oldSize, (unsigned)size);
+}
+
+void UsbCdc_SetDmaWriteBuffer(uint8_t* buf, uint32_t size) {
+    if (buf == NULL || size == 0) return;
+    gRunTimeUsbSttings.dmaWriteBuffer = buf;
+    gRunTimeUsbSttings.dmaWriteBufferSize = size;
 }

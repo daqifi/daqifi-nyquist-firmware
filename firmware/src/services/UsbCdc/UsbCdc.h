@@ -25,6 +25,8 @@ extern "C" {
 #include "Util/CircularBuffer.h"
 
 #define USBCDC_WBUFFER_SIZE 4096
+#define USBCDC_DMA_WBUFFER_MAX 16384   // Max DMA staging when USB active
+#define USBCDC_DMA_WBUFFER_MIN 4096    // Min DMA staging when USB inactive
 #define USBCDC_RBUFFER_SIZE 512
 #define USBCDC_CIRCULAR_BUFF_SIZE USBCDC_WBUFFER_SIZE*4
 
@@ -98,8 +100,9 @@ extern "C" {
         uint8_t readBuffer[USBCDC_RBUFFER_SIZE] __attribute__((coherent, aligned(16)));
         ;
 
-        /** Client write buffer */
-        uint8_t writeBuffer[USBCDC_WBUFFER_SIZE] __attribute__((coherent, aligned(16)));
+        /** Client DMA write buffer (allocated from CoherentPool, auto-sized) */
+        uint8_t* dmaWriteBuffer;
+        uint32_t dmaWriteBufferSize;
 
         CircularBuf_t wCirbuf;
         SemaphoreHandle_t wMutex;
@@ -214,6 +217,15 @@ extern "C" {
      * @param size Buffer size in bytes
      */
     void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size);
+
+    /**
+     * Set the USB CDC DMA write staging buffer.
+     * Called at each stream start to auto-size for active interfaces.
+     * Must only be called when no USB DMA transfer is in flight.
+     * @param buf Pointer to coherent buffer memory
+     * @param size Buffer size in bytes
+     */
+    void UsbCdc_SetDmaWriteBuffer(uint8_t* buf, uint32_t size);
 
 #ifdef	__cplusplus
 }

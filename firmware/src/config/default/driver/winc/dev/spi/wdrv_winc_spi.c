@@ -67,7 +67,7 @@ typedef struct
 // *****************************************************************************
 
 static WDRV_WINC_SPIDCPT spiDcpt;
-static CACHE_ALIGN uint8_t alignedBuffer[CACHE_ALIGNED_SIZE_GET(2048)];
+static CACHE_ALIGN uint8_t alignedBuffer[CACHE_ALIGNED_SIZE_GET(8192)]; // 8KB SPI staging (benchmarked: WiFi PB 16ch 1→3kHz)
 
 // *****************************************************************************
 // *****************************************************************************
