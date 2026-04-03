@@ -48,12 +48,8 @@ static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on
 // Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
 static volatile uint32_t gBenchmarkMode = 0;
 
-// Task priority constants
+// Task priority constant (benchmark no longer changes priority)
 #define STREAMING_ISR_TASK_PRIORITY     8
-#define STREAMING_BENCHMARK_PRIORITY    2
-
-// Saved ISR task priority for restore after benchmark
-static UBaseType_t gSavedIsrPriority = STREAMING_ISR_TASK_PRIORITY;
 
 // SD protobuf metadata: emitted as first message in each SD log file.
 // volatile: written by SD card task (via Streaming_ResetSdPbMetadata),
@@ -1016,21 +1012,12 @@ uint32_t Streaming_GetTestPattern(void) {
 }
 
 void Streaming_SetBenchmarkMode(bool enabled) {
-    // Serialize transitions — prevents race if called from USB and WiFi SCPI
-    taskENTER_CRITICAL();
-    if (enabled && gBenchmarkMode == 0) {
-        if (gStreamingInterruptHandle != NULL) {
-            gSavedIsrPriority = uxTaskPriorityGet(gStreamingInterruptHandle);
-            vTaskPrioritySet(gStreamingInterruptHandle, STREAMING_BENCHMARK_PRIORITY);
-        }
-        gBenchmarkMode = 1;
-    } else if (!enabled && gBenchmarkMode != 0) {
-        gBenchmarkMode = 0;
-        if (gStreamingInterruptHandle != NULL) {
-            vTaskPrioritySet(gStreamingInterruptHandle, gSavedIsrPriority);
-        }
-    }
-    taskEXIT_CRITICAL();
+    // Benchmark mode only bypasses the frequency cap.
+    // The ISR task priority is no longer changed — the normal hierarchy
+    // (ISR=8, USB=7, encoder=2) is correct with all-or-nothing retry.
+    // Dropping ISR to priority 2 caused the encoder retry to compete
+    // with ISR for CPU, flooding the sample queue.
+    gBenchmarkMode = enabled ? 1 : 0;
 }
 
 bool Streaming_GetBenchmarkMode(void) {
