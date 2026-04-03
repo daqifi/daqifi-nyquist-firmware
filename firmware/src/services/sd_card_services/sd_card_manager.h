@@ -12,7 +12,7 @@
 
 #define SD_CARD_MANAGER_CONF_RBUFFER_SIZE 512   // Small buffer, send directory listings in chunks
 #define SD_CARD_MANAGER_CONF_WBUFFER_SIZE 65536  // 64KB DMA write buffer max (coherent, sector-aligned)
-#define SD_CARD_MANAGER_MIN_WBUFFER_SIZE  8192  // 8KB DMA write buffer min (when SD not streaming)
+#define SD_CARD_MANAGER_MIN_WBUFFER_SIZE  512   // Min DMA write buffer (1 sector, when SD not streaming)
 #define SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE (32U * 1024U)  // Default SD circular buffer size
 
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40

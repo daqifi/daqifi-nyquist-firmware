@@ -25,8 +25,8 @@ extern "C" {
 #include "Util/CircularBuffer.h"
 
 #define USBCDC_WBUFFER_SIZE 4096
-#define USBCDC_DMA_WBUFFER_MAX 16384   // Max DMA staging when USB active
-#define USBCDC_DMA_WBUFFER_MIN 4096    // Min DMA staging when USB inactive
+#define USBCDC_DMA_WBUFFER_MAX 16384   // Max DMA staging when USB streaming active
+#define USBCDC_DMA_WBUFFER_MIN 512     // Min DMA staging (enough for SCPI responses)
 #define USBCDC_RBUFFER_SIZE 512
 #define USBCDC_CIRCULAR_BUFF_SIZE USBCDC_WBUFFER_SIZE*4
 
