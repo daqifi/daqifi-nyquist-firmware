@@ -621,8 +621,9 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
         return 0;  // Mutex busy, can't write now
     }
 
-    // All-or-nothing: only write if full packet fits. No partial writes,
-    // no garbled data at receiver. Callers retry via Streaming_WriteWithRetry.
+    // All-or-nothing: only write if full packet fits. Prevents convoy effect
+    // where tiny partial writes burn CPU on mutex cycles. Callers retry via
+    // Streaming_WriteWithRetry — no data loss.
     size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
     if (currentFree < len) {
         xSemaphoreGive(client->wMutex);

@@ -376,12 +376,14 @@ void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
  * the full packet is written or nothing is. No partial writes, no garbled
  * data at the receiver. Blocks until buffer has space or 10s timeout.
  *
- * Write functions must be all-or-nothing: return len (success) or 0 (no space).
+ * Write functions are all-or-nothing: return len (full packet written) or
+ * 0 (buffer full). This prevents the "convoy effect" where tiny partial
+ * writes burn CPU on mutex lock/unlock without letting the output task drain.
  *
  * @param writeFn   All-or-nothing write function
  * @param buf       Encoded packet to write
  * @param len       Packet size in bytes
- * @return          len on success, 0 on timeout (interface dead)
+ * @return          len on success, 0 on 10s timeout (interface dead)
  */
 typedef size_t (*StreamWriteFn)(const char* buf, size_t len);
 
@@ -404,7 +406,7 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
         if (writeFn((const char*)buf, len) == len) return len;
     }
 
-    // Phase 3: tick-based backoff — 1ms sleeps, up to 10s timeout
+    // Phase 3: tick-based backoff — 1ms sleeps, up to 10s timeout.
     // If we reach here, the output is overwhelmed. Block the encoder
     // so backpressure propagates to sample drops (the only acceptable loss).
     TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(STREAM_WRITE_TIMEOUT_MS);

@@ -1453,8 +1453,9 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         return 0;
     }
 
-    // All-or-nothing: only write if full packet fits. No partial writes,
-    // no garbled data on SD card. Callers retry via Streaming_WriteWithRetry.
+    // All-or-nothing: only write if full packet fits. Prevents convoy effect
+    // where tiny partial writes burn CPU on mutex cycles. Callers retry via
+    // Streaming_WriteWithRetry — no data loss.
     SD_TakeMutexDebug(gSDCardData.wMutex, "write_buffer_add");
     if (CircularBuf_NumBytesFree(&gSDCardData.wCirbuf) < len) {
         xSemaphoreGive(gSDCardData.wMutex);
