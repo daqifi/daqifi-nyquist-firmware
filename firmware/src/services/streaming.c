@@ -29,6 +29,7 @@
 #include "Util/Logger.h"
 #include "Util/CircularBuffer.h"
 #include "Util/StreamingBufferPool.h"
+#include "Util/CoherentPool.h"
 #include "UsbCdc/UsbCdc.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
@@ -402,15 +403,33 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
     *outSdSize = hasSd ? SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE
                        : STREAMING_SD_CIRCULAR_MIN;
 
-    // SD DMA write buffer: maximize when SD active, minimize when not.
-    // Coherent pool is statically allocated so unused bytes are committed
-    // but not accessed — the auto-balance controls effective write size.
-    *outSdDmaSize = hasSd ? SD_CARD_MANAGER_CONF_WBUFFER_SIZE
-                          : SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
+    // DMA write buffers: divide entire coherent pool among active consumers.
+    // Inactive interfaces get minimum (512B). Remaining pool space is split
+    // among active interfaces — no committed coherent RAM left unused.
+    {
+        uint32_t pool = CoherentPool_TotalSize();
+        uint32_t overhead = 2 * COHERENT_POOL_ALIGNMENT;  // alignment per alloc
+        uint32_t sdMin = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
+        uint32_t usbMin = USBCDC_DMA_WBUFFER_MIN;
 
-    // USB DMA write staging: 16KB when USB active (benchmarked: PB 1ch +36%,
-    // CSV 16ch +67%), 4KB minimum when not active.
-    *outUsbDmaSize = hasUsb ? USBCDC_DMA_WBUFFER_MAX : USBCDC_DMA_WBUFFER_MIN;
+        if (hasSd && hasUsb) {
+            // Both active: SD gets 75% (benefits more from large writes),
+            // USB gets 25%. Benchmarked: SD gains plateau at 64KB,
+            // USB gains plateau at 16KB, so this split is optimal.
+            uint32_t avail = pool - overhead;
+            *outSdDmaSize = (avail * 3) / 4;
+            *outUsbDmaSize = avail - *outSdDmaSize;
+        } else if (hasSd) {
+            *outSdDmaSize = pool - usbMin - overhead;
+            *outUsbDmaSize = usbMin;
+        } else if (hasUsb) {
+            *outUsbDmaSize = pool - sdMin - overhead;
+            *outSdDmaSize = sdMin;
+        } else {
+            *outSdDmaSize = sdMin;
+            *outUsbDmaSize = usbMin;
+        }
+    }
 
     // Encoder buffer: 16KB when SD active (larger writes reduce SPI overhead),
     // 8KB default otherwise (sufficient for USB/WiFi).
