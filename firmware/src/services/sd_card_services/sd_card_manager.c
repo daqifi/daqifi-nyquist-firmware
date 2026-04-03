@@ -1453,9 +1453,13 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         return 0;
     }
 
-    // Non-blocking: write what fits immediately, return bytes written.
-    // Callers use Streaming_WriteWithRetry for backpressure.
+    // All-or-nothing: only write if full packet fits. No partial writes,
+    // no garbled data on SD card. Callers retry via Streaming_WriteWithRetry.
     SD_TakeMutexDebug(gSDCardData.wMutex, "write_buffer_add");
+    if (CircularBuf_NumBytesFree(&gSDCardData.wCirbuf) < len) {
+        xSemaphoreGive(gSDCardData.wMutex);
+        return 0;
+    }
     size_t bytesAdded = CircularBuf_AddBytes(&gSDCardData.wCirbuf, (uint8_t*)pData, len);
     xSemaphoreGive(gSDCardData.wMutex);
     return bytesAdded;

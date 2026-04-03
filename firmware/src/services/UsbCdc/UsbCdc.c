@@ -621,23 +621,15 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
         return 0;  // Mutex busy, can't write now
     }
 
+    // All-or-nothing: only write if full packet fits. No partial writes,
+    // no garbled data at receiver. Callers retry via Streaming_WriteWithRetry.
     size_t currentFree = CircularBuf_NumBytesFree(&client->wCirbuf);
-    if (currentFree == 0) {
+    if (currentFree < len) {
         xSemaphoreGive(client->wMutex);
         return 0;
     }
 
-    // Partial write - clamp to chunk size for better flow control
-    // Limit to DMA staging buffer size for USB driver transfer granularity
-    size_t toWrite = len;
-    if (toWrite > currentFree) {
-        toWrite = currentFree;
-    }
-    if (toWrite > client->dmaWriteBufferSize) {
-        toWrite = client->dmaWriteBufferSize;
-    }
-
-    size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, toWrite);
+    size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
     xSemaphoreGive(client->wMutex);
 
     return bytesAdded;

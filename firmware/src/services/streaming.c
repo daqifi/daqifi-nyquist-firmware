@@ -372,55 +372,50 @@ void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
 }
 
 /**
- * Write encoded data to an output buffer with adaptive retry.
- * Fast spin retries first (handles transient fullness), then increasing
- * backoff, up to 1 second total before giving up.
+ * Write an encoded packet to an output buffer. All-or-nothing semantics:
+ * the full packet is written or nothing is. No partial writes, no garbled
+ * data at the receiver. Blocks until buffer has space or 10s timeout.
  *
- * @param writeFn   Function pointer: writes buf[len] → returns bytes written
- * @param buf       Encoded data to write
- * @param len       Total bytes to write
- * @return          Total bytes successfully written
+ * Write functions must be all-or-nothing: return len (success) or 0 (no space).
+ *
+ * @param writeFn   All-or-nothing write function
+ * @param buf       Encoded packet to write
+ * @param len       Packet size in bytes
+ * @return          len on success, 0 on timeout (interface dead)
  */
 typedef size_t (*StreamWriteFn)(const char* buf, size_t len);
+
+#define STREAM_WRITE_TIMEOUT_MS 10000  // 10s — assume interface dead
 
 static size_t Streaming_UsbWrite(const char* buf, size_t len) {
     return UsbCdc_WriteToBuffer(NULL, buf, len);
 }
 
-// sd_card_manager_WriteToBuffer matches StreamWriteFn directly — no wrapper needed
-
 static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
                                         const uint8_t* buf, size_t len) {
-    const uint8_t* p = buf;
-    size_t remaining = len;
-    size_t total = 0;
-
-    // Phase 1: quick spin (no delay) — catch in-progress DMA completions
-    for (int i = 0; i < 10 && remaining > 0; i++) {
-        size_t w = writeFn((const char*)p, remaining);
-        if (w > 0) { total += w; p += w; remaining -= w; }
+    // Phase 1: quick spin — catch in-progress DMA completions
+    for (int i = 0; i < 10; i++) {
+        if (writeFn((const char*)buf, len) == len) return len;
     }
-    if (remaining == 0) return total;
 
-    // Phase 2: yield-based retry — let output tasks (same priority) drain
-    for (int i = 0; i < 50 && remaining > 0; i++) {
+    // Phase 2: yield — let output tasks (same priority) drain
+    for (int i = 0; i < 50; i++) {
         taskYIELD();
-        size_t w = writeFn((const char*)p, remaining);
-        if (w > 0) { total += w; p += w; remaining -= w; }
+        if (writeFn((const char*)buf, len) == len) return len;
     }
-    if (remaining == 0) return total;
 
-    // Phase 3: tick-based backoff — 1ms sleeps, up to 100ms total
-    // Beyond this the output is genuinely overwhelmed; accept the byte drop
-    // rather than stalling the encoder long enough to cause sample drops.
-    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(100);
-    while (remaining > 0 && xTaskGetTickCount() < deadline) {
+    // Phase 3: tick-based backoff — 1ms sleeps, up to 10s timeout
+    // If we reach here, the output is overwhelmed. Block the encoder
+    // so backpressure propagates to sample drops (the only acceptable loss).
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(STREAM_WRITE_TIMEOUT_MS);
+    while (xTaskGetTickCount() < deadline) {
         vTaskDelay(1);
-        size_t w = writeFn((const char*)p, remaining);
-        if (w > 0) { total += w; p += w; remaining -= w; }
+        if (writeFn((const char*)buf, len) == len) return len;
     }
 
-    return total;
+    LOG_E("Output write timeout (%u ms, %u bytes) — interface dead",
+          STREAM_WRITE_TIMEOUT_MS, (unsigned)len);
+    return 0;
 }
 
 /**
@@ -914,48 +909,35 @@ void streaming_Task(void) {
         }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
+            // All-or-nothing output writes. On timeout (10s), the interface
+            // is assumed dead. Backpressure propagates to sample queue —
+            // QueueDroppedSamples is the ONLY data loss mechanism.
             if (hasUsb) {
-                size_t written = Streaming_WriteWithRetry(Streaming_UsbWrite,
-                                                          buffer, packetSize);
-                if (written != packetSize) {
-                    gStreamStats.usbDroppedBytes += (packetSize - written);
+                if (Streaming_WriteWithRetry(Streaming_UsbWrite, buffer, packetSize) == 0) {
+                    gStreamStats.usbDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB buffer overflow detected");
+                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB interface dead (10s timeout)");
                 }
             }
             if (hasWifi) {
-                size_t written = Streaming_WriteWithRetry(wifi_manager_WriteToBuffer,
-                                                          buffer, packetSize);
-                if (written != packetSize) {
-                    gStreamStats.wifiDroppedBytes += (packetSize - written);
+                if (Streaming_WriteWithRetry(wifi_manager_WriteToBuffer, buffer, packetSize) == 0) {
+                    gStreamStats.wifiDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi buffer overflow detected");
+                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi interface dead (10s timeout)");
                 }
             }
             if (hasSD && gSdFileWasReady) {
-                // Guard: gSdFileWasReady is reset by the SD task during file
-                // rotation (via Streaming_ResetSdPbMetadata).  If it went
-                // false while we were encoding, a rotation happened and our
-                // buffer belongs to the old file — writing it now would place
-                // non-metadata data at position 0 of the NEW file.  Skipping
-                // the write lets the next iteration detect the new file,
-                // include metadata, and write at position 0.
-                size_t total_written = Streaming_WriteWithRetry(
-                        sd_card_manager_WriteToBuffer, buffer, packetSize);
-
-                if (total_written != packetSize) {
-                    gStreamStats.sdDroppedBytes += (packetSize - total_written);
-                    // Critical section: gQuesBits is also RMW'd by deferred ISR task
+                if (Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer, buffer, packetSize) == 0) {
+                    gStreamStats.sdDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD write overflow detected");
+                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
                 }
-
             }
 
             // Track packets discarded due to output buffer backpressure.
