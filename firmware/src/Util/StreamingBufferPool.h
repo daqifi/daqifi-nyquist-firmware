@@ -28,11 +28,11 @@ extern "C" {
  */
 
 /** Minimum buffer sizes (from module constraints) */
-#define STREAMING_USB_MIN           4096   /* USBCDC_WBUFFER_SIZE */
-#define STREAMING_WIFI_MIN          1400   /* SOCKET_BUFFER_MAX_LENGTH */
+#define STREAMING_USB_MIN           2048   /* Min for SCPI responses when not streaming */
+#define STREAMING_WIFI_MIN          1400   /* SOCKET_BUFFER_MAX_LENGTH (one TCP packet) */
 #define ENCODER_BUFFER_MIN          1024   /* Must fit at least one encoded sample set */
 #define ENCODER_BUFFER_DEFAULT      8192   /* Optimal for USB; SD benefits from 16384 */
-#define STREAMING_SD_CIRCULAR_MIN   4096   /* Minimum SD circular buffer */
+#define STREAMING_SD_CIRCULAR_MIN   512    /* Min valid circular buffer (unused when inactive) */
 
 /**
  * Initialize the pool and set default partition.
