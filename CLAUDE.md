@@ -1053,6 +1053,20 @@ The project can be built using Microchip tools in WSL/Linux:
 
 ### Device Testing and SCPI Communication
 
+#### USB CDC Host Read Speed (Critical for Zero-Loss Streaming)
+
+USB CDC streaming is **zero-loss when the host reads at >=1ms intervals**. Slow host-side reading (e.g., 500ms polling loops) causes the device's USB circular buffer to fill, triggering packet drops on the firmware side. This was proven by A/B testing:
+- Slow reader (500ms): USB CSV 16ch@3kHz -> 1,088,768 bytes dropped
+- Fast reader (1ms): USB CSV 16ch@3kHz -> 0 bytes dropped
+
+The firmware pipeline is leak-free. All reported USB byte drops in benchmarks prior to this finding were caused by insufficient host read speed, not firmware limitations.
+
+**Python test suite:** Always use `FastReader` from `test_harness.py` (1ms background thread). Never use `time.sleep(0.5)` polling loops during streaming.
+
+**Measured USB throughput (with fast reader):**
+- USB CSV 16ch@3kHz: 795 KB/s, 0 drops
+- USB CSV 16ch@5kHz: 907 KB/s, 0 drops (frequency-capped to 3.5kHz)
+
 #### Important Testing Notes
 
 1. **Picocom Limitations — Use Python Libraries for Streaming Tests**
