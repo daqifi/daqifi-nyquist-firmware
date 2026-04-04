@@ -480,10 +480,12 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
     // 8KB default otherwise (sufficient for USB/WiFi).
     *outEncoderSize = hasSd ? (ENCODER_BUFFER_DEFAULT * 2) : ENCODER_BUFFER_DEFAULT;
 
-    // Active interfaces get compile-time defaults (benchmarked as sufficient).
-    // Inactive interfaces get minimums to maximize sample pool depth.
-    *outWifiSize = hasWifi ? WIFI_CIRCULAR_BUFF_SIZE : STREAMING_WIFI_MIN;
-    *outUsbSize  = hasUsb  ? USBCDC_CIRCULAR_BUFF_SIZE : STREAMING_USB_MIN;
+    // Circular buffers: larger buffers reduce retry frequency for
+    // all-or-nothing writes, but must leave enough pool for samples.
+    // 64KB USB (85ms at 3kHz×250B) and 32KB WiFi (23ms at 1kHz×1400B)
+    // balance retry avoidance with sample pool depth (~500+ samples).
+    *outWifiSize = hasWifi ? (32U * 1024U) : STREAMING_WIFI_MIN;
+    *outUsbSize  = hasUsb  ? (64U * 1024U) : STREAMING_USB_MIN;
 }
 
 /*!
@@ -913,22 +915,25 @@ void streaming_Task(void) {
             // All-or-nothing output writes. On timeout (10s), the interface
             // is assumed dead. Backpressure propagates to sample queue —
             // QueueDroppedSamples is the ONLY data loss mechanism.
+            // USB/WiFi: all-or-nothing without retry. Full packet written
+            // or cleanly dropped (no garbled partial data). No retry because
+            // the ISR→encoder feedback loop causes sample queue overflow.
             if (hasUsb) {
-                if (Streaming_WriteWithRetry(Streaming_UsbWrite, buffer, packetSize) == 0) {
+                if (Streaming_UsbWrite((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.usbDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB interface dead (10s timeout)");
+                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB buffer overflow detected");
                 }
             }
             if (hasWifi) {
-                if (Streaming_WriteWithRetry(wifi_manager_WriteToBuffer, buffer, packetSize) == 0) {
+                if (wifi_manager_WriteToBuffer((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.wifiDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi interface dead (10s timeout)");
+                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi buffer overflow detected");
                 }
             }
             if (hasSD && gSdFileWasReady) {
