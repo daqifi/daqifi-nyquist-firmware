@@ -2251,7 +2251,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
 
         // Re-partition coherent pool for all DMA write buffers.
-        // Align sizes and clamp total to pool capacity.
+        // SD DMA must be sector-aligned (512B) for FatFS fast-path writes.
+        sdDmaSize &= ~(511U);
+        if (sdDmaSize < 512) sdDmaSize = 512;
         sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
         usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
         uint32_t totalDma = sdDmaSize + usbDmaSize + 2 * COHERENT_POOL_ALIGNMENT;
@@ -2869,6 +2871,8 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
         sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
 
         // Re-partition coherent pool for all DMA write buffers.
+        sdDmaSize &= ~(511U);  // sector-align for FatFS fast path
+        if (sdDmaSize < 512) sdDmaSize = 512;
         sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
         usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
         uint32_t totalDma = sdDmaSize + usbDmaSize + 2 * COHERENT_POOL_ALIGNMENT;
