@@ -2901,6 +2901,13 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_MemReset(scpi_t * context) {
+    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    memset(mc, 0, sizeof(MemoryConfig));
+    return SCPI_RES_OK;
+}
+
 // =============================================================================
 // Stack Profiling SCPI Callback
 // =============================================================================
@@ -3145,6 +3152,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:MEMory:ENCoder:BUFfer?", .callback = SCPI_GetMemEncoderBuf,},
     {.pattern = "SYSTem:MEMory:FREE?", .callback = SCPI_GetMemFree,},
     {.pattern = "SYSTem:MEMory:AUTO", .callback = SCPI_MemAutoBalance,},
+    {.pattern = "SYSTem:MEMory:RESet", .callback = SCPI_MemReset,},
     {.pattern = "SYSTem:MEMory:STACk?", .callback = SCPI_GetStackStats,},
     //
     {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
