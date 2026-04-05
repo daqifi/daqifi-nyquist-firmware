@@ -2274,15 +2274,21 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
         // Quiesce all DMA consumers before pool reset.
         // USB: writeTransferHandle already waited above.
-        // SD: wait for file operations to complete.
+        // SD: close file so f_write can't be mid-DMA during reset.
+        //     Re-opened after resize via the SD enable path below.
         {
+            bool sdWasEnabled = pSDCardSettings && pSDCardSettings->enable;
+            if (sdWasEnabled) {
+                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_UpdateSettings(pSDCardSettings);
+            }
             int sdWait = 0;
             while (!sd_card_manager_IsIdle() && sdWait < 500) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 sdWait++;
             }
             if (sdWait >= 500) {
-                LOG_E("SD idle timeout before DMA resize");
+                LOG_E("SD idle timeout before DMA resize (%d ms)", sdWait * 10);
             }
         }
         // WiFi: wait for SPI transfers to complete.
@@ -2313,6 +2319,20 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
         StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
         AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount);
+
+        // Re-enable SD if it was closed for DMA quiesce
+        if (sdLoggingRequested) {
+            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
+            sd_card_manager_UpdateSettings(pSDCardSettings);
+            int readyWait = 0;
+            while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                readyWait++;
+            }
+            if (!sd_card_manager_IsWriteReady()) {
+                LOG_E("SD file not ready after DMA resize (%d ms)", readyWait * 10);
+            }
+        }
     }
 
     pRunTimeStreamConfig->IsEnabled = true;
@@ -2921,7 +2941,14 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             wifiDmaSize = WIFI_DMA_MIN;
         }
         // Quiesce all DMA consumers before pool reset.
+        // SYST:MEM:AUTO rejects while streaming, so SD should be idle.
+        // But close any open file to be safe (drains, flushes FAT).
         {
+            sd_card_manager_settings_t* pSd = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+            if (pSd && pSd->mode != SD_CARD_MANAGER_MODE_NONE) {
+                pSd->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_UpdateSettings(pSd);
+            }
             int sdWait = 0;
             while (!sd_card_manager_IsIdle() && sdWait < 500) {
                 vTaskDelay(pdMS_TO_TICKS(10));

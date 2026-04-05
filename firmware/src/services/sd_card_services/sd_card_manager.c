@@ -1490,6 +1490,10 @@ bool sd_card_manager_IsIdle() {
             gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT);
 }
 
+bool sd_card_manager_IsDmaIdle(void) {
+    return gSDCardData.sdCardWritePending == 0;
+}
+
 bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
     if (sd_card_manager_IsIdle()) {
         return true;  // Already idle
