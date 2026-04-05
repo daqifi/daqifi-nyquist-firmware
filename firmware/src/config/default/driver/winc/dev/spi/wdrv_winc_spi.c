@@ -61,6 +61,12 @@ typedef struct
 } WDRV_WINC_SPIDCPT;
 
 // *****************************************************************************
+// DAQiFi MODIFICATION SENTINEL — if this line causes a build error after an
+// MCC/Harmony update, the file was overwritten. Re-apply patches from:
+// https://github.com/daqifi/daqifi-nyquist-firmware/wiki/Harmony-Driver-Patches
+// Changes: static alignedBuffer[] → CoherentPool pointer, added SetBuffer/WaitIdle
+#define DAQIFI_WINC_SPI_PATCHED 1
+// *****************************************************************************
 // *****************************************************************************
 // Section: Global Data
 // *****************************************************************************

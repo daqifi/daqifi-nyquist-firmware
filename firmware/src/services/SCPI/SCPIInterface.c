@@ -48,7 +48,10 @@
 #include "Util/CoherentPool.h"
 #include "state/data/AInSample.h"  // For AInSampleList_PoolCapacity
 #include "services/wifi_services/wifi_tcp_server.h"  // For WIFI_CIRCULAR_BUFF_SIZE
-#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer
+#include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/WaitIdle
+#ifndef DAQIFI_WINC_SPI_PATCHED
+#error "wdrv_winc_spi.h was overwritten by Harmony/MCC! Re-apply DAQiFi patches. See wiki: Harmony-Driver-Patches"
+#endif
 
 //
 // SCPI STATus:OPERation condition register bit assignments (IEEE 488.2 Sec 11.6.1)

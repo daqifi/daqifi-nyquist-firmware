@@ -40,6 +40,11 @@ Microchip or any third party.
 #ifndef WDRV_WINC_SPI_H
 #define WDRV_WINC_SPI_H
 
+// DAQiFi patch sentinel — build fails if Harmony/MCC overwrites this file.
+// Re-apply patches from: https://github.com/daqifi/daqifi-nyquist-firmware/wiki/Harmony-Driver-Patches
+// Changes: static alignedBuffer[] → CoherentPool pointer, added SetBuffer/WaitIdle
+#define DAQIFI_WINC_SPI_PATCHED 1
+
 #include "system/ports/sys_ports.h"
 
 // *****************************************************************************
