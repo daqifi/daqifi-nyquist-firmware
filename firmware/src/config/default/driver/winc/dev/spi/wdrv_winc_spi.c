@@ -79,6 +79,18 @@ void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size) {
     alignedBufferSize = size;
 }
 
+bool WDRV_WINC_SPI_WaitIdle(uint32_t timeout_ms) {
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    while (xTaskGetTickCount() < deadline) {
+        if (spiDcpt.transferTxHandle == DRV_SPI_TRANSFER_HANDLE_INVALID &&
+            spiDcpt.transferRxHandle == DRV_SPI_TRANSFER_HANDLE_INVALID) {
+            return true;
+        }
+        vTaskDelay(1);
+    }
+    return false;
+}
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: File scope functions

@@ -247,4 +247,26 @@ void WDRV_WINC_SPIDeinitialize(void);
 
 void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size);
 
+//*******************************************************************************
+/*
+  Function:
+    bool WDRV_WINC_SPI_WaitIdle(uint32_t timeout_ms)
+
+  Summary:
+    Waits until no SPI DMA transfers are in flight.
+
+  Description:
+    Polls the SPI transfer handles until both TX and RX are idle.
+    Must be called before CoherentPool_Reset() to prevent DMA
+    corruption from in-flight WINC1500 control-plane transfers.
+
+  Parameters:
+    timeout_ms - Maximum time to wait in milliseconds
+
+  Returns:
+    true if idle, false if timeout
+ */
+
+bool WDRV_WINC_SPI_WaitIdle(uint32_t timeout_ms);
+
 #endif /* WDRV_WINC_SPI_H */
