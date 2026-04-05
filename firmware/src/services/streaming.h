@@ -29,6 +29,10 @@ extern "C" {
 //    Benchmark: 16ch@3.5kHz PASS, 16ch@3.75kHz FAIL.
 //
 // Effective limit: min(ISR_MAX, TYPE1_AGG / type1Count, BUDGET / (OVERHEAD + total))
+// WiFi SPI DMA staging buffer limits
+#define WIFI_DMA_MAX  (32U * 1024U)  // 32KB max (benchmarked: fixes CSV 8ch/16ch drops)
+#define WIFI_DMA_MIN  (2U * 1024U)   // 2KB min (enough for WINC1500 control plane)
+
 #define STREAMING_ISR_MAX_HZ        11000
 #define STREAMING_TYPE1_AGG_MAX_HZ  30000
 #define STREAMING_TICK_BUDGET       77000
@@ -125,13 +129,15 @@ uint32_t Streaming_GetQuesBits(void);
  * @param[out] outUsbSize     Optimal USB circular buffer size (bytes)
  * @param[out] outWifiSize    Optimal WiFi circular buffer size (bytes)
  * @param[out] outSdSize      Optimal SD circular buffer size (bytes)
- * @param[out] outSdDmaSize   Optimal SD DMA write buffer size (bytes, coherent pool)
- * @param[out] outUsbDmaSize  Optimal USB DMA write buffer size (bytes, coherent pool)
- * @param[out] outEncoderSize Optimal encoder buffer size (bytes)
+ * @param[out] outSdDmaSize    Optimal SD DMA write buffer size (bytes, coherent pool)
+ * @param[out] outUsbDmaSize   Optimal USB DMA write buffer size (bytes, coherent pool)
+ * @param[out] outWifiDmaSize  Optimal WiFi SPI staging buffer size (bytes, coherent pool)
+ * @param[out] outEncoderSize  Optimal encoder buffer size (bytes)
  */
 void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
                                    uint32_t* outSdSize, uint32_t* outSdDmaSize,
-                                   uint32_t* outUsbDmaSize, uint32_t* outEncoderSize);
+                                   uint32_t* outUsbDmaSize, uint32_t* outWifiDmaSize,
+                                   uint32_t* outEncoderSize);
 
 /**
  * Set the encoder buffer to pool-managed memory.

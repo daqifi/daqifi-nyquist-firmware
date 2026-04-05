@@ -429,7 +429,8 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
  */
 void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
                                    uint32_t* outSdSize, uint32_t* outSdDmaSize,
-                                   uint32_t* outUsbDmaSize, uint32_t* outEncoderSize) {
+                                   uint32_t* outUsbDmaSize, uint32_t* outWifiDmaSize,
+                                   uint32_t* outEncoderSize) {
     StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(
         BOARDRUNTIME_STREAMING_CONFIGURATION);
     sd_card_manager_settings_t* sd = BoardRunTimeConfig_Get(
@@ -449,30 +450,42 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
                        : STREAMING_SD_CIRCULAR_MIN;
 
     // DMA write buffers: divide entire coherent pool among active consumers.
-    // Inactive interfaces get minimum (512B). Remaining pool space is split
+    // Inactive interfaces get minimum. Remaining pool space is split
     // among active interfaces — no committed coherent RAM left unused.
     {
         uint32_t pool = CoherentPool_TotalSize();
-        uint32_t overhead = 2 * COHERENT_POOL_ALIGNMENT;  // alignment per alloc
+        uint32_t overhead = 3 * COHERENT_POOL_ALIGNMENT;  // alignment per alloc
         uint32_t sdMin = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
         uint32_t usbMin = USBCDC_DMA_WBUFFER_MIN;
+        uint32_t wifiMin = WIFI_DMA_MIN;
 
-        if (hasSd && hasUsb) {
-            // Both active: SD gets 75% (benefits more from large writes),
-            // USB gets 25%. Benchmarked: SD gains plateau at 64KB,
-            // USB gains plateau at 16KB, so this split is optimal.
-            uint32_t avail = pool - overhead;
-            *outSdDmaSize = (avail * 3) / 4;
-            *outUsbDmaSize = avail - *outSdDmaSize;
-        } else if (hasSd) {
-            *outSdDmaSize = pool - usbMin - overhead;
-            *outUsbDmaSize = usbMin;
-        } else if (hasUsb) {
-            *outUsbDmaSize = pool - sdMin - overhead;
+        // Count active DMA consumers and allocate minimums for inactive
+        uint32_t reserved = overhead;
+        if (!hasSd)   reserved += sdMin;
+        if (!hasUsb)  reserved += usbMin;
+        if (!hasWifi) reserved += wifiMin;
+        uint32_t avail = (pool > reserved) ? pool - reserved : 0;
+
+        // Divide available space among active consumers
+        uint32_t activeCount = (hasSd ? 1 : 0) + (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0);
+        if (activeCount == 0) {
             *outSdDmaSize = sdMin;
+            *outUsbDmaSize = usbMin;
+            *outWifiDmaSize = wifiMin;
         } else {
-            *outSdDmaSize = sdMin;
-            *outUsbDmaSize = usbMin;
+            // SD benefits most from large DMA (sector-aligned writes).
+            // Split: SD gets 50%, USB gets 30%, WiFi gets 20% of active share.
+            *outSdDmaSize   = hasSd   ? (avail / 2) : sdMin;
+            *outUsbDmaSize  = hasUsb  ? (avail * 3 / 10) : usbMin;
+            *outWifiDmaSize = hasWifi ? (avail - *outSdDmaSize - *outUsbDmaSize
+                                         + (hasSd ? 0 : sdMin) + (hasUsb ? 0 : usbMin))
+                                      : wifiMin;
+            // Single-active gets everything
+            if (activeCount == 1) {
+                if (hasSd)   *outSdDmaSize   = avail;
+                if (hasUsb)  *outUsbDmaSize  = avail;
+                if (hasWifi) *outWifiDmaSize = avail;
+            }
         }
     }
 

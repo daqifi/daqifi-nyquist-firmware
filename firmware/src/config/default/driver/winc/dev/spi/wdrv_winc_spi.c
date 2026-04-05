@@ -67,7 +67,16 @@ typedef struct
 // *****************************************************************************
 
 static WDRV_WINC_SPIDCPT spiDcpt;
-static CACHE_ALIGN uint8_t alignedBuffer[CACHE_ALIGNED_SIZE_GET(32768)]; // 32KB SPI staging (benchmarked: fixes WiFi CSV 8ch/16ch drops)
+// WiFi SPI DMA staging buffer — allocated from CoherentPool at boot,
+// auto-balanced at stream start. Pool-managed instead of static to
+// share coherent memory with SD/USB DMA buffers.
+static uint8_t* alignedBuffer = NULL;
+static uint32_t alignedBufferSize = 0;
+
+void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size) {
+    alignedBuffer = buf;
+    alignedBufferSize = size;
+}
 
 // *****************************************************************************
 // *****************************************************************************

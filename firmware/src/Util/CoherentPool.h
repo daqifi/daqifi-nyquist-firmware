@@ -9,10 +9,10 @@
 extern "C" {
 #endif
 
-// Default coherent pool size: 92KB
-// Must accommodate DMA-safe buffers: SD write (64KB) + USB write (16KB) + WiFi SPI (8KB) + headroom
-// All three are auto-balanced at stream start via CoherentPool_Reset + re-alloc
-#define COHERENT_POOL_DEFAULT_SIZE  (92U * 1024U)
+// Default coherent pool size: 124KB
+// Must accommodate DMA-safe buffers: SD write + USB write + WiFi SPI staging
+// All three auto-balanced at stream start via CoherentPool_Reset + re-alloc
+#define COHERENT_POOL_DEFAULT_SIZE  (124U * 1024U)
 
 // Alignment for all pool allocations (cache line size on PIC32MZ)
 #define COHERENT_POOL_ALIGNMENT     16U

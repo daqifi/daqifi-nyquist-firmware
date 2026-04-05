@@ -464,6 +464,16 @@ void app_SystemInit() {
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
     CoherentPool_Init();
+    // Allocate WiFi SPI DMA staging buffer from coherent pool at boot
+    // (needed before WiFi init; auto-balanced at stream start)
+    {
+        #define WIFI_DMA_BOOT_SIZE (32U * 1024U)
+        uint8_t* wifiBuf = CoherentPool_Alloc("WiFi_SPI", WIFI_DMA_BOOT_SIZE);
+        if (wifiBuf != NULL) {
+            extern void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size);
+            WDRV_WINC_SPI_SetBuffer(wifiBuf, WIFI_DMA_BOOT_SIZE);
+        }
+    }
     StreamingBufferPool_Init(USBCDC_CIRCULAR_BUFF_SIZE, WIFI_CIRCULAR_BUFF_SIZE,
                              ENCODER_BUFFER_DEFAULT, SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE,
                              DEFAULT_AIN_SAMPLE_COUNT);

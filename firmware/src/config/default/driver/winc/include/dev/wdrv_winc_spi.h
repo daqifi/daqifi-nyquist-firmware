@@ -225,4 +225,26 @@ void WDRV_WINC_SPIInitialize(const WDRV_WINC_SPI_CFG *const pInitData);
 
 void WDRV_WINC_SPIDeinitialize(void);
 
+//*******************************************************************************
+/*
+  Function:
+    void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size)
+
+  Summary:
+    Sets the SPI DMA staging buffer from CoherentPool.
+
+  Description:
+    Called at boot and at each stream start to auto-balance the WiFi
+    SPI staging buffer size based on active interfaces.
+
+  Parameters:
+    buf  - Pointer to coherent buffer memory
+    size - Buffer size in bytes
+
+  Remarks:
+    Must be called before any SPI operations.
+ */
+
+void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size);
+
 #endif /* WDRV_WINC_SPI_H */
