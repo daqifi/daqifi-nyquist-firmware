@@ -23,8 +23,8 @@ extern "C" {
  * Start:  StreamingBufferPool_Partition() re-carves all regions.
  * Run:    Each module uses its region via external pointers.
  *
- * RAM budget: PIC32MZ has 512KB. This pool (218KB) + FreeRTOS heap (75KB)
- * + coherent pool (92KB) + BSS/data (~30KB) + ISR stack (8KB) = ~423KB.
+ * RAM budget: PIC32MZ has 512KB. This pool (194KB) + FreeRTOS heap (75KB)
+ * + coherent pool (92KB) + WiFi SPI (32KB) + BSS/data (~30KB) + ISR stack (8KB) = ~431KB.
  */
 
 /** Minimum buffer sizes (from module constraints) */
