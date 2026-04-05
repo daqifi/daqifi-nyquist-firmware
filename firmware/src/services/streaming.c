@@ -459,32 +459,29 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
         uint32_t usbMin = USBCDC_DMA_WBUFFER_MIN;
         uint32_t wifiMin = WIFI_DMA_MIN;
 
-        // Count active DMA consumers and allocate minimums for inactive
-        uint32_t reserved = overhead;
-        if (!hasSd)   reserved += sdMin;
-        if (!hasUsb)  reserved += usbMin;
-        if (!hasWifi) reserved += wifiMin;
-        uint32_t avail = (pool > reserved) ? pool - reserved : 0;
+        // Start with minimums for all, then distribute remaining to active.
+        *outSdDmaSize   = sdMin;
+        *outUsbDmaSize  = usbMin;
+        *outWifiDmaSize = wifiMin;
 
-        // Divide available space among active consumers
-        uint32_t activeCount = (hasSd ? 1 : 0) + (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0);
-        if (activeCount == 0) {
-            *outSdDmaSize = sdMin;
-            *outUsbDmaSize = usbMin;
-            *outWifiDmaSize = wifiMin;
-        } else {
-            // SD benefits most from large DMA (sector-aligned writes).
-            // Split: SD gets 50%, USB gets 30%, WiFi gets 20% of active share.
-            *outSdDmaSize   = hasSd   ? (avail / 2) : sdMin;
-            *outUsbDmaSize  = hasUsb  ? (avail * 3 / 10) : usbMin;
-            *outWifiDmaSize = hasWifi ? (avail - *outSdDmaSize - *outUsbDmaSize
-                                         + (hasSd ? 0 : sdMin) + (hasUsb ? 0 : usbMin))
-                                      : wifiMin;
-            // Single-active gets everything
+        uint32_t totalMin = sdMin + usbMin + wifiMin + overhead;
+        if (pool > totalMin) {
+            uint32_t avail = pool - totalMin;
+            uint32_t activeCount = (hasSd ? 1 : 0) + (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0);
+
             if (activeCount == 1) {
-                if (hasSd)   *outSdDmaSize   = avail;
-                if (hasUsb)  *outUsbDmaSize  = avail;
-                if (hasWifi) *outWifiDmaSize = avail;
+                // Single active gets all remaining
+                if (hasSd)   *outSdDmaSize   += avail;
+                if (hasUsb)  *outUsbDmaSize  += avail;
+                if (hasWifi) *outWifiDmaSize += avail;
+            } else if (activeCount >= 2) {
+                // Split: SD 50%, USB 30%, WiFi 20%
+                uint32_t sdShare   = hasSd   ? (avail / 2) : 0;
+                uint32_t usbShare  = hasUsb  ? (avail * 3 / 10) : 0;
+                uint32_t wifiShare = hasWifi ? (avail - sdShare - usbShare) : 0;
+                *outSdDmaSize   += sdShare;
+                *outUsbDmaSize  += usbShare;
+                *outWifiDmaSize += wifiShare;
             }
         }
     }

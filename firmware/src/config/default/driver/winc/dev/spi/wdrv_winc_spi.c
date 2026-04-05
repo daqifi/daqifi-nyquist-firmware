@@ -74,6 +74,7 @@ static uint8_t* alignedBuffer = NULL;
 static uint32_t alignedBufferSize = 0;
 
 void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size) {
+    if (buf == NULL || size == 0) return;
     alignedBuffer = buf;
     alignedBufferSize = size;
 }
