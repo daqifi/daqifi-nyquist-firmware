@@ -144,6 +144,3 @@ bootloader/              # USB bootloader project
 - **[CLAUDE.md](CLAUDE.md)** — Comprehensive technical reference (architecture, memory, SCPI, benchmarks)
 - **[Wiki](https://github.com/daqifi/daqifi-nyquist-firmware/wiki)** — SCPI command reference, LED patterns
 
-## License
-
-Proprietary. Copyright DAQiFi LLC.
