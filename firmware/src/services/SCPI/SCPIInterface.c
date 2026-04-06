@@ -1951,6 +1951,39 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * Quiesce all DMA consumers and reset the coherent pool.
+ * Closes SD file (filesystem safety), waits for WiFi SPI idle.
+ * USB is assumed already waited by caller.
+ * @return true if successful, false if a timeout occurred
+ */
+static bool SCPI_QuiesceAndResetCoherentPool(void) {
+    // SD: close file so f_write can't be mid-DMA during reset.
+    {
+        sd_card_manager_settings_t* pSd = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+        if (pSd && pSd->mode != SD_CARD_MANAGER_MODE_NONE) {
+            pSd->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSd);
+        }
+        int sdWait = 0;
+        while (!sd_card_manager_IsIdle() && sdWait < 500) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            sdWait++;
+        }
+        if (sdWait >= 500) {
+            LOG_E("SD idle timeout before DMA resize (%d ms)", sdWait * 10);
+            return false;
+        }
+    }
+    // WiFi: wait for any in-flight SPI DMA to complete.
+    if (!WDRV_WINC_SPI_WaitIdle(1000)) {
+        LOG_E("WiFi SPI idle timeout before DMA resize");
+        return false;
+    }
+    CoherentPool_Reset();
+    return true;
+}
+
 static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     int32_t freq;
 
@@ -2272,30 +2305,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
             wifiDmaSize = WIFI_DMA_MIN;
         }
-        // Quiesce all DMA consumers before pool reset.
-        // USB: writeTransferHandle already waited above.
-        // SD: close file so f_write can't be mid-DMA during reset.
-        //     Re-opened after resize via the SD enable path below.
-        {
-            bool sdWasEnabled = pSDCardSettings && pSDCardSettings->enable;
-            if (sdWasEnabled) {
-                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                sd_card_manager_UpdateSettings(pSDCardSettings);
-            }
-            int sdWait = 0;
-            while (!sd_card_manager_IsIdle() && sdWait < 500) {
-                vTaskDelay(pdMS_TO_TICKS(10));
-                sdWait++;
-            }
-            if (sdWait >= 500) {
-                LOG_E("SD idle timeout before DMA resize (%d ms)", sdWait * 10);
-            }
+        // Quiesce all DMA consumers (SD file close, WiFi SPI idle) and reset pool.
+        // USB writeTransferHandle already waited above.
+        if (!SCPI_QuiesceAndResetCoherentPool()) {
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
         }
-        // WiFi: wait for any in-flight SPI DMA to complete.
-        if (!WDRV_WINC_SPI_WaitIdle(1000)) {
-            LOG_E("WiFi SPI idle timeout before DMA resize");
-        }
-        CoherentPool_Reset();
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
         if (sdDmaBuf == NULL) {
             LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize);
@@ -2935,28 +2950,10 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
             wifiDmaSize = WIFI_DMA_MIN;
         }
-        // Quiesce all DMA consumers before pool reset.
-        // SYST:MEM:AUTO rejects while streaming, so SD should be idle.
-        // But close any open file to be safe (drains, flushes FAT).
-        {
-            sd_card_manager_settings_t* pSd = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-            if (pSd && pSd->mode != SD_CARD_MANAGER_MODE_NONE) {
-                pSd->mode = SD_CARD_MANAGER_MODE_NONE;
-                sd_card_manager_UpdateSettings(pSd);
-            }
-            int sdWait = 0;
-            while (!sd_card_manager_IsIdle() && sdWait < 500) {
-                vTaskDelay(pdMS_TO_TICKS(10));
-                sdWait++;
-            }
-            if (sdWait >= 500) {
-                LOG_E("SD idle timeout before DMA resize");
-            }
+        if (!SCPI_QuiesceAndResetCoherentPool()) {
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
         }
-        if (!WDRV_WINC_SPI_WaitIdle(1000)) {
-            LOG_E("WiFi SPI idle timeout before DMA resize");
-        }
-        CoherentPool_Reset();
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
         if (sdDmaBuf == NULL) {
             LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize);
