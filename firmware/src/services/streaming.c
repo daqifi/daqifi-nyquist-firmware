@@ -44,9 +44,9 @@
 static volatile uint32_t gTestPattern = 0;       // 0=off, 1-4=pattern type
 static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on start
 
-// Benchmark mode: bypasses frequency cap for throughput testing.
+// Benchmark mode level (BENCHMARK_OFF/NOCAP/PIPELINE).
 // Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
-static volatile uint32_t gBenchmarkMode = 0;
+static volatile uint32_t gBenchmarkMode = BENCHMARK_OFF;
 
 // Task priority constant (benchmark no longer changes priority)
 #define STREAMING_ISR_TASK_PRIORITY     8
@@ -256,37 +256,46 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             for (i = 0; i < pAiRunTimeChannelConfig->Size; i++) {
                 if (pAiRunTimeChannelConfig->Data[i].IsEnabled == 1
                         && AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
-                    pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
-                    // Null check to prevent crash
-                    if (pAiSample != NULL) {
-                        // Use channel ID from BoardConfig (authoritative source) instead of sample data
-                        pPublicSampleList->sampleElement[i].Channel=pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
-                        // Copy entire sample atomically to prevent torn reads
-                        // Task-only context - use efficient critical section
-                        taskENTER_CRITICAL();
-                        pPublicSampleList->sampleElement[i].Timestamp=pAiSample->Timestamp;
-                        pPublicSampleList->sampleElement[i].Value=pAiSample->Value;
-                        taskEXIT_CRITICAL();
 
-                        pPublicSampleList->isSampleValid[i]=1;
-
-                        // Test pattern override: replace ADC value with synthetic data
-                        // adcMax = Resolution - 1 to match real ADC range (0..4095 for 12-bit)
-                        if (gTestPattern != 0) {
-                            uint32_t adcMax;
-                            if (pBoardConfig->AInChannels.Data[i].Type == AIn_AD7609) {
-                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution - 1;
-                            } else {
-                                adcMax = (uint32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution - 1;
-                            }
-                            pPublicSampleList->sampleElement[i].Value =
-                                Streaming_GenerateTestValue(gTestPattern,
-                                    pPublicSampleList->sampleElement[i].Channel,
-                                    gTestPatternSampleCount, adcMax);
-                        }
+                    uint32_t adcMax;
+                    if (pBoardConfig->AInChannels.Data[i].Type == AIn_AD7609) {
+                        adcMax = (uint32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution - 1;
                     } else {
-                        // Mark as invalid if sample data unavailable
-                        pPublicSampleList->isSampleValid[i]=0;
+                        adcMax = (uint32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution - 1;
+                    }
+
+                    pPublicSampleList->sampleElement[i].Channel =
+                        pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+
+                    if (gBenchmarkMode == BENCHMARK_PIPELINE) {
+                        // Pipeline: skip ADC entirely, generate synthetic data directly.
+                        // No BoardData read, no ADC wait — measures pure encoder + output.
+                        pPublicSampleList->sampleElement[i].Timestamp = 0;
+                        pPublicSampleList->sampleElement[i].Value =
+                            Streaming_GenerateTestValue(gTestPattern,
+                                pPublicSampleList->sampleElement[i].Channel,
+                                gTestPatternSampleCount, adcMax);
+                        pPublicSampleList->isSampleValid[i] = 1;
+                    } else {
+                        // Normal/NoCap: read real ADC data from BoardData
+                        pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
+                        if (pAiSample != NULL) {
+                            taskENTER_CRITICAL();
+                            pPublicSampleList->sampleElement[i].Timestamp = pAiSample->Timestamp;
+                            pPublicSampleList->sampleElement[i].Value = pAiSample->Value;
+                            taskEXIT_CRITICAL();
+                            pPublicSampleList->isSampleValid[i] = 1;
+
+                            // Test pattern override (if enabled)
+                            if (gTestPattern != 0) {
+                                pPublicSampleList->sampleElement[i].Value =
+                                    Streaming_GenerateTestValue(gTestPattern,
+                                        pPublicSampleList->sampleElement[i].Channel,
+                                        gTestPatternSampleCount, adcMax);
+                            }
+                        } else {
+                            pPublicSampleList->isSampleValid[i] = 0;
+                        }
                     }
                 }
             }
@@ -302,24 +311,28 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 Streaming_UpdateFlowWindow(false);
             }
 
-            if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
-                for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                    ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
-                }
-            } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
-                for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                    ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
-                }
-
-                if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
+            // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
+            // Normal/NoCap modes trigger ADC for next conversion cycle.
+            if (gBenchmarkMode != BENCHMARK_PIPELINE) {
+                if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                     for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                        ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_SHARED);
+                        ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
                     }
-                    ChannelScanFreqDivCount = 0;
+                } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
+                    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                        ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
+                    }
+
+                    if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
+                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_SHARED);
+                        }
+                        ChannelScanFreqDivCount = 0;
+                    }
+                    ChannelScanFreqDivCount++;
                 }
-                ChannelScanFreqDivCount++;
+                DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
             }
-            DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
 
             // Increment test pattern counter once per ISR tick (after all channels)
             if (gTestPattern != 0) {
@@ -1026,17 +1039,16 @@ uint32_t Streaming_GetTestPattern(void) {
     return gTestPattern;  // 32-bit read is atomic on PIC32MZ
 }
 
-void Streaming_SetBenchmarkMode(bool enabled) {
-    // Benchmark mode only bypasses the frequency cap.
-    // The ISR task priority is no longer changed — the normal hierarchy
-    // (ISR=8, USB=7, encoder=2) is correct with all-or-nothing retry.
-    // Dropping ISR to priority 2 caused the encoder retry to compete
-    // with ISR for CPU, flooding the sample queue.
-    gBenchmarkMode = enabled ? 1 : 0;
+void Streaming_SetBenchmarkMode(uint32_t mode) {
+    gBenchmarkMode = mode;
+    // Pipeline mode requires test patterns (no real ADC data)
+    if (mode == BENCHMARK_PIPELINE && gTestPattern == 0) {
+        gTestPattern = 2;  // Force midscale
+    }
 }
 
-bool Streaming_GetBenchmarkMode(void) {
-    return gBenchmarkMode != 0;
+uint32_t Streaming_GetBenchmarkMode(void) {
+    return gBenchmarkMode;
 }
 
 // Removed: Streaming_RunBenchmark — replaced by benchmark mode flag.

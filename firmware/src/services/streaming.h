@@ -33,6 +33,11 @@ extern "C" {
 #define WIFI_DMA_MAX  (32U * 1024U)  // 32KB max (benchmarked: fixes CSV 8ch/16ch drops)
 #define WIFI_DMA_MIN  (2U * 1024U)   // 2KB min (enough for WINC1500 control plane)
 
+// Benchmark mode levels (extensible — add new values for future modes)
+#define BENCHMARK_OFF      0   // Normal: freq cap active, real ADC
+#define BENCHMARK_NOCAP    1   // Bypass freq cap, real ADC timing
+#define BENCHMARK_PIPELINE 2   // Bypass freq cap + skip ADC entirely
+
 #define STREAMING_ISR_MAX_HZ        11000
 #define STREAMING_TYPE1_AGG_MAX_HZ  30000
 #define STREAMING_TICK_BUDGET       77000
@@ -164,11 +169,12 @@ uint32_t Streaming_GetTestPattern(void);
 
 // Benchmark mode: when enabled, the deferred ISR task generates test pattern
 // samples as fast as possible (no timer wait), bypassing ADC timing.
-// Use with test patterns (SYST:STR:TESTpattern 1-6) to measure pure
-// encoder + output throughput. Start with SYST:StartStreamData 0 (freq=0).
-// Stop normally with SYST:StopStreamData, then check SYST:STR:STATS?.
-void Streaming_SetBenchmarkMode(bool enabled);
-bool Streaming_GetBenchmarkMode(void);
+// Benchmark modes isolate pipeline stages for bottleneck analysis:
+//   0 = Normal (freq cap + real ADC)
+//   1 = NoCap (bypass cap, real ADC timing)
+//   2 = Pipeline (bypass cap + skip ADC, test pattern required)
+void Streaming_SetBenchmarkMode(uint32_t mode);
+uint32_t Streaming_GetBenchmarkMode(void);
 
 #ifdef	__cplusplus
 }

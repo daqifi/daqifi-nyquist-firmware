@@ -1683,23 +1683,23 @@ static scpi_result_t SCPI_GetTestPattern(scpi_t * context) {
 static scpi_result_t SCPI_SetBenchmarkMode(scpi_t * context) {
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
-    if (val != 0 && val != 1) {
+    if (val < 0 || val > BENCHMARK_PIPELINE) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
-    // Block changes while streaming — priority swap mid-stream is unsafe
+    // Block changes while streaming
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     if (pStreamCfg->IsEnabled && pStreamCfg->Running) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
-    Streaming_SetBenchmarkMode(val != 0);
+    Streaming_SetBenchmarkMode((uint32_t)val);
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
-    SCPI_ResultInt32(context, Streaming_GetBenchmarkMode() ? 1 : 0);
+    SCPI_ResultInt32(context, (int32_t)Streaming_GetBenchmarkMode());
     return SCPI_RES_OK;
 }
 
@@ -1742,11 +1742,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     }
 
     // Save previous state to restore after benchmark
-    bool savedBenchmark = Streaming_GetBenchmarkMode();
+    uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
 
     // Enable benchmark mode + test pattern
-    Streaming_SetBenchmarkMode(true);
+    Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);
     Streaming_SetTestPattern(2);  // midscale
 
     // Clear stats
@@ -2093,7 +2093,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // Three-constraint frequency capping (validated via benchmark testing)
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
         // Bypass cap in benchmark mode to measure pure interface throughput.
-        if (!Streaming_GetBenchmarkMode()) {
+        if (Streaming_GetBenchmarkMode() == BENCHMARK_OFF) {
             uint32_t maxFreq = Streaming_ComputeMaxFreq(
                 activeType1ChannelCount, totalEnabledPublicChannels);
             if (freq > (int32_t)maxFreq) {
@@ -2112,7 +2112,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                   (int)freq, (unsigned)totalEnabledPublicChannels);
         }
 
-        int32_t freqLimit = Streaming_GetBenchmarkMode() ? 100000 : (int32_t)STREAMING_ISR_MAX_HZ;
+        int32_t freqLimit = (Streaming_GetBenchmarkMode() != BENCHMARK_OFF) ? 100000 : (int32_t)STREAMING_ISR_MAX_HZ;
         if (freq >= 1 && freq <= freqLimit)
         {
 
@@ -3222,7 +3222,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
     {.pattern = "SYSTem:STReam:TESTpattern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
     {.pattern = "SYSTem:STReam:TESTpattern?", .callback = SCPI_GetTestPattern,},
-    {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 1=enable max-rate mode, 0=normal ADC timing
+    {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 0=normal, 1=nocap, 2=pipeline (skip ADC)
     {.pattern = "SYSTem:STReam:BENCHmark?", .callback = SCPI_GetBenchmarkMode,},
     {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
     // Dynamic memory configuration
