@@ -2882,17 +2882,14 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
 
-    // Compute optimal buffer sizes using shared helper
+    // Compute optimal buffer sizes into LOCAL variables — do NOT persist
+    // into MemoryConfig. Keeping mc at zero preserves auto mode for
+    // subsequent StartStreamData calls.
+    uint32_t usbSize, wifiSize, sdCircSize;
     uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
-    Streaming_ComputeAutoBuffers(&mc->usbCircularBufSize,
-                                 &mc->wifiCircularBufSize,
-                                 &mc->sdCircularBufSize,
+    Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
                                  &sdDmaSize, &usbDmaSize, &wifiDmaSize,
                                  &encSize);
-    mc->encoderBufSize = encSize;
-
-    // Sample pool count = 0 means maximize with remaining pool space
-    mc->samplePoolCount = 0;
 
     // Apply: re-partition unified pool, swap all pointers
     {
@@ -2903,10 +2900,8 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             vTaskDelay(1);
         }
 
-        StreamingBufferPool_Partition(mc->usbCircularBufSize,
-                                      mc->wifiCircularBufSize,
-                                      encSize,
-                                      mc->sdCircularBufSize, 0);
+        StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
+                                      sdCircSize, 0);
 
         uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
         uint32_t usbLen, wifiLen, encLen, sdCircLen;
@@ -2984,20 +2979,13 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
         void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
         StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
         AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount);
-        mc->samplePoolCount = sCount;
     }
 
-    // Circular buffers (streaming pool)
-    scpi_printf(context, "USB=%u\r\n", (unsigned)mc->usbCircularBufSize);
-    scpi_printf(context, "WiFi=%u\r\n", (unsigned)mc->wifiCircularBufSize);
-    scpi_printf(context, "SD=%u\r\n", (unsigned)mc->sdCircularBufSize);
-    scpi_printf(context, "Encoder=%u\r\n", (unsigned)encSize);
-    scpi_printf(context, "Pool=%u\r\n", (unsigned)mc->samplePoolCount);
-    // DMA buffers (coherent pool)
-    scpi_printf(context, "UsbDma=%u\r\n", (unsigned)usbDmaSize);
-    scpi_printf(context, "WifiDma=%u\r\n", (unsigned)wifiDmaSize);
-    scpi_printf(context, "SdDma=%u\r\n", (unsigned)sdDmaSize);
+    // Ensure MemoryConfig stays zeroed — auto mode for next StartStreamData
+    memset(mc, 0, sizeof(MemoryConfig));
 
+    // SCPI compliance: commands (no ?) don't return data.
+    // Use SYST:MEM:FREE? to query applied sizes.
     return SCPI_RES_OK;
 }
 
