@@ -1958,10 +1958,11 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
  * @return true if successful, false if a timeout occurred
  */
 static bool SCPI_QuiesceAndResetCoherentPool(void) {
-    // SD: close file so f_write can't be mid-DMA during reset.
+    // SD: close write file so f_write can't be mid-DMA during reset.
+    // Only interrupt WRITE mode (DMA consumer). Leave READ/LIST/DELETE alone.
     {
         sd_card_manager_settings_t* pSd = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-        if (pSd && pSd->mode != SD_CARD_MANAGER_MODE_NONE) {
+        if (pSd && pSd->mode == SD_CARD_MANAGER_MODE_WRITE) {
             pSd->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSd);
         }

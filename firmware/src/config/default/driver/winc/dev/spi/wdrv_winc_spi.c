@@ -126,7 +126,15 @@ static void spiTransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
             break;
 
         case DRV_SPI_TRANSFER_EVENT_ERROR:
-            // Error handling here.
+            // Post semaphore on error to prevent deadlock in SPISend/SPIReceive.
+            if (spiDcpt.transferTxHandle == handle)
+            {
+                OSAL_SEM_PostISR(&spiDcpt.txSyncSem);
+            }
+            else if (spiDcpt.transferRxHandle == handle)
+            {
+                OSAL_SEM_PostISR(&spiDcpt.rxSyncSem);
+            }
             break;
 
         default:
@@ -151,6 +159,7 @@ static void spiTransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
 
 bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
 {
+    if (alignedBuffer == NULL || txSize > alignedBufferSize) return false;
     memcpy(alignedBuffer, pTransmitData, txSize);
     DRV_SPI_WriteTransferAdd(spiDcpt.spiHandle, alignedBuffer, txSize, &spiDcpt.transferTxHandle);
 
@@ -187,6 +196,7 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
 {
     static uint8_t dummy = 0;
 
+    if (alignedBuffer == NULL || rxSize > alignedBufferSize) return false;
     DRV_SPI_WriteReadTransferAdd(spiDcpt.spiHandle, &dummy, 1, alignedBuffer, rxSize, &spiDcpt.transferRxHandle);
 
     if (DRV_SPI_TRANSFER_HANDLE_INVALID == spiDcpt.transferRxHandle)
