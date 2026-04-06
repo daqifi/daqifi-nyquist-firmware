@@ -112,10 +112,12 @@ static void spiTransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
             // This means the data was transferred.
             if (spiDcpt.transferTxHandle == handle)
             {
+                spiDcpt.transferTxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
                 OSAL_SEM_PostISR(&spiDcpt.txSyncSem);
             }
             else if (spiDcpt.transferRxHandle == handle)
             {
+                spiDcpt.transferRxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
                 OSAL_SEM_PostISR(&spiDcpt.rxSyncSem);
             }
 
@@ -234,6 +236,11 @@ bool WDRV_WINC_SPIOpen(void)
         LOG_E("WiFi SPI: rxSyncSem create failed (heap exhaustion?)\r\n");
         return false;
     }
+
+    // Initialize transfer handles to INVALID so WaitIdle() works correctly.
+    // Static init leaves them at 0, but INVALID is 0xFFFFFFFF.
+    spiDcpt.transferTxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
+    spiDcpt.transferRxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
 
     if (DRV_HANDLE_INVALID == spiDcpt.spiHandle)
     {

@@ -2291,7 +2291,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 LOG_E("SD idle timeout before DMA resize (%d ms)", sdWait * 10);
             }
         }
-        // WiFi: wait for SPI transfers to complete.
+        // WiFi: wait for any in-flight SPI DMA to complete.
         if (!WDRV_WINC_SPI_WaitIdle(1000)) {
             LOG_E("WiFi SPI idle timeout before DMA resize");
         }
