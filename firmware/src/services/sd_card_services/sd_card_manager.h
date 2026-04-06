@@ -175,15 +175,6 @@ extern "C" {
     bool sd_card_manager_IsIdle(void);
 
     /**
-     * @brief Checks if no SD DMA write (f_write) is in progress.
-     *
-     * Unlike IsIdle(), this returns true even in WRITE_TO_FILE state
-     * as long as no f_write is actively using the DMA write buffer.
-     * Used before CoherentPool resize to avoid corrupting an in-flight DMA.
-     */
-    bool sd_card_manager_IsDmaIdle(void);
-
-    /**
      * @brief Waits for the current SD card operation to complete.
      *
      * @param[in] timeoutMs Maximum time to wait in milliseconds (0 = wait forever)
