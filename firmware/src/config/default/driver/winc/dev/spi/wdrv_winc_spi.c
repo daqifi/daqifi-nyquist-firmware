@@ -110,14 +110,16 @@ static void spiTransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
     {
         case DRV_SPI_TRANSFER_EVENT_COMPLETE:
             // This means the data was transferred.
+            // Post semaphore only — do NOT clear handle here.
+            // Handle is cleared in SPISend/SPIReceive AFTER post-DMA
+            // memcpy completes. This prevents WaitIdle() from returning
+            // true while the task is still using alignedBuffer.
             if (spiDcpt.transferTxHandle == handle)
             {
-                spiDcpt.transferTxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
                 OSAL_SEM_PostISR(&spiDcpt.txSyncSem);
             }
             else if (spiDcpt.transferRxHandle == handle)
             {
-                spiDcpt.transferRxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
                 OSAL_SEM_PostISR(&spiDcpt.rxSyncSem);
             }
 
@@ -161,6 +163,8 @@ bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
     {
     }
 
+    // DMA complete, buffer no longer in use — mark idle for WaitIdle()
+    spiDcpt.transferTxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
     return true;
 }
 
@@ -196,6 +200,8 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
 
     memcpy(pReceiveData, alignedBuffer, rxSize);
 
+    // Buffer fully consumed — mark idle for WaitIdle()
+    spiDcpt.transferRxHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
     return true;
 }
 
