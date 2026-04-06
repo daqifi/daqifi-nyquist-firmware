@@ -8,33 +8,51 @@ pr_commands = [
 [pr_reviewer]
 extra_instructions = """\
 This is a PIC32MZ2048EFM144 (MIPS32, 200 MHz) embedded firmware project with FreeRTOS.
+
 Key concurrency rules:
-- 32-bit reads/writes are atomic. Do NOT suggest critical sections for plain stores/loads.
+- 32-bit reads/writes are atomic on PIC32MZ bus. Do NOT suggest critical sections for plain 32-bit stores/loads.
 - Read-modify-write (+=, |=, ++, &=~) is NOT atomic — needs taskENTER_CRITICAL.
 - 64-bit operations always need critical sections.
+- volatile prevents register caching but does NOT make RMW atomic.
 - BoardRunTimeConfig_Get() never returns NULL — do NOT suggest NULL guards on it.
 - All ISR handlers defer to FreeRTOS tasks via xTaskNotifyGive — socket callbacks and
   streaming code run in task context, NOT ISR context. Do NOT suggest ISR-safe variants.
 - portTASK_USES_FLOATING_POINT() is required for any task using float/double.
 
+Memory architecture:
+- StreamingBufferPool (194KB static BSS): USB/WiFi circular, encoder, SD circular, sample pool. CPU-only, no DMA.
+- CoherentPool (124KB static KSEG1): SD DMA write + USB DMA write + WiFi SPI staging. All auto-balanced at stream start.
+- CACHE_ALIGN = __attribute__((coherent)) on PIC32MZ — places buffers in KSEG1 (uncached). They ARE DMA-safe.
+- CoherentPool_Reset() + re-alloc happens at each stream start. All DMA consumers are quiesced first (SD file closed, WiFi SPI idle, USB transfer waited).
+- Buffer sizing is auto-balanced — do NOT suggest fixed sizes or hardcoded buffer allocations.
+- sd_card_manager_SetCircularBuffer/SetWriteBuffer are only called after init (mutex guaranteed). Do NOT suggest NULL mutex guards.
+
+Streaming pipeline:
+- USB/WiFi: all-or-nothing writes without retry (clean packet drop, no garbled data).
+- SD: all-or-nothing writes WITH 3-phase retry (10s timeout, data integrity on disk).
+- Partial writes cause convoy effect — do NOT suggest partial write fallbacks.
+
+Harmony driver patches:
+- wdrv_winc_spi.c/.h have DAQiFi modifications (DAQIFI_WINC_SPI_PATCHED sentinel).
+- These are intentional patches to Harmony-generated code. Do NOT flag them as "modifying generated code."
+
 When reviewing SCPI interfaces:
-- Treat `**ERROR:` lines returned as part of SCPI command/interactive responses as acceptable existing behavior (USB and TCP).
-- Do NOT flag these as "errors in the data stream" unless the code is in the dedicated data streaming path (continuous/binary/deterministic output stream).
-- Prefer suggesting improvements only if SCPI error handling is inconsistent across interfaces, or if streaming-path payloads are polluted.
+- SCPI commands (no ?) must NOT return data. Queries (?) return data.
+- Treat `**ERROR:` lines returned as part of SCPI command/interactive responses as acceptable existing behavior.
+- Do NOT flag these as "errors in the data stream" unless the code is in the dedicated data streaming path.
 """
 
 [pr_code_suggestions]
 extra_instructions = """\
-This is a PIC32MZ2048EFM144 (MIPS32, 200 MHz) embedded firmware project with FreeRTOS.
-Key concurrency rules:
-- 32-bit reads/writes are atomic. Do NOT suggest critical sections for plain stores/loads.
-- Read-modify-write (+=, |=, ++, &=~) is NOT atomic — needs taskENTER_CRITICAL.
-- 64-bit operations always need critical sections.
-- BoardRunTimeConfig_Get() never returns NULL — do NOT suggest NULL guards on it.
-- All socket callbacks run in task context, NOT ISR context. Do NOT suggest ISR-safe critical sections.
-
-When reviewing SCPI interfaces:
-- Treat `**ERROR:` lines returned as part of SCPI command/interactive responses as acceptable existing behavior (USB and TCP).
-- Do NOT flag these as "errors in the data stream" unless the code is in the dedicated data streaming path (continuous/binary/deterministic output stream).
-- Prefer suggesting improvements only if SCPI error handling is inconsistent across interfaces, or if streaming-path payloads are polluted.
+PIC32MZ2048EFM144 embedded firmware with FreeRTOS. Key rules:
+- 32-bit reads/writes are atomic. Do NOT suggest critical sections for plain 32-bit stores/loads.
+- RMW (+=, |=, &=~) is NOT atomic — needs taskENTER_CRITICAL.
+- BoardRunTimeConfig_Get() never returns NULL — no NULL guards needed.
+- sd_card_manager Set* functions are only called after init — mutex is guaranteed, no NULL mutex guards.
+- CACHE_ALIGN = __attribute__((coherent)) on PIC32MZ — these ARE DMA-safe. Do NOT suggest adding coherent attribute.
+- CoherentPool buffers are auto-balanced. Do NOT suggest fixed sizes or static fallback buffers.
+- USB/WiFi writes are all-or-nothing without retry. Do NOT suggest partial write fallbacks or retry loops for USB/WiFi.
+- SD writes have retry with 10s timeout. This is intentional for disk integrity.
+- Harmony driver files (wdrv_winc_spi.*) have intentional DAQiFi patches. Do NOT flag as "modifying generated code."
+- SCPI commands (no ?) must NOT return data. Only queries (?) return data.
 """
