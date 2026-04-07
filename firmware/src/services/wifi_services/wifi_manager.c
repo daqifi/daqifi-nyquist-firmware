@@ -332,6 +332,10 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 wifi_tcp_server_clientContext_t* client = &gStateMachineContext.pTcpServerContext->client;
                 client->tcpSendPending = 0;
 
+                // Immediately try to send next chunk — don't wait for
+                // the WiFi task tick (5ms). This runs in WINC_Tasks context.
+                wifi_tcp_server_TransmitBufferedData();
+
                 // Single critical section for all counter updates + lastSendSize read
                 uint16_t sendSize;
                 uint32_t errorCount, partialCount;
