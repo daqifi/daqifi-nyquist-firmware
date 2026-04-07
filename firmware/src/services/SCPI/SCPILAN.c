@@ -379,8 +379,9 @@ scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
     if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
     uint8_t rssiPercentage = 0;
     
-    // Try to get fresh RSSI with 1 second timeout
-    if (wifi_manager_GetRSSI(&rssiPercentage, 1000)) {
+    // Only attempt fresh RSSI read when connected (avoids 1s blocking timeout)
+    if (wifi_manager_GetWiFiStatus() == WIFI_STATUS_CONNECTED &&
+        wifi_manager_GetRSSI(&rssiPercentage, 1000)) {
         // Successfully got fresh RSSI
         SCPI_ResultInt32(context, (int) rssiPercentage);
     } else {
