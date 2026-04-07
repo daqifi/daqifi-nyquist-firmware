@@ -3266,7 +3266,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = NULL, .callback = SCPI_NotImplemented,},
 };
 
-#define SCPI_INPUT_BUFFER_LENGTH 128  // Increased from 64 to handle rapid command sequences
+#define SCPI_INPUT_BUFFER_LENGTH 512  // Match USB CDC max packet size to prevent silent truncation
 #define SCPI_ERROR_QUEUE_SIZE 17
 char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
 scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
