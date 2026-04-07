@@ -304,7 +304,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 addr.sin_family = AF_INET;
                 // Always respond to sender's source port (standard UDP behavior)
                 addr.sin_port = pstrRx->strRemoteAddr.sin_port;
-                addr.sin_addr.s_addr = inet_addr(s);
+                addr.sin_addr.s_addr = pstrRx->strRemoteAddr.sin_addr.s_addr;
                 LOG_D("UDP Discovery: Sending response to %s:%d (packet size: %d, socket=%d)\r\n", s, _htons(addr.sin_port), announcePacktLen, socket);
                 // Use the socket parameter, not gStateMachineContext.udpServerSocket
                 sendto(socket, udpBuffer, announcePacktLen, 0, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
