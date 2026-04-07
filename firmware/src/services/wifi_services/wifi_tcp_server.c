@@ -408,12 +408,13 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
     }
     bytesAdded = CircularBuf_AddBytes(&gpServerData->client.wCirbuf, (uint8_t*) data, len);
 
-    // Proactive flush: If buffer is >10% full (560 bytes), trigger transmission
-    // This minimizes latency by sending data to the WINC module immediately
-    // The WINC's TCP stack handles packet coalescing with Nagle's algorithm
-    // Keeps buffer mostly empty to maximize room for high-rate streaming data
+    // Proactive flush at 30% of send buffer size (~420 bytes).
+    // With callback-driven sends, a higher threshold lets more data
+    // accumulate per send while the callback chains the next immediately.
+    // Benchmarked: 30% optimal with callback sends (125 KB/s PB16@3k,
+    // lowest drops at ceiling). Was 10% before callback optimization.
     size_t bytesInBuffer = CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf);
-    bool shouldFlush = (bytesInBuffer > (WIFI_CIRCULAR_BUFF_SIZE / 10));
+    bool shouldFlush = (bytesInBuffer > (WIFI_WBUFFER_SIZE * 3 / 10));
     xSemaphoreGive(gpServerData->client.wMutex);
 
     // Trigger flush outside mutex to avoid blocking other writers
