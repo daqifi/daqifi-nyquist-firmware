@@ -107,6 +107,11 @@ scpi_result_t SCPI_LANSsidSet(scpi_t * context);
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context);
 
+// CONFigured value queries (return user-set values, not DHCP-assigned)
+scpi_result_t SCPI_LANConfAddrGet(scpi_t * context);
+scpi_result_t SCPI_LANConfMaskGet(scpi_t * context);
+scpi_result_t SCPI_LANConfGatewayGet(scpi_t * context);
+
 /**
  * SCPI Callback: Set the security mode of the device
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error

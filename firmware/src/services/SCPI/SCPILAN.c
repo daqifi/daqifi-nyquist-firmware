@@ -26,6 +26,19 @@
 // WiFi status functions have been moved to wifi_manager
 
 /**
+ * Check if WiFi is powered and ready. Returns true if WiFi GET commands
+ * should proceed, false if they should fail with execution error.
+ */
+static bool SCPI_LANRequireWiFiReady(scpi_t* context) {
+    wifi_status_t status = wifi_manager_GetWiFiStatus();
+    if (status == WIFI_STATUS_DISABLED) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return false;
+    }
+    return true;
+}
+
+/**
  * Encodes the given ip multi-address as a scpi string
  * @param context The scpi context
  * @param ipv6 Indicates whether the address is expected to be an ipv6 address
@@ -226,12 +239,19 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANAddrGet(scpi_t * context) {
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(
             BOARDDATA_WIFI_SETTINGS, 0);
 
     return SCPI_LANAddrGetImpl(
             context,
             &pWifiSettings->ipAddr);
+}
+
+scpi_result_t SCPI_LANConfAddrGet(scpi_t * context) {
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    return SCPI_LANAddrGetImpl(context, &pWifiSettings->ipAddr);
 }
 
 /**
@@ -252,12 +272,19 @@ scpi_result_t SCPI_LANAddrSet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMaskGet(scpi_t * context) {
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
+            BOARDDATA_WIFI_SETTINGS, 0);
 
     return SCPI_LANAddrGetImpl(
             context,
             &pWifiSettings->ipMask);
+}
+
+scpi_result_t SCPI_LANConfMaskGet(scpi_t * context) {
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    return SCPI_LANAddrGetImpl(context, &pWifiSettings->ipMask);
 }
 
 /**
@@ -277,11 +304,18 @@ scpi_result_t SCPI_LANMaskSet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANGatewayGet(scpi_t * context) {
-    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_WIFI_SETTINGS);
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
+    wifi_manager_settings_t * pWifiSettings = BoardData_Get(
+            BOARDDATA_WIFI_SETTINGS, 0);
     return SCPI_LANAddrGetImpl(
             context,
             &pWifiSettings->gateway);
+}
+
+scpi_result_t SCPI_LANConfGatewayGet(scpi_t * context) {
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    return SCPI_LANAddrGetImpl(context, &pWifiSettings->gateway);
 }
 
 /**
@@ -301,6 +335,7 @@ scpi_result_t SCPI_LANGatewaySet(scpi_t * context) {
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMacGet(scpi_t * context) {
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
     char buffer[MAX_MAC_ADDR_STR_LEN];
 
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(
@@ -341,6 +376,7 @@ scpi_result_t SCPI_LANSsidSet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
     uint8_t rssiPercentage = 0;
     
     // Try to get fresh RSSI with 1 second timeout
