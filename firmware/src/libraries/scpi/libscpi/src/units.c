@@ -36,11 +36,11 @@
  */
 
 #include <string.h>
-#include "../inc/scpi/parser.h"
-#include "../inc/scpi/units.h"
+#include "scpi/parser.h"
+#include "scpi/units.h"
 #include "utils_private.h"
-#include "../inc/scpi/utils.h"
-#include "../inc/scpi/error.h"
+#include "scpi/utils.h"
+#include "scpi/error.h"
 #include "lexer_private.h"
 
 

@@ -38,13 +38,13 @@
 #include <ctype.h>
 #include <string.h>
 
-#include "../inc/scpi/config.h"
-#include "../inc/scpi/parser.h"
+#include "scpi/config.h"
+#include "scpi/parser.h"
 #include "parser_private.h"
 #include "lexer_private.h"
-#include "../inc/scpi/error.h"
-#include "../inc/scpi/constants.h"
-#include "../inc/scpi/utils.h"
+#include "scpi/error.h"
+#include "scpi/constants.h"
+#include "scpi/utils.h"
 
 /**
  * Write data to SCPI output
@@ -94,7 +94,7 @@ static size_t writeDelimiter(scpi_t * context) {
  */
 static size_t writeNewLine(scpi_t * context) {
     if (!context->first_output) {
-        size_t len=0;
+        size_t len;
 #ifndef SCPI_LINE_ENDING
 #error no termination character defined
 #endif

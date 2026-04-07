@@ -38,7 +38,7 @@
 #ifndef SCPI_MINIMAL_H
 #define	SCPI_MINIMAL_H
 
-#include "types.h"
+#include "scpi/types.h"
 
 #ifdef	__cplusplus
 extern "C" {

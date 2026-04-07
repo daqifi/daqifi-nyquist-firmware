@@ -38,14 +38,14 @@
 #ifndef SCPI_H
 #define	SCPI_H
 
-#include "parser.h"
-#include "ieee488.h"
-#include "error.h"
-#include "constants.h"
-#include "minimal.h"
-#include "units.h"
-#include "utils.h"
-#include "expression.h"
+#include "scpi/parser.h"
+#include "scpi/ieee488.h"
+#include "scpi/error.h"
+#include "scpi/constants.h"
+#include "scpi/minimal.h"
+#include "scpi/units.h"
+#include "scpi/utils.h"
+#include "scpi/expression.h"
 
 #endif	/* SCPI_H */
 

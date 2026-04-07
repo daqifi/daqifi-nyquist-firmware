@@ -37,7 +37,7 @@
 #ifndef SCPI_PARSER_PRIVATE_H
 #define	SCPI_PARSER_PRIVATE_H
 
-#include "../inc/scpi/types.h"
+#include "scpi/types.h"
 #include "utils_private.h"
 
 #ifdef	__cplusplus

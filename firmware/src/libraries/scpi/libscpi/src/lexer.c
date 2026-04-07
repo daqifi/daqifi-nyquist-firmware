@@ -40,7 +40,7 @@
 #include <string.h>
 
 #include "lexer_private.h"
-#include "../inc/scpi/error.h"
+#include "scpi/error.h"
 
 /**
  * Is white space

@@ -42,7 +42,7 @@
 #include <math.h>
 
 #include "utils_private.h"
-#include "../inc/scpi/utils.h"
+#include "scpi/utils.h"
 
 static size_t patternSeparatorShortPos(const char * pattern, size_t len);
 static size_t patternSeparatorPos(const char * pattern, size_t len);

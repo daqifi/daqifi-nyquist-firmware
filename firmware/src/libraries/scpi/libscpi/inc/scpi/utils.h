@@ -38,7 +38,7 @@
 #define	SCPI_UTILS_H
 
 #include <stdint.h>
-#include "types.h"
+#include "scpi/types.h"
 
 #ifdef	__cplusplus
 extern "C" {

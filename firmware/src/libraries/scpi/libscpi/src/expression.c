@@ -34,9 +34,9 @@
  *
  */
 
-#include "../inc/scpi/expression.h"
-#include "../inc/scpi/error.h"
-#include "../inc/scpi/parser.h"
+#include "scpi/expression.h"
+#include "scpi/error.h"
+#include "scpi/parser.h"
 
 #include "lexer_private.h"
 

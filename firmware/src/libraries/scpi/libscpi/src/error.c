@@ -36,11 +36,11 @@
 
 #include <stdint.h>
 
-#include "../inc/scpi/parser.h"
-#include "../inc/scpi/ieee488.h"
-#include "../inc/scpi/error.h"
+#include "scpi/parser.h"
+#include "scpi/ieee488.h"
+#include "scpi/error.h"
 #include "fifo_private.h"
-#include "../inc/scpi/constants.h"
+#include "scpi/constants.h"
 
 #if USE_DEVICE_DEPENDENT_ERROR_INFORMATION
 #define SCPI_ERROR_SETVAL(e, c, i) do { (e)->error_code = (c); (e)->device_dependent_info = (i); } while(0)
@@ -106,16 +106,13 @@ void SCPI_ErrorClear(scpi_t * context) {
  * @return
  */
 scpi_bool_t SCPI_ErrorPop(scpi_t * context, scpi_error_t * error) {
-    scpi_bool_t result;
     if (!error || !context) return FALSE;
     SCPI_ERROR_SETVAL(error, 0, NULL);
-    result = fifo_remove(&context->error_queue, error);
+    fifo_remove(&context->error_queue, error);
 
-    if (result) {
-        SCPI_ErrorEmitEmpty(context);
-    }
+    SCPI_ErrorEmitEmpty(context);
 
-    return result;
+    return TRUE;
 }
 
 /**

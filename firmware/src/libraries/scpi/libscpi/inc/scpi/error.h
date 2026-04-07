@@ -38,8 +38,8 @@
 #ifndef SCPI_ERROR_H
 #define SCPI_ERROR_H
 
-#include "config.h"
-#include "types.h"
+#include "scpi/config.h"
+#include "scpi/types.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -39,8 +39,8 @@
 #define	SCPI_UTILS_PRIVATE_H
 
 #include <stdint.h>
-#include "../inc/scpi/config.h"
-#include "../inc/scpi/types.h"
+#include "scpi/config.h"
+#include "scpi/types.h"
 
 #ifdef	__cplusplus
 extern "C" {

@@ -38,7 +38,7 @@
 #ifndef SCPI_UNITS_H
 #define	SCPI_UNITS_H
 
-#include "types.h"
+#include "scpi/types.h"
 
 #ifdef	__cplusplus
 extern "C" {

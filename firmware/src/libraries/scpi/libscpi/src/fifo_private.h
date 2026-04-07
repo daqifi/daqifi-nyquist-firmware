@@ -38,7 +38,7 @@
 #ifndef SCPI_FIFO_H
 #define	SCPI_FIFO_H
 
-#include "../inc/scpi/types.h"
+#include "scpi/types.h"
 #include "utils_private.h"
 
 #ifdef	__cplusplus

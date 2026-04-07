@@ -39,7 +39,7 @@
 #define SCPI_PARSER_H
 
 #include <string.h>
-#include "types.h"
+#include "scpi/types.h"
 
 #ifdef __cplusplus
 extern "C" {

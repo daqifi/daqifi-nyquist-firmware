@@ -36,8 +36,8 @@
 #ifndef SCPI_EXPRESSION_H
 #define SCPI_EXPRESSION_H
 
-#include "config.h"
-#include "types.h"
+#include "scpi/config.h"
+#include "scpi/types.h"
 
 #ifdef __cplusplus
 extern "C" {

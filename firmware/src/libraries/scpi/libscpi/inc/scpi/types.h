@@ -40,7 +40,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "config.h"
+#include "scpi/config.h"
 
 #if HAVE_STDBOOL
 #include <stdbool.h>

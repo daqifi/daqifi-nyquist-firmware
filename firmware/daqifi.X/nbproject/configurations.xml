@@ -2460,7 +2460,7 @@
         <property key="exclude-floating-point" value="false"/>
         <property key="expand-pragma-config" value="false"/>
         <property key="extra-include-directories"
-                  value="../src;../src/config/default;../src/config/default/driver/winc/include/;../src/config/default/driver/winc/include/dev;../src/config/default/driver/winc/include/drv/bsp;../src/config/default/driver/winc/include/drv/bsp/include;../src/config/default/driver/winc/include/drv/common;../src/config/default/driver/winc/include/drv/driver;../src/config/default/driver/winc/include/drv/socket;../src/config/default/driver/winc/include/drv/spi_flash;../src/config/default/system/fs/fat_fs/file_system;../src/config/default/system/fs/fat_fs/hardware_access;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ;../src/third_party/wolfssl;../src/third_party/wolfssl/wolfssl;../src/third_party/zlib"/>
+                  value="../src;../src/config/default;../src/config/default/driver/winc/include/;../src/config/default/driver/winc/include/dev;../src/config/default/driver/winc/include/drv/bsp;../src/config/default/driver/winc/include/drv/bsp/include;../src/config/default/driver/winc/include/drv/common;../src/config/default/driver/winc/include/drv/driver;../src/config/default/driver/winc/include/drv/socket;../src/config/default/driver/winc/include/drv/spi_flash;../src/config/default/system/fs/fat_fs/file_system;../src/config/default/system/fs/fat_fs/hardware_access;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ;../src/third_party/wolfssl;../src/third_party/wolfssl/wolfssl;../src/third_party/zlib;../src/libraries/scpi/libscpi/inc"/>
         <property key="generate-16-bit-code" value="false"/>
         <property key="generate-micro-compressed-code" value="false"/>
         <property key="isolate-each-function" value="true"/>
@@ -3799,8 +3799,6 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
-        <property key="programmerToGoFilePath"
-                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/default/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
@@ -6483,8 +6481,6 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
-        <property key="programmerToGoFilePath"
-                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/Nq1/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
@@ -9167,8 +9163,6 @@
         <property key="memories.programmemory" value="true"/>
         <property key="memories.programmemory.ranges" value="1d000000-1d1fffff"/>
         <property key="poweroptions.powerenable" value="false"/>
-        <property key="programmerToGoFilePath"
-                  value="C:/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X/debug/Nq3/daqifi_ptg"/>
         <property key="programmerToGoImageName" value="daqifi_ptg"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
