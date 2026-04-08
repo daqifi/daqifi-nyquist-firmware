@@ -43,7 +43,7 @@ Note: XC32 compiler is also available in Linux at `/opt/microchip/xc32/v4.60/bin
 2. Use ipecmd to program the hex file:
    ```bash
    cd firmware/daqifi.X
-   "/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe" \
+   "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
      -TPPK4 -P32MZ2048EFM144 -M -F"dist/default/production/daqifi.X.production.hex" -OL
    ```
 3. The device will be erased and programmed automatically
@@ -1030,7 +1030,7 @@ The project can be built using Microchip tools in WSL/Linux:
 
 ##### From WSL (Verified Working Method)
 ```bash
-"/mnt/c/Program Files/Microchip/MPLABX/v6.25/mplab_platform/mplab_ipe/ipecmd.exe" \
+"/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
   -TPPK4 -P32MZ2048EFM144 -M -F"dist/default/production/daqifi.X.production.hex" -OL
 ```
 
@@ -1067,6 +1067,26 @@ The firmware pipeline is leak-free. All reported USB byte drops in benchmarks pr
 **Measured USB throughput (with fast reader):**
 - USB CSV 16ch@3kHz: 795 KB/s, 0 drops
 - USB CSV 16ch@5kHz: 907 KB/s, 0 drops (frequency-capped to 3.5kHz)
+
+#### USB CDC Write-Side Latency (Why pyserial capture is bursty)
+
+USB streaming data delivery to the host is inherently bursty due to the firmware's USB CDC write pipeline. This is NOT data loss — data arrives intact but with variable latency.
+
+**Root cause chain:**
+1. **ZLP (Zero-Length Packet) on packet boundaries:** `USB_DEVICE_CDC_Write()` uses `DATA_COMPLETE` flag, which appends a ZLP when transfer size is a multiple of the USB max packet size. WSL's usbipd may buffer packets until the ZLP arrives.
+2. **Serialized DMA writes:** Only one USB DMA transfer can be in-flight at a time (`writeTransferHandle`). New data waits in the circular buffer until the previous transfer completes and `UsbCdc_FinalizeWrite()` runs.
+3. **Circular buffer → DMA copy path:** Data flows: streaming encoder → circular buffer → `CircularBuf_ProcessBytes()` → DMA buffer copy → `USB_DEVICE_CDC_Write()`. The process callback only runs when no transfer is pending.
+
+**Impact on pyserial (especially WSL):**
+- `ser.in_waiting` may return 0 while data is in the USB/usbipd pipeline
+- Polling `ser.in_waiting` in a tight loop is unreliable — data arrives in bursts
+- First streaming session after port open usually works; subsequent sessions need 3+ seconds settle time between stop and start
+- Sending any SCPI command during streaming forces a short USB packet, "flushing" buffered data
+
+**Workarounds for test scripts:**
+- **Best:** Use SD card download via `verify_test_patterns.py --download` for deterministic verification
+- **USB streaming:** Use `FastReader` from `test_harness.py` (1ms background thread) — most reliable
+- **Simple scripts:** Sleep 3+ seconds after `StartStreamData`, then bulk `ser.read(ser.in_waiting)` — NOT polling
 
 #### Important Testing Notes
 

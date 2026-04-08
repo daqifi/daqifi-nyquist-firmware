@@ -2062,6 +2062,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
+    // Build channel mapping for compact sample pool (#177).
+    // Must happen before pool partitioning (needs channel count for element sizing).
+    Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRuntimeAInChannels);
+
     // Check if DIO is globally enabled
     bool *pDIOGlobalEnable = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
     if (pDIOGlobalEnable && *pDIOGlobalEnable) {
@@ -2080,6 +2084,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (freq == 0) {
             pRunTimeStreamConfig->IsEnabled = false;
             Streaming_UpdateState();
+            UsbCdc_FlushWriteBuffer();
             return SCPI_RES_OK;
         }
 
@@ -2268,9 +2273,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
         uint32_t poolCount = mc->samplePoolCount;
 
+        // Compute compact sample element size based on enabled channel count (#177).
+        const AInChannelMapping* chMapping = Streaming_GetChannelMapping();
+        uint8_t enabledChannels = chMapping->count;
+        if (enabledChannels == 0) enabledChannels = 1;  // Minimum 1 slot
+        size_t sampleElemSize = AInSampleList_ElementSize(enabledChannels);
+
         // Re-partition the unified pool and swap all buffer pointers.
         StreamingBufferPool_Partition(usbSize, wifiSize, encSize, sdCircSize,
-                                      poolCount);
+                                      poolCount, sampleElemSize);
 
         uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
         uint32_t usbLen, wifiLen, encLen, sdCircLen;
@@ -2332,9 +2343,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
 
         // Re-init sample pool with new region from unified pool
-        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
-        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
-        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount);
+        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSize;
+        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSize);
+        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSize);
 
         // Re-enable SD if it was closed for DMA quiesce
         if (sdLoggingRequested) {
@@ -2372,6 +2383,11 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     }
 
     Streaming_UpdateState();
+
+    // Flush any remaining USB CDC data so the host receives all streamed bytes.
+    // Without this, data sitting in the circular buffer (waiting for DMA) may
+    // not reach the host until the next SCPI command triggers a USB write.
+    UsbCdc_FlushWriteBuffer();
 
     // Close SD card file if logging was enabled
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -2880,9 +2896,11 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     scpi_printf(context, "CoherentPoolFree=%u\r\n", (unsigned)poolFree);
     scpi_printf(context, "SdCircularSize=%u\r\n",
                 (unsigned)StreamingBufferPool_SdCircularSize());
+    size_t elemSize = AInSampleList_PoolElementSize();
     scpi_printf(context, "SamplePoolCount=%u\r\n", (unsigned)samplePoolCap);
+    scpi_printf(context, "SampleElementBytes=%u\r\n", (unsigned)elemSize);
     scpi_printf(context, "SamplePoolBytes=%u\r\n",
-                (unsigned)(samplePoolCap * sizeof(AInPublicSampleList_t)));
+                (unsigned)(samplePoolCap * elemSize));
     scpi_printf(context, "SampleNextFreeBytes=%u\r\n",
                 (unsigned)(samplePoolCap * sizeof(int16_t)));
     scpi_printf(context, "SampleQueueBytes=%u\r\n",
@@ -2916,8 +2934,10 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             vTaskDelay(1);
         }
 
+        // SYST:MEM:AUTO: use 0 for element size (defaults to max 16ch)
+        // since actual channel count isn't known until StartStreamData.
         StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
-                                      sdCircSize, 0);
+                                      sdCircSize, 0, 0);
 
         uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
         uint32_t usbLen, wifiLen, encLen, sdCircLen;
@@ -2974,9 +2994,9 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
         }
 
-        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount;
-        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount);
-        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount);
+        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
+        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
+        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
     }
 
     // Ensure MemoryConfig stays zeroed — auto mode for next StartStreamData

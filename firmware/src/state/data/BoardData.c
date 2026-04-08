@@ -35,9 +35,10 @@ void InitializeBoardData(tBoardData* boardData) {
         void* poolMem = NULL;
         int16_t* freeMem = NULL;
         uint32_t count = 0;
-        StreamingBufferPool_GetSamplePool(&poolMem, &freeMem, &count);
-        if (poolMem != NULL && count > 0) {
-            AInSampleList_InitializeExternal(poolMem, freeMem, count);
+        size_t elemSize = 0;
+        StreamingBufferPool_GetSamplePool(&poolMem, &freeMem, &count, &elemSize);
+        if (poolMem != NULL && count > 0 && elemSize > 0) {
+            AInSampleList_InitializeExternal(poolMem, freeMem, count, elemSize);
         } else {
             // Fallback to heap allocation if pool not available
             AInSampleList_Initialize(DEFAULT_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);

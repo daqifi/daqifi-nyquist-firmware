@@ -21,9 +21,7 @@ static uint32_t gWifiSize = 0;
 static uint32_t gEncoderSize = 0;
 static uint32_t gSdCircularSize = 0;
 static uint32_t gSampleCount = 0;
-
-/* Per-sample memory cost: data struct + free-list index */
-#define SAMPLE_BYTES (sizeof(AInPublicSampleList_t) + sizeof(int16_t))
+static size_t gSampleElementSize = 0;  /* Runtime per-element byte size */
 
 bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
                               uint32_t defaultEncoderSize, uint32_t defaultSdCircularSize,
@@ -38,14 +36,23 @@ bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
 
     StreamingBufferPool_Partition(defaultUsbSize, defaultWifiSize,
                                   defaultEncoderSize, defaultSdCircularSize,
-                                  defaultSampleCount);
+                                  defaultSampleCount, 0);
     return true;
 }
 
 void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
                                    uint32_t encoderSize, uint32_t sdCircularSize,
-                                   uint32_t sampleCount) {
+                                   uint32_t sampleCount,
+                                   size_t sampleElementSize) {
     if (gPool == NULL) return;
+
+    /* Default to max-channel element size (16ch = 72 bytes) for boot init */
+    if (sampleElementSize == 0) {
+        sampleElementSize = AInSampleList_ElementSize(MAX_AIN_PUBLIC_CHANNELS);
+    }
+
+    /* Per-sample memory cost: data element + free-list index */
+    size_t sampleBytes = sampleElementSize + sizeof(int16_t);
 
     /* Clamp buffer minimums */
     if (usbSize < STREAMING_USB_MIN) usbSize = STREAMING_USB_MIN;
@@ -75,7 +82,7 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
     /* Remaining space goes to sample pool (minus alignment padding) */
     uint32_t alignedBufTotal = (bufTotal + 3U) & ~3U;  /* align sample start */
     uint32_t remaining = gPoolSize - alignedBufTotal;
-    uint32_t maxSamples = (uint32_t)(remaining / SAMPLE_BYTES);
+    uint32_t maxSamples = (uint32_t)(remaining / sampleBytes);
     if (maxSamples > MAX_AIN_SAMPLE_COUNT) maxSamples = MAX_AIN_SAMPLE_COUNT;
 
     if (sampleCount == 0 || sampleCount > maxSamples) {
@@ -90,11 +97,12 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
     gEncoderSize = encoderSize;
     gSdCircularSize = sdCircularSize;
     gSampleCount = sampleCount;
+    gSampleElementSize = sampleElementSize;
 
-    LOG_I("Pool partition: USB=%u WiFi=%u enc=%u sdCirc=%u samples=%u (of %u max, %u pool)",
+    LOG_I("Pool partition: USB=%u WiFi=%u enc=%u sdCirc=%u samples=%u×%u (of %u max, %u pool)",
           (unsigned)usbSize, (unsigned)wifiSize, (unsigned)encoderSize,
-          (unsigned)sdCircularSize, (unsigned)sampleCount, (unsigned)maxSamples,
-          (unsigned)gPoolSize);
+          (unsigned)sdCircularSize, (unsigned)sampleCount, (unsigned)sampleElementSize,
+          (unsigned)maxSamples, (unsigned)gPoolSize);
 }
 
 void StreamingBufferPool_GetEncoder(uint8_t** buf, uint32_t* size) {
@@ -118,34 +126,36 @@ void StreamingBufferPool_GetWifi(uint8_t** buf, uint32_t* size) {
 }
 
 void StreamingBufferPool_GetSamplePool(void** poolBuf, int16_t** nextFreeBuf,
-                                        uint32_t* count) {
-    if (gPool == NULL || gSampleCount == 0) {
+                                        uint32_t* count, size_t* elementSize) {
+    if (gPool == NULL || gSampleCount == 0 || gSampleElementSize == 0) {
         *poolBuf = NULL;
         *nextFreeBuf = NULL;
         *count = 0;
+        *elementSize = 0;
         return;
     }
     /* Layout: [USB | WiFi | encoder | SD_circular | <align> | samplePool[count] | nextFree[count]] */
     uintptr_t base = (uintptr_t)gPool;
     uintptr_t off = (uintptr_t)(gUsbSize + gWifiSize + gEncoderSize + gSdCircularSize);
 
-    /* Align sample pool start to 4 bytes (uint32_t members in AInSample) */
+    /* Align sample pool start to 4 bytes (uint32_t members) */
     off = (off + 3U) & ~3U;
 
-    uintptr_t nextFreeOff = off + gSampleCount * sizeof(AInPublicSampleList_t);
+    uintptr_t nextFreeOff = off + (uintptr_t)gSampleCount * gSampleElementSize;
     /* int16_t needs 2-byte alignment */
     nextFreeOff = (nextFreeOff + 1U) & ~1U;
 
     /* Bounds check (all values are offsets from pool start, not addresses) */
     uintptr_t end = nextFreeOff + gSampleCount * sizeof(int16_t);
     if (end > gPoolSize) {
-        *poolBuf = NULL; *nextFreeBuf = NULL; *count = 0;
+        *poolBuf = NULL; *nextFreeBuf = NULL; *count = 0; *elementSize = 0;
         return;
     }
 
     *poolBuf = (void*)(base + off);
     *nextFreeBuf = (int16_t*)(base + nextFreeOff);
     *count = gSampleCount;
+    *elementSize = gSampleElementSize;
 }
 
 uint32_t StreamingBufferPool_TotalSize(void)  { return gPoolSize; }

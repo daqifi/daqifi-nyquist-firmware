@@ -24,6 +24,7 @@
 #include "csv_encoder.h"
 #include "../HAL/ADC.h"
 #include "../HAL/TimerApi/TimerApi.h"
+#include "streaming.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -338,15 +339,22 @@ static size_t tryWriteRow(
     int   w;
     bool firstField = true;
 
-    // Write channel timestamp,value pairs (ONLY for enabled channels)
-    for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-        // Skip disabled channels entirely
-        if (!channelConfig->Data[i].IsEnabled) {
-            continue;
-        }
+    // Write channel timestamp,value pairs using compact channel mapping (#177).
+    // Packed index j matches CSV header column order (both built from same
+    // board config iteration in SCPI_StartStreaming).
+    const AInChannelMapping* mapping = Streaming_GetChannelMapping();
+    (void)channelConfig;  // No longer needed — mapping drives iteration
 
-        if (*hadAIN && ainPeek && ainPeek->isSampleValid[i]) {
-            AInSample *s = &ainPeek->sampleElement[i];
+    for (uint8_t j = 0; j < mapping->count; j++) {
+        bool valid = *hadAIN && ainPeek && (ainPeek->validMask & (1U << j));
+
+        if (valid) {
+            // Build temporary AInSample for ADC_ConvertToVoltage
+            AInSample tmpSample = {
+                .Timestamp = ainPeek->Timestamp,
+                .Channel = mapping->channelIds[j],
+                .Value = ainPeek->Values[j]
+            };
 
             // First field has no leading comma
             char* p = q;
@@ -356,7 +364,7 @@ static size_t tryWriteRow(
                 *p++ = ',';
                 space--;
             }
-            p = uint32_to_str(s->Timestamp, p, space);
+            p = uint32_to_str(tmpSample.Timestamp, p, space);
             if (p == NULL) return 0;  // Buffer exhausted
             size_t used = p - q;
             space = (used < rem) ? rem - used : 0;
@@ -366,7 +374,7 @@ static size_t tryWriteRow(
 
             if (voltagePrecision == 0) {
                 // Integer millivolts (shorter output strings)
-                double voltage_mv = ADC_ConvertToVoltage(s) * 1000.0;
+                double voltage_mv = ADC_ConvertToVoltage(&tmpSample) * 1000.0;
                 int32_t mv;
                 if (voltage_mv > (double)INT32_MAX) {
                     mv = INT32_MAX;
@@ -379,7 +387,7 @@ static size_t tryWriteRow(
                 if (p == NULL) return 0;
             } else {
                 // Volts with N decimal places
-                double voltage_v = ADC_ConvertToVoltage(s);
+                double voltage_v = ADC_ConvertToVoltage(&tmpSample);
                 int n = snprintf(p, space, "%.*f", (int)voltagePrecision, voltage_v);
                 if (n < 0 || (size_t)n >= space) return 0;
                 p += n;
@@ -388,12 +396,10 @@ static size_t tryWriteRow(
             w = p - q;
             firstField = false;
         } else {
-            // No valid sample for this enabled channel: emit empty ts,val pair
-            // Always two fields (timestamp and value) to align with header
+            // No valid sample for this channel: emit empty ts,val pair
             char* p = q;
             size_t space = rem;
 
-            // Check space before each write
             if (!firstField) {
                 if (space == 0) return 0;  // Buffer exhausted
                 *p++ = ',';  // separator before empty ts

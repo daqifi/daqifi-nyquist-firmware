@@ -227,6 +227,14 @@ extern "C" {
      */
     void UsbCdc_SetDmaWriteBuffer(uint8_t* buf, uint32_t size);
 
+    /**
+     * Flush any pending data in the USB CDC write circular buffer.
+     * Drains circular buffer to DMA, waits for DMA transfer to complete.
+     * Called after streaming stop to ensure the host receives all data.
+     * @return true if flushed successfully, false on error
+     */
+    bool UsbCdc_FlushWriteBuffer(void);
+
 #ifdef	__cplusplus
 }
 #endif

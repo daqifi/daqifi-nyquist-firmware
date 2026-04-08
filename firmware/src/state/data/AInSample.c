@@ -37,8 +37,9 @@ static uint32_t queueSize = 0;
 // =============================================================================
 // Object Pool (from StreamingBufferPool static BSS, or FreeRTOS heap fallback)
 // =============================================================================
-static AInPublicSampleList_t* samplePool = NULL;
+static uint8_t* samplePoolBase = NULL;   // Raw byte pointer (stride-indexed)
 static uint32_t poolCapacity = 0;
+static size_t poolElementStride = 0;     // Bytes per element (runtime-sized)
 static volatile uint32_t poolAllocCount = 0;     // Currently allocated (in use)
 static volatile uint32_t poolMaxAllocCount = 0;  // High-water mark (max ever in use)
 
@@ -62,7 +63,7 @@ void AInSampleList_Initialize(
 
     // Destroy previous resources if re-initializing (any size change or same size).
     // Must destroy before creating new queue to prevent orphaning the old handle.
-    if (samplePool != NULL) {
+    if (samplePoolBase != NULL) {
         AInSampleList_Destroy();
     }
 
@@ -70,11 +71,12 @@ void AInSampleList_Initialize(
     if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
     if (maxSize > MAX_AIN_SAMPLE_COUNT) maxSize = MAX_AIN_SAMPLE_COUNT;
 
+    // Heap fallback uses max-size elements (all 16 channels)
+    size_t elemSize = AInSampleList_ElementSize(MAX_AIN_PUBLIC_CHANNELS);
+
     // Clamp further to what the heap can actually fit.
-    // Check BEFORE allocating anything so we don't waste heap on an
-    // oversized queue that we'd have to delete and recreate.
-    if (samplePool == NULL) {
-        size_t perSample = sizeof(AInPublicSampleList_t) + sizeof(int16_t);
+    if (samplePoolBase == NULL) {
+        size_t perSample = elemSize + sizeof(int16_t);
         size_t heapAvail = xPortGetFreeHeapSize();
         // Reserve 10KB for queue + FreeRTOS overhead + alignment padding
         size_t usable = (heapAvail > 10240) ? (heapAvail - 10240) : 0;
@@ -89,18 +91,16 @@ void AInSampleList_Initialize(
     analogInputsQueue = xQueueCreate(queueSize, sizeof(AInPublicSampleList_t *));
     configASSERT(analogInputsQueue != NULL);
 
-    // Allocate pool from heap.
-    // Total heap cost: maxSize * (sizeof(AInPublicSampleList_t) + sizeof(int16_t))
-    //                = maxSize * (208 + 2) = maxSize * 210 bytes
-    if (samplePool == NULL) {
+    // Allocate pool from heap with max-channel element size
+    if (samplePoolBase == NULL) {
         poolCapacity = maxSize;
+        poolElementStride = elemSize;
 
-        samplePool = (AInPublicSampleList_t*)pvPortMalloc(
-            poolCapacity * sizeof(AInPublicSampleList_t));
-        if (samplePool == NULL) {
+        samplePoolBase = (uint8_t*)pvPortMalloc(poolCapacity * poolElementStride);
+        if (samplePoolBase == NULL) {
             LOG_E("Sample pool alloc failed (%u samples, %u bytes)",
                   (unsigned)poolCapacity,
-                  (unsigned)(poolCapacity * sizeof(AInPublicSampleList_t)));
+                  (unsigned)(poolCapacity * poolElementStride));
             vQueueDelete(analogInputsQueue);
             analogInputsQueue = NULL;
             queueSize = 0;
@@ -111,8 +111,8 @@ void AInSampleList_Initialize(
 
         nextFree = (int16_t*)pvPortMalloc(poolCapacity * sizeof(int16_t));
         if (nextFree == NULL) {
-            vPortFree(samplePool);
-            samplePool = NULL;
+            vPortFree(samplePoolBase);
+            samplePoolBase = NULL;
             vQueueDelete(analogInputsQueue);
             analogInputsQueue = NULL;
             queueSize = 0;
@@ -141,10 +141,10 @@ void AInSampleList_Initialize(
 }
 
 void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
-                                       size_t maxSize) {
-    if (poolMem == NULL || freeMem == NULL || maxSize == 0) {
-        LOG_E("Sample pool external init: NULL or zero (%p, %p, %u)",
-              poolMem, freeMem, (unsigned)maxSize);
+                                       size_t maxSize, size_t elementSize) {
+    if (poolMem == NULL || freeMem == NULL || maxSize == 0 || elementSize == 0) {
+        LOG_E("Sample pool external init: NULL or zero (%p, %p, %u, %u)",
+              poolMem, freeMem, (unsigned)maxSize, (unsigned)elementSize);
         return;
     }
 
@@ -195,9 +195,10 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     }
 
     // Swap to externally provided memory (from StreamingBufferPool)
-    samplePool = (AInPublicSampleList_t*)poolMem;
+    samplePoolBase = (uint8_t*)poolMem;
     nextFree = freeMem;
     poolCapacity = maxSize;
+    poolElementStride = elementSize;
     poolOwnsMemory = false;
     poolAllocCount = 0;
     poolMaxAllocCount = 0;
@@ -212,7 +213,8 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     poolActive = true;
     xSemaphoreGive(poolMutex);
 
-    LOG_I("Sample pool: %u samples (external memory)", (unsigned)poolCapacity);
+    LOG_I("Sample pool: %u samples × %u bytes (external memory)",
+          (unsigned)poolCapacity, (unsigned)poolElementStride);
 }
 
 /**
@@ -260,16 +262,17 @@ void AInSampleList_Destroy()
         xSemaphoreTake(poolMutex, portMAX_DELAY);
     }
     if (poolOwnsMemory) {
-        if (samplePool != NULL) {
-            vPortFree(samplePool);
+        if (samplePoolBase != NULL) {
+            vPortFree(samplePoolBase);
         }
         if (nextFree != NULL) {
             vPortFree(nextFree);
         }
     }
-    samplePool = NULL;
+    samplePoolBase = NULL;
     nextFree = NULL;
     poolCapacity = 0;
+    poolElementStride = 0;
     freeHead = -1;
     if (poolMutex != NULL) {
         xSemaphoreGive(poolMutex);
@@ -400,18 +403,18 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
     AInPublicSampleList_t* result = NULL;
     xSemaphoreTake(poolMutex, portMAX_DELAY);
 
-    // O(1) allocation: pop from free list head
-    if (freeHead >= 0 && samplePool != NULL) {
+    // O(1) allocation: pop from free list head (stride-based indexing)
+    if (freeHead >= 0 && samplePoolBase != NULL && poolElementStride > 0) {
         int idx = freeHead;
         freeHead = nextFree[idx];  // Move head to next free
-        result = &samplePool[idx];
+        result = (AInPublicSampleList_t*)(samplePoolBase + (size_t)idx * poolElementStride);
         // Track usage high-water mark (atomic 32-bit RMW under mutex)
         poolAllocCount++;
         if (poolAllocCount > poolMaxAllocCount) {
             poolMaxAllocCount = poolAllocCount;
         }
-        // Clear entire structure to ensure no stale data
-        memset(result, 0, sizeof(AInPublicSampleList_t));
+        // Clear entire element to ensure no stale data
+        memset(result, 0, poolElementStride);
     }
 
     xSemaphoreGive(poolMutex);
@@ -420,13 +423,19 @@ AInPublicSampleList_t* AInSampleList_AllocateFromPool() {
 }
 
 void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
-    if (pSample == NULL || !poolActive || poolMutex == NULL || samplePool == NULL) {
+    if (pSample == NULL || !poolActive || poolMutex == NULL ||
+        samplePoolBase == NULL || poolElementStride == 0) {
         return;
     }
 
-    ptrdiff_t index = pSample - samplePool;
+    // Stride-based index: byte offset / element stride
+    ptrdiff_t byteOff = (uint8_t*)pSample - samplePoolBase;
+    if (byteOff < 0 || byteOff % (ptrdiff_t)poolElementStride != 0) {
+        return;  // Not aligned to our pool stride
+    }
+    ptrdiff_t index = byteOff / (ptrdiff_t)poolElementStride;
 
-    if (index < 0 || (uint32_t)index >= poolCapacity) {
+    if ((uint32_t)index >= poolCapacity) {
         return;  // Not from our pool
     }
 
@@ -452,4 +461,8 @@ void AInSampleList_PoolResetMaxUsed(void) {
 
 size_t AInSampleList_PoolCapacity(void) {
     return poolCapacity;
+}
+
+size_t AInSampleList_PoolElementSize(void) {
+    return poolElementStride;
 }

@@ -389,7 +389,6 @@ size_t Nanopb_Encode(tBoardData* state,
 
                 uint32_t queueSize = AInSampleList_Size(); //takes approx 3us
                 size_t maxDataIndex = (sizeof (message.analog_in_data) / sizeof (message.analog_in_data[0])) - 1;
-                AInSample data = {0};
                 AInPublicSampleList_t *pPublicSampleList;
                 while (queueSize > 0) {
                     // Retrieve the next sample from the queue
@@ -403,22 +402,22 @@ size_t Nanopb_Encode(tBoardData* state,
 
                     queueSize--;
 
-                    for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-                        if (!pPublicSampleList->isSampleValid[i])
+                    // Compact sample: iterate packed values via channelCount
+                    uint32_t sampleTimestamp = pPublicSampleList->Timestamp;
+                    for (uint16_t j = 0; j < pPublicSampleList->channelCount; j++) {
+                        if (!(pPublicSampleList->validMask & (1U << j)))
                             continue;
-                        data = pPublicSampleList->sampleElement[i];
                         if (message.analog_in_data_count > maxDataIndex)
                             break;  // Array full
                         // Use sequential packing
-                        message.analog_in_data[message.analog_in_data_count] = data.Value;
+                        message.analog_in_data[message.analog_in_data_count] = pPublicSampleList->Values[j];
                         message.analog_in_data_count++;
                     }
 
-                     AInSampleList_FreeToPool(pPublicSampleList);  // Use pool instead of vPortFree
+                     AInSampleList_FreeToPool(pPublicSampleList);
 
                     if (message.analog_in_data_count > 0) {
-                        //time stamp of all the samples in a list should be same, so using anyone should be fine
-                        message.msg_time_stamp = data.Timestamp;
+                        message.msg_time_stamp = sampleTimestamp;
                         if (!encode_message_to_buffer(&message, pBuffer, buffSize, &bufferOffset)) { //takes 248 us
                             LOG_E("NanoPB: encode_message_to_buffer failed");
                             return 0; // Return 0 if encoding fails
@@ -1387,18 +1386,17 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
             if (pPublicSampleList == NULL) break;
             queueSize--;
 
-            /* Collect valid channel values for this sample set */
+            /* Collect valid channel values from compact sample */
             int32_t values[MAX_AIN_PUBLIC_CHANNELS];
             size_t count = 0;
-            uint32_t timestamp = 0;
+            uint32_t timestamp = pPublicSampleList->Timestamp;
 
-            for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-                if (!pPublicSampleList->isSampleValid[i])
+            for (uint16_t j = 0; j < pPublicSampleList->channelCount; j++) {
+                if (!(pPublicSampleList->validMask & (1U << j)))
                     continue;
                 if (count >= MAX_AIN_PUBLIC_CHANNELS)
                     break;
-                values[count++] = pPublicSampleList->sampleElement[i].Value;
-                timestamp = pPublicSampleList->sampleElement[i].Timestamp;
+                values[count++] = pPublicSampleList->Values[j];
             }
 
             AInSampleList_FreeToPool(pPublicSampleList);

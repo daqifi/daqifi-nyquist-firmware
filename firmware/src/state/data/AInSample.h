@@ -29,7 +29,9 @@ extern "C" {
     ARRAYWRAPPERDEF(AInModDataArray, AInModData, MAX_AIN_MOD);
 
     /**
-     * Contains a single analog input sample with timestamp and value
+     * Contains a single analog input sample with timestamp and value.
+     * Used internally by BoardData for per-channel latest values.
+     * NOT used inside the streaming sample pool (see AInPublicSampleList_t).
      */
     typedef struct s_AInSample {
         /**
@@ -48,10 +50,46 @@ extern "C" {
         uint32_t Value;
     } AInSample;
 
+    /**
+     * Channel mapping: built at stream start, maps packed indices to
+     * board config channel IDs and array indices.
+     *
+     * Stored globally in streaming.c, used by ISR and all encoders.
+     */
     typedef struct {
-        AInSample sampleElement[MAX_AIN_PUBLIC_CHANNELS];
-        bool isSampleValid[MAX_AIN_PUBLIC_CHANNELS];
+        uint8_t count;                                    /**< Number of enabled public channels */
+        uint8_t channelIds[MAX_AIN_PUBLIC_CHANNELS];      /**< Packed index -> DaqifiAdcChannelId */
+        uint8_t configIndices[MAX_AIN_PUBLIC_CHANNELS];   /**< Packed index -> board config array index */
+    } AInChannelMapping;
+
+    /**
+     * Compact streaming sample: shared timestamp + packed channel values.
+     *
+     * Runtime-sized via flexible array member. Each sample is
+     * (8 + channelCount * 4) bytes. At stream start, the pool element
+     * stride is computed from the number of enabled public channels.
+     *
+     * Size comparison (16 channels):
+     *   Old: 208 bytes (16 × 12-byte AInSample + 16 bools)
+     *   New:  72 bytes (8-byte header + 16 × 4-byte values)
+     *
+     * Size at low channel counts:
+     *   1ch: 12 bytes | 4ch: 24 bytes | 8ch: 40 bytes
+     */
+    typedef struct {
+        uint32_t Timestamp;        /**< Shared timestamp for all channels in this sample */
+        uint16_t validMask;        /**< Bitmask: bit j = Values[j] is valid */
+        uint16_t channelCount;     /**< Number of Values[] entries (= mapping.count) */
+        uint32_t Values[];         /**< Packed channel values [0..channelCount-1] */
     } AInPublicSampleList_t;
+
+    /**
+     * Compute the per-element byte size for a given channel count.
+     * Used by pool partitioning and allocation.
+     */
+    static inline size_t AInSampleList_ElementSize(uint8_t channelCount) {
+        return sizeof(AInPublicSampleList_t) + (size_t)channelCount * sizeof(uint32_t);
+    }
 
     // Define a storage class for analog input channels
 
@@ -59,16 +97,17 @@ extern "C" {
      * Default sample pool depth.
      * Used when no runtime override is configured (MemoryConfig.samplePoolCount = 0).
      *
-     * Memory impact: ~210 bytes per sample (208 data + 2 nextFree)
-     *   700 samples = ~147 KB
-     *   1100 samples = ~231 KB (current default after stack right-sizing)
+     * Memory per sample depends on enabled channel count:
+     *   1ch: 14 bytes (12 data + 2 nextFree)
+     *   8ch: 42 bytes (40 data + 2 nextFree)
+     *  16ch: 74 bytes (72 data + 2 nextFree)
      *
-     * Sized to use available heap after right-sized task stacks (#230),
-     * leaving ~27KB headroom for WiFi driver + transient allocations.
+     * Default 1100 @ 16ch = ~81 KB (was 231 KB before compact pool).
+     * At 1ch, same 194KB pool yields ~14,000 samples.
      */
 #define DEFAULT_AIN_SAMPLE_COUNT 1100
 #define MIN_AIN_SAMPLE_COUNT     100
-#define MAX_AIN_SAMPLE_COUNT     2000
+#define MAX_AIN_SAMPLE_COUNT     10000
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**
@@ -99,12 +138,13 @@ extern "C" {
      * the sample pool and free-list arrays (e.g., from StreamingBufferPool).
      * The FreeRTOS queue is still heap-allocated.
      *
-     * @param poolMem    Pre-allocated array of AInPublicSampleList_t[maxSize]
-     * @param freeMem    Pre-allocated array of int16_t[maxSize]
-     * @param maxSize    Number of samples the arrays can hold
+     * @param poolMem       Pre-allocated byte array for sample pool
+     * @param freeMem       Pre-allocated array of int16_t[maxSize]
+     * @param maxSize       Number of samples the arrays can hold
+     * @param elementSize   Bytes per sample element (from AInSampleList_ElementSize)
      */
     void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
-                                           size_t maxSize);
+                                           size_t maxSize, size_t elementSize);
 
     /**
      * @brief Destroys the Analog Input Sample List queue.
@@ -207,6 +247,12 @@ extern "C" {
      * @brief Resets the peak usage counter to current usage.
      */
     void AInSampleList_PoolResetMaxUsed(void);
+
+    /**
+     * @brief Returns the current per-element stride in bytes.
+     * This is the runtime element size used for pool indexing.
+     */
+    size_t AInSampleList_PoolElementSize(void);
 
 #ifdef __cplusplus
 }

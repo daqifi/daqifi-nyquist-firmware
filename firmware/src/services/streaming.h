@@ -3,6 +3,7 @@
 #include "../state/board/BoardConfig.h"
 #include "../state/runtime/BoardRuntimeConfig.h"
 #include "../state/data/BoardData.h"
+#include "../state/data/AInSample.h"
 
 
 #ifdef	__cplusplus
@@ -175,6 +176,24 @@ uint32_t Streaming_GetTestPattern(void);
 //   2 = Pipeline (bypass cap + skip ADC, test pattern required)
 void Streaming_SetBenchmarkMode(uint32_t mode);
 uint32_t Streaming_GetBenchmarkMode(void);
+
+/**
+ * Build channel mapping from current board config and runtime config.
+ * Must be called before streaming starts (from SCPI_StartStreaming).
+ * Stores mapping globally for ISR and encoder access.
+ *
+ * @param pBoardConfig     Board hardware configuration
+ * @param pRuntimeChannels Runtime channel enable/disable state
+ * @return Number of enabled public channels (mapping.count)
+ */
+uint8_t Streaming_BuildChannelMapping(const tBoardConfig* pBoardConfig,
+                                       const AInRuntimeArray* pRuntimeChannels);
+
+/**
+ * Get the current channel mapping (built at stream start).
+ * Valid only while streaming is active or after BuildChannelMapping.
+ */
+const AInChannelMapping* Streaming_GetChannelMapping(void);
 
 #ifdef	__cplusplus
 }

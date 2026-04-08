@@ -51,13 +51,18 @@ bool StreamingBufferPool_Init(uint32_t defaultUsbSize, uint32_t defaultWifiSize,
  * Re-partition the pool.  All regions are reset (empty).
  * Must only be called when streaming is stopped.
  *
- * @param usbSize   Desired USB circular buffer size (clamped to min/available)
- * @param wifiSize  Desired WiFi circular buffer size (clamped to min/available)
- * @param sampleCount Desired sample pool depth (0 = maximize with remaining space)
+ * @param usbSize          Desired USB circular buffer size (clamped to min/available)
+ * @param wifiSize         Desired WiFi circular buffer size (clamped to min/available)
+ * @param encoderSize      Desired encoder buffer size
+ * @param sdCircularSize   Desired SD circular buffer size
+ * @param sampleCount      Desired sample pool depth (0 = maximize with remaining space)
+ * @param sampleElementSize Bytes per sample element (from AInSampleList_ElementSize).
+ *                          0 = use max (16-channel) element size.
  */
 void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
                                    uint32_t encoderSize, uint32_t sdCircularSize,
-                                   uint32_t sampleCount);
+                                   uint32_t sampleCount,
+                                   size_t sampleElementSize);
 
 /** Get current USB buffer region */
 void StreamingBufferPool_GetUsb(uint8_t** buf, uint32_t* size);
@@ -71,9 +76,9 @@ void StreamingBufferPool_GetEncoder(uint8_t** buf, uint32_t* size);
 /** Get current SD circular buffer region */
 void StreamingBufferPool_GetSdCircular(uint8_t** buf, uint32_t* size);
 
-/** Get current sample pool region and count */
+/** Get current sample pool region, count, and per-element size */
 void StreamingBufferPool_GetSamplePool(void** poolBuf, int16_t** nextFreeBuf,
-                                        uint32_t* count);
+                                        uint32_t* count, size_t* elementSize);
 
 /** Query total pool size */
 uint32_t StreamingBufferPool_TotalSize(void);

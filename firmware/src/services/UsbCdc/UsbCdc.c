@@ -652,6 +652,31 @@ static bool UsbCdc_Flush(UsbCdcData_t* client) {
             UsbCdc_WaitForWrite(client);
 }
 
+bool UsbCdc_FlushWriteBuffer(void) {
+    UsbCdcData_t* client = &gRunTimeUsbSttings;
+    if (client->state != USB_CDC_STATE_PROCESS) {
+        return false;
+    }
+
+    // Wait for any in-flight DMA transfer to complete (bounded).
+    // WaitForWrite has no timeout, so we implement one here to avoid
+    // blocking the USB task forever if the host disconnects mid-transfer.
+    TickType_t start = xTaskGetTickCount();
+    while (client->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        if (client->state != USB_CDC_STATE_PROCESS) {
+            return false;
+        }
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(500)) {
+            LOG_E("USB flush: timeout waiting for in-flight DMA");
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    // Drain remaining circular buffer data to USB
+    return UsbCdc_Flush(client);
+}
+
 /**
  * Thin wrapper to match ScpiTransportWriteFn signature.
  */
