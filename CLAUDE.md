@@ -636,8 +636,8 @@ The firmware uses four distinct memory regions, each with different properties:
 The sample pool lives inside the Streaming Buffer Pool (static BSS). It is re-partitioned at each `StartStreamData` — the pool depth adjusts automatically based on how much space remains after USB/WiFi/encoder buffers are carved out. O(1) free-list allocation is preserved.
 
 - **Default size**: 1100 samples (`DEFAULT_AIN_SAMPLE_COUNT` in `AInSample.h`)
-- **Range**: 100–2000 samples (`MIN_AIN_SAMPLE_COUNT`–`MAX_AIN_SAMPLE_COUNT`)
-- **Memory per sample**: ~210 bytes (208 `AInPublicSampleList_t` + 2 `int16_t` free-list)
+- **Range**: 100–10000 samples (`MIN_AIN_SAMPLE_COUNT`–`MAX_AIN_SAMPLE_COUNT`)
+- **Memory per sample**: depends on enabled channels (compact pool): 1ch=14 bytes, 4ch=26 bytes, 8ch=42 bytes, 16ch=74 bytes (element + 2-byte free-list entry). Stride computed at stream start from `AInSampleList_ElementSize(channelCount)`.
 - **Resize**: `StreamingBufferPool_Partition()` re-carves the pool, then `AInSampleList_InitializeExternal()` swaps the memory pointers. FreeRTOS queue is reused (not reallocated) across sessions.
 - **When resized**: At each `StartStreamData` via `SCPI_StartStreaming`
 - **Typical values**: Boot=1100, USB-only auto-balance=~585, multi-interface=varies (see Auto-Balance table)
