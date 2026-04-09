@@ -139,6 +139,13 @@ static const NanopbFlagsArray fields_sd_metadata = {
 // --- Channel mapping for compact sample pool (#177) ---
 // Built at stream start, maps packed array indices to board config channels.
 // Used by deferred ISR task (sample population) and all encoders.
+//
+// Concurrency: Streaming_BuildChannelMapping() is always called before
+// pRunTimeStreamConf->IsEnabled is set to true and before the timer ISR starts
+// (see SCPI_StartStreaming: BuildChannelMapping → ... → IsEnabled=true →
+// Streaming_UpdateState). The deferred ISR task guards all gChannelMapping
+// reads behind the IsEnabled check, so the mapping is fully written before
+// any reader sees it. On PIC32MZ single-core, no memory barriers are needed.
 static AInChannelMapping gChannelMapping = {0};
 
 // Encoder buffer — allocated from StreamingBufferPool, runtime-adjustable.
@@ -1119,7 +1126,7 @@ uint32_t Streaming_GetBenchmarkMode(void) {
     AInPublicSampleList_t* fakeSample = (AInPublicSampleList_t*)fakeStorage;
     memset(fakeStorage, 0, sizeof(fakeStorage));
     fakeSample->channelCount = mapping->count;
-    fakeSample->validMask = (1U << mapping->count) - 1;
+    fakeSample->validMask = (mapping->count >= 16) ? 0xFFFFu : (uint16_t)((1u << mapping->count) - 1u);
     uint32_t sampleCounter = 0;
 
     for (uint8_t j = 0; j < mapping->count; j++) {
