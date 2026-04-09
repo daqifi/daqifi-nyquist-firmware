@@ -238,11 +238,18 @@ SYSTem:STReam:CLEARSTATS   # Reset all counters
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
 | `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries) |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
+| `TimerISRCalls` | uint32 | Actual streaming timer ISR call count this session |
+| `TimerISROverruns` | uint32 | `max(0, expected - actual)` — silent timer overruns when ISR can't keep up with requested freq (#265). UINT32_MAX = session > ~40h at 30 kHz, tracking unreliable. |
 | `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
 | `WindowLossPercent` | uint32 | Sliding-window sample loss % (0-100), updated every N samples |
 
-**Thread safety:** `TotalSamplesStreamed` and `TotalBytesStreamed` are 64-bit counters (safe for week-long sessions) protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ).
+**Three failure modes** are now distinguishable:
+1. `TimerISROverruns > 0` → ISR physically can't run at requested freq (raise rate, cut overhead)
+2. `QueueDroppedSamples > 0` → ISR is fine but encoder/sample pool can't drain
+3. `UsbDroppedBytes / SdDroppedBytes > 0` → encoder is fine but transport can't keep up
+
+**Thread safety:** `TotalSamplesStreamed` and `TotalBytesStreamed` are 64-bit counters (safe for week-long sessions) protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ). `TimerISRCalls` is incremented in true ISR context (TIMER_3, priority 1) by a single writer; the snapshot read uses `taskENTER_CRITICAL` which raises the syscall priority above the kernel-managed ISR threshold and blocks the timer.
 
 **Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
 

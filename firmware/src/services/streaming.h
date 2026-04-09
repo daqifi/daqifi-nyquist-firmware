@@ -111,6 +111,13 @@ typedef struct {
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
     uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)
+    // Timer ISR tracking (#265). Detects when the requested frequency exceeds
+    // what the firmware can physically service (ISR + deferred-task overhead).
+    // PIC32MZ only latches one pending IFS bit per source, so back-to-back
+    // timer events while the ISR is busy are silently lost — these counters
+    // make that visible without requiring drop counters to fire.
+    uint32_t timerISRCalls;          // Actual timer ISR call count this session
+    uint32_t timerISROverruns;       // Computed at snapshot: max(0, expected - actual)
 } StreamingStats;
 
 // Copies stats into *out inside a critical section (atomic snapshot)

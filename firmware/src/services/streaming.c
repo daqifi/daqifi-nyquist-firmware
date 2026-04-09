@@ -65,8 +65,16 @@ static volatile bool gSdFileWasReady = false;
 // Per-session streaming statistics.
 // Written by: deferred ISR task (queueDroppedSamples, totalSamplesStreamed)
 //             streaming task (all other fields)
+//             timer ISR (timerISRCalls)
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
+
+// Tick when the timer ISR was first armed this session — used to compute
+// expected ISR call count for overrun detection (#265). Captured in
+// Streaming_Start() right before TimerApi_Start().
+// 32-bit, single writer (USB SCPI task), single reader (any task during
+// snapshot). Plain assignment is atomic on PIC32MZ.
+static volatile TickType_t gStreamStartTick = 0;
 
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
@@ -363,7 +371,24 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
-  
+    // ISR-safety contract for timerISRCalls (#265):
+    //
+    // - Single writer: ONLY this function writes timerISRCalls. No other ISR,
+    //   no task, no DMA callback touches it. Verified via grep.
+    // - PIC32MZ doesn't have an atomic-add instruction; this expands to
+    //   lw / addiu / sw (3 cycles). A higher-priority ISR cannot corrupt
+    //   the result because no higher-priority ISR writes this variable.
+    // - The hardware can't preempt an ISR with itself (same source), so
+    //   sequential timer events are serialized through this handler.
+    // - Read side: 32-bit reads are atomic on PIC32MZ. Streaming_GetStats()
+    //   reads this field without needing a special barrier — the snapshot may
+    //   be off by 1 if the ISR fires mid-snapshot, which is well within
+    //   measurement tolerance.
+    // - Overflow: uint32_t wraps after ~143k seconds at 30 kHz (~40 hours).
+    //   Streaming_GetStats() detects expected > UINT32_MAX and clamps the
+    //   overrun field to UINT32_MAX, signalling "session too long to track".
+    gStreamStats.timerISRCalls++;
+
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
     if (gInTimerHandler) return;
@@ -553,6 +578,10 @@ static void Streaming_Start(void) {
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
         TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
+        // Capture start tick for ISR overrun computation (#265). Must be set
+        // immediately before TimerApi_Start() so the elapsed time used for
+        // expected-ISR-count math matches the timer's actual run window.
+        gStreamStartTick = xTaskGetTickCount();
         TimerApi_Start(gpStreamingConfig->TimerIndex);
         gpRuntimeConfigStream->Running = 1;
     }
@@ -566,6 +595,27 @@ static void Streaming_Stop(void) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
         gpRuntimeConfigStream->Running = false;
+
+        // Freeze final timer ISR overrun count for post-stream stats query (#265).
+        // After this point, gpRuntimeConfigStream->Running is false and
+        // Streaming_GetStats() skips the live recompute, so this value sticks.
+        // Overflow-safe: see Streaming_GetStats() for the same clamping logic.
+        if (gStreamStartTick != 0 && gpRuntimeConfigStream->Frequency > 0) {
+            TickType_t elapsedTicks = xTaskGetTickCount() - gStreamStartTick;
+            uint64_t expected64 = ((uint64_t)elapsedTicks * gpRuntimeConfigStream->Frequency)
+                                  / (uint64_t)configTICK_RATE_HZ;
+            uint32_t actual = gStreamStats.timerISRCalls;
+            if (expected64 > (uint64_t)UINT32_MAX) {
+                gStreamStats.timerISROverruns = UINT32_MAX;
+            } else {
+                uint32_t expected32 = (uint32_t)expected64;
+                gStreamStats.timerISROverruns =
+                    (expected32 > actual) ? (expected32 - actual) : 0;
+            }
+            // Clear so a duplicate Stop or post-stop GetStats doesn't recompute
+            // from a stale start tick. Streaming_Start() captures a fresh value.
+            gStreamStartTick = 0;
+        }
 
         // Log session summary if any data was lost
         bool hadDrops = gStreamStats.queueDroppedSamples > 0 ||
@@ -626,11 +676,49 @@ void Streaming_GetStats(StreamingStats* out) {
     if (out == NULL) return;
     taskENTER_CRITICAL();
     *out = gStreamStats;
+    // Compute timer ISR overruns from elapsed ticks × requested frequency.
+    // If streaming is currently running, use elapsed-since-start. If it's
+    // stopped, the value was already frozen in Streaming_Stop() and stays
+    // in the snapshot copy above — we skip this branch.
+    //
+    // Overflow safety:
+    //  - elapsedTicks: TickType_t (uint32_t) subtraction handles wraparound
+    //    correctly via modular arithmetic, valid for sessions ≤ 50 days at
+    //    1 ms tick.
+    //  - expected: uint64_t multiply/divide cannot overflow at any realistic
+    //    streaming frequency; (uint32_t × uint64_t) = uint64_t fits.
+    //  - timerISRCalls (uint32_t) wraps at ~143k seconds at 30 kHz. If the
+    //    expected count exceeds UINT32_MAX, clamp the overrun field to
+    //    UINT32_MAX as a "session too long for accurate tracking" sentinel.
+    if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->Running &&
+        gStreamStartTick != 0 && gpRuntimeConfigStream->Frequency > 0) {
+        TickType_t now = xTaskGetTickCount();
+        TickType_t elapsedTicks = now - gStreamStartTick;  // wraparound-safe
+        uint64_t expected64 = ((uint64_t)elapsedTicks * gpRuntimeConfigStream->Frequency)
+                              / (uint64_t)configTICK_RATE_HZ;
+        uint32_t actual = out->timerISRCalls;
+        if (expected64 > (uint64_t)UINT32_MAX) {
+            // Session length exceeded uint32 range — sentinel for "too long".
+            out->timerISROverruns = UINT32_MAX;
+        } else {
+            uint32_t expected32 = (uint32_t)expected64;
+            out->timerISROverruns = (expected32 > actual) ? (expected32 - actual) : 0;
+        }
+    }
     taskEXIT_CRITICAL();
 }
 
 void Streaming_ClearStats(void) {
+    // Critical section: timer ISR could be live and incrementing timerISRCalls
+    // (the only ISR-context writer in this struct). Without locking, the ISR
+    // could fire between the memset and stream-start and we'd carry a stale
+    // count into the new session. taskENTER_CRITICAL raises syscall priority
+    // above the kernel ISR threshold; the streaming timer ISR runs at the
+    // kernel-managed priority so it's blocked here. Other (non-ISR) writers
+    // are task-context and serialized by this same critical section.
+    taskENTER_CRITICAL();
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
+    taskEXIT_CRITICAL();
     Logger_ResetSessionOneShots();
     // Reset windowed flow tracking
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
