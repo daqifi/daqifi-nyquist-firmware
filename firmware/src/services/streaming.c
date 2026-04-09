@@ -655,23 +655,33 @@ void Streaming_GetStats(StreamingStats* out) {
 }
 
 void Streaming_ClearStats(void) {
-    // Critical section: timer ISR could be live and incrementing timerISRCalls
-    // (the only ISR-context writer in this struct). Without locking, the ISR
-    // could fire between the memset and stream-start and we'd carry a stale
-    // count into the new session. taskENTER_CRITICAL raises syscall priority
-    // above the kernel ISR threshold; the streaming timer ISR runs at the
-    // kernel-managed priority so it's blocked here. Other (non-ISR) writers
-    // are task-context and serialized by this same critical section.
+    // Single critical section covers ALL session observability state:
+    //   - gStreamStats:     written by timer ISR (timerISRCalls) and
+    //                       deferred ISR task (sample/drop counters)
+    //   - gFlowWindow:      written by deferred ISR task (priority 8)
+    //   - gFlowWindowCount: written by deferred ISR task
+    //   - gQuesBits:        written by streaming task on threshold cross
+    //
+    // SCPI:STR:CLEARSTATS can be invoked mid-session from USB (priority 7).
+    // The deferred task at priority 8 can preempt the SCPI handler at any
+    // time, so without a single atomic clear a concurrent reader could see
+    // half-reset state. taskENTER_CRITICAL raises syscall priority to 4,
+    // blocking the timer ISR (priority 1) — and since the deferred task
+    // wakes only via that ISR's notification, it's transitively blocked
+    // for the duration of the clear.
+    //
+    // Logger_ResetSessionOneShots is kept outside the critical section
+    // because it manipulates a separate Logger-owned bitmask with no
+    // shared state with the streaming engine.
     taskENTER_CRITICAL();
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
-    taskEXIT_CRITICAL();
-    Logger_ResetSessionOneShots();
-    // Reset windowed flow tracking
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
-    gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
+    gQuesBits = 0;
+    taskEXIT_CRITICAL();
+    Logger_ResetSessionOneShots();
     // NOTE: Pool max-used is NOT reset here — it persists across sessions
-    // so users can check peak usage after stopping. Reset via SYST:STR:ClearStats.
+    // so users can check peak usage after stopping.
 }
 
 /**
