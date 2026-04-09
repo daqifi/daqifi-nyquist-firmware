@@ -113,11 +113,10 @@ typedef struct {
     uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)
     // Timer ISR tracking (#265). Distinguishes "timer firing at requested rate"
     // from downstream bottlenecks (sample pool, encoder, output transport).
+    // The invariant `timerISRCalls == totalSamplesStreamed + queueDroppedSamples`
+    // should always hold during a session — every timer event becomes either
+    // a successfully queued sample or a pool-exhaustion drop.
     uint32_t timerISRCalls;          // Actual timer ISR entry count this session
-    uint32_t timerISRReentries;      // ISR entered with gInTimerHandler already
-                                     // true (timer fired faster than handler
-                                     // could complete its critical section).
-                                     // Should be 0 under normal operation.
 } StreamingStats;
 
 // Copies stats into *out inside a critical section (atomic snapshot)

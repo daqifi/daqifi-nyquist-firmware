@@ -65,7 +65,7 @@ static volatile bool gSdFileWasReady = false;
 // Per-session streaming statistics.
 // Written by: deferred ISR task (queueDroppedSamples, totalSamplesStreamed)
 //             streaming task (all other fields)
-//             timer ISR (timerISRCalls, timerISRReentries)
+//             timer ISR (timerISRCalls)
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
 
@@ -364,17 +364,17 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
-    // ISR-safety contract for timerISRCalls / timerISRReentries (#265):
+    // ISR-safety contract for timerISRCalls (#265):
     //
-    // - Single writer: ONLY this function writes either counter. No other
-    //   ISR, no task, no DMA callback touches them. Verified via grep.
+    // - Single writer: ONLY this function writes timerISRCalls. No other
+    //   ISR, no task, no DMA callback touches it. Verified via grep.
     // - PIC32MZ doesn't have an atomic-add instruction; this expands to
     //   lw / addiu / sw (3 cycles). A higher-priority ISR cannot corrupt
-    //   the result because no higher-priority ISR writes these variables.
+    //   the result because no higher-priority ISR writes this variable.
     // - The hardware can't preempt an ISR with itself (same source), so
     //   sequential timer events are serialized through this handler.
     // - Read side: 32-bit reads are atomic on PIC32MZ. Streaming_GetStats()
-    //   reads these fields without needing a special barrier — the snapshot
+    //   reads this field without needing a special barrier — the snapshot
     //   may be off by 1 if the ISR fires mid-snapshot, which is well within
     //   measurement tolerance.
     // - Overflow: uint32_t wraps after ~40 hours at 30 kHz. For a benchmark
@@ -387,18 +387,6 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     // would still increment on phantom ISR firings between sessions.
     if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->IsEnabled) {
         gStreamStats.timerISRCalls++;
-        // Re-entry detection: if gInTimerHandler is already true at entry,
-        // it means a previous invocation of this handler is still inside its
-        // critical section between gInTimerHandler=true and gInTimerHandler
-        // =false. On PIC32MZ a same-source interrupt can't preempt itself,
-        // so this should be impossible under normal hardware behavior — but
-        // the existing flag was put here defensively, and counting actual
-        // re-entries makes the assumption observable. A non-zero value
-        // signals something is very wrong (manual handler call, recursive
-        // invocation, hardware quirk, etc).
-        if (gInTimerHandler) {
-            gStreamStats.timerISRReentries++;
-        }
     }
 
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
