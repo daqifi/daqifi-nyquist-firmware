@@ -238,11 +238,18 @@ SYSTem:STReam:CLEARSTATS   # Reset all counters
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
 | `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries) |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
+| `TimerISRCalls` | uint64 | Actual streaming timer ISR entry count this session (#265). Invariant: `TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples`. |
 | `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
 | `WindowLossPercent` | uint32 | Sliding-window sample loss % (0-100), updated every N samples |
 
-**Thread safety:** `TotalSamplesStreamed` and `TotalBytesStreamed` are 64-bit counters (safe for week-long sessions) protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ).
+**Distinguishing failure modes** with the new ISR counter:
+- `TimerISRCalls < freq × duration` → timer is rate-limited (PIC32MZ ~90 kHz hardware ceiling)
+- `TimerISRCalls == TotalSamples + QueueDropped` → every ISR is accounted for; nothing lost between ISR and deferred task (should always hold)
+- `QueueDroppedSamples > 0` → sample pool exhausted (encoder/output too slow for the rate the timer is firing)
+- `UsbDroppedBytes / SdDroppedBytes > 0` → encoder is fine but transport can't keep up
+
+**Thread safety:** `TotalSamplesStreamed`, `TotalBytesStreamed`, and `TimerISRCalls` are 64-bit counters (safe for million-year sessions). The first two are protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ). `TimerISRCalls` lives in a separate `static volatile uint64_t gTimerISRCalls` global, incremented in true ISR context (TIMER_3, priority 1) by a single writer (no critical section needed because same-source can't preempt itself); the snapshot read uses `taskENTER_CRITICAL` which raises the syscall priority above the kernel-managed ISR threshold and blocks the timer, making the non-atomic 64-bit read coherent.
 
 **Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
 

@@ -68,6 +68,21 @@ static volatile bool gSdFileWasReady = false;
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
 
+// Timer ISR call counter (#265). Lives outside gStreamStats so it can be
+// declared volatile — gStreamStats is not volatile because the other fields
+// rely on taskENTER_CRITICAL barriers for cross-context visibility, but the
+// timer ISR writes this field WITHOUT a critical section (single writer,
+// no preemption from same source). volatile prevents the compiler from
+// caching the value across statements or eliding writes it thinks are dead.
+//
+// 64-bit so it never wraps in practice (~6 million years at the ~90 kHz
+// hardware ceiling). 64-bit increment on PIC32MZ is two 32-bit ops; the
+// low-word add can overflow into the high-word add, which is fine because
+// the timer ISR is the only writer (no concurrent RMW from another context).
+// 64-bit reads are NOT atomic on PIC32MZ; Streaming_GetStats() snapshots
+// this inside taskENTER_CRITICAL which blocks the timer ISR (priority 1).
+static volatile uint64_t gTimerISRCalls = 0;
+
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
 // All reset in Streaming_ClearStats() via Logger_ResetSessionOneShots().
@@ -410,12 +425,49 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
-  
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
+
+    // Defensive re-entry guard. PIC32MZ same-source ISRs cannot preempt
+    // themselves so this should never trigger, but the existing flag is
+    // kept for paranoia. Counter increment is BELOW the guard so the
+    // invariant `gTimerISRCalls == samples + queue_drops` holds even if
+    // the guard ever fires (preventing this ISR from dispatching work).
     if (gInTimerHandler) return;
     gInTimerHandler = true;
-    Streaming_Defer_Interrupt();
+
+    // ISR-safety contract for gTimerISRCalls (#265):
+    //
+    // - Storage: declared `static volatile uint64_t` so the compiler cannot
+    //   cache the value across statements or elide writes it thinks are dead.
+    // - Single writer: ONLY this timer ISR increments gTimerISRCalls. No
+    //   other ISR, no task, no DMA callback touches it. Verified via grep.
+    // - Increment: 64-bit RMW expands to multiple 32-bit ops on PIC32MZ. It
+    //   is safe here because there are no other writers and this ISR cannot
+    //   be preempted by itself (same source).
+    // - Read side: 64-bit reads are NOT atomic on PIC32MZ. Streaming_GetStats
+    //   snapshots gTimerISRCalls inside its existing taskENTER_CRITICAL,
+    //   which blocks the timer ISR (priority 1) for a coherent read.
+    // - Overflow: 64-bit so it never wraps in practice (~6M years at 90 kHz).
+    //
+    // IsEnabled gate: Streaming_UpdateState() always cycles Stop→Start, and
+    // Streaming_Start() unconditionally re-arms the timer even when
+    // IsEnabled is false (existing reset-on-reconfig behavior). The deferred
+    // task ignores those notifications, but without this gate the counter
+    // would still increment on phantom ISR firings between sessions.
+    //
+    // Increment AND defer happen INSIDE the IsEnabled check so the invariant
+    // TimerISRCalls == TotalSamples + QueueDropped holds exactly: every
+    // counted ISR call corresponds to exactly one Defer_Interrupt dispatch,
+    // which becomes either a queued sample or a pool-exhaust drop. Gating
+    // Defer_Interrupt on IsEnabled also avoids spurious deferred-task
+    // wakeups during the Stop→Start reconfig window when the timer is
+    // re-armed but streaming is disabled.
+    if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->IsEnabled) {
+        gTimerISRCalls++;
+        Streaming_Defer_Interrupt();
+    }
+
     gInTimerHandler = false;
 
 }
@@ -673,18 +725,64 @@ void Streaming_GetStats(StreamingStats* out) {
     if (out == NULL) return;
     taskENTER_CRITICAL();
     *out = gStreamStats;
+    // Snapshot the volatile ISR counter into the struct copy. The volatile
+    // read forces a fresh load from memory; the critical section blocks the
+    // timer ISR (priority 1) so we get a coherent reading.
+    out->timerISRCalls = gTimerISRCalls;
     taskEXIT_CRITICAL();
 }
 
 void Streaming_ClearStats(void) {
+    // Defensive: this function uses taskENTER_CRITICAL which is not safe
+    // from ISR context. All current callers (SCPI handlers, Streaming_Start)
+    // run in task context. Belt-and-suspenders: configASSERT catches misuse
+    // in debug builds, and the runtime guard below makes us silently no-op
+    // (rather than crash) if called from an ISR in a release build where
+    // configASSERT compiles out.
+    //
+    // Note: xPortIsInsideInterrupt() is not implemented in the PIC32MZ
+    // FreeRTOS port, so we check uxInterruptNesting directly — the same
+    // pattern used by Logger.c::LogIsInISR(). The variable is maintained
+    // by the assembly ISR wrappers in ISR_Support.h.
+    configASSERT(uxInterruptNesting == 0);
+    if (uxInterruptNesting != 0) {
+        return;
+    }
+
+    // Mid-session clearing is intentionally allowed: callers may want to
+    // measure throughput over a sub-window without restarting the stream
+    // (e.g., wait for steady state, clear, measure for N seconds, query).
+    // After this call, all counters represent "since last clear" rather
+    // than "since session start" — the caller is responsible for tracking
+    // the elapsed time of their measurement window.
+    //
+    // Single critical section covers ALL session observability state:
+    //   - gStreamStats:     written by deferred ISR task (sample/drop counters)
+    //                       and streaming task (encoder/output drop counters)
+    //   - gTimerISRCalls:   written by timer ISR (priority 1)
+    //   - gFlowWindow:      written by deferred ISR task (priority 8)
+    //   - gFlowWindowCount: written by deferred ISR task
+    //   - gQuesBits:        written by streaming task on threshold cross
+    //   - Logger session one-shots: reset alongside so observers don't see
+    //                       half-cleared session state across the boundary
+    //
+    // SCPI:STR:CLEARSTATS can be invoked mid-session from USB (priority 7).
+    // The deferred task at priority 8 can preempt the SCPI handler at any
+    // time, so without a single atomic clear a concurrent reader could see
+    // half-reset state. taskENTER_CRITICAL raises syscall priority to 4,
+    // blocking the timer ISR (priority 1) — and since the deferred task
+    // wakes only via that ISR's notification, it's transitively blocked
+    // for the duration of the clear.
+    taskENTER_CRITICAL();
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
-    Logger_ResetSessionOneShots();
-    // Reset windowed flow tracking
+    gTimerISRCalls = 0;
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
-    gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
+    gQuesBits = 0;
+    Logger_ResetSessionOneShots();
+    taskEXIT_CRITICAL();
     // NOTE: Pool max-used is NOT reset here — it persists across sessions
-    // so users can check peak usage after stopping. Reset via SYST:STR:ClearStats.
+    // so users can check peak usage after stopping.
 }
 
 /**

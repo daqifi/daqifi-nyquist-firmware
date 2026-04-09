@@ -112,6 +112,22 @@ typedef struct {
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
     uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)
+    // Timer ISR tracking (#265). Distinguishes "timer firing at requested rate"
+    // from downstream bottlenecks (sample pool, encoder, output transport).
+    // The invariant `timerISRCalls == totalSamplesStreamed + queueDroppedSamples`
+    // should always hold during a session — every timer event becomes either
+    // a successfully queued sample or a pool-exhaustion drop.
+    //
+    // 64-bit so it never wraps in practice — at the ~90 kHz hardware ceiling
+    // it would take ~6 million years to overflow. Matches the other 64-bit
+    // session counters (totalSamplesStreamed, totalBytesStreamed).
+    //
+    // Storage note: this field is populated by Streaming_GetStats() from a
+    // separate `static volatile uint64_t gTimerISRCalls` global. The volatile
+    // global is the actual ISR-modified storage; the StreamingStats field is
+    // a snapshot copy taken inside taskENTER_CRITICAL (which makes the
+    // non-atomic 64-bit read coherent by blocking the timer ISR).
+    uint64_t timerISRCalls;          // Actual timer ISR entry count this session
 } StreamingStats;
 
 // Copies stats into *out inside a critical section (atomic snapshot)

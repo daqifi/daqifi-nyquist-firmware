@@ -1930,6 +1930,12 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "SdWriteAlignedCopies=%u\r\n", (unsigned)sdm.writeAlignedCopies);
     }
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
+    // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
+    // so it never wraps in practice). Compare against (TotalSamplesStreamed
+    // + QueueDroppedSamples) to verify every timer event is accounted for,
+    // and against (freq × duration) to see whether the timer is firing at
+    // the requested rate or rate-limited.
+    scpi_printf(context, "TimerISRCalls=%llu\r\n", (unsigned long long)s.timerISRCalls);
 
     // Compute sample loss percentage (64-bit intermediate to avoid overflow)
     uint64_t totalSampleAttempts = s.totalSamplesStreamed + s.queueDroppedSamples;
