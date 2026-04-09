@@ -402,9 +402,15 @@ size_t Nanopb_Encode(tBoardData* state,
 
                     queueSize--;
 
-                    // Compact sample: iterate packed values via channelCount
+                    // Compact sample: iterate packed values via channelCount.
+                    // Clamp to MAX_AIN_PUBLIC_CHANNELS as a defensive bound
+                    // against memory-corruption / desync edge cases.
                     uint32_t sampleTimestamp = pPublicSampleList->Timestamp;
-                    for (uint16_t j = 0; j < pPublicSampleList->channelCount; j++) {
+                    uint16_t n = pPublicSampleList->channelCount;
+                    if (n > MAX_AIN_PUBLIC_CHANNELS) {
+                        n = MAX_AIN_PUBLIC_CHANNELS;
+                    }
+                    for (uint16_t j = 0; j < n; j++) {
                         if (!(pPublicSampleList->validMask & (1U << j)))
                             continue;
                         if (message.analog_in_data_count > maxDataIndex)

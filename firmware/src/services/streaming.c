@@ -366,12 +366,15 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
 
-            // Pipeline mode skips per-channel ADC reads, so no per-channel
-            // timestamps are populated. Use the streaming timer tick captured
-            // by Streaming_TimerHandler at this ISR fire — same source the ADC
-            // ISR writes to AInSample.Timestamp during normal operation, so
-            // benchmark output carries meaningful timing instead of zeros.
-            if (gBenchmarkMode == BENCHMARK_PIPELINE) {
+            // Guarantee a non-zero timestamp on every emitted packet. Pipeline
+            // mode never reads ADC samples; normal/test-pattern modes may also
+            // end up with Timestamp=0 in edge cases (DIO-only streaming, or
+            // all AIN channels happen to be invalid this cycle). Fall back to
+            // the streaming timer tick captured by Streaming_TimerHandler —
+            // same source the ADC ISR writes to AInSample.Timestamp, so the
+            // wire output remains consistent across modes. Required because
+            // the PB encoder omits the msg_time_stamp field when timestamp==0.
+            if (pPublicSampleList->Timestamp == 0) {
                 uint32_t* pTrigStamp = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
                 if (pTrigStamp != NULL) {
                     pPublicSampleList->Timestamp = *pTrigStamp;

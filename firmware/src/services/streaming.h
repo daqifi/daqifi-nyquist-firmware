@@ -37,12 +37,13 @@ extern "C" {
 // Benchmark mode levels (extensible — add new values for future modes)
 #define BENCHMARK_OFF      0   // Normal: freq cap active, real ADC
 #define BENCHMARK_NOCAP    1   // Bypass freq cap, real ADC timing
-#define BENCHMARK_PIPELINE 2   // Bypass freq cap + skip ADC entirely. Test
-                               // pattern values are generated directly without
-                               // touching ADC hardware. Timestamp comes from
-                               // the streaming timer tick (same source as
-                               // normal-mode AInSample timestamps), so output
-                               // remains comparable across modes.
+#define BENCHMARK_PIPELINE 2   // Bypass freq cap + skip ADC entirely. Sample
+                               // values are generated directly without touching
+                               // ADC hardware (uses current test pattern; if
+                               // pattern=0 then values will be 0). Timestamp
+                               // comes from the streaming timer tick (same
+                               // source as normal-mode AInSample timestamps),
+                               // so output remains comparable across modes.
 
 #define STREAMING_ISR_MAX_HZ        11000
 #define STREAMING_TYPE1_AGG_MAX_HZ  30000

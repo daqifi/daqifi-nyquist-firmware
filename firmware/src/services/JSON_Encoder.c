@@ -416,7 +416,14 @@ size_t Json_Encode(tBoardData* state,
                 break;
             qSize--;
             bool timestampAdded = false;
-            for (uint8_t j = 0; j < mapping->count; j++) {
+            // Clamp to the sample's own channelCount in case the mapping and
+            // the sample fall out of sync. Defensive — they should always
+            // match. Matches the CSV / NanoPB encoder pattern.
+            uint8_t n = mapping->count;
+            if (pPublicSampleList->channelCount < n) {
+                n = (uint8_t)pPublicSampleList->channelCount;
+            }
+            for (uint8_t j = 0; j < n; j++) {
                 if (!(pPublicSampleList->validMask & (1U << j)))
                     continue;
 

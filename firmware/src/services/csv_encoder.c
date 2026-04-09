@@ -345,7 +345,15 @@ static size_t tryWriteRow(
     const AInChannelMapping* mapping = Streaming_GetChannelMapping();
     (void)channelConfig;  // No longer needed — mapping drives iteration
 
-    for (uint8_t j = 0; j < mapping->count; j++) {
+    // Clamp to the sample's own channelCount in case the mapping and the
+    // sample fall out of sync (e.g. mid-session reconfig). Defensive — they
+    // should always match in practice. Matches the NanoPB encoder pattern.
+    uint8_t n = mapping->count;
+    if (*hadAIN && ainPeek && ainPeek->channelCount < n) {
+        n = (uint8_t)ainPeek->channelCount;
+    }
+
+    for (uint8_t j = 0; j < n; j++) {
         bool valid = *hadAIN && ainPeek && (ainPeek->validMask & (1U << j));
 
         if (valid) {

@@ -439,9 +439,14 @@ void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
         return;  // Not from our pool
     }
 
-    // O(1) deallocation: push to free list head
+    // O(1) deallocation: push to free list head.
+    // Guard against double-free underflow on the alloc counter — defensive,
+    // doesn't fix the underlying free-list corruption a real double-free
+    // would cause, but keeps usage stats reliable for debugging.
     xSemaphoreTake(poolMutex, portMAX_DELAY);
-    poolAllocCount--;
+    if (poolAllocCount > 0) {
+        poolAllocCount--;
+    }
     nextFree[index] = freeHead;
     freeHead = (int16_t)index;
     xSemaphoreGive(poolMutex);
