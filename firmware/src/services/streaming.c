@@ -65,9 +65,23 @@ static volatile bool gSdFileWasReady = false;
 // Per-session streaming statistics.
 // Written by: deferred ISR task (queueDroppedSamples, totalSamplesStreamed)
 //             streaming task (all other fields)
-//             timer ISR (timerISRCalls)
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
+
+// Timer ISR call counter (#265). Lives outside gStreamStats so it can be
+// declared volatile — gStreamStats is not volatile because the other fields
+// rely on taskENTER_CRITICAL barriers for cross-context visibility, but the
+// timer ISR writes this field WITHOUT a critical section (single writer,
+// no preemption from same source). volatile prevents the compiler from
+// caching the value across statements or eliding writes it thinks are dead.
+//
+// 64-bit so it never wraps in practice (~6 million years at the ~90 kHz
+// hardware ceiling). 64-bit increment on PIC32MZ is two 32-bit ops; the
+// low-word add can overflow into the high-word add, which is fine because
+// the timer ISR is the only writer (no concurrent RMW from another context).
+// 64-bit reads are NOT atomic on PIC32MZ; Streaming_GetStats() snapshots
+// this inside taskENTER_CRITICAL which blocks the timer ISR (priority 1).
+static volatile uint64_t gTimerISRCalls = 0;
 
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
@@ -364,9 +378,11 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
-    // ISR-safety contract for timerISRCalls (#265):
+    // ISR-safety contract for gTimerISRCalls (#265):
     //
-    // - Single writer: ONLY this function writes timerISRCalls. No other
+    // - Storage: declared `static volatile uint32_t` so the compiler cannot
+    //   cache the value across statements or elide writes it thinks are dead.
+    // - Single writer: ONLY this function writes gTimerISRCalls. No other
     //   ISR, no task, no DMA callback touches it. Verified via grep.
     // - PIC32MZ doesn't have an atomic-add instruction; this expands to
     //   lw / addiu / sw (3 cycles). A higher-priority ISR cannot corrupt
@@ -374,11 +390,11 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     // - The hardware can't preempt an ISR with itself (same source), so
     //   sequential timer events are serialized through this handler.
     // - Read side: 32-bit reads are atomic on PIC32MZ. Streaming_GetStats()
-    //   reads this field without needing a special barrier — the snapshot
-    //   may be off by 1 if the ISR fires mid-snapshot, which is well within
-    //   measurement tolerance.
+    //   snapshots gTimerISRCalls into the StreamingStats copy inside the
+    //   existing taskENTER_CRITICAL block — the volatile read ensures fresh
+    //   memory access and the critical section blocks the timer ISR.
     // - Overflow: uint32_t wraps after ~40 hours at 30 kHz. For a benchmark
-    //   tool this is more than enough; values reset on Streaming_ClearStats.
+    //   tool this is more than enough; value resets on Streaming_ClearStats.
     //
     // IsEnabled gate: Streaming_UpdateState() always cycles Stop→Start, and
     // Streaming_Start() unconditionally re-arms the timer even when
@@ -386,7 +402,7 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     // task ignores those notifications, but without this gate the counter
     // would still increment on phantom ISR firings between sessions.
     if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->IsEnabled) {
-        gStreamStats.timerISRCalls++;
+        gTimerISRCalls++;
     }
 
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
@@ -651,16 +667,28 @@ void Streaming_GetStats(StreamingStats* out) {
     if (out == NULL) return;
     taskENTER_CRITICAL();
     *out = gStreamStats;
+    // Snapshot the volatile ISR counter into the struct copy. The volatile
+    // read forces a fresh load from memory; the critical section blocks the
+    // timer ISR (priority 1) so we get a coherent reading.
+    out->timerISRCalls = gTimerISRCalls;
     taskEXIT_CRITICAL();
 }
 
 void Streaming_ClearStats(void) {
+    // Defensive: this function uses taskENTER_CRITICAL which is not safe
+    // from ISR context. All current callers (SCPI handlers, Streaming_Start)
+    // run in task context; this assert catches future misuse.
+    configASSERT(uxInterruptNesting == 0);
+
     // Single critical section covers ALL session observability state:
-    //   - gStreamStats:     written by timer ISR (timerISRCalls) and
-    //                       deferred ISR task (sample/drop counters)
+    //   - gStreamStats:     written by deferred ISR task (sample/drop counters)
+    //                       and streaming task (encoder/output drop counters)
+    //   - gTimerISRCalls:   written by timer ISR (priority 1)
     //   - gFlowWindow:      written by deferred ISR task (priority 8)
     //   - gFlowWindowCount: written by deferred ISR task
     //   - gQuesBits:        written by streaming task on threshold cross
+    //   - Logger session one-shots: reset alongside so observers don't see
+    //                       half-cleared session state across the boundary
     //
     // SCPI:STR:CLEARSTATS can be invoked mid-session from USB (priority 7).
     // The deferred task at priority 8 can preempt the SCPI handler at any
@@ -669,17 +697,14 @@ void Streaming_ClearStats(void) {
     // blocking the timer ISR (priority 1) — and since the deferred task
     // wakes only via that ISR's notification, it's transitively blocked
     // for the duration of the clear.
-    //
-    // Logger_ResetSessionOneShots is kept outside the critical section
-    // because it manipulates a separate Logger-owned bitmask with no
-    // shared state with the streaming engine.
     taskENTER_CRITICAL();
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
+    gTimerISRCalls = 0;
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gQuesBits = 0;
-    taskEXIT_CRITICAL();
     Logger_ResetSessionOneShots();
+    taskEXIT_CRITICAL();
     // NOTE: Pool max-used is NOT reset here — it persists across sessions
     // so users can check peak usage after stopping.
 }
