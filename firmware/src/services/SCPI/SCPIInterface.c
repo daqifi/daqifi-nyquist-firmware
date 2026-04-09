@@ -1930,10 +1930,11 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "SdWriteAlignedCopies=%u\r\n", (unsigned)sdm.writeAlignedCopies);
     }
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
-    // Timer ISR tracking (#265): exposes silent ISR overruns when the requested
-    // streaming frequency exceeds what the firmware can physically service.
+    // Timer ISR tracking (#265): TimerISRCalls = actual ISR entry count this
+    // session; TimerISRReentries = ISR entered while gInTimerHandler was
+    // already true (handler still inside its critical section). Should be 0.
     scpi_printf(context, "TimerISRCalls=%u\r\n", (unsigned)s.timerISRCalls);
-    scpi_printf(context, "TimerISROverruns=%u\r\n", (unsigned)s.timerISROverruns);
+    scpi_printf(context, "TimerISRReentries=%u\r\n", (unsigned)s.timerISRReentries);
 
     // Compute sample loss percentage (64-bit intermediate to avoid overflow)
     uint64_t totalSampleAttempts = s.totalSamplesStreamed + s.queueDroppedSamples;
