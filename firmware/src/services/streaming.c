@@ -378,37 +378,45 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
+    uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
+    BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
+
+    // Defensive re-entry guard. PIC32MZ same-source ISRs cannot preempt
+    // themselves so this should never trigger, but the existing flag is
+    // kept for paranoia. Counter increment is BELOW the guard so the
+    // invariant `gTimerISRCalls == samples + queue_drops` holds even if
+    // the guard ever fires (preventing this ISR from dispatching work).
+    if (gInTimerHandler) return;
+    gInTimerHandler = true;
+
     // ISR-safety contract for gTimerISRCalls (#265):
     //
-    // - Storage: declared `static volatile uint32_t` so the compiler cannot
+    // - Storage: declared `static volatile uint64_t` so the compiler cannot
     //   cache the value across statements or elide writes it thinks are dead.
-    // - Single writer: ONLY this function writes gTimerISRCalls. No other
-    //   ISR, no task, no DMA callback touches it. Verified via grep.
-    // - PIC32MZ doesn't have an atomic-add instruction; this expands to
-    //   lw / addiu / sw (3 cycles). A higher-priority ISR cannot corrupt
-    //   the result because no higher-priority ISR writes this variable.
-    // - The hardware can't preempt an ISR with itself (same source), so
-    //   sequential timer events are serialized through this handler.
-    // - Read side: 32-bit reads are atomic on PIC32MZ. Streaming_GetStats()
-    //   snapshots gTimerISRCalls into the StreamingStats copy inside the
-    //   existing taskENTER_CRITICAL block — the volatile read ensures fresh
-    //   memory access and the critical section blocks the timer ISR.
-    // - Overflow: uint32_t wraps after ~40 hours at 30 kHz. For a benchmark
-    //   tool this is more than enough; value resets on Streaming_ClearStats.
+    // - Single writer: ONLY this timer ISR increments gTimerISRCalls. No
+    //   other ISR, no task, no DMA callback touches it. Verified via grep.
+    // - Increment: 64-bit RMW expands to multiple 32-bit ops on PIC32MZ. It
+    //   is safe here because there are no other writers and this ISR cannot
+    //   be preempted by itself (same source).
+    // - Read side: 64-bit reads are NOT atomic on PIC32MZ. Streaming_GetStats
+    //   snapshots gTimerISRCalls inside its existing taskENTER_CRITICAL,
+    //   which blocks the timer ISR (priority 1) for a coherent read.
+    // - Overflow: 64-bit so it never wraps in practice (~6M years at 90 kHz).
     //
     // IsEnabled gate: Streaming_UpdateState() always cycles Stop→Start, and
     // Streaming_Start() unconditionally re-arms the timer even when
     // IsEnabled is false (existing reset-on-reconfig behavior). The deferred
     // task ignores those notifications, but without this gate the counter
     // would still increment on phantom ISR firings between sessions.
+    //
+    // Increment happens INSIDE the gInTimerHandler critical section so the
+    // invariant TimerISRCalls == TotalSamples + QueueDropped holds exactly:
+    // every counted ISR call corresponds to exactly one Defer_Interrupt
+    // dispatch, which becomes either a queued sample or a pool-exhaust drop.
     if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->IsEnabled) {
         gTimerISRCalls++;
     }
 
-    uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
-    BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
-    if (gInTimerHandler) return;
-    gInTimerHandler = true;
     Streaming_Defer_Interrupt();
     gInTimerHandler = false;
 
@@ -678,8 +686,20 @@ void Streaming_ClearStats(void) {
     // Defensive: this function uses taskENTER_CRITICAL which is not safe
     // from ISR context. All current callers (SCPI handlers, Streaming_Start)
     // run in task context; this assert catches future misuse.
+    //
+    // Note: xPortIsInsideInterrupt() is not implemented in the PIC32MZ
+    // FreeRTOS port, so we check uxInterruptNesting directly — the same
+    // pattern used by Logger.c::LogIsInISR(). The variable is maintained
+    // by the assembly ISR wrappers in ISR_Support.h.
     configASSERT(uxInterruptNesting == 0);
 
+    // Mid-session clearing is intentionally allowed: callers may want to
+    // measure throughput over a sub-window without restarting the stream
+    // (e.g., wait for steady state, clear, measure for N seconds, query).
+    // After this call, all counters represent "since last clear" rather
+    // than "since session start" — the caller is responsible for tracking
+    // the elapsed time of their measurement window.
+    //
     // Single critical section covers ALL session observability state:
     //   - gStreamStats:     written by deferred ISR task (sample/drop counters)
     //                       and streaming task (encoder/output drop counters)
