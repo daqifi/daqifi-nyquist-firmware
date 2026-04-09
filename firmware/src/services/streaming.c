@@ -326,6 +326,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
                 if (gBenchmarkMode == BENCHMARK_PIPELINE) {
                     // Pipeline: skip ADC entirely, generate synthetic data directly.
+                    // Timestamp comes from the streaming timer tick captured by
+                    // Streaming_TimerHandler (BOARDDATA_STREAMING_TIMESTAMP) — same
+                    // source the ADC ISR uses for AInSample.Timestamp in normal
+                    // operation, so PB/CSV/JSON output is consistent across modes.
                     pPublicSampleList->Values[j] =
                         Streaming_GenerateTestValue(gTestPattern,
                             mapping->channelIds[j],
@@ -359,6 +363,18 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         }
                     }
                     // else: bit stays 0 in validMask (invalid)
+                }
+            }
+
+            // Pipeline mode skips per-channel ADC reads, so no per-channel
+            // timestamps are populated. Use the streaming timer tick captured
+            // by Streaming_TimerHandler at this ISR fire — same source the ADC
+            // ISR writes to AInSample.Timestamp during normal operation, so
+            // benchmark output carries meaningful timing instead of zeros.
+            if (gBenchmarkMode == BENCHMARK_PIPELINE) {
+                uint32_t* pTrigStamp = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+                if (pTrigStamp != NULL) {
+                    pPublicSampleList->Timestamp = *pTrigStamp;
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
