@@ -409,15 +409,18 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     // task ignores those notifications, but without this gate the counter
     // would still increment on phantom ISR firings between sessions.
     //
-    // Increment happens INSIDE the gInTimerHandler critical section so the
-    // invariant TimerISRCalls == TotalSamples + QueueDropped holds exactly:
-    // every counted ISR call corresponds to exactly one Defer_Interrupt
-    // dispatch, which becomes either a queued sample or a pool-exhaust drop.
+    // Increment AND defer happen INSIDE the IsEnabled check so the invariant
+    // TimerISRCalls == TotalSamples + QueueDropped holds exactly: every
+    // counted ISR call corresponds to exactly one Defer_Interrupt dispatch,
+    // which becomes either a queued sample or a pool-exhaust drop. Gating
+    // Defer_Interrupt on IsEnabled also avoids spurious deferred-task
+    // wakeups during the Stop→Start reconfig window when the timer is
+    // re-armed but streaming is disabled.
     if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->IsEnabled) {
         gTimerISRCalls++;
+        Streaming_Defer_Interrupt();
     }
 
-    Streaming_Defer_Interrupt();
     gInTimerHandler = false;
 
 }
@@ -685,13 +688,19 @@ void Streaming_GetStats(StreamingStats* out) {
 void Streaming_ClearStats(void) {
     // Defensive: this function uses taskENTER_CRITICAL which is not safe
     // from ISR context. All current callers (SCPI handlers, Streaming_Start)
-    // run in task context; this assert catches future misuse.
+    // run in task context. Belt-and-suspenders: configASSERT catches misuse
+    // in debug builds, and the runtime guard below makes us silently no-op
+    // (rather than crash) if called from an ISR in a release build where
+    // configASSERT compiles out.
     //
     // Note: xPortIsInsideInterrupt() is not implemented in the PIC32MZ
     // FreeRTOS port, so we check uxInterruptNesting directly — the same
     // pattern used by Logger.c::LogIsInISR(). The variable is maintained
     // by the assembly ISR wrappers in ISR_Support.h.
     configASSERT(uxInterruptNesting == 0);
+    if (uxInterruptNesting != 0) {
+        return;
+    }
 
     // Mid-session clearing is intentionally allowed: callers may want to
     // measure throughput over a sub-window without restarting the stream
