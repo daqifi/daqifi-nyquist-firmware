@@ -75,6 +75,16 @@ bool ADC_IsDataValid(const AInSample* sample);
  */
 double ADC_ConvertToVoltage(const AInSample* sample);
 
+/*! Converts a raw ADC value to voltage using the board config index directly.
+ * Skips the O(N) channel-ID-to-index linear search that ADC_ConvertToVoltage
+ * performs internally — use this in streaming hot paths where the board config
+ * index is already known (e.g., from AInChannelMapping.configIndices[]).
+ * @param channelIndex Board config array index (NOT the DaqifiAdcChannelId)
+ * @param rawValue     Raw ADC code
+ * @return The converted voltage, or 0.0 if channelIndex is out of range
+ */
+double ADC_ConvertToVoltageByIndex(size_t channelIndex, uint32_t rawValue);
+
 bool ADC_ReadADCSampleFromISR(uint32_t value,uint8_t bufferIndex);
 
 /*! Function to be called from the ISR for deferring the ADC interrupt */

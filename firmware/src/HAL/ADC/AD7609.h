@@ -77,13 +77,13 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig);
 /*!
  * Calculates a voltage based on the given sample
  * NOTE: This is NOT safe to call in an ISR
- * @param[in] runtimeConfig Runtime channel information
- * @param[in] sample The sample to process
+ * @param[in] runtimeConfig Runtime channel information (unused, kept for API symmetry)
+ * @param[in] rawValue Raw 18-bit ADC code
  * @return The converted voltage
  */
-double AD7609_ConvertToVoltage(                                             \
-                        const AInRuntimeConfig* runtimeConfig,              \
-                        const AInSample* sample);
+double AD7609_ConvertToVoltage(
+                        const AInRuntimeConfig* runtimeConfig,
+                        uint32_t rawValue);
 
 /*!
  * AD7609 deferred interrupt task (handles SPI read after BSY interrupt)

@@ -347,35 +347,35 @@ bool ADC_IsDataValid(const AInSample* sample) {
     return (sample->Timestamp > 0);
 }
 
-double ADC_ConvertToVoltage(const AInSample* sample) {
-    const AInRuntimeArray * pRunTimeAInChannels =
-            &gpBoardRuntimeConfig->AInChannels;
-
-    size_t channelIndex = ADC_FindChannelIndex(sample->Channel);
-
-    // Validate channel index to prevent out-of-bounds access
+double ADC_ConvertToVoltageByIndex(size_t channelIndex, uint32_t rawValue) {
     if (channelIndex >= gpBoardConfig->AInChannels.Size) {
-        return 0.0;  // Invalid channel - return safe value
+        return 0.0;
     }
 
     const AInChannel* channelConfig =
             &gpBoardConfig->AInChannels.Data[channelIndex];
     const AInRuntimeConfig* pRuntimeConfig =
-            &pRunTimeAInChannels->Data[channelIndex];
-
-
+            &gpBoardRuntimeConfig->AInChannels.Data[channelIndex];
 
     switch (channelConfig->Type) {
         case AIn_MC12bADC:
             return MC12b_ConvertToVoltage(
                     &channelConfig->Config.MC12b,
                     pRuntimeConfig,
-                    sample);
+                    rawValue);
         case AIn_AD7609:
-            return AD7609_ConvertToVoltage(pRuntimeConfig, sample);
+            return AD7609_ConvertToVoltage(pRuntimeConfig, rawValue);
         default:
             return 0.0;
     }
+}
+
+double ADC_ConvertToVoltage(const AInSample* sample) {
+    size_t channelIndex = ADC_FindChannelIndex(sample->Channel);
+    if (channelIndex >= gpBoardConfig->AInChannels.Size) {
+        return 0.0;
+    }
+    return ADC_ConvertToVoltageByIndex(channelIndex, sample->Value);
 }
 
 static uint8_t ADC_FindModuleIndex(const AInModule* pModule) {

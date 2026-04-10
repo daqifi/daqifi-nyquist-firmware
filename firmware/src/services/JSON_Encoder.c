@@ -407,7 +407,15 @@ size_t Json_Encode(tBoardData* state,
 
         uint32_t qSize = AInSampleList_Size();
         AInPublicSampleList_t *pPublicSampleList;
+        // Cache mapping pointer and fields in locals (#269)
         const AInChannelMapping* mapping = Streaming_GetChannelMapping();
+        const uint8_t mapCount = mapping->count;
+        const uint8_t* mapChannelIds = mapping->channelIds;
+        const uint8_t* mapConfigIdx = mapping->configIndices;
+        // Hoist runtime config lookup out of the per-sample loop (#269)
+        StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+                BOARDRUNTIME_STREAMING_CONFIGURATION);
+        uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
         while (((buffSize - startIndex) >= 65) && (qSize > 0)) {
             if (!AInSampleList_PopFront(&pPublicSampleList)) {
                 break;
@@ -417,27 +425,23 @@ size_t Json_Encode(tBoardData* state,
             qSize--;
             bool timestampAdded = false;
             // Clamp to the sample's own channelCount in case the mapping and
-            // the sample fall out of sync. Defensive — they should always
-            // match. Matches the CSV / NanoPB encoder pattern.
-            uint8_t n = mapping->count;
-            if (pPublicSampleList->channelCount < n) {
-                n = (uint8_t)pPublicSampleList->channelCount;
+            // the sample fall out of sync. Defensive — they should always match.
+            uint8_t chCount = mapCount;
+            if (pPublicSampleList->channelCount < chCount) {
+                chCount = (uint8_t)pPublicSampleList->channelCount;
             }
-            for (uint8_t j = 0; j < n; j++) {
+            for (uint8_t j = 0; j < chCount; j++) {
                 if (!(pPublicSampleList->validMask & (1U << j)))
                     continue;
 
-                // Build temporary AInSample for ADC_ConvertToVoltage
-                AInSample data = {
-                    .Timestamp = pPublicSampleList->Timestamp,
-                    .Channel = mapping->channelIds[j],
-                    .Value = pPublicSampleList->Values[j]
-                };
+                uint8_t channelId = mapChannelIds[j];
+                uint32_t rawValue = pPublicSampleList->Values[j];
+
                 if (!timestampAdded) {
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ts\":%u,\n",
-                            data.Timestamp);
+                            pPublicSampleList->Timestamp);
                     if (written < 0 || written >= (int)(buffSize - startIndex)) break;
                     startIndex += written;
 
@@ -449,14 +453,13 @@ size_t Json_Encode(tBoardData* state,
                     timestampAdded = true;
                 }
 
-
-                StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
-                        BOARDRUNTIME_STREAMING_CONFIGURATION);
-                uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+                // Convert raw ADC value to voltage by board config index
+                // directly (#268/#269). Skips O(N) channel-ID search.
                 int written;
                 if (precision == 0) {
                     // Integer millivolts (backwards compatible)
-                    double voltage_mv = ADC_ConvertToVoltage(&data) * 1000.0;
+                    double voltage_mv = ADC_ConvertToVoltageByIndex(
+                        mapConfigIdx[j], rawValue) * 1000.0;
                     int32_t mv;
                     if (voltage_mv > (double)INT32_MAX) mv = INT32_MAX;
                     else if (voltage_mv < (double)INT32_MIN) mv = INT32_MIN;
@@ -464,15 +467,16 @@ size_t Json_Encode(tBoardData* state,
                     written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "{\"ch\":%u, \"val\":%d},\n",
-                            data.Channel,
+                            channelId,
                             (int)mv);
                 } else {
                     // Volts with N decimal places
-                    double voltage = ADC_ConvertToVoltage(&data);
+                    double voltage = ADC_ConvertToVoltageByIndex(
+                        mapConfigIdx[j], rawValue);
                     written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "{\"ch\":%u, \"val\":%.*f},\n",
-                            data.Channel,
+                            channelId,
                             (int)precision, voltage);
                 }
                 if (written < 0 || written >= (int)(buffSize - startIndex)) break;

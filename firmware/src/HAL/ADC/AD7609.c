@@ -509,14 +509,9 @@ bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig)
 
 double AD7609_ConvertToVoltage(
                         const AInRuntimeConfig* runtimeConfig,
-                        const AInSample* sample)
+                        uint32_t rawValue)
 {
     UNUSED(runtimeConfig);
-
-    if (sample == NULL) {
-        LOG_E("AD7609_ConvertToVoltage: NULL sample");
-        return 0.0;
-    }
 
     // Get runtime range from module configuration using BoardRunTimeConfig_Get
     AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
@@ -531,15 +526,15 @@ double AD7609_ConvertToVoltage(
     const int32_t maxCode = (AD7609_MAX_VALUE >> 1); // Half scale for signed 18-bit (131071)
 
     // Convert raw ADC value to signed integer
-    int32_t rawValue = (int32_t)sample->Value;
+    int32_t signedValue = (int32_t)rawValue;
 
     // Handle 18-bit 2's complement conversion by checking sign bit
     // If bit 17 is set, the value is negative and needs sign extension
-    if (rawValue & AD7609_SIGN_BIT) {
-        rawValue |= AD7609_SIGN_EXTEND;  // Sign extend from 18 bits to 32 bits
+    if (signedValue & AD7609_SIGN_BIT) {
+        signedValue |= AD7609_SIGN_EXTEND;  // Sign extend from 18 bits to 32 bits
     }
 
     // Convert to voltage: raw / maxCode * fullScale
-    double voltage = ((double)rawValue / (double)maxCode) * fullScaleVoltage;
+    double voltage = ((double)signedValue / (double)maxCode) * fullScaleVoltage;
     return voltage;
 }

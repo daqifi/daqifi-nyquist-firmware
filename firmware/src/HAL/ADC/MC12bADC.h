@@ -76,13 +76,13 @@ bool MC12b_ReadSamples( AInSampleArray* samples,
  * NOTE: This is NOT safe to call in an ISR
  * @param[in] channelConfig Information about the channel
  * @param[in] runtimeConfig Runtime channel information
- * @param[in] sample The sample to process
+ * @param[in] rawValue Raw ADC code
  * @return The converted voltage
  */
-double MC12b_ConvertToVoltage(                                              
-                        const MC12bChannelConfig* channelConfig,            
-                        const AInRuntimeConfig* runtimeConfig,              
-                        const AInSample* sample);
+double MC12b_ConvertToVoltage(
+                        const MC12bChannelConfig* channelConfig,
+                        const AInRuntimeConfig* runtimeConfig,
+                        uint32_t rawValue);
 bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);    
 #ifdef	__cplusplus
 }

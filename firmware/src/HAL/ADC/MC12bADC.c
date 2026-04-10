@@ -173,17 +173,14 @@ bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pA
 double MC12b_ConvertToVoltage(
         const MC12bChannelConfig* channelConfig,
         const AInRuntimeConfig* runtimeConfig,
-        const AInSample* sample) {
+        uint32_t rawValue) {
 
-    double dataOut = 0.0;
     double range = gpModuleRuntimeConfigMC12->Range;
     double scale = channelConfig->InternalScale;
     double CalM = runtimeConfig->CalM;
 
-    dataOut = (range * scale * CalM * (double) sample->Value) /
+    return (range * scale * CalM * (double)rawValue) /
             (gpModuleConfigMC12->Resolution) + runtimeConfig->CalB;
-
-    return (dataOut);
 }
 
 bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal) {

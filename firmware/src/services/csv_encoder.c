@@ -342,28 +342,25 @@ static size_t tryWriteRow(
     // Write channel timestamp,value pairs using compact channel mapping (#177).
     // Packed index j matches CSV header column order (both built from same
     // board config iteration in SCPI_StartStreaming).
+    // Cache mapping pointer and fields in locals to avoid repeated global
+    // pointer dereferences in the hot loop (#269).
     const AInChannelMapping* mapping = Streaming_GetChannelMapping();
+    const uint8_t mapCount = mapping->count;
+    const uint8_t* mapConfigIdx = mapping->configIndices;
     (void)channelConfig;  // No longer needed — mapping drives iteration
 
     // Clamp to the sample's own channelCount in case the mapping and the
     // sample fall out of sync (e.g. mid-session reconfig). Defensive — they
     // should always match in practice. Matches the NanoPB encoder pattern.
-    uint8_t n = mapping->count;
-    if (*hadAIN && ainPeek && ainPeek->channelCount < n) {
-        n = (uint8_t)ainPeek->channelCount;
+    uint8_t chCount = mapCount;
+    if (*hadAIN && ainPeek && ainPeek->channelCount < chCount) {
+        chCount = (uint8_t)ainPeek->channelCount;
     }
 
-    for (uint8_t j = 0; j < n; j++) {
+    for (uint8_t j = 0; j < chCount; j++) {
         bool valid = *hadAIN && ainPeek && (ainPeek->validMask & (1U << j));
 
         if (valid) {
-            // Build temporary AInSample for ADC_ConvertToVoltage
-            AInSample tmpSample = {
-                .Timestamp = ainPeek->Timestamp,
-                .Channel = mapping->channelIds[j],
-                .Value = ainPeek->Values[j]
-            };
-
             // First field has no leading comma
             char* p = q;
             size_t space = rem;
@@ -372,7 +369,7 @@ static size_t tryWriteRow(
                 *p++ = ',';
                 space--;
             }
-            p = uint32_to_str(tmpSample.Timestamp, p, space);
+            p = uint32_to_str(ainPeek->Timestamp, p, space);
             if (p == NULL) return 0;  // Buffer exhausted
             size_t used = p - q;
             space = (used < rem) ? rem - used : 0;
@@ -380,9 +377,13 @@ static size_t tryWriteRow(
             *p++ = ',';
             space--;
 
+            // Convert raw ADC value to voltage using the board config index
+            // directly (#268/#269). Skips the O(N) channel-ID-to-index linear
+            // search that ADC_ConvertToVoltage performs internally.
             if (voltagePrecision == 0) {
                 // Integer millivolts (shorter output strings)
-                double voltage_mv = ADC_ConvertToVoltage(&tmpSample) * 1000.0;
+                double voltage_mv = ADC_ConvertToVoltageByIndex(
+                    mapConfigIdx[j], ainPeek->Values[j]) * 1000.0;
                 int32_t mv;
                 if (voltage_mv > (double)INT32_MAX) {
                     mv = INT32_MAX;
@@ -395,7 +396,8 @@ static size_t tryWriteRow(
                 if (p == NULL) return 0;
             } else {
                 // Volts with N decimal places
-                double voltage_v = ADC_ConvertToVoltage(&tmpSample);
+                double voltage_v = ADC_ConvertToVoltageByIndex(
+                    mapConfigIdx[j], ainPeek->Values[j]);
                 int n = snprintf(p, space, "%.*f", (int)voltagePrecision, voltage_v);
                 if (n < 0 || (size_t)n >= space) return 0;
                 p += n;
