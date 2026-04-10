@@ -525,6 +525,12 @@ double AD7609_ConvertToVoltage(
     // AD7609 is 18-bit, 2's complement: range -131072 to +131071.
     // AD7609_MAX_VALUE (0x1FFFF = 131071) is the max positive code.
     // Bug fix: was using MAX_VALUE >> 1 (65535) which doubled all voltages.
+    // TODO: Verify this scaling against a known reference voltage on NQ3
+    // hardware. The original >> 1 may have been compensating for a different
+    // issue (e.g., bipolar vs unipolar range interpretation, or a mismatch
+    // between fullScaleVoltage and the AD7609's actual configured range).
+    // Consult the AD7609 datasheet Table 7 (output coding) and verify with
+    // a precision voltage source before shipping this change on NQ3.
     const int32_t maxCode = AD7609_MAX_VALUE;  // 131071 = 2^17 - 1
 
     // Mask to 18-bit width before sign extension. Defensive: upstream should
