@@ -522,12 +522,15 @@ double AD7609_ConvertToVoltage(
         fullScaleVoltage = pRuntimeModules->Data[AIn_AD7609].Range;
     }
 
-    // AD7609 is 18-bit, 2's complement
-    const int32_t maxCode = (AD7609_MAX_VALUE >> 1); // Half scale for signed 18-bit (131071)
+    // AD7609 is 18-bit, 2's complement: range -131072 to +131071.
+    // AD7609_MAX_VALUE (0x1FFFF = 131071) is the max positive code.
+    // Bug fix: was using MAX_VALUE >> 1 (65535) which doubled all voltages.
+    const int32_t maxCode = AD7609_MAX_VALUE;  // 131071 = 2^17 - 1
 
     // Mask to 18-bit width before sign extension. Defensive: upstream should
     // only pass 18-bit values, but if upper bits are set (e.g., from a wider
     // register read or buffered value), they would corrupt the sign logic.
+    // 0x3FFFF = bits [17:0] = AD7609_MAX_VALUE | AD7609_SIGN_BIT
     int32_t signedValue = (int32_t)(rawValue & (AD7609_MAX_VALUE | AD7609_SIGN_BIT));
 
     // Handle 18-bit 2's complement conversion by checking sign bit
