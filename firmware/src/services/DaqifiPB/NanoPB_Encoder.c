@@ -1392,12 +1392,17 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
             if (pPublicSampleList == NULL) break;
             queueSize--;
 
-            /* Collect valid channel values from compact sample */
+            /* Collect valid channel values from compact sample.
+             * Clamp to MAX_AIN_PUBLIC_CHANNELS as defensive bound. */
             int32_t values[MAX_AIN_PUBLIC_CHANNELS];
             size_t count = 0;
             uint32_t timestamp = pPublicSampleList->Timestamp;
+            uint16_t chCount = pPublicSampleList->channelCount;
+            if (chCount > MAX_AIN_PUBLIC_CHANNELS) {
+                chCount = MAX_AIN_PUBLIC_CHANNELS;
+            }
 
-            for (uint16_t j = 0; j < pPublicSampleList->channelCount; j++) {
+            for (uint16_t j = 0; j < chCount; j++) {
                 if (!(pPublicSampleList->validMask & (1U << j)))
                     continue;
                 if (count >= MAX_AIN_PUBLIC_CHANNELS)

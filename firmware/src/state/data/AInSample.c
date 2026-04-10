@@ -440,13 +440,16 @@ void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
     }
 
     // O(1) deallocation: push to free list head.
-    // Guard against double-free underflow on the alloc counter — defensive,
-    // doesn't fix the underlying free-list corruption a real double-free
-    // would cause, but keeps usage stats reliable for debugging.
+    // Guard against double-free: if poolAllocCount is already 0, returning
+    // early prevents free-list corruption (duplicate entries would cause the
+    // same slot to be handed out twice, leading to torn data). The counter
+    // check is inside the mutex so no TOCTOU race.
     xSemaphoreTake(poolMutex, portMAX_DELAY);
-    if (poolAllocCount > 0) {
-        poolAllocCount--;
+    if (poolAllocCount == 0) {
+        xSemaphoreGive(poolMutex);
+        return;
     }
+    poolAllocCount--;
     nextFree[index] = freeHead;
     freeHead = (int16_t)index;
     xSemaphoreGive(poolMutex);
