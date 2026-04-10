@@ -525,8 +525,10 @@ double AD7609_ConvertToVoltage(
     // AD7609 is 18-bit, 2's complement
     const int32_t maxCode = (AD7609_MAX_VALUE >> 1); // Half scale for signed 18-bit (131071)
 
-    // Convert raw ADC value to signed integer
-    int32_t signedValue = (int32_t)rawValue;
+    // Mask to 18-bit width before sign extension. Defensive: upstream should
+    // only pass 18-bit values, but if upper bits are set (e.g., from a wider
+    // register read or buffered value), they would corrupt the sign logic.
+    int32_t signedValue = (int32_t)(rawValue & (AD7609_MAX_VALUE | AD7609_SIGN_BIT));
 
     // Handle 18-bit 2's complement conversion by checking sign bit
     // If bit 17 is set, the value is negative and needs sign extension
