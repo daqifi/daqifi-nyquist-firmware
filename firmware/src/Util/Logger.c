@@ -480,7 +480,7 @@ static int LogMessageAdd(const char *message) {
     #endif
 
     if (xSemaphoreTake(logBuffer.mutex, portMAX_DELAY) == pdTRUE) {
-        strncpy(logBuffer.entries[logBuffer.head].message, message, message_len);
+        memcpy(logBuffer.entries[logBuffer.head].message, message, message_len);
         logBuffer.entries[logBuffer.head].message[message_len] = '\0';
         logBuffer.head = (logBuffer.head + 1) % LOG_MAX_ENTRY_COUNT;
 

@@ -61,6 +61,12 @@ size_t wifi_serial_bridge_interface_UARTReadGetCount(void) {
     return count;
 }
 
+/* Declared noinline to prevent GCC -O3 from inlining it into the 1-byte
+   GetByte wrapper and falsely warning about memcpy overflow. The runtime
+   path is safe: numBytes=1 bounds partialReadNum to at most 1. Other
+   callers still benefit from interprocedural optimization. */
+size_t __attribute__((noinline)) wifi_serial_bridge_interface_UARTReadGetBuffer(void *pBuf, size_t numBytes);
+
 uint8_t wifiSerialBridgeIntf_UARTReadGetByte(void) {
     uint8_t byte = 0;
 
@@ -71,7 +77,7 @@ uint8_t wifiSerialBridgeIntf_UARTReadGetByte(void) {
     return byte;
 }
 
-size_t wifi_serial_bridge_interface_UARTReadGetBuffer(void *pBuf, size_t numBytes) {
+size_t __attribute__((noinline)) wifi_serial_bridge_interface_UARTReadGetBuffer(void *pBuf, size_t numBytes) {
     if (gUsartReadMutex == NULL) {
         return 0;
     }

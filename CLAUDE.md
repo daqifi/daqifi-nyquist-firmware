@@ -38,6 +38,19 @@ This is the DAQiFi Nyquist firmware project - a multi-channel data acquisition d
 
 Note: XC32 compiler is also available in Linux at `/opt/microchip/xc32/v4.60/bin/xc32-gcc`
 
+### Compiler Optimization Level
+
+The project builds with **-O3** (aggressive optimization including inlining and loop unrolling). This required four patches to fix false positives and third-party incompatibilities:
+
+| File | Patch | Reason | Permanent? |
+|------|-------|--------|-----------|
+| `libraries/scpi/libscpi/src/utils_private.h:49` | Added platform guard to `__attribute__((visibility))` | ELF visibility is meaningless on bare-metal PIC32, errors at -O3 with -Werror | No — reevaluate after libscpi upgrade |
+| `Util/Logger.c:483` | `strncpy` → `memcpy` | `strncpy(dst, src, strlen(src))` never null-terminates; memcpy is what the code actually means (next line does manual null-term) | **Yes** — genuine bug fix |
+| `services/wifi_services/wifi_serial_bridge_interface.c:68,80` | `__attribute__((noinline))` on `UARTReadGetBuffer` | GCC -O3 inlines 512-byte ring buffer read into 1-byte caller, triggers false `-Warray-bounds`. Function takes a mutex so inlining is counterproductive anyway. | No — reevaluate after XC32/GCC upgrade |
+| `daqifi.X/nbproject/configurations.xml` (per-file) | `-Wno-error=array-bounds` on `wolfssl/wolfcrypt/src/tfm.c` | GCC loses track of loop variable range after inlining in wolfSSL big-number math. Known third-party issue. | No — reevaluate after wolfSSL upgrade (currently pinned to v5.4.0) |
+
+**When upgrading XC32 or third-party libraries**, try removing patches 1, 3, and 4 and rebuild with -O3 -Werror. If the build passes clean, the patches can be deleted.
+
 ### Programming with PICkit 4 from Command Line
 1. Connect PICkit 4 to the device
 2. Use ipecmd to program the hex file:

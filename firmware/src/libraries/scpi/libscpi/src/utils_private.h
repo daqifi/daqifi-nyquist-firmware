@@ -46,7 +46,7 @@
 extern "C" {
 #endif
 
-#if defined(__GNUC__) && (__GNUC__ >= 4)
+#if defined(__GNUC__) && (__GNUC__ >= 4) && (defined(__unix__) || defined(__linux__) || defined(__APPLE__) || defined(__CYGWIN__))
 #define LOCAL __attribute__((visibility ("hidden")))
 #else
 #define LOCAL
