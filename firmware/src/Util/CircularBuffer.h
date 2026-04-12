@@ -34,7 +34,9 @@ typedef struct s_CircularBuf
 {
     uint8_t*    insertPtr;
     uint8_t*    removePtr;
-    volatile uint32_t    totalBytes;  // volatile: cross-task producer/consumer
+    volatile uint32_t    totalBytes;  // volatile: single-producer (AddBytes +=)
+                                      // single-consumer (ProcessBytes -=). RMW is
+                                      // safe: only one writer per direction.
     uint8_t*    buf_ptr;
     uint32_t    buf_size;
     int        (*process_callback)(uint8_t*, uint32_t);

@@ -167,13 +167,10 @@ static AInChannelMapping gChannelMapping = {0};
 // ENCODER_BUFFER_DEFAULT (8192) and ENCODER_BUFFER_MIN (1024) defined in
 // StreamingBufferPool.h. Benchmark: 8KB optimal for USB, 16KB helps SD.
 //
-// volatile: written by SCPI/USB task (Streaming_SetEncoderBuffer, called
-// during pool repartitioning at each StartStreamData), read by streaming_Task
-// in its while(1) loop.  Both are file-scope static with no escaped address
-// (&buffer / &bufferSize never taken), so without volatile the compiler at
-// -O2+ can prove no external function modifies them and cache them in
-// registers for the entire loop — making the streaming task blind to
-// repartitioned buffer pointers.  See Issue #271.
+// volatile: written by SCPI/USB task during StartStreamData (streaming is
+// stopped, so no torn-read risk — the streaming task is blocked on
+// ulTaskNotifyTake). Without volatile, -O2+ caches these in registers
+// across the while(1) loop since their addresses are never taken.
 static uint8_t* volatile buffer = NULL;
 static volatile uint32_t bufferSize = 0;
 
