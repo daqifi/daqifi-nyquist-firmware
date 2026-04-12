@@ -40,16 +40,28 @@ Note: XC32 compiler is also available in Linux at `/opt/microchip/xc32/v4.60/bin
 
 ### Compiler Optimization Level
 
-The project builds with **-O3** (aggressive optimization including inlining and loop unrolling). This required four patches to fix false positives and third-party incompatibilities:
+The project builds with **-O3** globally, with per-file overrides where needed. This required patches to fix false positives and third-party incompatibilities:
+
+#### Per-File Optimization Overrides
+
+| File | Optimization | Reason | Permanent? |
+|------|-------------|--------|-----------|
+| `third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c` | **-O1** | O2 miscompiles FreeRTOS list operations — `listINSERT_END` stores reordered so `pxContainer` is NULL when `xTaskResumeAll` reads it, causing crash (BadVAddr=4). See Issue #271. | **Yes** — common RTOS practice; kernel perf impact negligible |
+| `third_party/wolfssl/wolfcrypt/src/tfm.c` | -O3 with `-Wno-error=array-bounds` | GCC loses track of loop variable range after inlining in wolfSSL big-number math. Known third-party issue. | No — reevaluate after wolfSSL upgrade (currently pinned to v5.4.0) |
+
+#### Source Patches for -O2/-O3
 
 | File | Patch | Reason | Permanent? |
 |------|-------|--------|-----------|
 | `libraries/scpi/libscpi/src/utils_private.h:49` | Added platform guard to `__attribute__((visibility))` | ELF visibility is meaningless on bare-metal PIC32, errors at -O3 with -Werror | No — reevaluate after libscpi upgrade |
 | `Util/Logger.c:483` | `strncpy` → `memcpy` | `strncpy(dst, src, strlen(src))` never null-terminates; memcpy is what the code actually means (next line does manual null-term) | **Yes** — genuine bug fix |
 | `services/wifi_services/wifi_serial_bridge_interface.c:68,80` | `__attribute__((noinline))` on `UARTReadGetBuffer` | GCC -O3 inlines 512-byte ring buffer read into 1-byte caller, triggers false `-Warray-bounds`. Function takes a mutex so inlining is counterproductive anyway. | No — reevaluate after XC32/GCC upgrade |
-| `daqifi.X/nbproject/configurations.xml` (per-file) | `-Wno-error=array-bounds` on `wolfssl/wolfcrypt/src/tfm.c` | GCC loses track of loop variable range after inlining in wolfSSL big-number math. Known third-party issue. | No — reevaluate after wolfSSL upgrade (currently pinned to v5.4.0) |
 
-**When upgrading XC32 or third-party libraries**, try removing patches 1, 3, and 4 and rebuild with -O3 -Werror. If the build passes clean, the patches can be deleted.
+#### Known Linker Issue (Issue #271, informational)
+
+The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.bss.*` sections. At O2+ with `-fdata-sections`, this can place variables at two addresses (`.sbss` GP-relative vs `.bss.*` best-fit), causing dual-address bugs. This was the root cause of the O2 FreeRTOS crash. The fix is to keep `FreeRTOS_tasks.c` at O1 (which prevents `.bss.*` section creation for its statics). The linker script is left at Microchip default — no modification needed as long as FreeRTOS stays at O1.
+
+**When upgrading XC32 or third-party libraries**, try removing source patches 1 and 3 and rebuild with -Werror. If the build passes clean, the patches can be deleted. The FreeRTOS O1 override should be kept regardless of compiler version.
 
 ### Programming with PICkit 4 from Command Line
 1. Connect PICkit 4 to the device
@@ -1110,9 +1122,9 @@ USB streaming data delivery to the host is inherently bursty due to the firmware
 
 #### Important Testing Notes
 
-1. **Picocom Limitations — Use Python Libraries for Streaming Tests**
+1. **Picocom — ONLY for Simple Non-Streaming SCPI Queries**
 
-   Picocom is suitable ONLY for simple SCPI command/response testing (non-streaming). It has critical limitations that cause device crashes and test failures:
+   **Do NOT use picocom for streaming, benchmarking, or any multi-step test sequence.** Always use the Python test suite (`test_harness.py` → `ReliableSCPI` + `FastReader`) instead. Picocom has critical limitations that cause device crashes, false test results, and USB disconnects:
 
    **Problem 1: `-x` timeout is idle-based, not hard timeout.** When the device is streaming (PB or CSV), picocom receives continuous data and the "exit after N ms of inactivity" condition never triggers. The process hangs indefinitely.
 
