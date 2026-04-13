@@ -114,9 +114,34 @@ bool MC12b_WriteStateAll(
     size_t i = 0;
     bool result = true;
     for (i = 0; i < channelConfig->Size; ++i) {
+        if (channelConfig->Data[i].Type != AIn_MC12bADC) continue;
         result &= MC12b_WriteStateSingle(
                 &(channelConfig->Data[i].Config.MC12b),
                 &channelRuntimeConfig->Data[i]);
+    }
+
+    // Batch interrupt for Type 1: enable only CH3's result interrupt
+    // (the batch trigger). All Type 1 results are read from CH3's ISR.
+    // Disable result interrupts for other Type 1 channels (CH0-CH2, CH4).
+    bool anyType1Enabled = false;
+    for (i = 0; i < channelConfig->Size; ++i) {
+        if (channelConfig->Data[i].Type == AIn_MC12bADC &&
+            channelConfig->Data[i].Config.MC12b.ChannelType == 1 &&
+            channelRuntimeConfig->Data[i].IsEnabled) {
+            anyType1Enabled = true;
+            // Disable this channel's individual result interrupt
+            ADCHS_ChannelResultInterruptDisable(
+                channelConfig->Data[i].Config.MC12b.ChannelId);
+        }
+    }
+    if (anyType1Enabled) {
+        // Enable MODULE3 and its result interrupt as batch trigger.
+        // MODULE3 may not have an enabled user channel (ch14), but it
+        // must be active so its data-ready ISR fires and reads all results.
+        ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
+        ADCHS_ChannelResultInterruptEnable(ADCHS_CH3);
+    } else {
+        ADCHS_ChannelResultInterruptDisable(ADCHS_CH3);
     }
 
     if (isEnabled) {
@@ -130,39 +155,41 @@ bool MC12b_WriteStateSingle(
         const MC12bChannelConfig* channelConfig,
         AInRuntimeConfig* channelRuntimeConfig) {
 
-
     if (channelConfig->ChannelType == 1) {
         if (channelRuntimeConfig->IsEnabled) {
             ADCHS_ModulesEnable(channelConfig->ModuleId);
-            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);
+            // Do NOT enable per-channel result interrupt here.
+            // Type 1 channels use batch ISR via CH3 (see WriteStateAll).
         } else {
             ADCHS_ModulesDisable(channelConfig->ModuleId);
             ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);
         }
     }
-    //    else {
-    //        if (channelRuntimeConfig->IsEnabled) {
-    //            ADCHS_ChannelResultInterruptEnable(channelConfig->ChannelId);          
-    //        } else {
-    //            ADCHS_ChannelResultInterruptDisable(channelConfig->ChannelId);           
-    //            
-    //        }
-    //    }
-    // TODO: What about channel 2-3
     return true;
 }
 
 bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr, MC12b_adcType_t type) {
     int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size);
     if (type == MC12B_ADC_TYPE_DEDICATED || type==MC12B_ADC_TYPE_ALL) {
+        bool anyType1Triggered = false;
+        bool triggerChTriggered = false;
         for (int i = 0; i < aiChannelSize; i++) {
-            if (pRunTimeChannlConfig->Data[i].IsEnabled) {
-                // Check Type before accessing union member
-                if (pAIConfigArr->Data[i].Type == AIn_MC12bADC &&
-                        pAIConfigArr->Data[i].Config.MC12b.ChannelType == 1){
-                    ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
+            if (pRunTimeChannlConfig->Data[i].IsEnabled &&
+                pAIConfigArr->Data[i].Type == AIn_MC12bADC &&
+                pAIConfigArr->Data[i].Config.MC12b.ChannelType == 1) {
+                ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
+                anyType1Triggered = true;
+                if (pAIConfigArr->Data[i].Config.MC12b.ChannelId == ADCHS_CH3) {
+                    triggerChTriggered = true;
                 }
             }
+        }
+        // Always trigger CH3 (batch trigger) so its data-ready ISR fires
+        // and reads all Type 1 results. If ch14 (CH3) is disabled, MODULE3
+        // converts but the result is harmlessly discarded by the ISR
+        // (no matching enabled channel in ADC_ReadADCSampleFromISR).
+        if (anyType1Triggered && !triggerChTriggered) {
+            ADCHS_ChannelConversionStart(ADCHS_CH3);
         }
     }
     if(type==MC12B_ADC_TYPE_SHARED || type==MC12B_ADC_TYPE_ALL)

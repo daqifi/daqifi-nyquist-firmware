@@ -154,38 +154,42 @@ void __attribute__((used)) TIMER_7_Handler (void)
     TIMER_7_InterruptHandler();
 }
 
-void __attribute__((used)) ADC_DATA0_Handler(void) {    
-    if (ADCHS_ChannelResultIsReady(0)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(0), 0);
-    }
+// Type 1 (dedicated) ADC channels: batch-read all results from a single ISR.
+// All dedicated modules (0-4) convert simultaneously, so when CH3 (the batch
+// trigger) completes, all others are ready. This eliminates 4 redundant ISR
+// entries per sample period. See Issue #277.
+//
+// CH3 (MODULE3, DaqiFi ch14) is the batch trigger — always triggered when
+// any Type 1 channel is active (see MC12b_TriggerConversion).
+
+void __attribute__((used)) ADC_DATA0_Handler(void) {
+    // Interrupt disabled for batching — stub clears IFS only (safety)
     ADC_DATA0_InterruptHandler();
 }
 
-void __attribute__((used)) ADC_DATA1_Handler(void) {    
-    if (ADCHS_ChannelResultIsReady(1)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(1), 1);
-    }
+void __attribute__((used)) ADC_DATA1_Handler(void) {
     ADC_DATA1_InterruptHandler();
 }
 
-void __attribute__((used)) ADC_DATA2_Handler(void) {   
-    if (ADCHS_ChannelResultIsReady(2)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(2), 2);
-    }
+void __attribute__((used)) ADC_DATA2_Handler(void) {
     ADC_DATA2_InterruptHandler();
 }
 
-void __attribute__((used)) ADC_DATA3_Handler(void) {    
-    if (ADCHS_ChannelResultIsReady(3)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(3), 3);
+void __attribute__((used)) ADC_DATA3_Handler(void) {
+    // Batch trigger: read all Type 1 dedicated channel results (CH0-CH4).
+    // ChannelResultIsReady returns false for modules that weren't triggered
+    // (disabled channels), so only enabled channels' results are read.
+    static const uint8_t type1Channels[] = { 0, 1, 2, 3, 4 };
+    for (int i = 0; i < 5; i++) {
+        uint8_t ch = type1Channels[i];
+        if (ADCHS_ChannelResultIsReady(ch)) {
+            ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(ch), ch);
+        }
     }
     ADC_DATA3_InterruptHandler();
 }
 
-void __attribute__((used)) ADC_DATA4_Handler(void) {    
-    if (ADCHS_ChannelResultIsReady(4)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(4), 4);        
-    }
+void __attribute__((used)) ADC_DATA4_Handler(void) {
     ADC_DATA4_InterruptHandler();
 }
 
