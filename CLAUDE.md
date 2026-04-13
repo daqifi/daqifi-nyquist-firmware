@@ -218,6 +218,45 @@ Commit and push wiki changes after updating.
    - Streaming engine manages buffer flow and encoding
    - Supports multiple simultaneous outputs
 
+#### ADC Architecture & ISR Design
+
+The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR strategies:
+
+**Type 1 — Dedicated modules (simultaneous conversion):**
+- NQ1 channels: ch4 (MODULE4), ch8 (MODULE0), ch10 (MODULE1), ch12 (MODULE2), ch14 (MODULE3)
+- Each channel has its own SAR ADC module — all convert simultaneously on trigger
+- **Batched ISR**: A single data-ready interrupt (CH3/MODULE3) reads all Type 1 results. CH3 is always triggered when any Type 1 channel is active, even if ch14 itself is disabled. This eliminates N-1 redundant ISR entries per sample. See Issue #277.
+- Trigger: `ADCHS_ChannelConversionStart()` per enabled channel in `MC12b_TriggerConversion()`
+
+**Type 2 — Shared MODULE7 (sequential mux scan):**
+- NQ1 channels: ch0, ch1, ch2, ch3, ch5, ch6, ch7, ch9, ch11, ch13, ch15
+- All share MODULE7 — channels scanned sequentially via analog multiplexer
+- **Single EOS ISR**: `ADC_EOS_Handler` fires once after the entire scan completes
+- Results read by `MC12bADC_EosInterruptTask` (deferred task, priority 8)
+- Trigger: `ADCHS_GlobalEdgeConversionStart()` in `MC12b_TriggerConversion()`
+
+**ISR flow per streaming timer tick:**
+1. Streaming timer ISR (`Streaming_Defer_Interrupt`) fires → notifies deferred task
+2. Deferred task calls `MC12b_TriggerConversion(MC12B_ADC_TYPE_ALL)`
+3. Type 1: individual `ChannelConversionStart` + CH3 phantom trigger → single `ADC_DATA3_Handler` reads all
+4. Type 2: `GlobalEdgeConversionStart` → MODULE7 scans → `ADC_EOS_Handler` → `MC12bADC_EosInterruptTask` reads all
+5. Results stored via `ADC_ReadADCSampleFromISR()` → `BoardData_Set(BOARDDATA_AIN_LATEST)`
+
+**Key files:**
+- `config/default/interrupts.c` — `ADC_DATA3_Handler` (Type 1 batch), `ADC_EOS_Handler` (Type 2)
+- `HAL/ADC/MC12bADC.c` — `MC12b_TriggerConversion`, `MC12b_WriteStateAll` (batch interrupt setup)
+- `HAL/ADC.c` — `MC12bADC_EosInterruptTask`, `ADC_ReadADCSampleFromISR`
+
+**Characterization results (O3, USB PB, zero-loss ceiling):**
+
+| Config | Ceiling Hz | Notes |
+|--------|-----------|-------|
+| 1×T1 | ~15,000 | Single dedicated module |
+| 5×T1 | ~11,000 | All 5 simultaneous (batched ISR) |
+| 1×T2 | ~16,800 | Single mux channel |
+| 11×T2 | ~11,400 | Full mux scan |
+| 5T1+11T2 (16ch) | ~6,400 | Both ADC paths active |
+
 #### Voltage Output Precision
 
 Systemwide configurable voltage precision via `StreamingRuntimeConfig.VoltagePrecision`. Applies to CSV streaming, JSON streaming, and SCPI voltage queries (`MEAS:VOLT:DC?`, `SOUR:VOLT:LEV?`).
