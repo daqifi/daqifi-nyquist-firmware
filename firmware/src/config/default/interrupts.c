@@ -177,11 +177,9 @@ void __attribute__((used)) ADC_DATA2_Handler(void) {
 
 void __attribute__((used)) ADC_DATA3_Handler(void) {
     // Batch trigger: read all Type 1 dedicated channel results (CH0-CH4).
-    // ChannelResultIsReady returns false for modules that weren't triggered
-    // (disabled channels), so only enabled channels' results are read.
-    static const uint8_t type1Channels[] = { 0, 1, 2, 3, 4 };
-    for (int i = 0; i < 5; i++) {
-        uint8_t ch = type1Channels[i];
+    // Fixed bound avoids cross-TU function call (O3-unsafe, see #277).
+    // ChannelResultIsReady filters disabled modules.
+    for (uint32_t ch = 0; ch < 5; ch++) {
         if (ADCHS_ChannelResultIsReady(ch)) {
             ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(ch), ch);
         }

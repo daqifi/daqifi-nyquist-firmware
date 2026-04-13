@@ -24,6 +24,13 @@
 #define max(x,y) x >= y ? x : y
 #endif // min
 
+//! Bitmask of enabled Type 1 ADCHS channels (bits 0-4).
+//! Set by MC12b_WriteStateAll; getter available for diagnostics.
+//! uint32_t (native bus width) — see Issue #277.
+static volatile uint32_t gType1EnabledMask = 0;
+
+uint32_t MC12b_GetType1EnabledMask(void) { return gType1EnabledMask; }
+
 //! Pointer to the module configuration data structure to be set in initialization
 static MC12bModuleConfig* gpModuleConfigMC12;
 //! Pointer to the module configuration data structure in runtime
@@ -120,24 +127,21 @@ bool MC12b_WriteStateAll(
                 &channelRuntimeConfig->Data[i]);
     }
 
-    // Batch interrupt for Type 1: enable only CH3's result interrupt
-    // (the batch trigger). All Type 1 results are read from CH3's ISR.
-    // Disable result interrupts for other Type 1 channels (CH0-CH2, CH4).
-    bool anyType1Enabled = false;
+    // Batch interrupt for Type 1: build bitmask of enabled ADCHS channels
+    // and enable only CH3's result interrupt (the batch trigger).
+    uint8_t mask = 0;
     for (i = 0; i < channelConfig->Size; ++i) {
         if (channelConfig->Data[i].Type == AIn_MC12bADC &&
-            channelConfig->Data[i].Config.MC12b.ChannelType == 1 &&
-            channelRuntimeConfig->Data[i].IsEnabled) {
-            anyType1Enabled = true;
-            // Disable this channel's individual result interrupt
-            ADCHS_ChannelResultInterruptDisable(
-                channelConfig->Data[i].Config.MC12b.ChannelId);
+            channelConfig->Data[i].Config.MC12b.ChannelType == 1) {
+            uint8_t chId = channelConfig->Data[i].Config.MC12b.ChannelId;
+            if (channelRuntimeConfig->Data[i].IsEnabled) {
+                mask |= (1U << chId);
+            }
+            ADCHS_ChannelResultInterruptDisable(chId);
         }
     }
-    if (anyType1Enabled) {
-        // Enable MODULE3 and its result interrupt as batch trigger.
-        // MODULE3 may not have an enabled user channel (ch14), but it
-        // must be active so its data-ready ISR fires and reads all results.
+    gType1EnabledMask = mask;
+    if (mask != 0) {
         ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
         ADCHS_ChannelResultInterruptEnable(ADCHS_CH3);
     } else {

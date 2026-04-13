@@ -83,7 +83,13 @@ double MC12b_ConvertToVoltage(
                         const MC12bChannelConfig* channelConfig,
                         const AInRuntimeConfig* runtimeConfig,
                         uint32_t rawValue);
-bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);    
+bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);
+
+/**
+ * Returns bitmask of enabled Type 1 ADCHS channels (bits 0-4).
+ */
+uint32_t MC12b_GetType1EnabledMask(void);
+
 #ifdef	__cplusplus
 }
 #endif
