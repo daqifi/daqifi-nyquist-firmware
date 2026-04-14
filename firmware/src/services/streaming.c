@@ -408,23 +408,18 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 bool hwShd = MC12b_IsHwTriggerShared();
 
                 if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
-                    if (!hwDed || !hwShd) {
-                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                            if (pBoardConfig->AInModules.Data[i].Type != AIn_MC12bADC) {
-                                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
-                            } else if (!hwDed || !hwShd) {
-                                MC12b_adcType_t swType = MC12B_ADC_TYPE_ALL;
-                                if (hwDed && !hwShd) swType = MC12B_ADC_TYPE_SHARED;
-                                else if (!hwDed && hwShd) swType = MC12B_ADC_TYPE_DEDICATED;
-                                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], swType);
-                            }
+                    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                        if (pBoardConfig->AInModules.Data[i].Type != AIn_MC12bADC) {
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
+                            continue;
                         }
-                    } else {
-                        // Full hardware trigger — only trigger non-MC12bADC devices
-                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                            if (pBoardConfig->AInModules.Data[i].Type != AIn_MC12bADC) {
-                                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
-                            }
+                        // MC12bADC: software-trigger only the parts not
+                        // covered by hardware triggering.
+                        if (!hwDed || !hwShd) {
+                            MC12b_adcType_t swType = MC12B_ADC_TYPE_ALL;
+                            if (hwDed && !hwShd) swType = MC12B_ADC_TYPE_SHARED;
+                            else if (!hwDed && hwShd) swType = MC12B_ADC_TYPE_DEDICATED;
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], swType);
                         }
                     }
                 } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
