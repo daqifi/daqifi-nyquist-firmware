@@ -1254,8 +1254,54 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="false">
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="true">
         <C32>
+          <property key="additional-warnings" value="true"/>
+          <property key="addresss-attribute-use" value="false"/>
+          <property key="cast-align" value="false"/>
+          <property key="code-model" value="default"/>
+          <property key="const-model" value="default"/>
+          <property key="data-model" value="default"/>
+          <property key="disable-instruction-scheduling" value="false"/>
+          <property key="enable-app-io" value="false"/>
+          <property key="enable-omit-frame-pointer" value="false"/>
+          <property key="enable-procedural-abstraction" value="false"/>
+          <property key="enable-short-double" value="false"/>
+          <property key="enable-symbols" value="true"/>
+          <property key="enable-unroll-loops" value="false"/>
+          <property key="exclude-floating-point" value="false"/>
+          <property key="expand-pragma-config" value="false"/>
+          <property key="extra-include-directories"
+                    value="../src;../src/config/default;../src/config/default/driver/winc/include/;../src/config/default/driver/winc/include/dev;../src/config/default/driver/winc/include/drv/bsp;../src/config/default/driver/winc/include/drv/bsp/include;../src/config/default/driver/winc/include/drv/common;../src/config/default/driver/winc/include/drv/driver;../src/config/default/driver/winc/include/drv/socket;../src/config/default/driver/winc/include/drv/spi_flash;../src/config/default/system/fs/fat_fs/file_system;../src/config/default/system/fs/fat_fs/hardware_access;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ;../src/third_party/wolfssl;../src/third_party/wolfssl/wolfssl;../src/third_party/zlib;../src/libraries/scpi/libscpi/inc"/>
+          <property key="generate-16-bit-code" value="false"/>
+          <property key="generate-micro-compressed-code" value="false"/>
+          <property key="isolate-each-function" value="true"/>
+          <property key="keep-inline" value="false"/>
+          <property key="make-warnings-into-errors" value="true"/>
+          <property key="oXC16gcc-errata" value=""/>
+          <property key="oXC16gcc-large-aggregate" value="false"/>
+          <property key="oXC16gcc-mpa-lvl" value=""/>
+          <property key="oXC16gcc-name-text-sec" value=""/>
+          <property key="oXC16gcc-near-chars" value="false"/>
+          <property key="oXC16gcc-no-isr-warn" value="false"/>
+          <property key="oXC16gcc-sfr-warn" value="false"/>
+          <property key="oXC16gcc-smar-io-lvl" value="1"/>
+          <property key="oXC16gcc-smart-io-fmt" value=""/>
+          <property key="optimization-level" value="-O1"/>
+          <property key="place-data-into-section" value="true"/>
+          <property key="post-instruction-scheduling" value="default"/>
+          <property key="pre-instruction-scheduling" value="default"/>
+          <property key="preprocessor-macros"
+                    value="FORCE_BOOTLOADER_FLAG_ADDR=&quot;0x80000000+0x80000-0x10&quot;;FORCE_BOOTLOADER_FLAG_VALUE=&quot;0xF4CEB007&quot;;HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN"/>
+          <property key="scalar-model" value="default"/>
+          <property key="strict-ansi" value="false"/>
+          <property key="support-ansi" value="false"/>
+          <property key="tentative-definitions" value=""/>
+          <property key="toplevel-reordering" value=""/>
+          <property key="unaligned-access" value=""/>
+          <property key="use-cci" value="false"/>
+          <property key="use-iar" value="false"/>
+          <property key="use-indirect-calls" value="false"/>
         </C32>
         <C32-AR>
         </C32-AR>
@@ -4299,8 +4345,54 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="false">
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="true">
         <C32>
+          <property key="additional-warnings" value="true"/>
+          <property key="addresss-attribute-use" value="false"/>
+          <property key="cast-align" value="false"/>
+          <property key="code-model" value="default"/>
+          <property key="const-model" value="default"/>
+          <property key="data-model" value="default"/>
+          <property key="disable-instruction-scheduling" value="false"/>
+          <property key="enable-app-io" value="false"/>
+          <property key="enable-omit-frame-pointer" value="false"/>
+          <property key="enable-procedural-abstraction" value="false"/>
+          <property key="enable-short-double" value="false"/>
+          <property key="enable-symbols" value="true"/>
+          <property key="enable-unroll-loops" value="false"/>
+          <property key="exclude-floating-point" value="false"/>
+          <property key="expand-pragma-config" value="false"/>
+          <property key="extra-include-directories"
+                    value="../src;../src/config/default;../src/config/default/driver/winc/include/;../src/config/default/driver/winc/include/dev;../src/config/default/driver/winc/include/drv/bsp;../src/config/default/driver/winc/include/drv/bsp/include;../src/config/default/driver/winc/include/drv/common;../src/config/default/driver/winc/include/drv/driver;../src/config/default/driver/winc/include/drv/socket;../src/config/default/driver/winc/include/drv/spi_flash;../src/config/default/system/fs/fat_fs/file_system;../src/config/default/system/fs/fat_fs/hardware_access;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ;../src/third_party/wolfssl;../src/third_party/wolfssl/wolfssl;../src/third_party/zlib;../src/libraries/scpi/libscpi/inc"/>
+          <property key="generate-16-bit-code" value="false"/>
+          <property key="generate-micro-compressed-code" value="false"/>
+          <property key="isolate-each-function" value="true"/>
+          <property key="keep-inline" value="false"/>
+          <property key="make-warnings-into-errors" value="true"/>
+          <property key="oXC16gcc-errata" value=""/>
+          <property key="oXC16gcc-large-aggregate" value="false"/>
+          <property key="oXC16gcc-mpa-lvl" value=""/>
+          <property key="oXC16gcc-name-text-sec" value=""/>
+          <property key="oXC16gcc-near-chars" value="false"/>
+          <property key="oXC16gcc-no-isr-warn" value="false"/>
+          <property key="oXC16gcc-sfr-warn" value="false"/>
+          <property key="oXC16gcc-smar-io-lvl" value="1"/>
+          <property key="oXC16gcc-smart-io-fmt" value=""/>
+          <property key="optimization-level" value="-O1"/>
+          <property key="place-data-into-section" value="true"/>
+          <property key="post-instruction-scheduling" value="default"/>
+          <property key="pre-instruction-scheduling" value="default"/>
+          <property key="preprocessor-macros"
+                    value="FORCE_BOOTLOADER_FLAG_ADDR=&quot;0x80000000+0x80000-0x10&quot;;FORCE_BOOTLOADER_FLAG_VALUE=&quot;0xF4CEB007&quot;;HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN"/>
+          <property key="scalar-model" value="default"/>
+          <property key="strict-ansi" value="false"/>
+          <property key="support-ansi" value="false"/>
+          <property key="tentative-definitions" value=""/>
+          <property key="toplevel-reordering" value=""/>
+          <property key="unaligned-access" value=""/>
+          <property key="use-cci" value="false"/>
+          <property key="use-iar" value="false"/>
+          <property key="use-indirect-calls" value="false"/>
         </C32>
         <C32-AR>
         </C32-AR>
@@ -6981,8 +7073,54 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="false">
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="true">
         <C32>
+          <property key="additional-warnings" value="true"/>
+          <property key="addresss-attribute-use" value="false"/>
+          <property key="cast-align" value="false"/>
+          <property key="code-model" value="default"/>
+          <property key="const-model" value="default"/>
+          <property key="data-model" value="default"/>
+          <property key="disable-instruction-scheduling" value="false"/>
+          <property key="enable-app-io" value="false"/>
+          <property key="enable-omit-frame-pointer" value="false"/>
+          <property key="enable-procedural-abstraction" value="false"/>
+          <property key="enable-short-double" value="false"/>
+          <property key="enable-symbols" value="true"/>
+          <property key="enable-unroll-loops" value="false"/>
+          <property key="exclude-floating-point" value="false"/>
+          <property key="expand-pragma-config" value="false"/>
+          <property key="extra-include-directories"
+                    value="../src;../src/config/default;../src/config/default/driver/winc/include/;../src/config/default/driver/winc/include/dev;../src/config/default/driver/winc/include/drv/bsp;../src/config/default/driver/winc/include/drv/bsp/include;../src/config/default/driver/winc/include/drv/common;../src/config/default/driver/winc/include/drv/driver;../src/config/default/driver/winc/include/drv/socket;../src/config/default/driver/winc/include/drv/spi_flash;../src/config/default/system/fs/fat_fs/file_system;../src/config/default/system/fs/fat_fs/hardware_access;../src/third_party/rtos/FreeRTOS/Source/include;../src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ;../src/third_party/wolfssl;../src/third_party/wolfssl/wolfssl;../src/third_party/zlib;../src/libraries/scpi/libscpi/inc"/>
+          <property key="generate-16-bit-code" value="false"/>
+          <property key="generate-micro-compressed-code" value="false"/>
+          <property key="isolate-each-function" value="true"/>
+          <property key="keep-inline" value="false"/>
+          <property key="make-warnings-into-errors" value="true"/>
+          <property key="oXC16gcc-errata" value=""/>
+          <property key="oXC16gcc-large-aggregate" value="false"/>
+          <property key="oXC16gcc-mpa-lvl" value=""/>
+          <property key="oXC16gcc-name-text-sec" value=""/>
+          <property key="oXC16gcc-near-chars" value="false"/>
+          <property key="oXC16gcc-no-isr-warn" value="false"/>
+          <property key="oXC16gcc-sfr-warn" value="false"/>
+          <property key="oXC16gcc-smar-io-lvl" value="1"/>
+          <property key="oXC16gcc-smart-io-fmt" value=""/>
+          <property key="optimization-level" value="-O1"/>
+          <property key="place-data-into-section" value="true"/>
+          <property key="post-instruction-scheduling" value="default"/>
+          <property key="pre-instruction-scheduling" value="default"/>
+          <property key="preprocessor-macros"
+                    value="FORCE_BOOTLOADER_FLAG_ADDR=&quot;0x80000000+0x80000-0x10&quot;;FORCE_BOOTLOADER_FLAG_VALUE=&quot;0xF4CEB007&quot;;HAVE_CONFIG_H;WOLFSSL_IGNORE_FILE_WARN"/>
+          <property key="scalar-model" value="default"/>
+          <property key="strict-ansi" value="false"/>
+          <property key="support-ansi" value="false"/>
+          <property key="tentative-definitions" value=""/>
+          <property key="toplevel-reordering" value=""/>
+          <property key="unaligned-access" value=""/>
+          <property key="use-cci" value="false"/>
+          <property key="use-iar" value="false"/>
+          <property key="use-indirect-calls" value="false"/>
         </C32>
         <C32-AR>
         </C32-AR>

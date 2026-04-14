@@ -222,3 +222,54 @@ bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal) {
     *pVal = 0;
     return false;
 }
+
+// Hardware trigger source values from PIC32MZ EFM ATDF (DS60001320).
+// Per-channel TRGSRC (ADCTRGx) and scan STRGSRC (ADCCON1) share the
+// same encoding.
+#define ADC_TRGSRC_NONE     0   // Software only (RQCNVRT / GSWTRG)
+#define ADC_TRGSRC_GSWTRG   1   // Global software edge trigger
+#define ADC_TRGSRC_TMR5     7   // Timer4/5 match (streaming timer)
+
+void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared) {
+    uint32_t dedicatedSrc = hwDedicated ? ADC_TRGSRC_TMR5 : ADC_TRGSRC_NONE;
+    uint32_t sharedSrc    = hwShared    ? ADC_TRGSRC_TMR5 : ADC_TRGSRC_GSWTRG;
+
+    // Dedicated modules (AN0-AN4): set per-channel trigger source in ADCTRGx.
+    // Each TRGSRCn field is 5 bits at byte-aligned positions within ADCTRGx.
+    // AN0-AN3 in ADCTRG1, AN4 in ADCTRG2[4:0].
+    ADCTRG1 = (dedicatedSrc <<  0) |   // AN0 (MODULE0)
+              (dedicatedSrc <<  8) |   // AN1 (MODULE1)
+              (dedicatedSrc << 16) |   // AN2 (MODULE2)
+              (dedicatedSrc << 24);    // AN3 (MODULE3 / batch trigger)
+
+    // ADCTRG2: AN4 (dedicated MODULE4) + AN5-AN7 (shared MODULE7)
+    uint32_t sharedMuxSrc = hwShared ? ADC_TRGSRC_TMR5 : ADC_TRGSRC_GSWTRG;
+    ADCTRG2 = (dedicatedSrc <<  0) |   // AN4 (MODULE4)
+              (sharedMuxSrc <<  8) |   // AN5 (shared)
+              (sharedMuxSrc << 16) |   // AN6 (shared)
+              (sharedMuxSrc << 24);    // AN7 (shared)
+
+    // ADCTRG3: AN8 (shared), AN9-AN10 (unused?), AN11 (shared)
+    ADCTRG3 = (sharedMuxSrc <<  0) |   // AN8 (shared)
+              (ADC_TRGSRC_NONE << 8) | // AN9
+              (ADC_TRGSRC_NONE << 16) | // AN10
+              (sharedMuxSrc << 24);    // AN11 (shared)
+
+    // ADCCON1.STRGSRC: scan trigger source for MODULE7 global edge conversion.
+    // Bits [20:16]. Preserve other ADCCON1 bits (FSSCLKEN, FSPBCLKEN, etc.).
+    uint32_t con1 = ADCCON1;
+    con1 &= ~(0x1FU << 16);           // Clear STRGSRC[20:16]
+    con1 |= (sharedSrc << 16);        // Set new scan trigger source
+    ADCCON1 = con1;
+}
+
+// No static shadow variables — read the SFR registers directly to
+// determine if hardware triggering is active.  The register value IS
+// the authoritative state.  Avoids O3 .sbss layout issues (#277, #282).
+bool MC12b_IsHwTriggerDedicated(void) {
+    return (ADCTRG1 & 0x1FU) == ADC_TRGSRC_TMR5;
+}
+
+bool MC12b_IsHwTriggerShared(void) {
+    return ((ADCCON1 >> 16) & 0x1FU) == ADC_TRGSRC_TMR5;
+}

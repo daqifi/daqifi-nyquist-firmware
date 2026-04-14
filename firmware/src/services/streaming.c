@@ -399,15 +399,39 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
 
             // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
-            // Normal/NoCap modes trigger ADC for next conversion cycle.
+            // Normal/NoCap modes: with hardware triggering (#282), the timer
+            // match event directly triggers MC12bADC modules — only non-HW
+            // devices (AD7609, DIO) and divided-rate shared scans need software
+            // triggers here.
             if (gBenchmarkMode != BENCHMARK_PIPELINE) {
+                bool hwDed = MC12b_IsHwTriggerDedicated();
+                bool hwShd = MC12b_IsHwTriggerShared();
+
                 if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
-                    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                        ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
+                    if (!hwDed || !hwShd) {
+                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                            if (pBoardConfig->AInModules.Data[i].Type != AIn_MC12bADC) {
+                                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
+                            } else if (!hwDed || !hwShd) {
+                                MC12b_adcType_t swType = MC12B_ADC_TYPE_ALL;
+                                if (hwDed && !hwShd) swType = MC12B_ADC_TYPE_SHARED;
+                                else if (!hwDed && hwShd) swType = MC12B_ADC_TYPE_DEDICATED;
+                                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], swType);
+                            }
+                        }
+                    } else {
+                        // Full hardware trigger — only trigger non-MC12bADC devices
+                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                            if (pBoardConfig->AInModules.Data[i].Type != AIn_MC12bADC) {
+                                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
+                            }
+                        }
                     }
                 } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
-                    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                        ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
+                    if (!hwDed) {
+                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
+                        }
                     }
 
                     if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
@@ -677,6 +701,15 @@ static void Streaming_Start(void) {
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
         TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
+
+        // Enable hardware ADC triggering only when actually streaming.
+        // Streaming_Start runs at boot (via Streaming_UpdateState) before
+        // ADC_Init — must not write ADCTRG/ADCCON1 until ADC is ready.
+        if (gpRuntimeConfigStream->IsEnabled) {
+            bool hwShared = (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
+            MC12b_ConfigureHardwareTrigger(true, hwShared);
+        }
+
         TimerApi_Start(gpStreamingConfig->TimerIndex);
         gpRuntimeConfigStream->Running = 1;
     }
@@ -689,6 +722,10 @@ static void Streaming_Stop(void) {
     if (gpRuntimeConfigStream->Running) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
+
+        // Revert ADC to software triggering so non-streaming reads
+        // (ADC_Tasks polling) still work.
+        MC12b_ConfigureHardwareTrigger(false, false);
         gpRuntimeConfigStream->Running = false;
 
         // Log session summary if any data was lost

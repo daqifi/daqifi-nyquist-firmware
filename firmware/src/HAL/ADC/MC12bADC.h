@@ -90,6 +90,20 @@ bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);
  */
 uint32_t MC12b_GetType1EnabledMask(void);
 
+/**
+ * Configure hardware-triggered ADC conversion via Timer4/5 match event.
+ * When enabled, the streaming timer directly triggers ADC modules without
+ * software intervention, eliminating inter-channel skew.
+ * Call with (false, false) to revert to software triggering.
+ * @param hwDedicated  true = dedicated modules (0-4) triggered by TMR5 match
+ * @param hwShared     true = shared MODULE7 scan triggered by TMR5 match
+ */
+void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared);
+
+/** Query whether hardware triggering is active for dedicated/shared modules. */
+bool MC12b_IsHwTriggerDedicated(void);
+bool MC12b_IsHwTriggerShared(void);
+
 #ifdef	__cplusplus
 }
 #endif
