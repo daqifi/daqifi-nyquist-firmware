@@ -262,7 +262,7 @@ static void SetChannelTrigSrc(uint32_t trg[ADCTRG_REG_COUNT],
     if (regIdx >= ADCTRG_REG_COUNT) return;   // channels > 11 not in ADCTRG1-3
     uint32_t shift = (chId % ADCTRG_CHANNELS_PER_REG) * 8;
     trg[regIdx] &= ~(ADCTRG_FIELD_MASK << shift);
-    trg[regIdx] |= (src << shift);
+    trg[regIdx] |= ((src & ADCTRG_FIELD_MASK) << shift);
 }
 
 void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared) {

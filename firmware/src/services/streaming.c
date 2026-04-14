@@ -428,8 +428,12 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         }
                     }
                 } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
-                    if (!hwDed) {
-                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                    // Dedicated: hw-triggered modules skip software trigger,
+                    // but non-MC12bADC devices (AD7609) always need software.
+                    for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                        if (pBoardConfig->AInModules.Data[i].Type != AIn_MC12bADC) {
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
+                        } else if (!hwDed) {
                             ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
                         }
                     }
