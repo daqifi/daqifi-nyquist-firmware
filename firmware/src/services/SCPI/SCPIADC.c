@@ -47,6 +47,15 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
             return SCPI_RES_ERR;
         }
 
+        // Monitoring channels (ID >= 248) are unreadable when onboard
+        // diagnostics are disabled during streaming — config error.
+        if ((uint8_t)channel >= ADC_CHANNEL_3_3V &&
+            pStreamCfg->Running && !pStreamCfg->OnboardDiagEnabled) {
+            LOG_E("MEAS:VOLT:DC? ch%d: onboard diagnostics disabled (CONF:ADC:OBDiag 0)", channel);
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
+
         if (!pRuntimeAInChannels->Data[index].IsEnabled) {
             SCPI_ResultVoltage(context, 0.0, precision);
             return SCPI_RES_OK;

@@ -28,6 +28,7 @@
 #include "HAL/BQ24297/BQ24297.h"
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
+#include "HAL/TimerApi/TimerApi.h"
 #include "SCPIADC.h"
 #include "SCPIDAC.h" 
 #include "SCPIDIO.h"
@@ -756,95 +757,77 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             double volt3_3 = 0, volt5 = 0, volt10 = 0, voltSys = 0, vBatt = 0, v2_5Ref = 0, v5Ref = 0;
             bool found3_3 = false, found5 = false, found10 = false, foundSys = false;
             bool foundBatt = false, found2_5Ref = false, found5Ref = false;
+            uint32_t newestMonitorTs = 0;
 
-            // Get the actual count of available samples (not runtime config size)
             size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
             size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
 
-            // Iterate through available samples and use channel ID for identification
             for (size_t i = 0; i < sampleCount; i++) {
                 AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
                 if (!sample || !ADC_IsDataValid(sample)) continue;
 
-                // Convert raw ADC value to voltage using ADC layer function
                 double voltage = ADC_ConvertToVoltage(sample);
                 uint8_t sampleChannelId = sample->Channel;
 
-                // Store voltage for the appropriate rail
                 if (sampleChannelId == ADC_CHANNEL_3_3V) {
-                    volt3_3 = voltage;
-                    found3_3 = true;
+                    volt3_3 = voltage; found3_3 = true;
                 } else if (sampleChannelId == ADC_CHANNEL_5V) {
-                    volt5 = voltage;
-                    found5 = true;
+                    volt5 = voltage; found5 = true;
                 } else if (sampleChannelId == ADC_CHANNEL_10V) {
-                    volt10 = voltage;
-                    found10 = true;
+                    volt10 = voltage; found10 = true;
                 } else if (sampleChannelId == ADC_CHANNEL_VSYS) {
-                    voltSys = voltage;
-                    foundSys = true;
+                    voltSys = voltage; foundSys = true;
                 } else if (sampleChannelId == ADC_CHANNEL_VBATT) {
-                    vBatt = voltage;
-                    foundBatt = true;
+                    vBatt = voltage; foundBatt = true;
                 } else if (sampleChannelId == ADC_CHANNEL_2_5VREF) {
-                    v2_5Ref = voltage;
-                    found2_5Ref = true;
+                    v2_5Ref = voltage; found2_5Ref = true;
                 } else if (sampleChannelId == ADC_CHANNEL_5VREF) {
-                    v5Ref = voltage;
-                    found5Ref = true;
+                    v5Ref = voltage; found5Ref = true;
                 }
-                // ADC_CHANNEL_TEMP intentionally not processed - PIC32MZ temperature sensor
-                // does not function per silicon errata
+
+                // Track newest monitoring sample timestamp for stale detection
+                if (sampleChannelId >= ADC_CHANNEL_3_3V &&
+                    sample->Timestamp > newestMonitorTs) {
+                    newestMonitorTs = sample->Timestamp;
+                }
             }
 
-            // Display voltage rails with proper string formatting
-            // Initialize strings to empty to ensure well-defined behavior
-            char str3_3[20] = {0}, str5[20] = {0}, str10[20] = {0};
-            char strSys[20] = {0}, strBatt[20] = {0}, str2_5Ref[20] = {0}, str5Ref[20] = {0};
-
-            if (found3_3) {
-                snprintf(str3_3, sizeof(str3_3), "%.2fV", volt3_3);
-            } else {
-                strcpy(str3_3, "--");
+            // Compute stale age: compare newest monitoring sample to current
+            // timestamp timer. Timer runs at TSTimer frequency (390,625 Hz).
+            const tBoardConfig* pBCfg = (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+            uint32_t nowTicks = TimerApi_CounterGet(pBCfg->StreamingConfig.TSTimerIndex);
+            uint32_t tsFreq = TimerApi_FrequencyGet(pBCfg->StreamingConfig.TSTimerIndex);
+            uint32_t ageSec = 0;
+            bool isStale = false;
+            if (newestMonitorTs > 0 && tsFreq > 0) {
+                uint32_t elapsed = nowTicks - newestMonitorTs;  // wraps correctly
+                ageSec = elapsed / tsFreq;
+                isStale = (ageSec >= 2);  // 2+ seconds = stale
             }
 
-            if (found5) {
-                snprintf(str5, sizeof(str5), "%.2fV", volt5);
-            } else {
-                strcpy(str5, "--");
-            }
+            // Format helper: voltage string with optional stale indicator
+            #define FMT_RAIL(strBuf, found, voltage) do { \
+                if (found) { \
+                    if (isStale) \
+                        snprintf(strBuf, sizeof(strBuf), "%.2fV (stale, %lus ago)", voltage, (unsigned long)ageSec); \
+                    else \
+                        snprintf(strBuf, sizeof(strBuf), "%.2fV", voltage); \
+                } else { \
+                    strcpy(strBuf, "--"); \
+                } \
+            } while(0)
 
-            if (found10) {
-                snprintf(str10, sizeof(str10), "%.2fV", volt10);
-            } else {
-                strcpy(str10, "--");
-            }
+            char str3_3[40] = {0}, str5[40] = {0}, str10[40] = {0};
+            char strSys[40] = {0}, strBatt[40] = {0}, str2_5Ref[40] = {0}, str5Ref[40] = {0};
+            FMT_RAIL(str3_3, found3_3, volt3_3);
+            FMT_RAIL(str5, found5, volt5);
+            FMT_RAIL(str10, found10, volt10);
+            FMT_RAIL(strSys, foundSys, voltSys);
+            FMT_RAIL(strBatt, foundBatt, vBatt);
+            FMT_RAIL(str2_5Ref, found2_5Ref, v2_5Ref);
+            FMT_RAIL(str5Ref, found5Ref, v5Ref);
+            #undef FMT_RAIL
 
-            if (foundSys) {
-                snprintf(strSys, sizeof(strSys), "%.2fV", voltSys);
-            } else {
-                strcpy(strSys, "--");
-            }
-
-            if (foundBatt) {
-                snprintf(strBatt, sizeof(strBatt), "%.2fV", vBatt);
-            } else {
-                strcpy(strBatt, "--");
-            }
-
-            if (found2_5Ref) {
-                snprintf(str2_5Ref, sizeof(str2_5Ref), "%.2fV", v2_5Ref);
-            } else {
-                strcpy(str2_5Ref, "--");
-            }
-
-            if (found5Ref) {
-                snprintf(str5Ref, sizeof(str5Ref), "%.2fV", v5Ref);
-            } else {
-                strcpy(str5Ref, "--");
-            }
-
-            // Display power rails
             snprintf(buffer, sizeof(buffer), "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
                 str3_3, str5, str10);
             context->interface->write(context, buffer, strlen(buffer));
@@ -853,7 +836,6 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                 strSys, strBatt);
             context->interface->write(context, buffer, strlen(buffer));
 
-            // Display reference voltages
             snprintf(buffer, sizeof(buffer), "  2.5V Ref: %s | 5V Ref: %s\r\n",
                 str2_5Ref, str5Ref);
             context->interface->write(context, buffer, strlen(buffer));
