@@ -38,11 +38,27 @@ static AInModuleRuntimeConfig* gpModuleRuntimeConfigMC12;
 //! Boolean to indicate if this module is enabled
 static bool gIsEnabled = false;
 
-// PLIB-initialized trigger register values, saved once after ADCHS_Initialize.
-// Restored when hardware triggering is disabled so non-streaming ADC reads
-// continue to work with the MHC-configured trigger sources.
-static uint32_t gSavedADCTRG[3];       // ADCTRG1, ADCTRG2, ADCTRG3
-static uint32_t gSavedSTRGSRC;         // ADCCON1 bits [20:16]
+// --- Hardware trigger constants (DS60001320) ---
+// Trigger source encoding shared by per-channel TRGSRC (ADCTRGx) and
+// scan trigger STRGSRC (ADCCON1[20:16]).
+#define ADC_TRGSRC_TMR5             7       // Timer4/5 match (streaming timer)
+
+// ADCTRGx register layout: 4 channels per register, each TRGSRC field
+// is 5 bits wide at byte-aligned positions.
+//   ADCTRG(n) covers channels [(n-1)*4 .. (n-1)*4+3]
+//   Channel C → register index (C/4), bit shift (C%4)*8
+// Only channels 0-11 have per-channel TRGSRC fields (ADCTRG1-3).
+// Higher-numbered shared channels are scan-triggered via ADCCON1.STRGSRC.
+#define ADCTRG_REG_COUNT            3
+#define ADCTRG_CHANNELS_PER_REG     4
+#define ADCTRG_FIELD_MASK           0x1FU   // 5-bit trigger source field
+#define ADCCON1_STRGSRC_SHIFT       16      // STRGSRC is bits [20:16]
+
+// PLIB-initialized trigger register values, saved once in MC12b_InitHardware
+// (after ADCHS_Initialize). Restored when hardware triggering is disabled so
+// non-streaming ADC reads continue to work with MHC-configured trigger sources.
+static uint32_t gSavedADCTRG[ADCTRG_REG_COUNT];
+static uint32_t gSavedSTRGSRC;
 
 bool MC12b_InitHardware(MC12bModuleConfig* pModuleConfigInit,
         AInModuleRuntimeConfig * pModuleRuntimeConfigInit) {
@@ -53,7 +69,7 @@ bool MC12b_InitHardware(MC12bModuleConfig* pModuleConfigInit,
     gSavedADCTRG[0] = ADCTRG1;
     gSavedADCTRG[1] = ADCTRG2;
     gSavedADCTRG[2] = ADCTRG3;
-    gSavedSTRGSRC = (ADCCON1 >> 16) & 0x1FU;
+    gSavedSTRGSRC = (ADCCON1 >> ADCCON1_STRGSRC_SHIFT) & ADCTRG_FIELD_MASK;
 
     // Copy factory calibration data to calibration registers
     ADC0CFG = DEVADC0;
@@ -233,22 +249,6 @@ bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal) {
     *pVal = 0;
     return false;
 }
-
-// Trigger source encoding shared by per-channel TRGSRC (ADCTRGx) and
-// scan trigger STRGSRC (ADCCON1[20:16]).  Values from DS60001320 (ATDF).
-#define ADC_TRGSRC_TMR5     7   // Timer4/5 match (streaming timer)
-
-// ADCTRGx register layout: 4 channels per register, each TRGSRC field
-// is 5 bits wide at byte-aligned positions.
-//   ADCTRGn covers channels [(n-1)*4 .. (n-1)*4+3]
-//   Channel C → register index (C/4), bit shift (C%4)*8
-// Only channels 0-11 have per-channel TRGSRC fields (ADCTRG1-3).
-// Higher-numbered shared channels are scan-triggered via ADCCON1.STRGSRC.
-#define ADCTRG_REG_COUNT 3
-#define ADCTRG_CHANNELS_PER_REG 4
-#define ADCTRG_FIELD_WIDTH 5
-#define ADCTRG_FIELD_MASK  0x1FU
-#define ADCCON1_STRGSRC_SHIFT 16
 
 /**
  * Set a single channel's trigger source in ADCTRGx.

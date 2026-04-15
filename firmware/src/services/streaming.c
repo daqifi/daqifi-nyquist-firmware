@@ -423,12 +423,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         }
                     }
                 } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
-                    // Dedicated: hw-triggered modules skip software trigger,
-                    // but non-MC12bADC devices (AD7609) always need software.
+                    // Dedicated at full rate, shared at divided rate.
+                    // Skip MC12bADC dedicated trigger when hardware does it.
                     for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                        if (pBoardConfig->AInModules.Data[i].Type != AIn_MC12bADC) {
-                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
-                        } else if (!hwDed) {
+                        bool isMC12b = (pBoardConfig->AInModules.Data[i].Type == AIn_MC12bADC);
+                        if (!(isMC12b && hwDed)) {
                             ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
                         }
                     }
