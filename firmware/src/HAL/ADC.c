@@ -514,12 +514,12 @@ void ADC_SetEosInterruptEnabled(bool enabled) {
     if (enabled) {
         // Clear latched flag before re-enabling to prevent an immediate
         // spurious fire from a flag set while the interrupt was disabled.
-        IFS6CLR = _IFS6_ADCEOSIF_MASK;
-        IEC6SET = _IEC6_ADCEOSIE_MASK;
+        EVIC_SourceStatusClear(INT_SOURCE_ADC_EOS);
+        EVIC_SourceEnable(INT_SOURCE_ADC_EOS);
     } else {
         // Disable first, then clear pending flag to avoid a race where
         // EOS re-asserts between clear and disable.
-        IEC6CLR = _IEC6_ADCEOSIE_MASK;
-        IFS6CLR = _IFS6_ADCEOSIF_MASK;
+        EVIC_SourceDisable(INT_SOURCE_ADC_EOS);
+        EVIC_SourceStatusClear(INT_SOURCE_ADC_EOS);
     }
 }
