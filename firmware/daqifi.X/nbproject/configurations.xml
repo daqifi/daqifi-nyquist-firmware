@@ -1254,7 +1254,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="true">
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="false">
         <C32>
           <property key="additional-warnings" value="true"/>
           <property key="addresss-attribute-use" value="false"/>
@@ -4345,7 +4345,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="true">
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="false">
         <C32>
           <property key="additional-warnings" value="true"/>
           <property key="addresss-attribute-use" value="false"/>
@@ -7073,7 +7073,7 @@
         <C32Global>
         </C32Global>
       </item>
-      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="true">
+      <item path="../src/HAL/ADC/MC12bADC.c" ex="false" overriding="false">
         <C32>
           <property key="additional-warnings" value="true"/>
           <property key="addresss-attribute-use" value="false"/>
