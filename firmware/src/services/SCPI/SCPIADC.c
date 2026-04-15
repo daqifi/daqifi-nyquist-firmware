@@ -54,10 +54,13 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
         }
 
         // Monitoring channels (ID >= 248) are not being refreshed when
-        // OBDiag is disabled during streaming — return an error so the
-        // user knows the reading would be stale/meaningless.
+        // OBDiag is disabled during active streaming — return an error so
+        // the user knows the reading would be stale/meaningless. Gate on
+        // Running (actual hardware state) rather than IsEnabled (user
+        // intent) so the guard lifts the instant Streaming_Stop re-enables
+        // the EOS interrupt, even if IsEnabled is still mid-reconfig.
         if (ch >= ADC_CHANNEL_3_3V &&
-            pStreamCfg->IsEnabled && !pStreamCfg->OnboardDiagEnabled) {
+            pStreamCfg->Running && !pStreamCfg->OnboardDiagEnabled) {
             LOG_E("MEAS:VOLT:DC? ch%d: monitoring disabled (OBDiag=0 during streaming)", (int)ch);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
