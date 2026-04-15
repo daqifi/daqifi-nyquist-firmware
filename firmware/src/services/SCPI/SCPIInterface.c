@@ -868,7 +868,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                 if (ageSec >= 2) {
                     StreamingRuntimeConfig *pStrmCfg = BoardRunTimeConfig_Get(
                             BOARDRUNTIME_STREAMING_CONFIGURATION);
-                    bool diagOff = pStrmCfg->IsEnabled && !pStrmCfg->OnboardDiagEnabled;
+                    bool diagOff = pStrmCfg->Running && !pStrmCfg->OnboardDiagEnabled;
                     snprintf(buffer, sizeof(buffer),
                              "  * Stale: last update %lus ago%s\r\n",
                              (unsigned long)ageSec,
