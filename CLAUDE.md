@@ -1618,6 +1618,4 @@ python test_sd_card.py
 - all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
  error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
 error was.
-- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
- error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
-error was.
+- SCPI data visibility principle: prevent users from operating with improper settings (return SCPI errors for config problems like reading disabled channels), but maximize visibility into device health. When data is stale (e.g., monitoring channels frozen during OBDiag=0 streaming), show last-known values with age indicators rather than hiding them. Error on config problems, inform on stale data.
