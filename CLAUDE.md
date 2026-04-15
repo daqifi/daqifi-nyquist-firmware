@@ -247,19 +247,22 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 - `HAL/ADC/MC12bADC.c` — `MC12b_TriggerConversion`, `MC12b_WriteStateAll` (batch interrupt setup)
 - `HAL/ADC.c` — `MC12bADC_EosInterruptTask`, `ADC_ReadADCSampleFromISR`
 
-**Characterization results (O3, USB, zero-loss ceiling, 2026-04-13):**
+**Characterization results (O3, USB, zero-loss ceiling, fullscale test pattern, NoCap benchmark mode):**
+
+PB columns updated 2026-04-15 after PR #290 (EOS interrupt disable during OBDiag=0 streaming — dedicated-module completions were falsely asserting EOSIF, causing per-sample EOS task wakeups). CSV columns still from 2026-04-13 (re-run pending).
 
 | Config | PB Ceiling | PB KB/s | CSV Ceiling | CSV KB/s |
 |--------|----------:|--------:|------------:|--------:|
-| 1×T1 | 13,800 Hz | 147 | 13,800 Hz | 217 |
-| 3×T1 | 12,200 Hz | 180 | 11,400 Hz | 543 |
-| 5×T1 | 11,000 Hz | 212 | 9,600 Hz | 755 |
-| 1×T2 | 16,200 Hz | 171 | 16,200 Hz | 255 |
-| 4×T2 | 12,800 Hz | 214 | 12,600 Hz | 771 |
-| 8×T2 | 12,200 Hz | 297 | 9,600 Hz | 1,160 |
-| 11×T2 | 11,000 Hz | 335 | 6,400 Hz | 1,125 |
-| 5T1+4T2 (9ch) | 10,000 Hz | 262 | 7,800 Hz | 1,077 |
-| 5T1+11T2 (16ch) | 6,400 Hz | 263 | 6,000 Hz | 1,464 |
+| 1×T1 | 15,000 Hz | 145 | 13,800 Hz | 217 |
+| 3×T1 | 14,000 Hz | 225 | 11,400 Hz | 543 |
+| 5×T1 | 13,000 Hz | 217 | 9,600 Hz | 755 |
+| 1×T2 | 21,000 Hz | 243 | 16,200 Hz | 255 |
+| 4×T2 | 17,000 Hz | 313 | 12,600 Hz | 771 |
+| 5×T2 | 16,000 Hz | 271 | — | — |
+| 8×T2 | 16,000 Hz | 354 | 9,600 Hz | 1,160 |
+| 11×T2 | 13,000 Hz | 361 | 6,400 Hz | 1,125 |
+| 5T1+4T2 (9ch) | 12,000 Hz | 294 | 7,800 Hz | 1,077 |
+| 5T1+11T2 (16ch) | 9,000 Hz | 399 | 6,000 Hz | 1,464 |
 
 #### Voltage Output Precision
 
