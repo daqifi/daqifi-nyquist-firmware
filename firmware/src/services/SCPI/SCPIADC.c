@@ -47,6 +47,16 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
             return SCPI_RES_ERR;
         }
 
+        // Monitoring channels (ID >= 248) are not being refreshed when
+        // OBDiag is disabled during streaming — return an error so the
+        // user knows the reading would be stale/meaningless.
+        if (channel >= ADC_CHANNEL_3_3V &&
+            pStreamCfg->IsEnabled && !pStreamCfg->OnboardDiagEnabled) {
+            LOG_E("MEAS:VOLT:DC? ch%d: monitoring disabled (OBDiag=0 during streaming)", channel);
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
+
         if (!pRuntimeAInChannels->Data[index].IsEnabled) {
             SCPI_ResultVoltage(context, 0.0, precision);
             return SCPI_RES_OK;
@@ -685,7 +695,7 @@ scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
     }
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg->Running) {
+    if (pStreamCfg->IsEnabled) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }

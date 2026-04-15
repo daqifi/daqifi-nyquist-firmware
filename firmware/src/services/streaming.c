@@ -716,6 +716,14 @@ static void Streaming_Start(void) {
             bool hwShared = gpRuntimeConfigStream->OnboardDiagEnabled &&
                             (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
             MC12b_ConfigureHardwareTrigger(true, hwShared);
+
+            // When OBDiag is disabled, suppress the EOS interrupt entirely.
+            // Without this, dedicated channel completions fire EOS, the
+            // deferred task wakes and reads stale monitoring results, making
+            // stale-age detection impossible.  Re-enabled in Streaming_Stop.
+            if (!gpRuntimeConfigStream->OnboardDiagEnabled) {
+                ADC_SetEosInterruptEnabled(false);
+            }
         }
 
         TimerApi_Start(gpStreamingConfig->TimerIndex);
@@ -734,6 +742,9 @@ static void Streaming_Stop(void) {
         // Revert ADC to software triggering so non-streaming reads
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
+        // Re-enable EOS interrupt unconditionally (safe even if already on).
+        // Needed after OBDiag=0 sessions that disabled it.
+        ADC_SetEosInterruptEnabled(true);
         gpRuntimeConfigStream->Running = false;
 
         // Log session summary if any data was lost

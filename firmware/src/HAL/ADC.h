@@ -90,6 +90,16 @@ bool ADC_ReadADCSampleFromISR(uint32_t value,uint8_t bufferIndex);
 /*! Function to be called from the ISR for deferring the ADC interrupt */
 void ADC_EOSInterruptCB(uintptr_t context);
 
+/*! Returns the FreeRTOS tick count of the last successful monitoring channel
+ *  read by the EOS deferred task.  Returns 0 if no monitoring data has been
+ *  read yet.  Use with xTaskGetTickCount() to compute stale age. */
+uint32_t ADC_GetLastDiagScanTick(void);
+
+/*! Enables or disables the ADC End-of-Scan interrupt (IEC6 ADCEOSIE bit).
+ *  Used by the streaming engine to suppress spurious EOS wakeups during
+ *  dedicated-only streaming (OBDiag=0). */
+void ADC_SetEosInterruptEnabled(bool enabled);
+
 /*!
  * Handles AD7609 data acquisition from deferred interrupt task
  * Called when BSY pin interrupt signals conversion complete

@@ -857,6 +857,25 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             snprintf(buffer, sizeof(buffer), "  2.5V Ref: %s | 5V Ref: %s\r\n",
                 str2_5Ref, str5Ref);
             context->interface->write(context, buffer, strlen(buffer));
+
+            // Stale data indicator: all monitoring channels are scanned
+            // together by MODULE7, so a single age applies to all rails.
+            uint32_t lastDiagTick = ADC_GetLastDiagScanTick();
+            if (lastDiagTick > 0) {
+                uint32_t ageTicks = xTaskGetTickCount() - lastDiagTick;
+                uint32_t ageSec = ageTicks / configTICK_RATE_HZ;
+                // Show stale indicator if data is older than 2 seconds
+                if (ageSec >= 2) {
+                    StreamingRuntimeConfig *pStrmCfg = BoardRunTimeConfig_Get(
+                            BOARDRUNTIME_STREAMING_CONFIGURATION);
+                    bool diagOff = pStrmCfg->IsEnabled && !pStrmCfg->OnboardDiagEnabled;
+                    snprintf(buffer, sizeof(buffer),
+                             "  * Stale: last update %lus ago%s\r\n",
+                             (unsigned long)ageSec,
+                             diagOff ? " (diag scanning disabled)" : "");
+                    context->interface->write(context, buffer, strlen(buffer));
+                }
+            }
         } else {
             context->interface->write(context, "  Voltage monitoring unavailable\r\n", 34);
         }

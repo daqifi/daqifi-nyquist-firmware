@@ -12,6 +12,8 @@
 #include "ADC/MC12bADC.h"
 #include "DIO.h"
 #include "Util/Logger.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #define UNUSED(x) (void)(x)
 
@@ -23,6 +25,11 @@ static tBoardRuntimeConfig *gpBoardRuntimeConfig;
 // Pointer to the BoardData data structure, to be set in initialization
 static tBoardData* gpBoardData;
 static TaskHandle_t gADCInterruptHandle;
+
+// FreeRTOS tick count of the last successful monitoring channel read.
+// Updated only when MC12bADC_EosInterruptTask actually reads private
+// (non-public) channels.  Used by SCPI info commands to detect stale data.
+static volatile uint32_t gLastDiagScanTick = 0;
 /*!
  * Retrieves the index of a module
  * @param[in] pModule Pointer to the module to search for
@@ -106,6 +113,7 @@ void MC12bADC_EosInterruptTask(void) {
         AInSample sample;
         int i = 0;
         uint32_t adcval;
+        bool anyMonitorRead = false;
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
 
         // Ensure timestamp pointer is valid; use 0 as safe fallback
@@ -127,7 +135,15 @@ void MC12bADC_EosInterruptTask(void) {
                         BOARDDATA_AIN_LATEST,
                         i,
                         &sample);
+                anyMonitorRead = true;
             }
+        }
+
+        // Only update last-scan tick when we actually read monitoring data.
+        // This prevents stale-tick updates from spurious EOS wakeups
+        // (e.g., dedicated channel completions firing EOS).
+        if (anyMonitorRead) {
+            gLastDiagScanTick = xTaskGetTickCount();
         }
     }
 }
@@ -488,4 +504,16 @@ void ADC_EOSInterruptCB(uintptr_t context) {
         portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
     }
     // If task creation failed, interrupt still clears but no notification sent
+}
+
+uint32_t ADC_GetLastDiagScanTick(void) {
+    return gLastDiagScanTick;   // 32-bit read is atomic on PIC32MZ
+}
+
+void ADC_SetEosInterruptEnabled(bool enabled) {
+    if (enabled) {
+        IEC6SET = _IEC6_ADCEOSIE_MASK;
+    } else {
+        IEC6CLR = _IEC6_ADCEOSIE_MASK;
+    }
 }
