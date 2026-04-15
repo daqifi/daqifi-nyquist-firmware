@@ -96,6 +96,14 @@ extern "C" {
          */
         uint8_t VoltagePrecision;
 
+        /**
+         * Enable onboard diagnostic channel scanning during streaming.
+         * true (default): MODULE7 scans monitoring channels at divided rate.
+         * false: Skip MODULE7 entirely for max dedicated channel throughput.
+         * Controlled via CONF:ADC:OBDiag.  Runtime-only, resets on reboot.
+         */
+        bool OnboardDiagEnabled;
+
     } StreamingRuntimeConfig;
 
     /**

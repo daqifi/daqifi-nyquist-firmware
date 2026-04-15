@@ -675,3 +675,24 @@ scpi_result_t SCPI_ADCUseCalGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 }
+
+scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val < 0 || val > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    pStreamCfg->OnboardDiagEnabled = (val != 0);
+    LOG_I("Onboard diagnostics during streaming: %s", val ? "enabled" : "disabled");
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context) {
+    StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    SCPI_ResultInt32(context, pStreamCfg->OnboardDiagEnabled ? 1 : 0);
+    return SCPI_RES_OK;
+}

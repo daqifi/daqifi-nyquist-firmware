@@ -406,6 +406,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             if (gBenchmarkMode != BENCHMARK_PIPELINE) {
                 bool hwDed = MC12b_IsHwTriggerDedicated();
                 bool hwShd = MC12b_IsHwTriggerShared();
+                bool skipShared = !pRunTimeStreamConf->OnboardDiagEnabled;
 
                 if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                     for (i = 0; i < pRunTimeAInModules->Size; ++i) {
@@ -413,18 +414,20 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                             ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
                             continue;
                         }
-                        // MC12bADC: software-trigger only the parts not
-                        // covered by hardware triggering.
-                        if (!hwDed || !hwShd) {
-                            MC12b_adcType_t swType = MC12B_ADC_TYPE_ALL;
-                            if (hwDed && !hwShd) swType = MC12B_ADC_TYPE_SHARED;
-                            else if (!hwDed && hwShd) swType = MC12B_ADC_TYPE_DEDICATED;
-                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], swType);
+                        // MC12bADC: determine which trigger types need software
+                        bool needSwDed = !hwDed;
+                        bool needSwShd = !hwShd && !skipShared;
+                        if (needSwDed && needSwShd) {
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
+                        } else if (needSwDed) {
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_DEDICATED);
+                        } else if (needSwShd) {
+                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_SHARED);
                         }
+                        // else: both hw-triggered or shared skipped — no software trigger
                     }
                 } else if (pRunTimeStreamConf->ChannelScanFreqDiv != 0) {
                     // Dedicated at full rate, shared at divided rate.
-                    // Skip MC12bADC dedicated trigger when hardware does it.
                     for (i = 0; i < pRunTimeAInModules->Size; ++i) {
                         bool isMC12b = (pBoardConfig->AInModules.Data[i].Type == AIn_MC12bADC);
                         if (!(isMC12b && hwDed)) {
@@ -432,13 +435,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         }
                     }
 
-                    if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
-                        for (i = 0; i < pRunTimeAInModules->Size; ++i) {
-                            ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_SHARED);
+                    // Shared at divided rate — skip entirely when hw-triggered
+                    // or when onboard diagnostics are disabled.
+                    if (!hwShd && !skipShared) {
+                        if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
+                            for (i = 0; i < pRunTimeAInModules->Size; ++i) {
+                                ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_SHARED);
+                            }
+                            ChannelScanFreqDivCount = 0;
                         }
-                        ChannelScanFreqDivCount = 0;
+                        ChannelScanFreqDivCount++;
                     }
-                    ChannelScanFreqDivCount++;
                 }
                 DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
             }
@@ -704,7 +711,10 @@ static void Streaming_Start(void) {
         // Streaming_Start runs at boot (via Streaming_UpdateState) before
         // ADC_Init — must not write ADCTRG/ADCCON1 until ADC is ready.
         if (gpRuntimeConfigStream->IsEnabled) {
-            bool hwShared = (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
+            // hwShared: enable MODULE7 scan trigger unless onboard diag is
+            // disabled (max dedicated throughput mode).
+            bool hwShared = gpRuntimeConfigStream->OnboardDiagEnabled &&
+                            (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
             MC12b_ConfigureHardwareTrigger(true, hwShared);
         }
 

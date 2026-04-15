@@ -149,6 +149,13 @@ extern "C" {
      */        
     scpi_result_t SCPI_ADCUseCalGet(scpi_t * context);
 
+    /**
+     * Enable/disable onboard diagnostic channel scanning during streaming.
+     *   CONFigure:ADC:OBDiag <0|1> - 0=skip MODULE7, 1=scan at divided rate (default)
+     */
+    scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context);
+    scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context);
+
 #ifdef	__cplusplus
 }
 #endif
