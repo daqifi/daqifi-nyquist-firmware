@@ -685,6 +685,10 @@ scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
     }
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pStreamCfg->Running) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     pStreamCfg->OnboardDiagEnabled = (val != 0);
     LOG_I("Onboard diagnostics during streaming: %s", val ? "enabled" : "disabled");
     return SCPI_RES_OK;
