@@ -511,6 +511,10 @@ uint32_t ADC_GetLastDiagScanTick(void) {
 }
 
 void ADC_SetEosInterruptEnabled(bool enabled) {
+    // Clear any latched EOS flag first to prevent an immediate spurious
+    // fire when re-enabling after a disabled period.
+    IFS6CLR = _IFS6_ADCEOSIF_MASK;
+
     if (enabled) {
         IEC6SET = _IEC6_ADCEOSIE_MASK;
     } else {

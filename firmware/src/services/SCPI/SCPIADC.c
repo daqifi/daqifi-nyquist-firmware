@@ -43,7 +43,8 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
         // Get single
         volatile double val = 0;
         size_t index = ADC_FindChannelIndex((uint8_t) channel);
-        if (index > pBoardConfigAInChannels->Size) {
+        if (index >= pBoardConfigAInChannels->Size) {
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
             return SCPI_RES_ERR;
         }
 
