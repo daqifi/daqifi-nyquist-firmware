@@ -1141,9 +1141,25 @@ USB CDC streaming is **zero-loss when the host reads at >=1ms intervals**. Slow 
 
 The firmware pipeline is leak-free. All reported USB byte drops in benchmarks prior to this finding were caused by insufficient host read speed, not firmware limitations.
 
-**Python test suite:** Always use `FastReader` from `test_harness.py` (1ms background thread). Never use `time.sleep(0.5)` polling loops during streaming.
+**Python test suite:** Always use `StreamingMeasurement` from `test_harness.py` for any streaming rate measurement. Never use wall-clock time around SCPI start/stop commands — command latency varies by ~1s and causes 10% SPS error.
 
-**Measured USB throughput (with fast reader):**
+```python
+from test_harness import ReliableSCPI, StreamingMeasurement, device_reset
+
+m = StreamingMeasurement(scpi, scpi._serial)
+m.start(freq=5000, duration=10, is_csv=True)  # CSV: PC counts newlines
+# m.start(freq=5000, duration=10, is_csv=False)  # PB: PC counts varint frames
+# m.start(..., wait_for_serial=False)  # WiFi/SD: data not on serial
+
+# Results (all PC-derived, zero firmware trust for rate calculation):
+# m.pc_sps, m.pc_kbps, m.pc_samples_window, m.leaked, m.fw_stats
+```
+
+The measurement window is PC-controlled: waits for first data byte, times for exactly `duration` seconds, then sends StopStreamData **outside** the window. For WiFi/SD tests, pass `wait_for_serial=False` since data arrives via TCP/SD card, not serial.
+
+For simple streaming tests that don't need rate measurement (e.g., verifying SCPI fields), use `FastReader` directly for serial drain at 1ms intervals.
+
+**Measured USB throughput (with StreamingMeasurement):**
 - USB CSV 16ch@3kHz: 795 KB/s, 0 drops
 - USB CSV 16ch@5kHz: 907 KB/s, 0 drops (frequency-capped to 3.5kHz)
 
@@ -1589,6 +1605,19 @@ python comprehensive_test.py
 # Run SD card tests specifically
 python test_sd_card.py
 ```
+
+#### Key Test Scripts for Firmware Validation
+
+| What to validate | Script | Duration |
+|-----------------|--------|----------|
+| Streaming throughput ceilings | `test_overnight_characterization.py` | ~2-4 hours |
+| Quick ceiling check | `test_interface_ceilings.py` | ~30 min |
+| Data loss counters (#295-297) | `test_silent_loss_observability.py` | ~3 min |
+| Test pattern integrity | `verify_test_patterns.py --run-all` | ~10 min |
+| A/B branch comparison | `test_ab_comparison.py` | ~20 min |
+| Full device validation | `comprehensive_test.py` | ~5 min |
+
+**Critical rule:** Any test that measures streaming rate MUST use `StreamingMeasurement` from `test_harness.py`. See the class docstring for usage. Wall-clock timing around SCPI start/stop is forbidden — it causes 10% measurement error from variable command latency.
 
 ### Known Issues and Workarounds
 
