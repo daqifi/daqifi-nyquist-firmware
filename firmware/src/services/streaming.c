@@ -1137,7 +1137,6 @@ void streaming_Task(void) {
         }
 
         packetSize = 0;
-        size_t queueDepthBefore = AInSampleList_Size();
         if (nanopbFlag.Size > 0) {
             if(pRunTimeStreamConf->Encoding == Streaming_Csv){
                 DIO_TIMING_TEST_WRITE_STATE(1);
@@ -1156,13 +1155,15 @@ void streaming_Task(void) {
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
             gStreamStats.encoderFailures++;
-            // Count samples consumed and lost by the failed encode (#297)
-            size_t queueDepthAfter = AInSampleList_Size();
-            if (queueDepthBefore > queueDepthAfter) {
-                uint32_t consumed = (uint32_t)(queueDepthBefore - queueDepthAfter);
-                gStreamStats.encoderDroppedSamples += consumed;
+            // Each encoder pops exactly 1 sample per call. On failure that
+            // sample is freed back to the pool but its data is lost (#297).
+            // Counting 1 per failure avoids the race condition where the
+            // higher-priority deferred ISR task pushes new samples between
+            // queue depth reads, making a delta approach inaccurate.
+            if (AINDataAvailable) {
+                gStreamStats.encoderDroppedSamples++;
                 LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                    "Streaming: encoder failure consumed %u samples", (unsigned)consumed);
+                    "Streaming: encoder failure lost 1 sample");
             }
             // Critical section: gQuesBits is also RMW'd by deferred ISR task
             taskENTER_CRITICAL();
