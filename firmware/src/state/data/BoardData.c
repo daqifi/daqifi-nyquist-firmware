@@ -193,15 +193,22 @@ void BoardData_Set(
             break;
         case BOARDDATA_AIN_LATEST:
             if (index < g_BoardData.AInLatest.Size) {
-                // Atomic write to prevent torn reads by streaming task.
-                // Called from ADC ISR, so must use ISR-safe critical section.
-                // Without this, streaming task could read partial sample (old timestamp + new value).
-                UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
-                memcpy(
-                        &g_BoardData.AInLatest.Data[ index ],
-                        pSetValue,
-                        sizeof (AInSample));
-                taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
+                // Atomic write to prevent torn reads by the streaming task.
+                // Callable from ISR (ADC_DATAx pri-1 handlers for T2 user
+                // channels) and task context (MC12bADC_EosInterruptTask for
+                // T1 user + monitoring channels after #292). Use the
+                // matching FreeRTOS critical-section primitive per context.
+                if (uxInterruptNesting != 0u) {
+                    UBaseType_t uxSaved = taskENTER_CRITICAL_FROM_ISR();
+                    memcpy(&g_BoardData.AInLatest.Data[index],
+                           pSetValue, sizeof(AInSample));
+                    taskEXIT_CRITICAL_FROM_ISR(uxSaved);
+                } else {
+                    taskENTER_CRITICAL();
+                    memcpy(&g_BoardData.AInLatest.Data[index],
+                           pSetValue, sizeof(AInSample));
+                    taskEXIT_CRITICAL();
+                }
             }
             break;
         case BOARDDATA_AIN_LATEST_TIMESTAMP:
