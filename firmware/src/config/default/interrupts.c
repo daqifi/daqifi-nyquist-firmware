@@ -154,13 +154,11 @@ void __attribute__((used)) TIMER_7_Handler (void)
     TIMER_7_InterruptHandler();
 }
 
-// Type 1 (dedicated) ADC channels: batch-read all results from a single ISR.
-// All dedicated modules (0-4) convert simultaneously, so when CH3 (the batch
-// trigger) completes, all others are ready. This eliminates 4 redundant ISR
-// entries per sample period. See Issue #277.
-//
-// CH3 (MODULE3, DaqiFi ch14) is the batch trigger — always triggered when
-// any Type 1 channel is active (see MC12b_TriggerConversion).
+// Type 1 (dedicated) ADC channels: results read by MC12bADC_EosInterruptTask
+// (task priority 8) after #292. The old batch-read ISR (ADC_DATA3_Handler,
+// #277) was eliminated because the ~5μs ISR entry/exit overhead was the T1
+// throughput bottleneck. CH3 result interrupt is disabled at peripheral level;
+// these handlers are safety stubs that only ack the PLIB flag.
 
 void __attribute__((used)) ADC_DATA0_Handler(void) {
     // Interrupt disabled for batching — stub clears IFS only (safety)
