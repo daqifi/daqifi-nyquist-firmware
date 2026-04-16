@@ -58,11 +58,14 @@ Website:    https://zlib.net/
 microrl
 ------------------------------------------------------------------------------
 Location:   firmware/src/libraries/microrl/
-License:    LGPLv3 (pending replacement with permissive alternative)
-Copyright:  Copyright Eugene Samoylov (ghelius@gmail.com)
+License:    Apache-2.0
+Copyright:  Copyright 2017 Eugene Samoylov aka Helius (ghelius@gmail.com)
+Website:    https://github.com/Helius/microrl
+SPDX:       Apache-2.0
 
-NOTE: This library is scheduled for replacement with a BSD-licensed
-alternative to eliminate copyleft obligations from the firmware.
+NOTE: The local LICENSE file previously contained LGPLv3 in error;
+the upstream project is Apache-2.0. Corrected 2026-04-15. Upgrade to
+the maintained microrl-remaster fork is tracked in issue #43.
 
 ------------------------------------------------------------------------------
 WINC1500 WiFi Driver
