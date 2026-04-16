@@ -122,12 +122,12 @@ void MC12bADC_EosInterruptTask(void) {
         // pdTRUE clears all pending notifications and returns the count.
         // If count > 1, intermediate EOS interrupts fired while we were
         // busy — those ADC result registers were overwritten before we
-        // could read them. Count these as coalesce events (#295).
+        // could read them. Count these as result overruns (#295).
         uint32_t notifCount = ulTaskNotifyTake(pdTRUE, xBlockTime);
         if (notifCount > 1) {
-            Streaming_IncrEosCoalesce(notifCount - 1);
-            LOG_E_SESSION(LOG_SESSION_EOS_COALESCE,
-                "EOS: %u notifications coalesced", (unsigned)(notifCount - 1));
+            Streaming_IncrEosOverruns(notifCount - 1);
+            LOG_E_SESSION(LOG_SESSION_EOS_OVERRUN,
+                "EOS: %u result overruns", (unsigned)(notifCount - 1));
         }
 
         AInSample sample;

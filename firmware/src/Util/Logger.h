@@ -215,7 +215,7 @@ extern "C" {
         LOG_SESSION_AD7609_BUSY,           /**< AD7609.c: conversion busy, skipping */
         LOG_SESSION_NANOPB_FAIL,           /**< NanoPB_Encoder.c: streaming encode failure */
         LOG_SESSION_DIO_DROP,              /**< DIO.c: DIO queue full (#296) */
-        LOG_SESSION_EOS_COALESCE,          /**< ADC.c: EOS notifications coalesced (#295) */
+        LOG_SESSION_EOS_OVERRUN,           /**< ADC.c: EOS result register overrun (#295) */
         LOG_SESSION_ENCODER_SAMPLE_LOSS,   /**< streaming.c: samples consumed by failed encode (#297) */
         /* Add new entries above this line */
         LOG_SESSION_COUNT                  /**< Must be <= 32 */

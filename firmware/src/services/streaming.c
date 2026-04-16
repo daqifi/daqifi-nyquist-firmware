@@ -749,7 +749,7 @@ static void Streaming_Stop(void) {
                         gStreamStats.sdDroppedBytes > 0 ||
                         gStreamStats.encoderFailures > 0 ||
                         gStreamStats.dioDroppedSamples > 0 ||
-                        gStreamStats.eosCoalesceCount > 0;
+                        gStreamStats.eosOverruns > 0;
         // Clear QUES condition bits so they don't persist after streaming ends.
         // Stats remain available via SYST:STR:STATS? until next session.
         gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
@@ -775,7 +775,7 @@ static void Streaming_Stop(void) {
                   (unsigned)gStreamStats.encoderFailures,
                   (unsigned)gStreamStats.encoderDroppedSamples,
                   (unsigned)gStreamStats.dioDroppedSamples,
-                  (unsigned)gStreamStats.eosCoalesceCount);
+                  (unsigned)gStreamStats.eosOverruns);
         }
     }
 }
@@ -942,8 +942,8 @@ void Streaming_IncrDioDropped(void) {
     gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 8)
 }
 
-void Streaming_IncrEosCoalesce(uint32_t missed) {
-    gStreamStats.eosCoalesceCount += missed;  // Single writer (EOS task, pri 8)
+void Streaming_IncrEosOverruns(uint32_t missed) {
+    gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 8)
 }
 
 uint32_t Streaming_GetLossThreshold(void) {

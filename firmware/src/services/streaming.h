@@ -119,7 +119,7 @@ typedef struct {
     uint32_t encoderFailures;       // Encoder returned 0 with data available
     uint32_t encoderDroppedSamples; // AIn samples consumed by failed encode calls (#297)
     uint32_t dioDroppedSamples;     // DIO queue full — PushBack returned false (#296)
-    uint32_t eosCoalesceCount;      // EOS notifications coalesced (>1 per wake) (#295)
+    uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
     uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)
@@ -151,7 +151,7 @@ void Streaming_IncrDioDropped(void);
 
 // Increment EOS coalesce counter (called from MC12bADC_EosInterruptTask).
 // @param missed Number of coalesced notifications (notifCount - 1).
-void Streaming_IncrEosCoalesce(uint32_t missed);
+void Streaming_IncrEosOverruns(uint32_t missed);
 
 /**
  * Returns current SCPI STATus:QUEStionable condition bits for streaming health.
