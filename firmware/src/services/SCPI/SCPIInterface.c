@@ -1949,6 +1949,9 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "SdWriteAlignedCopies=%u\r\n", (unsigned)sdm.writeAlignedCopies);
     }
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
+    scpi_printf(context, "EncoderDroppedSamples=%u\r\n", (unsigned)s.encoderDroppedSamples);
+    scpi_printf(context, "DioDroppedSamples=%u\r\n", (unsigned)s.dioDroppedSamples);
+    scpi_printf(context, "EosCoalesceCount=%u\r\n", (unsigned)s.eosCoalesceCount);
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
     // + QueueDroppedSamples) to verify every timer event is accounted for,

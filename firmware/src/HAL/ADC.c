@@ -12,6 +12,7 @@
 #include "ADC/MC12bADC.h"
 #include "DIO.h"
 #include "Util/Logger.h"
+#include "services/streaming.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -118,7 +119,16 @@ void MC12bADC_EosInterruptTask(void) {
     const TickType_t xBlockTime = portMAX_DELAY;
 
     while (1) {
-        ulTaskNotifyTake(pdTRUE, xBlockTime);
+        // pdTRUE clears all pending notifications and returns the count.
+        // If count > 1, intermediate EOS interrupts fired while we were
+        // busy — those ADC result registers were overwritten before we
+        // could read them. Count these as coalesce events (#295).
+        uint32_t notifCount = ulTaskNotifyTake(pdTRUE, xBlockTime);
+        if (notifCount > 1) {
+            Streaming_IncrEosCoalesce(notifCount - 1);
+            LOG_E_SESSION(LOG_SESSION_EOS_COALESCE,
+                "EOS: %u notifications coalesced", (unsigned)(notifCount - 1));
+        }
 
         AInSample sample;
         int i = 0;

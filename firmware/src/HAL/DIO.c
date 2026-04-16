@@ -1,5 +1,7 @@
-/*! @file DIO.c 
- * 
+#define LOG_LVL LOG_LEVEL_DEBUG
+#define LOG_MODULE LOG_MODULE_GENERAL
+/*! @file DIO.c
+ *
  * This file implements the functions to manage the digital input/output
  */
 
@@ -11,6 +13,8 @@
 #include "state/board/BoardConfig.h"
 #include "TimerApi/TimerApi.h"
 #include "OcmpApi/OcmpApi.h"
+#include "services/streaming.h"
+#include "Util/Logger.h"
 //! Pointer to the board configuration. It must be set in the initialization
 static tBoardConfig *gpBoardConfig;
 //! Pointer to the runtime board configuration. It must be set in the initialization
@@ -219,9 +223,12 @@ void DIO_StreamingTrigger(DIOSample* latest, DIOSampleList* streamingSamples) {
             streamingSample.Mask = 0xFFFF;
             streamingSample.Values = latest->Values;
             streamingSample.Timestamp = latest->Timestamp;
-            DIOSampleList_PushBack(
+            if (!DIOSampleList_PushBack(
                     streamingSamples,
-                    (const DIOSample*) &streamingSample);
+                    (const DIOSample*) &streamingSample)) {
+                Streaming_IncrDioDropped();
+                LOG_E_SESSION(LOG_SESSION_DIO_DROP, "DIO: sample queue full");
+            }
         }
     }
 

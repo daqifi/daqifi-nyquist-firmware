@@ -747,7 +747,9 @@ static void Streaming_Stop(void) {
                         gStreamStats.usbDroppedBytes > 0 ||
                         gStreamStats.wifiDroppedBytes > 0 ||
                         gStreamStats.sdDroppedBytes > 0 ||
-                        gStreamStats.encoderFailures > 0;
+                        gStreamStats.encoderFailures > 0 ||
+                        gStreamStats.dioDroppedSamples > 0 ||
+                        gStreamStats.eosCoalesceCount > 0;
         // Clear QUES condition bits so they don't persist after streaming ends.
         // Stats remain available via SYST:STR:STATS? until next session.
         gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
@@ -758,14 +760,16 @@ static void Streaming_Stop(void) {
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((gStreamStats.queueDroppedSamples * 100ULL) / totalAttempted)
                 : 0;
-            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes dropped, enc=%u",
+            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, enc=%u, dio=%u, eos=%u",
                   (unsigned)gStreamStats.queueDroppedSamples,
                   (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
                   (unsigned)gStreamStats.usbDroppedBytes,
                   (unsigned)gStreamStats.wifiDroppedBytes,
                   (unsigned)gStreamStats.sdDroppedBytes,
-                  (unsigned)gStreamStats.encoderFailures);
+                  (unsigned)gStreamStats.encoderFailures,
+                  (unsigned)gStreamStats.dioDroppedSamples,
+                  (unsigned)gStreamStats.eosCoalesceCount);
         }
     }
 }
@@ -926,6 +930,14 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
 
 uint32_t Streaming_GetQuesBits(void) {
     return gQuesBits;  // 32-bit read is atomic on PIC32MZ
+}
+
+void Streaming_IncrDioDropped(void) {
+    gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 8)
+}
+
+void Streaming_IncrEosCoalesce(uint32_t missed) {
+    gStreamStats.eosCoalesceCount += missed;  // Single writer (EOS task, pri 8)
 }
 
 uint32_t Streaming_GetLossThreshold(void) {
@@ -1125,6 +1137,7 @@ void streaming_Task(void) {
         }
 
         packetSize = 0;
+        size_t queueDepthBefore = AInSampleList_Size();
         if (nanopbFlag.Size > 0) {
             if(pRunTimeStreamConf->Encoding == Streaming_Csv){
                 DIO_TIMING_TEST_WRITE_STATE(1);
@@ -1133,7 +1146,7 @@ void streaming_Task(void) {
             }
             else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
-                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize); 
+                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
                 DIO_TIMING_TEST_WRITE_STATE(0);
             } else {
                 DIO_TIMING_TEST_WRITE_STATE(1);
@@ -1143,6 +1156,14 @@ void streaming_Task(void) {
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
             gStreamStats.encoderFailures++;
+            // Count samples consumed and lost by the failed encode (#297)
+            size_t queueDepthAfter = AInSampleList_Size();
+            if (queueDepthBefore > queueDepthAfter) {
+                uint32_t consumed = (uint32_t)(queueDepthBefore - queueDepthAfter);
+                gStreamStats.encoderDroppedSamples += consumed;
+                LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+                    "Streaming: encoder failure consumed %u samples", (unsigned)consumed);
+            }
             // Critical section: gQuesBits is also RMW'd by deferred ISR task
             taskENTER_CRITICAL();
             gQuesBits |= QUES_BIT_ENCODER_FAIL;
