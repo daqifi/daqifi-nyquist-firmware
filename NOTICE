@@ -1,0 +1,80 @@
+DAQiFi Nyquist Firmware - Third-Party Notices
+==============================================================================
+
+This firmware incorporates the following third-party components.
+Each component retains its original license and copyright.
+
+------------------------------------------------------------------------------
+wolfSSL
+------------------------------------------------------------------------------
+Location:   firmware/src/third_party/wolfssl/
+License:    GPLv2+ (dual-licensed; commercial license pending)
+Copyright:  Copyright (C) 2006-2021 wolfSSL Inc.
+Website:    https://www.wolfssl.com/
+
+NOTE: DAQiFi is in the process of obtaining a commercial wolfSSL license
+to eliminate GPL obligations from the firmware distribution. Until the
+commercial license is in place, this component is distributed under GPLv2+.
+
+------------------------------------------------------------------------------
+FreeRTOS
+------------------------------------------------------------------------------
+Location:   firmware/src/third_party/rtos/FreeRTOS/
+License:    MIT
+Copyright:  Copyright (C) 2021 Amazon.com, Inc. or its affiliates.
+Website:    https://www.freertos.org/
+SPDX:       MIT
+
+------------------------------------------------------------------------------
+libscpi
+------------------------------------------------------------------------------
+Location:   firmware/src/libraries/scpi/libscpi/
+License:    BSD-2-Clause
+Copyright:  Copyright (c) 2012-2018 Jan Breuer
+Website:    https://www.jaybee.cz/scpi-parser/
+
+------------------------------------------------------------------------------
+nanopb
+------------------------------------------------------------------------------
+Location:   firmware/src/libraries/nanopb/
+License:    Zlib License
+Copyright:  Copyright (c) 2011 Petteri Aimonen
+Website:    https://jpa.kapsi.fi/nanopb/
+
+------------------------------------------------------------------------------
+zlib
+------------------------------------------------------------------------------
+Location:   firmware/src/third_party/zlib/
+License:    Zlib License
+Copyright:  Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+Website:    https://zlib.net/
+
+------------------------------------------------------------------------------
+microrl
+------------------------------------------------------------------------------
+Location:   firmware/src/libraries/microrl/
+License:    LGPLv3 (pending replacement with permissive alternative)
+Copyright:  Copyright Eugene Samoylov (ghelius@gmail.com)
+
+NOTE: This library is scheduled for replacement with a BSD-licensed
+alternative to eliminate copyleft obligations from the firmware.
+
+------------------------------------------------------------------------------
+WINC1500 WiFi Driver
+------------------------------------------------------------------------------
+Location:   firmware/src/config/default/driver/winc/
+License:    Microchip Technology proprietary (MPLAB Harmony license)
+Copyright:  Copyright Microchip Technology Incorporated
+Website:    https://www.microchip.com/
+
+Redistributed under the terms of the Microchip MPLAB Harmony Integrated
+Software Framework License Agreement. See Microchip's license terms for
+redistribution conditions.
+
+------------------------------------------------------------------------------
+Microchip Harmony Framework Components
+------------------------------------------------------------------------------
+Location:   firmware/src/config/default/ (various drivers and middleware)
+License:    Apache-2.0 (Harmony 3 components)
+Copyright:  Copyright Microchip Technology Incorporated
+Website:    https://github.com/Microchip-MPLAB-Harmony
