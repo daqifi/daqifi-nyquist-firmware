@@ -176,14 +176,9 @@ void __attribute__((used)) ADC_DATA2_Handler(void) {
 }
 
 void __attribute__((used)) ADC_DATA3_Handler(void) {
-    // Batch trigger: read all Type 1 dedicated channel results (CH0-CH4).
-    // Fixed bound avoids cross-TU function call (O3-unsafe, see #277).
-    // ChannelResultIsReady filters disabled modules.
-    for (uint32_t ch = 0; ch < 5; ch++) {
-        if (ADCHS_ChannelResultIsReady(ch)) {
-            ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(ch), ch);
-        }
-    }
+    // #292: T1 result reads moved to MC12bADC_EosInterruptTask (task pri 8).
+    // CH3 result interrupt is disabled at peripheral level; this stub is a
+    // safety net — just acks the PLIB flag.
     ADC_DATA3_InterruptHandler();
 }
 

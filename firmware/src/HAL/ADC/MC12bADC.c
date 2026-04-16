@@ -154,8 +154,10 @@ bool MC12b_WriteStateAll(
                 &channelRuntimeConfig->Data[i]);
     }
 
-    // Batch interrupt for Type 1: build bitmask of enabled ADCHS channels
-    // and enable only CH3's result interrupt (the batch trigger).
+    // Type 1 enable mask (used by MC12b_TriggerConversion software path).
+    // Do NOT enable CH3 result interrupt — #292 moves T1 result reads to
+    // the EOS deferred task, eliminating the ~5μs ISR entry/exit overhead
+    // that was the T1 throughput bottleneck.
     uint8_t mask = 0;
     for (i = 0; i < channelConfig->Size; ++i) {
         if (channelConfig->Data[i].Type == AIn_MC12bADC &&
@@ -170,10 +172,8 @@ bool MC12b_WriteStateAll(
     gType1EnabledMask = mask;
     if (mask != 0) {
         ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
-        ADCHS_ChannelResultInterruptEnable(ADCHS_CH3);
-    } else {
-        ADCHS_ChannelResultInterruptDisable(ADCHS_CH3);
     }
+    ADCHS_ChannelResultInterruptDisable(ADCHS_CH3);
 
     if (isEnabled) {
         gpModuleRuntimeConfigMC12->IsEnabled = isEnabled;

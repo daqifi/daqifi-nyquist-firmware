@@ -717,13 +717,11 @@ static void Streaming_Start(void) {
                             (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
             MC12b_ConfigureHardwareTrigger(true, hwShared);
 
-            // When OBDiag is disabled, suppress the EOS interrupt entirely.
-            // Without this, dedicated channel completions fire EOS, the
-            // deferred task wakes and reads stale monitoring results, making
-            // stale-age detection impossible.  Re-enabled in Streaming_Stop.
-            if (!gpRuntimeConfigStream->OnboardDiagEnabled) {
-                ADC_SetEosInterruptEnabled(false);
-            }
+            // #292: EOS stays enabled across all modes. The EOS deferred
+            // task now reads T1 user channels (moved from ADC_DATA3 ISR),
+            // so disabling EOS would break T1 streaming. OBDiag=0 gating
+            // is handled in the task body (skips monitoring reads when
+            // Running && !OnboardDiagEnabled).
         }
 
         TimerApi_Start(gpStreamingConfig->TimerIndex);
@@ -742,9 +740,6 @@ static void Streaming_Stop(void) {
         // Revert ADC to software triggering so non-streaming reads
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
-        // Re-enable EOS interrupt unconditionally (safe even if already on).
-        // Needed after OBDiag=0 sessions that disabled it.
-        ADC_SetEosInterruptEnabled(true);
         gpRuntimeConfigStream->Running = false;
 
         // Log session summary if any data was lost
