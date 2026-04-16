@@ -158,7 +158,7 @@ bool MC12b_WriteStateAll(
     // Do NOT enable CH3 result interrupt — #292 moves T1 result reads to
     // the EOS deferred task, eliminating the ~5μs ISR entry/exit overhead
     // that was the T1 throughput bottleneck.
-    uint8_t mask = 0;
+    uint32_t mask = 0;
     for (i = 0; i < channelConfig->Size; ++i) {
         if (channelConfig->Data[i].Type == AIn_MC12bADC &&
             channelConfig->Data[i].Config.MC12b.ChannelType == 1) {

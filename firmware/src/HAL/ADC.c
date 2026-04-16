@@ -118,7 +118,7 @@ void MC12bADC_EosInterruptTask(void) {
     const TickType_t xBlockTime = portMAX_DELAY;
 
     while (1) {
-        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        ulTaskNotifyTake(pdTRUE, xBlockTime);
 
         AInSample sample;
         int i = 0;
