@@ -8,13 +8,18 @@ Each component retains its original license and copyright.
 wolfSSL
 ------------------------------------------------------------------------------
 Location:   firmware/src/third_party/wolfssl/
-License:    GPLv2+ (dual-licensed; commercial license pending)
+License:    GPLv2+ (dual-licensed; commercial license required for non-GPL use)
 Copyright:  Copyright (C) 2006-2021 wolfSSL Inc.
 Website:    https://www.wolfssl.com/
+Distributed via: Microchip MPLAB Harmony (v5.4.0)
 
-NOTE: DAQiFi is in the process of obtaining a commercial wolfSSL license
-to eliminate GPL obligations from the firmware distribution. Until the
-commercial license is in place, this component is distributed under GPLv2+.
+NOTE: wolfSSL is distributed by Microchip as part of MPLAB Harmony but
+Microchip does NOT sublicense it. Microchip's own headers state: "It is
+your responsibility to comply with third party license terms applicable
+to your use of third party software that may accompany Microchip software."
+A separate commercial license from wolfSSL Inc. is required for non-GPL
+distribution. PIC32-specific port files (port/pic32/) are separately
+licensed under Microchip's proprietary terms.
 
 ------------------------------------------------------------------------------
 FreeRTOS
