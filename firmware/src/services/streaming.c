@@ -757,17 +757,22 @@ static void Streaming_Stop(void) {
         if (hadDrops) {
             uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
                                      gStreamStats.queueDroppedSamples;
+            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamples +
+                                      gStreamStats.encoderDroppedSamples +
+                                      gStreamStats.dioDroppedSamples +
+                                      gStreamStats.eosCoalesceCount;
             uint32_t lossPercent = totalAttempted > 0
-                ? (uint32_t)((gStreamStats.queueDroppedSamples * 100ULL) / totalAttempted)
+                ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
-            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, enc=%u, dio=%u, eos=%u",
-                  (unsigned)gStreamStats.queueDroppedSamples,
+            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u",
+                  (unsigned)totalSampleLoss,
                   (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
                   (unsigned)gStreamStats.usbDroppedBytes,
                   (unsigned)gStreamStats.wifiDroppedBytes,
                   (unsigned)gStreamStats.sdDroppedBytes,
                   (unsigned)gStreamStats.encoderFailures,
+                  (unsigned)gStreamStats.encoderDroppedSamples,
                   (unsigned)gStreamStats.dioDroppedSamples,
                   (unsigned)gStreamStats.eosCoalesceCount);
         }
@@ -1160,11 +1165,11 @@ void streaming_Task(void) {
             // Counting 1 per failure avoids the race condition where the
             // higher-priority deferred ISR task pushes new samples between
             // queue depth reads, making a delta approach inaccurate.
-            if (AINDataAvailable) {
-                gStreamStats.encoderDroppedSamples++;
-                LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                    "Streaming: encoder failure lost 1 sample");
-            }
+            // Count for both AIN and DIO encoder failures — any sample type
+            // consumed by a failed encode is lost.
+            gStreamStats.encoderDroppedSamples++;
+            LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+                "Streaming: encoder failure lost 1 sample");
             // Critical section: gQuesBits is also RMW'd by deferred ISR task
             taskENTER_CRITICAL();
             gQuesBits |= QUES_BIT_ENCODER_FAIL;
