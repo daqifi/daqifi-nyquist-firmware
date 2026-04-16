@@ -757,10 +757,11 @@ static void Streaming_Stop(void) {
         if (hadDrops) {
             uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
                                      gStreamStats.queueDroppedSamples;
+            // EOS coalescing is data staleness (ADC register overwrite),
+            // not a dropped sample — exclude from loss total/percentage.
             uint32_t totalSampleLoss = gStreamStats.queueDroppedSamples +
                                       gStreamStats.encoderDroppedSamples +
-                                      gStreamStats.dioDroppedSamples +
-                                      gStreamStats.eosCoalesceCount;
+                                      gStreamStats.dioDroppedSamples;
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
