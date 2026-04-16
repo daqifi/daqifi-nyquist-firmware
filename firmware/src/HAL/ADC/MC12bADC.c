@@ -172,6 +172,8 @@ bool MC12b_WriteStateAll(
     gType1EnabledMask = mask;
     if (mask != 0) {
         ADCHS_ModulesEnable(ADCHS_MODULE3_MASK);
+    } else {
+        ADCHS_ModulesDisable(ADCHS_MODULE3_MASK);
     }
     ADCHS_ChannelResultInterruptDisable(ADCHS_CH3);
 

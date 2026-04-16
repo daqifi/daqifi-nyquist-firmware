@@ -31,11 +31,6 @@ static TaskHandle_t gADCInterruptHandle;
 // (non-public) channels.  Used by SCPI info commands to detect stale data.
 static volatile uint32_t gLastDiagScanTick = 0;
 
-// Mirrors the hardware EOS interrupt enable state so the deferred task
-// can skip its body when a pending notification drains after the ISR
-// has already been disabled. Without this, a single stale read can
-// refresh gLastDiagScanTick post-disable and delay the stale indicator.
-static volatile bool gEosInterruptEnabled = true;
 /*!
  * Retrieves the index of a module
  * @param[in] pModule Pointer to the module to search for
@@ -124,10 +119,6 @@ void MC12bADC_EosInterruptTask(void) {
 
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
-
-        if (!gEosInterruptEnabled) {
-            continue;
-        }
 
         AInSample sample;
         int i = 0;
@@ -529,24 +520,3 @@ uint32_t ADC_GetLastDiagScanTick(void) {
     return gLastDiagScanTick;   // 32-bit read is atomic on PIC32MZ
 }
 
-void ADC_SetEosInterruptEnabled(bool enabled) {
-    // Update the software mirror first on disable (and last on enable) so
-    // the deferred task sees the flag state that matches the hardware at
-    // the moment of its next notification drain. Setting the flag true
-    // AFTER re-enabling hardware avoids a window where the task could
-    // unblock early and see gEosInterruptEnabled=true but no valid ADC
-    // results yet.
-    if (enabled) {
-        // Clear latched flag before re-enabling to prevent an immediate
-        // spurious fire from a flag set while the interrupt was disabled.
-        EVIC_SourceStatusClear(INT_SOURCE_ADC_EOS);
-        EVIC_SourceEnable(INT_SOURCE_ADC_EOS);
-        gEosInterruptEnabled = true;
-    } else {
-        gEosInterruptEnabled = false;
-        // Disable first, then clear pending flag to avoid a race where
-        // EOS re-asserts between clear and disable.
-        EVIC_SourceDisable(INT_SOURCE_ADC_EOS);
-        EVIC_SourceStatusClear(INT_SOURCE_ADC_EOS);
-    }
-}

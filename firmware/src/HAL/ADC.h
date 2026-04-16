@@ -95,11 +95,6 @@ void ADC_EOSInterruptCB(uintptr_t context);
  *  read yet.  Use with xTaskGetTickCount() to compute stale age. */
 uint32_t ADC_GetLastDiagScanTick(void);
 
-/*! Enables or disables the ADC End-of-Scan interrupt.
- *  Used by the streaming engine to suppress spurious EOS wakeups during
- *  dedicated-only streaming (OBDiag=0). */
-void ADC_SetEosInterruptEnabled(bool enabled);
-
 /*!
  * Handles AD7609 data acquisition from deferred interrupt task
  * Called when BSY pin interrupt signals conversion complete
