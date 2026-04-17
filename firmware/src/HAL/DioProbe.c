@@ -141,19 +141,27 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
     tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
 
-    /* Critical section required for re-assign: without it, an ISR reader
-     * could see mode=ACTIVE (old) with port/mask partially updated,
-     * toggling the wrong pin. Mode-published-last is not enough here
-     * because mode may stay ACTIVE across the reassign. */
+    /* Publication protocol for re-assign:
+     *   1. Clear mode to OFF (ISR readers see OFF and bail)
+     *   2. Critical section: rewrite port/mask/channel + masks
+     *   3. Publish new mode LAST (outside critical section — readers
+     *      only ever see mode=OFF while fields are mid-update, then
+     *      mode=NEW with fully committed fields)
+     * This protocol is safe even without the critical section; the
+     * critical section is kept to also cover the volatile bitmask
+     * updates (gDioProbeOwnedMask, gDioProbeAnyActive). */
     DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
+    slot->mode = DIO_PROBE_MODE_OFF;
+
     taskENTER_CRITICAL();
     slot->port    = dio->DataChannel;
     slot->mask    = 1u << dio->DataBitPos;
     slot->channel = channel;
-    slot->mode    = (uint8_t)mode;
-    gDioProbeOwnedMask |= (1u << channel);
+    gDioProbeOwnedMask |= (uint16_t)(1u << channel);
     gDioProbeAnyActive = true;
     taskEXIT_CRITICAL();
+
+    slot->mode = (uint8_t)mode;
     return true;
 }
 

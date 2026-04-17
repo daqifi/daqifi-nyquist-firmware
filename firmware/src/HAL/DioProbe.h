@@ -123,17 +123,27 @@ void DioProbe_GetSlot(uint8_t probeId, DioProbeSlot_t* out);
 /* ---- hot path (called from pipeline) ---- */
 
 /*! Fire a probe event. TOGGLE: flip pin. PULSE: drive pin HIGH.
- *  No-op if gDioProbeAnyActive is false or slot is OFF. */
+ *  No-op if gDioProbeAnyActive is false or slot is OFF.
+ *
+ *  Tear-safe read order: load mode first, bail on OFF before reading
+ *  port/mask. The writer publishes mode last (after fields are fully
+ *  written) on assign, and clears mode first on clear — so reading
+ *  mode before port/mask guarantees we only use fields that are
+ *  committed when mode is ACTIVE. */
 static inline void DioProbe_Toggle(uint8_t probeId) {
     if (!gDioProbeAnyActive) return;
     if (probeId >= DIO_PROBE_SLOTS) return;
-    /* Struct copy is a few LW instructions; safe against concurrent
-     * assign thanks to mode-published-last rule. */
-    const DioProbeSlot_t s = gDioProbeSlots[probeId];
-    if (s.mode == DIO_PROBE_MODE_TOGGLE) {
-        GPIO_PortToggle(s.port, s.mask);
-    } else if (s.mode == DIO_PROBE_MODE_PULSE) {
-        GPIO_PortSet(s.port, s.mask);
+
+    uint8_t mode = gDioProbeSlots[probeId].mode;
+    if (mode == DIO_PROBE_MODE_OFF) return;
+
+    GPIO_PORT port = gDioProbeSlots[probeId].port;
+    uint32_t  mask = gDioProbeSlots[probeId].mask;
+
+    if (mode == DIO_PROBE_MODE_TOGGLE) {
+        GPIO_PortToggle(port, mask);
+    } else { /* DIO_PROBE_MODE_PULSE */
+        GPIO_PortSet(port, mask);
     }
 }
 
@@ -141,10 +151,10 @@ static inline void DioProbe_Toggle(uint8_t probeId) {
 static inline void DioProbe_PulseEnd(uint8_t probeId) {
     if (!gDioProbeAnyActive) return;
     if (probeId >= DIO_PROBE_SLOTS) return;
-    const DioProbeSlot_t s = gDioProbeSlots[probeId];
-    if (s.mode == DIO_PROBE_MODE_PULSE) {
-        GPIO_PortClear(s.port, s.mask);
-    }
+
+    if (gDioProbeSlots[probeId].mode != DIO_PROBE_MODE_PULSE) return;
+
+    GPIO_PortClear(gDioProbeSlots[probeId].port, gDioProbeSlots[probeId].mask);
 }
 
 /*! Alias — reads better at call sites that start a pulse. */
