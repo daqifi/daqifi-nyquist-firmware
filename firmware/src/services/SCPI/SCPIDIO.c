@@ -17,6 +17,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
+#include "HAL/DioProbe.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 /**
  * Sets the GPIO direction for a single pin
@@ -91,7 +92,7 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
     {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Validate channel
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
@@ -99,6 +100,10 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
     }
     else
     {
+        if (DioProbe_IsChannelOwned((uint8_t)param1)) {
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
         return SCPI_GPIOSingleDirectionSet((uint8_t)param1, !(bool)param2); // Interpret the input as a bit/direction pair (invert because 1=output but we use isInput as the test)
     }
 }
@@ -149,7 +154,7 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
     {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Validate channel
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
@@ -157,6 +162,10 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
     }
     else
     {
+        if (DioProbe_IsChannelOwned((uint8_t)param1)) {
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
         return SCPI_GPIOSingleStateSet((uint8_t)param1, (bool)param2); // Interpret the input as a bit/direction pair
     }
 }
@@ -230,15 +239,18 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
     {
         return SCPI_RES_ERR;
     }
-    
+
     if (!SCPI_ParamInt32(context, &param2, TRUE))
     {
         return SCPI_RES_ERR;
     }
-    
+
+    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     return SCPI_PWMSingleStateSet((uint8_t)param1, (bool)param2);
-    return SCPI_RES_OK;
-   
 }
 scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){
     int param1;
@@ -272,7 +284,11 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     {
         return SCPI_RES_ERR;
     }
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
+    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
@@ -283,7 +299,7 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     //update the duty cycle period register of all the channels based on the new frequency
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
         DIO_PWMDutyCycleSetSingle(i);
-    }   
+    }
     return SCPI_RES_OK;
 }
 scpi_result_t SCPI_PWMChannelFrequencyGet(scpi_t * context){
@@ -322,8 +338,12 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     if(param2>100){
         return SCPI_RES_ERR;
     }
-    
-    pRunTimeDIOChannels->Data[param1].PwmDutyCycle=param2;    
+    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    pRunTimeDIOChannels->Data[param1].PwmDutyCycle=param2;
     DIO_PWMDutyCycleSetSingle(param1);
     return SCPI_RES_OK;
 }

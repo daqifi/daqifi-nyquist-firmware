@@ -28,6 +28,7 @@
 #include "HAL/BQ24297/BQ24297.h"
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
+#include "HAL/DioProbe.h"
 #include "SCPIADC.h"
 #include "SCPIDAC.h" 
 #include "SCPIDIO.h"
@@ -3076,6 +3077,117 @@ static scpi_result_t SCPI_GetStackStats(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// =============================================================================
+// DIO Debug Probe SCPI Callbacks
+// =============================================================================
+
+static bool dioprobe_parse_mode(const char* str, size_t len, DioProbeMode_t* out) {
+    if (len >= 3 && (str[0] == 'O' || str[0] == 'o') &&
+                    (str[1] == 'F' || str[1] == 'f') &&
+                    (str[2] == 'F' || str[2] == 'f')) {
+        *out = DIO_PROBE_MODE_OFF;
+        return true;
+    }
+    if (len >= 3 && (str[0] == 'T' || str[0] == 't') &&
+                    (str[1] == 'O' || str[1] == 'o') &&
+                    (str[2] == 'G' || str[2] == 'g')) {
+        *out = DIO_PROBE_MODE_TOGGLE;
+        return true;
+    }
+    if (len >= 3 && (str[0] == 'P' || str[0] == 'p') &&
+                    (str[1] == 'U' || str[1] == 'u') &&
+                    (str[2] == 'L' || str[2] == 'l')) {
+        *out = DIO_PROBE_MODE_PULSE;
+        return true;
+    }
+    return false;
+}
+
+static const char* dioprobe_mode_name(uint8_t mode) {
+    switch (mode) {
+        case DIO_PROBE_MODE_TOGGLE: return "TOGGLE";
+        case DIO_PROBE_MODE_PULSE:  return "PULSE";
+        default:                    return "OFF";
+    }
+}
+
+static scpi_result_t SCPI_DioProbeAssign(scpi_t * context) {
+    int32_t probeId;
+    if (!SCPI_ParamInt32(context, &probeId, TRUE)) return SCPI_RES_ERR;
+    if (probeId < 0 || probeId >= DIO_PROBE_STANDARD_COUNT) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    const char* modeStr;
+    size_t modeLen;
+    if (!SCPI_ParamCharacters(context, &modeStr, &modeLen, TRUE)) return SCPI_RES_ERR;
+    DioProbeMode_t mode;
+    if (!dioprobe_parse_mode(modeStr, modeLen, &mode)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    if (!DioProbe_Assign((uint8_t)probeId, mode)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_DioProbeAssignGet(scpi_t * context) {
+    int32_t probeId;
+    if (!SCPI_ParamInt32(context, &probeId, TRUE)) return SCPI_RES_ERR;
+    if (probeId < 0 || probeId >= DIO_PROBE_SLOTS) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    DioProbeSlot_t s;
+    DioProbe_GetSlot((uint8_t)probeId, &s);
+    SCPI_ResultText(context, dioprobe_mode_name(s.mode));
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_DioProbeClear(scpi_t * context) {
+    int32_t probeId;
+    if (!SCPI_ParamInt32(context, &probeId, TRUE)) return SCPI_RES_ERR;
+    if (probeId < 0 || probeId >= DIO_PROBE_STANDARD_COUNT) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    DioProbe_Clear((uint8_t)probeId);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_DioProbeClearAll(scpi_t * context) {
+    (void)context;
+    DioProbe_ClearAll();
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_DioProbePipeline(scpi_t * context) {
+    const char* modeStr;
+    size_t modeLen;
+    if (!SCPI_ParamCharacters(context, &modeStr, &modeLen, TRUE)) return SCPI_RES_ERR;
+    DioProbeMode_t mode;
+    if (!dioprobe_parse_mode(modeStr, modeLen, &mode)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    DioProbe_SetPipeline(mode);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_DioProbeList(scpi_t * context) {
+    for (uint8_t i = 0; i < DIO_PROBE_SLOTS; ++i) {
+        DioProbeSlot_t s;
+        DioProbe_GetSlot(i, &s);
+        const char* compile = (i >= DIO_PROBE_ADHOC_FIRST) ? "yes" : "no";
+        unsigned ch = (s.channel == 0xFF) ? 0xFFu : s.channel;
+        scpi_printf(context, "probe %u: channel=%u mode=%s compile_time=%s\r\n",
+                    (unsigned)i, ch, dioprobe_mode_name(s.mode), compile);
+    }
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -3309,6 +3421,13 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
     {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},
+    // DIO debug probe framework
+    {.pattern = "SYSTem:DIOProbe:ASSign", .callback = SCPI_DioProbeAssign,},
+    {.pattern = "SYSTem:DIOProbe:ASSign?", .callback = SCPI_DioProbeAssignGet,},
+    {.pattern = "SYSTem:DIOProbe:CLEar", .callback = SCPI_DioProbeClear,},
+    {.pattern = "SYSTem:DIOProbe:CLEar:ALL", .callback = SCPI_DioProbeClearAll,},
+    {.pattern = "SYSTem:DIOProbe:PIPELine", .callback = SCPI_DioProbePipeline,},
+    {.pattern = "SYSTem:DIOProbe:LIST?", .callback = SCPI_DioProbeList,},
     // FreeRTOS
     //{.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

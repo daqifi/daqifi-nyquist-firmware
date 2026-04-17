@@ -22,6 +22,7 @@
 #include <math.h>
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
+#include "HAL/DioProbe.h"
 #include "JSON_Encoder.h"
 #include "csv_encoder.h"
 #include "DaqifiPB/DaqifiOutMessage.pb.h"
@@ -294,8 +295,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
     while (1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
+        DioProbe_Toggle(2);  /* probe 2: deferred task wake rate */
 
         if (pRunTimeStreamConf->IsEnabled) {
+            DioProbe_PulseStart(3);  /* probe 3: alloc + channel loop + queue push */
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
             // No heap check needed - pool uses pre-allocated static memory
             pPublicSampleList = AInSampleList_AllocateFromPool();
@@ -309,6 +312,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     gTestPatternSampleCount++;
                     taskEXIT_CRITICAL();
                 }
+                DioProbe_PulseEnd(3);
                 continue;
             }
 
@@ -397,6 +401,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 taskEXIT_CRITICAL();
                 Streaming_UpdateFlowWindow(false);
             }
+            DioProbe_PulseEnd(3);
 
             // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
             // Normal/NoCap modes: with hardware triggering (#282), the timer
@@ -404,6 +409,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // devices (AD7609, DIO) and divided-rate shared scans need software
             // triggers here.
             if (gBenchmarkMode != BENCHMARK_PIPELINE) {
+                DioProbe_PulseStart(4);  /* probe 4: ADC trigger duration */
                 bool hwDed = MC12b_IsHwTriggerDedicated();
                 bool hwShd = MC12b_IsHwTriggerShared();
                 bool skipShared = !pRunTimeStreamConf->OnboardDiagEnabled;
@@ -448,6 +454,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     }
                 }
                 DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
+                DioProbe_PulseEnd(4);
             }
 
             // Increment test pattern counter once per ISR tick (after all channels)
@@ -479,6 +486,7 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
  * @param[in] alarmCount unused
  */
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
+    DioProbe_Toggle(0);  /* probe 0: true timer ISR rate */
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
 
@@ -1001,6 +1009,7 @@ void streaming_Task(void) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     while(1) {
         ulTaskNotifyTake(pdFALSE, xBlockTime);
+        DioProbe_Toggle(7);  /* probe 7: encoder task wake */
 
         // Don't process data or update QUES bits after streaming stops.
         // A notification may already be pending when Stop clears gQuesBits.
@@ -1144,6 +1153,7 @@ void streaming_Task(void) {
 
         packetSize = 0;
         if (nanopbFlag.Size > 0) {
+            DioProbe_PulseStart(8);  /* probe 8: encode duration */
             if(pRunTimeStreamConf->Encoding == Streaming_Csv){
                 DIO_TIMING_TEST_WRITE_STATE(1);
                 packetSize = csv_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
@@ -1158,6 +1168,7 @@ void streaming_Task(void) {
                 packetSize = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
                 DIO_TIMING_TEST_WRITE_STATE(0);
             }
+            DioProbe_PulseEnd(8);
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
             gStreamStats.encoderFailures++;
@@ -1184,6 +1195,7 @@ void streaming_Task(void) {
         }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
+            DioProbe_PulseStart(9);  /* probe 9: output write duration */
             // All-or-nothing output writes. On timeout (10s), the interface
             // is assumed dead. Backpressure propagates to sample queue —
             // QueueDroppedSamples is the ONLY data loss mechanism.
@@ -1240,6 +1252,7 @@ void streaming_Task(void) {
                     LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
                 }
             }
+            DioProbe_PulseEnd(9);
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
     }
