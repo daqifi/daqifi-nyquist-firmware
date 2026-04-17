@@ -106,7 +106,10 @@ void DioProbe_SetPipeline(DioProbeMode_t mode);
 /*! Lookup: is this DIO channel currently owned by a probe?
  *  Used by DIO.c and SCPIDIO.c to enforce isolation. */
 static inline bool DioProbe_IsChannelOwned(uint8_t channel) {
-    return (gDioProbeOwnedMask & (1u << channel)) != 0;
+    if (channel > DIO_PROBE_MAX_DIO_CHANNEL) {
+        return false;  /* shift by >=16 bits would be undefined behavior */
+    }
+    return (gDioProbeOwnedMask & (uint16_t)(1u << channel)) != 0;
 }
 
 /*! Remove owned bits from a DIO channel read mask. */

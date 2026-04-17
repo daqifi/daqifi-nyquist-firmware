@@ -63,10 +63,21 @@ static void probe_release_pin(uint8_t channel) {
 
     const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
     uint32_t dataMask = 1u << dio->DataBitPos;
+    uint32_t enMask   = 1u << dio->EnableBitPos;
 
-    /* Park pin LOW so the next stream sample reads a clean zero
-     * until DIO_WriteStateSingle re-applies user config. */
+    /* Park outputs to inactive levels first (avoids a spurious edge
+     * during the direction change to input), then put both pins back
+     * to input / high-Z so normal DIO control can re-apply user
+     * config cleanly — including the case where the user had the
+     * channel configured as an input. */
     GPIO_PortClear(dio->DataChannel, dataMask);
+    if (dio->EnableInverted) {
+        GPIO_PortSet(dio->EnableChannel, enMask);   /* inactive-high */
+    } else {
+        GPIO_PortClear(dio->EnableChannel, enMask); /* inactive-low */
+    }
+    GPIO_PortInputEnable(dio->DataChannel, dataMask);
+    GPIO_PortInputEnable(dio->EnableChannel, enMask);
 }
 
 static void recompute_any_active(void) {
