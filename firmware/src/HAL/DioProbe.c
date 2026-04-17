@@ -80,7 +80,13 @@ static void probe_release_pin(uint8_t channel) {
 }
 
 static void recompute_any_active(void) {
+    /* Critical section: serializes this iteration with DioProbe_Assign
+     * and DioProbe_Clear on the other SCPI task. Without it, Assign
+     * on task B could publish mode=NEW right after our read of
+     * gDioProbeSlots[i].mode returned OFF, and we would then stomp
+     * Assign's gDioProbeAnyActive=true with a false. */
     bool any = false;
+    taskENTER_CRITICAL();
     for (int i = 0; i < DIO_PROBE_SLOTS; ++i) {
         if (gDioProbeSlots[i].mode != DIO_PROBE_MODE_OFF) {
             any = true;
@@ -88,6 +94,7 @@ static void recompute_any_active(void) {
         }
     }
     gDioProbeAnyActive = any;
+    taskEXIT_CRITICAL();
 }
 
 /* ---- public API ---- */
@@ -141,15 +148,16 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
     tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
 
-    /* Publication protocol for re-assign:
-     *   1. Clear mode to OFF (ISR readers see OFF and bail)
-     *   2. Critical section: rewrite port/mask/channel + masks
-     *   3. Publish new mode LAST (outside critical section — readers
-     *      only ever see mode=OFF while fields are mid-update, then
-     *      mode=NEW with fully committed fields)
-     * This protocol is safe even without the critical section; the
-     * critical section is kept to also cover the volatile bitmask
-     * updates (gDioProbeOwnedMask, gDioProbeAnyActive). */
+    /* Publication protocol:
+     *   1. Clear mode to OFF (belt-and-suspenders — CS will block ISR
+     *      readers anyway, but any read that slips before the CS sees
+     *      OFF and bails)
+     *   2. Single critical section: rewrite fields + masks + publish
+     *      mode=NEW + set any_active. Mode publish MUST be inside the
+     *      CS so recompute_any_active on the other SCPI task cannot
+     *      observe mode=OFF and stomp any_active=false.
+     *   3. Volatile fields (see DioProbeSlot_t) prevent the compiler
+     *      from reordering writes out of the CS. */
     volatile DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
     slot->mode = DIO_PROBE_MODE_OFF;
 
@@ -157,11 +165,10 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
     slot->port    = dio->DataChannel;
     slot->mask    = 1u << dio->DataBitPos;
     slot->channel = channel;
+    slot->mode    = (uint8_t)mode;
     gDioProbeOwnedMask |= (uint16_t)(1u << channel);
     gDioProbeAnyActive = true;
     taskEXIT_CRITICAL();
-
-    slot->mode = (uint8_t)mode;
     return true;
 }
 
