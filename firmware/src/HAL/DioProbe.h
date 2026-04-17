@@ -14,7 +14,8 @@
  *
  * 1) STANDARD probes 0..9 — permanently wired to streaming pipeline
  *    stages. Mapped 1:1 to DIO_0..DIO_9. Assigned at runtime via
- *    SCPI SYST:DIOPR:ASS <probe>,<mode>.
+ *    SCPI SYST:DIOP:ASS <probe>,<mode> (caps-only) or long form
+ *    SYSTem:DIOProbe:ASSign.
  *
  * 2) AD-HOC probes 10..15 — compile-time instrumentation. Drop
  *    `DIO_PROBE_TOGGLE(n)` or `DIO_PROBE_PULSE_START(n)/END(n)` into
