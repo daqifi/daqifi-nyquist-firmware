@@ -8,6 +8,7 @@
 #include "services/wifi_services/wifi_manager.h"
 #include "services/sd_card_services/sd_card_manager.h"
 #include "HAL/DIO.h"
+#include "HAL/DioProbe.h"
 #include "HAL/DAC7718/DAC7718.h"
 #include "Util/Logger.h"
 #include "Util/CoherentPool.h"
@@ -542,6 +543,10 @@ void app_SystemInit() {
     // Write initial values
     DIO_WriteStateAll();
     DIO_TIMING_TEST_INIT();
+
+    // Init DIO debug probe framework AFTER default DIO state is applied
+    // so ad-hoc probes start from a known quiescent pin state.
+    DioProbe_Init();
     Streaming_Init(&gpBoardConfig->StreamingConfig,
             &gpBoardRuntimeConfig->StreamingConfig);
     Streaming_UpdateState();

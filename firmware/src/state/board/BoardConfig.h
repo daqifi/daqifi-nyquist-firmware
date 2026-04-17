@@ -14,6 +14,13 @@
 
 //#define DIO_TIMING_TEST
 
+/* Ad-hoc DIO probe enable mask. Each bit N enables DIO_PROBE_*(N)
+ * macro expansion for probe ID N (maps to DIO channel N). Bits 10-15
+ * are the ad-hoc probe range; bits 0-9 are reserved for standard
+ * pipeline probes. Default 0 = all ad-hoc probe macros compile to
+ * no-ops. See HAL/DioProbe.h. */
+#define DIO_PROBE_ENABLE_MASK 0x0000u
+
 #include "AInConfig.h"
 #include "AOutConfig.h"
 #include "DIOConfig.h"

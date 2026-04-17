@@ -15,6 +15,7 @@
 #include "OcmpApi/OcmpApi.h"
 #include "services/streaming.h"
 #include "Util/Logger.h"
+#include "DioProbe.h"
 //! Pointer to the board configuration. It must be set in the initialization
 static tBoardConfig *gpBoardConfig;
 //! Pointer to the runtime board configuration. It must be set in the initialization
@@ -83,6 +84,12 @@ bool DIO_WriteStateAll(void) {
 }
 
 bool DIO_WriteStateSingle(uint8_t dataIndex) {
+    /* Probe owns this channel — the debug probe drives TRIS/LAT
+     * exclusively. Skipping here is the primary isolation point;
+     * signal purity on the scope depends on it. */
+    if (DioProbe_IsChannelOwned(dataIndex)) {
+        return true;
+    }
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
     GPIO_PORT enableChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ]. EnableChannel;
     uint8_t enableBitPos = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableBitPos;
@@ -115,6 +122,10 @@ bool DIO_WriteStateSingle(uint8_t dataIndex) {
 }
 
 bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
+    /* Filter out probe-owned channels — their toggle waveform is
+     * debug artifact, not user data. Including them in the stream
+     * would mislead the consumer reading DIO samples. */
+    mask = DioProbe_FilterReadMask(mask);
     sample->Mask = mask;
     sample->Values = 0;
     // Set module trigger timestamp
@@ -139,6 +150,9 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
 }
 
 bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
+    if (DioProbe_IsChannelOwned(dataIndex)) {
+        return false;
+    }
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
     GPIO_PORT enableChannel = gpBoardConfig->DIOChannels.Data[ dataIndex ]. EnableChannel;
     uint8_t enableBitPos = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableBitPos;
@@ -162,6 +176,9 @@ bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
 }
 
 bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
+    if (DioProbe_IsChannelOwned(dataIndex)) {
+        return false;
+    }
     uint8_t pwmDriverInstance = gpBoardConfig->DIOChannels.Data[ dataIndex ].PwmOcmpId;
     uint32_t timerFreq = TimerApi_FrequencyGet(3);
     uint16_t pwmDutyCycle = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].PwmDutyCycle;
@@ -175,6 +192,9 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
 }
 
 bool DIO_PWMFrequencySet(uint8_t dataIndex) {
+    if (DioProbe_IsChannelOwned(dataIndex)) {
+        return false;
+    }
 
     const uint16_t tim3PreScalers[8] = {1, 2, 4, 8, 16, 32, 64, 256};
     uint32_t timerClock = TIMER_CLOCK_FRQ;//TimerApi_FrequencyGet(3);
@@ -211,6 +231,11 @@ void DIO_StreamingTrigger(DIOSample* latest, DIOSampleList* streamingSamples) {
 
     // Write DIO values
     for (i = 0; i < DIOChruntimeConfig->Size; ++i) {
+        /* Skip probe-owned channels at the loop level to avoid the
+         * call overhead. DIO_WriteStateSingle also guards internally. */
+        if (DioProbe_IsChannelOwned((uint8_t)i)) {
+            continue;
+        }
         DIO_WriteStateSingle(i);
     }
 

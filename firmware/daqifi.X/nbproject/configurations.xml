@@ -931,6 +931,7 @@
           <itemPath>../src/HAL/UI/UI.c</itemPath>
         </logicalFolder>
         <itemPath>../src/HAL/DIO.c</itemPath>
+        <itemPath>../src/HAL/DioProbe.c</itemPath>
         <itemPath>../src/HAL/ADC.c</itemPath>
       </logicalFolder>
       <logicalFolder name="libraries" displayName="libraries" projectFiles="true">

@@ -11,6 +11,7 @@
 //#include "ADC/AD7173.h"
 #include "ADC/MC12bADC.h"
 #include "DIO.h"
+#include "DioProbe.h"
 #include "Util/Logger.h"
 #include "services/streaming.h"
 #include "FreeRTOS.h"
@@ -124,12 +125,14 @@ void MC12bADC_EosInterruptTask(void) {
         // busy — those ADC result registers were overwritten before we
         // could read them. Count these as result overruns (#295).
         uint32_t notifCount = ulTaskNotifyTake(pdTRUE, xBlockTime);
+        DioProbe_Toggle(5);  /* probe 5: EOS task wake rate */
         if (notifCount > 1) {
             Streaming_IncrEosOverruns(notifCount - 1);
             LOG_E_SESSION(LOG_SESSION_EOS_OVERRUN,
                 "EOS: %u result overruns", (unsigned)(notifCount - 1));
         }
 
+        DioProbe_PulseStart(6);  /* probe 6: result read loop duration */
         AInSample sample;
         int i = 0;
         uint32_t adcval;
@@ -165,6 +168,7 @@ void MC12bADC_EosInterruptTask(void) {
         if (anyMonitorRead) {
             gLastDiagScanTick = xTaskGetTickCount();
         }
+        DioProbe_PulseEnd(6);
     }
 }
 
@@ -516,6 +520,7 @@ static void GetModuleChannelRuntimeData(
 
 void ADC_EOSInterruptCB(uintptr_t context) {
     (void)context; // Unused
+    DioProbe_Toggle(1);  /* probe 1: EOS ISR entry rate */
 
     // Guard against NULL task handle (if task creation failed during init)
     if (gADCInterruptHandle != NULL) {
