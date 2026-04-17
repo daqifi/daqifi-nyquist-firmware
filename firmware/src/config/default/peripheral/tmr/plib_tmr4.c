@@ -64,11 +64,11 @@ void TMR4_Initialize(void)
 
     /*
     SIDL = 0
-    TCKPS =7
+    TCKPS =3  (1:8 prescaler — 12.5 MHz base for <0.1% freq error)
     T32   = 1
     TCS = 0
     */
-    T4CONSET = 0x78;
+    T4CONSET = 0x38;
 
     /* Clear counter */
     TMR4 = 0x0;
