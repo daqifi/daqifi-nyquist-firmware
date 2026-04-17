@@ -44,13 +44,15 @@ typedef enum {
     DIO_PROBE_MODE_PULSE  = 2
 } DioProbeMode_t;
 
-/*! Per-probe slot. Written only by the SCPI task; read by many
- *  contexts. Publish order: fill port/mask/channel first, mode last. */
+/*! Per-probe slot. Written by the SCPI task; read by many contexts
+ *  including priority-1 ISRs. Fields are volatile so the compiler
+ *  cannot reorder or cache accesses across the publish-mode-last /
+ *  read-mode-first contract. */
 typedef struct {
-    GPIO_PORT port;       //!< Data pin GPIO port
-    uint32_t  mask;       //!< 1u << data bit position
-    uint8_t   channel;    //!< DIO channel index (0..15); 0xFF = unassigned
-    uint8_t   mode;       //!< DioProbeMode_t
+    volatile GPIO_PORT port;       //!< Data pin GPIO port
+    volatile uint32_t  mask;       //!< 1u << data bit position
+    volatile uint8_t   channel;    //!< DIO channel index (0..15); 0xFF = unassigned
+    volatile uint8_t   mode;       //!< DioProbeMode_t
 } DioProbeSlot_t;
 
 #define DIO_PROBE_SLOTS            16  //!< probe IDs 0..15
@@ -72,8 +74,9 @@ typedef struct {
 extern volatile bool gDioProbeAnyActive;
 
 /*! Slot table. Single-writer (SCPI task); readers do atomic struct
- *  copies on PIC32MZ's 32-bit bus. */
-extern DioProbeSlot_t gDioProbeSlots[DIO_PROBE_SLOTS];
+ *  copies on PIC32MZ's 32-bit bus. Volatile to match the per-field
+ *  qualification in DioProbeSlot_t. */
+extern volatile DioProbeSlot_t gDioProbeSlots[DIO_PROBE_SLOTS];
 
 /*! Bitmask of DIO channels currently owned by a probe. Checked by
  *  DIO.c write paths to skip stomping the pin. */

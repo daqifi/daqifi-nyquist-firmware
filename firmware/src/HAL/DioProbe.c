@@ -18,7 +18,7 @@
 /* ---- globals ---- */
 
 volatile bool gDioProbeAnyActive = false;
-DioProbeSlot_t gDioProbeSlots[DIO_PROBE_SLOTS];
+volatile DioProbeSlot_t gDioProbeSlots[DIO_PROBE_SLOTS];
 volatile uint16_t gDioProbeOwnedMask = 0;
 
 /* ---- internal helpers ---- */
@@ -116,7 +116,7 @@ void DioProbe_Init(void) {
         tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
         const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
 
-        DioProbeSlot_t* slot = &gDioProbeSlots[i];
+        volatile DioProbeSlot_t* slot = &gDioProbeSlots[i];
         slot->port    = dio->DataChannel;
         slot->mask    = 1u << dio->DataBitPos;
         slot->channel = channel;
@@ -150,7 +150,7 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
      * This protocol is safe even without the critical section; the
      * critical section is kept to also cover the volatile bitmask
      * updates (gDioProbeOwnedMask, gDioProbeAnyActive). */
-    DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
+    volatile DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
     slot->mode = DIO_PROBE_MODE_OFF;
 
     taskENTER_CRITICAL();
@@ -167,7 +167,7 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
 
 bool DioProbe_Clear(uint8_t probeId) {
     if (probeId >= DIO_PROBE_STANDARD_COUNT) return false;
-    DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
+    volatile DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
     if (slot->mode == DIO_PROBE_MODE_OFF && slot->channel == 0xFF) {
         return true;  /* already clear */
     }
