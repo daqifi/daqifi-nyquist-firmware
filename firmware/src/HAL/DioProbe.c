@@ -11,6 +11,8 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/Logger.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 /* ---- globals ---- */
 
@@ -129,15 +131,19 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
     tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
 
-    /* Write slot fields; mode LAST to publish. */
+    /* Critical section required for re-assign: without it, an ISR reader
+     * could see mode=ACTIVE (old) with port/mask partially updated,
+     * toggling the wrong pin. Mode-published-last is not enough here
+     * because mode may stay ACTIVE across the reassign. */
     DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
+    taskENTER_CRITICAL();
     slot->port    = dio->DataChannel;
     slot->mask    = 1u << dio->DataBitPos;
     slot->channel = channel;
     slot->mode    = (uint8_t)mode;
-
     gDioProbeOwnedMask |= (1u << channel);
-    gDioProbeAnyActive = true;  /* publish after all slot state valid */
+    gDioProbeAnyActive = true;
+    taskEXIT_CRITICAL();
     return true;
 }
 
@@ -150,18 +156,24 @@ bool DioProbe_Clear(uint8_t probeId) {
 
     uint8_t channel = slot->channel;
 
-    /* Stop toggles first, then drive the pin LOW, then clear ownership.
-     * Readers seeing mode=OFF won't touch the pin even if they got a
-     * torn copy of the slot. */
+    /* Mode=OFF first (stops any further toggles from ISR context),
+     * then wrap the rest in a critical section so the owned mask
+     * clear and slot field reset publish atomically relative to
+     * subsequent reads. */
     slot->mode = DIO_PROBE_MODE_OFF;
 
     if (channel <= DIO_PROBE_MAX_DIO_CHANNEL) {
         probe_release_pin(channel);
-        gDioProbeOwnedMask &= (uint16_t)~(1u << channel);
     }
 
+    taskENTER_CRITICAL();
+    if (channel <= DIO_PROBE_MAX_DIO_CHANNEL) {
+        gDioProbeOwnedMask &= (uint16_t)~(1u << channel);
+    }
     slot->channel = 0xFF;
     slot->mask = 0;
+    taskEXIT_CRITICAL();
+
     recompute_any_active();
     return true;
 }
