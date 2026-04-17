@@ -285,7 +285,12 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    pRunTimeStreamConfig->ClockPeriod = clkFreq / freq;
+    // PIC32MZ type-B timer counts 0..PR inclusive (PR+1 cycles per match).
+    {
+        uint32_t periodCycles = (clkFreq + freq - 1) / freq;
+        if (periodCycles < 2) periodCycles = 2;
+        pRunTimeStreamConfig->ClockPeriod = periodCycles - 1;
+    }
     pRunTimeStreamConfig->Frequency = freq;
     pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
     if (freq > 1000) {

@@ -1775,11 +1775,10 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // Set frequency and start
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
-    // Ceiling division to prevent actual freq exceeding requested freq
-    pStreamCfg->ClockPeriod = (clkFreq + freq - 1) / freq;
-    if (pStreamCfg->ClockPeriod == 0) {
-        pStreamCfg->ClockPeriod = 1;
-    }
+    // PIC32MZ type-B timer counts 0..PR inclusive (PR+1 cycles per match).
+    uint32_t periodCycles = (clkFreq + freq - 1) / freq;
+    if (periodCycles < 2) periodCycles = 2;
+    pStreamCfg->ClockPeriod = periodCycles - 1;
     pStreamCfg->Frequency = freq;
     pStreamCfg->IsEnabled = true;
     Streaming_UpdateState();
@@ -2151,11 +2150,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
             // Note: Internal monitoring channels have fixed 1Hz in NQ3 runtime config
 
-            // Ceiling division: ensures actual freq <= requested freq (no overspeed)
-            pRunTimeStreamConfig->ClockPeriod = (clkFreq + freq - 1) / freq;
-            if (pRunTimeStreamConfig->ClockPeriod == 0) {
-                pRunTimeStreamConfig->ClockPeriod = 1;
-            }
+            // PIC32MZ type-B timer counts 0..PR inclusive (PR+1 cycles per match).
+            // Compute the period in timer cycles, then subtract 1 for the PR value.
+            // Ceiling division ensures actual freq <= requested freq (no overspeed).
+            uint32_t periodCycles = (clkFreq + freq - 1) / freq;
+            if (periodCycles < 2) periodCycles = 2;  // PR must be >= 1
+            pRunTimeStreamConfig->ClockPeriod = periodCycles - 1;
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
             if (freq > 1000) {
