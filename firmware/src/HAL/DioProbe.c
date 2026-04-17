@@ -223,5 +223,11 @@ void DioProbe_GetSlot(uint8_t probeId, DioProbeSlot_t* out) {
         out->channel = 0xFF;
         return;
     }
+    /* Critical section protects against a torn read if another SCPI
+     * task (USB pri 7 vs WiFi pri 2) is concurrently modifying the
+     * same slot via Assign/Clear. Cost is negligible — this is called
+     * from LIST?/ASS? SCPI queries, not a hot path. */
+    taskENTER_CRITICAL();
     *out = gDioProbeSlots[probeId];
+    taskEXIT_CRITICAL();
 }
