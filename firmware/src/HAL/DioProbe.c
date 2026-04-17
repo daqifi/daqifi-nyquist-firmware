@@ -232,9 +232,15 @@ void DioProbe_GetSlot(uint8_t probeId, DioProbeSlot_t* out) {
     }
     /* Critical section protects against a torn read if another SCPI
      * task (USB pri 7 vs WiFi pri 2) is concurrently modifying the
-     * same slot via Assign/Clear. Cost is negligible — this is called
-     * from LIST?/ASS? SCPI queries, not a hot path. */
+     * same slot via Assign/Clear. Copy fields explicitly rather than
+     * using struct assignment from volatile — makes the volatile
+     * loads explicit in generated code and portable across compilers. */
+    DioProbeSlot_t tmp;
     taskENTER_CRITICAL();
-    *out = gDioProbeSlots[probeId];
+    tmp.port    = gDioProbeSlots[probeId].port;
+    tmp.mask    = gDioProbeSlots[probeId].mask;
+    tmp.channel = gDioProbeSlots[probeId].channel;
+    tmp.mode    = gDioProbeSlots[probeId].mode;
     taskEXIT_CRITICAL();
+    *out = tmp;
 }
