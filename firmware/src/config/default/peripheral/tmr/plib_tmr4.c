@@ -68,6 +68,7 @@ void TMR4_Initialize(void)
     T32   = 1
     TCS = 0
     */
+    T4CONCLR = 0x70;  // Clear TCKPS bits before setting (safe on soft reset)
     T4CONSET = 0x38;
 
     /* Clear counter */
