@@ -11,6 +11,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/Logger.h"
+#include "DIO.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -25,7 +26,6 @@ volatile uint16_t gDioProbeOwnedMask = 0;
 static bool probe_configure_pin(uint8_t channel) {
     tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     tBoardRuntimeConfig* rt = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_ALL_CONFIG);
-    if (cfg == NULL || rt == NULL) return false;
     if (channel >= cfg->DIOChannels.Size) return false;
 
     const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
@@ -58,7 +58,6 @@ static bool probe_configure_pin(uint8_t channel) {
 
 static void probe_release_pin(uint8_t channel) {
     tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    if (cfg == NULL) return;
     if (channel >= cfg->DIOChannels.Size) return;
 
     const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
@@ -184,6 +183,14 @@ bool DioProbe_Clear(uint8_t probeId) {
     slot->channel = 0xFF;
     slot->mask = 0;
     taskEXIT_CRITICAL();
+
+    /* Ownership is cleared — re-apply the user's runtime-configured
+     * DIO state so the channel returns to its pre-probe behavior
+     * (direction, value, enable) without requiring an external SCPI
+     * write from the host. */
+    if (channel <= DIO_PROBE_MAX_DIO_CHANNEL) {
+        (void)DIO_WriteStateSingle(channel);
+    }
 
     recompute_any_active();
     return true;
