@@ -182,17 +182,16 @@ bool DioProbe_Clear(uint8_t probeId) {
     uint8_t channel = slot->channel;
 
     /* Mode=OFF first (stops any further toggles from ISR context),
-     * then wrap the rest in a critical section so the owned mask
-     * clear and slot field reset publish atomically relative to
-     * subsequent reads. */
+     * then wrap everything else in a single critical section: pin
+     * release + owned mask clear + slot field reset all publish
+     * together. Tightens the "owned" invariant — there's no window
+     * where the mask says owned but the pin has already been reverted
+     * to high-Z. probe_release_pin only does SFR writes, safe in CS. */
     slot->mode = DIO_PROBE_MODE_OFF;
-
-    if (channel <= DIO_PROBE_MAX_DIO_CHANNEL) {
-        probe_release_pin(channel);
-    }
 
     taskENTER_CRITICAL();
     if (channel <= DIO_PROBE_MAX_DIO_CHANNEL) {
+        probe_release_pin(channel);
         gDioProbeOwnedMask &= (uint16_t)~(1u << channel);
     }
     slot->channel = 0xFF;
