@@ -232,7 +232,7 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 - NQ1 channels: ch0, ch1, ch2, ch3, ch5, ch6, ch7, ch9, ch11, ch13, ch15
 - All share MODULE7 — channels scanned sequentially via analog multiplexer
 - **Single EOS ISR**: `ADC_EOS_Handler` fires once after the entire scan completes
-- Results read by `MC12bADC_EosInterruptTask` (deferred task, priority 8)
+- Results read by `MC12bADC_EosInterruptTask` (deferred task, priority 9)
 - Trigger: `ADCHS_GlobalEdgeConversionStart()` in `MC12b_TriggerConversion()`
 
 **ISR flow per streaming timer tick:**
@@ -608,14 +608,14 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 
 | Priority | Task | Stack (words) | Peak Used | Notes |
 |----------|------|--------------|-----------|-------|
-| 8 | `_Streaming_Deferred_Interrupt_Task` | 512 | 214 | ISR deferral, sample collection, FPU |
-| 8 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
-| 8 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
+| 9 | `_Streaming_Deferred_Interrupt_Task` | 512 | 214 | ISR deferral, sample collection (no FPU — uses Q16 LUT for sine pattern) |
+| 9 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
+| 9 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
 | 7 | `app_PowerAndUITask` | 512 | 226 | UI + BQ24297 power, FPU |
 | 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use 512-byte locals |
-| 2 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs |
+| 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
+| 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
 | 2 | `app_WifiTask` | 1024 | 360 | WiFi state machine + TCP |
-| 2 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
 | 2 | `lWDRV_WINC_Tasks` | 1024 | 290 | WINC1500 driver background |
 | 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
 | 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
@@ -626,7 +626,7 @@ Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TC
 
 **WARNING**: If recursive SD directory listing is enabled, `app_SDCardTask` needs 10KB+ (~550 bytes per nesting level).
 
-**Scheduling implications**: The deferred ISR task (priority 8) preempts everything — it runs immediately when a streaming timer fires. The streaming encoder and all I/O tasks share priority 2, so they round-robin via time-slicing. USB device task starts at priority 2 then self-boosts to 7.
+**Scheduling implications**: Capture tasks at priority 9 preempt everything to guarantee deterministic sample timing. The encoder at priority 6 preempts WiFi/WINC/background (priority 2) and SD (priority 5), but stays below USB (7) so SCPI commands remain responsive during streaming. SD task at priority 5 sits above background transports but below encoder — prevents encoder from starving SD writes when USB+SD both active. See `docs/PIPELINE_TIMING.md` for measurements motivating these values (PR #308, Sessions 7-17).
 
 #### Known Silicon Errata (DS80000663R, verified against PDF pages 6-15)
 
