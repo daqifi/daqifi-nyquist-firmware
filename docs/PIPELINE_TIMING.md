@@ -980,21 +980,65 @@ capture (9) and USB (7) without contending with encoder (6).
 
 ---
 
+### Session 15 — 2026-04-17, CSV encode FPU cost scaling
+
+Parallel to Session 9 (PB scaling) with CSV format at
+`VoltagePrecision=4`. Each sample invokes
+`ADC_ConvertToVoltageByIndex` (double FPU math) + format double to
+string with 4 decimals per channel. Quantifies the encode-side FPU
+cost kept in `streaming_Task`.
+
+- **Firmware**: final set (encoder pri 6, capture pri 9, LUT sine,
+  deferred no-FPU)
+- **Stream config**: 1 kHz, pattern 0 (real ADC), CSV / USB,
+  `VoltagePrecision=4`
+
+#### P8 Tpos mean by channel count — CSV vs PB
+
+| Channels | PB (Sess 9) | **CSV (Sess 15)** | Ratio |
+|---:|---:|---:|---:|
+| 1 | 25.95 µs | **100.74 µs** | 3.9× |
+| 4 | 41.35 µs | **192.24 µs** | 4.6× |
+| 8 | 47.83 µs | **290.82 µs** | 6.1× |
+| 16 | 81.25 µs | **492.58 µs** | 6.1× |
+
+#### Linear fit
+
+- CSV: `P8 ≈ 75 µs fixed + 26 µs/channel`
+- PB:  `P8 ≈ 22 µs fixed + 3.7 µs/channel`
+
+Per-channel CSV is **~7× PB**; fixed overhead **~3.4× PB**.
+
+#### Key findings
+
+1. **CSV at 16 ch uses ~49% of a 1 kHz tick for encoding alone.**
+   At 5 kHz (capped rate for 16 ch) this would exceed the tick
+   budget — CSV 16 ch can't sustain 5 kHz. PB can.
+
+2. **Per-channel FPU cost dominates.** 26 µs/ch is mostly
+   `ADC_ConvertToVoltageByIndex` (double mul + add + cvt) plus
+   `snprintf`-style formatting with 4 decimals. Float→string on
+   PIC32MZ is expensive.
+
+3. **Workaround for CSV high-rate use**: set
+   `CONFigure:VOLTage:PRECision 0` to output integer millivolts.
+   Bypasses `ADC_ConvertToVoltage`, uses `int_to_str` fast path.
+   Expected to drop CSV P8 closer to PB levels.
+
+4. **Confirms why all CLAUDE.md high-rate benchmarks use PB.**
+   CSV/JSON are fundamentally FPU-bound per channel per sample.
+
+#### Implication for jitter
+
+When streaming CSV precision > 0, every encoder preemption crosses
+FPU context save/restore. If jitter on CSV workloads becomes
+important, next mitigation would be to conditionally register FPU
+at stream start based on `VoltagePrecision`. Out of scope for
+current work.
+
+---
+
 ## Follow-up captures to run
-- [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7
-      now that the FPU-save cost is eliminated. Find the sweet spot.
-- [ ] **FPU save cost validation**: rerun Session 10 with pattern 2
-      (integer — streaming_Task's FPU registration should matter less
-      if no FPU ops happen in the encoder). Compare P3 Tstd. If it
-      drops back close to Session 7's 5.7 µs, FPU save is confirmed
-      as the cause.
-- [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7.
-      Find the priority that minimizes P7 wake jitter without
-      hurting P3.
-- [ ] **CSV encode FPU contribution**: Session 9 but CSV instead of PB
-      with `VoltagePrecision = 4` (NQ1 default). Expect P8 grows
-      significantly per channel — each value becomes a `double`
-      multiply + format. Good parallel to Session 4's P3 finding.
 - [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
       actually observe bimodal P4 we'd need to disable HW triggering
       (a build change) and force software shared-scan every tick.
