@@ -228,6 +228,9 @@ static const uint16_t kSineLutQ16[SINE_PERIOD] = {
     26375, 27166, 27960, 28756, 29556, 30357, 31160, 31963,
 };
 
+_Static_assert((sizeof(kSineLutQ16) / sizeof(kSineLutQ16[0])) == SINE_PERIOD,
+               "kSineLutQ16 must have exactly SINE_PERIOD entries");
+
 /**
  * Generate a synthetic ADC value for test pattern streaming.
  * @param pattern    Pattern type (1-6, see switch cases)
