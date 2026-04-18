@@ -652,7 +652,7 @@ Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TC
 
 **WARNING**: If recursive SD directory listing is enabled, `app_SDCardTask` needs 10KB+ (~550 bytes per nesting level).
 
-**Scheduling implications**: Capture tasks at priority 9 preempt everything to guarantee deterministic sample timing. The encoder at priority 6 preempts WiFi/WINC/background (priority 2) and SD (priority 5), but stays below USB (7) so SCPI commands remain responsive during streaming. SD task at priority 5 sits above background transports but below encoder — prevents encoder from starving SD writes when USB+SD both active. See `docs/PIPELINE_TIMING.md` for measurements motivating these values (PR #308, Sessions 7-17).
+**Scheduling implications**: Capture tasks at priority 9 preempt everything to guarantee deterministic sample timing. The encoder at priority 6 preempts WiFi/WINC/background (priority 2) and SD (priority 5), but stays below USB (7) so SCPI commands remain responsive during streaming. SD task at priority 5 sits above background transports but below encoder — prevents encoder from starving SD writes when USB+SD both active. Encoder's `Streaming_WriteWithRetry` uses `vTaskDelay(1)` (not `taskYIELD()`) in its retry loop so lower-priority SD actually gets CPU to drain circular buffer (#312). See `docs/PIPELINE_TIMING.md` for measurements (PR #308, Sessions 7-17).
 
 #### Known Silicon Errata (DS80000663R, verified against PDF pages 6-15)
 
