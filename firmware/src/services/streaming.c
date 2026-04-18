@@ -648,8 +648,7 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
 
     bool hasUsb = (sc->ActiveInterface == StreamingInterface_USB ||
                    sc->ActiveInterface == StreamingInterface_All);
-    bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi ||
-                    sc->ActiveInterface == StreamingInterface_All);
+    bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi);
     bool hasSd = (sd->enable ||
                   sc->ActiveInterface == StreamingInterface_SD ||
                   sc->ActiveInterface == StreamingInterface_All);
@@ -1139,9 +1138,9 @@ void streaming_Task(void) {
                 break;
             case StreamingInterface_All:
             default:
-                // Legacy mode: stream to all interfaces (may cause issues at high rates)
+                // USB+SD concurrent mode (WiFi excluded — shares SPI bus with SD).
                 hasUsb = (usbSize >= 128);
-                hasWifi = (wifiSize >= 128);
+                hasWifi = false;
                 hasSD = (sdSize >= 128);
                 break;
         }

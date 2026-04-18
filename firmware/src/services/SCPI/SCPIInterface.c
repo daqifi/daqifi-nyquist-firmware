@@ -2184,18 +2184,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
     // Otherwise keep user's explicit setting (e.g., SD or All)
 
-    // Check for WiFi+SD conflict (both use SPI bus)
+    /* Interface_All is USB+SD (WiFi excluded by SPI bus conflict). Any
+     * interface other than WiFi-only can drive SD logging when the SD
+     * card is enabled and a filename is set. */
     sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    bool sdLoggingRequested = (pRunTimeStreamConfig->ActiveInterface == StreamingInterface_SD ||
-                               pRunTimeStreamConfig->ActiveInterface == StreamingInterface_All) &&
+    bool sdLoggingRequested = (pRunTimeStreamConfig->ActiveInterface != StreamingInterface_WiFi) &&
                               pSDCardSettings != NULL && pSDCardSettings->enable &&
                               pSDCardSettings->file[0] != '\0';
 
-    if ((pRunTimeStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
-         pRunTimeStreamConfig->ActiveInterface == StreamingInterface_All) &&
-        sdLoggingRequested) {
-        LOG_E("Cannot start WiFi streaming while SD logging is configured (SPI bus conflict)");
+    if (pRunTimeStreamConfig->ActiveInterface == StreamingInterface_WiFi &&
+        pSDCardSettings != NULL && pSDCardSettings->enable &&
+        pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        LOG_E("Cannot start WiFi streaming while SD logging is active (SPI bus conflict)");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -2572,8 +2573,10 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
         }
     }
 
-    // Check for WiFi+SD conflict (both use SPI bus) - only when SD streaming is actively running
-    if (param1 == StreamingInterface_WiFi || param1 == StreamingInterface_All) {
+    /* WiFi+SD SPI conflict: only a risk when switching explicitly to
+     * WiFi while SD is actively writing. Interface_All is USB+SD now
+     * (no WiFi), so no check needed for All. */
+    if (param1 == StreamingInterface_WiFi) {
         if (pSDCardSettings->enable && pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
             LOG_E("Cannot switch to WiFi while SD streaming is active (SPI bus conflict). Stop streaming first.");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -3377,7 +3380,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:StreamData?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:STReam:FORmat", .callback = SCPI_SetStreamFormat,}, // 0 = pb = default, 1 = text (json)
     {.pattern = "SYSTem:STReam:FORmat?", .callback = SCPI_GetStreamFormat,},
-    {.pattern = "SYSTem:STReam:INTerface", .callback = SCPI_SetStreamInterface,}, // 0=USB, 1=WiFi, 2=SD, 3=All
+    {.pattern = "SYSTem:STReam:INTerface", .callback = SCPI_SetStreamInterface,}, // 0=USB, 1=WiFi, 2=SD, 3=USB+SD
     {.pattern = "SYSTem:STReam:INTerface?", .callback = SCPI_GetStreamInterface,},
     {.pattern = "SYSTem:STReam:Stats?", .callback = SCPI_GetStreamStats,},
     {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
