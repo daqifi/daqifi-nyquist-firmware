@@ -739,8 +739,124 @@ budget at high channel counts), revisit the FPU mitigation.
 
 ---
 
+### Session 11 — 2026-04-17, 1 T1 ch / pattern 2 / PB / USB / encoder pri 6 / **FPU-save validation**
+
+Validation of the Session 10 FPU-save hypothesis. Ran Session 10's
+config but with pattern 2 (midscale, integer) instead of pattern 6
+(sine, FPU). If the P3 regression in Session 10 was caused by the
+sin() work itself, P3 Tstd should drop back to ~6 µs. If caused by
+FPU context save/restore on every task switch, P3 Tstd stays high.
+
+| Probe | Metric | Sess 7 pat 6 pri 2 | Sess 10 pat 6 pri 6 | Sess 11 pat 2 pri 6 |
+|---:|---|---:|---:|---:|
+| 3 | Tpos mean | 12.06 µs | 12.74 µs | **9.76 µs** (no sin work) |
+| 3 | Tstd | 5.70 µs | 14.20 µs | **14.37 µs** (stayed high!) |
+
+**Hypothesis confirmed: FPU-save on context switch is the cause.**
+Removing sin() calls from the deferred task (pattern 2) dropped the
+mean (work is simpler) but left Tstd unchanged. The variance comes
+from the ~32×64-bit FPU register save/restore that happens on every
+switch between two `portTASK_USES_FLOATING_POINT`-registered tasks,
+regardless of whether FPU was actually touched that slice.
+
+At pri 2 this rarely mattered because encoder was usually idle when
+deferred task fired (time-sliced with WiFi/SD). At pri 6 encoder
+runs contiguously → every deferred preemption pays the FPU save.
+
+---
+
+### Session 12 — 2026-04-17, 1 T1 ch / pattern 6 / PB / USB / **LUT sine + deferred task no-FPU**
+
+Fix for the Session 10 trade-off. Two changes:
+
+1. **Sine LUT**: replaced `sin()` in `Streaming_GenerateTestValue` with
+   a 256-entry Q0.16 lookup table. Integer multiply+shift — zero FPU
+   ops, zero dependencies on libm.
+2. **Drop FPU registration from deferred task**: removed
+   `portTASK_USES_FLOATING_POINT()` from
+   `_Streaming_Deferred_Interrupt_Task`. With the LUT in place this
+   task is pure integer forever; context switches no longer carry
+   FPU state. `streaming_Task` (encoder) keeps its FPU registration
+   for CSV/JSON at VoltagePrecision>0.
+
+- **Firmware**: `streaming.c` has LUT table (+32 lines), sin() call
+  replaced with LUT lookup, `portTASK_USES_FLOATING_POINT()` removed
+  from deferred task. All other changes (capture tasks at pri 9,
+  encoder at pri 6) from prior sessions remain.
+- **Stream config**: identical to Session 7 — 1 T1 ch, pattern 6
+  (now LUT-backed), PB/USB, 13 kHz
+- **Stats**: 10,227,171 samples / 10,227,171 TimerISRCalls / **0 drops**
+
+#### Full per-probe comparison across 4 sessions
+
+| Probe | Sess 7 (baseline) | Sess 10 (enc pri 6) | Sess 11 (pat 2, enc pri 6) | **Sess 12 (LUT + no-FPU)** |
+|---:|---:|---:|---:|---:|
+| 0 Tstd | 1,049 ns | 1,076 ns | — | **905 ns** |
+| 1 Tstd | 3,980 ns | 2,238 ns | — | **1,441 ns** |
+| 2 Tstd | 5.39 µs | 5.64 µs | — | **5.22 µs** |
+| **3 Tpos mean** | 12.06 µs | 12.74 µs | 9.76 µs | **8.85 µs** |
+| **3 Tstd** | **5.70 µs** | 14.20 µs | 14.37 µs | **5.51 µs** |
+| 4 Tstd | 11.85 µs | 14.42 µs | 14.37 µs | **11.40 µs** |
+| 5 Tstd | 4.97 µs | 6.95 µs | — | **3.86 µs** |
+| 6 Tstd | 4.88 µs | 6.62 µs | — | **3.72 µs** |
+| 7 Tstd | 157.4 µs | 86.6 µs | 72.4 µs | **59.4 µs** |
+| 8 Tpos mean | 59.64 µs | 42.76 µs | — | **34.88 µs** |
+| 8 Tstd | 93.08 µs | 65.25 µs | — | **28.41 µs** |
+| 9 Tpos mean | 11.50 µs | 0.86 µs | — | **0.80 µs** |
+| 9 Tstd | 122.8 µs | 66.2 µs | — | **45.4 µs** |
+
+#### Key findings
+
+1. **Every probe is equal or better than Session 7.** Session 12 is
+   the best combined result of the entire sweep.
+
+2. **P3 regression from Session 10 fully eliminated.** Tstd back to
+   5.51 µs (was 14.2 µs at pri 6 pre-fix). Mean actually *dropped*
+   to 8.85 µs vs Session 7's 12.06 µs — the LUT is faster than
+   `sin()` by ~3.2 µs per tick at 1 channel.
+
+3. **Big win on downstream probes.** P7 wake Tstd: 157 → 59 µs
+   (-62%). P8 Tstd: 93 → 28 µs (-69%). P9 mean: 11.5 µs → 801 ns
+   (-93%). The encoder pipeline is dramatically more deterministic.
+
+4. **Side benefits on capture probes.** P5 (EOS wake) and P6 (EOS
+   work) both Tstd better than Session 7 baseline — fewer FPU
+   save/restores on switches between encoder and EOS task too.
+
+5. **ISR probes marginally better.** P0 and P1 Tstd improved 14%
+   and 64% respectively. Likely less cache pressure from the FPU
+   save sequence no longer running on every deferred task switch.
+
+6. **CSV/JSON with VoltagePrecision > 0 still works correctly.**
+   `streaming_Task` retains `portTASK_USES_FLOATING_POINT()` so
+   `ADC_ConvertToVoltage` calls still save/restore float state
+   properly. The fix only removes FPU registration where it was
+   not actually needed.
+
+#### Net result
+
+Across the three firmware interventions (capture tasks pri 9,
+encoder pri 6, LUT + deferred no-FPU), the major pipeline jitter
+metrics vs the original baseline (pre-PR #307 capture priority 8):
+
+| Metric | Pre-307 (Session 4) | **Session 12** | Reduction |
+|---|---:|---:|---:|
+| P3 Tstd (deferred work) | 11.57 µs | 5.51 µs | -52% |
+| P7 Tstd (encoder wake) | 157 µs | 59 µs | -62% |
+| P8 Tstd (encode work) | 42.4 µs | 28.4 µs | -33% |
+| P9 Tstd (output write) | 63 µs | 45 µs | -29% |
+
+Zero cost on the device: no additional CPU, no additional memory
+(the LUT is 512 bytes static const), same throughput, 0 drops.
+
+---
+
 ## Follow-up captures to run
 
+- [ ] **Session 12 at 16 ch**: replicate the LUT+no-FPU win under
+      16-channel load. Expect similar P3 relative improvement.
+- [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7
+      now that the FPU-save cost is eliminated. Find the sweet spot.
 - [ ] **FPU save cost validation**: rerun Session 10 with pattern 2
       (integer — streaming_Task's FPU registration should matter less
       if no FPU ops happen in the encoder). Compare P3 Tstd. If it
