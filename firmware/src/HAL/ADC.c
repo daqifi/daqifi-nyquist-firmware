@@ -187,7 +187,7 @@ void ADC_Init(
     gpBoardData = (tBoardData *) pBoardDataADCInit;
     BaseType_t result = xTaskCreate((TaskFunction_t) MC12bADC_EosInterruptTask,
             "MC12bADC EOS",
-            160, NULL, 8, &gADCInterruptHandle);  // Profiled: 80 words peak. 2x margin. (was 2048)
+            160, NULL, 9, &gADCInterruptHandle);  // Profiled: 80 words peak. 2x margin. (was 2048)
     if (result != pdPASS) {
         LOG_E("FATAL: Failed to create MC12bADC_EosInterruptTask\r\n");
     }

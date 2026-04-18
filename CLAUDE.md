@@ -232,7 +232,7 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 - NQ1 channels: ch0, ch1, ch2, ch3, ch5, ch6, ch7, ch9, ch11, ch13, ch15
 - All share MODULE7 — channels scanned sequentially via analog multiplexer
 - **Single EOS ISR**: `ADC_EOS_Handler` fires once after the entire scan completes
-- Results read by `MC12bADC_EosInterruptTask` (deferred task, priority 8)
+- Results read by `MC12bADC_EosInterruptTask` (deferred task, priority 9)
 - Trigger: `ADCHS_GlobalEdgeConversionStart()` in `MC12b_TriggerConversion()`
 
 **ISR flow per streaming timer tick:**
@@ -247,22 +247,48 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 - `HAL/ADC/MC12bADC.c` — `MC12b_TriggerConversion`, `MC12b_WriteStateAll` (batch interrupt setup)
 - `HAL/ADC.c` — `MC12bADC_EosInterruptTask`, `ADC_ReadADCSampleFromISR`
 
-**Characterization results (O3, USB, zero-loss ceiling, fullscale test pattern, NoCap benchmark mode):**
+**Characterization results (O3, USB, zero-loss ceiling sustained for 120s, fullscale test pattern, NoCap benchmark mode):**
 
-PB columns updated 2026-04-15 after PR #290 (EOS interrupt disable during OBDiag=0 streaming — dedicated-module completions were falsely asserting EOSIF, causing per-sample EOS task wakeups). CSV columns still from 2026-04-13 (re-run pending).
+Full refresh 2026-04-18 after PR #308 interventions (capture tasks pri 9, encoder pri 6, SD task pri 5, sin()→LUT, deferred task no-FPU, Interface_All=USB+SD). See PIPELINE_TIMING.md Session 18 for full 120-config data.
+
+**USB** (zero-drop over 120s):
 
 | Config | PB Ceiling | PB KB/s | CSV Ceiling | CSV KB/s |
 |--------|----------:|--------:|------------:|--------:|
-| 1×T1 | 15,000 Hz | 145 | 13,800 Hz | 217 |
-| 3×T1 | 14,000 Hz | 225 | 11,400 Hz | 543 |
-| 5×T1 | 13,000 Hz | 217 | 9,600 Hz | 755 |
-| 1×T2 | 21,000 Hz | 243 | 16,200 Hz | 255 |
-| 4×T2 | 17,000 Hz | 313 | 12,600 Hz | 771 |
-| 5×T2 | 16,000 Hz | 271 | — | — |
-| 8×T2 | 16,000 Hz | 354 | 9,600 Hz | 1,160 |
-| 11×T2 | 13,000 Hz | 361 | 6,400 Hz | 1,125 |
-| 5T1+4T2 (9ch) | 12,000 Hz | 294 | 7,800 Hz | 1,077 |
-| 5T1+11T2 (16ch) | 9,000 Hz | 399 | 6,000 Hz | 1,464 |
+| 1×T1 | 18,000 Hz | 239 | 18,000 Hz | 294 |
+| 1×T1 OBDiag=OFF | 20,000 Hz | 265 | 20,000 Hz | 305 |
+| 3×T1 | 16,000 Hz | 362 | 15,000 Hz | 720 |
+| 5×T1 | 14,000 Hz | 452 | 12,000 Hz | 1,007 |
+| 5×T1 OBDiag=OFF | 16,000 Hz | 514 | 14,000 Hz | 1,147 |
+| 1×T2 | 18,000 Hz | 239 | 18,000 Hz | 295 |
+| 3×T2 | 16,000 Hz | 362 | 15,000 Hz | 721 |
+| 5×T2 | 14,000 Hz | 451 | 12,000 Hz | 1,012 |
+| 8×T2 | 12,000 Hz | 559 | 10,000 Hz | 1,328 |
+| 11×T2 | 11,000 Hz | 669 | 8,000 Hz | 1,517 |
+| 5T1+3T2 (8ch) | 12,000 Hz | 558 | 10,000 Hz | 1,283 |
+| 5T1+5T2 (10ch) | 11,000 Hz | 617 | 9,000 Hz | 1,476 |
+| 5T1+11T2 (16ch) | 9,000 Hz | 761 | 6,000 Hz | 1,742 |
+
+**SD** (zero-drop over 120s, interface=2):
+
+| Config | PB Ceiling | CSV Ceiling |
+|--------|----------:|------------:|
+| 1×T1 | 10,000 Hz | 10,000 Hz |
+| 1×T1 OBDiag=OFF | 11,000 Hz | 10,000 Hz |
+| 3×T1 | 8,000 Hz | 6,000 Hz |
+| 5×T1 | 7,000 Hz | 3,000 Hz |
+| 5×T1 OBDiag=OFF | 8,000 Hz | 2,000 Hz |
+| 8×T2 | 6,000 Hz | 3,000 Hz |
+| 11×T2 | 5,000 Hz | 1,000 Hz |
+| 5T1+11T2 (16ch) | 4,000 Hz | 1,000 Hz |
+
+Compared to pre-intervention (2026-04-15 PB / 2026-04-13 CSV):
+- **USB CSV broadly up +11 to +32%.** Biggest wins at mid-channel counts (3×T1 +32%, 11×T2 +25%).
+- **USB PB T1 up +8 to +20%.** Larger improvements at lower channel counts.
+- **USB PB T2 down -14 to -25%** (known regression, real but modest at practical channel counts).
+- **SD PB down -14 to -43%.** See #312 — follow-up for SD priority rework.
+- **SD CSV down -9% to -50%.** Same root cause as #312.
+- **New 20 kHz ceiling** at 1×T1 with OBDiag disabled (USB PB or CSV).
 
 #### Voltage Output Precision
 
@@ -608,14 +634,14 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 
 | Priority | Task | Stack (words) | Peak Used | Notes |
 |----------|------|--------------|-----------|-------|
-| 8 | `_Streaming_Deferred_Interrupt_Task` | 512 | 214 | ISR deferral, sample collection, FPU |
-| 8 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
-| 8 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
+| 9 | `_Streaming_Deferred_Interrupt_Task` | 512 | 214 | ISR deferral, sample collection (no FPU — uses Q16 LUT for sine pattern) |
+| 9 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
+| 9 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
 | 7 | `app_PowerAndUITask` | 512 | 226 | UI + BQ24297 power, FPU |
 | 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use 512-byte locals |
-| 2 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs |
+| 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
+| 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
 | 2 | `app_WifiTask` | 1024 | 360 | WiFi state machine + TCP |
-| 2 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
 | 2 | `lWDRV_WINC_Tasks` | 1024 | 290 | WINC1500 driver background |
 | 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
 | 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
@@ -626,7 +652,7 @@ Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TC
 
 **WARNING**: If recursive SD directory listing is enabled, `app_SDCardTask` needs 10KB+ (~550 bytes per nesting level).
 
-**Scheduling implications**: The deferred ISR task (priority 8) preempts everything — it runs immediately when a streaming timer fires. The streaming encoder and all I/O tasks share priority 2, so they round-robin via time-slicing. USB device task starts at priority 2 then self-boosts to 7.
+**Scheduling implications**: Capture tasks at priority 9 preempt everything to guarantee deterministic sample timing. The encoder at priority 6 preempts WiFi/WINC/background (priority 2) and SD (priority 5), but stays below USB (7) so SCPI commands remain responsive during streaming. SD task at priority 5 sits above background transports but below encoder — prevents encoder from starving SD writes when USB+SD both active. See `docs/PIPELINE_TIMING.md` for measurements motivating these values (PR #308, Sessions 7-17).
 
 #### Known Silicon Errata (DS80000663R, verified against PDF pages 6-15)
 

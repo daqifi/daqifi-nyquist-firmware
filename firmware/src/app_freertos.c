@@ -312,9 +312,10 @@ static bool app_SDCard_IsWifiUsingSPI(void) {
     StreamingRuntimeConfig* pStreamConfig =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
     bool isStreaming = pStreamConfig->IsEnabled;
+    /* Interface_All is USB+SD — WiFi is NOT used in that mode. Only
+     * explicit Interface_WiFi puts WiFi on the SPI bus. */
     bool isWifiStreaming = isStreaming &&
-                          (pStreamConfig->ActiveInterface == StreamingInterface_WiFi ||
-                           pStreamConfig->ActiveInterface == StreamingInterface_All);
+                          pStreamConfig->ActiveInterface == StreamingInterface_WiFi;
     return isWifiStreaming || wifi_manager_IsWifiFirmwareUpdateActive();
 }
 
@@ -713,7 +714,8 @@ static void app_TasksCreate() {
             "SDCardTask",
             1024,  // Profiled: 468 words peak. 2x+ margin. (was 5240)
             NULL,
-            2,
+            5,  // Pri 5: above background (2), below encoder (6). Prevents
+                // encoder from starving SD writer when USB+SD both active.
             NULL);
     if (errStatus != pdTRUE) {
         LOG_E("FATAL: Failed to create SDCardTask\r\n");

@@ -217,7 +217,7 @@ void SYS_Tasks ( void )
         "AD7609 BSY",
         160,   // Profiled: 76 words peak. 2x margin. (was 512)
         NULL,
-        8,
+        9,
         (TaskHandle_t*)pAD7609TaskHandle
     );
 
