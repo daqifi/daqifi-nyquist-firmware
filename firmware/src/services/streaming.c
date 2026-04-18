@@ -616,9 +616,12 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
         if (writeFn((const char*)buf, len) == len) return len;
     }
 
-    // Phase 2: yield — let output tasks (same priority) drain
+    // Phase 2: short sleeps — let lower-priority output tasks drain.
+    // taskYIELD() only reschedules within the same priority; encoder at 6
+    // yielding to SD at 5 is a no-op. vTaskDelay(1) blocks for 1 tick so
+    // lower-priority SD task gets CPU to drain its circular buffer (#312).
     for (int i = 0; i < 50; i++) {
-        taskYIELD();
+        vTaskDelay(1);
         if (writeFn((const char*)buf, len) == len) return len;
     }
 
