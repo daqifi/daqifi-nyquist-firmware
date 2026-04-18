@@ -3114,7 +3114,7 @@ static const char* dioprobe_mode_name(uint8_t mode) {
     }
 }
 
-static scpi_result_t SCPI_DioProbeAssign(scpi_t * context) {
+static scpi_result_t SCPI_DioProbeModeSet(scpi_t * context) {
     int32_t probeId;
     if (!SCPI_ParamInt32(context, &probeId, TRUE)) return SCPI_RES_ERR;
     if (probeId < 0 || probeId >= DIO_PROBE_STANDARD_COUNT) {
@@ -3136,7 +3136,7 @@ static scpi_result_t SCPI_DioProbeAssign(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_DioProbeAssignGet(scpi_t * context) {
+static scpi_result_t SCPI_DioProbeModeGet(scpi_t * context) {
     int32_t probeId;
     if (!SCPI_ParamInt32(context, &probeId, TRUE)) return SCPI_RES_ERR;
     if (probeId < 0 || probeId >= DIO_PROBE_SLOTS) {
@@ -3425,8 +3425,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
     {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},
     // DIO debug probe framework
-    {.pattern = "SYSTem:DIOProbe:ASSign", .callback = SCPI_DioProbeAssign,},
-    {.pattern = "SYSTem:DIOProbe:ASSign?", .callback = SCPI_DioProbeAssignGet,},
+    {.pattern = "SYSTem:DIOProbe:MODE", .callback = SCPI_DioProbeModeSet,},
+    {.pattern = "SYSTem:DIOProbe:MODE?", .callback = SCPI_DioProbeModeGet,},
     {.pattern = "SYSTem:DIOProbe:CLEar", .callback = SCPI_DioProbeClear,},
     {.pattern = "SYSTem:DIOProbe:CLEar:ALL", .callback = SCPI_DioProbeClearAll,},
     {.pattern = "SYSTem:DIOProbe:PIPELine", .callback = SCPI_DioProbePipeline,},

@@ -14,16 +14,16 @@ measurements remain comparable over time.
 2. Power the device: `SYST:POW:STAT 1`.
 3. Assign probes — pipeline default map:
    ```
-   SYST:DIOP:ASS 0,TOGGLE   ; streaming timer ISR entry
-   SYST:DIOP:ASS 1,TOGGLE   ; ADC EOS ISR entry
-   SYST:DIOP:ASS 2,TOGGLE   ; deferred task wake
-   SYST:DIOP:ASS 3,PULSE    ; deferred: alloc + channel loop + queue push
-   SYST:DIOP:ASS 4,PULSE    ; deferred: ADC trigger + DIO trigger
-   SYST:DIOP:ASS 5,TOGGLE   ; EOS task wake
-   SYST:DIOP:ASS 6,PULSE    ; EOS task: result read loop
-   SYST:DIOP:ASS 7,TOGGLE   ; encoder task wake
-   SYST:DIOP:ASS 8,PULSE    ; encoder: encode call
-   SYST:DIOP:ASS 9,PULSE    ; encoder: output write
+   SYST:DIOP:MODE 0,TOGGLE   ; streaming timer ISR entry
+   SYST:DIOP:MODE 1,TOGGLE   ; ADC EOS ISR entry
+   SYST:DIOP:MODE 2,TOGGLE   ; deferred task wake
+   SYST:DIOP:MODE 3,PULSE    ; deferred: alloc + channel loop + queue push
+   SYST:DIOP:MODE 4,PULSE    ; deferred: ADC trigger + DIO trigger
+   SYST:DIOP:MODE 5,TOGGLE   ; EOS task wake
+   SYST:DIOP:MODE 6,PULSE    ; EOS task: result read loop
+   SYST:DIOP:MODE 7,TOGGLE   ; encoder task wake
+   SYST:DIOP:MODE 8,PULSE    ; encoder: encode call
+   SYST:DIOP:MODE 9,PULSE    ; encoder: output write
    ```
    Or `SYST:DIOP:PIPEL TOGGLE` (then swap specific probes to PULSE as
    desired).
