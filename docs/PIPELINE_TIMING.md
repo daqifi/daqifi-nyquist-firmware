@@ -225,13 +225,154 @@ total timer ticks.
 
 ---
 
+### Session 3 — 2026-04-17, 13 kHz / 1 T1 ch / PB / USB / **midscale test pattern**
+
+Intended as the "FPU contribution" follow-up (TODO #1) — rerun Session 2
+with `SYST:STR:TESTpattern 2` to eliminate the `sin()` call in test
+pattern sample generation, then compare P2/P3 jitter.
+
+- **Firmware**: main `68023a70` (framework merged)
+- **Board**: NQ1 | **Analyzer**: Saleae Logic 8 (10 ch)
+- **Stream config**: 13 kHz, 1 Type-1 ADC ch (`ENA:VOLT:DC 1,1`),
+  Protocol Buffers, USB only, `SYST:STR:TESTpattern 2`
+- **Firmware stats**: 40,390,253 samples / 40,390,253 TimerISRCalls /
+  **0 drops** / 441,761,451 bytes / ~52 min session
+
+#### Per-probe comparison vs Session 2
+
+| Probe | Metric | Session 2 (default) | Session 3 (pattern 2) | Δ |
+|---:|---|---:|---:|---:|
+| 0 TOGGLE | Tstd | 912 ns | **1,016 ns** | +11% |
+| 1 TOGGLE | Tstd | 2.2 µs | **3.5 µs** | +59% |
+| 2 TOGGLE | Tstd | 5.42 µs | **5.54 µs** | +2% |
+| 3 PULSE | Tpos mean | 9.81 µs | **9.21 µs** | -6% |
+| 3 PULSE | Tstd | 5.82 µs | **6.24 µs** | +7% |
+| 4 PULSE | Tpos mean | 8.85 µs | **9.41 µs** | +6% |
+| 4 PULSE | Tstd | 15.6 µs | **11.3 µs** | -28% |
+| 5 TOGGLE | Tstd | 4.16 µs | **4.94 µs** | +19% |
+| 6 PULSE | Tpos mean | — | 13.88 µs | new |
+| 7 TOGGLE | Tstd | — | 132.8 µs | new |
+| 8 PULSE | Tpos mean | 36.0 µs | **52.95 µs** | +47% |
+| 8 PULSE | Tpos max | 349 µs | **479 µs** | +37% |
+| 9 PULSE | Tpos mean | 910 ns | **10.0 µs** | +1000% |
+
+#### Key findings — null result on FPU, methodology correction
+
+1. **No FPU signal in P2/P3.** Deferred task wake (P2) and work (P3)
+   jitter are essentially unchanged. The TODO hypothesis was wrong:
+   **Session 2 did not use pattern 6 (sine)**, so there was no `sin()`
+   call to eliminate. Switching pattern 0→2 replaces a real ADC read
+   with a constant (`adcMax/2`) but neither path touches FPU in
+   `Streaming_GenerateTestValue`.
+2. **P8/P9 widened, but not from FPU.** Encode mean +47%, output write
+   mean +1000%. Driver: with a constant value, the encoder task
+   coalesces differently — the P8 invocation rate (8558 Hz vs 10454 Hz
+   in Session 2) means each burst drains more samples, so per-burst
+   work inflates. Not an FPU effect; PB encoding of constant 2047 is if
+   anything cheaper than the varying Session 2 values.
+3. **The real FPU test is pattern 6 (sine) vs pattern 2 (midscale).**
+   Pattern 6 runs `sin()` per sample in the deferred task (P3 region) —
+   that's where the FPU work lives. See Session 4 TODO below.
+4. **P7 encoder wake jitter blew up to 133 µs.** Not captured in
+   Session 2 but is the highest scheduler-induced jitter on any probe.
+   Priority-2 task under burst-coalesce scheduling.
+
+---
+
+### Session 4 — 2026-04-17, 13 kHz / 1 T1 ch / PB / USB / **sine test pattern (FPU)**
+
+Corrected FPU test: same config as Session 3 but `SYST:STR:TESTpattern 6`
+(sine). Pattern 6 runs `sin()` + 2× double multiply + 1× double add +
+1× double→int conversion per sample per channel
+(`Streaming_GenerateTestValue` in `streaming.c:222–228`). This is where
+the hardware FPU actually gets exercised in the pipeline — before the
+encoder, inside the deferred task (priority 8).
+
+- **Firmware**: main `68023a70`
+- **Board**: NQ1 | **Analyzer**: Saleae Logic 8
+- **Stream config**: 13 kHz, 1 T1 ch, PB / USB, `SYST:STR:TESTpattern 6`
+- **Firmware stats**: 5,314,025 samples / 5,314,025 TimerISRCalls /
+  **0 drops** / 57,666,604 bytes
+
+#### Pattern 2 (no FPU) vs Pattern 6 (FPU) at 13 kHz
+
+| Probe | Metric | Pattern 2 | Pattern 6 | Δ | FPU signal? |
+|---:|---|---:|---:|---:|:---:|
+| 0 TOGGLE | Timer ISR Tstd | 1,016 ns | **1,066 ns** | +5% | no |
+| 1 TOGGLE | EOS ISR Tstd | 3,515 ns | **3,502 ns** | 0% | no |
+| 2 TOGGLE | Deferred wake Tstd | 5.54 µs | 5.53 µs | 0% | no |
+| 3 PULSE | **Alloc+loop+push Tpos mean** | **9.21 µs** | **12.08 µs** | **+31% (+2.87 µs)** | **YES** |
+| 3 PULSE | **Alloc+loop+push Tstd** | 6.24 µs | **11.57 µs** | **+85%** | **YES** |
+| 4 PULSE | ADC+DIO trigger Tpos mean | 9.41 µs | 9.58 µs | +2% | no |
+| 5 TOGGLE | EOS task wake Tstd | 4.94 µs | 4.96 µs | 0% | no |
+| 6 PULSE | EOS read loop Tpos mean | 13.88 µs | 13.80 µs | 0% | no |
+| 7 TOGGLE | Encoder wake Tstd | 132.8 µs | **157.4 µs** | +18% | indirect |
+| 8 PULSE | Encode Tpos mean | 52.95 µs | **59.70 µs** | +13% | indirect |
+| 9 PULSE | Output write Tpos mean | 10.04 µs | 11.63 µs | +16% | indirect |
+
+#### Key findings — FPU cost is real and localized to P3
+
+1. **P3 is the FPU probe.** Deferred task work grew 9.21 → 12.08 µs
+   mean when the only change was adding `sin()` + double mul/add per
+   sample. That's **~2.87 µs of FPU work per tick**. At 1 enabled
+   channel that's essentially the cost of one sin() call plus a
+   few `mul.d`/`add.d`/`cvt.l.d` instructions — consistent with
+   PIC32MZ EF's hardware FPU latency (sin is software-emulated via
+   libm table lookup + polynomial, but the multiplies are hardware).
+2. **P3 Tstd grew 85%** (6.24 → 11.57 µs). The `sin()` path hits
+   libm table lookup + polynomial eval — branch density is higher
+   than integer path, so per-tick variance rises. Not FPU context
+   save; FPU save on FreeRTOS context switch is bounded (32× 64-bit
+   store/load) and doesn't appear on P3 which stays within one task
+   invocation.
+3. **ISRs are unaffected.** P0 and P1 Tstd within 5% across patterns.
+   FPU work is in task context; ISR handlers never use FPU. This is
+   exactly what the config-matrix predicts.
+4. **P4/P5/P6 unchanged.** ADC trigger, EOS task wake, and EOS read
+   loop don't use FPU, don't move with pattern change.
+5. **P7/P8/P9 inflated indirectly.** The +2.87 µs per-tick cost in
+   P3 shifts the encoder input timing, which changes burst coalescing.
+   P7 wake jitter +18%, P8 mean +13%, P9 mean +16% — all downstream
+   of the P3 FPU work, none are themselves FPU-bound.
+6. **Null hypothesis for FreeRTOS FPU save rejected** (in this
+   config). If saving the 32× 64-bit FPU registers on every task
+   switch contributed noticeable jitter, we'd see it on P2 wake
+   (deferred task wake latency). P2 Tstd is identical across patterns
+   — the FPU save/restore path is not a jitter driver here.
+
+#### Implication for production benchmarking
+
+- **FPU cost is pattern-6-only.** Patterns 0 (real ADC), 1 (counter),
+  2 (midscale), 3 (fullscale), 4 (walking), 5 (triangle) are all
+  integer arithmetic — zero FPU ops in the sample-generation path.
+  Only pattern 6 (sine) and pattern 0 when `VoltagePrecision > 0` via
+  a float-capable encoder (CSV/JSON, not PB) exercise the FPU.
+- **All production ceiling benchmarks (CLAUDE.md characterization
+  table) use pattern 3 (fullscale).** Rationale: pattern 3 yields the
+  largest PB varint encoding (worst case for encoder throughput) and
+  is integer — no FPU. Therefore the ~2.87 µs/tick P3 inflation seen
+  here does not appear in those numbers.
+- **This measurement is bounded.** Session 4 quantifies the maximum
+  FPU contribution the pipeline can experience under the current code
+  paths. Users running sine synthesis OR CSV/JSON with voltage
+  conversion pay this cost; PB users and integer patterns do not.
+- Follow-up: same sine test at 16 T1 channels — P3 should grow
+  ~linearly with FPU ops per tick. Sub-linear growth implies FPU
+  pipeline overlap; super-linear implies cache effects.
+
+---
+
 ## Follow-up captures to run
 
-- [ ] **FPU contribution**: rerun Session 2 with `SYST:STR:TESTpattern 2`
-      (midscale — bypasses the sin() call). If P2/P3 jitter drops, FPU
-      context save is a real contributor.
-- [ ] **DIO isolation test**: rerun Session 1 with `ENA:DIO:GLOB 0`,
-      confirm P4 drops to ~1–2 µs. Separates DIO cost from ADC trigger.
+- [ ] **FPU channel scaling**: Session 4 at 16 T1 channels. P3 should
+      grow ~linearly with FPU ops per tick. Sub-linear growth implies
+      FPU pipeline overlap; super-linear implies cache effects.
+- [ ] **DIO isolation test**: `ENA:DIO:GLOB 0` does **not** gate the
+      per-channel SFR writes — it only gates the push to the DIO
+      sample queue. To actually measure P4's DIO-vs-ADC split, build
+      with `DIO_PROBE_ENABLE_MASK=0xFC00` (owns channels 10-15 as
+      ad-hoc probes so all 16 slots are owned → `DIO_WriteStateSingle`
+      skipped in the loop) and rerun.
 - [ ] **Shared-scan split**: Session 2 + enable a Type-2 channel
       (e.g. `ENA:VOLT:DC 0,1`), verify P4 shows bimodal width
       (shared-scan ticks vs non-shared ticks).
