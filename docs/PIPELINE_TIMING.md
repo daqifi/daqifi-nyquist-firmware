@@ -362,11 +362,106 @@ encoder, inside the deferred task (priority 8).
 
 ---
 
+---
+
+### Sessions 5 & 6 — 2026-04-17, 16 channels / PB / USB / 5 kHz (capped from 13 kHz)
+
+Channel scaling pair: FPU (pattern 6) and integer (pattern 2) at 16
+enabled channels. Requested 13 kHz, budget constraint
+`110000/(6+16) = 5000 Hz` kicks in and caps to 5 kHz. Both sessions
+sustain 0 drops at cap — constraint model is calibrated correctly.
+
+- **Firmware**: main `68023a70`
+- **Board**: NQ1 (5 T1 + 11 T2 = 16 channels, all enabled via
+  `ENA:VOLT:DC N,1` for N=0..15)
+- **Stream config**: 13 kHz → capped to 5 kHz, PB, USB
+- **Session 5 (pattern 6 sine)**: 1,765,907 samples / 0 drops
+- **Session 6 (pattern 2 midscale)**: 1,099,803 samples / 0 drops
+
+#### P3 (deferred task work) — clean FPU isolation at 16 ch
+
+| Config | Tpos mean | Source |
+|---|---:|---|
+| 1 ch pattern 2 (integer) | 9.21 µs | Session 3 |
+| 1 ch pattern 6 (FPU)     | 12.08 µs | Session 4 |
+| 16 ch pattern 2 (integer) | **18.29 µs** | Session 6 |
+| 16 ch pattern 6 (FPU)    | **43.28 µs** | Session 5 |
+
+**Decomposition:**
+- **Non-FPU per-channel cost**: (18.29 − 9.21) / 15 = **0.61 µs/ch**
+  (pool alloc is fixed; channel loop + queue push scales slowly)
+- **FPU per-channel cost at 1 ch**: +2.87 µs for 1 ch = **2.87 µs/ch**
+- **FPU per-channel cost at 16 ch**: (43.28 − 18.29) = 24.99 µs of
+  FPU work across 16 channels = **1.56 µs/ch** (amortized)
+
+**Sub-linear FPU scaling confirmed.** Per-channel FPU cost drops
+~46% (2.87 → 1.56 µs/ch) going from 1 to 16 channels. Two plausible
+contributors:
+
+1. **sin() table cache warmth.** `Streaming_GenerateTestValue` (line
+   226 in streaming.c) reads a 256-entry sin table. First call faces
+   cold cache; successive calls in the same tick benefit from the
+   line already being resident.
+2. **FPU pipeline overlap.** PIC32MZ EF's FPU is pipelined — multiple
+   `mul.d`/`add.d` instructions can be in-flight simultaneously. A
+   single sample can't amortize this; 16 samples in a tight loop can.
+
+Either way: **FPU cost per sample decreases when many samples are
+processed together** — useful to remember when evaluating future
+FPU-using features (DSP, interpolation, voltage conversion at encode).
+
+#### Other probes Session 5 (pattern 6) vs Session 6 (pattern 2)
+
+| Probe | Pattern 2 | Pattern 6 | Δ |
+|---:|---:|---:|---|
+| 0 Tstd | 2.24 µs | 1.23 µs | ISR jitter at cap ≈ hardware floor |
+| 1 Tstd | 1.70 µs | 1.84 µs | same |
+| 2 Tstd | 8.12 µs | 3.32 µs | deferred wake jitter HIGHER w/o FPU |
+| 4 Tpos | 10.78 µs | 10.93 µs | ADC+DIO identical (no FPU) |
+| 5 Tstd | **185 ns** | 1.92 µs | EOS wake nearly perfect w/o FPU |
+| 6 Tpos | 18.64 µs | 21.25 µs | read loop scales with T2 count |
+| 6 Tstd | **171 ns** | 3.09 µs | same — pipeline-clean |
+| 7 Tstd | 32.06 µs | 41.13 µs | encoder wake both low (saturated) |
+| 8 Tpos mean | 52.79 µs | 44.23 µs | **midscale larger** — varying values hit faster varint paths |
+| 9 Tpos mean | 8.10 µs | 12.38 µs | constant values pack into USB ring faster |
+
+**Counter-intuitive finding — P5/P6 jitter nearly disappears in
+Session 6.** The EOS task wake (P5, 185 ns Tstd) and work (P6, 171 ns
+Tstd) show sub-microsecond jitter at pattern 2 / 16 ch. At pattern 6
+they are 10–18× higher. Interpretation: when priority-8 deferred task
+finishes faster (pattern 2, no FPU), the EOS task has more scheduling
+slack and wakes up deterministically. Under pattern 6, the deferred
+task runs ~25 µs longer per tick, increasing the probability it
+preempts the EOS task wake/work path.
+
+This is a useful general rule: **jitter on a given probe reflects
+contention from everything else running at the same or higher
+priority**. Reducing any hot-path work reduces jitter on neighboring
+probes, not just on itself.
+
+#### Cap-model validation
+
+At 16 channels, constraint-model predicts `min(13000, 55000/5 = 11000,
+110000/(6+16) = 5000) = 5000 Hz`. Both sessions show probe 0
+fmean = 2500 Hz (→ 5000 Hz ISR rate), 0 drops over ~200–400 seconds.
+**Model is accurate at this config point.** TimerISRCalls ==
+TotalSamplesStreamed invariant holds across 2.9M combined ticks.
+
+---
+
 ## Follow-up captures to run
 
-- [ ] **FPU channel scaling**: Session 4 at 16 T1 channels. P3 should
-      grow ~linearly with FPU ops per tick. Sub-linear growth implies
-      FPU pipeline overlap; super-linear implies cache effects.
+- [ ] **Shared-scan split**: Session 2 + enable a Type-2 channel
+      (e.g. `ENA:VOLT:DC 0,1`), verify P4 shows bimodal width
+      (shared-scan ticks vs non-shared ticks).
+- [ ] **Encode format scaling**: same 16 ch config, compare P8 widths
+      for PB / CSV / JSON. CSV+VoltagePrecision>0 invokes FPU at
+      encode time — should show as P8 delta the way P3 showed for the
+      deferred task.
+- [ ] **Load test**: encode with WiFi + SD both active, watch P7 jitter
+      and P9 tail.
+- [ ] **Over-ceiling probe**: `SYST:STR:BENCH 1` + 20 kHz / 1 ch to force
+      failure, record where drops begin and which stage saturates first.
 - [ ] **DIO isolation test**: `ENA:DIO:GLOB 0` does **not** gate the
       per-channel SFR writes — it only gates the push to the DIO
       sample queue. To actually measure P4's DIO-vs-ADC split, build
