@@ -925,10 +925,62 @@ And at **1 channel (Session 12 vs Session 4)**:
 
 ---
 
-## Follow-up captures to run
+### Session 14 — 2026-04-17, encoder priority sweep
 
-- [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7
-      now that the FPU-save cost is eliminated. Find the sweet spot.
+Tested encoder at priority 3, 5, 7 against current default of 6.
+Same Session 12 config otherwise (1 T1 ch, pattern 6 LUT, PB/USB,
+13 kHz). Captured P3 and P7 (the priority-sensitive probes).
+
+| Priority | P3 Tstd | P7 Tstd | USB drops | Notes |
+|---:|---:|---:|---:|---|
+| 3 | — | — | — | **UNSAFE — USB CDC locked up.** Device disappeared from USB enumeration. Recovery required flash. |
+| 5 | 5.36 µs | 61.5 µs | 0 | Safe, same as pri 6 |
+| **6** | **5.51 µs** | **59.4 µs** | **0** | Current default (Session 12 reference) |
+| 7 | 5.16 µs | 59.5 µs | **27,127 bytes in ~10s** | Unsafe — USB circular overflow |
+
+#### Key findings
+
+1. **Priority 3 crashes USB.** Mechanism not fully understood but
+   reproducible: the encoder pre-empts priority-1 USB internals
+   (`F_DRV_USBHS_Tasks`, `F_USB_DEVICE_Tasks`) enough that the host
+   stops seeing USB descriptors. Device enumeration drops. Requires
+   reflash to recover. Likely FreeRTOS kernel interaction
+   (`configMAX_SYSCALL_INTERRUPT_PRIORITY=4`) — pri 3 is within the
+   syscall-managed band, something is off.
+
+2. **Priority 7 starves USB device task.** Encoder at same level as
+   `app_USBDeviceTask` (priority 7). Round-robin time-slicing means
+   USB task gets half the CPU slots; encoder produces faster than
+   USB can drain, USB circular buffer overflows. 27 KB dropped in
+   10 seconds — obvious regression.
+
+3. **Priorities 5 and 6 give identical timing results.** Within
+   noise for both P3 (<3% delta) and P7 (<4% delta). Either is a
+   valid choice.
+
+4. **Sweet spot is 5 or 6.** Stay safely below USB (7) and above
+   background transports (WiFi/SD at 2). Priority 6 is the current
+   default; no reason to change.
+
+#### Updated task priority map
+
+| Priority | Task | Role |
+|---:|---|---|
+| 9 | `_Streaming_Deferred_Interrupt_Task` | Capture |
+| 9 | `MC12bADC_EosInterruptTask` | Capture |
+| 9 | `AD7609_DeferredInterruptTask` | Capture |
+| 7 | `app_USBDeviceTask` | USB SCPI |
+| 7 | `app_PowerAndUITask` | Battery/UI |
+| **6** | **`streaming_Task` (encoder)** | **Encode + output** |
+| 2 | WiFi / SD / WINC / fwUpdate | Background transports |
+| 1 | USB driver internals | Hardware |
+
+Gap at priority 8: available if a task ever needs to sit between
+capture (9) and USB (7) without contending with encoder (6).
+
+---
+
+## Follow-up captures to run
 - [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7
       now that the FPU-save cost is eliminated. Find the sweet spot.
 - [ ] **FPU save cost validation**: rerun Session 10 with pattern 2
