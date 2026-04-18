@@ -658,8 +658,97 @@ overhead is already dominant at low channel counts but dilutes quickly.
 
 ---
 
+### Session 10 — 2026-04-17, 1 T1 ch / pattern 6 / PB / USB / **encoder @ priority 6**
+
+Second intervention run. Bumped `streaming_Task` (encoder) from
+priority 2 to 6. Rationale: at priority 2 the encoder round-robins
+with WiFi (2), SD (2), and WINC driver (2), all of which can add
+scheduling noise. Priority 6 keeps it below USB (7) and Power (7)
+so SCPI remains responsive, but above all background transport
+tasks.
+
+- **Firmware**: `streaming.c:1270` `2` → `6` on top of Session 7's
+  priority-9 capture tasks
+- **Stream config**: identical to Session 7 — 1 T1 ch, pattern 6
+  (sine, FPU), PB/USB, 13 kHz
+- **Stats**: 2,923,144 samples / 2,923,144 TimerISRCalls / **0 drops**
+
+#### Session 7 (encoder pri 2) vs Session 10 (encoder pri 6)
+
+| Probe | Metric | Sess 7 | Sess 10 | Δ |
+|---:|---|---:|---:|---:|
+| 0 | Timer ISR Tstd | 1,049 ns | 1,076 ns | ≈0 |
+| 1 | EOS ISR Tstd | 3,980 ns | **2,238 ns** | **-44%** |
+| 2 | Deferred wake Tstd | 5.39 µs | 5.64 µs | +5% |
+| **3** | **Deferred work Tstd** | **5.70 µs** | **14.20 µs** | **+149%** |
+| 3 | Deferred work Tpos mean | 12.06 µs | 12.74 µs | +6% |
+| 4 | ADC+DIO Tstd | 11.85 µs | 14.42 µs | +22% |
+| 5 | EOS wake Tstd | 4.97 µs | 6.95 µs | +40% |
+| 6 | EOS work Tstd | 4.88 µs | 6.62 µs | +36% |
+| **7** | **Encoder wake Tstd** | **157.4 µs** | **86.6 µs** | **-45%** |
+| 8 | Encode Tpos mean | 59.64 µs | **42.76 µs** | **-28%** |
+| 8 | Encode Tstd | 93.08 µs | **65.25 µs** | **-30%** |
+| 9 | Output write Tpos mean | 11.50 µs | **0.86 µs** | **-93%** |
+| 9 | Output write Tstd | 122.8 µs | 66.2 µs | -46% |
+
+#### Mixed result — wins downstream, variance upstream
+
+**Downstream wins (encoder-side, P7-P9):**
+- P7 wake Tstd cut nearly in half (157 → 87 µs)
+- P8 encode work both mean and Tstd improved 28-30%
+- P9 output write mean went from 11.5 µs to **857 ns** — essentially
+  free. The USB circular-buffer copy path finds DMA idle when
+  encoder runs contiguously
+
+**Upstream regressions (capture-side, P3/P4/P5/P6):**
+- P3 deferred work Tstd +149% (5.7 → 14.2 µs)
+- P4, P5, P6 Tstd all up 22-40%
+
+**Why the capture path got worse:** most likely **FPU context save
+on task switch**. Both `streaming_Task` and
+`_Streaming_Deferred_Interrupt_Task` are registered with
+`portTASK_USES_FLOATING_POINT()`. At priority 2, the encoder rarely
+ran right when the deferred task fired — it was usually
+time-sliced with WiFi/SD and often idle. At priority 6 it runs
+contiguously until preempted. Every deferred-task preemption now
+crosses FPU context, adding ~32× 64-bit register save/restore to
+the switch. That shows up as extra variance on P3's work time
+(measured from the deferred task's first instruction to its last).
+
+**Is this a net win?** P3 mean is still 12.7 µs (tick period 77 µs,
+plenty of margin). Zero drops. The measurable degradation is in
+variance only, and the variance absolute values (6-14 µs) are
+still much smaller than the downstream improvements (87 µs on P7
+alone). So yes — **net positive for pipeline determinism**, but
+not the unqualified win Session 7 was.
+
+#### If FPU-save cost is the culprit — mitigation option
+
+The encoder only needs FPU when `VoltagePrecision > 0` (CSV/JSON
+with float output). For PB streaming it's integer all the way.
+Could make `portTASK_USES_FLOATING_POINT()` conditional or
+deregister it after init. Would eliminate the FPU save overhead
+on the preemption path in PB mode. Speculative — not yet tested.
+
+#### Recommendation
+
+**Land the encoder priority bump.** Net gain in downstream jitter is
+much larger than the capture-side regression. If variance on P3
+becomes load-bearing later (e.g. pushing close to the per-tick
+budget at high channel counts), revisit the FPU mitigation.
+
+---
+
 ## Follow-up captures to run
 
+- [ ] **FPU save cost validation**: rerun Session 10 with pattern 2
+      (integer — streaming_Task's FPU registration should matter less
+      if no FPU ops happen in the encoder). Compare P3 Tstd. If it
+      drops back close to Session 7's 5.7 µs, FPU save is confirmed
+      as the cause.
+- [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7.
+      Find the priority that minimizes P7 wake jitter without
+      hurting P3.
 - [ ] **CSV encode FPU contribution**: Session 9 but CSV instead of PB
       with `VoltagePrecision = 4` (NQ1 default). Expect P8 grows
       significantly per channel — each value becomes a `double`

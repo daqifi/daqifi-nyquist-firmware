@@ -1267,7 +1267,7 @@ void TimestampTimer_Init(void) {
     if (gStreamingTaskHandle == NULL) {
         BaseType_t result = xTaskCreate((TaskFunction_t) streaming_Task,
                 "Stream task",
-                1392, NULL, 2, &gStreamingTaskHandle);  // Profiled: 692 words peak. 2x margin. (was 4096)
+                1392, NULL, 6, &gStreamingTaskHandle);  // Profiled: 692 words peak. 2x margin. (was 4096)
         if (result != pdPASS) {
             LOG_E("FATAL: Failed to create streaming_Task\r\n");
             while(1);
