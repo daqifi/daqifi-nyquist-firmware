@@ -1038,6 +1038,76 @@ current work.
 
 ---
 
+### Session 16 — 2026-04-17, SD-only streaming load test at 13 kHz
+
+Attempted multi-output load test. Finding: **SD and WiFi share SPI
+bus on this board** (see `SYST:STR:INTerface 3` validation at
+`SCPIInterface.c:2576-2582`), so concurrent USB+WiFi+SD streaming is
+hardware-impossible during streaming. No SCPI combination exposes
+"USB+SD without WiFi". Tested SD-only (interface=2) as the next
+closest thing — stresses the SPI bus + SD manager task.
+
+- **Firmware**: final set (encoder pri 6, capture pri 9, LUT sine,
+  deferred no-FPU)
+- **Stream config**: 1 T1 ch, pattern 6 LUT, interface=2 (SD only),
+  PB format, 13 kHz, filename `loadtest.pb`
+- **Stats**: 3,755,562 samples / 3,755,562 TimerISRCalls / 0 queue
+  drops / 1 encoder failure / **SdDroppedBytes: 24,494,524 (47% byte
+  loss)** / SdWriteMaxLatencyMs: 422 ms
+
+#### Comparison vs Session 12 (USB-only)
+
+| Probe | USB (Sess 12) | **SD (Sess 16)** | Δ |
+|---:|---:|---:|---|
+| P7 Tstd | 59.4 µs | **96.2 µs** | +62% |
+| P7 Tpos max | 606 µs | **2,454 µs** | **4×** |
+| P8 Tpos mean | 34.88 µs | 38.23 µs | +10% |
+| P8 Tstd | 28.41 µs | 48.61 µs | +71% |
+| P8 Tpos max | 357 µs | 697 µs | +95% |
+| P9 Tpos mean | 801 ns | **5.62 µs** | **7×** |
+
+#### Key findings
+
+1. **SD write path jitter is much worse than USB.** Every probe on
+   the output-path side (P7, P8, P9) sees 50–600% jitter increase.
+   SD writes block the SPI bus; encoder has to wait when SD sectors
+   are being flushed.
+
+2. **Worst case write latency: 422 ms.** During a slow SD write,
+   the encoder stalls, samples pile up in the streaming pool, and
+   output bytes get dropped when the SD circular buffer fills.
+
+3. **Capture path stays intact.** Despite the output-side havoc:
+   - 0 queue drops (QueueDroppedSamples=0)
+   - 0 USB drops (interface=2, no USB output expected)
+   - TimerISRCalls = TotalSamplesStreamed exactly
+   - Invariant holds across 3.75 M samples
+
+   This validates the earlier priority/LUT interventions: a badly
+   jittering output doesn't propagate backwards into the capture
+   timing. Priority 9 on capture tasks isolates them from
+   priority-6 encoder backpressure.
+
+4. **13 kHz exceeds the SD ceiling.** 47% byte loss at 13 kHz / 1
+   channel PB confirms SD can't sustain this rate. (CLAUDE.md table
+   lists SD PB 1 ch at 13 kHz / 148 KB/s — that's the peak observed,
+   but not drop-free.) For drop-free SD logging on PB 1 ch, target
+   rate should be much lower (likely 2-4 kHz).
+
+5. **Encoder failures: 1 (out of 3.75M samples).** Rare event, not a
+   pattern. Not associated with any single probe event — benign.
+
+#### Implication for users
+
+- **For drop-free SD logging at PB / 1 ch, stay at ≤4 kHz.** Actual
+  practical ceiling TBD.
+- **SD + USB concurrent not supported** via SCPI interface
+  (hardware is capable — `hasUsb` and `hasSD` flags work in
+  encoder — but the SCPI enum only has 4 exclusive options).
+- **WiFi and SD never concurrent** on this hardware (SPI bus conflict).
+
+---
+
 ## Follow-up captures to run
 - [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
       actually observe bimodal P4 we'd need to disable HW triggering
