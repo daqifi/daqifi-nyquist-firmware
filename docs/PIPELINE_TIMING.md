@@ -594,8 +594,76 @@ enabled, the scan only completes ~77× per second, not per tick.
 
 ---
 
+### Session 9 — 2026-04-17, PB encode per-channel scaling at 1 kHz
+
+Isolates PB encoder scaling cleanly. At 1 kHz tick rate the encoder
+stays 1:1 with ticks (no burst coalescing), so P8 Tpos mean ==
+per-sample encode cost directly. Pattern 2 (integer) to avoid FPU
+confound. Sweep: 1, 4, 8, 16 channels.
+
+- **Firmware**: same as Session 8 (priority-9 capture tasks)
+- **Stream config**: 1 kHz, pattern 2, PB/USB, priority-9 tasks
+- **Stats**: 1,231,561 total ticks across the 4 phases / **0 drops**
+
+#### P8 Tpos mean by channel count
+
+| Channels | P8 Tpos mean | Δ vs prior | Per-channel Δ |
+|---:|---:|---:|---:|
+| 1 | **25.95 µs** | — | — |
+| 4 | **41.35 µs** | +15.40 µs (3 extra ch) | +5.13 µs/ch |
+| 8 | **47.83 µs** | +6.48 µs (4 extra ch) | +1.62 µs/ch |
+| 16 | **81.25 µs** | +33.42 µs (8 extra ch) | +4.18 µs/ch |
+
+#### Linear model fit
+
+Trying `P8 = A + B × N` (fixed overhead + per-channel cost):
+
+- **A ≈ 22 µs** fixed encode overhead (message header, queue pop,
+  output buffer prep)
+- **B ≈ 3.7 µs/channel** average per-channel encode cost
+
+The 4→8 slope of only 1.62 µs/ch is anomalously low — likely cache
+warmth as the sin table / encoder state stays resident. The 8→16
+slope of 4.18 µs/ch comes back to trend and probably reflects cache
+eviction as the working set grows.
+
+#### Per-channel amortized cost
+
+| Channels | Per-ch (Tpos / N) |
+|---:|---:|
+| 1 | 25.95 µs |
+| 4 | 10.34 µs |
+| 8 | 5.98 µs |
+| 16 | 5.08 µs |
+
+The amortization curve flattens out by 16 channels, bounded below by
+`B ≈ 3.7 µs/ch`. The headroom for further improvement by batching
+more channels into one encode call is small — the fixed 22 µs
+overhead is already dominant at low channel counts but dilutes quickly.
+
+#### Key findings
+
+1. **PB scales ~linearly** in channel count, with ~22 µs fixed
+   per-sample overhead and ~3.7 µs per-channel variable cost.
+2. **Per-channel amortized cost decreases** from 25.9 → 5.1 µs/ch as
+   channel count grows. Useful to remember: "1 channel PB" is not a
+   meaningful throughput ceiling — add channels and you get better
+   CPU utilization per data byte.
+3. **No FPU involvement in PB encode path** — pattern 2 (integer)
+   measurements track pattern-6-absent assumption. CSV/JSON with
+   `VoltagePrecision > 0` will look different (FPU at encode time);
+   see follow-up TODO.
+4. **Encoder saturated 1:1 at 1 kHz regardless of channel count**.
+   Zero drops, no coalescing, clean per-sample measurement.
+
+---
+
 ## Follow-up captures to run
 
+- [ ] **CSV encode FPU contribution**: Session 9 but CSV instead of PB
+      with `VoltagePrecision = 4` (NQ1 default). Expect P8 grows
+      significantly per channel — each value becomes a `double`
+      multiply + format. Good parallel to Session 4's P3 finding.
 - [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
       actually observe bimodal P4 we'd need to disable HW triggering
       (a build change) and force software shared-scan every tick.
