@@ -533,11 +533,74 @@ overwritten on next MCC session — flag if that happens.
 
 ---
 
+### Session 8 — 2026-04-17, 1 T1 + 1 T2 / pattern 6 / PB / USB / priority 9
+
+Shared-scan split follow-up. Enabled one Type-2 channel (ch0) alongside
+the Type-1 ch1 from Session 7 to test the hypothesis that P4 becomes
+bimodal when shared-scan ticks arrive (some ticks include the shared
+MODULE7 scan trigger, others don't).
+
+- **Firmware**: same as Session 7 (priority-9 capture tasks)
+- **Stream config**: `ENA:VOLT:DC 0,1` + `ENA:VOLT:DC 1,1`, pattern 6,
+  PB/USB, 13 kHz
+- **Stats**: 3,368,016 samples / 3,368,016 TimerISRCalls / **0 drops**
+
+#### P4 result — bimodal hypothesis rejected (for this config)
+
+| Config | Tpos min | Tpos mean | Tpos max | Tstd |
+|---|---:|---:|---:|---:|
+| Sess 4 (1 T1, pri 8) | — | 9.58 µs | 59.72 µs | 15.6 µs |
+| Sess 7 (1 T1, pri 9) | 6.24 µs | 9.62 µs | 57.60 µs | 11.9 µs |
+| **Sess 8 (1T1+1T2, pri 9)** | 6.28 µs | **9.63 µs** | 68.60 µs | 13.6 µs |
+
+Adding a T2 channel barely moved P4 mean (+0.01 µs). Max grew slightly
+(57.6 → 68.6 µs) but is dominated by scheduler preemption outliers,
+not shared-scan cost. **No bimodal distribution.**
+
+**Why the hypothesis fails**: PR #282 enabled hardware triggering of
+the ADC modules. With `MC12b_IsHwTriggerShared() == true`, the
+software shared-scan trigger path in `streaming.c:411–434` is skipped
+entirely — the shared scan fires via timer-match hardware event in
+parallel with the timer ISR, and EOS fires ~1 ms later (the
+OBDiag scan timing). None of that work happens inside P4's window.
+
+The "23 µs → 8.85 µs" drop observed between Sessions 1 and 2 was
+therefore a rate-dependent effect (possibly related to how the
+deferred task interleaves with other pipeline stages at different
+tick rates), not a shared-scan artifact.
+
+#### Per-channel cost, 1 → 2 channels (1 T1 → 1 T1 + 1 T2)
+
+| Probe | Sess 7 (1 ch) | Sess 8 (2 ch) | Δ per T2 ch |
+|---:|---:|---:|---:|
+| 3 Tpos mean | 12.06 µs | 14.17 µs | **+2.11 µs** |
+| 6 Tpos mean | 13.77 µs | 14.00 µs | +0.23 µs |
+| 7 Tstd | 156.7 µs | 189.7 µs | +21% |
+| 8 Tpos mean | 59.64 µs | 83.66 µs | +24.02 µs |
+| 9 Tpos mean | 11.50 µs | 16.27 µs | +4.77 µs |
+
+P3 per-channel delta of +2.11 µs matches the Session 5 16-ch FPU
+per-channel cost (1.56 µs/ch amortized; first-extra-channel is closer
+to the 2.87 µs/ch observed at 1 ch). P8 per-channel is much larger —
+PB encoding appends per-channel fields (timestamp delta + varint
+value) per sample.
+
+#### P1 confirms divided shared-scan rate
+
+P1 (EOS ISR) fmean = 500 Hz (→ 1000 Hz ISR) regardless of T2
+enablement. `ChannelScanFreqDiv` effectively fixes shared-scan
+cadence at 1 kHz for 13 kHz ticks (ratio 1:13). So even when T2 is
+enabled, the scan only completes ~77× per second, not per tick.
+
+---
+
 ## Follow-up captures to run
 
-- [ ] **Shared-scan split**: Session 2 + enable a Type-2 channel
-      (e.g. `ENA:VOLT:DC 0,1`), verify P4 shows bimodal width
-      (shared-scan ticks vs non-shared ticks).
+- [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
+      actually observe bimodal P4 we'd need to disable HW triggering
+      (a build change) and force software shared-scan every tick.
+      Low priority — Session 8 showed the user-visible pipeline cost
+      is already minimal.
 - [ ] **Encode format scaling**: same 16 ch config, compare P8 widths
       for PB / CSV / JSON. CSV+VoltagePrecision>0 invokes FPU at
       encode time — should show as P8 delta the way P3 showed for the
