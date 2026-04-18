@@ -1108,6 +1108,91 @@ closest thing — stresses the SPI bus + SD manager task.
 
 ---
 
+### Session 17 — 2026-04-17, USB+SD concurrent load with #309 fix
+
+First true multi-output load test. Uses the new USB+SD mode from
+PR #309 (`SYST:STR:INTerface 3` now means USB+SD, not the
+hardware-impossible USB+WiFi+SD). Streams to both USB (live host)
+and SD (local logging) simultaneously.
+
+- **Firmware**: final set + #309 (Interface_All = USB+SD, SD task
+  priority 2→5, `app_SDCard_IsWifiUsingSPI` no longer matches All)
+- **Stream config**: 1 ch T1, pattern 6 LUT, PB format,
+  `SYST:STR:INTerface 3`, SD logging to `load17*.pb`
+
+#### Results across rates
+
+| Rate | Duration | USB drops | SD drops | SD writes | SD maxLatency |
+|---:|---:|---:|---:|---:|---:|
+| 1 kHz | 94.5 s | 0 | 0 | 2,906 | 21 ms |
+| 5 kHz | 67.6 s | 0 | 0 | 10,355 | 88 ms |
+
+**Zero drops at both rates on both interfaces.** Invariant
+`TimerISRCalls == TotalSamplesStreamed` holds throughout.
+
+#### P7/P8/P9 at 1 kHz USB+SD
+
+| Probe | Session 12 (USB, 13 kHz) | Session 9 (USB, 1 kHz) | **Session 17 (USB+SD, 1 kHz)** |
+|---|---:|---:|---:|
+| 7 Tstd | 59.4 µs | — | **3.78 µs** |
+| 8 Tpos mean | 34.88 µs | 25.95 µs | **18.75 µs** |
+| 9 Tpos mean | 801 ns | — | **4.41 µs** |
+
+Note: Session 17 @ 1 kHz is much cleaner than Session 12 @ 13 kHz
+— the rate dominates jitter. But P9 goes up because SD write cost
+is ~5 µs per sample (vs USB's ~800 ns at full burst).
+
+#### P7/P8/P9 at 5 kHz USB+SD
+
+| Probe | Metric | **Session 17 (5 kHz)** |
+|---|---|---:|
+| 7 | Tstd | 22.7 µs |
+| 8 | Tpos mean | 25.5 µs |
+| 8 | Tstd | 21.7 µs |
+| 9 | Tpos mean | 5.53 µs |
+| 9 | Tstd | 23.7 µs |
+
+#### Key findings
+
+1. **USB+SD now works.** After PR #309, users can stream live to
+   PC via USB while logging to SD card with zero data loss up to
+   tested rates. Both interfaces stay synchronized.
+
+2. **SD write time dominates P9.** At 1 kHz SD adds ~4-5 µs per
+   sample to the output path. Small in absolute terms but 5×
+   larger than pure-USB P9 (~800 ns at burst, ~25 ns in the
+   ISR-grade path).
+
+3. **Capture path completely isolated from SD jitter.** Even with
+   SdWriteMaxLatencyMs of 88 ms (a nearly 100 ms stall during one
+   SD write), zero samples dropped from the queue. Priority-9
+   capture + priority-5 SD task means the SD stall only pushes on
+   the output path, never the capture path.
+
+4. **Comparison to SD-only (Session 16) at 13 kHz**: that ran at
+   47% byte loss because 13 kHz exceeds the SD ceiling. Session
+   17 at 5 kHz for USB+SD is within ceiling for both paths.
+   Drop-free SD at 1-ch PB is bounded at somewhere between 5 and
+   13 kHz. TBD.
+
+5. **SD task priority change (2→5) was essential.** Without it,
+   the earlier test attempts showed encoder at pri 6 starving the
+   SD task at pri 2, resulting in only 2 SD sector writes before
+   the buffer filled and dropped everything. Priority 5 places
+   SD above WiFi/background but below encoder, allowing it to run
+   frequently enough to drain.
+
+#### Architectural validation
+
+This session validates the whole intervention stack:
+- Capture at 9: keeps sample timing integrity even under SD stall
+- Encoder at 6: drives both outputs without USB starvation
+- SD at 5: drains fast enough for concurrent operation
+- Deferred task no-FPU + LUT sine: keeps P3 jitter low under load
+- Interface_All = USB+SD: exposes the combination to users
+
+---
+
 ## Follow-up captures to run
 - [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
       actually observe bimodal P4 we'd need to disable HW triggering
