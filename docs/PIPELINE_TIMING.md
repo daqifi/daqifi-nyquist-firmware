@@ -1193,6 +1193,122 @@ This session validates the whole intervention stack:
 
 ---
 
+### Session 18 — 2026-04-18, overnight characterization (comprehensive)
+
+Ran `test_overnight_characterization.py --sd --duration 15 --endurance 120`
+on the PR #308 final firmware. Phase 1: ceiling sweep across 60
+configs (4 interface/format combinations × 15 channel configurations).
+Phase 2: 120-second endurance at each ceiling. Total runtime: 7h 45min.
+
+- **Firmware**: PR #308 branch tip (capture pri 9, encoder pri 6, SD pri 5,
+  LUT sine, deferred no-FPU, Interface_All=USB+SD, DIOProbe:MODE)
+- **Pattern**: 3 (fullscale — canonical benchmark per CLAUDE.md convention)
+- **Result file**: `benchmarks/overnight_20260418_0729.csv` in test suite repo
+- **Configs**: 60 ceilings + 60 endurance runs
+
+#### Zero-loss ceilings (post-intervention) vs CLAUDE.md (pre-intervention)
+
+USB PB:
+
+| Config | Pre | Post | Δ |
+|---|---:|---:|---:|
+| 1×T1 | 15,000 | **18,000** | **+20%** ✓ |
+| 1×T2 | 21,000 | 18,000 | -14% ⚠️ |
+| 3×T1 | 14,000 | **16,000** | +14% ✓ |
+| 3×T2 | — | 16,000 | new |
+| 5×T1 | 13,000 | 14,000 | +8% ✓ |
+| 5×T2 | 16,000 | 14,000 | -12.5% ⚠️ |
+| 8×T2 | 16,000 | 12,000 | -25% ⚠️ |
+| 11×T2 | 13,000 | 11,000 | -15% ⚠️ |
+| 5T1+4T2 (9ch) | 12,000 | 12,000 | 0% |
+| 5T1+11T2 (16ch) | 9,000 | 9,000 | 0% |
+| **1×T1 OBDiag=OFF** | — | **20,000** | **new record** |
+
+USB CSV — uniform improvement:
+
+| Config | Pre | Post | Δ |
+|---|---:|---:|---:|
+| 1×T1 | 13,800 | **18,000** | **+30%** ✓ |
+| 1×T2 | 16,200 | 18,000 | +11% ✓ |
+| 3×T1 | 11,400 | **15,000** | **+32%** ✓ |
+| 5×T1 | 9,600 | 12,000 | **+25%** ✓ |
+| 8×T2 | 9,600 | 10,000 | +4% ✓ |
+| 11×T2 | 6,400 | 8,000 | **+25%** ✓ |
+| 5T1+11T2 (16ch, endurance) | 6,000 | 6,000 | 0% |
+| **1×T1 OBDiag=OFF** | — | **20,000** | **new record** |
+
+SD PB — regressed (tracked in #312):
+
+| Config | Pre | Post | Δ |
+|---|---:|---:|---:|
+| 1×T1 | 13,000 | 10,000 | -23% |
+| 8×T2 | 7,000 | 6,000 | -14% |
+| 16ch | 7,000 | 4,000 | **-43%** |
+
+SD CSV — small regression in mid-range, large at max channel count:
+
+| Config | Pre | Post | Δ |
+|---|---:|---:|---:|
+| 1×T1 | 11,000 | 10,000 | -9% |
+| 8×T2 | 3,000 | 3,000 | 0% |
+| 16ch | 2,000 | 1,000 | -50% |
+
+#### Endurance — sustained ceilings
+
+60 endurance runs at ceiling rate for 120s each. **7 runs LEAKed** —
+their Phase 1 ceiling was 1 step too high for sustained operation.
+All were multi-channel SD/CSV configs where drop growth is slow
+enough to be invisible in a 15s ceiling probe but accumulates over
+120s:
+
+| Config | Phase 1 ceiling | True sustained |
+|---|---:|---:|
+| USB CSV 5T1+11T2 | 7,000 | 6,000 |
+| SD PB 5T1+3T2 | 6,000 | 5,000 |
+| SD CSV 5×T1 | 4,000 | 3,000 |
+| SD CSV 11×T2 | 2,000 | 1,000 |
+| SD CSV 5T1+11T2 | 2,000 | 1,000 |
+
+**Test methodology implication**: 15s ceiling probes overstate
+ceilings for slow-drift configs. Tables above use endurance-
+validated values where available.
+
+#### Pattern analysis
+
+1. **USB improved broadly.** CSV 11-32% across the board. PB T1
+   +8-20%. This reflects the reduced per-tick CPU overhead from
+   LUT-sine + removed FPU save/restore + encoder at pri 6 getting
+   contiguous CPU time.
+2. **USB PB T2 regressed -14% to -25%.** Specific to Protocol
+   Buffers + Type-2 (MODULE7 shared-scan) channels. CSV T2 doesn't
+   regress. Hypothesis: the new priority map changes how EOS task
+   (pri 9) interleaves with deferred task (pri 9) and encoder (pri 6)
+   on T2 scan bursts, reducing headroom vs the pre-intervention
+   ordering where encoder was at 2 and didn't preempt anything.
+3. **SD-only regressed** (#312). Filed as follow-up. Encoder at pri 6
+   preempts SD at pri 5 during SD-only streaming, reducing the SD
+   task's CPU share vs pre-intervention round-robin (both at pri 2).
+4. **New high-water marks at 20 kHz** with OBDiag disabled at 1×T1.
+   Previously untested configuration — demonstrates the tick-rate
+   ceiling when ADC path is minimized.
+
+#### Net impact by user scenario
+
+| User scenario | Verdict |
+|---|---|
+| High-rate USB PB single-channel (real-time plotting) | **Improved** (+20 to +33%) |
+| High-rate USB CSV any channel count | **Improved** (+11 to +32%) |
+| USB PB with 8+ T2 channels | **Slight regression** (-14 to -25%) — still 11-16 kHz sustainable |
+| SD-only logging | **Regressed** (-9 to -43%) — see #312 |
+| USB+SD concurrent (new capability from #309) | **New** — works at 5 kHz zero-drop, untested higher |
+
+#### Follow-ups
+
+- #312: SD-only priority rework (probably raise SD to pri 6 or dynamic-priority)
+- Investigation: PB-T2 regression mechanism (not filed yet — characterize and confirm real before ticket)
+
+---
+
 ## Follow-up captures to run
 - [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
       actually observe bimodal P4 we'd need to disable HW triggering

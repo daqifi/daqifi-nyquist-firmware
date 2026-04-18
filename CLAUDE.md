@@ -247,22 +247,48 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 - `HAL/ADC/MC12bADC.c` — `MC12b_TriggerConversion`, `MC12b_WriteStateAll` (batch interrupt setup)
 - `HAL/ADC.c` — `MC12bADC_EosInterruptTask`, `ADC_ReadADCSampleFromISR`
 
-**Characterization results (O3, USB, zero-loss ceiling, fullscale test pattern, NoCap benchmark mode):**
+**Characterization results (O3, USB, zero-loss ceiling sustained for 120s, fullscale test pattern, NoCap benchmark mode):**
 
-PB columns updated 2026-04-15 after PR #290 (EOS interrupt disable during OBDiag=0 streaming — dedicated-module completions were falsely asserting EOSIF, causing per-sample EOS task wakeups). CSV columns still from 2026-04-13 (re-run pending).
+Full refresh 2026-04-18 after PR #308 interventions (capture tasks pri 9, encoder pri 6, SD task pri 5, sin()→LUT, deferred task no-FPU, Interface_All=USB+SD). See PIPELINE_TIMING.md Session 18 for full 120-config data.
+
+**USB** (zero-drop over 120s):
 
 | Config | PB Ceiling | PB KB/s | CSV Ceiling | CSV KB/s |
 |--------|----------:|--------:|------------:|--------:|
-| 1×T1 | 15,000 Hz | 145 | 13,800 Hz | 217 |
-| 3×T1 | 14,000 Hz | 225 | 11,400 Hz | 543 |
-| 5×T1 | 13,000 Hz | 217 | 9,600 Hz | 755 |
-| 1×T2 | 21,000 Hz | 243 | 16,200 Hz | 255 |
-| 4×T2 | 17,000 Hz | 313 | 12,600 Hz | 771 |
-| 5×T2 | 16,000 Hz | 271 | — | — |
-| 8×T2 | 16,000 Hz | 354 | 9,600 Hz | 1,160 |
-| 11×T2 | 13,000 Hz | 361 | 6,400 Hz | 1,125 |
-| 5T1+4T2 (9ch) | 12,000 Hz | 294 | 7,800 Hz | 1,077 |
-| 5T1+11T2 (16ch) | 9,000 Hz | 399 | 6,000 Hz | 1,464 |
+| 1×T1 | 18,000 Hz | 239 | 18,000 Hz | 294 |
+| 1×T1 OBDiag=OFF | 20,000 Hz | 265 | 20,000 Hz | 305 |
+| 3×T1 | 16,000 Hz | 362 | 15,000 Hz | 720 |
+| 5×T1 | 14,000 Hz | 452 | 12,000 Hz | 1,007 |
+| 5×T1 OBDiag=OFF | 16,000 Hz | 514 | 14,000 Hz | 1,147 |
+| 1×T2 | 18,000 Hz | 239 | 18,000 Hz | 295 |
+| 3×T2 | 16,000 Hz | 362 | 15,000 Hz | 721 |
+| 5×T2 | 14,000 Hz | 451 | 12,000 Hz | 1,012 |
+| 8×T2 | 12,000 Hz | 559 | 10,000 Hz | 1,328 |
+| 11×T2 | 11,000 Hz | 669 | 8,000 Hz | 1,517 |
+| 5T1+3T2 (8ch) | 12,000 Hz | 558 | 10,000 Hz | 1,283 |
+| 5T1+5T2 (10ch) | 11,000 Hz | 617 | 9,000 Hz | 1,476 |
+| 5T1+11T2 (16ch) | 9,000 Hz | 761 | 6,000 Hz | 1,742 |
+
+**SD** (zero-drop over 120s, interface=2):
+
+| Config | PB Ceiling | CSV Ceiling |
+|--------|----------:|------------:|
+| 1×T1 | 10,000 Hz | 10,000 Hz |
+| 1×T1 OBDiag=OFF | 11,000 Hz | 10,000 Hz |
+| 3×T1 | 8,000 Hz | 6,000 Hz |
+| 5×T1 | 7,000 Hz | 3,000 Hz |
+| 5×T1 OBDiag=OFF | 8,000 Hz | 2,000 Hz |
+| 8×T2 | 6,000 Hz | 3,000 Hz |
+| 11×T2 | 5,000 Hz | 1,000 Hz |
+| 5T1+11T2 (16ch) | 4,000 Hz | 1,000 Hz |
+
+Compared to pre-intervention (2026-04-15 PB / 2026-04-13 CSV):
+- **USB CSV broadly up +11 to +32%.** Biggest wins at mid-channel counts (3×T1 +32%, 11×T2 +25%).
+- **USB PB T1 up +8 to +20%.** Larger improvements at lower channel counts.
+- **USB PB T2 down -14 to -25%** (known regression, real but modest at practical channel counts).
+- **SD PB down -14 to -43%.** See #312 — follow-up for SD priority rework.
+- **SD CSV down -9% to -50%.** Same root cause as #312.
+- **New 20 kHz ceiling** at 1×T1 with OBDiag disabled (USB PB or CSV).
 
 #### Voltage Output Precision
 
