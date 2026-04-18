@@ -1276,7 +1276,7 @@ void TimestampTimer_Init(void) {
     if (gStreamingInterruptHandle == NULL) {
         BaseType_t result = xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
                 "Stream Interrupt",
-                512, NULL, 8, &gStreamingInterruptHandle);  // Profiled: 214 words peak + FPU. 2x margin. (was 4096)
+                512, NULL, 9, &gStreamingInterruptHandle);  // Profiled: 214 words peak + FPU. 2x margin. (was 4096)
         if (result != pdPASS) {
             LOG_E("FATAL: Failed to create _Streaming_Deferred_Interrupt_Task\r\n");
             while(1);
