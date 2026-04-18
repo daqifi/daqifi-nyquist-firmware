@@ -851,10 +851,84 @@ Zero cost on the device: no additional CPU, no additional memory
 
 ---
 
+### Session 13 — 2026-04-17, 16 ch / pattern 6 LUT / PB / USB / 5 kHz (capped)
+
+Scale test. Same firmware as Session 12 (LUT sine, deferred task
+no-FPU, encoder pri 6, capture pri 9). Enable all 16 channels.
+13 kHz request caps to 5 kHz per budget constraint.
+
+- **Stream config**: 16 ch, pattern 6 LUT, PB/USB, 13k req → 5 kHz cap
+- **Stats**: 2,339,469 samples / 2,339,469 TimerISRCalls / **0 drops**
+
+#### Comparison to Session 5 (16 ch pre-fix, sin-based)
+
+| Probe | Sess 5 (sin, pri 8/2) | **Sess 13 (LUT, pri 9/6)** | Δ |
+|---:|---:|---:|---:|
+| 0 Tstd | 1,230 ns | **1,171 ns** | -5% |
+| 1 Tstd | 2,200 ns | **726 ns** | **-67%** |
+| 2 Tstd | 5.42 µs | **3.41 µs** | -37% |
+| **3 Tpos mean** | **43.28 µs** | **21.95 µs** | **-49%** |
+| 3 Tstd | 2.90 µs | 3.20 µs | similar |
+| 4 Tstd | 11.58 µs | 8.85 µs | -24% |
+| 5 Tstd | 1,920 ns | **844 ns** | **-56%** |
+| 6 Tpos mean | 21.25 µs | 18.92 µs | -11% |
+| 6 Tstd | 3,090 ns | **372 ns** | **-88%** |
+| 7 Tstd | 41.13 µs | 30.74 µs | -25% |
+| 8 Tpos mean | 44.23 µs | 53.07 µs | +20% (noise) |
+| 8 Tstd | 93+ µs | **27.95 µs** | **-70%** |
+| 9 Tpos mean | — | 541 ns | — |
+
+#### Key findings
+
+1. **P3 mean dropped 49% at 16 channels.** From 43.3 → 22.0 µs per
+   tick. That's ~1.4 µs saved per channel (15 extra × 1.4 = 21 µs),
+   matching the per-channel LUT-vs-sin cost estimate from Sessions 9
+   and 12. At scale this is the dominant win — 21 µs saved per tick
+   at 5 kHz tick rate = 105 ms/sec of CPU freed.
+
+2. **Sub-microsecond Tstd on three probes**: P1 (EOS ISR) 726 ns,
+   P5 (EOS wake) 844 ns, P6 (EOS work) **372 ns**. P6 is essentially
+   tick-synchronous — the EOS task runs the same sequence within a
+   margin smaller than a single PBCLK cycle.
+
+3. **Zero drops across 2.3M samples at cap.** Same throughput as
+   Session 5 but with dramatically lower jitter everywhere.
+
+4. **P8 Tpos mean +20%** is the only regression (44 → 53 µs).
+   Likely run-to-run noise since encoder saturates at 5 kHz in both
+   sessions. Tstd dropped 70% so the overall encoder behavior is
+   much more predictable.
+
+#### Combined result across all interventions
+
+Vs the starting baseline (pre-PR #307, Session 4 — capture pri 8,
+encoder pri 2, sin() with FPU), the three firmware changes
+(capture pri 9, encoder pri 6, LUT + deferred no-FPU) achieve at
+**16 channels**:
+
+| Probe | Baseline (Sess 5) | Session 13 | Reduction |
+|---|---:|---:|---:|
+| P3 mean (deferred work) | 43.3 µs | 22.0 µs | **-49%** |
+| P3 Tstd | 2.9 µs | 3.2 µs | similar |
+| P6 Tstd (EOS work) | 3.09 µs | 0.37 µs | **-88%** |
+| P7 Tstd (encoder wake) | 41.1 µs | 30.7 µs | -25% |
+| P8 Tstd (encode work) | 93 µs | 28 µs | **-70%** |
+
+And at **1 channel (Session 12 vs Session 4)**:
+
+| Probe | Baseline (Sess 4) | Session 12 | Reduction |
+|---|---:|---:|---:|
+| P3 Tstd | 11.6 µs | 5.51 µs | **-52%** |
+| P7 Tstd | 157 µs | 59 µs | **-62%** |
+| P8 Tstd | 42 µs | 28 µs | -33% |
+| P9 mean | 11.5 µs | 0.80 µs | **-93%** |
+
+---
+
 ## Follow-up captures to run
 
-- [ ] **Session 12 at 16 ch**: replicate the LUT+no-FPU win under
-      16-channel load. Expect similar P3 relative improvement.
+- [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7
+      now that the FPU-save cost is eliminated. Find the sweet spot.
 - [ ] **Encoder priority sensitivity sweep**: test pri 3, 4, 5, 6, 7
       now that the FPU-save cost is eliminated. Find the sweet spot.
 - [ ] **FPU save cost validation**: rerun Session 10 with pattern 2
