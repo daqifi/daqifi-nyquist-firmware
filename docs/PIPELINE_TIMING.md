@@ -1309,6 +1309,58 @@ validated values where available.
 
 ---
 
+### Session 19 — 2026-04-18, A/B signal-integrity control test
+
+Controlled before/after measurement of the two ADC-timing probes (P0
+timer ISR, P1 EOS ISR) using identical test config on both firmware
+versions. Purpose: verify PR #308's priority/LUT/FPU changes didn't
+regress signal integrity while the overall throughput ceilings changed.
+
+**Test config** (both runs):
+- 1 T1 ch (ch1), pattern 3 (fullscale), PB / USB, 13 kHz
+- Probes 0 + 1 both TOGGLE
+- ~9s LA capture window
+
+**A: Pre-intervention firmware** — commit `68023a70` (main tip, right
+after PR #307 DIO probe framework merged, before our interventions):
+
+| Probe | fmean | Tstd |
+|---|---:|---:|
+| P0 (timer ISR) | 6,496.88 Hz → 12,994 Hz ISR | **1,003 ns** |
+| P1 (EOS ISR) | 499.76 Hz → 1,000 Hz ISR | **2,205 ns** |
+
+**B: Post-intervention firmware** — PR #308 tip (capture pri 9,
+encoder pri 6, LUT sine, deferred no-FPU, SD pri 5, DIOProbe:MODE):
+
+| Probe | fmean | Tstd |
+|---|---:|---:|
+| P0 (timer ISR) | 6,496.88 Hz → 12,994 Hz ISR | **903 ns** |
+| P1 (EOS ISR) | 499.76 Hz → 1,000 Hz ISR | **1,801 ns** |
+
+#### Diff
+
+| Metric | Pre | Post | Δ |
+|---|---:|---:|---:|
+| P0 ISR rate | 12,994 Hz | 12,994 Hz | **identical** |
+| P0 Tstd | 1,003 ns | 903 ns | **-10%** |
+| P1 ISR rate | 1,000 Hz | 1,000 Hz | **identical** |
+| P1 Tstd | 2,205 ns | 1,801 ns | **-18%** |
+
+**Conclusion**: signal integrity preserved or slightly improved.
+Timer ISR rate is bit-for-bit identical (hardware-triggered — expected).
+EOS ISR rate identical. Both jitter numbers decreased, meaning the
+ADC-trigger and conversion-completion timing became marginally more
+consistent post-intervention — probably a side benefit from less
+cache/bus contention after removing FPU save/restore from deferred task.
+
+**This validates the PR #308 claim** in the updated title
+("reduce pipeline jitter + throughput, add USB+SD interface"): the
+throughput and jitter improvements did not come at the cost of ADC
+capture timing. The (timestamp, value) couple integrity contract
+— sample on time, capture both — is preserved.
+
+---
+
 ## Follow-up captures to run
 - [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
       actually observe bimodal P4 we'd need to disable HW triggering
