@@ -259,7 +259,14 @@ static uint32_t Streaming_GenerateTestValue(uint32_t pattern, uint8_t channel,
         }
         case 6: {  // Sine: 256-sample period, integer Q0.16 LUT scaling
             uint32_t phase = (uint32_t)((sampleCount + (uint32_t)channel * 32) % SINE_PERIOD);
-            return (uint32_t)(((uint64_t)kSineLutQ16[phase] * adcMax) >> 16);
+            /* Scale lut[phase] ∈ [0,65535] to [0,adcMax] with rounding.
+             * Multiply by (adcMax+1) and >>16 maps the full Q0.16 range
+             * (where 65535 represents ~1.0) to [0,adcMax] exactly; add
+             * 0x8000 for round-to-nearest; clamp against the +1 overshoot. */
+            uint64_t scaled =
+                ((uint64_t)kSineLutQ16[phase] * (uint64_t)(adcMax + 1U) + 0x8000ULL) >> 16;
+            if (scaled > adcMax) scaled = adcMax;
+            return (uint32_t)scaled;
         }
         default:
             return 0;
@@ -652,9 +659,14 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
     bool hasUsb = (sc->ActiveInterface == StreamingInterface_USB ||
                    sc->ActiveInterface == StreamingInterface_All);
     bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi);
-    bool hasSd = (sd->enable ||
-                  sc->ActiveInterface == StreamingInterface_SD ||
-                  sc->ActiveInterface == StreamingInterface_All);
+    /* SD logging is actually requested only when all three conditions
+     * hold: interface allows it (SD or All, or USB with enable+file
+     * via SCPI_StartStreaming override), SD is enabled, and a filename
+     * is set. Matches sdLoggingRequested in SCPIInterface.c — keeps
+     * buffer allocation consistent with actual SD activity, avoids
+     * reserving SD space during USB-only streaming when SD is dormant. */
+    bool hasSd = (sc->ActiveInterface != StreamingInterface_WiFi) &&
+                 sd->enable && sd->file[0] != '\0';
 
     // SD circular now lives in streaming pool (CPU-only, no DMA).
     // Active: full default size. Inactive: minimum (pool needs valid pointer).
