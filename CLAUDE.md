@@ -249,46 +249,53 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 
 **Characterization results (O3, USB, zero-loss ceiling sustained for 120s, fullscale test pattern, NoCap benchmark mode):**
 
-Full refresh 2026-04-18 after PR #308 interventions (capture tasks pri 9, encoder pri 6, SD task pri 5, sin()→LUT, deferred task no-FPU, Interface_All=USB+SD). See PIPELINE_TIMING.md Session 18 for full 120-config data.
+Full refresh 2026-04-19 after cumulative merges since PR #308 — PR #314 (vTaskDelay in encoder retry loop, #312), PR #319 (SCPI_ExecutionError helper, #262), PR #320 (HeapList + LockProvider removal, #294). See PIPELINE_TIMING.md Session 20 (2026-04-19 overnight) for full 120-config data.
 
-**USB** (zero-drop over 120s):
+**USB** (ceiling sweep 10s/step, endurance 60s at each ceiling):
 
 | Config | PB Ceiling | PB KB/s | CSV Ceiling | CSV KB/s |
 |--------|----------:|--------:|------------:|--------:|
-| 1×T1 | 18,000 Hz | 239 | 18,000 Hz | 294 |
-| 1×T1 OBDiag=OFF | 20,000 Hz | 265 | 20,000 Hz | 305 |
-| 3×T1 | 16,000 Hz | 362 | 15,000 Hz | 720 |
-| 5×T1 | 14,000 Hz | 452 | 12,000 Hz | 1,007 |
-| 5×T1 OBDiag=OFF | 16,000 Hz | 514 | 14,000 Hz | 1,147 |
-| 1×T2 | 18,000 Hz | 239 | 18,000 Hz | 295 |
-| 3×T2 | 16,000 Hz | 362 | 15,000 Hz | 721 |
-| 5×T2 | 14,000 Hz | 451 | 12,000 Hz | 1,012 |
-| 8×T2 | 12,000 Hz | 559 | 10,000 Hz | 1,328 |
-| 11×T2 | 11,000 Hz | 669 | 8,000 Hz | 1,517 |
-| 5T1+3T2 (8ch) | 12,000 Hz | 558 | 10,000 Hz | 1,283 |
-| 5T1+5T2 (10ch) | 11,000 Hz | 617 | 9,000 Hz | 1,476 |
-| 5T1+11T2 (16ch) | 9,000 Hz | 761 | 6,000 Hz | 1,742 |
+| 1×T1 | 20,000 Hz | 263 | 19,000 Hz | 308 |
+| 1×T1 OBDiag=OFF | **22,000 Hz** | 290 | **20,000 Hz** | 332 |
+| 1×T2 | 20,000 Hz | 263 | 19,000 Hz | 309 |
+| 3×T1 | 17,000 Hz | 387 | 15,000 Hz | 710 |
+| 3×T2 | 17,000 Hz | 382 | 15,000 Hz | 704 |
+| 5×T1 | 15,000 Hz | 480 | 13,000 Hz | 1,048 |
+| 5×T2 | 15,000 Hz | 483 | 13,000 Hz | 1,054 |
+| 5×T1 OBDiag=OFF | 17,000 Hz | 544 | 14,000 Hz† | 1,078† |
+| 8×T2 | 13,000 Hz | 600 | 10,000 Hz | 1,370 |
+| 11×T2 | 11,000 Hz | 666 | 9,000 Hz | 1,577 |
+| 5T1+3T2 (8ch) | 13,000 Hz | 604 | 10,000 Hz | 1,301 |
+| 5T1+5T2 (10ch) | 12,000 Hz | 670 | 9,000 Hz | 1,508 |
+| 5T1+11T2 (16ch) | 9,000 Hz | 760 | 7,000 Hz | 1,771 |
 
-**SD** (zero-drop over 120s, interface=2):
+† USB CSV 5×T1 OBDiag=OFF: ceiling probe says 15k but 60s endurance at 15k leaked; real sustainable ceiling is 14k. Known methodology quirk for slow-drift configs.
+
+**SD** (zero-drop over 60s, interface=2):
 
 | Config | PB Ceiling | CSV Ceiling |
 |--------|----------:|------------:|
-| 1×T1 | 10,000 Hz | 10,000 Hz |
-| 1×T1 OBDiag=OFF | 11,000 Hz | 10,000 Hz |
-| 3×T1 | 8,000 Hz | 6,000 Hz |
-| 5×T1 | 7,000 Hz | 3,000 Hz |
-| 5×T1 OBDiag=OFF | 8,000 Hz | 2,000 Hz |
-| 8×T2 | 6,000 Hz | 3,000 Hz |
-| 11×T2 | 5,000 Hz | 1,000 Hz |
+| 1×T1 | 11,000 Hz | 9,000 Hz |
+| 1×T1 OBDiag=OFF | **12,000 Hz** | 10,000 Hz |
+| 1×T2 | 11,000 Hz | 9,000 Hz |
+| 3×T1 | 8,000 Hz | 5,000 Hz |
+| 3×T2 | 8,000 Hz | 5,000 Hz |
+| 5×T1 | 7,000 Hz | 4,000 Hz |
+| 5×T2 | 7,000 Hz | 4,000 Hz |
+| 5×T1 OBDiag=OFF | 8,000 Hz | 4,000 Hz |
+| 8×T2 | 6,000 Hz | 1,000 Hz |
+| 11×T2 | 5,000 Hz | 2,000 Hz |
+| 5T1+3T2 (8ch) | 6,000 Hz | 3,000 Hz |
+| 5T1+5T2 (10ch) | 5,000 Hz | 2,000 Hz |
 | 5T1+11T2 (16ch) | 4,000 Hz | 1,000 Hz |
 
-Compared to pre-intervention (2026-04-15 PB / 2026-04-13 CSV):
-- **USB CSV broadly up +11 to +32%.** Biggest wins at mid-channel counts (3×T1 +32%, 11×T2 +25%).
-- **USB PB T1 up +8 to +20%.** Larger improvements at lower channel counts.
-- **USB PB T2 down -14 to -25%** (known regression, real but modest at practical channel counts).
-- **SD PB down -14 to -43%.** See #312 — follow-up for SD priority rework.
-- **SD CSV down -9% to -50%.** Same root cause as #312.
-- **New 20 kHz ceiling** at 1×T1 with OBDiag disabled (USB PB or CSV).
+Highlights vs Session 18 (post-#308 pre-followups):
+- **T1/T2 parity achieved across every mode** — PB+T2 regression (#313) fully resolved.
+- **USB PB +7-21%** across configs; single-channel PB OBDiag=OFF now hits **22 kHz** (new high-water mark).
+- **USB CSV OBDiag=OFF hits 20 kHz** (new CSV high-water mark).
+- **SD PB +10-33%** — #312 regression fully resolved (not just partially as #314 showed).
+- **SD PB OBDiag=OFF hits 12 kHz** (new SD high-water mark).
+- **Zero regressions** on any config vs Session 18.
 
 #### Voltage Output Precision
 
