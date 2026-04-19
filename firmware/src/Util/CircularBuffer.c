@@ -36,41 +36,47 @@
 
 void CircularBuf_Init(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint32_t size)
 {
+    if (cirbuf == NULL) return;
     cirbuf->buf_ptr                = OSAL_Malloc(size);
     if (cirbuf->buf_ptr == NULL) {
         LOG_E("CircularBuf_Init: Failed to allocate %u bytes (OSAL_Malloc returned NULL)\r\n", size);
         // Leave struct in uninitialized state so callers can detect failure
-        cirbuf->buf_size = 0;
-        cirbuf->insertPtr = NULL;
-        cirbuf->removePtr = NULL;
-        cirbuf->totalBytes = 0;
-        cirbuf->_ownsMemory = false;
+        cirbuf->buf_size       = 0;
+        cirbuf->insertPtr      = NULL;
+        cirbuf->removePtr      = NULL;
+        cirbuf->producedBytes  = 0;
+        cirbuf->consumedBytes  = 0;
+        cirbuf->_ownsMemory    = false;
         return;
     }
-    cirbuf->process_callback       = fp;
-    cirbuf->buf_size               = size;
-    cirbuf->insertPtr              = cirbuf->removePtr = cirbuf->buf_ptr;
-    cirbuf->totalBytes             = 0;
-    cirbuf->_ownsMemory            = true;
+    cirbuf->process_callback   = fp;
+    cirbuf->buf_size           = size;
+    cirbuf->insertPtr          = cirbuf->removePtr = cirbuf->buf_ptr;
+    cirbuf->producedBytes      = 0;
+    cirbuf->consumedBytes      = 0;
+    cirbuf->_ownsMemory        = true;
 }
 
 void CircularBuf_InitExternal(CircularBuf_t* cirbuf, int(*fp)(uint8_t*,uint32_t), uint8_t* buf, uint32_t size)
 {
+    if (cirbuf == NULL) return;
     if (buf == NULL || size == 0) {
-        cirbuf->buf_ptr = NULL;
-        cirbuf->buf_size = 0;
-        cirbuf->insertPtr = NULL;
-        cirbuf->removePtr = NULL;
-        cirbuf->totalBytes = 0;
-        cirbuf->process_callback = NULL;
-        cirbuf->_ownsMemory = false;
+        cirbuf->buf_ptr            = NULL;
+        cirbuf->buf_size           = 0;
+        cirbuf->insertPtr          = NULL;
+        cirbuf->removePtr          = NULL;
+        cirbuf->producedBytes      = 0;
+        cirbuf->consumedBytes      = 0;
+        cirbuf->process_callback   = NULL;
+        cirbuf->_ownsMemory        = false;
         return;
     }
     cirbuf->buf_ptr                = buf;
     cirbuf->process_callback       = fp;
     cirbuf->buf_size               = size;
     cirbuf->insertPtr              = cirbuf->removePtr = cirbuf->buf_ptr;
-    cirbuf->totalBytes             = 0;
+    cirbuf->producedBytes          = 0;
+    cirbuf->consumedBytes          = 0;
     cirbuf->_ownsMemory            = false;
 }
 
@@ -84,7 +90,8 @@ void CircularBuf_Deinit(CircularBuf_t* cirbuf)
     cirbuf->insertPtr = NULL;
     cirbuf->removePtr = NULL;
     cirbuf->buf_size = 0;
-    cirbuf->totalBytes = 0;
+    cirbuf->producedBytes = 0;
+    cirbuf->consumedBytes = 0;
     cirbuf->process_callback = NULL;
     cirbuf->_ownsMemory = false;
 }
@@ -110,44 +117,33 @@ bool CircularBuf_Resize(CircularBuf_t* cirbuf, uint32_t newSize)
     cirbuf->buf_ptr = newBuf;
     cirbuf->buf_size = newSize;
     cirbuf->insertPtr = cirbuf->removePtr = cirbuf->buf_ptr;
-    cirbuf->totalBytes = 0;
+    cirbuf->producedBytes = 0;
+    cirbuf->consumedBytes = 0;
     return true;
 }
 
 /*=============================================================================
- * Function: CircularBuf_GetPendingBytes
- * Execution Level:
- * Execution Time: Not measured
+ * Function: CircularBuf_NumBytesAvailable
  *
- * Return Value:  None
- *
- * Abstract: Returns the number of bytes waiting in the transmit buffer.  
- *           To prevent returning a bad value if an ISR happens to change logger.txBuf.totalBytes 
- *           while we are reading it, we read until we get the same answer twice in a row.  
- *           This method allows us to get a good reading without turning off interrupts to do it.
+ * Returns the number of bytes waiting in the buffer. Reads split SPSC
+ * counters (#276): producer-only writes producedBytes, consumer-only writes
+ * consumedBytes. Unsigned subtraction gives the correct pending count even
+ * when either counter wraps around (2^32 bytes = ~4 GB — impractical in one
+ * streaming session, but mathematically robust).
  *===========================================================================*/
 uint32_t CircularBuf_NumBytesAvailable(CircularBuf_t* cirbuf)
 {
-    // Defensive check for null pointer
-    if (cirbuf == NULL) {
-        return 0;
-    }
-    
-    // Note: This double-read pattern ensures we get a consistent value even if
-    // totalBytes is modified by an interrupt during the read. On PIC32MZ (32-bit
-    // MIPS), reading a 32-bit value is atomic, but this pattern provides extra
-    // safety and works correctly on both 16-bit and 32-bit architectures.
-    uint32_t num1,num2;
-    do{
-      num1 = cirbuf->totalBytes;
-      num2 = cirbuf->totalBytes;
-    }while(num1!= num2);
-    
-    return num1;
+    if (cirbuf == NULL) return 0;
+    // 32-bit reads are atomic on PIC32MZ; no double-read needed because each
+    // counter has exactly one writer and torn reads can't happen.
+    uint32_t produced = cirbuf->producedBytes;
+    uint32_t consumed = cirbuf->consumedBytes;
+    return produced - consumed;
 }
 
 uint32_t CircularBuf_NumBytesFree(CircularBuf_t* cirbuf)
 {
+    if (cirbuf == NULL) return 0;
     return (cirbuf->buf_size - CircularBuf_NumBytesAvailable(cirbuf));
 }
 
@@ -155,7 +151,8 @@ uint32_t CircularBuf_NumBytesFree(CircularBuf_t* cirbuf)
 uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint32_t maxBytes, int* error)
 {
     uint32_t bytesToSend  = 0;
-    uint32_t bytesRemoved = 0; 
+    uint32_t bytesRemoved = 0;
+    if (cirbuf == NULL || error == NULL) return 0;
     *error = 0;
    
     bytesToSend = min(CircularBuf_NumBytesAvailable(cirbuf), maxBytes);
@@ -191,7 +188,7 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
                 bytesRemoved = bytesToSend;
                 cirbuf->removePtr += bytesRemoved;
             } 
-            cirbuf->totalBytes  -= bytesRemoved;
+            cirbuf->consumedBytes += bytesRemoved;
 
         }
         else if(cirbuf->process_callback!= NULL){
@@ -221,7 +218,7 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
                     } else {
                         cirbuf->removePtr += actuallyRemoved;
                     }
-                    cirbuf->totalBytes -= actuallyRemoved;
+                    cirbuf->consumedBytes += actuallyRemoved;
                     bytesRemoved = actuallyRemoved;
                     *error = cbRet;
                 } else {
@@ -240,7 +237,7 @@ uint32_t CircularBuf_ProcessBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint
                         actuallyRemoved = bytesToSend;
                     }
                     cirbuf->removePtr += actuallyRemoved;
-                    cirbuf->totalBytes -= actuallyRemoved;
+                    cirbuf->consumedBytes += actuallyRemoved;
                     bytesRemoved = actuallyRemoved;
                     *error = cbRet;
                 } else {
@@ -264,7 +261,8 @@ uint32_t CircularBuf_AddBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint32_t
     int wMaxPut;
     uint8_t* bytesPtr;
 
-    
+    if (cirbuf == NULL || bytesBuf == NULL) return 0;
+
     if(bytesToSend>0){
   
         // check how many bytes were already taken in the logging buffer. 
@@ -290,7 +288,7 @@ uint32_t CircularBuf_AddBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint32_t
             }
             memcpy(cirbuf->insertPtr, bytesPtr, bytesToSend);
             cirbuf->insertPtr  += bytesToSend;
-            cirbuf->totalBytes += numBytesCopied;    //Update total number of bytes in the Queue.
+            cirbuf->producedBytes += numBytesCopied;  // SPSC: single writer
         }
         else{
             return 0;   //buffer is full. Return 0.
@@ -302,10 +300,9 @@ uint32_t CircularBuf_AddBytes(CircularBuf_t* cirbuf, uint8_t* bytesBuf, uint32_t
 void CircularBuf_Reset(CircularBuf_t* cirbuf)
 {
     if (cirbuf != NULL) {
-        // Reset the insert and remove pointers to the start of the buffer
         cirbuf->insertPtr = cirbuf->removePtr = cirbuf->buf_ptr;
-        // Reset the total byte count to zero
-        cirbuf->totalBytes = 0;
+        cirbuf->producedBytes = 0;
+        cirbuf->consumedBytes = 0;
     }
 }
 /* *****************************************************************************
