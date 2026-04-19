@@ -1361,6 +1361,61 @@ capture timing. The (timestamp, value) couple integrity contract
 
 ---
 
+### Session 20 — 2026-04-19, overnight characterization after PR #314/#319/#320
+
+First comprehensive rerun after the post-#308 follow-up PRs merged:
+- **#314** — `taskYIELD()` → `vTaskDelay(1)` in encoder retry loop (#312 fix)
+- **#319** — `SCPI_ExecutionError` helper logging every execution error (#262)
+- **#320** — HeapList + LockProvider removal (#294 audit)
+
+**Methodology**: 120 configs total — 60 ceiling probes (10s per rate step,
+binary search to first leak) + 60 endurance runs (60s at each ceiling).
+NoCap benchmark mode, fullscale test pattern. Results CSV:
+`firmware/daqifi.X/overnight_results_20260419_0145/overnight_20260419_0746.csv`.
+
+**Elapsed**: 6h0m.
+
+**New high-water marks**:
+
+| Mode | Config | Rate | KB/s | Prior best |
+|---|---|---:|---:|---:|
+| USB PB  | 1×T1 OBDiag=OFF | **22,000 Hz** | 290   | 20k (Session 18) |
+| USB CSV | 1×T1 OBDiag=OFF | **20,000 Hz** | 332   | 18k (Session 18) |
+| SD PB   | 1×T1 OBDiag=OFF | **12,000 Hz** | n/a   | 11k (Session 18) |
+
+**T1/T2 parity**: Every mode now shows identical ceilings for matched
+channel counts (1×: 20k/20k, 3×: 17k/17k, 5×: 15k/15k USB PB). The
+PB+T2 regression flagged as #313 during Session 18 analysis is fully
+resolved — #313 can be closed.
+
+**SD-only recovery**: #312's SD-only regressions fully resolved (not just
+partially as #314 endurance test showed). SD PB 1×T1 went 10k → 12k
+(OBDiag=OFF); all channel counts match or beat pre-#308 baselines.
+#312 can be closed.
+
+**Zero regressions** anywhere vs Session 18.
+
+**Endurance vs ceiling methodology note**: USB CSV 5×T1 OBDiag=OFF ceiling
+probe reported 15k but 60s endurance at 15k leaked 8418 drops. Real
+sustainable rate is 14k. This confirms Session 18's observation that
+15s ceiling probes overstate slow-drift configs — endurance validation
+remains necessary before claiming a ceiling.
+
+**SD endurance transient encoder failures**: 3 of 15 SD configs reported
+`encFail=1, encDrop=1` over 60s endurance (no data loss, just encoding
+underrun transients). Not systemic, matches Session 18 baseline behavior.
+Suspect cause: SPI-side write latency occasionally blocking an encoder
+cycle. Not blocking for release.
+
+**Root cause of Session 18 regressions being resolved**: the cumulative
+effect of #314 (vTaskDelay in retry), #319 (no net change but removed
+per-site duplication), and #320 (removed dead code + re-init guards
+from `DIOSampleList_Initialize`). Most likely #314 itself was the
+dominant fix; #320's DIO queue re-init guard may have fixed subtle
+state accumulation across sessions.
+
+---
+
 ## Follow-up captures to run
 - [ ] **Shared-scan split with OBDiag off + HW trigger off**: to
       actually observe bimodal P4 we'd need to disable HW triggering
