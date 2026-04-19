@@ -450,8 +450,8 @@ Test pattern mode replaces real ADC values with synthetic data for deterministic
 
 **SCPI Commands:**
 ```bash
-SYSTem:STReam:TESTpattern <pattern>   # Set pattern (0=off, 1-6)
-SYSTem:STReam:TESTpattern?            # Query current pattern (0=disabled)
+SYSTem:STReam:TEST:PATtern <pattern>   # Set pattern (0=off, 1-6)
+SYSTem:STReam:TEST:PATtern?            # Query current pattern (0=disabled)
 ```
 
 **Pattern Types:**
@@ -484,7 +484,7 @@ SYSTem:STReam:BENCHmark?           # Query current mode
 
 Usage:
 ```bash
-SYST:STR:TESTpattern 2             # Midscale test data
+SYST:STR:TEST:PATtern 2             # Midscale test data
 SYST:STR:BENCHmark 1               # Uncap frequency
 SYST:StartStreamData 11000         # Start at 11kHz (normally capped)
 # ... wait ...

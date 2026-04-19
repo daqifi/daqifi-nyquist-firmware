@@ -39,7 +39,7 @@
 
 // --- Test pattern streaming mode ---
 // When non-zero, overrides ADC sample values with synthetic data patterns.
-// Runtime-only (not persisted to NVM). Set via SCPI SYST:STR:TESTpattern.
+// Runtime-only (not persisted to NVM). Set via SCPI SYST:STR:TEST:PATtern.
 // 32-bit atomic read on PIC32MZ — no critical section needed for reads/writes.
 static volatile uint32_t gTestPattern = 0;       // 0=off, 1-4=pattern type
 static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on start
