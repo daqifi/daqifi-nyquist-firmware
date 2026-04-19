@@ -3349,6 +3349,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
     {.pattern = "CONFigure:ADC:OBDiag", .callback = SCPI_ADCOnboardDiagSet,},
     {.pattern = "CONFigure:ADC:OBDiag?", .callback = SCPI_ADCOnboardDiagGet,},
+    {.pattern = "CONFigure:ADC:MAXFreq?", .callback = SCPI_ADCMaxFreqGet,},
+    {.pattern = "CONFigure:ADC:CAP:FORMula?", .callback = SCPI_ADCCapFormulaGet,},
     //
     // Voltage output precision
     {.pattern = "CONFigure:VOLTage:PRECision", .callback = SCPI_SetDataPrecision,},

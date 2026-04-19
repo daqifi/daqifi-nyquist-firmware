@@ -159,6 +159,31 @@ extern "C" {
     scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context);
     scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context);
 
+    /**
+     * Query max safe streaming frequency for the current channel configuration.
+     *   CONFigure:ADC:MAXFreq?
+     * Response key=value pairs:
+     *   MaxFreqHz=<int>       effective cap applied by SYST:StartStreamData
+     *   Type1Count=<int>      count of enabled Type 1 (dedicated) channels
+     *   TotalChannels=<int>   count of all enabled public channels
+     *   IsrMaxHz=<int>        ISR-rate constraint (formula constant)
+     *   Type1AggHz=<int>      Type 1 aggregate constraint (0 if type1==0)
+     *   TickBudgetHz=<int>    per-tick budget constraint (0 if total==0)
+     */
+    scpi_result_t SCPI_ADCMaxFreqGet(scpi_t * context);
+
+    /**
+     * Query cap-formula constants so the client can compute caps for
+     * hypothetical configurations without round-tripping to the device.
+     *   CONFigure:ADC:CAP:FORMula?
+     * Formula: maxFreq = min(
+     *   IsrMaxHz,
+     *   Type1AggMaxHz / type1Count,                 // skip if type1Count==0
+     *   TickBudget / (TickOverhead + totalChannels) // skip if totalChannels==0
+     * )
+     */
+    scpi_result_t SCPI_ADCCapFormulaGet(scpi_t * context);
+
 #ifdef	__cplusplus
 }
 #endif

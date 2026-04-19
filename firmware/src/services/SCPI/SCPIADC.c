@@ -724,3 +724,68 @@ scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context) {
     SCPI_ResultInt32(context, pStreamCfg->OnboardDiagEnabled ? 1 : 0);
     return SCPI_RES_OK;
 }
+
+/* Count currently enabled public ADC channels, split by type (#283). */
+static void SCPI_CountActiveAdcChannels(uint16_t* outType1, uint16_t* outTotal) {
+    tBoardConfig *pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    AInRuntimeArray *pRuntimeAIn = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    uint16_t type1 = 0;
+    uint16_t total = 0;
+    for (size_t i = 0; i < pBoardConfig->AInChannels.Size; i++) {
+        if (pRuntimeAIn->Data[i].IsEnabled != 1) continue;
+        const AInChannel* ch = &pBoardConfig->AInChannels.Data[i];
+        if (ch->Type == AIn_AD7609) {
+            if (ch->Config.AD7609.IsPublic) total++;
+        } else if (ch->Type == AIn_MC12bADC) {
+            if (ch->Config.MC12b.IsPublic) {
+                total++;
+                if (ch->Config.MC12b.ChannelType == 1) type1++;
+            }
+        }
+    }
+    *outType1 = type1;
+    *outTotal = total;
+}
+
+scpi_result_t SCPI_ADCMaxFreqGet(scpi_t * context) {
+    uint16_t type1 = 0;
+    uint16_t total = 0;
+    SCPI_CountActiveAdcChannels(&type1, &total);
+
+    uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
+    uint32_t type1Agg = (type1 > 0)
+        ? (STREAMING_TYPE1_AGG_MAX_HZ / type1)
+        : 0;  // 0 = constraint not applicable
+    uint32_t tickBudget = (total > 0)
+        ? (STREAMING_TICK_BUDGET / (STREAMING_TICK_OVERHEAD + total))
+        : 0;
+
+    scpi_printf(context,
+            "MaxFreqHz=%u\r\n"
+            "Type1Count=%u\r\n"
+            "TotalChannels=%u\r\n"
+            "IsrMaxHz=%u\r\n"
+            "Type1AggHz=%u\r\n"
+            "TickBudgetHz=%u\r\n",
+            (unsigned)maxFreq,
+            (unsigned)type1,
+            (unsigned)total,
+            (unsigned)STREAMING_ISR_MAX_HZ,
+            (unsigned)type1Agg,
+            (unsigned)tickBudget);
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_ADCCapFormulaGet(scpi_t * context) {
+    scpi_printf(context,
+            "IsrMaxHz=%u\r\n"
+            "Type1AggMaxHz=%u\r\n"
+            "TickBudget=%u\r\n"
+            "TickOverhead=%u\r\n",
+            (unsigned)STREAMING_ISR_MAX_HZ,
+            (unsigned)STREAMING_TYPE1_AGG_MAX_HZ,
+            (unsigned)STREAMING_TICK_BUDGET,
+            (unsigned)STREAMING_TICK_OVERHEAD);
+    return SCPI_RES_OK;
+}
