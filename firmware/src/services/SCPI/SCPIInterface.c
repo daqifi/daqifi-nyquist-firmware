@@ -1511,8 +1511,8 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
  * Command: SYSTem:POWer:BQ:FAULT:CLEar
  */
 static scpi_result_t SCPI_ClearBQFaults(scpi_t * context) {
+    (void)context;
     BQ24297_ClearAccumulatedFaults();
-    scpi_printf(context, "Accumulated faults cleared\r\n");
     return SCPI_RES_OK;
 }
 
