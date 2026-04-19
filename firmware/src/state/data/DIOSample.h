@@ -1,8 +1,8 @@
 #pragma once
 
 #include <stdint.h>
-
-#include "Util/HeapList.h"
+#include <stddef.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,24 +30,23 @@ extern "C" {
     } DIOSample;
 
     /**
-     * A wrapper around a HeapList to simplify use
+     * Historical wrapper retained as a type name for encoder/BoardData
+     * compatibility. The internals are dead — samples flow through a
+     * static FreeRTOS queue in DIOSample.c. `_unused` exists because
+     * empty structs are not portable C.
      */
     typedef struct s_DIOSampleList
     {
-        /**
-         * The list to wrap
-         */
-        HeapList List;
+        uint8_t _unused;
     } DIOSampleList;
-    
+
     /**
     * Initializes the list
     * @param list The list to initialize
     * @param maxSize The maximum number of items in the list
     * @param dropOnOverFlow Set true to drop the first element when adding to a full list (false to error out)
-    * @param lockPrototype The lock provider to use
     */
-    void DIOSampleList_Initialize(DIOSampleList* list, size_t maxSize, bool dropOnOverflow, const LockProvider* lockPrototype);
+    void DIOSampleList_Initialize(DIOSampleList* list, size_t maxSize, bool dropOnOverflow);
 
     /**
      * Destroys the list

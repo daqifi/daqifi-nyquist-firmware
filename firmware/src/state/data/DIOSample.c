@@ -10,19 +10,24 @@ static QueueHandle_t DIOQueue;
 //! Size of the queue, in number of items
 static uint32_t queueSize = 0;
 
-void DIOSampleList_Initialize( 
-                            DIOSampleList* list, 
-                            size_t maxSize, 
-                            bool dropOnOverflow, 
-                            const LockProvider* lockPrototype){
-    
+void DIOSampleList_Initialize(
+                            DIOSampleList* list,
+                            size_t maxSize,
+                            bool dropOnOverflow){
+
     (void)list;
-    (void)maxSize;
     (void)dropOnOverflow;
-    (void)lockPrototype;
-    
+
+    // Delete existing queue to avoid leaking the handle on re-init.
+    // Matches the pattern in AInSample.c.
+    if (DIOQueue != NULL) {
+        vQueueDelete(DIOQueue);
+        DIOQueue = NULL;
+    }
+
     queueSize = maxSize;
     DIOQueue = xQueueCreate( maxSize, sizeof(DIOSample) );
+    configASSERT(DIOQueue != NULL);
 }
 
 void DIOSampleList_Destroy(DIOSampleList* list)

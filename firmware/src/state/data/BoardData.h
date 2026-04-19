@@ -15,7 +15,6 @@
 #include "AInSample.h"
 #include "AOutSample.h"
 #include "DIOSample.h"
-#include "Util/HeapList.h"
 #include "HAL/Power/PowerApi.h"
 #include "HAL/UI/UI.h"
 #include "services/daqifi_settings.h"
@@ -35,8 +34,6 @@ extern "C" {
         BOARDDATA_IN_ISR,
         //! DIO latest field
         BOARDDATA_DIO_LATEST,
-        //! DIO Samples list
-        BOARDDATA_DIO_SAMPLES,
         //! State of the AIN module
         BOARDDATA_AIN_MODULE,
         //! Latest AIN SAMPLES
@@ -45,8 +42,6 @@ extern "C" {
         BOARDDATA_AIN_LATEST_SIZE,
         //! Timestamp corresponding to the a sample
         BOARDDATA_AIN_LATEST_TIMESTAMP,
-        //! Collected analog input samples
-        BOARDDATA_AIN_SAMPLES,
         //! Latest AOUT commanded voltages
         BOARDDATA_AOUT_LATEST,
         //! Global power structure
@@ -78,8 +73,6 @@ extern "C" {
         AInModDataArray AInState;
         //! The latest AIn samples
         AInSampleArray AInLatest;
-        //! Collected Analog-input samples
-        AInSampleList AInSamples;
         //! The latest AOut commanded voltages
         AOutSampleArray AOutLatest;
         //! Global Power structure

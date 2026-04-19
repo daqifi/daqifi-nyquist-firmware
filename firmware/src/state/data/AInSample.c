@@ -53,13 +53,9 @@ static SemaphoreHandle_t poolMutex = NULL;
 static volatile bool poolActive = false;
 static bool poolOwnsMemory = false;  // false = external (StreamingBufferPool)
 
-void AInSampleList_Initialize(
-                            size_t maxSize,
-                            bool dropOnOverflow,
-                            const LockProvider* lockPrototype){
+void AInSampleList_Initialize(size_t maxSize, bool dropOnOverflow){
 
     (void)dropOnOverflow;
-    (void)lockPrototype;
 
     // Destroy previous resources if re-initializing (any size change or same size).
     // Must destroy before creating new queue to prevent orphaning the old handle.
@@ -296,26 +292,6 @@ bool AInSampleList_PushBack(const AInPublicSampleList_t* pData){
     }
 
     BaseType_t queueResult = xQueueSend(q, &pData, AINSAMPLE_QUEUE_TICKS_TO_WAIT);
-    return queueResult == pdTRUE;
-}
-bool AInSampleList_PushBackFromIsr(const AInPublicSampleList_t* pData){
-    if (pData == NULL) {
-        return false;
-    }
-
-    // Atomically capture queue handle (ISR-safe critical section)
-    UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
-    QueueHandle_t q = analogInputsQueue;
-    taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
-
-    if (q == NULL) {
-        return false;
-    }
-
-    BaseType_t xTaskWokenByReceive = pdFALSE;
-    BaseType_t queueResult = xQueueSendFromISR(q, &pData, &xTaskWokenByReceive);
-
-    portEND_SWITCHING_ISR(xTaskWokenByReceive);
     return queueResult == pdTRUE;
 }
 bool AInSampleList_PopFront( AInPublicSampleList_t** ppData)

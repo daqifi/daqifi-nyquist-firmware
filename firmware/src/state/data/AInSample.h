@@ -3,7 +3,6 @@
 #include <stdint.h>
 
 #include "Util/ArrayWrapper.h"
-#include "Util/HeapList.h"
 #include "../board/AInConfig.h"
 #ifdef __cplusplus
 extern "C" {
@@ -111,25 +110,13 @@ extern "C" {
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**
-     * A wrapper around a HeapList to simplify use
-     */
-    typedef struct s_AInSampleList {
-        /**
-         * The list to wrap
-         */
-        HeapList List;
-    } AInSampleList;
-
-    /**
      * @brief Initializes the Analog Input Sample List queue.
-     * 
+     *
      * This function initializes the queue with a maximum size.
-     * 
+     *
      * @param maxSize Maximum number of items the queue can hold.
      */
-    void AInSampleList_Initialize(size_t maxSize,
-            bool dropOnOverflow,
-            const LockProvider* lockPrototype);
+    void AInSampleList_Initialize(size_t maxSize, bool dropOnOverflow);
 
     /**
      * @brief Initializes using externally-provided pool memory.
@@ -162,16 +149,6 @@ extern "C" {
      * @return True if the data was successfully added, false otherwise.
      */
     bool AInSampleList_PushBack(const AInPublicSampleList_t* pData);
-
-    /**
-     * @brief Adds a new data sample to the queue from an ISR.
-     * 
-     * Similar to AInSampleList_PushBack but used within an interrupt context.
-     * 
-     * @param pData Pointer to the data sample to be added.
-     * @return True if the data was successfully added, false otherwise.
-     */
-    bool AInSampleList_PushBackFromIsr(const AInPublicSampleList_t* pData);
 
     /**
      * @brief Removes and returns the first data sample from the queue.
