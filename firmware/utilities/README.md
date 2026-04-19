@@ -59,7 +59,7 @@ The script performs a fully automated 4-step update:
 
 3. **Restore Operation** - Reconnects and restores WiFi
    ```
-   SYST:USB:SetTransparentMode 0  # Exit transparent mode
+   SYST:USB:TRANS:MODE 0  # Exit transparent mode
    SYST:COMM:LAN:ENabled 1        # Re-enable WiFi
    SYST:COMM:LAN:APPLY            # Apply settings
    ```

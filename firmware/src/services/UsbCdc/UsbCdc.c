@@ -544,7 +544,7 @@ static bool UsbCdc_WaitForRead(UsbCdcData_t* client) {
  * Called to complete a read operation, feeding data to the rest of the system
  */
 static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
-    static const char UNSET_TRANSPARENT_MODE_COMMAND[] = "SYSTem:USB:SetTransparentMode 0"; // NOTE: PuTTY sends \r not \r\n by default so we are going to check for all terminating scenarios below
+    static const char UNSET_TRANSPARENT_MODE_COMMAND[] = "SYSTem:USB:TRANSparent:MODE 0"; // NOTE: PuTTY sends \r not \r\n by default so we are going to check for all terminating scenarios below
     static uint8_t transparentModeCmdLength = 0;
     
     if (client->readBufferLength > 0) {

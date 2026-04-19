@@ -28,11 +28,11 @@ measurements remain comparable over time.
    Or `SYST:DIOP:PIPEL TOGGLE` (then swap specific probes to PULSE as
    desired).
 4. Enable channel(s), start stream: e.g. `ENAble:VOLTage:DC 1,1` then
-   `SYST:StartStreamData 1000`.
+   `SYST:STR:START 1000`.
 5. Capture 5–10 seconds on the analyzer. Record stats per probe:
    - TOGGLE probes: `fmean`, `fmin`, `fmax`, `Tstd`, edge counts.
    - PULSE probes: all of the above plus `TposMean/Min/Max`, `TnegMean`.
-6. Stop: `SYST:StopStreamData`.
+6. Stop: `SYST:STR:STOP`.
 
 ## Probe map reference
 

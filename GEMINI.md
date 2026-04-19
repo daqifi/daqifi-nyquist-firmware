@@ -128,10 +128,10 @@ Services Layer
 
 **Common Mistakes to Avoid:**
 - ❌ `SYST:STAR 5000` (guessed)
-- ✅ `SYST:StartStreamData 5000` (verified from SCPIInterface.c:1521)
+- ✅ `SYST:STR:START 5000` (verified from SCPIInterface.c:1521)
 
 - ❌ `SYST:STOP` (guessed)
-- ✅ `SYST:StopStreamData` (verified from SCPIInterface.c:1522)
+- ✅ `SYST:STR:STOP` (verified from SCPIInterface.c:1522)
 
 - ❌ `SYST:STOR:SD:GET DAQiFi/file.csv` (unquoted path)
 - ✅ `SYST:STOR:SD:GET "file.csv"` (quoted, verified from SCPIStorageSD.c)
@@ -140,10 +140,10 @@ Services Layer
 ```bash
 # Step 1: Search for streaming commands
 grep -n "pattern.*Stream" firmware/src/services/SCPI/SCPIInterface.c
-# Result: Line 1521: {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
+# Result: Line 1521: {.pattern = "SYSTem:STReam:START", .callback = SCPI_StartStreaming,},
 
 # Step 2: Use exact command
-device._comm.send_command("SYST:StartStreamData 5000")  # Correct!
+device._comm.send_command("SYST:STR:START 5000")  # Correct!
 ```
 
 **If you use a SCPI command without verifying it first, STOP immediately and verify the syntax.**

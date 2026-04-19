@@ -103,8 +103,8 @@ Common commands:
 ```
 *IDN?                           # Device identification
 SYST:POW:STAT 1                 # Power up
-SYST:StartStreamData 1000       # Start streaming at 1kHz
-SYST:StopStreamData             # Stop streaming
+SYST:STR:START 1000       # Start streaming at 1kHz
+SYST:STR:STOP             # Stop streaming
 SYST:STR:STATS?                 # Streaming statistics
 SYST:MEM:FREE?                  # Memory diagnostics
 SYST:LOG?                       # Retrieve log messages

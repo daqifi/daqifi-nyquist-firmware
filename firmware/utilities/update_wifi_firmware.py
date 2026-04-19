@@ -197,7 +197,7 @@ class WiFiFirmwareUpdater:
 
         # Disable USB transparent mode
         self.log("\nDisabling USB transparent mode...")
-        self.send_command("SYSTem:USB:SetTransparentMode 0", delay=0.5)
+        self.send_command("SYSTem:USB:TRANSparent:MODE 0", delay=0.5)
 
         # Enable WiFi
         self.log("\nEnabling WiFi...")
@@ -368,7 +368,7 @@ class WiFiFirmwareUpdater:
             # Try to at least disable transparent mode before exiting
             try:
                 self.log("\nAttempting emergency restore to normal mode...")
-                self.send_command("SYSTem:USB:SetTransparentMode 0", delay=0.5)
+                self.send_command("SYSTem:USB:TRANSparent:MODE 0", delay=0.5)
             except:
                 pass
             self.disconnect()
@@ -407,7 +407,7 @@ Manual Process (for reference):
      winc_flash_tool.cmd /p COM3 /d WINC1500 /v 19.7.7 /x /e /i aio /w
 
   3. Reconnect and send:
-     SYST:USB:SetTransparentMode 0
+     SYST:USB:TRANS:MODE 0
      SYST:COMM:LAN:ENabled 1
      SYST:COMM:LAN:APPLY
         '''
