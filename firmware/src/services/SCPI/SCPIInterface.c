@@ -3388,8 +3388,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:LOSS:THREshold?", .callback = SCPI_GetLossThreshold,},
     {.pattern = "SYSTem:STReam:LOSS:WINDow", .callback = SCPI_SetFlowWindow,},
     {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
-    {.pattern = "SYSTem:STReam:TESTpattern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
-    {.pattern = "SYSTem:STReam:TESTpattern?", .callback = SCPI_GetTestPattern,},
+    {.pattern = "SYSTem:STReam:TEST:PATtern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
+    {.pattern = "SYSTem:STReam:TEST:PATtern?", .callback = SCPI_GetTestPattern,},
     {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 0=normal, 1=nocap, 2=pipeline (skip ADC)
     {.pattern = "SYSTem:STReam:BENCHmark?", .callback = SCPI_GetBenchmarkMode,},
     {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
@@ -3409,7 +3409,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:MEMory:RESet", .callback = SCPI_MemReset,},
     {.pattern = "SYSTem:MEMory:STACk?", .callback = SCPI_GetStackStats,},
     //
-    {.pattern = "SYSTem:STORage:SD:LOGging", .callback = SCPI_StorageSDLoggingSet,},
+    {.pattern = "SYSTem:STORage:SD:FILE", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
