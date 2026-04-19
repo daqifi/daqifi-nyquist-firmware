@@ -335,7 +335,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Check if a test is already in progress
     if (gSDBenchmarkResults.testInProgress) {
         SCPI_ExecutionError(context, "SYST:STOR:SD:BENCH: benchmark already in progress");
-        context->interface->write(context, "\r\nError: Benchmark already in progress\r\n", 40);
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
