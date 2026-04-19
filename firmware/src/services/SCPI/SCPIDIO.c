@@ -1,6 +1,7 @@
 #define LOG_LVL LOG_LEVEL_SCPI
 #define LOG_MODULE LOG_MODULE_SCPI
 #include "SCPIDIO.h"
+#include "SCPIInterface.h"
 
 // General
 #include <stdlib.h>
@@ -101,7 +102,7 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
     else
     {
         if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            SCPI_ExecutionError(context, "DIO:DIR: channel owned by DIO probe");
             return SCPI_RES_ERR;
         }
         return SCPI_GPIOSingleDirectionSet((uint8_t)param1, !(bool)param2); // Interpret the input as a bit/direction pair (invert because 1=output but we use isInput as the test)
@@ -163,7 +164,7 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
     else
     {
         if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            SCPI_ExecutionError(context, "DIO:STATE: channel owned by DIO probe");
             return SCPI_RES_ERR;
         }
         return SCPI_GPIOSingleStateSet((uint8_t)param1, (bool)param2); // Interpret the input as a bit/direction pair
@@ -246,7 +247,7 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
     }
 
     if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "DIO:PWM:ENA: channel owned by DIO probe");
         return SCPI_RES_ERR;
     }
 
@@ -285,7 +286,7 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
         return SCPI_RES_ERR;
     }
     if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "DIO:PWM:FREQ: channel owned by DIO probe");
         return SCPI_RES_ERR;
     }
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
@@ -339,7 +340,7 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
         return SCPI_RES_ERR;
     }
     if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "DIO:PWM:DUTY: channel owned by DIO probe");
         return SCPI_RES_ERR;
     }
 

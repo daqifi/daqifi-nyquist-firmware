@@ -1711,7 +1711,7 @@ static scpi_result_t SCPI_SetBenchmarkMode(scpi_t * context) {
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     if (pStreamCfg->IsEnabled && pStreamCfg->Running) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "SYST:STR:BENCH: cannot change while streaming");
         return SCPI_RES_ERR;
     }
     Streaming_SetBenchmarkMode((uint32_t)val);
@@ -1748,7 +1748,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     if (pStreamCfg->Running) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "SYST:STR:THR: streaming already active");
         return SCPI_RES_ERR;
     }
 
@@ -2350,7 +2350,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // Quiesce all DMA consumers (SD file close, WiFi SPI idle) and reset pool.
         // USB writeTransferHandle already waited above.
         if (!SCPI_QuiesceAndResetCoherentPool()) {
-            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            SCPI_ExecutionError(context, "SYST:StartStreamData: coherent pool quiesce failed");
             return SCPI_RES_ERR;
         }
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
@@ -3004,7 +3004,7 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
             wifiDmaSize = WIFI_DMA_MIN;
         }
         if (!SCPI_QuiesceAndResetCoherentPool()) {
-            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            SCPI_ExecutionError(context, "SYST:MEM:AUTO: coherent pool quiesce failed");
             return SCPI_RES_ERR;
         }
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
@@ -3130,7 +3130,7 @@ static scpi_result_t SCPI_DioProbeModeSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     if (!DioProbe_Assign((uint8_t)probeId, mode)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "SYST:DIOP:MODE: probe assign failed (channel owned?)");
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;

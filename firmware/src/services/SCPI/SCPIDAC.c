@@ -155,7 +155,7 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 
     // Ensure DAC hardware is initialized (lazy initialization when power is up)
     if (!DAC_EnsureHardwareInitialized()) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "SOUR:VOLT:LEV: DAC not initialized (device powered up?)");
         return SCPI_RES_ERR;
     }
 
@@ -364,7 +364,7 @@ scpi_result_t SCPI_DACUseCalGet(scpi_t * context) {
 scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // Ensure DAC hardware is initialized and instance ID is valid
     if (!DAC_EnsureHardwareInitialized() || dacInstanceId == 0xFF) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "CONF:DAC:UPDATE: DAC not initialized");
         return SCPI_RES_ERR;
     }
 

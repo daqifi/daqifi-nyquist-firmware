@@ -2,6 +2,7 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPILAN.h"
+#include "SCPIInterface.h"
 
 // General
 #include <stdlib.h>
@@ -32,7 +33,7 @@
 static bool SCPI_LANRequireWiFiReady(scpi_t* context) {
     wifi_status_t status = wifi_manager_GetWiFiStatus();
     if (status == WIFI_STATUS_DISABLED) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "SYST:COMM:LAN: WiFi not ready (device powered up?)");
         return false;
     }
     return true;

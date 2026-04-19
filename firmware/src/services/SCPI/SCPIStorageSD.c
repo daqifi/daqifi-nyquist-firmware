@@ -24,6 +24,7 @@
 /* ************************************************************************** */
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
+#include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
@@ -333,8 +334,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     
     // Check if a test is already in progress
     if (gSDBenchmarkResults.testInProgress) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        context->interface->write(context, "\r\nError: Benchmark already in progress\r\n", 40);
+        SCPI_ExecutionError(context, "SYST:STOR:SD:BENCH: benchmark already in progress");
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -499,7 +499,7 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
     char resultStr[128];
     
     if (!gSDBenchmarkResults.resultAvailable) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "SYST:STOR:SD:BENCH?: no benchmark result available");
         context->interface->write(context, "0,0,0\r\n", 7);
         return SCPI_RES_ERR;
     }
@@ -580,7 +580,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
 
     // Check if the operation succeeded
     if (!sd_card_manager_GetLastOperationResult()) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "SYST:STOR:SD:DELete: delete operation failed");
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
