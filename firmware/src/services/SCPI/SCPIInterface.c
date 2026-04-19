@@ -1508,7 +1508,7 @@ static scpi_result_t SCPI_ForceDPDM(scpi_t * context) {
 
 /**
  * SCPI Callback: Clear accumulated BQ24297 faults
- * Command: SYSTem:POWer:BQ:FAULTCLear
+ * Command: SYSTem:POWer:BQ:FAULT:CLEar
  */
 static scpi_result_t SCPI_ClearBQFaults(scpi_t * context) {
     BQ24297_ClearAccumulatedFaults();
@@ -3260,7 +3260,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:POWer:BQ:ILIM", .callback = SCPI_SetBQILim,},
     {.pattern = "SYSTem:POWer:BQ:DPDM", .callback = SCPI_ForceDPDM,},
     {.pattern = "SYSTem:POWer:BQ:DIAGnostics?", .callback = SCPI_GetBQDiagnostics,},
-    {.pattern = "SYSTem:POWer:BQ:FAULTCLear", .callback = SCPI_ClearBQFaults,},
+    {.pattern = "SYSTem:POWer:BQ:FAULT:CLEar", .callback = SCPI_ClearBQFaults,},
     // OTG commands disabled - OTG mode is managed automatically by the power system
     // When external power is present, OTG is always disabled for safety
     // When on battery power, OTG is controlled by the board configuration
