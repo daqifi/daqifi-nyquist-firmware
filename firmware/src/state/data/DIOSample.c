@@ -18,6 +18,13 @@ void DIOSampleList_Initialize(
     (void)list;
     (void)dropOnOverflow;
 
+    // Delete existing queue to avoid leaking the handle on re-init.
+    // Matches the pattern in AInSample.c.
+    if (DIOQueue != NULL) {
+        vQueueDelete(DIOQueue);
+        DIOQueue = NULL;
+    }
+
     queueSize = maxSize;
     DIOQueue = xQueueCreate( maxSize, sizeof(DIOSample) );
     configASSERT(DIOQueue != NULL);
