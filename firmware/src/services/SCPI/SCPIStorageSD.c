@@ -164,13 +164,14 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
-            LOG_E("SD:FILE - Filename too long: %d bytes, max: %d\r\n", fileLen, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
+            LOG_E("SD:FILE - Filename too long: %zu bytes, max: %zu\r\n",
+                  fileLen, (size_t)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
         memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
         pSDCardRuntimeConfig->file[fileLen] = '\0';
-        LOG_D("SD:FILE - Set filename to '%s' (%d bytes) dir='%s'\r\n",
+        LOG_D("SD:FILE - Set filename to '%s' (%zu bytes) dir='%s'\r\n",
               pSDCardRuntimeConfig->file, fileLen, pSDCardRuntimeConfig->directory);
     } else {
         LOG_D("SD:FILE - No filename provided, using existing: '%s'\r\n", pSDCardRuntimeConfig->file);
