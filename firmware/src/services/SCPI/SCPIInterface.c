@@ -3382,8 +3382,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:FORmat?", .callback = SCPI_GetStreamFormat,},
     {.pattern = "SYSTem:STReam:INTerface", .callback = SCPI_SetStreamInterface,}, // 0=USB, 1=WiFi, 2=SD, 3=USB+SD
     {.pattern = "SYSTem:STReam:INTerface?", .callback = SCPI_GetStreamInterface,},
-    {.pattern = "SYSTem:STReam:Stats?", .callback = SCPI_GetStreamStats,},
-    {.pattern = "SYSTem:STReam:ClearStats", .callback = SCPI_ClearStreamStats,},
+    {.pattern = "SYSTem:STReam:STATS?", .callback = SCPI_GetStreamStats,},
+    {.pattern = "SYSTem:STReam:STATS:CLEar", .callback = SCPI_ClearStreamStats,},
     {.pattern = "SYSTem:STReam:LOSS:THREshold", .callback = SCPI_SetLossThreshold,},
     {.pattern = "SYSTem:STReam:LOSS:THREshold?", .callback = SCPI_GetLossThreshold,},
     {.pattern = "SYSTem:STReam:LOSS:WINDow", .callback = SCPI_SetFlowWindow,},
