@@ -53,13 +53,9 @@ static SemaphoreHandle_t poolMutex = NULL;
 static volatile bool poolActive = false;
 static bool poolOwnsMemory = false;  // false = external (StreamingBufferPool)
 
-void AInSampleList_Initialize(
-                            size_t maxSize,
-                            bool dropOnOverflow,
-                            const LockProvider* lockPrototype){
+void AInSampleList_Initialize(size_t maxSize, bool dropOnOverflow){
 
     (void)dropOnOverflow;
-    (void)lockPrototype;
 
     // Destroy previous resources if re-initializing (any size change or same size).
     // Must destroy before creating new queue to prevent orphaning the old handle.

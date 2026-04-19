@@ -3,7 +3,6 @@
 #include <stdint.h>
 
 #include "Util/ArrayWrapper.h"
-#include "Util/HeapList.h"
 #include "../board/AInConfig.h"
 #ifdef __cplusplus
 extern "C" {
@@ -111,25 +110,13 @@ extern "C" {
     ARRAYWRAPPERDEF(AInSampleArray, AInSample, MAX_AIN_CHANNEL);
 
     /**
-     * A wrapper around a HeapList to simplify use
-     */
-    typedef struct s_AInSampleList {
-        /**
-         * The list to wrap
-         */
-        HeapList List;
-    } AInSampleList;
-
-    /**
      * @brief Initializes the Analog Input Sample List queue.
-     * 
+     *
      * This function initializes the queue with a maximum size.
-     * 
+     *
      * @param maxSize Maximum number of items the queue can hold.
      */
-    void AInSampleList_Initialize(size_t maxSize,
-            bool dropOnOverflow,
-            const LockProvider* lockPrototype);
+    void AInSampleList_Initialize(size_t maxSize, bool dropOnOverflow);
 
     /**
      * @brief Initializes using externally-provided pool memory.

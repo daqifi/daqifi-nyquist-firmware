@@ -10,17 +10,14 @@ static QueueHandle_t DIOQueue;
 //! Size of the queue, in number of items
 static uint32_t queueSize = 0;
 
-void DIOSampleList_Initialize( 
-                            DIOSampleList* list, 
-                            size_t maxSize, 
-                            bool dropOnOverflow, 
-                            const LockProvider* lockPrototype){
-    
+void DIOSampleList_Initialize(
+                            DIOSampleList* list,
+                            size_t maxSize,
+                            bool dropOnOverflow){
+
     (void)list;
-    (void)maxSize;
     (void)dropOnOverflow;
-    (void)lockPrototype;
-    
+
     queueSize = maxSize;
     DIOQueue = xQueueCreate( maxSize, sizeof(DIOSample) );
 }

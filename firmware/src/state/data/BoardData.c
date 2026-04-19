@@ -10,7 +10,6 @@
  */
 
 #include "BoardData.h"
-#include "Util/NullLockProvider.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/board/DIOConfig.h"
 #include "../../HAL/ADC.h"
@@ -24,7 +23,7 @@ void InitializeBoardData(tBoardData* boardData) {
     memset(&g_BoardData, 0, sizeof (g_BoardData));
 
     memset(&boardData->DIOLatest, 0, sizeof (DIOSample));
-    DIOSampleList_Initialize(&boardData->DIOSamples, MAX_DIO_SAMPLE_COUNT, false, &g_NullLockProvider);
+    DIOSampleList_Initialize(&boardData->DIOSamples, MAX_DIO_SAMPLE_COUNT, false);
     //    
     memset(&boardData->AInState, 0, sizeof (AInModDataArray));
 
@@ -41,7 +40,7 @@ void InitializeBoardData(tBoardData* boardData) {
             AInSampleList_InitializeExternal(poolMem, freeMem, count, elemSize);
         } else {
             // Fallback to heap allocation if pool not available
-            AInSampleList_Initialize(DEFAULT_AIN_SAMPLE_COUNT, false, &g_NullLockProvider);
+            AInSampleList_Initialize(DEFAULT_AIN_SAMPLE_COUNT, false);
         }
     }
     boardData->AInState.Size = MAX_AIN_MOD;
@@ -96,9 +95,6 @@ void *BoardData_Get(
         case BOARDDATA_DIO_LATEST:
             pRet= &g_BoardData.DIOLatest;
             break;
-        case BOARDDATA_DIO_SAMPLES:
-            pRet= &g_BoardData.DIOSamples.List;
-            break;
         case BOARDDATA_AIN_MODULE:
             if (index < g_BoardData.AInState.Size) {
                 pRet= &g_BoardData.AInState.Data[ index ];
@@ -122,9 +118,6 @@ void *BoardData_Get(
                 break;
             }
             pRet= NULL;
-            break;
-        case BOARDDATA_AIN_SAMPLES:
-            pRet= &g_BoardData.AInSamples;
             break;
         case BOARDDATA_AOUT_LATEST:
             if (index < g_BoardData.AOutLatest.Size) {
@@ -177,12 +170,6 @@ void BoardData_Set(
                     pSetValue,
                     sizeof (g_BoardData.DIOLatest));
             break;
-        case BOARDDATA_DIO_SAMPLES:
-            memcpy(
-                    &g_BoardData.DIOSamples.List,
-                    pSetValue,
-                    sizeof (g_BoardData.DIOSamples));
-            break;
         case BOARDDATA_AIN_MODULE:
             if (index < g_BoardData.AInState.Size) {
                 memcpy(
@@ -215,12 +202,6 @@ void BoardData_Set(
             if (index < g_BoardData.AInLatest.Size) {
                 g_BoardData.AInLatest.Data[ index ].Timestamp = *(uint32_t*) pSetValue;
             }
-            break;
-        case BOARDDATA_AIN_SAMPLES:
-            memcpy(
-                    &g_BoardData.AInSamples.List,
-                    pSetValue,
-                    sizeof (HeapList));
             break;
         case BOARDDATA_AOUT_LATEST:
             if (index < g_BoardData.AOutLatest.Size) {
