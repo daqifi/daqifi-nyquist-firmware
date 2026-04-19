@@ -1,4 +1,5 @@
 #include "libraries/scpi/libscpi/inc/scpi/scpi.h"
+#include "Util/Logger.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -81,6 +82,20 @@ extern "C" {
                 SCPI_ResultDouble(context, voltage_v);
             }
         }
+    }
+
+    /**
+     * Push a SCPI EXECUTION_ERROR with a logged reason (#262).
+     * Every execution error should be discoverable via SYST:LOG? in addition
+     * to SYST:ERR?. The reason string identifies the command and failure mode.
+     * Expands LOG_E at the call site, so LOG_MODULE must be defined (SCPI files
+     * all define LOG_MODULE_SCPI at the top).
+     * @param context SCPI context
+     * @param reason  short human-readable rejection reason, e.g. "streaming active"
+     */
+    static inline void SCPI_ExecutionError(scpi_t *context, const char *reason) {
+        LOG_E("SCPI exec error: %s", reason);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     }
 
 #ifdef	__cplusplus

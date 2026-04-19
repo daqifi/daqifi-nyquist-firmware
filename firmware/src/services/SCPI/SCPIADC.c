@@ -439,7 +439,7 @@ scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
     // Find the AD7609 module
     const AInModule* module = ADC_FindModule(AIn_AD7609);
     if (module == NULL) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "CONF:ADC:RANG: AD7609 module not found");
         return SCPI_RES_ERR;
     }
 
@@ -449,7 +449,7 @@ scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
 
     // Validate runtime configuration and module index
     if (pRuntimeModules == NULL || moduleIndex >= pRuntimeModules->Size) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "CONF:ADC:RANG: runtime module index invalid");
         return SCPI_RES_ERR;
     }
 
@@ -488,7 +488,7 @@ scpi_result_t SCPI_ADCChanRangeGet(scpi_t * context) {
     // Find the AD7609 module
     const AInModule* module = ADC_FindModule(AIn_AD7609);
     if (module == NULL) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "CONF:ADC:RANG?: AD7609 module not found");
         return SCPI_RES_ERR;
     }
 
@@ -710,7 +710,7 @@ scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     if (pStreamCfg->IsEnabled) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ExecutionError(context, "CONF:ADC:OBDiag: cannot change while streaming");
         return SCPI_RES_ERR;
     }
     pStreamCfg->OnboardDiagEnabled = (val != 0);
