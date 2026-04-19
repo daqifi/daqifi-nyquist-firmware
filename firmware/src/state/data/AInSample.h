@@ -164,16 +164,6 @@ extern "C" {
     bool AInSampleList_PushBack(const AInPublicSampleList_t* pData);
 
     /**
-     * @brief Adds a new data sample to the queue from an ISR.
-     * 
-     * Similar to AInSampleList_PushBack but used within an interrupt context.
-     * 
-     * @param pData Pointer to the data sample to be added.
-     * @return True if the data was successfully added, false otherwise.
-     */
-    bool AInSampleList_PushBackFromIsr(const AInPublicSampleList_t* pData);
-
-    /**
      * @brief Removes and returns the first data sample from the queue.
      * 
      * This function removes the first data sample from the queue and assigns it
