@@ -20,6 +20,7 @@ void DIOSampleList_Initialize(
 
     queueSize = maxSize;
     DIOQueue = xQueueCreate( maxSize, sizeof(DIOSample) );
+    configASSERT(DIOQueue != NULL);
 }
 
 void DIOSampleList_Destroy(DIOSampleList* list)
