@@ -322,7 +322,7 @@ The streaming engine tracks data loss at every stage of the pipeline. Statistics
 **SCPI Commands:**
 ```bash
 SYSTem:STReam:STATS?       # Query all statistics
-SYSTem:STReam:CLEARSTATS   # Reset all counters
+SYSTem:STReam:STATS:CLEar  # Reset all counters
 ```
 
 **Response fields from `SYSTem:STReam:STATS?`:**
