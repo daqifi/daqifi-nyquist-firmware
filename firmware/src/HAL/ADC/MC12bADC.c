@@ -340,8 +340,15 @@ bool MC12b_SetAcquisitionSamc(int32_t samcDedicated, int32_t samcShared) {
 
     if (adcWasOn) {
         ADCCON1bits.ON = 1;
-        while (ADCCON2bits.BGVRRDY == 0U) { /* wait for reference */ }
-        while (ADCCON2bits.REFFLT != 0U)   { /* wait for fault clear */ }
+        // Bound the hardware polling loops so an unhealthy reference can't
+        // hang the SCPI task forever. ~20 ms at 100 MHz is plenty for a
+        // normal bandgap settle (typically microseconds).
+        uint32_t timeout = 2000000U;
+        while (ADCCON2bits.BGVRRDY == 0U && timeout-- != 0U) { /* wait */ }
+        if (ADCCON2bits.BGVRRDY == 0U || ADCCON2bits.REFFLT != 0U) {
+            ADCCON1bits.ON = 0;
+            return false;
+        }
     }
     return true;
 }
