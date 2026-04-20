@@ -738,7 +738,7 @@ static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
     }
     StreamingRuntimeConfig *pStreamCfg =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg && pStreamCfg->IsEnabled) {
+    if (pStreamCfg->IsEnabled) {
         SCPI_ExecutionError(context, "CONF:ADC:SAMC: cannot change while streaming");
         return SCPI_RES_ERR;
     }
