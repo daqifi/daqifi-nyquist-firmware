@@ -35,6 +35,30 @@ bool DIO_WriteStateAll( void );
  * @param[in] Data channel index
  */
 bool DIO_WriteStateSingle( uint8_t dataIndex );
+
+/*!
+ * Configure a DIO channel's data+enable pin pair as an active digital
+ * output driven LOW. Used by debug / probe paths that need to bypass
+ * the runtime IsInput/Value config. Drives BOTH the data pin and the
+ * paired external-driver enable pin atomically — data+enable must
+ * always be configured together, per DIOConfig semantics.
+ *
+ * @param[in] channel  DIO channel index (0..15)
+ * @return true on success, false if channel is out of range.
+ */
+bool DIO_ConfigurePairAsOutput(uint8_t channel);
+
+/*!
+ * Release a DIO channel's data+enable pair. Parks outputs to their
+ * inactive levels (data LOW, enable INACTIVE per EnableInverted),
+ * then puts both pins back to input / high-Z so normal DIO control
+ * (DIO_WriteStateSingle) can re-apply the runtime-configured state
+ * cleanly — including the case where the channel was configured as
+ * an input.
+ *
+ * @param[in] channel  DIO channel index (0..15)
+ */
+void DIO_ReleasePair(uint8_t channel);
     
 /*!
  * Generates a sample based all enabled samples included in the mask
