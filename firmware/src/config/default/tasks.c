@@ -146,7 +146,7 @@ static void lWDRV_WINC_Tasks(void *pvParameters)
         SYS_STATUS status = WDRV_WINC_Status(sysObj.drvWifiWinc);
         uint32_t delay_ms = WincIdleGate_ComputeDelay(status);
         if (delay_ms > 0U) {
-            vTaskDelay(delay_ms / portTICK_PERIOD_MS);
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
         }
     }
 }
