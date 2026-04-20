@@ -127,7 +127,7 @@ static void lAPP_FREERTOS_Tasks(  void *pvParameters  )
 // Further CPU reduction when WiFi is fully idle requires #334 (chip
 // power-down) or a deeper driver rework that understands event-queue
 // emptiness.
-static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
+uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
 {
     if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status)) {
         return 50U;
@@ -148,6 +148,21 @@ static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
         return 50U;
     }
     return 0U;
+}
+
+// Debug accessor for SCPI verification of #55: reports the live gate state
+// so tests can observe the tier transitions across SYS_STATUS changes,
+// streaming start/stop, and TCP client connect/disconnect.
+void WincIdleGate_GetDebugState(int* out_status,
+                                 bool* out_streaming_non_wifi,
+                                 bool* out_tcp_client,
+                                 uint32_t* out_delay_ms)
+{
+    SYS_STATUS s = WDRV_WINC_Status(sysObj.drvWifiWinc);
+    if (out_status != NULL) *out_status = (int)s;
+    if (out_streaming_non_wifi != NULL) *out_streaming_non_wifi = Streaming_IsActiveOnNonWifiInterface();
+    if (out_tcp_client != NULL) *out_tcp_client = wifi_tcp_server_HasActiveClient();
+    if (out_delay_ms != NULL) *out_delay_ms = WincIdleGate_ComputeDelay(s);
 }
 
 static void lWDRV_WINC_Tasks(void *pvParameters)
