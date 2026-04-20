@@ -40,11 +40,11 @@ static bool probe_configure_pin(uint8_t channel) {
     /* Delegate data+enable pair handling to the DIO HAL. Keeps the
      * pair semantics (external driver chip needs both pins driven
      * together) in a single source of truth. */
-    return DIO_ConfigurePairAsOutput(channel);
+    return DIO_ProbeActivatePair(channel);
 }
 
 static void probe_release_pin(uint8_t channel) {
-    DIO_ReleasePair(channel);
+    DIO_ProbeReleasePair(channel);
 }
 
 static void recompute_any_active(void) {

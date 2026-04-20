@@ -39,7 +39,7 @@ static void SetGpioDir(GPIO_PORT port, uint32_t bitPos, bool isInput) {
 
 }
 
-bool DIO_ConfigurePairAsOutput(uint8_t channel) {
+bool DIO_ProbeActivatePair(uint8_t channel) {
     if (gpBoardConfig == NULL) return false;
     if (channel >= gpBoardConfig->DIOChannels.Size) return false;
 
@@ -56,7 +56,7 @@ bool DIO_ConfigurePairAsOutput(uint8_t channel) {
     return true;
 }
 
-void DIO_ReleasePair(uint8_t channel) {
+void DIO_ProbeReleasePair(uint8_t channel) {
     if (gpBoardConfig == NULL) return;
     if (channel >= gpBoardConfig->DIOChannels.Size) return;
 
