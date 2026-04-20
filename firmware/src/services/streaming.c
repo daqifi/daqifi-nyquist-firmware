@@ -299,6 +299,44 @@ const AInChannelMapping* Streaming_GetChannelMapping(void) {
     return &gChannelMapping;
 }
 
+void Streaming_CountActiveChannels(uint16_t* out_type1Count,
+                                   uint16_t* out_totalPublic,
+                                   bool* out_hasAD7609) {
+    uint16_t type1 = 0;
+    uint16_t total = 0;
+    bool has7609 = false;
+
+    volatile AInRuntimeArray* rt =
+        BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    volatile AInArray* cfg =
+        BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+
+    if (rt != NULL && cfg != NULL) {
+        size_t count = (cfg->Size < rt->Size) ? cfg->Size : rt->Size;
+        for (size_t i = 0; i < count; i++) {
+            if (rt->Data[i].IsEnabled != 1) continue;
+
+            if (cfg->Data[i].Type == AIn_AD7609) {
+                if (cfg->Data[i].Config.AD7609.IsPublic) {
+                    has7609 = true;
+                    total++;
+                }
+            } else if (cfg->Data[i].Type == AIn_MC12bADC) {
+                if (cfg->Data[i].Config.MC12b.IsPublic) {
+                    total++;
+                    if (cfg->Data[i].Config.MC12b.ChannelType == 1) {
+                        type1++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (out_type1Count  != NULL) *out_type1Count  = type1;
+    if (out_totalPublic != NULL) *out_totalPublic = total;
+    if (out_hasAD7609   != NULL) *out_hasAD7609   = has7609;
+}
+
 /**
  * @brief Deferred interrupt handler for sample collection.
  *
