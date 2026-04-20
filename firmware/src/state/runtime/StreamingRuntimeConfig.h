@@ -19,7 +19,7 @@ extern "C" {
         StreamingInterface_USB = 0,
         StreamingInterface_WiFi = 1,
         StreamingInterface_SD = 2,
-        StreamingInterface_All = 3,  // USB+SD concurrent (WiFi excluded — SPI bus conflict with SD)
+        StreamingInterface_UsbAndSd = 3,  // USB+SD concurrent (WiFi excluded — SPI bus conflict with SD)
     } StreamingInterface;
     
     /**
