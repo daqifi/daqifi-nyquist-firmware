@@ -50,6 +50,7 @@
 #include "state/data/AInSample.h"  // For AInSampleList_PoolCapacity
 #include "services/wifi_services/wifi_tcp_server.h"  // For WIFI_CIRCULAR_BUFF_SIZE
 #include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/WaitIdle
+#include "config/default/WincIdleGate.h"  // For SYST:WINC:GATE? debug accessor
 #ifndef DAQIFI_WINC_SPI_PATCHED
 #error "wdrv_winc_spi.h was overwritten by Harmony/MCC! Re-apply DAQiFi patches. See wiki: Harmony-Driver-Patches"
 #endif
@@ -3191,6 +3192,28 @@ static scpi_result_t SCPI_DioProbeList(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_WincGateQ(scpi_t * context) {
+    int status = 0;
+    bool streaming_non_wifi = false;
+    bool tcp_client = false;
+    uint32_t delay_ms = 0;
+    WincIdleGate_GetDebugState(&status, &streaming_non_wifi, &tcp_client, &delay_ms);
+    const char* name;
+    switch ((SYS_STATUS)status) {
+        case SYS_STATUS_UNINITIALIZED: name = "UNINITIALIZED"; break;
+        case SYS_STATUS_BUSY:          name = "BUSY";          break;
+        case SYS_STATUS_READY:         name = "READY";         break;
+        case SYS_STATUS_ERROR:         name = "ERROR";         break;
+        default:                       name = "UNKNOWN";       break;
+    }
+    scpi_printf(context, "Status=%s\r\n", name);
+    scpi_printf(context, "StatusValue=%d\r\n", status);
+    scpi_printf(context, "StreamingNonWifi=%u\r\n", (unsigned)streaming_non_wifi);
+    scpi_printf(context, "TcpClient=%u\r\n", (unsigned)tcp_client);
+    scpi_printf(context, "ComputedDelayMs=%u\r\n", (unsigned)delay_ms);
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -3435,6 +3458,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:DIOProbe:CLEar:ALL", .callback = SCPI_DioProbeClearAll,},
     {.pattern = "SYSTem:DIOProbe:PIPELine", .callback = SCPI_DioProbePipeline,},
     {.pattern = "SYSTem:DIOProbe:LIST?", .callback = SCPI_DioProbeList,},
+    {.pattern = "SYSTem:WINC:GATE?", .callback = SCPI_WincGateQ,},
     // FreeRTOS
     //{.pattern = "SYSTem:OS:Stats?",           .callback = SCPI_GetFreeRtosStats,},
     // Testing

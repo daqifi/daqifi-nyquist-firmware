@@ -28,7 +28,6 @@ static bool probe_configure_pin(uint8_t channel) {
     tBoardRuntimeConfig* rt = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_ALL_CONFIG);
     if (channel >= cfg->DIOChannels.Size) return false;
 
-    const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
     const DIORuntimeConfig* rtch = &rt->DIOChannels.Data[channel];
 
     /* Reject if PWM is currently active on this channel. PWM drives
@@ -38,45 +37,14 @@ static bool probe_configure_pin(uint8_t channel) {
         return false;
     }
 
-    /* Drive LOW *before* setting direction to output. The pin starts
-     * at a known level — scope triggers cleanly on first real edge. */
-    uint32_t dataMask = 1u << dio->DataBitPos;
-    uint32_t enMask   = 1u << dio->EnableBitPos;
-
-    GPIO_PortClear(dio->DataChannel, dataMask);
-    GPIO_PortOutputEnable(dio->DataChannel, dataMask);
-
-    /* Activate driver. EnableInverted means active-low. */
-    if (dio->EnableInverted) {
-        GPIO_PortClear(dio->EnableChannel, enMask);
-    } else {
-        GPIO_PortSet(dio->EnableChannel, enMask);
-    }
-    GPIO_PortOutputEnable(dio->EnableChannel, enMask);
-    return true;
+    /* Delegate data+enable pair handling to the DIO HAL. Keeps the
+     * pair semantics (external driver chip needs both pins driven
+     * together) in a single source of truth. */
+    return DIO_ProbeActivatePair(channel);
 }
 
 static void probe_release_pin(uint8_t channel) {
-    tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    if (channel >= cfg->DIOChannels.Size) return;
-
-    const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
-    uint32_t dataMask = 1u << dio->DataBitPos;
-    uint32_t enMask   = 1u << dio->EnableBitPos;
-
-    /* Park outputs to inactive levels first (avoids a spurious edge
-     * during the direction change to input), then put both pins back
-     * to input / high-Z so normal DIO control can re-apply user
-     * config cleanly — including the case where the user had the
-     * channel configured as an input. */
-    GPIO_PortClear(dio->DataChannel, dataMask);
-    if (dio->EnableInverted) {
-        GPIO_PortSet(dio->EnableChannel, enMask);   /* inactive-high */
-    } else {
-        GPIO_PortClear(dio->EnableChannel, enMask); /* inactive-low */
-    }
-    GPIO_PortInputEnable(dio->DataChannel, dataMask);
-    GPIO_PortInputEnable(dio->EnableChannel, enMask);
+    DIO_ProbeReleasePair(channel);
 }
 
 static void recompute_any_active(void) {

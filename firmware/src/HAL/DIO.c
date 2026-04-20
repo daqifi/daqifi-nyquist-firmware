@@ -39,6 +39,40 @@ static void SetGpioDir(GPIO_PORT port, uint32_t bitPos, bool isInput) {
 
 }
 
+bool DIO_ProbeActivatePair(uint8_t channel) {
+    if (gpBoardConfig == NULL) return false;
+    if (channel >= gpBoardConfig->DIOChannels.Size) return false;
+
+    const DIOConfig* dio = &gpBoardConfig->DIOChannels.Data[channel];
+
+    // Drive data pin LOW *before* flipping to output — guarantees a
+    // known initial level on the external-header pin.
+    WriteGpioPin(dio->DataChannel, dio->DataBitPos, 0);
+    SetGpioDir(dio->DataChannel, dio->DataBitPos, 0);
+
+    // Activate the external-driver enable. Polarity per DIOConfig.
+    WriteGpioPin(dio->EnableChannel, dio->EnableBitPos, !dio->EnableInverted);
+    SetGpioDir(dio->EnableChannel, dio->EnableBitPos, 0);
+    return true;
+}
+
+void DIO_ProbeReleasePair(uint8_t channel) {
+    if (gpBoardConfig == NULL) return;
+    if (channel >= gpBoardConfig->DIOChannels.Size) return;
+
+    const DIOConfig* dio = &gpBoardConfig->DIOChannels.Data[channel];
+
+    // Park outputs at inactive levels *before* flipping direction
+    // to input — avoids a spurious edge on the external header.
+    WriteGpioPin(dio->DataChannel, dio->DataBitPos, 0);
+    WriteGpioPin(dio->EnableChannel, dio->EnableBitPos, dio->EnableInverted);
+
+    // Return both pins to input / high-Z. DIO_WriteStateSingle will
+    // re-apply the runtime-configured state on the next streaming tick.
+    SetGpioDir(dio->DataChannel, dio->DataBitPos, 1);
+    SetGpioDir(dio->EnableChannel, dio->EnableBitPos, 1);
+}
+
 bool DIO_InitHardware(const tBoardConfig *pInitBoardConfiguration,
         const tBoardRuntimeConfig *pInitBoardRuntimeConfig) {
     bool enableInverted;

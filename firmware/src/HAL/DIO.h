@@ -35,6 +35,55 @@ bool DIO_WriteStateAll( void );
  * @param[in] Data channel index
  */
 bool DIO_WriteStateSingle( uint8_t dataIndex );
+
+/* ---------------------------------------------------------------------
+ * Debug / probe overrides
+ * ---------------------------------------------------------------------
+ * These bypass the runtime DIOChannels.Data[].IsInput / .Value fields
+ * and force a pin-pair state directly from the HAL. Intended for the
+ * DIO debug probe framework (HAL/DioProbe.c) and any other debug tool
+ * that needs to commandeer a DIO channel independently of the user's
+ * runtime configuration. For normal user-facing DIO operations, use
+ * DIO_WriteStateSingle / DIO_WriteStateAll instead — those respect the
+ * runtime config.
+ * --------------------------------------------------------------------- */
+
+/*!
+ * Force a DIO channel's data+enable pin pair into an active digital
+ * output driven LOW, bypassing the runtime IsInput/Value config.
+ * Drives BOTH the data pin and the paired external-driver enable
+ * pin — data+enable must always be configured together, per DIOConfig
+ * semantics (Nyquist DIO drives an external buffer IC with a per-
+ * channel enable).
+ *
+ * @warning Callers take ownership of the pin pair. The runtime DIO
+ *          config is not updated, so DIO_WriteStateSingle on the next
+ *          streaming tick would re-apply the user's config and stomp
+ *          this override. Use DIO_ProbeReleasePair when done, and/or
+ *          arrange for DIO_StreamingTrigger to skip the channel (e.g.
+ *          via DioProbe_IsChannelOwned).
+ *
+ * @param[in] channel  DIO channel index (0..15)
+ * @return true on success, false if channel is out of range.
+ */
+bool DIO_ProbeActivatePair(uint8_t channel);
+
+/*!
+ * Release a DIO channel's data+enable pair after DIO_ProbeActivatePair.
+ * Parks outputs at their inactive levels (data LOW, enable INACTIVE per
+ * EnableInverted), then returns both pins to input / high-Z so the
+ * normal DIO path (DIO_WriteStateSingle) can cleanly re-apply the
+ * runtime-configured state — including the case where the user had
+ * the channel configured as an input.
+ *
+ * @warning Pair only with DIO_ProbeActivatePair. Calling this on a
+ *          channel under normal user control will transiently break
+ *          its driver state until the next DIO_StreamingTrigger tick
+ *          re-applies the runtime config.
+ *
+ * @param[in] channel  DIO channel index (0..15)
+ */
+void DIO_ProbeReleasePair(uint8_t channel);
     
 /*!
  * Generates a sample based all enabled samples included in the mask
