@@ -3191,11 +3191,7 @@ static scpi_result_t SCPI_DioProbeList(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-// Forward declaration — defined in config/default/tasks.c.
-extern void WincIdleGate_GetDebugState(int* out_status,
-                                       bool* out_streaming_non_wifi,
-                                       bool* out_tcp_client,
-                                       uint32_t* out_delay_ms);
+#include "config/default/WincIdleGate.h"
 
 static scpi_result_t SCPI_WincGateQ(scpi_t * context) {
     int status = 0;

@@ -57,6 +57,7 @@
 #include "Util/Logger.h"
 #include "services/streaming.h"  // #331: Streaming_IsActiveOnNonWifiInterface
 #include "services/wifi_services/wifi_tcp_server.h"  // #331: HasActiveClient
+#include "config/default/WincIdleGate.h"                // #55: public idle-gate API
 
 
 // *****************************************************************************
