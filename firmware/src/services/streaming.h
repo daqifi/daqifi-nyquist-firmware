@@ -1,5 +1,8 @@
 #pragma once
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "../state/board/BoardConfig.h"
 #include "../state/runtime/BoardRuntimeConfig.h"
 #include "../state/data/BoardData.h"
@@ -78,7 +81,22 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
     if (maxFreq == 0) maxFreq = 1;
     return maxFreq;
 }
-    
+
+/**
+ * Count enabled public ADC channels from current board + runtime config.
+ * Used by SCPI_StartStreaming, the ADC channel-enable path, and the
+ * MAXFreq query so they all agree on what counts toward the cap.
+ *
+ * @param[out] out_type1Count     Enabled MC12bADC ChannelType=1 (Type 1) channels
+ * @param[out] out_totalPublic    Total enabled IsPublic channels (both ADC types)
+ * @param[out] out_hasAD7609      true if any enabled IsPublic channel is AD7609
+ *
+ * Any out_* pointer may be NULL.
+ */
+void Streaming_CountActiveChannels(uint16_t* out_type1Count,
+                                   uint16_t* out_totalPublic,
+                                   bool* out_hasAD7609);
+
 /*! Initializes the streaming component
  * @param[in] pStreamingConfigInit Streaming configuration
  * @param[out] pStreamingRuntimeConfigInit Streaming configuration in runtime

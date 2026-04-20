@@ -2055,41 +2055,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // timer running frequency
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
 
-    //int i;
     uint16_t activeType1ChannelCount = 0;
     uint16_t totalEnabledPublicChannels = 0;
-    bool hasActiveAD7609Channels __attribute__((unused)) = false;
-    int i;
-    bool hasEnabledChannels = false;
-
-    // Count active PUBLIC ADC channels and detect AD7609 usage
-    // Internal monitoring channels (IsPublic=false) don't count as user channels
-    // Use minimum of both array sizes to prevent out-of-bounds access
-    size_t adcCount = pBoardConfigADC->Size < pRuntimeAInChannels->Size ?
-                      pBoardConfigADC->Size : pRuntimeAInChannels->Size;
-    for (i = 0; i < (int)adcCount; i++) {
-        if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            // Check IsPublic based on channel type (it's in the union)
-            bool isPublic = false;
-            if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
-                isPublic = pBoardConfigADC->Data[i].Config.AD7609.IsPublic;
-                if (isPublic) {
-                    hasEnabledChannels = true;
-                    hasActiveAD7609Channels = true;
-                    totalEnabledPublicChannels++;
-                }
-            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC) {
-                isPublic = pBoardConfigADC->Data[i].Config.MC12b.IsPublic;
-                if (isPublic) {
-                    hasEnabledChannels = true;
-                    totalEnabledPublicChannels++;
-                    if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
-                        activeType1ChannelCount++;
-                    }
-                }
-            }
-        }
-    }
+    bool hasActiveAD7609Channels = false;
+    Streaming_CountActiveChannels(&activeType1ChannelCount,
+                                  &totalEnabledPublicChannels,
+                                  &hasActiveAD7609Channels);
+    bool hasEnabledChannels = (totalEnabledPublicChannels > 0);
 
     // Build channel mapping for compact sample pool (#177).
     // Must happen before pool partitioning (needs channel count for element sizing).
@@ -2459,6 +2431,39 @@ static scpi_result_t SCPI_IsStreaming(scpi_t * context) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
 
     SCPI_ResultInt32(context, (int) pRunTimeStreamConfig->IsEnabled);
+    return SCPI_RES_OK;
+}
+
+/*
+ * CONFigure:ADC:MAXFreq?
+ * Reports the three-constraint streaming frequency cap for the currently
+ * enabled public ADC channels, plus the formula constants so clients can
+ * predict caps for hypothetical channel configurations without a round
+ * trip. Format: key=value pairs, comma-separated, so the existing
+ * key=value SCPI-response parsers in python-core / daqifi-core can split
+ * on ',' and '=' without a format bump. See #283.
+ */
+static scpi_result_t SCPI_GetMaxStreamFreq(scpi_t * context) {
+    uint16_t type1 = 0;
+    uint16_t total = 0;
+    Streaming_CountActiveChannels(&type1, &total, NULL);
+    uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
+
+    char buf[160];
+    int n = snprintf(buf, sizeof(buf),
+        "MaxFreqHz=%u,Type1Count=%u,TotalChannels=%u,"
+        "IsrMaxHz=%u,Type1AggMaxHz=%u,TickBudget=%u,TickOverhead=%u",
+        (unsigned)maxFreq,
+        (unsigned)type1,
+        (unsigned)total,
+        (unsigned)STREAMING_ISR_MAX_HZ,
+        (unsigned)STREAMING_TYPE1_AGG_MAX_HZ,
+        (unsigned)STREAMING_TICK_BUDGET,
+        (unsigned)STREAMING_TICK_OVERHEAD);
+    if (n < 0 || (size_t)n >= sizeof(buf)) {
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultText(context, buf);
     return SCPI_RES_OK;
 }
 
@@ -3360,6 +3365,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet,},
     {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet,},
     {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet,},
+    {.pattern = "CONFigure:ADC:MAXFreq?", .callback = SCPI_GetMaxStreamFreq,},
     {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
     {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
     {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},
