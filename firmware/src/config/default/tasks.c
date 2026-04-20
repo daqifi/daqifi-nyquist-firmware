@@ -131,7 +131,10 @@ static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
     if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status)) {
         return 50U;
     }
-    if (Streaming_IsActiveOnNonWifiInterface()) {
+    // Only pace when the driver is fully READY. Other states
+    // (SYS_STATUS_BUSY, initialization phases) rely on tight polling
+    // to advance their internal state machines.
+    if ((SYS_STATUS_READY == status) && Streaming_IsActiveOnNonWifiInterface()) {
         return 50U;
     }
     return 0U;
