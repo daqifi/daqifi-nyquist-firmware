@@ -55,6 +55,8 @@
 #include "sys_tasks.h"
 #include "HAL/ADC/AD7609.h"
 #include "Util/Logger.h"
+#include "services/streaming.h"  // #331: Streaming_IsActiveOnNonWifiInterface
+#include "services/wifi_services/wifi_tcp_server.h"  // #331: HasActiveClient
 
 
 // *****************************************************************************
@@ -101,19 +103,63 @@ static void lAPP_FREERTOS_Tasks(  void *pvParameters  )
     }
 }
 
+// #331 WINC idle-gate — pace the driver's hot loop ONLY when we're
+// certain WiFi isn't needed. Pre-#331 was an unbounded tight loop that
+// preempted the streaming timer ISR every 45.9 ms for ~270 µs (22 Hz,
+// CV 10.6% jitter at 10+ kHz). Bisection confirmed this task as the
+// sole source of that signature. See #331 for data.
+//
+// CAUTION: Adding ANY delay to the fast path breaks USB CDC and WiFi
+// responsiveness when WiFi is connecting / associated / transferring.
+// The WINC driver's state machine relies on being called back-to-back
+// during event-heavy phases. A 1 ms vTaskDelay between calls caused
+// the firmware to assert + reboot into bootloader during STA mode
+// throughput testing.
+//
+// Tier policy:
+//   - ERROR / UNINITIALIZED → 50 ms (existing recovery behavior)
+//   - READY + streaming on non-WiFi interface → 50 ms
+//     (WiFi data path definitely not in use — safe to pace)
+//   - Otherwise → 0 ms (preserve original unbounded loop behavior)
+//
+// The gate still eliminates the 22 Hz preemption for the common case
+// (USB streaming with WiFi idle-AP), which was the #331 target.
+// Further CPU reduction when WiFi is fully idle requires #334 (chip
+// power-down) or a deeper driver rework that understands event-queue
+// emptiness.
+static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
+{
+    if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status)) {
+        return 50U;
+    }
+    if (SYS_STATUS_READY != status) {
+        // BUSY / initialization phases rely on tight polling to advance
+        // their internal state machines — don't pace.
+        return 0U;
+    }
+    // READY. Pace only when:
+    //   (a) streaming is using a non-WiFi interface (USB/SD/All), AND
+    //   (b) no TCP client is connected to the control plane.
+    // Either condition alone disqualifies: an active TCP client needs
+    // tight polling even when streaming is on USB, otherwise SCPI
+    // responses lag and the socket's receive queue can overflow.
+    if (Streaming_IsActiveOnNonWifiInterface() &&
+        !wifi_tcp_server_HasActiveClient()) {
+        return 50U;
+    }
+    return 0U;
+}
+
 static void lWDRV_WINC_Tasks(void *pvParameters)
 {
     while(1)
     {
-        SYS_STATUS status;
-       
         WDRV_WINC_Tasks(sysObj.drvWifiWinc);
 
-        status = WDRV_WINC_Status(sysObj.drvWifiWinc);
-      
-        if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status))
-        {
-            vTaskDelay(50 / portTICK_PERIOD_MS);
+        SYS_STATUS status = WDRV_WINC_Status(sysObj.drvWifiWinc);
+        uint32_t delay_ms = WincIdleGate_ComputeDelay(status);
+        if (delay_ms > 0U) {
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
         }
     }
 }

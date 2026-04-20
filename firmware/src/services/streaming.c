@@ -1366,3 +1366,29 @@ uint32_t Streaming_GetBenchmarkMode(void) {
     return gBenchmarkMode;
 }
 
+// #331: used by the WINC idle-gate in tasks.c to pace the WINC driver's
+// hot loop when we know WiFi isn't on the streaming data path. Both
+// fields are plain bools / enums updated on the SCPI task — readers
+// only see one-cycle-stale values in the worst case, which is fine
+// because the worst cost of staleness here is "we poll WINC at the
+// wrong cadence for one iteration of its loop."
+//
+// NOTE on StreamingInterface_All: its name is misleading. Per the
+// enum definition in StreamingRuntimeConfig.h it specifically means
+// "USB + SD concurrent (WiFi excluded — SPI bus conflict with SD)".
+// WiFi is NOT part of _All mode, so including it here is correct.
+// Tracked as a rename in #336 because the name keeps tripping readers.
+bool Streaming_IsActiveOnNonWifiInterface(void) {
+    // volatile-qualified view ensures the compiler re-reads each field
+    // even with -O3 / LTO inlining the caller (the WINC task loop).
+    // Without this, the read could be hoisted out of the loop entirely.
+    const volatile StreamingRuntimeConfig* cfg =
+        (const volatile StreamingRuntimeConfig*)gpRuntimeConfigStream;
+    if (cfg == NULL) return false;
+    if (!cfg->IsEnabled) return false;
+    StreamingInterface iface = cfg->ActiveInterface;
+    return (iface == StreamingInterface_USB ||
+            iface == StreamingInterface_SD  ||
+            iface == StreamingInterface_All);  // USB+SD concurrent, not WiFi — see NOTE above
+}
+

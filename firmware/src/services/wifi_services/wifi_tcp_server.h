@@ -94,6 +94,13 @@ bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize);
  */
 void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size);
 
+/**
+ * True when a TCP client is currently connected (socket open).
+ * Used by the WINC idle-gate (#331) to skip pacing when the control
+ * plane is in use.
+ */
+bool wifi_tcp_server_HasActiveClient(void);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }
