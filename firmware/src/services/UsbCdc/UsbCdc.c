@@ -1026,7 +1026,8 @@ void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     gRunTimeUsbSttings.wCirbuf.buf_size = size;
     gRunTimeUsbSttings.wCirbuf.insertPtr = buf;
     gRunTimeUsbSttings.wCirbuf.removePtr = buf;
-    gRunTimeUsbSttings.wCirbuf.totalBytes = 0;
+    gRunTimeUsbSttings.wCirbuf.producedBytes = 0;
+    gRunTimeUsbSttings.wCirbuf.consumedBytes = 0;
     gRunTimeUsbSttings.wCirbuf._ownsMemory = false;  // Pool-managed
 
     xSemaphoreGive(gRunTimeUsbSttings.wMutex);

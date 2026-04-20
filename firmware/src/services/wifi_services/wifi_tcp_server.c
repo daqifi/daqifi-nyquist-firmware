@@ -482,7 +482,8 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     gpServerData->client.wCirbuf.buf_size = size;
     gpServerData->client.wCirbuf.insertPtr = buf;
     gpServerData->client.wCirbuf.removePtr = buf;
-    gpServerData->client.wCirbuf.totalBytes = 0;
+    gpServerData->client.wCirbuf.producedBytes = 0;
+    gpServerData->client.wCirbuf.consumedBytes = 0;
     gpServerData->client.wCirbuf._ownsMemory = false;
 
     xSemaphoreGive(gpServerData->client.wMutex);
