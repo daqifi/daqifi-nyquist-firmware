@@ -1372,12 +1372,18 @@ uint32_t Streaming_GetBenchmarkMode(void) {
 // only see one-cycle-stale values in the worst case, which is fine
 // because the worst cost of staleness here is "we poll WINC at the
 // wrong cadence for one iteration of its loop."
+//
+// NOTE on StreamingInterface_All: its name is misleading. Per the
+// enum definition in StreamingRuntimeConfig.h it specifically means
+// "USB + SD concurrent (WiFi excluded — SPI bus conflict with SD)".
+// WiFi is NOT part of _All mode, so including it here is correct.
+// Tracked as a rename in #336 because the name keeps tripping readers.
 bool Streaming_IsActiveOnNonWifiInterface(void) {
     if (gpRuntimeConfigStream == NULL) return false;
     if (!gpRuntimeConfigStream->IsEnabled) return false;
     StreamingInterface iface = gpRuntimeConfigStream->ActiveInterface;
     return (iface == StreamingInterface_USB ||
             iface == StreamingInterface_SD  ||
-            iface == StreamingInterface_All);
+            iface == StreamingInterface_All);  // USB+SD concurrent, not WiFi — see NOTE above
 }
 
