@@ -2448,7 +2448,10 @@ static scpi_result_t SCPI_GetMaxStreamFreq(scpi_t * context) {
     uint16_t type1 = 0;
     uint16_t total = 0;
     Streaming_CountActiveChannels(&type1, &total, NULL);
-    uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
+    /* Zero enabled channels → no valid stream rate. Report 0 instead of
+     * the ISR ceiling so a client that drives the UI from this response
+     * doesn't silently offer rates that StartStreamData would reject. */
+    uint32_t maxFreq = (total > 0) ? Streaming_ComputeMaxFreq(type1, total) : 0;
 
     char buf[160];
     int n = snprintf(buf, sizeof(buf),
