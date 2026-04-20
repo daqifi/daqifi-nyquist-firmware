@@ -321,6 +321,9 @@ bool MC12b_SetAcquisitionSamc(int32_t samcDedicated, int32_t samcShared) {
     if (samcDedicated > (int32_t)MC12B_SAMC_MAX) return false;
     if (samcShared > (int32_t)MC12B_SAMC_MAX) return false;
 
+    // Nothing to do — don't disturb the ADC.
+    if (samcDedicated < 0 && samcShared < 0) return true;
+
     bool adcWasOn = (ADCCON1bits.ON != 0U);
     if (adcWasOn) {
         ADCCON1bits.ON = 0;
