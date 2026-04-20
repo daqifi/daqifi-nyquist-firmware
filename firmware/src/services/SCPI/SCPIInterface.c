@@ -50,6 +50,7 @@
 #include "state/data/AInSample.h"  // For AInSampleList_PoolCapacity
 #include "services/wifi_services/wifi_tcp_server.h"  // For WIFI_CIRCULAR_BUFF_SIZE
 #include "config/default/driver/winc/include/dev/wdrv_winc_spi.h"  // For WDRV_WINC_SPI_SetBuffer/WaitIdle
+#include "config/default/WincIdleGate.h"  // For SYST:WINC:GATE? debug accessor
 #ifndef DAQIFI_WINC_SPI_PATCHED
 #error "wdrv_winc_spi.h was overwritten by Harmony/MCC! Re-apply DAQiFi patches. See wiki: Harmony-Driver-Patches"
 #endif
@@ -3190,8 +3191,6 @@ static scpi_result_t SCPI_DioProbeList(scpi_t * context) {
     }
     return SCPI_RES_OK;
 }
-
-#include "config/default/WincIdleGate.h"
 
 static scpi_result_t SCPI_WincGateQ(scpi_t * context) {
     int status = 0;
