@@ -1366,3 +1366,18 @@ uint32_t Streaming_GetBenchmarkMode(void) {
     return gBenchmarkMode;
 }
 
+// #331: used by the WINC idle-gate in tasks.c to pace the WINC driver's
+// hot loop when we know WiFi isn't on the streaming data path. Both
+// fields are plain bools / enums updated on the SCPI task — readers
+// only see one-cycle-stale values in the worst case, which is fine
+// because the worst cost of staleness here is "we poll WINC at the
+// wrong cadence for one iteration of its loop."
+bool Streaming_IsActiveOnNonWifiInterface(void) {
+    if (gpRuntimeConfigStream == NULL) return false;
+    if (!gpRuntimeConfigStream->IsEnabled) return false;
+    StreamingInterface iface = gpRuntimeConfigStream->ActiveInterface;
+    return (iface == StreamingInterface_USB ||
+            iface == StreamingInterface_SD  ||
+            iface == StreamingInterface_All);
+}
+

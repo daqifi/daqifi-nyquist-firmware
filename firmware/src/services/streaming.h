@@ -213,6 +213,14 @@ void Streaming_SetBenchmarkMode(uint32_t mode);
 uint32_t Streaming_GetBenchmarkMode(void);
 
 /**
+ * True when streaming is active AND the active interface does not use
+ * WiFi. Used by the WINC idle-gate (#331) to decide when it is safe to
+ * pace the WINC driver's task loop down. Safe to call from any context;
+ * reads plain bools with no cross-task coordination needed.
+ */
+bool Streaming_IsActiveOnNonWifiInterface(void);
+
+/**
  * Build channel mapping from current board config and runtime config.
  * Must be called before streaming starts (from SCPI_StartStreaming).
  * Stores mapping globally for ISR and encoder access.

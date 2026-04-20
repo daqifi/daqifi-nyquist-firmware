@@ -55,6 +55,7 @@
 #include "sys_tasks.h"
 #include "HAL/ADC/AD7609.h"
 #include "Util/Logger.h"
+#include "services/streaming.h"  // #331: Streaming_IsActiveOnNonWifiInterface
 
 
 // *****************************************************************************
@@ -101,20 +102,44 @@ static void lAPP_FREERTOS_Tasks(  void *pvParameters  )
     }
 }
 
+// #331 WINC idle-gate — pace the driver's hot loop based on state.
+// Default (main pre-#331) was an unbounded tight loop that preempted the
+// streaming timer ISR every 45.9 ms for ~270 µs (22 Hz, CV 10.6% jitter
+// at 10+ kHz). Bisection confirmed this task is the sole source of that
+// signature. See #331 for data.
+//
+// Tier policy:
+//   - Driver not ready (ERROR/UNINITIALIZED) → 50 ms (existing recovery)
+//   - Driver ready + streaming on non-WiFi interface → 50 ms
+//     (USB/SD streaming active, WiFi data path not in use)
+//   - Driver ready + anything else → 1 ms
+//     (WiFi may be actively connecting, transferring, or idle-but-ready;
+//     keep polling responsive)
+//
+// The 1 ms base cadence is a conservative floor — still 50× slower than
+// the prior unbounded loop, but fast enough that TCP throughput and
+// connect latency remain close to baseline. If #334 delivers full chip
+// power-down, the task can be fully suspended when WINC is off.
+static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
+{
+    if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status)) {
+        return 50U;
+    }
+    if (Streaming_IsActiveOnNonWifiInterface()) {
+        return 50U;
+    }
+    return 1U;
+}
+
 static void lWDRV_WINC_Tasks(void *pvParameters)
 {
     while(1)
     {
-        SYS_STATUS status;
-       
         WDRV_WINC_Tasks(sysObj.drvWifiWinc);
 
-        status = WDRV_WINC_Status(sysObj.drvWifiWinc);
-      
-        if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status))
-        {
-            vTaskDelay(50 / portTICK_PERIOD_MS);
-        }
+        SYS_STATUS status = WDRV_WINC_Status(sysObj.drvWifiWinc);
+        uint32_t delay_ms = WincIdleGate_ComputeDelay(status);
+        vTaskDelay(delay_ms / portTICK_PERIOD_MS);
     }
 }
 
