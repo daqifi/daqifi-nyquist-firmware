@@ -16,6 +16,7 @@
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
+#include "HAL/ADC/MC12bADC.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/ADC.h"
 #include "../daqifi_settings.h"
@@ -722,5 +723,55 @@ scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context) {
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     SCPI_ResultInt32(context, pStreamCfg->OnboardDiagEnabled ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+// --- #328 phase 1: ADC acquisition-time runtime control ------------------
+// Wrapper that rejects SAMC writes while streaming is active. Calls into
+// MC12b_SetAcquisitionSamc for the register work.
+static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val < 0 || val > (int32_t)MC12B_SAMC_MAX) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    StreamingRuntimeConfig *pStreamCfg =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pStreamCfg && pStreamCfg->IsEnabled) {
+        SCPI_ExecutionError(context, "CONF:ADC:SAMC: cannot change while streaming");
+        return SCPI_RES_ERR;
+    }
+    bool ok = isDedicated ? MC12b_SetAcquisitionSamc(val, -1)
+                          : MC12b_SetAcquisitionSamc(-1, val);
+    if (!ok) {
+        SCPI_ExecutionError(context, "CONF:ADC:SAMC: set failed");
+        return SCPI_RES_ERR;
+    }
+    LOG_I("ADC SAMC %s = %ld (%ld ns acquisition @ 50 MHz clk)",
+          isDedicated ? "dedicated" : "shared",
+          (long)val, (long)((val + 2) * 20));
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_ADCSamcDedicatedSet(scpi_t *context) {
+    return SamcSetCommon(context, true);
+}
+
+scpi_result_t SCPI_ADCSamcSharedSet(scpi_t *context) {
+    return SamcSetCommon(context, false);
+}
+
+scpi_result_t SCPI_ADCSamcDedicatedGet(scpi_t *context) {
+    uint16_t samc = 0;
+    MC12b_GetAcquisitionSamc(&samc, NULL);
+    SCPI_ResultInt32(context, (int32_t)samc);
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_ADCSamcSharedGet(scpi_t *context) {
+    uint16_t samc = 0;
+    MC12b_GetAcquisitionSamc(NULL, &samc);
+    SCPI_ResultInt32(context, (int32_t)samc);
     return SCPI_RES_OK;
 }
