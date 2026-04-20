@@ -247,31 +247,31 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 - `HAL/ADC/MC12bADC.c` — `MC12b_TriggerConversion`, `MC12b_WriteStateAll` (batch interrupt setup)
 - `HAL/ADC.c` — `MC12bADC_EosInterruptTask`, `ADC_ReadADCSampleFromISR`
 
-**Characterization results (O3, USB, zero-loss ceiling sustained for 120s, fullscale test pattern, NoCap benchmark mode):**
+**Characterization results (O3, USB, zero-loss ceiling sustained for 60s, fullscale test pattern, NoCap benchmark mode):**
 
-Full refresh 2026-04-19 after cumulative merges since PR #308 — PR #314 (vTaskDelay in encoder retry loop, #312), PR #319 (SCPI_ExecutionError helper, #262), PR #320 (HeapList + LockProvider removal, #294). See PIPELINE_TIMING.md Session 20 (2026-04-19 overnight) for full 120-config data.
+Current table = Session 21 (2026-04-20 overnight, post-#335 WINC idle-gate). #335 eliminated the 22 Hz / 270 µs WINC preemption causing 10% CV jitter at ≥10 kHz, but didn't raise ceilings — ceilings remain bounded by encoder/USB-write throughput. Session 20's single-channel 20/22 kHz numbers were slightly optimistic run-to-run; Session 21's 19/20 kHz is the reliably achievable endurance value.
 
 **USB** (ceiling sweep 10s/step, endurance 60s at each ceiling):
 
 | Config | PB Ceiling | PB KB/s | CSV Ceiling | CSV KB/s |
 |--------|----------:|--------:|------------:|--------:|
-| 1×T1 | 20,000 Hz | 263 | 19,000 Hz | 308 |
-| 1×T1 OBDiag=OFF | **22,000 Hz** | 290 | **20,000 Hz** | 332 |
-| 1×T2 | 20,000 Hz | 263 | 19,000 Hz | 309 |
-| 3×T1 | 17,000 Hz | 387 | 15,000 Hz | 710 |
-| 3×T2 | 17,000 Hz | 382 | 15,000 Hz | 704 |
-| 5×T1 | 15,000 Hz | 480 | 13,000 Hz | 1,048 |
-| 5×T2 | 15,000 Hz | 483 | 13,000 Hz | 1,054 |
-| 5×T1 OBDiag=OFF | 17,000 Hz | 544 | 14,000 Hz† | 1,078† |
-| 8×T2 | 13,000 Hz | 600 | 10,000 Hz | 1,370 |
-| 11×T2 | 11,000 Hz | 666 | 9,000 Hz | 1,577 |
-| 5T1+3T2 (8ch) | 13,000 Hz | 604 | 10,000 Hz | 1,301 |
-| 5T1+5T2 (10ch) | 12,000 Hz | 670 | 9,000 Hz | 1,508 |
-| 5T1+11T2 (16ch) | 9,000 Hz | 760 | 7,000 Hz | 1,771 |
+| 1×T1 | 19,000 Hz | 252 | 18,000 Hz | 296 |
+| 1×T1 OBDiag=OFF | **20,000 Hz** | 266 | **20,000 Hz** | 324 |
+| 1×T2 | 19,000 Hz | 252 | 18,000 Hz | 296 |
+| 3×T1 | 16,000 Hz | 361 | 15,000 Hz | 727 |
+| 3×T2 | 17,000 Hz | 380 | 15,000 Hz | 731 |
+| 5×T1 | 15,000 Hz | 479 | 12,000 Hz | 959 |
+| 5×T2 | 15,000 Hz | 480 | 13,000 Hz† | 1,018† |
+| 5×T1 OBDiag=OFF | 16,000 Hz | 515 | 14,000 Hz | 1,151 |
+| 8×T2 | 13,000 Hz | 592 | 10,000 Hz | 1,336 |
+| 11×T2 | 11,000 Hz | 667 | 9,000 Hz† | 1,455† |
+| 5T1+3T2 (8ch) | 13,000 Hz | 596 | 10,000 Hz | 1,334 |
+| 5T1+5T2 (10ch) | 12,000 Hz | 659 | 9,000 Hz | 1,486 |
+| 5T1+11T2 (16ch) | 9,000 Hz | 760 | 7,000 Hz† | 1,757† |
 
-† USB CSV 5×T1 OBDiag=OFF: ceiling probe says 15k but 60s endurance at 15k leaked; real sustainable ceiling is 14k. Known methodology quirk for slow-drift configs.
+† Endurance leak at ceiling in Session 21 (CSV 5×T2 @ 13k: 340 drops; 11×T2 @ 9k: 5667 drops; 16ch @ 7k: 1994 drops). Ceilings listed are highest clean in the 10s sweep; true sustainable endurance ceilings are 1 kHz lower for those configs.
 
-**SD** (zero-drop over 60s, interface=2):
+**SD** (zero-drop over 60s, interface=2) — **Session 20 data, pending Session 21 re-run**:
 
 | Config | PB Ceiling | CSV Ceiling |
 |--------|----------:|------------:|
@@ -289,10 +289,14 @@ Full refresh 2026-04-19 after cumulative merges since PR #308 — PR #314 (vTask
 | 5T1+5T2 (10ch) | 5,000 Hz | 2,000 Hz |
 | 5T1+11T2 (16ch) | 4,000 Hz | 1,000 Hz |
 
-Highlights vs Session 18 (post-#308 pre-followups):
+**Session 21 highlights vs Session 20:**
+- **Ceilings largely unchanged.** 20/29 USB configs same, 9/29 down 1-2 kHz on single-channel high-rate (suggests Session 20 numbers were run-to-run optimistic at the edge).
+- **Jitter eliminated at ≥10 kHz.** #335 idle-gate kills the 22 Hz / 270 µs WINC preemption — CV at 10 kHz drops 9.44% → 0.5%, p-p 326 µs → 8.8 µs. Saleae verified.
+- **No gains but no real regressions.** The WINC idle-gate does exactly what it was designed for (jitter / ISR-observability), doesn't magically raise ceilings. Those are bounded by encoder/USB-write throughput.
+- **3 endurance leaks at found ceiling** on CSV-heavy configs (5×T2, 11×T2, 16ch) — normal edge-of-ceiling variance at 60s endurance.
+
+**Session 20 highlights (earlier, retained for context):**
 - **T1/T2 parity achieved across every mode** — PB+T2 regression (#313) fully resolved.
-- **USB PB +7-21%** across configs; single-channel PB OBDiag=OFF now hits **22 kHz** (new high-water mark).
-- **USB CSV OBDiag=OFF hits 20 kHz** (new CSV high-water mark).
 - **SD PB +10-33%** — #312 regression fully resolved (not just partially as #314 showed).
 - **SD PB OBDiag=OFF hits 12 kHz** (new SD high-water mark).
 - **Zero regressions** on any config vs Session 18.
