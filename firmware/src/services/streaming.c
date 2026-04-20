@@ -306,27 +306,27 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
     uint16_t total = 0;
     bool has7609 = false;
 
+    /* Per CLAUDE.md: BoardRunTimeConfig_Get / BoardConfig_Get index into
+     * static arrays populated at boot and never return NULL. No guard. */
     volatile AInRuntimeArray* rt =
         BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     volatile AInArray* cfg =
         BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
 
-    if (rt != NULL && cfg != NULL) {
-        size_t count = (cfg->Size < rt->Size) ? cfg->Size : rt->Size;
-        for (size_t i = 0; i < count; i++) {
-            if (rt->Data[i].IsEnabled != 1) continue;
+    size_t count = (cfg->Size < rt->Size) ? cfg->Size : rt->Size;
+    for (size_t i = 0; i < count; i++) {
+        if (rt->Data[i].IsEnabled != 1) continue;
 
-            if (cfg->Data[i].Type == AIn_AD7609) {
-                if (cfg->Data[i].Config.AD7609.IsPublic) {
-                    has7609 = true;
-                    total++;
-                }
-            } else if (cfg->Data[i].Type == AIn_MC12bADC) {
-                if (cfg->Data[i].Config.MC12b.IsPublic) {
-                    total++;
-                    if (cfg->Data[i].Config.MC12b.ChannelType == 1) {
-                        type1++;
-                    }
+        if (cfg->Data[i].Type == AIn_AD7609) {
+            if (cfg->Data[i].Config.AD7609.IsPublic) {
+                has7609 = true;
+                total++;
+            }
+        } else if (cfg->Data[i].Type == AIn_MC12bADC) {
+            if (cfg->Data[i].Config.MC12b.IsPublic) {
+                total++;
+                if (cfg->Data[i].Config.MC12b.ChannelType == 1) {
+                    type1++;
                 }
             }
         }
