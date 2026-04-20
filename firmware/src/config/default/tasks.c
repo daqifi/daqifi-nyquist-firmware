@@ -102,24 +102,30 @@ static void lAPP_FREERTOS_Tasks(  void *pvParameters  )
     }
 }
 
-// #331 WINC idle-gate — pace the driver's hot loop based on state.
-// Default (main pre-#331) was an unbounded tight loop that preempted the
-// streaming timer ISR every 45.9 ms for ~270 µs (22 Hz, CV 10.6% jitter
-// at 10+ kHz). Bisection confirmed this task is the sole source of that
-// signature. See #331 for data.
+// #331 WINC idle-gate — pace the driver's hot loop ONLY when we're
+// certain WiFi isn't needed. Pre-#331 was an unbounded tight loop that
+// preempted the streaming timer ISR every 45.9 ms for ~270 µs (22 Hz,
+// CV 10.6% jitter at 10+ kHz). Bisection confirmed this task as the
+// sole source of that signature. See #331 for data.
+//
+// CAUTION: Adding ANY delay to the fast path breaks USB CDC and WiFi
+// responsiveness when WiFi is connecting / associated / transferring.
+// The WINC driver's state machine relies on being called back-to-back
+// during event-heavy phases. A 1 ms vTaskDelay between calls caused
+// the firmware to assert + reboot into bootloader during STA mode
+// throughput testing.
 //
 // Tier policy:
-//   - Driver not ready (ERROR/UNINITIALIZED) → 50 ms (existing recovery)
-//   - Driver ready + streaming on non-WiFi interface → 50 ms
-//     (USB/SD streaming active, WiFi data path not in use)
-//   - Driver ready + anything else → 1 ms
-//     (WiFi may be actively connecting, transferring, or idle-but-ready;
-//     keep polling responsive)
+//   - ERROR / UNINITIALIZED → 50 ms (existing recovery behavior)
+//   - READY + streaming on non-WiFi interface → 50 ms
+//     (WiFi data path definitely not in use — safe to pace)
+//   - Otherwise → 0 ms (preserve original unbounded loop behavior)
 //
-// The 1 ms base cadence is a conservative floor — still 50× slower than
-// the prior unbounded loop, but fast enough that TCP throughput and
-// connect latency remain close to baseline. If #334 delivers full chip
-// power-down, the task can be fully suspended when WINC is off.
+// The gate still eliminates the 22 Hz preemption for the common case
+// (USB streaming with WiFi idle-AP), which was the #331 target.
+// Further CPU reduction when WiFi is fully idle requires #334 (chip
+// power-down) or a deeper driver rework that understands event-queue
+// emptiness.
 static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
 {
     if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status)) {
@@ -128,7 +134,7 @@ static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
     if (Streaming_IsActiveOnNonWifiInterface()) {
         return 50U;
     }
-    return 1U;
+    return 0U;
 }
 
 static void lWDRV_WINC_Tasks(void *pvParameters)
@@ -139,7 +145,9 @@ static void lWDRV_WINC_Tasks(void *pvParameters)
 
         SYS_STATUS status = WDRV_WINC_Status(sysObj.drvWifiWinc);
         uint32_t delay_ms = WincIdleGate_ComputeDelay(status);
-        vTaskDelay(delay_ms / portTICK_PERIOD_MS);
+        if (delay_ms > 0U) {
+            vTaskDelay(delay_ms / portTICK_PERIOD_MS);
+        }
     }
 }
 
