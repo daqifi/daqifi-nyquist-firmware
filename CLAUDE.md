@@ -848,6 +848,7 @@ All DMA buffers (SD write, USB write, WiFi SPI staging) are auto-balanced from t
 ### Development Considerations
 
 - All hardware access must go through HAL layer
+- **Prefer Harmony PLIB / driver APIs over direct SFR writes** for hardware abstractability. Order of preference: (1) PLIB function (`EVIC_SourceEnable`, `ADCHS_*`, `GPIO_*`), (2) SFR bitfield accessors (`ADCCON2bits.SAMC = val`), (3) raw register writes only when no PLIB/bitfield path exists AND performance demands it OR SET/CLR atomic forms are needed — always comment *why*
 - SCPI commands follow IEEE 488.2 standard
 - Use FreeRTOS primitives for synchronization
 - Respect board variant differences in runtime checks

@@ -159,6 +159,21 @@ extern "C" {
     scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context);
     scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context);
 
+    /**
+     * #328 phase 1 — ADC acquisition-time (SAMC) runtime control.
+     *   CONFigure:ADC:SAMC:DEDicated <0-1023>  — sample time for modules 0-4
+     *   CONFigure:ADC:SAMC:DEDicated?          — current value
+     *   CONFigure:ADC:SAMC:SHARed <0-1023>     — sample time for MODULE7
+     *   CONFigure:ADC:SAMC:SHARed?             — current value
+     * Actual acquisition time = (SAMC+2) ADC clocks. ADC clock = SYSCLK / (2*(ADCDIV+1))
+     * which with ADCDIV=1 gives 50 MHz, so each clock is 20 ns.
+     * Rejected while streaming is active (returns EXECUTION_ERROR).
+     */
+    scpi_result_t SCPI_ADCSamcDedicatedSet(scpi_t * context);
+    scpi_result_t SCPI_ADCSamcDedicatedGet(scpi_t * context);
+    scpi_result_t SCPI_ADCSamcSharedSet(scpi_t * context);
+    scpi_result_t SCPI_ADCSamcSharedGet(scpi_t * context);
+
 #ifdef	__cplusplus
 }
 #endif

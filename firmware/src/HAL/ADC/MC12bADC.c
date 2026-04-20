@@ -308,3 +308,59 @@ bool MC12b_IsHwTriggerDedicated(void) {
 bool MC12b_IsHwTriggerShared(void) {
     return ((ADCCON1 >> ADCCON1_STRGSRC_SHIFT) & ADCTRG_FIELD_MASK) == ADC_TRGSRC_TMR5;
 }
+
+// --- ADC acquisition-time (SAMC) runtime control — #328 phase 1 ----------
+// ADCxTIMEbits.SAMC  = dedicated module sample time (0..4). 10-bit, max 1023.
+// ADCCON2bits.SAMC   = shared MODULE7 sample time.         10-bit, max 1023.
+// Actual acquisition = (SAMC + 2) ADC clocks. With ADCDIV=1, ADC_clk=50 MHz so
+// one clock = 20 ns.
+// Writing these requires ADCCON1.ON = 0. We toggle it around the update so
+// the change applies cleanly to all modules.
+
+bool MC12b_SetAcquisitionSamc(int32_t samcDedicated, int32_t samcShared) {
+    if (samcDedicated > (int32_t)MC12B_SAMC_MAX) return false;
+    if (samcShared > (int32_t)MC12B_SAMC_MAX) return false;
+
+    // Nothing to do — don't disturb the ADC.
+    if (samcDedicated < 0 && samcShared < 0) return true;
+
+    bool adcWasOn = (ADCCON1bits.ON != 0U);
+    if (adcWasOn) {
+        ADCCON1bits.ON = 0;
+    }
+
+    if (samcDedicated >= 0) {
+        uint32_t s = (uint32_t)samcDedicated;
+        ADC0TIMEbits.SAMC = s;
+        ADC1TIMEbits.SAMC = s;
+        ADC2TIMEbits.SAMC = s;
+        ADC3TIMEbits.SAMC = s;
+        ADC4TIMEbits.SAMC = s;
+    }
+    if (samcShared >= 0) {
+        ADCCON2bits.SAMC = (uint32_t)samcShared;
+    }
+
+    if (adcWasOn) {
+        ADCCON1bits.ON = 1;
+        // Bound the hardware polling loops so an unhealthy reference can't
+        // hang the SCPI task forever. ~20 ms at 100 MHz is plenty for a
+        // normal bandgap settle (typically microseconds).
+        uint32_t timeout = 2000000U;
+        while (ADCCON2bits.BGVRRDY == 0U && timeout-- != 0U) { /* wait */ }
+        if (ADCCON2bits.BGVRRDY == 0U || ADCCON2bits.REFFLT != 0U) {
+            ADCCON1bits.ON = 0;
+            return false;
+        }
+    }
+    return true;
+}
+
+void MC12b_GetAcquisitionSamc(uint16_t* outSamcDedicated, uint16_t* outSamcShared) {
+    if (outSamcDedicated) {
+        *outSamcDedicated = (uint16_t)ADC0TIMEbits.SAMC;
+    }
+    if (outSamcShared) {
+        *outSamcShared = (uint16_t)ADCCON2bits.SAMC;
+    }
+}

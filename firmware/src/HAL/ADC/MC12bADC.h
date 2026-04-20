@@ -104,6 +104,32 @@ void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared);
 bool MC12b_IsHwTriggerDedicated(void);
 bool MC12b_IsHwTriggerShared(void);
 
+/**
+ * Set ADC sample-time (SAMC) for dedicated modules (ADC0-4) and the shared
+ * MODULE7. Higher SAMC = longer acquisition window = lower noise at the cost
+ * of per-scan time. Range: 0-1023 ADC clock cycles (actual acquisition time
+ * is SAMC+2 clocks).
+ *
+ * NOT safe to call while streaming — caller must stop streaming first. The
+ * ADC is briefly taken offline to apply the new values.
+ *
+ * Pass a negative value for either parameter to leave that channel type
+ * unchanged.
+ *
+ * @param samcDedicated 0-1023, or negative to skip
+ * @param samcShared    0-1023, or negative to skip
+ * @return true on success, false if args out of range
+ */
+bool MC12b_SetAcquisitionSamc(int32_t samcDedicated, int32_t samcShared);
+
+/** Read current SAMC values. out* may be NULL. */
+void MC12b_GetAcquisitionSamc(uint16_t* outSamcDedicated, uint16_t* outSamcShared);
+
+/** Boot-default SAMC values (from MCC-generated ADCHS init). */
+#define MC12B_SAMC_DEDICATED_DEFAULT  100
+#define MC12B_SAMC_SHARED_DEFAULT     1
+#define MC12B_SAMC_MAX                1023
+
 #ifdef	__cplusplus
 }
 #endif

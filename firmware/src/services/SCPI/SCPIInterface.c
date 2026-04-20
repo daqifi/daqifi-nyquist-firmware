@@ -3349,6 +3349,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
     {.pattern = "CONFigure:ADC:OBDiag", .callback = SCPI_ADCOnboardDiagSet,},
     {.pattern = "CONFigure:ADC:OBDiag?", .callback = SCPI_ADCOnboardDiagGet,},
+    {.pattern = "CONFigure:ADC:SAMC:DEDicated", .callback = SCPI_ADCSamcDedicatedSet,},
+    {.pattern = "CONFigure:ADC:SAMC:DEDicated?", .callback = SCPI_ADCSamcDedicatedGet,},
+    {.pattern = "CONFigure:ADC:SAMC:SHARed", .callback = SCPI_ADCSamcSharedSet,},
+    {.pattern = "CONFigure:ADC:SAMC:SHARed?", .callback = SCPI_ADCSamcSharedGet,},
     //
     // Voltage output precision
     {.pattern = "CONFigure:VOLTage:PRECision", .callback = SCPI_SetDataPrecision,},
