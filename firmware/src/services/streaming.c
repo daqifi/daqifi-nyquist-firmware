@@ -660,7 +660,7 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
         BOARDRUNTIME_SD_CARD_SETTINGS);
 
     bool hasUsb = (sc->ActiveInterface == StreamingInterface_USB ||
-                   sc->ActiveInterface == StreamingInterface_All);
+                   sc->ActiveInterface == StreamingInterface_UsbAndSd);
     bool hasWifi = (sc->ActiveInterface == StreamingInterface_WiFi);
     /* SD logging is actually requested only when all three conditions
      * hold: interface allows it (SD or All, or USB with enable+file
@@ -1154,12 +1154,19 @@ void streaming_Task(void) {
                 hasWifi = false;
                 hasSD = (sdSize >= 128);
                 break;
-            case StreamingInterface_All:
-            default:
+            case StreamingInterface_UsbAndSd:
                 // USB+SD concurrent mode (WiFi excluded — shares SPI bus with SD).
                 hasUsb = (usbSize >= 128);
                 hasWifi = false;
                 hasSD = (sdSize >= 128);
+                break;
+            default:
+                // Unreachable with a validated enum, but fail closed so a
+                // future ActiveInterface value not covered above can't
+                // silently fall through with a USB+SD-shaped allocation.
+                hasUsb = false;
+                hasWifi = false;
+                hasSD = false;
                 break;
         }
 
@@ -1291,7 +1298,7 @@ void streaming_Task(void) {
             {
                 bool sdExpected = hasSD || (
                     pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD ||
-                    pRunTimeStreamConf->ActiveInterface == StreamingInterface_All ||
+                    pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd ||
                     (pSDCardSettings && pSDCardSettings->enable &&
                      pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE &&
                      pRunTimeStreamConf->ActiveInterface != StreamingInterface_WiFi));
@@ -1373,11 +1380,6 @@ uint32_t Streaming_GetBenchmarkMode(void) {
 // because the worst cost of staleness here is "we poll WINC at the
 // wrong cadence for one iteration of its loop."
 //
-// NOTE on StreamingInterface_All: its name is misleading. Per the
-// enum definition in StreamingRuntimeConfig.h it specifically means
-// "USB + SD concurrent (WiFi excluded — SPI bus conflict with SD)".
-// WiFi is NOT part of _All mode, so including it here is correct.
-// Tracked as a rename in #336 because the name keeps tripping readers.
 bool Streaming_IsActiveOnNonWifiInterface(void) {
     // volatile-qualified view ensures the compiler re-reads each field
     // even with -O3 / LTO inlining the caller (the WINC task loop).
@@ -1389,6 +1391,6 @@ bool Streaming_IsActiveOnNonWifiInterface(void) {
     StreamingInterface iface = cfg->ActiveInterface;
     return (iface == StreamingInterface_USB ||
             iface == StreamingInterface_SD  ||
-            iface == StreamingInterface_All);  // USB+SD concurrent, not WiFi — see NOTE above
+            iface == StreamingInterface_UsbAndSd);
 }
 

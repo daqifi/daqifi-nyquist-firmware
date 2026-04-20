@@ -2565,10 +2565,10 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    // Check if SD card is enabled when trying to use SD or All interfaces
-    if (param1 == StreamingInterface_SD || param1 == StreamingInterface_All) {
+    // Check if SD card is enabled when trying to use SD or USB+SD interfaces
+    if (param1 == StreamingInterface_SD || param1 == StreamingInterface_UsbAndSd) {
         if (!pSDCardSettings->enable) {
-            LOG_E("Cannot set interface to SD - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
+            LOG_E("Cannot set SD/USB+SD interface - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
