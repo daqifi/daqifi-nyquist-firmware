@@ -2463,7 +2463,10 @@ static scpi_result_t SCPI_GetMaxStreamFreq(scpi_t * context) {
     if (n < 0 || (size_t)n >= sizeof(buf)) {
         return SCPI_RES_ERR;
     }
-    SCPI_ResultText(context, buf);
+    /* SCPI_ResultCharacters emits raw bytes; SCPI_ResultText would wrap
+     * the payload in double quotes (see libscpi parser.c), which would
+     * break the unquoted key=value contract documented for this query. */
+    SCPI_ResultCharacters(context, buf, (size_t)n);
     return SCPI_RES_OK;
 }
 
