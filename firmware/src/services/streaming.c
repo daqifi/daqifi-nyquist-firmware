@@ -1379,9 +1379,14 @@ uint32_t Streaming_GetBenchmarkMode(void) {
 // WiFi is NOT part of _All mode, so including it here is correct.
 // Tracked as a rename in #336 because the name keeps tripping readers.
 bool Streaming_IsActiveOnNonWifiInterface(void) {
-    if (gpRuntimeConfigStream == NULL) return false;
-    if (!gpRuntimeConfigStream->IsEnabled) return false;
-    StreamingInterface iface = gpRuntimeConfigStream->ActiveInterface;
+    // volatile-qualified view ensures the compiler re-reads each field
+    // even with -O3 / LTO inlining the caller (the WINC task loop).
+    // Without this, the read could be hoisted out of the loop entirely.
+    const volatile StreamingRuntimeConfig* cfg =
+        (const volatile StreamingRuntimeConfig*)gpRuntimeConfigStream;
+    if (cfg == NULL) return false;
+    if (!cfg->IsEnabled) return false;
+    StreamingInterface iface = cfg->ActiveInterface;
     return (iface == StreamingInterface_USB ||
             iface == StreamingInterface_SD  ||
             iface == StreamingInterface_All);  // USB+SD concurrent, not WiFi — see NOTE above

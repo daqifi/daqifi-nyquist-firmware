@@ -56,6 +56,7 @@
 #include "HAL/ADC/AD7609.h"
 #include "Util/Logger.h"
 #include "services/streaming.h"  // #331: Streaming_IsActiveOnNonWifiInterface
+#include "services/wifi_services/wifi_tcp_server.h"  // #331: HasActiveClient
 
 
 // *****************************************************************************
@@ -131,10 +132,19 @@ static uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
     if ((SYS_STATUS_ERROR == status) || (SYS_STATUS_UNINITIALIZED == status)) {
         return 50U;
     }
-    // Only pace when the driver is fully READY. Other states
-    // (SYS_STATUS_BUSY, initialization phases) rely on tight polling
-    // to advance their internal state machines.
-    if ((SYS_STATUS_READY == status) && Streaming_IsActiveOnNonWifiInterface()) {
+    if (SYS_STATUS_READY != status) {
+        // BUSY / initialization phases rely on tight polling to advance
+        // their internal state machines — don't pace.
+        return 0U;
+    }
+    // READY. Pace only when:
+    //   (a) streaming is using a non-WiFi interface (USB/SD/All), AND
+    //   (b) no TCP client is connected to the control plane.
+    // Either condition alone disqualifies: an active TCP client needs
+    // tight polling even when streaming is on USB, otherwise SCPI
+    // responses lag and the socket's receive queue can overflow.
+    if (Streaming_IsActiveOnNonWifiInterface() &&
+        !wifi_tcp_server_HasActiveClient()) {
         return 50U;
     }
     return 0U;

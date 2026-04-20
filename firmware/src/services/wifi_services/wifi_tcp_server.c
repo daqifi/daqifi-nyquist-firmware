@@ -376,6 +376,12 @@ void wifi_tcp_server_CloseClientSocket() {
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
 }
 
+// #331: used by the WINC idle-gate to back off pacing when a TCP client
+// is actively connected. Returns true when a client socket is open.
+bool wifi_tcp_server_HasActiveClient(void) {
+    return (gpServerData != NULL) && (gpServerData->client.clientSocket >= 0);
+}
+
 size_t wifi_tcp_server_GetWriteBuffFreeSize() {
     if (gpServerData->client.clientSocket < 0) {
         return 0;
