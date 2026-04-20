@@ -1155,11 +1155,18 @@ void streaming_Task(void) {
                 hasSD = (sdSize >= 128);
                 break;
             case StreamingInterface_UsbAndSd:
-            default:
                 // USB+SD concurrent mode (WiFi excluded — shares SPI bus with SD).
                 hasUsb = (usbSize >= 128);
                 hasWifi = false;
                 hasSD = (sdSize >= 128);
+                break;
+            default:
+                // Unreachable with a validated enum, but fail closed so a
+                // future ActiveInterface value not covered above can't
+                // silently fall through with a USB+SD-shaped allocation.
+                hasUsb = false;
+                hasWifi = false;
+                hasSD = false;
                 break;
         }
 
