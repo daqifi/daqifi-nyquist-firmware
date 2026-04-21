@@ -9,10 +9,16 @@
  * SCPI capability commands and render themselves from the response
  * rather than hard-coding board variants or channel counts.
  *
- * This PR introduces the foundation pieces (version byte, AIN
- * topology summary, DIO topology summary). The unified
- * `CONFigure:CAPabilities:JSON?` rollup + protobuf extension land
- * in a follow-up PR that composes what's here.
+ * Current coverage:
+ *   - DAQIFI_CAPABILITIES_VERSION (schema version byte)
+ *   - Streaming cap + formula constants
+ *     (CONFigure:ADC:MAXFreq?)
+ *   - AIN / DIO topology summaries
+ *     (CONFigure:CAPabilities:AIN? / :DIO?)
+ *   - Unified JSON rollup
+ *     (CONFigure:CAPabilities:JSON?)
+ *   - Capability fields embedded in DaqifiOutMessage protobuf
+ *     (tags 70..75, see DaqifiOutMessage.proto)
  */
 
 #include <stdbool.h>

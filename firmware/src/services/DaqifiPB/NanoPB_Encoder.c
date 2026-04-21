@@ -390,6 +390,12 @@ size_t Nanopb_Encode(tBoardData* state,
         return 0;
     }
 
+    /* Streaming cap summary is the same for every cap_* tag in this
+     * field list — lazy-init once here instead of re-walking the
+     * channel config on each case-block hit. */
+    CapabilitiesStreamingSummary capStream;
+    bool capStreamCached = false;
+
 
     for (i = 0; i < fields->Size; i++) {
         switch (fields->Data[i]) {
@@ -1071,18 +1077,16 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_cap_type1_agg_hz_tag:
             case DaqifiOutMessage_cap_tick_budget_tag:
             case DaqifiOutMessage_cap_tick_overhead_tag:
-            {
-                /* Pull all streaming cap fields in one summary call to
-                 * avoid re-walking the channel config once per field. */
-                CapabilitiesStreamingSummary cap;
-                Capabilities_GetStreamingSummary(&cap);
-                message.cap_max_freq_hz    = cap.maxFreqHz;
-                message.cap_isr_max_hz     = cap.isrMaxHz;
-                message.cap_type1_agg_hz   = cap.type1AggMaxHz;
-                message.cap_tick_budget    = cap.tickBudget;
-                message.cap_tick_overhead  = cap.tickOverhead;
+                if (!capStreamCached) {
+                    Capabilities_GetStreamingSummary(&capStream);
+                    capStreamCached = true;
+                }
+                message.cap_max_freq_hz    = capStream.maxFreqHz;
+                message.cap_isr_max_hz     = capStream.isrMaxHz;
+                message.cap_type1_agg_hz   = capStream.type1AggMaxHz;
+                message.cap_tick_budget    = capStream.tickBudget;
+                message.cap_tick_overhead  = capStream.tickOverhead;
                 break;
-            }
             default:
                 // Skip unknown fields
                 break;

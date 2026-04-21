@@ -3309,6 +3309,12 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     Capabilities_GetDioSummary(&d);
     Capabilities_GetStreamingSummary(&st);
 
+    /* INVARIANT: boardFirmwareRev and boardHardwareRev come from the
+     * FIRMWARE_REVISION / HARDWARE_REVISION macros in version.h and
+     * are version strings like "3.4.6b1" — no characters that need
+     * JSON escaping (no `"`, `\`, or control chars). If a future
+     * revision scheme ever introduces such characters, add a small
+     * JSON-string escaper before embedding these fields. */
     scpi_printf(context,
         "{\"version\":%u,"
         "\"identity\":{\"vendor\":\"DAQiFi\",\"model\":\"Nyquist\","
