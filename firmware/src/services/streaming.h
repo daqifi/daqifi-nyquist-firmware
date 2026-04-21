@@ -85,7 +85,7 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
 /**
  * Count enabled public ADC channels from current board + runtime config.
  * Used by SCPI_StartStreaming, the ADC channel-enable path, and the
- * MAXFreq query so they all agree on what counts toward the cap.
+ * capability rollup so they all agree on what counts toward the cap.
  *
  * @param[out] out_type1Count     Enabled MC12bADC ChannelType=1 (Type 1) channels
  * @param[out] out_totalPublic    Total enabled IsPublic channels (both ADC types)

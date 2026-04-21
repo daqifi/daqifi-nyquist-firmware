@@ -2435,13 +2435,6 @@ static scpi_result_t SCPI_IsStreaming(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-/* CONFigure:ADC:MAXFreq?, CONFigure:CAPabilities:AIN?, and
- * CONFigure:CAPabilities:DIO? were removed as part of the #327
- * capability schema V1 reshape — their data is now exclusive to the
- * CONFigure:CAPabilities:JSON? rollup so the schema has a single
- * source of truth. See Capabilities.h and the plan in #327 for the
- * rationale. Streaming cap can also be parsed from proto fields
- * 70..75 on DaqifiOutMessage. */
 
 static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
     int param1;
@@ -3206,20 +3199,11 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-/* CONFigure:CAPabilities:AIN? and CONFigure:CAPabilities:DIO?
- * were removed in the #327 V1 reshape — their data is now emitted
- * only as part of the CONFigure:CAPabilities:JSON? rollup, so the
- * schema has a single source of truth. See Capabilities.h and the
- * plan in #327. */
-
 /* -------- CONFigure:CAPabilities:JSON? emitter helpers -----------
- * Each helper emits one channel object with the V1 schema shape:
+ * Each helper emits one channel object with the schema shape
  *   { "id", "kind", "signal_type", ... }
- * Kept as static file-scope functions (rather than Capabilities.c
- * API) because they only make sense as chunks of the rollup — the
- * SCPI transport is the only consumer and coupling them to the
- * libscpi transport via scpi_printf would leak out of the module
- * otherwise. */
+ * Kept file-scope (not in Capabilities.c) because they're coupled
+ * to the libscpi transport via scpi_printf. */
 
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
@@ -3687,11 +3671,9 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet,},
     {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet,},
     {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet,},
-    /* Capability framework (#327). Schema-V1 reshape: per-block
-     * subset queries (AIN?, DIO?, ADC:MAXFreq?) were removed —
-     * CONFigure:CAPabilities:JSON? is the single source of truth.
-     * APIVersion? remains as a fast pre-parse compat probe.
-     * See Capabilities.h for the schema evolution rules. */
+    /* Capability framework — JSON? is the canonical source of truth.
+     * APIVersion? is a fast pre-parse compat probe. See
+     * Capabilities.h for the schema and evolution rules. */
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
     {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
     {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
