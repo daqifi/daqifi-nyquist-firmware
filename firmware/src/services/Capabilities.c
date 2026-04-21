@@ -43,16 +43,22 @@ void Capabilities_GetAinSummary(CapabilitiesAinSummary* out_summary) {
 
         /* Bitmask index uses the DaqifiAdcChannelId (user-facing channel
          * number), not the board-config array index. Keeps the mask
-         * meaningful to a client that already knows channels by ID. */
+         * meaningful to a client that already knows channels by ID.
+         * Counts always increment so the invariant
+         *   type1Count + type2Count == publicChannelCount
+         * holds even for boards with channel IDs >= 16 where the
+         * bitmask can't represent them. */
         uint8_t channelId = ch->DaqifiAdcChannelId;
-        if (channelId < 16) {
-            if (channelType == 1) {
+        if (channelType == 1) {
+            if (channelId < 16) {
                 out_summary->type1Bitmask |= (uint16_t)(1u << channelId);
-                out_summary->type1Count++;
-            } else {
-                out_summary->type2Bitmask |= (uint16_t)(1u << channelId);
-                out_summary->type2Count++;
             }
+            out_summary->type1Count++;
+        } else {
+            if (channelId < 16) {
+                out_summary->type2Bitmask |= (uint16_t)(1u << channelId);
+            }
+            out_summary->type2Count++;
         }
         out_summary->publicChannelCount++;
 
