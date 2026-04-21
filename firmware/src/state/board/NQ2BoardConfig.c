@@ -239,7 +239,10 @@ const tBoardConfig NQ2BoardConfig = {
     .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
     .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT,
     .DefaultVoltagePrecision = 7,  // 24-bit ADC (AD7173): LSB = 0.298µV
-    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS
+    /* AD7173 is 24-bit sigma-delta — inherently slower than MC12b or
+     * AD7609. Set the conservative envelope lower until #344
+     * characterization runs on NQ2 hardware. */
+    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS(100)
 };
 
 /*! This function is used for getting a board configuration parameter

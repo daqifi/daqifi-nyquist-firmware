@@ -3471,27 +3471,40 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         if (stor.sdSupported) { scpi_printf(context, first ? "\"sd\""   : ",\"sd\"");                 }
     }
 
-    /* sample_rate_range is the absolute firmware envelope.
-     * current_max_rate_hz is the narrower cap for the channel set
-     * enabled right now.
-     * rate_model lets a client reproduce that computation locally
-     * for any hypothetical channel grouping. Inputs required are
-     * available from the channels[] array: count the entries with
-     * kind=="analog-input" and simultaneous==true to get
-     * simultaneous_count; count all enabled kind=="analog-input"
-     * to get total_count. DIO/AOut do not factor into the formula —
-     * DIO sample emission is amortized in the per-tick overhead and
-     * AOut is not streamed.
-     * rate_validation documents what happens when a client requests
-     * a rate above the cap: today the firmware lowers silently and
-     * logs an INFO message (check SYST:LOG?). Clients that need to
-     * catch over-asks MUST compare the requested rate against
-     * current_max_rate_hz (or rate_model output) before issuing
-     * SYSTem:StartStreamData. */
+    /* Three rate tiers, each a different contract (see issue #344):
+     *
+     * - sample_rate_range_hz.max: the absolute ISR ceiling — hardware
+     *   envelope, never achievable under real load.
+     *
+     * - conservative_envelope_hz: rate guaranteed zero-drop regardless
+     *   of how the client configures channels / interface / encoder /
+     *   DIO / OBDiag. Measured via the worst-case test in #344. A
+     *   client that always picks this rate is never surprised.
+     *
+     * - current_max_rate_hz: device's authoritative cap for the
+     *   channel set enabled right now. Today only reflects channel
+     *   count/type; future work (#344 Phase 3) extends it to apply
+     *   interface / encoder / DIO caps too.
+     *
+     * - rate_model: client-side formula for optimistic previews
+     *   across hypothetical channel groupings. Channel-count only —
+     *   real max for a committed configuration may be lower. Count
+     *   channels[] entries with kind=="analog-input" and
+     *   simultaneous==true to get simultaneous_count; count all
+     *   enabled kind=="analog-input" to get total_count. DIO / AOut
+     *   do not factor (DIO is amortized in per_tick_overhead; AOut
+     *   is not streamed).
+     *
+     * rate_validation documents over-ask handling. Today: silent_cap
+     * (firmware lowers to current_max_rate_hz, logs LOG_I). Clients
+     * needing explicit feedback MUST pre-validate against
+     * current_max_rate_hz before SYSTem:StartStreamData. */
     scpi_printf(context,
         "],\"sample_rate_range_hz\":{\"min\":1,\"max\":%u},"
+        "\"conservative_envelope_hz\":%u,"
         "\"current_max_rate_hz\":%u,",
         (unsigned)st.isrMaxHz,
+        (unsigned)cfg->CapabilitiesFlags.streamingConservativeEnvelopeHz,
         (unsigned)st.maxFreqHz);
 
     scpi_printf(context,

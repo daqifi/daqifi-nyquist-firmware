@@ -64,6 +64,19 @@ extern "C" {
         bool wifiSupported;             //!< WiFi chipset fitted
         bool ethernetSupported;         //!< Ethernet PHY fitted
         bool serialDebugSupported;      //!< ICSP / debug UART pins broken out
+
+        //! Streaming rate that is guaranteed zero-drop for 60s
+        //! regardless of which other dials the client turns
+        //! (all channels, heaviest encoder, all interfaces, DIO +
+        //! OBDiag on). See issue #344 for the worst-case
+        //! characterization test that populates this field. Clients
+        //! may use it as a safe default without having to reason
+        //! about transport / encoder / DIO interactions.
+        //!
+        //! Placeholder value pending actual measurement — set
+        //! conservatively based on existing Session 20/21 SD CSV
+        //! 16ch ceilings until characterization lands.
+        uint32_t streamingConservativeEnvelopeHz;
     } tCapabilitiesFlags;
 
     //! Enumeration with the board configuration parameters.

@@ -94,19 +94,22 @@ extern const char* const COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16];
 #define COMMON_STREAMING_CONFIG {.TimerIndex = TMR_INDEX_4, .TSTimerIndex = TMR_INDEX_6}
 
 /* Capability flags that happen to be identical across every current
- * NQ variant (SD/WiFi/battery/OTG fitted, Ethernet not). Variants
- * that diverge should override individual fields rather than using
- * this macro. See #327 and tCapabilitiesFlags in BoardConfig.h. */
-#define COMMON_CAPABILITIES_FLAGS { \
-    .sdSupported            = true,  \
-    .nvmSettingsSlots       = 1,     \
-    .batteryPresent         = true,  \
-    .externalPowerSupported = true,  \
-    .otgSupported           = true,  \
-    .usbSupported           = true,  \
-    .wifiSupported          = true,  \
-    .ethernetSupported      = false, \
-    .serialDebugSupported   = true,  \
+ * NQ variant (SD/WiFi/battery/OTG fitted, Ethernet not). The
+ * streaming conservative envelope is variant-specific — pass it in
+ * so each variant declares its own worst-case zero-drop rate
+ * (see issue #344). Variants that diverge on feature flags should
+ * override individual fields rather than using this macro. */
+#define COMMON_CAPABILITIES_FLAGS(conservative_envelope_hz) { \
+    .sdSupported                      = true,  \
+    .nvmSettingsSlots                 = 1,     \
+    .batteryPresent                   = true,  \
+    .externalPowerSupported           = true,  \
+    .otgSupported                     = true,  \
+    .usbSupported                     = true,  \
+    .wifiSupported                    = true,  \
+    .ethernetSupported                = false, \
+    .serialDebugSupported             = true,  \
+    .streamingConservativeEnvelopeHz  = (conservative_envelope_hz), \
 }
 
 #ifdef __cplusplus

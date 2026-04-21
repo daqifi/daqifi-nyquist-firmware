@@ -207,7 +207,9 @@ const tBoardConfig NQ3BoardConfig = {
     .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
     .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT,
     .DefaultVoltagePrecision = 6,  // 18-bit ADC (AD7609): LSB = 38.15µV
-    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS
+    /* AD7609 18-bit similar performance envelope to NQ1 MC12b.
+     * Pending #344 characterization on NQ3 hardware. */
+    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS(500)
 };
 
 /*! This function is used for getting a board configuration parameter

@@ -171,7 +171,11 @@ const tBoardConfig NQ1BoardConfig = {
     .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
     .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT,
     .DefaultVoltagePrecision = 4,  // 12-bit ADC (MC12bADC): LSB = 1.22mV
-    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS
+    /* Placeholder until the worst-case test in #344 runs. Based on
+     * Session 20/21 data, SD CSV at 16 public channels zero-drops
+     * at ~1 kHz; adding DIO streaming + OBDiag + concurrent USB is
+     * unmeasured — pick 500 Hz to leave headroom until measured. */
+    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS(500)
 };
 
 /*! This function is used for getting a board configuration parameter
