@@ -3398,8 +3398,14 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     scpi_printf(context, "\"channels\":[");
     bool firstEntry = true;
 
-    /* AIn — public only */
-    for (uint32_t i = 0; i < cfg->AInChannels.Size; i++) {
+    /* AIn — public only. Bound the loop by the smaller of the
+     * two arrays so a runtime-config shape mismatch can't walk
+     * past the end of rt->AInChannels.Data[]. In practice both
+     * arrays have MAX_AIN_CHANNEL (48) capacity and matching Size,
+     * but defending the read is cheap. */
+    uint32_t ainLoopCount = (cfg->AInChannels.Size < rt->AInChannels.Size)
+        ? cfg->AInChannels.Size : rt->AInChannels.Size;
+    for (uint32_t i = 0; i < ainLoopCount; i++) {
         const AInChannel* ch = &cfg->AInChannels.Data[i];
         bool isPublic =
             (ch->Type == AIn_MC12bADC && ch->Config.MC12b.IsPublic) ||

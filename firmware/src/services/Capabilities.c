@@ -71,10 +71,15 @@ void Capabilities_GetAoutSummary(CapabilitiesAoutSummary* out) {
     if (cfg->AOutModules.Size > 0) {
         const AOutModule* mod = &cfg->AOutModules.Data[0];
         if (mod->Type == AOut_DAC7718) {
-            /* DAC7718 Resolution is counts (e.g. 4096) — convert to bits. */
+            /* Resolution is a counts value (e.g. 4096). Only power-of-two
+             * counts map cleanly to a bit width; anything else means a
+             * misconfigured board — report 0 bits so clients can flag
+             * the device rather than silently rendering a wrong depth. */
             uint32_t counts = mod->Config.DAC7718.Resolution;
             uint8_t bits = 0;
-            while (counts > 1) { counts >>= 1; bits++; }
+            if (counts >= 2U && ((counts & (counts - 1U)) == 0U)) {
+                while (counts > 1U) { counts >>= 1U; bits++; }
+            }
             out->resolutionBits = bits;
             out->moduleMinVoltage = mod->Config.DAC7718.MinVoltage;
             out->moduleMaxVoltage = mod->Config.DAC7718.MaxVoltage;
