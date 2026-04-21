@@ -3205,70 +3205,60 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
  * Kept file-scope (not in Capabilities.c) because they're coupled
  * to the libscpi transport via scpi_printf. */
 
+/* Design principle (see #327): emit client-actionable facts only.
+ * No IC names, no module internals, no formula constants — just
+ * "what can the client DO with this channel/pin/transport?" An
+ * "extensions":{} escape hatch on each object reserves space for
+ * vendor-specific or future fields that older clients MUST ignore.
+ *
+ * Chunked to stay under the 192-byte scpi_printf buffer per call. */
+
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
                                double moduleRangeSpan) {
-    uint8_t   id           = ch->DaqifiAdcChannelId;
-    bool      isTemperature = false;
-    bool      allowDifferential = false;
-    uint8_t   resolutionBits = 12;
-    uint8_t   channelType   = 2;   /* 1 = simultaneous, 2 = multiplexed */
-    double    internalScale  = 1.0;
+    uint8_t id = ch->DaqifiAdcChannelId;
+    bool    isTemperature     = false;
+    bool    allowDifferential = false;
+    bool    simultaneous      = false;   /* true = dedicated ADC, zero inter-channel skew */
+    uint8_t resolutionBits    = 12;
 
     if (ch->Type == AIn_MC12bADC) {
-        isTemperature    = ch->Config.MC12b.IsTemperatureSensor;
+        isTemperature     = ch->Config.MC12b.IsTemperatureSensor;
         allowDifferential = ch->Config.MC12b.AllowDifferential;
-        channelType      = (ch->Config.MC12b.ChannelType == 1) ? 1 : 2;
-        internalScale    = ch->Config.MC12b.InternalScale;
-        resolutionBits   = 12;
+        simultaneous      = (ch->Config.MC12b.ChannelType == 1);
+        resolutionBits    = 12;
     } else if (ch->Type == AIn_AD7609) {
-        /* AD7609 converts all 8 channels simultaneously. No
-         * differential support on the DAQiFi board wiring. */
-        channelType    = 1;
+        simultaneous   = true;   /* AD7609 converts all 8 channels together */
         resolutionBits = 18;
     }
 
-    /* Range is bipolar at the terminal: ±(span/2) for RSE-off
-     * channels (NON-RSE bipolar is how the proto doc describes the
-     * repeated analog_in_port_range field — see
-     * DaqifiOutMessage.proto line 35). Clients that need the exact
-     * RSE/differential mapping read CalM / CalB and perform the
-     * linear transform raw*CalM + CalB. */
+    /* Range at the terminal is bipolar ±(span/2) for NON-RSE
+     * wiring. Clients that need exact raw→volts use
+     * calibration.slope + calibration.intercept. */
     double rangeHalf = moduleRangeSpan / 2.0;
 
-    /* Kept in small chunks — the scpi_printf helper truncates at
-     * 192 bytes (SCPIInterface.h). */
     scpi_printf(context,
         "{\"id\":%u,\"kind\":\"analog-input\","
-        "\"signal_type\":\"%s\",",
+        "\"signal_type\":\"%s\",\"unit\":\"%s\","
+        "\"resolution_bits\":%u,",
         (unsigned)id,
-        isTemperature ? "temperature" : "voltage");
+        isTemperature ? "temperature" : "voltage",
+        isTemperature ? "Cel"         : "V",
+        (unsigned)resolutionBits);
 
     scpi_printf(context,
-        "\"acquisition\":{\"architecture\":\"%s\","
-        "\"resolution_bits\":%u,"
-        "\"single_ended\":true,\"differential\":%s,"
-        "\"coupling\":[\"dc\"]},",
-        (channelType == 1) ? "simultaneous" : "multiplexed",
-        (unsigned)resolutionBits,
-        allowDifferential ? "true" : "false");
-
-    scpi_printf(context,
-        "\"measurement\":{\"unit\":\"%s\",\"unit_display\":\"%s\","
-        "\"ranges\":[{\"id\":\"bipolar\",\"min\":%.3f,\"max\":%.3f}]},",
-        isTemperature ? "Cel" : "V",
-        isTemperature ? "celsius" : "volts",
+        "\"simultaneous\":%s,\"differential\":%s,"
+        "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],",
+        simultaneous      ? "true" : "false",
+        allowDifferential ? "true" : "false",
         -rangeHalf, rangeHalf);
 
     scpi_printf(context,
-        "\"scaling\":{\"internal_scale\":%.6f,\"model\":\"linear\"},",
-        internalScale);
-
-    scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
-        "\"factory_present\":true,\"user_override_supported\":true,"
-        "\"slope\":%.6f,\"intercept\":%.6f}}",
+        "\"user_override_supported\":true,"
+        "\"slope\":%.6f,\"intercept\":%.6f},"
+        "\"extensions\":{}}",
         rt->CalM, rt->CalB);
 }
 
@@ -3277,42 +3267,42 @@ static void EmitAoutChannelJson(scpi_t* context,
                                 const CapabilitiesAoutSummary* ao) {
     scpi_printf(context,
         "{\"id\":%u,\"kind\":\"analog-output\","
-        "\"signal_type\":\"voltage\","
+        "\"signal_type\":\"voltage\",\"unit\":\"V\","
         "\"resolution_bits\":%u,",
         (unsigned)ch->DaqifiDacChannelId,
         (unsigned)ao->resolutionBits);
 
     scpi_printf(context,
-        "\"measurement\":{\"unit\":\"V\",\"unit_display\":\"volts\","
-        "\"ranges\":[{\"id\":\"unipolar\",\"min\":%.3f,\"max\":%.3f}]},",
-        ao->moduleMinVoltage, ao->moduleMaxVoltage);
-
-    scpi_printf(context,
+        "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],"
         "\"calibration\":{\"model\":\"linear\","
-        "\"factory_present\":true,\"user_override_supported\":true}}");
+        "\"user_override_supported\":true},"
+        "\"extensions\":{}}",
+        ao->moduleMinVoltage, ao->moduleMaxVoltage);
 }
 
 static void EmitDioChannelJson(scpi_t* context,
                                const DIOConfig* dio,
                                uint8_t channelIndex) {
+    /* features{} only contains keys for features the pin actually
+     * supports. Absent key = unavailable. Forward-compat:
+     *   - new feature kinds (spi, uart, i2c, counter, trigger, …)
+     *     just add a new key here and clients that know the key
+     *     pick it up; older clients ignore it.
+     *   - richer settings for existing features (e.g. PWM dead-time)
+     *     go under the feature's own object.
+     * "extensions":{} is the catch-all for vendor-specific keys. */
     scpi_printf(context,
         "{\"id\":%u,\"kind\":\"digital-io\","
-        "\"directions\":[\"input\",\"output\"],"
-        "\"features\":{\"pwm\":%s,\"counter\":false,"
-        "\"trigger\":false,\"analog_readable\":false}%s",
+        "\"features\":{\"input\":true,\"output\":true%s",
         (unsigned)channelIndex,
-        dio->IsPwmCapable ? "true" : "false",
-        dio->IsPwmCapable ? "," : "}");
+        dio->IsPwmCapable ? "," : "},\"extensions\":{}}");
 
-    /* PWM block only emitted for PWM-capable channels. Frequency
-     * range reflects the OCMP driver's supported setpoints — the
-     * HAL accepts 1 Hz through 50 kHz today (see
-     * HAL/DIO.c:DIO_PWMFrequencySet); resolution follows the OCMP
-     * timer width (16 bits). */
     if (dio->IsPwmCapable) {
+        /* PWM freq/res reflect OCMP HAL support
+         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). */
         scpi_printf(context,
             "\"pwm\":{\"min_freq_hz\":1,\"max_freq_hz\":50000,"
-            "\"resolution_bits\":16}}");
+            "\"resolution_bits\":16}},\"extensions\":{}}");
     }
 }
 
@@ -3371,24 +3361,39 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * well under that so there's headroom for longer firmware_rev
      * strings, larger variant codes, etc. */
 
-    /* ---- Schema header + identity ---- */
+    /* ---- Schema header + extensions escape hatch ----
+     * "extensions":{} is a reserved object at every level clients
+     * parse. Older clients MUST ignore unknown keys inside it; new
+     * keys can be added without bumping schema_version. Breaking
+     * changes (renames, removals, retypes) still require a
+     * schema_version bump. */
     scpi_printf(context,
         "{\"schema_version\":%u,"
-        "\"schema_uri\":\"https://daqifi.com/schemas/capability/v1\",",
+        "\"schema_uri\":\"https://daqifi.com/schemas/capability/v1\","
+        "\"extensions\":{},",
         (unsigned)DAQIFI_CAPABILITIES_VERSION);
 
+    /* ---- identity ----
+     * Vendor/model/variant strings identify the product. USB VID/PID
+     * live here (not transports) because they're device-identity
+     * information the host uses for enumeration / driver matching,
+     * not a configurable transport setting. */
     scpi_printf(context,
         "\"identity\":{\"vendor\":\"DAQiFi\",\"model\":\"Nyquist\","
-        "\"variant\":\"%s\",\"variant_code\":%u,",
-        variantName,
-        (unsigned)cfg->BoardVariant);
+        "\"variant\":\"%s\",",
+        variantName);
 
     scpi_printf(context,
-        "\"firmware_rev\":\"%s\",\"hardware_rev\":\"%s\","
-        "\"serial_hex\":\"%llX\"},",
+        "\"serial\":\"%llX\","
+        "\"firmware_rev\":\"%s\",\"hardware_rev\":\"%s\",",
+        (unsigned long long)cfg->boardSerialNumber,
         cfg->boardFirmwareRev,
-        cfg->boardHardwareRev,
-        (unsigned long long)cfg->boardSerialNumber);
+        cfg->boardHardwareRev);
+
+    scpi_printf(context,
+        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"}},",
+        (unsigned)0x04D8,   /* Microchip VID (matches usb_device_init_data) */
+        (unsigned)0xF794);  /* DAQiFi Nyquist PID */
 
     /* ---- channels[] array (flat, kind-grouped) ----
      * Order: all analog-input first (sorted by DaqifiAdcChannelId
@@ -3451,11 +3456,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     scpi_printf(context, "],");
 
     /* ---- streaming ----
-     * transports[] is filtered by what the board actually supports.
-     * SD appears when the SD block is fitted (storage.sdSupported)
-     * rather than the transports flag because SD is a storage
-     * target, not a network transport — it's gated by the SD
-     * hardware being present. */
+     * Client-actionable facts: what encodings can I pick, which
+     * transports can I stream over, what sample rates are valid,
+     * and what's the current effective cap given enabled channels.
+     * Formula constants were dropped — clients care about the
+     * result, not the derivation. */
     scpi_printf(context,
         "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
         "\"transports\":[");
@@ -3465,20 +3470,19 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         if (tr.wifiSupported) { scpi_printf(context, first ? "\"wifi\"" : ",\"wifi\""); first = false; }
         if (stor.sdSupported) { scpi_printf(context, first ? "\"sd\""   : ",\"sd\"");                 }
     }
-    scpi_printf(context, "],\"current_max_rate_hz\":%u,",
+
+    /* sample_rate_range is the absolute firmware envelope; the
+     * current_max_rate_hz is the narrower cap given the channels
+     * enabled right now. Clients present the range, validate the
+     * user's requested rate against current_max. */
+    scpi_printf(context,
+        "],\"sample_rate_range_hz\":{\"min\":1,\"max\":%u},"
+        "\"current_max_rate_hz\":%u,",
+        (unsigned)st.isrMaxHz,
         (unsigned)st.maxFreqHz);
 
     scpi_printf(context,
-        "\"max_rate_formula\":{\"isr_max_hz\":%u,"
-        "\"type1_aggregate_max_hz\":%u,"
-        "\"tick_budget\":%u,\"tick_overhead\":%u},",
-        (unsigned)st.isrMaxHz,
-        (unsigned)st.type1AggMaxHz,
-        (unsigned)st.tickBudget,
-        (unsigned)st.tickOverhead);
-
-    scpi_printf(context,
-        "\"buffer_sizes\":{"
+        "\"buffer_ranges_bytes\":{"
         "\"usb\":{\"min\":2048,\"max\":65536,\"default\":16384},"
         "\"wifi\":{\"min\":1400,\"max\":65536,\"default\":14000},");
 
@@ -3488,65 +3492,80 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         "\"sample_pool\":{\"min\":100,\"max\":2000,\"default\":1100}},");
 
     scpi_printf(context,
-        "\"test_patterns\":[0,1,2,3,4,5,6]},");
+        "\"test_patterns\":[0,1,2,3,4,5,6],\"extensions\":{}},");
 
-    /* ---- storage ---- */
+    /* ---- storage ----
+     * Client cares about: can I write files, what filesystems do
+     * you support, and what's the max file size I can expect
+     * before the auto-split kicks in. */
     scpi_printf(context,
         "\"storage\":{\"sd_supported\":%s,"
-        "\"nvm_settings_slots\":%u},",
+        "\"filesystems\":[\"FAT32\"],"
+        "\"max_file_size_bytes\":%llu,"
+        "\"extensions\":{}},",
         stor.sdSupported ? "true" : "false",
-        (unsigned)stor.nvmSettingsSlots);
+        (unsigned long long)SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE);
 
     /* ---- power ----
-     * sources[] is filtered by board flags: "usb" appears if the
-     * USB hardware is fitted (it always is — USB is how the board
-     * gets power to enumerate), "external" and "battery" track
-     * their respective CapabilitiesFlags. */
+     * Client cares about: where does this device take power from,
+     * does it have a battery I should monitor, can it source 5V
+     * (OTG) to peripherals. Charger IC, IIN-limit rungs, and
+     * internal power-state enum values are firmware/datasheet
+     * facts, not client-actionable — dropped. */
     scpi_printf(context, "\"power\":{\"sources\":[");
     {
         bool first = true;
-        if (tr.usbSupported)              { scpi_printf(context, "\"usb\"");                             first = false; }
-        if (pw.externalPowerSupported)    { scpi_printf(context, first ? "\"external\"" : ",\"external\""); first = false; }
-        if (pw.batteryPresent)            { scpi_printf(context, first ? "\"battery\""  : ",\"battery\"");                }
+        if (tr.usbSupported)           { scpi_printf(context, "\"usb\"");                               first = false; }
+        if (pw.externalPowerSupported) { scpi_printf(context, first ? "\"external\"" : ",\"external\""); first = false; }
+        if (pw.batteryPresent)         { scpi_printf(context, first ? "\"battery\""  : ",\"battery\"");                }
     }
     scpi_printf(context,
-        "],\"battery\":{\"present\":%s,\"chemistry\":\"li-po\"},"
+        "],\"battery_present\":%s,"
         "\"external_power_supported\":%s,"
-        "\"otg_supported\":%s,",
+        "\"otg_output_supported\":%s,"
+        "\"extensions\":{}},",
         pw.batteryPresent ? "true" : "false",
         pw.externalPowerSupported ? "true" : "false",
         pw.otgSupported ? "true" : "false");
 
-    scpi_printf(context,
-        "\"charger_ic\":\"BQ24297\","
-        "\"iin_limits_ma\":[100,150,500,900,1000,1500,2000,3000],"
-        "\"power_states\":[0,1,2]},");
-
-    /* ---- transports ---- */
+    /* ---- transports ----
+     * Client-actionable facts per channel: what bands / security
+     * modes am I restricted to, what port do I connect my command
+     * stream on, what UDP port do I send discovery broadcasts to.
+     * Internal chipset names and USB class (in identity.usb) are
+     * not relevant here. */
     scpi_printf(context,
         "\"transports\":{"
-        "\"usb\":{\"supported\":%s,\"class\":\"CDC\","
-        "\"vid\":%u,\"pid\":%u},",
-        tr.usbSupported ? "true" : "false",
-        (unsigned)0x04D8,  /* Microchip VID used by the CDC descriptor */
-        (unsigned)0xF794); /* DAQiFi Nyquist PID */
+        "\"usb\":{\"supported\":%s,\"extensions\":{}},",
+        tr.usbSupported ? "true" : "false");
 
     scpi_printf(context,
-        "\"wifi\":{\"supported\":%s,\"chipset\":\"WINC1500\","
-        "\"modes\":[\"sta\",\"ap\"],"
-        "\"security\":[\"open\",\"wpa\",\"wpa2\"]},",
+        "\"wifi\":{\"supported\":%s,"
+        "\"bands\":[\"2.4GHz\"],"
+        "\"modes\":[\"sta\",\"ap\"],",
         tr.wifiSupported ? "true" : "false");
 
     scpi_printf(context,
-        "\"ethernet\":{\"supported\":%s},"
-        "\"serial_debug\":{\"supported\":%s,\"baud\":921600}},",
+        "\"security\":[\"open\",\"wpa\",\"wpa2\"],"
+        "\"tcp_command_port\":%u,"
+        "\"udp_announce_port\":%u,"
+        "\"extensions\":{}},",
+        (unsigned)DEFAULT_TCP_PORT,
+        (unsigned)WIFI_MANAGER_UDP_LISTEN_PORT);
+
+    scpi_printf(context,
+        "\"ethernet\":{\"supported\":%s,\"extensions\":{}},"
+        "\"serial_debug\":{\"supported\":%s,\"baud\":921600,"
+        "\"extensions\":{}}},",
         tr.ethernetSupported ? "true" : "false",
         tr.serialDebugSupported ? "true" : "false");
 
-    /* ---- triggers (stub for V1; no HW trigger feature yet) ---- */
+    /* ---- triggers (stub for V1; no HW trigger feature yet) ----
+     * When HW triggers ship, hardware_inputs[] fills with objects
+     * describing each input (pin, supported edges, debounce). */
     scpi_printf(context,
         "\"triggers\":{\"hardware_inputs\":[],\"software\":true,"
-        "\"edge_modes\":[],\"level_modes\":[]}}"
+        "\"extensions\":{}}}"
         "\r\n");
 
     return SCPI_RES_OK;

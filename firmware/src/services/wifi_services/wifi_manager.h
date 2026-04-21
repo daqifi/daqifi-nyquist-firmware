@@ -15,6 +15,11 @@ extern "C" {
 #define WIFI_MANAGER_CHIP_INFO_FW_VERSION_MAX_SIZE 20
 #define WIFI_MANAGER_CHIP_INFO_FW_BUILD_DATE
 
+    /* UDP port the device listens on for discovery broadcasts.
+     * Used by the capability rollup so clients know where to send
+     * announce packets without hardcoding the value themselves. */
+#define WIFI_MANAGER_UDP_LISTEN_PORT             ((uint16_t)30303)
+
     typedef enum {
         WIFI_MANAGER_NETWORK_MODE_STA = 1,
         WIFI_MANAGER_NETWORK_MODE_AP = 4
