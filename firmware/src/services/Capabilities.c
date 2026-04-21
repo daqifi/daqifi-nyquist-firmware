@@ -81,6 +81,12 @@ void Capabilities_GetDioSummary(CapabilitiesDioSummary* out_summary) {
 
     const DIOArray* dio = &cfg->DIOChannels;
     out_summary->channelCount = (uint16_t)dio->Size;
+    /* INVARIANT: DIO channel number == DIOChannels.Data[] index. The
+     * DIOConfig struct has no explicit channel-ID field because the
+     * entire firmware relies on this mapping (see DIOProbe, DIO HAL,
+     * SCPI DIO callbacks). If a future board variant breaks that
+     * invariant, this mask becomes meaningless — add a ChannelId
+     * field to DIOConfig first and use it here. */
     for (uint32_t i = 0; i < dio->Size; i++) {
         if (dio->Data[i].IsPwmCapable && i < 16) {
             out_summary->pwmCapableMask |= (uint16_t)(1u << i);
