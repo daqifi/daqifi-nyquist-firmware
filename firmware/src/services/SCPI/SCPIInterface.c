@@ -3450,11 +3450,22 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
 
     scpi_printf(context, "],");
 
-    /* ---- streaming ---- */
+    /* ---- streaming ----
+     * transports[] is filtered by what the board actually supports.
+     * SD appears when the SD block is fitted (storage.sdSupported)
+     * rather than the transports flag because SD is a storage
+     * target, not a network transport — it's gated by the SD
+     * hardware being present. */
     scpi_printf(context,
         "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
-        "\"transports\":[\"usb\",\"wifi\",\"sd\"],"
-        "\"current_max_rate_hz\":%u,",
+        "\"transports\":[");
+    {
+        bool first = true;
+        if (tr.usbSupported)  { scpi_printf(context, "\"usb\"");                     first = false; }
+        if (tr.wifiSupported) { scpi_printf(context, first ? "\"wifi\"" : ",\"wifi\""); first = false; }
+        if (stor.sdSupported) { scpi_printf(context, first ? "\"sd\""   : ",\"sd\"");                 }
+    }
+    scpi_printf(context, "],\"current_max_rate_hz\":%u,",
         (unsigned)st.maxFreqHz);
 
     scpi_printf(context,
@@ -3486,10 +3497,20 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         stor.sdSupported ? "true" : "false",
         (unsigned)stor.nvmSettingsSlots);
 
-    /* ---- power ---- */
+    /* ---- power ----
+     * sources[] is filtered by board flags: "usb" appears if the
+     * USB hardware is fitted (it always is — USB is how the board
+     * gets power to enumerate), "external" and "battery" track
+     * their respective CapabilitiesFlags. */
+    scpi_printf(context, "\"power\":{\"sources\":[");
+    {
+        bool first = true;
+        if (tr.usbSupported)              { scpi_printf(context, "\"usb\"");                             first = false; }
+        if (pw.externalPowerSupported)    { scpi_printf(context, first ? "\"external\"" : ",\"external\""); first = false; }
+        if (pw.batteryPresent)            { scpi_printf(context, first ? "\"battery\""  : ",\"battery\"");                }
+    }
     scpi_printf(context,
-        "\"power\":{\"sources\":[\"usb\",\"external\",\"battery\"],"
-        "\"battery\":{\"present\":%s,\"chemistry\":\"li-po\"},"
+        "],\"battery\":{\"present\":%s,\"chemistry\":\"li-po\"},"
         "\"external_power_supported\":%s,"
         "\"otg_supported\":%s,",
         pw.batteryPresent ? "true" : "false",
