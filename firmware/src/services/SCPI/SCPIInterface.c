@@ -3456,11 +3456,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     scpi_printf(context, "],");
 
     /* ---- streaming ----
-     * Client-actionable facts: what encodings can I pick, which
-     * transports can I stream over, what sample rates are valid,
-     * and what's the current effective cap given enabled channels.
-     * Formula constants were dropped — clients care about the
-     * result, not the derivation. */
+     * Client-actionable facts: what encodings, which transports,
+     * what sample rates, and — importantly — a predictive rate_model
+     * so a client UI can preview "if the user enables this set of
+     * channels, the max rate will be X Hz" without round-tripping
+     * for every checkbox change. */
     scpi_printf(context,
         "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
         "\"transports\":[");
@@ -3471,15 +3471,44 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         if (stor.sdSupported) { scpi_printf(context, first ? "\"sd\""   : ",\"sd\"");                 }
     }
 
-    /* sample_rate_range is the absolute firmware envelope; the
-     * current_max_rate_hz is the narrower cap given the channels
-     * enabled right now. Clients present the range, validate the
-     * user's requested rate against current_max. */
+    /* sample_rate_range is the absolute firmware envelope.
+     * current_max_rate_hz is the narrower cap for the channel set
+     * enabled right now.
+     * rate_model lets a client reproduce that computation locally
+     * for any hypothetical channel grouping. Inputs required are
+     * available from the channels[] array: count the entries with
+     * kind=="analog-input" and simultaneous==true to get
+     * simultaneous_count; count all enabled kind=="analog-input"
+     * to get total_count. DIO/AOut do not factor into the formula —
+     * DIO sample emission is amortized in the per-tick overhead and
+     * AOut is not streamed.
+     * rate_validation documents what happens when a client requests
+     * a rate above the cap: today the firmware lowers silently and
+     * logs an INFO message (check SYST:LOG?). Clients that need to
+     * catch over-asks MUST compare the requested rate against
+     * current_max_rate_hz (or rate_model output) before issuing
+     * SYSTem:StartStreamData. */
     scpi_printf(context,
         "],\"sample_rate_range_hz\":{\"min\":1,\"max\":%u},"
         "\"current_max_rate_hz\":%u,",
         (unsigned)st.isrMaxHz,
         (unsigned)st.maxFreqHz);
+
+    scpi_printf(context,
+        "\"rate_model\":{\"formula\":"
+        "\"min(absolute_max_hz,"
+        " type1_aggregate_max_hz/simultaneous_count,"
+        " per_tick_budget_hz/(per_tick_overhead+total_count))\",");
+
+    scpi_printf(context,
+        "\"absolute_max_hz\":%u,\"type1_aggregate_max_hz\":%u,"
+        "\"per_tick_budget_hz\":%u,\"per_tick_overhead\":%u},",
+        (unsigned)st.isrMaxHz,
+        (unsigned)st.type1AggMaxHz,
+        (unsigned)st.tickBudget,
+        (unsigned)st.tickOverhead);
+
+    scpi_printf(context, "\"rate_validation\":\"silent_cap\",");
 
     scpi_printf(context,
         "\"buffer_ranges_bytes\":{"
