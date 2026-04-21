@@ -206,7 +206,8 @@ const tBoardConfig NQ3BoardConfig = {
     .StreamingConfig = COMMON_STREAMING_CONFIG,
     .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
     .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT,
-    .DefaultVoltagePrecision = 6  // 18-bit ADC (AD7609): LSB = 38.15µV
+    .DefaultVoltagePrecision = 6,  // 18-bit ADC (AD7609): LSB = 38.15µV
+    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS
 };
 
 /*! This function is used for getting a board configuration parameter

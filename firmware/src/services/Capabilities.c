@@ -128,41 +128,28 @@ void Capabilities_GetStorageSummary(CapabilitiesStorageSummary* out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
 
-    /* Every DAQiFi Nyquist board variant has the SD SPI hardware
-     * fitted; presence of an inserted card is runtime state and
-     * queried via SYST:STORage:SD:* commands. */
-    out->sdSupported = true;
-
-    /* NVM currently holds exactly one settings slot (the
-     * TopLevelSettings struct). If multi-slot config support lands,
-     * bump this and the settings module. */
-    out->nvmSettingsSlots = 1;
+    const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    out->sdSupported      = cfg->CapabilitiesFlags.sdSupported;
+    out->nvmSettingsSlots = cfg->CapabilitiesFlags.nvmSettingsSlots;
 }
 
 void Capabilities_GetPowerSummary(CapabilitiesPowerSummary* out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
 
-    /* Every current DAQiFi Nyquist variant ships with a LiPo battery
-     * connector + BQ24297 charger IC. External 5 V is always
-     * supported via USB. The BQ24297 supports OTG boost mode on all
-     * variants — see BQ24297_Enter_OTG() in the HAL driver. */
-    out->batteryPresent           = true;
-    out->externalPowerSupported   = true;
-    out->otgSupported             = true;
+    const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    out->batteryPresent         = cfg->CapabilitiesFlags.batteryPresent;
+    out->externalPowerSupported = cfg->CapabilitiesFlags.externalPowerSupported;
+    out->otgSupported           = cfg->CapabilitiesFlags.otgSupported;
 }
 
 void Capabilities_GetTransportsSummary(CapabilitiesTransportsSummary* out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
 
-    /* USB CDC and WINC1500 WiFi are fitted to every current variant.
-     * Ethernet is not supported on any variant. The debug UART
-     * (UART4 on ICSP header pin 4) is always physically present but
-     * only activated when ENABLE_ICSP_REALTIME_LOG is defined —
-     * report it supported because the pins are there. */
-    out->usbSupported           = true;
-    out->wifiSupported          = true;
-    out->ethernetSupported      = false;
-    out->serialDebugSupported   = true;
+    const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    out->usbSupported         = cfg->CapabilitiesFlags.usbSupported;
+    out->wifiSupported        = cfg->CapabilitiesFlags.wifiSupported;
+    out->ethernetSupported    = cfg->CapabilitiesFlags.ethernetSupported;
+    out->serialDebugSupported = cfg->CapabilitiesFlags.serialDebugSupported;
 }

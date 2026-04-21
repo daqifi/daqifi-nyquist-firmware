@@ -93,6 +93,22 @@ extern const char* const COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT[16];
 
 #define COMMON_STREAMING_CONFIG {.TimerIndex = TMR_INDEX_4, .TSTimerIndex = TMR_INDEX_6}
 
+/* Capability flags that happen to be identical across every current
+ * NQ variant (SD/WiFi/battery/OTG fitted, Ethernet not). Variants
+ * that diverge should override individual fields rather than using
+ * this macro. See #327 and tCapabilitiesFlags in BoardConfig.h. */
+#define COMMON_CAPABILITIES_FLAGS { \
+    .sdSupported            = true,  \
+    .nvmSettingsSlots       = 1,     \
+    .batteryPresent         = true,  \
+    .externalPowerSupported = true,  \
+    .otgSupported           = true,  \
+    .usbSupported           = true,  \
+    .wifiSupported          = true,  \
+    .ethernetSupported      = false, \
+    .serialDebugSupported   = true,  \
+}
+
 #ifdef __cplusplus
 }
 #endif
