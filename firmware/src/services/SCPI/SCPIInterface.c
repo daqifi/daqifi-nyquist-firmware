@@ -2435,44 +2435,13 @@ static scpi_result_t SCPI_IsStreaming(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-/*
- * CONFigure:ADC:MAXFreq?
- * Reports the three-constraint streaming frequency cap for the currently
- * enabled public ADC channels, plus the formula constants so clients can
- * predict caps for hypothetical channel configurations without a round
- * trip. Format: key=value pairs, comma-separated, so the existing
- * key=value SCPI-response parsers in python-core / daqifi-core can split
- * on ',' and '=' without a format bump. See #283.
- */
-static scpi_result_t SCPI_GetMaxStreamFreq(scpi_t * context) {
-    uint16_t type1 = 0;
-    uint16_t total = 0;
-    Streaming_CountActiveChannels(&type1, &total, NULL);
-    /* Zero enabled channels → no valid stream rate. Report 0 instead of
-     * the ISR ceiling so a client that drives the UI from this response
-     * doesn't silently offer rates that StartStreamData would reject. */
-    uint32_t maxFreq = (total > 0) ? Streaming_ComputeMaxFreq(type1, total) : 0;
-
-    char buf[160];
-    int n = snprintf(buf, sizeof(buf),
-        "MaxFreqHz=%u,Type1Count=%u,TotalChannels=%u,"
-        "IsrMaxHz=%u,Type1AggMaxHz=%u,TickBudget=%u,TickOverhead=%u",
-        (unsigned)maxFreq,
-        (unsigned)type1,
-        (unsigned)total,
-        (unsigned)STREAMING_ISR_MAX_HZ,
-        (unsigned)STREAMING_TYPE1_AGG_MAX_HZ,
-        (unsigned)STREAMING_TICK_BUDGET,
-        (unsigned)STREAMING_TICK_OVERHEAD);
-    if (n < 0 || (size_t)n >= sizeof(buf)) {
-        return SCPI_RES_ERR;
-    }
-    /* SCPI_ResultCharacters emits raw bytes; SCPI_ResultText would wrap
-     * the payload in double quotes (see libscpi parser.c), which would
-     * break the unquoted key=value contract documented for this query. */
-    SCPI_ResultCharacters(context, buf, (size_t)n);
-    return SCPI_RES_OK;
-}
+/* CONFigure:ADC:MAXFreq?, CONFigure:CAPabilities:AIN?, and
+ * CONFigure:CAPabilities:DIO? were removed as part of the #327
+ * capability schema V1 reshape — their data is now exclusive to the
+ * CONFigure:CAPabilities:JSON? rollup so the schema has a single
+ * source of truth. See Capabilities.h and the plan in #327 for the
+ * rationale. Streaming cap can also be parsed from proto fields
+ * 70..75 on DaqifiOutMessage. */
 
 static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
     int param1;
@@ -3237,121 +3206,337 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-/*
- * CONFigure:CAPabilities:AIN?
- * Summary of public ADC topology for the current board. Bitmasks are
- * indexed by DaqifiAdcChannelId so a client that already knows the
- * user-facing channel numbers can index them directly.
- */
-static scpi_result_t SCPI_CapabilitiesAinGet(scpi_t * context) {
-    CapabilitiesAinSummary s;
-    Capabilities_GetAinSummary(&s);
+/* CONFigure:CAPabilities:AIN? and CONFigure:CAPabilities:DIO?
+ * were removed in the #327 V1 reshape — their data is now emitted
+ * only as part of the CONFigure:CAPabilities:JSON? rollup, so the
+ * schema has a single source of truth. See Capabilities.h and the
+ * plan in #327. */
 
-    char buf[160];
-    int n = snprintf(buf, sizeof(buf),
-        "PublicCount=%u,Type1Count=%u,Type2Count=%u,"
-        "Type1Mask=%u,Type2Mask=%u,Resolution=%u,HasAD7609=%u",
-        (unsigned)s.publicChannelCount,
-        (unsigned)s.type1Count,
-        (unsigned)s.type2Count,
-        (unsigned)s.type1Bitmask,
-        (unsigned)s.type2Bitmask,
-        (unsigned)s.primaryResolutionBits,
-        (unsigned)s.hasAD7609);
-    if (n < 0 || (size_t)n >= sizeof(buf)) return SCPI_RES_ERR;
-    SCPI_ResultCharacters(context, buf, (size_t)n);
-    return SCPI_RES_OK;
+/* -------- CONFigure:CAPabilities:JSON? emitter helpers -----------
+ * Each helper emits one channel object with the V1 schema shape:
+ *   { "id", "kind", "signal_type", ... }
+ * Kept as static file-scope functions (rather than Capabilities.c
+ * API) because they only make sense as chunks of the rollup — the
+ * SCPI transport is the only consumer and coupling them to the
+ * libscpi transport via scpi_printf would leak out of the module
+ * otherwise. */
+
+static void EmitAinChannelJson(scpi_t* context,
+                               const AInChannel* ch,
+                               const AInRuntimeConfig* rt,
+                               double moduleRangeSpan) {
+    uint8_t   id           = ch->DaqifiAdcChannelId;
+    bool      isTemperature = false;
+    bool      allowDifferential = false;
+    uint8_t   resolutionBits = 12;
+    uint8_t   channelType   = 2;   /* 1 = simultaneous, 2 = multiplexed */
+    double    internalScale  = 1.0;
+
+    if (ch->Type == AIn_MC12bADC) {
+        isTemperature    = ch->Config.MC12b.IsTemperatureSensor;
+        allowDifferential = ch->Config.MC12b.AllowDifferential;
+        channelType      = (ch->Config.MC12b.ChannelType == 1) ? 1 : 2;
+        internalScale    = ch->Config.MC12b.InternalScale;
+        resolutionBits   = 12;
+    } else if (ch->Type == AIn_AD7609) {
+        /* AD7609 converts all 8 channels simultaneously. No
+         * differential support on the DAQiFi board wiring. */
+        channelType    = 1;
+        resolutionBits = 18;
+    }
+
+    /* Range is bipolar at the terminal: ±(span/2) for RSE-off
+     * channels (NON-RSE bipolar is how the proto doc describes the
+     * repeated analog_in_port_range field — see
+     * DaqifiOutMessage.proto line 35). Clients that need the exact
+     * RSE/differential mapping read CalM / CalB and perform the
+     * linear transform raw*CalM + CalB. */
+    double rangeHalf = moduleRangeSpan / 2.0;
+
+    /* Kept in small chunks — the scpi_printf helper truncates at
+     * 192 bytes (SCPIInterface.h). */
+    scpi_printf(context,
+        "{\"id\":%u,\"kind\":\"analog-input\","
+        "\"signal_type\":\"%s\",",
+        (unsigned)id,
+        isTemperature ? "temperature" : "voltage");
+
+    scpi_printf(context,
+        "\"acquisition\":{\"architecture\":\"%s\","
+        "\"resolution_bits\":%u,"
+        "\"single_ended\":true,\"differential\":%s,"
+        "\"coupling\":[\"dc\"]},",
+        (channelType == 1) ? "simultaneous" : "multiplexed",
+        (unsigned)resolutionBits,
+        allowDifferential ? "true" : "false");
+
+    scpi_printf(context,
+        "\"measurement\":{\"unit\":\"%s\",\"unit_display\":\"%s\","
+        "\"ranges\":[{\"id\":\"bipolar\",\"min\":%.3f,\"max\":%.3f}]},",
+        isTemperature ? "Cel" : "V",
+        isTemperature ? "celsius" : "volts",
+        -rangeHalf, rangeHalf);
+
+    scpi_printf(context,
+        "\"scaling\":{\"internal_scale\":%.6f,\"model\":\"linear\"},",
+        internalScale);
+
+    scpi_printf(context,
+        "\"calibration\":{\"model\":\"linear\","
+        "\"factory_present\":true,\"user_override_supported\":true,"
+        "\"slope\":%.6f,\"intercept\":%.6f}}",
+        rt->CalM, rt->CalB);
 }
 
-/*
- * CONFigure:CAPabilities:DIO?
- * Summary of DIO topology + PWM-capable pin bitmask (bit N set ⇒
- * DIO_N has an OCMP mapping and accepts PWM config). Clients gate
- * their UI's PWM controls on this mask.
- */
-static scpi_result_t SCPI_CapabilitiesDioGet(scpi_t * context) {
-    CapabilitiesDioSummary s;
-    Capabilities_GetDioSummary(&s);
+static void EmitAoutChannelJson(scpi_t* context,
+                                const AOutChannel* ch,
+                                const CapabilitiesAoutSummary* ao) {
+    scpi_printf(context,
+        "{\"id\":%u,\"kind\":\"analog-output\","
+        "\"signal_type\":\"voltage\","
+        "\"resolution_bits\":%u,",
+        (unsigned)ch->DaqifiDacChannelId,
+        (unsigned)ao->resolutionBits);
 
-    char buf[96];
-    int n = snprintf(buf, sizeof(buf),
-        "ChannelCount=%u,PwmCapableMask=%u",
-        (unsigned)s.channelCount,
-        (unsigned)s.pwmCapableMask);
-    if (n < 0 || (size_t)n >= sizeof(buf)) return SCPI_RES_ERR;
-    SCPI_ResultCharacters(context, buf, (size_t)n);
-    return SCPI_RES_OK;
+    scpi_printf(context,
+        "\"measurement\":{\"unit\":\"V\",\"unit_display\":\"volts\","
+        "\"ranges\":[{\"id\":\"unipolar\",\"min\":%.3f,\"max\":%.3f}]},",
+        ao->moduleMinVoltage, ao->moduleMaxVoltage);
+
+    scpi_printf(context,
+        "\"calibration\":{\"model\":\"linear\","
+        "\"factory_present\":true,\"user_override_supported\":true}}");
+}
+
+static void EmitDioChannelJson(scpi_t* context,
+                               const DIOConfig* dio,
+                               uint8_t channelIndex) {
+    scpi_printf(context,
+        "{\"id\":%u,\"kind\":\"digital-io\","
+        "\"directions\":[\"input\",\"output\"],"
+        "\"features\":{\"pwm\":%s,\"counter\":false,"
+        "\"trigger\":false,\"analog_readable\":false}%s",
+        (unsigned)channelIndex,
+        dio->IsPwmCapable ? "true" : "false",
+        dio->IsPwmCapable ? "," : "}");
+
+    /* PWM block only emitted for PWM-capable channels. Frequency
+     * range reflects the OCMP driver's supported setpoints — the
+     * HAL accepts 1 Hz through 50 kHz today (see
+     * HAL/DIO.c:DIO_PWMFrequencySet); resolution follows the OCMP
+     * timer width (16 bits). */
+    if (dio->IsPwmCapable) {
+        scpi_printf(context,
+            "\"pwm\":{\"min_freq_hz\":1,\"max_freq_hz\":50000,"
+            "\"resolution_bits\":16}}");
+    }
 }
 
 /*
  * CONFigure:CAPabilities:JSON?
- * Unified capability rollup per issue #327. Composes APIVersion +
- * identity + AIN + DIO + streaming cap into a single self-describing
- * JSON document so a new client can populate an entire UI from one
- * query instead of chaining four.
+ * Emits the unified V1 capability schema (see #327 and
+ * Capabilities.h) for the current board. Includes identity,
+ * per-channel capabilities, streaming, storage, power, transports,
+ * and triggers blocks — enough that a client can render its UI
+ * from the single query without hard-coding board variants.
  *
- * Emits via scpi_printf in chunks. Each scpi_printf call writes
- * directly to the libscpi transport via interface->write — same
- * mechanism other diagnostic dumps use (SYST:POW:BQ:REGisters?,
- * SYST:WINC:GATE?). Chunked so the formatted document can exceed
- * the scpi_printf 192-byte buffer as the schema grows.
+ * The schema version byte is DAQIFI_CAPABILITIES_VERSION; bump it
+ * in Capabilities.h on breaking changes (see history comment
+ * there for the evolution rules).
  *
- * Format is JSON rather than key=value because the schema has
- * nested structure (identity, ain, dio, streaming) — that grows
- * better as structured data than as a flat key list.
+ * Emission uses scpi_printf in chunks — each call writes directly
+ * to the libscpi transport via interface->write. The 192-byte
+ * per-call buffer is never exceeded because the helpers above
+ * split each channel object across multiple calls.
+ *
+ * INVARIANT: boardFirmwareRev and boardHardwareRev come from
+ * FIRMWARE_REVISION / HARDWARE_REVISION macros in version.h and
+ * are version strings like "3.4.6b1" — no characters that need
+ * JSON escaping (no `"`, `\`, or control chars). If a future
+ * revision scheme introduces such characters, add a small JSON
+ * string escaper before embedding these fields.
  */
 static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    CapabilitiesAinSummary a;
-    CapabilitiesDioSummary d;
-    CapabilitiesStreamingSummary st;
-    Capabilities_GetAinSummary(&a);
-    Capabilities_GetDioSummary(&d);
-    Capabilities_GetStreamingSummary(&st);
+    const tBoardRuntimeConfig* rt =
+        (const tBoardRuntimeConfig*)BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_ALL_CONFIG);
 
-    /* INVARIANT: boardFirmwareRev and boardHardwareRev come from the
-     * FIRMWARE_REVISION / HARDWARE_REVISION macros in version.h and
-     * are version strings like "3.4.6b1" — no characters that need
-     * JSON escaping (no `"`, `\`, or control chars). If a future
-     * revision scheme ever introduces such characters, add a small
-     * JSON-string escaper before embedding these fields. */
+    CapabilitiesAinSummary        ai;
+    CapabilitiesAoutSummary       ao;
+    CapabilitiesDioSummary        di;
+    CapabilitiesStreamingSummary  st;
+    CapabilitiesStorageSummary    stor;
+    CapabilitiesPowerSummary      pw;
+    CapabilitiesTransportsSummary tr;
+    Capabilities_GetAinSummary(&ai);
+    Capabilities_GetAoutSummary(&ao);
+    Capabilities_GetDioSummary(&di);
+    Capabilities_GetStreamingSummary(&st);
+    Capabilities_GetStorageSummary(&stor);
+    Capabilities_GetPowerSummary(&pw);
+    Capabilities_GetTransportsSummary(&tr);
+
+    const char* variantName =
+        (cfg->BoardVariant == 1) ? "NQ1" :
+        (cfg->BoardVariant == 2) ? "NQ2" :
+        (cfg->BoardVariant == 3) ? "NQ3" : "UNK";
+
+    /* Each scpi_printf call is capped at 192 bytes by the helper's
+     * internal buffer (see SCPIInterface.h). Chunks below are kept
+     * well under that so there's headroom for longer firmware_rev
+     * strings, larger variant codes, etc. */
+
+    /* ---- Schema header + identity ---- */
     scpi_printf(context,
-        "{\"version\":%u,"
+        "{\"schema_version\":%u,"
+        "\"schema_uri\":\"https://daqifi.com/schemas/capability/v1\",",
+        (unsigned)DAQIFI_CAPABILITIES_VERSION);
+
+    scpi_printf(context,
         "\"identity\":{\"vendor\":\"DAQiFi\",\"model\":\"Nyquist\","
-        "\"variant\":%u,\"firmware\":\"%s\",\"hardware\":\"%s\","
+        "\"variant\":\"%s\",\"variant_code\":%u,",
+        variantName,
+        (unsigned)cfg->BoardVariant);
+
+    scpi_printf(context,
+        "\"firmware_rev\":\"%s\",\"hardware_rev\":\"%s\","
         "\"serial_hex\":\"%llX\"},",
-        (unsigned)DAQIFI_CAPABILITIES_VERSION,
-        (unsigned)cfg->BoardVariant,
         cfg->boardFirmwareRev,
         cfg->boardHardwareRev,
         (unsigned long long)cfg->boardSerialNumber);
 
+    /* ---- channels[] array (flat, kind-grouped) ----
+     * Order: all analog-input first (sorted by DaqifiAdcChannelId
+     * via board-config array order), then analog-output (by
+     * DaqifiDacChannelId), then digital-io (by index). See
+     * plan doc for the grouping contract. */
+    scpi_printf(context, "\"channels\":[");
+    bool firstEntry = true;
+
+    /* AIn — public only */
+    for (uint32_t i = 0; i < cfg->AInChannels.Size; i++) {
+        const AInChannel* ch = &cfg->AInChannels.Data[i];
+        bool isPublic =
+            (ch->Type == AIn_MC12bADC && ch->Config.MC12b.IsPublic) ||
+            (ch->Type == AIn_AD7609   && ch->Config.AD7609.IsPublic);
+        if (!isPublic) continue;
+
+        /* Module range feeds per-channel range emission. MC12b
+         * channels belong to the single MC12b module (index 0 by
+         * board-config convention); AD7609 is a separate module. */
+        uint32_t modIdx = 0;
+        for (uint32_t m = 0; m < cfg->AInModules.Size; m++) {
+            if ((cfg->AInModules.Data[m].Type == ch->Type)) {
+                modIdx = m;
+                break;
+            }
+        }
+        double moduleRange = (modIdx < rt->AInModules.Size)
+            ? rt->AInModules.Data[modIdx].Range : 0.0;
+
+        if (!firstEntry) scpi_printf(context, ",");
+        firstEntry = false;
+
+        const AInRuntimeConfig* rc = &rt->AInChannels.Data[i];
+        EmitAinChannelJson(context, ch, rc, moduleRange);
+    }
+
+    /* AOut — always emitted, just empty on boards without a DAC */
+    for (uint32_t i = 0; i < cfg->AOutChannels.Size; i++) {
+        if (!firstEntry) scpi_printf(context, ",");
+        firstEntry = false;
+        EmitAoutChannelJson(context, &cfg->AOutChannels.Data[i], &ao);
+    }
+
+    /* DIO — emitted in board-config array order, which equals
+     * user-facing channel number by the DIOConfig invariant
+     * documented in Capabilities.c. */
+    for (uint32_t i = 0; i < cfg->DIOChannels.Size; i++) {
+        if (!firstEntry) scpi_printf(context, ",");
+        firstEntry = false;
+        EmitDioChannelJson(context, &cfg->DIOChannels.Data[i], (uint8_t)i);
+    }
+
+    scpi_printf(context, "],");
+
+    /* ---- streaming ---- */
     scpi_printf(context,
-        "\"ain\":{\"public_count\":%u,\"type1_count\":%u,\"type2_count\":%u,"
-        "\"type1_mask\":%u,\"type2_mask\":%u,\"resolution_bits\":%u,"
-        "\"has_ad7609\":%s},",
-        (unsigned)a.publicChannelCount,
-        (unsigned)a.type1Count,
-        (unsigned)a.type2Count,
-        (unsigned)a.type1Bitmask,
-        (unsigned)a.type2Bitmask,
-        (unsigned)a.primaryResolutionBits,
-        a.hasAD7609 ? "true" : "false");
+        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
+        "\"transports\":[\"usb\",\"wifi\",\"sd\"],"
+        "\"current_max_rate_hz\":%u,",
+        (unsigned)st.maxFreqHz);
 
     scpi_printf(context,
-        "\"dio\":{\"channel_count\":%u,\"pwm_capable_mask\":%u},",
-        (unsigned)d.channelCount,
-        (unsigned)d.pwmCapableMask);
-
-    scpi_printf(context,
-        "\"streaming\":{\"max_freq_hz\":%u,\"isr_max_hz\":%u,"
-        "\"type1_agg_max_hz\":%u,\"tick_budget\":%u,\"tick_overhead\":%u}}"
-        "\r\n",
-        (unsigned)st.maxFreqHz,
+        "\"max_rate_formula\":{\"isr_max_hz\":%u,"
+        "\"type1_aggregate_max_hz\":%u,"
+        "\"tick_budget\":%u,\"tick_overhead\":%u},",
         (unsigned)st.isrMaxHz,
         (unsigned)st.type1AggMaxHz,
         (unsigned)st.tickBudget,
         (unsigned)st.tickOverhead);
+
+    scpi_printf(context,
+        "\"buffer_sizes\":{"
+        "\"usb\":{\"min\":2048,\"max\":65536,\"default\":16384},"
+        "\"wifi\":{\"min\":1400,\"max\":65536,\"default\":14000},");
+
+    scpi_printf(context,
+        "\"sd\":{\"min\":4096,\"max\":65536,\"default\":32768},"
+        "\"encoder\":{\"min\":1024,\"max\":65536,\"default\":8192},"
+        "\"sample_pool\":{\"min\":100,\"max\":2000,\"default\":1100}},");
+
+    scpi_printf(context,
+        "\"test_patterns\":[0,1,2,3,4,5,6]},");
+
+    /* ---- storage ---- */
+    scpi_printf(context,
+        "\"storage\":{\"sd_supported\":%s,"
+        "\"nvm_settings_slots\":%u},",
+        stor.sdSupported ? "true" : "false",
+        (unsigned)stor.nvmSettingsSlots);
+
+    /* ---- power ---- */
+    scpi_printf(context,
+        "\"power\":{\"sources\":[\"usb\",\"external\",\"battery\"],"
+        "\"battery\":{\"present\":%s,\"chemistry\":\"li-po\"},"
+        "\"external_power_supported\":%s,"
+        "\"otg_supported\":%s,",
+        pw.batteryPresent ? "true" : "false",
+        pw.externalPowerSupported ? "true" : "false",
+        pw.otgSupported ? "true" : "false");
+
+    scpi_printf(context,
+        "\"charger_ic\":\"BQ24297\","
+        "\"iin_limits_ma\":[100,150,500,900,1000,1500,2000,3000],"
+        "\"power_states\":[0,1,2]},");
+
+    /* ---- transports ---- */
+    scpi_printf(context,
+        "\"transports\":{"
+        "\"usb\":{\"supported\":%s,\"class\":\"CDC\","
+        "\"vid\":%u,\"pid\":%u},",
+        tr.usbSupported ? "true" : "false",
+        (unsigned)0x04D8,  /* Microchip VID used by the CDC descriptor */
+        (unsigned)0xF794); /* DAQiFi Nyquist PID */
+
+    scpi_printf(context,
+        "\"wifi\":{\"supported\":%s,\"chipset\":\"WINC1500\","
+        "\"modes\":[\"sta\",\"ap\"],"
+        "\"security\":[\"open\",\"wpa\",\"wpa2\"]},",
+        tr.wifiSupported ? "true" : "false");
+
+    scpi_printf(context,
+        "\"ethernet\":{\"supported\":%s},"
+        "\"serial_debug\":{\"supported\":%s,\"baud\":921600}},",
+        tr.ethernetSupported ? "true" : "false",
+        tr.serialDebugSupported ? "true" : "false");
+
+    /* ---- triggers (stub for V1; no HW trigger feature yet) ---- */
+    scpi_printf(context,
+        "\"triggers\":{\"hardware_inputs\":[],\"software\":true,"
+        "\"edge_modes\":[],\"level_modes\":[]}}"
+        "\r\n");
 
     return SCPI_RES_OK;
 }
@@ -3502,11 +3687,12 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet,},
     {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet,},
     {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet,},
-    {.pattern = "CONFigure:ADC:MAXFreq?", .callback = SCPI_GetMaxStreamFreq,},
-    /* Capability framework (#327) — see Capabilities.h */
+    /* Capability framework (#327). Schema-V1 reshape: per-block
+     * subset queries (AIN?, DIO?, ADC:MAXFreq?) were removed —
+     * CONFigure:CAPabilities:JSON? is the single source of truth.
+     * APIVersion? remains as a fast pre-parse compat probe.
+     * See Capabilities.h for the schema evolution rules. */
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
-    {.pattern = "CONFigure:CAPabilities:AIN?", .callback = SCPI_CapabilitiesAinGet,},
-    {.pattern = "CONFigure:CAPabilities:DIO?", .callback = SCPI_CapabilitiesDioGet,},
     {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
     {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
     {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
