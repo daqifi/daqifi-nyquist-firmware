@@ -326,7 +326,10 @@ static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
             case DaqifiOutMessage_cap_type1_agg_hz_tag:
             case DaqifiOutMessage_cap_tick_budget_tag:
             case DaqifiOutMessage_cap_tick_overhead_tag:
-                len += sizeof(uint32_t);
+                /* Worst-case varint + 2-byte tag (field numbers 70–75
+                 * are > 15 so PB_TAG2_SIZE applies). sizeof(uint32_t)
+                 * would under-estimate by ~3 bytes per field. */
+                len += PB_VARINT32_MAX + PB_TAG2_SIZE;
                 break;
 
             default:
