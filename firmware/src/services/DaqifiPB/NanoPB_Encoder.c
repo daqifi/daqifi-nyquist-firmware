@@ -17,6 +17,7 @@
 #include "HAL/TimerApi/TimerApi.h"
 #include "state/board/BoardConfig.h"
 #include "HAL/DIO.h"
+#include "services/Capabilities.h"
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
 #endif // min
@@ -317,6 +318,15 @@ static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
 
             case DaqifiOutMessage_device_sn_tag:
                 len += sizeof (out->device_sn);
+                break;
+
+            case DaqifiOutMessage_cap_version_tag:
+            case DaqifiOutMessage_cap_max_freq_hz_tag:
+            case DaqifiOutMessage_cap_isr_max_hz_tag:
+            case DaqifiOutMessage_cap_type1_agg_hz_tag:
+            case DaqifiOutMessage_cap_tick_budget_tag:
+            case DaqifiOutMessage_cap_tick_overhead_tag:
+                len += sizeof(uint32_t);
                 break;
 
             default:
@@ -1050,6 +1060,26 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_device_sn_tag:
                 message.device_sn = pBoardConfig->boardSerialNumber;
                 break;
+            case DaqifiOutMessage_cap_version_tag:
+                message.cap_version = DAQIFI_CAPABILITIES_VERSION;
+                break;
+            case DaqifiOutMessage_cap_max_freq_hz_tag:
+            case DaqifiOutMessage_cap_isr_max_hz_tag:
+            case DaqifiOutMessage_cap_type1_agg_hz_tag:
+            case DaqifiOutMessage_cap_tick_budget_tag:
+            case DaqifiOutMessage_cap_tick_overhead_tag:
+            {
+                /* Pull all streaming cap fields in one summary call to
+                 * avoid re-walking the channel config once per field. */
+                CapabilitiesStreamingSummary cap;
+                Capabilities_GetStreamingSummary(&cap);
+                message.cap_max_freq_hz    = cap.maxFreqHz;
+                message.cap_isr_max_hz     = cap.isrMaxHz;
+                message.cap_type1_agg_hz   = cap.type1AggMaxHz;
+                message.cap_tick_budget    = cap.tickBudget;
+                message.cap_tick_overhead  = cap.tickOverhead;
+                break;
+            }
             default:
                 // Skip unknown fields
                 break;

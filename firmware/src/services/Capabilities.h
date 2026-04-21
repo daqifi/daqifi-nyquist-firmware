@@ -66,6 +66,28 @@ typedef struct {
     uint16_t pwmCapableMask;    /* bit N set ⇒ DIO_N has an OCMP mapping */
 } CapabilitiesDioSummary;
 
+/*
+ * Streaming cap state for the currently-enabled channel set.
+ * The cap formula constants (ISR ceiling, Type 1 aggregate max,
+ * per-tick budget and overhead) are compile-time in the firmware
+ * but emitted here so clients can predict caps for hypothetical
+ * configurations locally without round-tripping.
+ */
+typedef struct {
+    uint32_t maxFreqHz;         /* current-config cap; 0 if no channels */
+    uint32_t isrMaxHz;
+    uint32_t type1AggMaxHz;
+    uint32_t tickBudget;
+    uint32_t tickOverhead;
+} CapabilitiesStreamingSummary;
+
+/**
+ * Fill out_summary with current streaming cap + formula constants.
+ *
+ * @param[out] out_summary must not be NULL.
+ */
+void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out_summary);
+
 /**
  * Fill out_summary from the current tBoardConfig snapshot.
  * Safe to call from any task context — reads are idempotent.

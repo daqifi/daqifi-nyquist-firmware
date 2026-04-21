@@ -3283,6 +3283,73 @@ static scpi_result_t SCPI_CapabilitiesDioGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/*
+ * CONFigure:CAPabilities:JSON?
+ * Unified capability rollup per issue #327. Composes APIVersion +
+ * identity + AIN + DIO + streaming cap into a single self-describing
+ * JSON document so a new client can populate an entire UI from one
+ * query instead of chaining four.
+ *
+ * Emits via scpi_printf in chunks. Each scpi_printf call writes
+ * directly to the libscpi transport via interface->write — same
+ * mechanism other diagnostic dumps use (SYST:POW:BQ:REGisters?,
+ * SYST:WINC:GATE?). Chunked so the formatted document can exceed
+ * the scpi_printf 192-byte buffer as the schema grows.
+ *
+ * Format is JSON rather than key=value because the schema has
+ * nested structure (identity, ain, dio, streaming) — that grows
+ * better as structured data than as a flat key list.
+ */
+static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
+    const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    CapabilitiesAinSummary a;
+    CapabilitiesDioSummary d;
+    CapabilitiesStreamingSummary st;
+    Capabilities_GetAinSummary(&a);
+    Capabilities_GetDioSummary(&d);
+    Capabilities_GetStreamingSummary(&st);
+
+    scpi_printf(context,
+        "{\"version\":%u,"
+        "\"identity\":{\"vendor\":\"DAQiFi\",\"model\":\"Nyquist\","
+        "\"variant\":%u,\"firmware\":\"%s\",\"hardware\":\"%s\","
+        "\"serial_hex\":\"%llX\"},",
+        (unsigned)DAQIFI_CAPABILITIES_VERSION,
+        (unsigned)cfg->BoardVariant,
+        cfg->boardFirmwareRev,
+        cfg->boardHardwareRev,
+        (unsigned long long)cfg->boardSerialNumber);
+
+    scpi_printf(context,
+        "\"ain\":{\"public_count\":%u,\"type1_count\":%u,\"type2_count\":%u,"
+        "\"type1_mask\":%u,\"type2_mask\":%u,\"resolution_bits\":%u,"
+        "\"has_ad7609\":%s},",
+        (unsigned)a.publicChannelCount,
+        (unsigned)a.type1Count,
+        (unsigned)a.type2Count,
+        (unsigned)a.type1Bitmask,
+        (unsigned)a.type2Bitmask,
+        (unsigned)a.primaryResolutionBits,
+        a.hasAD7609 ? "true" : "false");
+
+    scpi_printf(context,
+        "\"dio\":{\"channel_count\":%u,\"pwm_capable_mask\":%u},",
+        (unsigned)d.channelCount,
+        (unsigned)d.pwmCapableMask);
+
+    scpi_printf(context,
+        "\"streaming\":{\"max_freq_hz\":%u,\"isr_max_hz\":%u,"
+        "\"type1_agg_max_hz\":%u,\"tick_budget\":%u,\"tick_overhead\":%u}}"
+        "\r\n",
+        (unsigned)st.maxFreqHz,
+        (unsigned)st.isrMaxHz,
+        (unsigned)st.type1AggMaxHz,
+        (unsigned)st.tickBudget,
+        (unsigned)st.tickOverhead);
+
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -3434,6 +3501,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
     {.pattern = "CONFigure:CAPabilities:AIN?", .callback = SCPI_CapabilitiesAinGet,},
     {.pattern = "CONFigure:CAPabilities:DIO?", .callback = SCPI_CapabilitiesDioGet,},
+    {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
     {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
     {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
     {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},

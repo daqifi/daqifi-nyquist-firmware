@@ -93,4 +93,17 @@ message DaqifiOutMessage
 	string device_hw_rev = 67;						//  Device hardware revision
 	string device_fw_rev = 68;						//  Device firmware revision
     uint64 device_sn = 69;                         //  Device serial number
+
+    // Capability framework (#327) — optional top-level fields so a
+    // client that receives a device-info message can learn the
+    // streaming frequency cap for the reported channel configuration
+    // without a second round-trip. Full capability schema is still
+    // owned by the SCPI CONFigure:CAPabilities:JSON? command; these
+    // fields carry the most actionable subset inline.
+    uint32 cap_version         = 70;  // DAQIFI_CAPABILITIES_VERSION
+    uint32 cap_max_freq_hz     = 71;  // current-config streaming cap
+    uint32 cap_isr_max_hz      = 72;  // formula constant
+    uint32 cap_type1_agg_hz    = 73;  // formula constant
+    uint32 cap_tick_budget     = 74;  // formula constant
+    uint32 cap_tick_overhead   = 75;  // formula constant
 }

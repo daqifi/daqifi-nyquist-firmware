@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "state/board/BoardConfig.h"
+#include "services/streaming.h"
 
 void Capabilities_GetAinSummary(CapabilitiesAinSummary* out_summary) {
     if (out_summary == NULL) return;
@@ -81,6 +82,7 @@ void Capabilities_GetDioSummary(CapabilitiesDioSummary* out_summary) {
 
     const DIOArray* dio = &cfg->DIOChannels;
     out_summary->channelCount = (uint16_t)dio->Size;
+
     /* INVARIANT: DIO channel number == DIOChannels.Data[] index. The
      * DIOConfig struct has no explicit channel-ID field because the
      * entire firmware relies on this mapping (see DIOProbe, DIO HAL,
@@ -92,4 +94,21 @@ void Capabilities_GetDioSummary(CapabilitiesDioSummary* out_summary) {
             out_summary->pwmCapableMask |= (uint16_t)(1u << i);
         }
     }
+}
+
+void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out_summary) {
+    if (out_summary == NULL) return;
+    memset(out_summary, 0, sizeof(*out_summary));
+
+    uint16_t type1 = 0;
+    uint16_t total = 0;
+    Streaming_CountActiveChannels(&type1, &total, NULL);
+    /* Mirrors SCPI_GetMaxStreamFreq: 0 public channels → no valid
+     * streaming rate. Reporting the ISR ceiling in that state would
+     * advertise rates that StartStreamData would reject. */
+    out_summary->maxFreqHz = (total > 0) ? Streaming_ComputeMaxFreq(type1, total) : 0;
+    out_summary->isrMaxHz      = STREAMING_ISR_MAX_HZ;
+    out_summary->type1AggMaxHz = STREAMING_TYPE1_AGG_MAX_HZ;
+    out_summary->tickBudget    = STREAMING_TICK_BUDGET;
+    out_summary->tickOverhead  = STREAMING_TICK_OVERHEAD;
 }
