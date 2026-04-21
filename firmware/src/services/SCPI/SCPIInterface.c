@@ -39,6 +39,7 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
 #include "../csv_encoder.h"
@@ -3214,6 +3215,63 @@ static scpi_result_t SCPI_WincGateQ(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/*
+ * CONFigure:CAPabilities:APIVersion?
+ * Returns the capability schema version byte so clients can dispatch
+ * to the right parser before issuing any other capability query. See
+ * Capabilities.h (DAQIFI_CAPABILITIES_VERSION) and issue #327.
+ */
+static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
+    SCPI_ResultUInt32(context, (uint32_t)DAQIFI_CAPABILITIES_VERSION);
+    return SCPI_RES_OK;
+}
+
+/*
+ * CONFigure:CAPabilities:AIN?
+ * Summary of public ADC topology for the current board. Bitmasks are
+ * indexed by DaqifiAdcChannelId so a client that already knows the
+ * user-facing channel numbers can index them directly.
+ */
+static scpi_result_t SCPI_CapabilitiesAinGet(scpi_t * context) {
+    CapabilitiesAinSummary s;
+    Capabilities_GetAinSummary(&s);
+
+    char buf[160];
+    int n = snprintf(buf, sizeof(buf),
+        "PublicCount=%u,Type1Count=%u,Type2Count=%u,"
+        "Type1Mask=%u,Type2Mask=%u,Resolution=%u,HasAD7609=%u",
+        (unsigned)s.publicChannelCount,
+        (unsigned)s.type1Count,
+        (unsigned)s.type2Count,
+        (unsigned)s.type1Bitmask,
+        (unsigned)s.type2Bitmask,
+        (unsigned)s.primaryResolutionBits,
+        (unsigned)s.hasAD7609);
+    if (n < 0 || (size_t)n >= sizeof(buf)) return SCPI_RES_ERR;
+    SCPI_ResultCharacters(context, buf, (size_t)n);
+    return SCPI_RES_OK;
+}
+
+/*
+ * CONFigure:CAPabilities:DIO?
+ * Summary of DIO topology + PWM-capable pin bitmask (bit N set ⇒
+ * DIO_N has an OCMP mapping and accepts PWM config). Clients gate
+ * their UI's PWM controls on this mask.
+ */
+static scpi_result_t SCPI_CapabilitiesDioGet(scpi_t * context) {
+    CapabilitiesDioSummary s;
+    Capabilities_GetDioSummary(&s);
+
+    char buf[96];
+    int n = snprintf(buf, sizeof(buf),
+        "ChannelCount=%u,PwmCapableMask=%u",
+        (unsigned)s.channelCount,
+        (unsigned)s.pwmCapableMask);
+    if (n < 0 || (size_t)n >= sizeof(buf)) return SCPI_RES_ERR;
+    SCPI_ResultCharacters(context, buf, (size_t)n);
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -3360,6 +3418,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet,},
     {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet,},
     {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet,},
+    /* Capability framework (#327) — see Capabilities.h */
+    {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
+    {.pattern = "CONFigure:CAPabilities:AIN?", .callback = SCPI_CapabilitiesAinGet,},
+    {.pattern = "CONFigure:CAPabilities:DIO?", .callback = SCPI_CapabilitiesDioGet,},
     {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
     {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
     {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},

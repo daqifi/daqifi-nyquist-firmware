@@ -410,6 +410,7 @@
         <itemPath>../src/services/streaming.h</itemPath>
         <itemPath>../src/services/JSON_Encoder.h</itemPath>
         <itemPath>../src/services/csv_encoder.h</itemPath>
+        <itemPath>../src/services/Capabilities.h</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
@@ -984,6 +985,7 @@
         <itemPath>../src/services/streaming.c</itemPath>
         <itemPath>../src/services/JSON_Encoder.c</itemPath>
         <itemPath>../src/services/csv_encoder.c</itemPath>
+        <itemPath>../src/services/Capabilities.c</itemPath>
       </logicalFolder>
       <logicalFolder name="state" displayName="state" projectFiles="true">
         <logicalFolder name="board" displayName="board" projectFiles="true">
