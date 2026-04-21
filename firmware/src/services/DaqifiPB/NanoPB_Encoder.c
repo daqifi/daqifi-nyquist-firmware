@@ -1072,20 +1072,45 @@ size_t Nanopb_Encode(tBoardData* state,
             case DaqifiOutMessage_cap_version_tag:
                 message.cap_version = DAQIFI_CAPABILITIES_VERSION;
                 break;
+            /* Each cap_* tag must set only its own message field.
+             * The length pre-calc upstream adds varint space per-tag;
+             * setting additional fields here makes them non-zero and
+             * proto3 encodes them, which would overflow the buffer
+             * sized for only the tags the caller requested. */
             case DaqifiOutMessage_cap_max_freq_hz_tag:
+                if (!capStreamCached) {
+                    Capabilities_GetStreamingSummary(&capStream);
+                    capStreamCached = true;
+                }
+                message.cap_max_freq_hz = capStream.maxFreqHz;
+                break;
             case DaqifiOutMessage_cap_isr_max_hz_tag:
+                if (!capStreamCached) {
+                    Capabilities_GetStreamingSummary(&capStream);
+                    capStreamCached = true;
+                }
+                message.cap_isr_max_hz = capStream.isrMaxHz;
+                break;
             case DaqifiOutMessage_cap_type1_agg_hz_tag:
+                if (!capStreamCached) {
+                    Capabilities_GetStreamingSummary(&capStream);
+                    capStreamCached = true;
+                }
+                message.cap_type1_agg_hz = capStream.type1AggMaxHz;
+                break;
             case DaqifiOutMessage_cap_tick_budget_tag:
+                if (!capStreamCached) {
+                    Capabilities_GetStreamingSummary(&capStream);
+                    capStreamCached = true;
+                }
+                message.cap_tick_budget = capStream.tickBudget;
+                break;
             case DaqifiOutMessage_cap_tick_overhead_tag:
                 if (!capStreamCached) {
                     Capabilities_GetStreamingSummary(&capStream);
                     capStreamCached = true;
                 }
-                message.cap_max_freq_hz    = capStream.maxFreqHz;
-                message.cap_isr_max_hz     = capStream.isrMaxHz;
-                message.cap_type1_agg_hz   = capStream.type1AggMaxHz;
-                message.cap_tick_budget    = capStream.tickBudget;
-                message.cap_tick_overhead  = capStream.tickOverhead;
+                message.cap_tick_overhead = capStream.tickOverhead;
                 break;
             default:
                 // Skip unknown fields
