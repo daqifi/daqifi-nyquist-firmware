@@ -401,8 +401,8 @@ scpi_result_t SCPI_Help(scpi_t* context);
 // docs and issue #347 for the underlying stack-overflow story).
 // Statically allocated mutex (configSUPPORT_STATIC_ALLOCATION=1) so there's
 // no heap-allocation failure path.
-static_assert(SCPI_RESPONSE_BUF_SIZE >= DaqifiOutMessage_size,
-              "SCPI_RESPONSE_BUF_SIZE must hold the largest SCPI response");
+_Static_assert(SCPI_RESPONSE_BUF_SIZE >= DaqifiOutMessage_size,
+               "SCPI_RESPONSE_BUF_SIZE must hold the largest SCPI response");
 static uint8_t gScpiRespBuf[SCPI_RESPONSE_BUF_SIZE];
 static StaticSemaphore_t gScpiRespMutexStorage;
 static SemaphoreHandle_t gScpiRespMutex = NULL;
