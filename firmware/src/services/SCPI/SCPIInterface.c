@@ -402,7 +402,13 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
         param1 = 0;
     }
 
-    uint8_t buffer[DaqifiOutMessage_size];
+    // #347: static (not stack-allocated). The TCP path runs this callback on
+    // WifiTask (1024-word / 4 KB stack). Measured depth at entry via TCP was
+    // 808 words; adding a 2008-byte stack buffer plus Nanopb frame overhead
+    // overflows the stack by ~280+ words, corrupting adjacent FreeRTOS state
+    // and killing USB CDC + TCP until power cycle. USB CDC path has a 3 KB+
+    // stack and had always been safe — that's why it wasn't caught before.
+    static uint8_t buffer[DaqifiOutMessage_size];
     size_t count = Nanopb_Encode(
             pBoardData,
             (const NanopbFlagsArray *) &fields_info,
