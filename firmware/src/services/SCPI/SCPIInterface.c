@@ -3561,8 +3561,15 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // #347: init the SysInfoGet buffer mutex once (both USB and WiFi init
     // call this during boot; boot is single-threaded so no race here).
+    // If creation fails (OOM at boot — extremely unlikely since heap is
+    // fresh), SCPI_SysInfoGet falls through without serialization. This
+    // LOG_E surfaces the degraded state so operators can notice.
     if (gSysInfoMutex == NULL) {
         gSysInfoMutex = xSemaphoreCreateMutex();
+        if (gSysInfoMutex == NULL) {
+            LOG_E("SCPI: failed to create SysInfoGet mutex — concurrent "
+                  "USB+TCP SysInfoPB may corrupt responses");
+        }
     }
 
     // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
