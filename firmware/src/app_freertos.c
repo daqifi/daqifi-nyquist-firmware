@@ -701,7 +701,16 @@ static void app_TasksCreate() {
 
     errStatus = xTaskCreate((TaskFunction_t) app_WifiTask,
             "WifiTask",
-            1024,  // Profiled: 360 words peak. 3x margin for unknown WiFi driver depth. (was 3000)
+            2048,  // #347 defense-in-depth: was 1024 (profiled 360-word peak on WiFi
+                   // state machine alone). TCP SCPI path (wifi_tcp_server → microrl →
+                   // libscpi → callback) consumes ~808 words at callback entry.
+                   // Callbacks with large stack buffers (SCPI_Help 512 B, SCPI_SysInfoPB
+                   // 2008 B, benchmark 512 B) could push past the 1024 limit and
+                   // corrupt adjacent FreeRTOS state — observed on #347 with
+                   // SysInfoPB (which is also individually fixed with static buffer).
+                   // 2048 words gives ~1000-word headroom over the measured 808-word
+                   // TCP-SCPI entry depth, covering current callbacks and plausible
+                   // future ones without per-site static-buffer fixes.
             NULL,
             2,
             NULL);

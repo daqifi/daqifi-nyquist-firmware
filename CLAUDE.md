@@ -652,7 +652,7 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 | 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use 512-byte locals |
 | 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
 | 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
-| 2 | `app_WifiTask` | 1024 | 360 | WiFi state machine + TCP |
+| 2 | `app_WifiTask` | 2048 | 808 (at TCP SCPI callback entry) | WiFi state machine + TCP; SCPI path consumes ~800 words on TCP, bumped from 1024 per #347 |
 | 2 | `lWDRV_WINC_Tasks` | 1024 | 290 | WINC1500 driver background |
 | 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
 | 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
