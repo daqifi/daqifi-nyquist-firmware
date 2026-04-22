@@ -2,6 +2,7 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
+#include "semphr.h"  // #347: mutex for SysInfoGet static buffer
 
 
 //// General
@@ -394,6 +395,19 @@ scpi_result_t SCPI_Help(scpi_t* context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 
+// #347: mutex guarding gSysInfoBuffer. Created once in CreateSCPIContext().
+// USB and TCP SCPI run on separate tasks at different priorities; both may
+// call SCPI_SysInfoGet concurrently, so the shared buffer must be serialized.
+static SemaphoreHandle_t gSysInfoMutex = NULL;
+
+// #347: moved from stack to BSS to avoid WifiTask stack overflow. WifiTask
+// has a 1024-word stack; TCP → microrl → libscpi already consumes ~808
+// words on entry, leaving only ~216 free. A 2008-byte stack-local buffer
+// plus Nanopb frame overhead would push total demand past the stack end,
+// corrupting adjacent FreeRTOS state (observed: USB CDC + TCP both hang
+// until power cycle). USB CDC path has a 3 KB+ stack so it was safe there.
+static uint8_t gSysInfoBuffer[DaqifiOutMessage_size];
+
 static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     int param1;
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
@@ -402,22 +416,26 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
         param1 = 0;
     }
 
-    // #347: static (not stack-allocated). The TCP path runs this callback on
-    // WifiTask (1024-word / 4 KB stack). Measured depth at entry via TCP was
-    // 808 words; adding a 2008-byte stack buffer plus Nanopb frame overhead
-    // overflows the stack by ~280+ words, corrupting adjacent FreeRTOS state
-    // and killing USB CDC + TCP until power cycle. USB CDC path has a 3 KB+
-    // stack and had always been safe — that's why it wasn't caught before.
-    static uint8_t buffer[DaqifiOutMessage_size];
+    if (gSysInfoMutex != NULL &&
+        xSemaphoreTake(gSysInfoMutex, portMAX_DELAY) != pdTRUE) {
+        return SCPI_RES_ERR;
+    }
+
     size_t count = Nanopb_Encode(
             pBoardData,
             (const NanopbFlagsArray *) &fields_info,
-            buffer, DaqifiOutMessage_size);
+            gSysInfoBuffer, DaqifiOutMessage_size);
+    scpi_result_t result = SCPI_RES_OK;
     if (count < 1) {
-        return SCPI_RES_ERR;
+        result = SCPI_RES_ERR;
+    } else {
+        context->interface->write(context, (char*) gSysInfoBuffer, count);
     }
-    context->interface->write(context, (char*) buffer, count);
-    return SCPI_RES_OK;
+
+    if (gSysInfoMutex != NULL) {
+        xSemaphoreGive(gSysInfoMutex);
+    }
+    return result;
 }
 
 
@@ -3541,6 +3559,12 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
 }
 
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
+    // #347: init the SysInfoGet buffer mutex once (both USB and WiFi init
+    // call this during boot; boot is single-threaded so no race here).
+    if (gSysInfoMutex == NULL) {
+        gSysInfoMutex = xSemaphoreCreateMutex();
+    }
+
     // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
     static char modelString[8] = {0};  // Initialize to prevent garbage data
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
