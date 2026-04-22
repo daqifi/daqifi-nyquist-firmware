@@ -407,7 +407,20 @@ static uint8_t gScpiRespBuf[SCPI_RESPONSE_BUF_SIZE];
 static StaticSemaphore_t gScpiRespMutexStorage;
 static SemaphoreHandle_t gScpiRespMutex = NULL;
 
+void SCPI_ResponseBuf_Init(void) {
+    // Idempotent: if SCPI_Init is called more than once (e.g. directly from
+    // app boot AND implicitly from the first CreateSCPIContext), the second
+    // call is a no-op.
+    if (gScpiRespMutex == NULL) {
+        gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
+    }
+}
+
 uint8_t* SCPI_ResponseBuf_Take(void) {
+    // gScpiRespMutex is NULL only if SCPI_ResponseBuf_Init() was not called
+    // before any SCPI dispatch — that would be a programming error. Defensive
+    // NULL return keeps the device alive (caller returns SCPI_RES_ERR) rather
+    // than dereferencing a NULL handle.
     if (gScpiRespMutex == NULL) {
         return NULL;
     }
@@ -2813,9 +2826,14 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     // Calculate starting position in circular buffer
     int startIdx = (usbSettings->cmdHistoryHead - usbSettings->cmdHistoryCount + SCPI_CMD_HISTORY_SIZE) % SCPI_CMD_HISTORY_SIZE;
 
-    // Send header
+    // Send header — guard against snprintf encoding errors (< 0) and
+    // clamp to buffer size if the output would otherwise be truncated.
     int len = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "Last %d commands:\r\n", usbSettings->cmdHistoryCount);
-    context->interface->write(context, buffer, len);
+    if (len > 0) {
+        size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
+                      ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+        context->interface->write(context, buffer, wlen);
+    }
 
     // Send command history
     for (int i = 0; i < usbSettings->cmdHistoryCount; i++) {
@@ -2823,7 +2841,11 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         len = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "%d: %s\r\n",
                       usbSettings->cmdHistoryCount - i,
                       usbSettings->cmdHistory[idx]);
-        context->interface->write(context, buffer, len);
+        if (len > 0) {
+            size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
+                          ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+            context->interface->write(context, buffer, wlen);
+        }
     }
 
     SCPI_ResponseBuf_Give();
@@ -3521,6 +3543,29 @@ static const scpi_command_t scpi_commands[] = {
 char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
 scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
 
+// Append formatted text to `buffer` at offset `count`, flushing via
+// `context->interface->write` when the next chunk would overflow. Returns
+// the updated count. snprintf negative returns (encoding errors) are
+// treated as empty append — safer than storing -1 into size_t.
+static size_t scpi_help_append(scpi_t* context, char* buffer, size_t count,
+                               const char* pattern) {
+    size_t cmdSize = strlen(pattern) + 5;  // "  " + pattern + "\r\n"
+    if (count + cmdSize >= SCPI_RESPONSE_BUF_SIZE) {
+        buffer[count] = '\0';
+        context->interface->write(context, buffer, count);
+        count = 0;
+    }
+    int n = snprintf(buffer + count, SCPI_RESPONSE_BUF_SIZE - count,
+                     "  %s\r\n", pattern);
+    if (n > 0) {
+        size_t added = (size_t)n < (SCPI_RESPONSE_BUF_SIZE - count)
+                       ? (size_t)n
+                       : (SCPI_RESPONSE_BUF_SIZE - count - 1);
+        count += added;
+    }
+    return count;
+}
+
 scpi_result_t SCPI_Help(scpi_t* context) {
     // #347: shared SCPI response scratch buffer (was stack-local char[512]).
     char* buffer = (char*)SCPI_ResponseBuf_Take();
@@ -3530,20 +3575,14 @@ scpi_result_t SCPI_Help(scpi_t* context) {
     size_t numCommands = sizeof (scpi_commands) / sizeof (scpi_command_t);
     size_t i = 0;
 
-    size_t count = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
-                            "%s", "\r\nImplemented:\r\n");
+    int hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
+                       "%s", "\r\nImplemented:\r\n");
+    size_t count = (hdr > 0) ? (size_t)hdr : 0;
     for (i = 0; i < numCommands; ++i) {
         if (scpi_commands[i].callback != SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
-            size_t cmdSize = strlen(scpi_commands[i].pattern) + 5;
-            if (count + cmdSize >= SCPI_RESPONSE_BUF_SIZE) {
-                buffer[count] = '\0';
-                context->interface->write(context, buffer, count);
-                count = 0;
-            }
-
-            count += snprintf(buffer + count, SCPI_RESPONSE_BUF_SIZE - count,
-                              "  %s\r\n", scpi_commands[i].pattern);
+            count = scpi_help_append(context, buffer, count,
+                                     scpi_commands[i].pattern);
         }
     }
 
@@ -3551,20 +3590,14 @@ scpi_result_t SCPI_Help(scpi_t* context) {
         context->interface->write(context, buffer, count);
     }
 
-    count = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
-                     "%s", "\r\nNot Implemented:\r\n");
+    hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
+                   "%s", "\r\nNot Implemented:\r\n");
+    count = (hdr > 0) ? (size_t)hdr : 0;
     for (i = 0; i < numCommands; ++i) {
         if (scpi_commands[i].callback == SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
-            size_t cmdSize = strlen(scpi_commands[i].pattern) + 5;
-            if (count + cmdSize >= SCPI_RESPONSE_BUF_SIZE) {
-                buffer[count] = '\0';
-                context->interface->write(context, buffer, count);
-                count = 0;
-            }
-
-            count += snprintf(buffer + count, SCPI_RESPONSE_BUF_SIZE - count,
-                              "  %s\r\n", scpi_commands[i].pattern);
+            count = scpi_help_append(context, buffer, count,
+                                     scpi_commands[i].pattern);
         }
     }
 
@@ -3594,14 +3627,11 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
 }
 
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
-    // #347: init the shared SCPI response-buffer mutex once, using static
-    // storage so it cannot fail (unlike xSemaphoreCreateMutex which can
-    // return NULL under heap pressure and would leave the buffer
-    // unserialized). Both USB and WiFi init call CreateSCPIContext during
-    // boot, which is single-threaded — no race on the NULL check.
-    if (gScpiRespMutex == NULL) {
-        gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
-    }
+    // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been
+    // called during app boot before any transport creates its SCPI context.
+    // Call it again here — it's idempotent — so the shared response-buffer
+    // mutex is guaranteed to exist before any callback could dispatch.
+    SCPI_ResponseBuf_Init();
 
     // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
     static char modelString[8] = {0};  // Initialize to prevent garbage data

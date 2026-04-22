@@ -14,6 +14,17 @@ extern "C" {
 #endif
 
     /**
+     * One-time init for the shared SCPI response buffer mutex (statically
+     * allocated, so this cannot fail). MUST be called exactly once during
+     * app boot, before any transport creates its SCPI context and before
+     * any SCPI command can be dispatched. Idempotent — safe to call more
+     * than once, subsequent calls are no-ops.
+     * Separate name from libscpi's `SCPI_Init(context)` which initializes
+     * a per-transport context object.
+     */
+    void SCPI_ResponseBuf_Init(void);
+
+    /**
      * Creates a new SCPI context object.
      * This allows us to have multiple independent consoles.
      * @param interface Defines the SCPI callback functions
