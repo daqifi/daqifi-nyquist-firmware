@@ -649,7 +649,7 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 | 9 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
 | 9 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
 | 7 | `app_PowerAndUITask` | 512 | 226 | UI + BQ24297 power, FPU |
-| 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use 512-byte locals |
+| 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use shared response buffer (see below) |
 | 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
 | 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
 | 2 | `app_WifiTask` | 1024 | 360 | WiFi state machine + TCP |
@@ -662,6 +662,8 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TCP + power cycles. Sized at 2-3x measured peak. Query at runtime: `SYST:MEM:STACk?`
 
 **WARNING**: If recursive SD directory listing is enabled, `app_SDCardTask` needs 10KB+ (~550 bytes per nesting level).
+
+**SCPI shared response buffer**: Any SCPI callback needing ≥256 B of scratch MUST use `SCPI_ResponseBuf_Take()` / `SCPI_ResponseBuf_Give()` rather than a stack local. The shared buffer is a single 2048-byte static in BSS guarded by a statically-allocated mutex (`configSUPPORT_STATIC_ALLOCATION=1`). Rationale: WifiTask's stack is only 1024 words; the TCP → microrl → libscpi path consumes ~808 words before the callback runs, so a large stack-local buffer inside a SCPI callback can overflow (issue #347). Callers that use the shared pattern keep SCPI stack depth below the measured 372-word WifiTask peak. Current users: `SCPI_SysInfoGet`, `SCPI_SysInfoTextGet`, `SCPI_GetCommandHistory`, `SCPI_Help`, `SCPI_StorageSDBenchmark`.
 
 **Scheduling implications**: Capture tasks at priority 9 preempt everything to guarantee deterministic sample timing. The encoder at priority 6 preempts WiFi/WINC/background (priority 2) and SD (priority 5), but stays below USB (7) so SCPI commands remain responsive during streaming. SD task at priority 5 sits above background transports but below encoder — prevents encoder from starving SD writes when USB+SD both active. Encoder's `Streaming_WriteWithRetry` uses `vTaskDelay(1)` (not `taskYIELD()`) in its retry loop so lower-priority SD actually gets CPU to drain circular buffer (#312). See `docs/PIPELINE_TIMING.md` for measurements (PR #308, Sessions 7-17).
 

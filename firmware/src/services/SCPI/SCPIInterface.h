@@ -22,6 +22,33 @@ extern "C" {
      */
     scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context);
 
+    /**
+     * Size of the shared SCPI response scratch buffer. Sized to hold the
+     * largest known SCPI response (DaqifiOutMessage protobuf, currently
+     * 2008 bytes). All callers that need ≥256 B of scratch should use this
+     * buffer rather than stack-allocating, especially those reachable on
+     * the TCP path where WifiTask stack is tight (see #347).
+     */
+    #define SCPI_RESPONSE_BUF_SIZE 2048U
+
+    /**
+     * Acquire the shared SCPI response scratch buffer.
+     * Blocks until the buffer mutex is available (portMAX_DELAY). Caller
+     * MUST pair every successful Take with exactly one Give.
+     * Returns NULL only if the mutex hasn't been created yet (shouldn't
+     * happen after CreateSCPIContext has run); callers should treat NULL
+     * as an internal error and return SCPI_RES_ERR.
+     * @return Pointer to the shared buffer (SCPI_RESPONSE_BUF_SIZE bytes)
+     *         or NULL on internal error.
+     */
+    uint8_t* SCPI_ResponseBuf_Take(void);
+
+    /**
+     * Release the shared SCPI response scratch buffer.
+     * Must only be called after a successful SCPI_ResponseBuf_Take.
+     */
+    void SCPI_ResponseBuf_Give(void);
+
     /*! Function pointer type for transport-level write (no SCPI context) */
     typedef size_t (*ScpiTransportWriteFn)(const char* data, size_t len);
 

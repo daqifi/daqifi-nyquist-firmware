@@ -403,16 +403,27 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
 
     // Start benchmark timing
     uint32_t startTime = xTaskGetTickCount();
-    
-    // Generate and write test data
-    uint8_t testBuffer[512]; // Write in 512-byte blocks
+
+    // #347: use shared SCPI response scratch buffer (was stack-local 512 B).
+    // Benchmark writes are chunked, so any slice of the shared buffer works.
+    uint8_t* testBuffer = (uint8_t*)SCPI_ResponseBuf_Take();
+    if (testBuffer == NULL) {
+        LOG_E("SD:BENCH - Could not acquire SCPI response buffer\r\n");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        gSDBenchmarkResults.testInProgress = false;
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+        result = SCPI_RES_ERR;
+        goto __exit_point;  // no Give needed — Take failed
+    }
+    const uint32_t kTestBufferChunk = 512;  // benchmark writes in 512 B blocks
     uint32_t bytesToWrite = testSizeKB * 1024;
     uint32_t bytesWritten = 0;
     
     while (bytesWritten < bytesToWrite) {
-        uint32_t chunkSize = (bytesToWrite - bytesWritten > sizeof(testBuffer)) ? 
-                            sizeof(testBuffer) : (bytesToWrite - bytesWritten);
-        
+        uint32_t chunkSize = (bytesToWrite - bytesWritten > kTestBufferChunk) ?
+                            kTestBufferChunk : (bytesToWrite - bytesWritten);
+
         // Fill buffer based on pattern
         switch (pattern) {
             case 0: // All zeros
@@ -429,7 +440,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                 }
                 break;
         }
-        
+
         // Write to SD card (WriteToBuffer has timeout protection)
         size_t written = sd_card_manager_WriteToBuffer((const char*)testBuffer, chunkSize);
         if (written != chunkSize) {
@@ -439,11 +450,14 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
+            SCPI_ResponseBuf_Give();
             goto __exit_point;
         }
-        
+
         bytesWritten += written;
     }
+    // Loop exited successfully — release shared buffer before post-flush phase.
+    SCPI_ResponseBuf_Give();
 
     // Trigger flush: set mode to NONE so SD task drains buffer and closes file
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
