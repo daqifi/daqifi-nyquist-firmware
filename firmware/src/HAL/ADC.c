@@ -296,13 +296,17 @@ void ADC_Tasks(void) {
     const AInArray* pChannels = &gpBoardConfig->AInChannels;
     AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
 
-    // Use min(config, runtime) so a size mismatch between board config and
-    // runtime config (their compile-time MAX_AIN_MOD vs MAX_AIN_RUNTIME_MOD
-    // differ) can't produce an out-of-bounds access in either array. On
-    // current NQ1/NQ3 both .Size fields agree; this is defensive.
+    // Use min(config, runtime, state) so a size mismatch across any of the
+    // three parallel arrays (their compile-time MAX_AIN_MOD vs
+    // MAX_AIN_RUNTIME_MOD vs the AInState array differ) can't produce an
+    // out-of-bounds access. On current NQ1/NQ3 all three .Size fields
+    // agree; this is defensive.
     size_t moduleCount = gpBoardRuntimeConfig->AInModules.Size;
     if (gpBoardConfig->AInModules.Size < moduleCount) {
         moduleCount = gpBoardConfig->AInModules.Size;
+    }
+    if (gpBoardData->AInState.Size < moduleCount) {
+        moduleCount = gpBoardData->AInState.Size;
     }
 
     for (moduleIndex = 0; moduleIndex < moduleCount; ++moduleIndex) {
