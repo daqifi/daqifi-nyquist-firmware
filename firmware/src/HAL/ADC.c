@@ -53,22 +53,8 @@ static bool ADC_WriteModuleState(
 
 /*! This function initialice the hardware neccesary for ADC
  * @param[in] pBoardAInModule Pointer to analog input module configuration
- * @param[in] pModuleChannels Pointer to module channels
  */
-static bool ADC_InitHardware(
-        AInModule* pBoardAInModule,
-        AInArray* pModuleChannels);
-
-/*!
- * Extracts channel information for the specified module
- * @param moduleChannels [out] Static channel data
- * @param moduleChannelRuntime [out] Runtime channel data
- * @param moduleId The module to search for
- */
-static void GetModuleChannelRuntimeData(
-        AInArray* moduleChannels,
-        AInRuntimeArray* moduleChannelRuntime,
-        uint8_t moduleId);
+static bool ADC_InitHardware(AInModule* pBoardAInModule);
 
 /*!
  * Handles AD7609 data acquisition from deferred interrupt task
@@ -199,30 +185,26 @@ void ADC_Init(
 }
 
 bool ADC_WriteChannelStateAll(void) {
+    // Pass global config pointers directly to per-ADC writers (#353). Earlier
+    // code stack-allocated AInArray + AInRuntimeArray (~5 KB) and memcpy'd
+    // the globals into them before calling. The callers never filtered by
+    // module — they just scanned the full list and skipped entries by Type —
+    // so the copy was pure overhead. On the WDRV_WINC_Tasks stack (4 KB)
+    // this overran and triggered vApplicationStackOverflowHook (#347 v2).
     size_t i;
     bool result = true;
-    AInArray moduleChannels;
-    AInRuntimeArray moduleChannelRuntime;
+    const AInArray* pChannels = &gpBoardConfig->AInChannels;
+    AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
 
     for (i = 0; i < gpBoardConfig->AInModules.Size; ++i) {
-        // Get channels associated with the current module
-        GetModuleChannelRuntimeData(
-                &moduleChannels,
-                &moduleChannelRuntime,
-                i);
-
-        // Delegate to the implementation
         switch (gpBoardConfig->AInModules.Data[i].Type) {
             case AIn_MC12bADC:
-                result &= MC12b_WriteStateAll(
-                        &moduleChannels,
-                        &moduleChannelRuntime);
+                result &= MC12b_WriteStateAll(pChannels, pRuntime);
                 break;
             case AIn_AD7609:
-                result &= AD7609_WriteStateAll(&moduleChannels, &moduleChannelRuntime);
+                result &= AD7609_WriteStateAll(pChannels, pRuntime);
                 break;
             default:
-                // Not implemented yet
                 break;
         }
     }
@@ -305,31 +287,22 @@ const AInModule* ADC_FindModule(AInType moduleType) {
 }
 
 void ADC_Tasks(void) {
-    size_t moduleIndex = 0;
+    // Uses global config pointers directly (#353). See ADC_WriteChannelStateAll
+    // for rationale — eliminates ~5 KB of stack use per call.
+    size_t moduleIndex;
     POWER_STATE powerState = gpBoardData->PowerData.powerState;
-    bool isPowered = (powerState == POWERED_UP ||                    
+    bool isPowered = (powerState == POWERED_UP ||
              powerState == POWERED_UP_EXT_DOWN);
-    AInArray moduleChannels;
-    bool canInit, initialized;
-    AInModule* module = &gpBoardConfig->AInModules.Data[moduleIndex];
-    const AInModuleRuntimeConfig* moduleRuntime =
-            &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
-    AInRuntimeArray moduleChannelRuntime;
+    const AInArray* pChannels = &gpBoardConfig->AInChannels;
+    AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
 
     for (moduleIndex = 0;
             moduleIndex < gpBoardRuntimeConfig->AInModules.Size;
             ++moduleIndex) {
-        // Update module pointer for current iteration
-        module = &gpBoardConfig->AInModules.Data[moduleIndex];
-        moduleRuntime = &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
-        
-        // Get channels associated with the current module
-        GetModuleChannelRuntimeData(
-                &moduleChannels,
-                &moduleChannelRuntime,
-                moduleIndex);
+        AInModule* module = &gpBoardConfig->AInModules.Data[moduleIndex];
+        const AInModuleRuntimeConfig* moduleRuntime =
+                &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
 
-        // Check if the module is enabled - if not, skip it
         bool isEnabled = (module->Type == AIn_MC12bADC || module->Type == AIn_AD7609 || isPowered) &&
                 moduleRuntime->IsEnabled;
         if (!isEnabled) {
@@ -341,15 +314,13 @@ void ADC_Tasks(void) {
         if (gpBoardData->AInState.Data[moduleIndex].AInTaskState ==
                 AINTASK_INITIALIZING) {
             // MC12bADC can init anytime, AD7609 requires isPowered (needs 10V rail)
-            canInit = (module->Type == AIn_MC12bADC) || (module->Type == AIn_AD7609 && isPowered);
-            initialized = false;
+            bool canInit = (module->Type == AIn_MC12bADC) || (module->Type == AIn_AD7609 && isPowered);
+            bool initialized = false;
 
             if (canInit) {
-                if (ADC_InitHardware(module, &moduleChannels)) {
+                if (ADC_InitHardware(module)) {
                     if (module->Type == AIn_MC12bADC) {
-                        MC12b_WriteStateAll(
-                                &moduleChannels,
-                                &moduleChannelRuntime);
+                        MC12b_WriteStateAll(pChannels, pRuntime);
                     }
                     ADC_WriteModuleState(moduleIndex, powerState);
                     gpBoardData->AInState.Data[moduleIndex].AInTaskState =
@@ -368,7 +339,7 @@ void ADC_Tasks(void) {
         }
     }
     if (!gpBoardRuntimeConfig->StreamingConfig.IsEnabled) {
-        for (int i = 0; i < gpBoardRuntimeConfig->AInModules.Size; i++)
+        for (size_t i = 0; i < gpBoardRuntimeConfig->AInModules.Size; i++)
             ADC_TriggerConversion(&gpBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
     }
 }
@@ -477,9 +448,7 @@ bool ADC_WriteModuleState(size_t moduleId, POWER_STATE powerState) {
     return result;
 }
 
-static bool ADC_InitHardware(
-        AInModule* pBoardAInModule,
-        AInArray* pModuleChannels) {
+static bool ADC_InitHardware(AInModule* pBoardAInModule) {
     bool result = false;
 
     switch (pBoardAInModule->Type) {
@@ -492,30 +461,10 @@ static bool ADC_InitHardware(
             result = AD7609_InitHardware(&pBoardAInModule->Config.AD7609);
             break;
         default:
-            // Not implemented yet
             break;
     }
 
     return result;
-}
-
-static void GetModuleChannelRuntimeData(
-        AInArray* moduleChannels,
-        AInRuntimeArray* moduleChannelRuntime,
-        uint8_t moduleId) {
-    moduleChannels->Size = 0;
-    moduleChannelRuntime->Size = 0;
-    size_t i;
-    for (i = 0; i < gpBoardConfig->AInChannels.Size; ++i) {
-
-        moduleChannels->Data[moduleChannels->Size] =
-                gpBoardConfig->AInChannels.Data[i];
-        moduleChannels->Size += 1;
-
-        moduleChannelRuntime->Data[moduleChannelRuntime->Size] =
-                gpBoardRuntimeConfig->AInChannels.Data[i];
-        moduleChannelRuntime->Size += 1;
-    }
 }
 
 void ADC_EOSInterruptCB(uintptr_t context) {
