@@ -224,7 +224,20 @@ bool ADC_WriteChannelStateAll(void) {
         result &= MC12b_WriteStateAll(pChannels, pRuntime);
     }
     if (hasAd7609) {
-        result &= AD7609_WriteStateAll(pChannels, pRuntime);
+        // AD7609_WriteStateAll short-circuits to false + LOG_E when the chip
+        // isn't initialized (pModuleConfigAD7609 == NULL), which happens
+        // whenever the board hasn't been powered up yet. Without this gate,
+        // any ENAble:VOLTage:DC call on an NQ3 booted unpowered would fail
+        // — even for MC12b-only enables — because AD7609's false would
+        // propagate up. Skip the call here when unpowered; the runtime
+        // config still holds the desired state, and AD7609_InitHardware
+        // will honor it once power comes on.
+        POWER_STATE powerState = gpBoardData->PowerData.powerState;
+        bool isPowered = (powerState == POWERED_UP ||
+                          powerState == POWERED_UP_EXT_DOWN);
+        if (isPowered) {
+            result &= AD7609_WriteStateAll(pChannels, pRuntime);
+        }
     }
 
     return result;
