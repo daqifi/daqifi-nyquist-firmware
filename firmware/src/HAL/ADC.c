@@ -347,11 +347,17 @@ void ADC_Tasks(void) {
     if (!gpBoardRuntimeConfig->StreamingConfig.IsEnabled) {
         for (size_t i = 0; i < gpBoardRuntimeConfig->AInModules.Size; i++) {
             const AInModule* m = &gpBoardConfig->AInModules.Data[i];
-            // Mirror the isEnabled gate above: MC12b is on-die, AD7609 needs
-            // the 10V rail. ADC_TriggerConversion_Generic also blocks when
-            // fully unpowered, so this is belt-and-suspenders — but skipping
-            // here makes the intent explicit and avoids the function call.
-            if (m->Type == AIn_AD7609 && !isPowered) {
+            const AInModuleRuntimeConfig* mr =
+                    &gpBoardRuntimeConfig->AInModules.Data[i];
+            // Same gate as the isEnabled check above: MC12b works in any power
+            // state, AD7609 requires the 10V rail, both require IsEnabled.
+            // ADC_TriggerConversion_Generic checks isPowered && IsEnabled too,
+            // so this is belt-and-suspenders — but skipping here is explicit
+            // and avoids the function call.
+            bool enabled = ((m->Type == AIn_MC12bADC) ||
+                            (m->Type == AIn_AD7609 && isPowered)) &&
+                           mr->IsEnabled;
+            if (!enabled) {
                 continue;
             }
             ADC_TriggerConversion(m, MC12B_ADC_TYPE_ALL);
