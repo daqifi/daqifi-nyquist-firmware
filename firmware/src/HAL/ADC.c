@@ -359,17 +359,23 @@ void ADC_Tasks(void) {
             const AInModule* m = &gpBoardConfig->AInModules.Data[i];
             const AInModuleRuntimeConfig* mr =
                     &gpBoardRuntimeConfig->AInModules.Data[i];
-            // Same gate as the isEnabled check above: MC12b works in any power
-            // state, AD7609 requires the 10V rail, both require IsEnabled.
-            // ADC_TriggerConversion_Generic checks isPowered && IsEnabled too,
-            // so this is belt-and-suspenders — but skipping here is explicit
-            // and avoids the function call.
+
+            // Mirror the outer gate plus runtime IsEnabled.
             bool enabled = ((m->Type == AIn_MC12bADC) ||
                             (m->Type == AIn_AD7609 && isPowered)) &&
                            mr->IsEnabled;
             if (!enabled) {
                 continue;
             }
+
+            // Only trigger on a module whose init completed. Anything other
+            // than AINTASK_IDLE (INITIALIZING, DISABLED, or already-running
+            // CONVSTART/BUSY) means the hardware is not in a safe state to
+            // kick off a new conversion here.
+            if (gpBoardData->AInState.Data[i].AInTaskState != AINTASK_IDLE) {
+                continue;
+            }
+
             ADC_TriggerConversion(m, MC12B_ADC_TYPE_ALL);
         }
     }
