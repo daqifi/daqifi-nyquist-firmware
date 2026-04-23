@@ -206,17 +206,25 @@ bool ADC_WriteChannelStateAll(void) {
         return false;
     }
 
+    // Post-#353 the writers scan the global channel list and filter by Type
+    // themselves, so each needs to run at most once regardless of how many
+    // AInModule entries declare that Type. Detect which types are present,
+    // then invoke each writer exactly once.
+    bool hasMc12b = false;
+    bool hasAd7609 = false;
     for (i = 0; i < gpBoardConfig->AInModules.Size; ++i) {
         switch (gpBoardConfig->AInModules.Data[i].Type) {
-            case AIn_MC12bADC:
-                result &= MC12b_WriteStateAll(pChannels, pRuntime);
-                break;
-            case AIn_AD7609:
-                result &= AD7609_WriteStateAll(pChannels, pRuntime);
-                break;
-            default:
-                break;
+            case AIn_MC12bADC: hasMc12b = true; break;
+            case AIn_AD7609:   hasAd7609 = true; break;
+            default: break;
         }
+    }
+
+    if (hasMc12b) {
+        result &= MC12b_WriteStateAll(pChannels, pRuntime);
+    }
+    if (hasAd7609) {
+        result &= AD7609_WriteStateAll(pChannels, pRuntime);
     }
 
     return result;
@@ -305,6 +313,15 @@ void ADC_Tasks(void) {
              powerState == POWERED_UP_EXT_DOWN);
     const AInArray* pChannels = &gpBoardConfig->AInChannels;
     AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
+
+    // MC12b_WriteStateAll below indexes pRuntime->Data[i] for i < pChannels->Size.
+    // Catch any mismatch here rather than in the writer, same as
+    // ADC_WriteChannelStateAll's guard.
+    if (pChannels->Size != pRuntime->Size) {
+        LOG_E("ADC_Tasks: channel size mismatch cfg=%u rt=%u",
+              (unsigned)pChannels->Size, (unsigned)pRuntime->Size);
+        return;
+    }
 
     // Use min(config, runtime, state) so a size mismatch across any of the
     // three parallel arrays (their compile-time MAX_AIN_MOD vs
