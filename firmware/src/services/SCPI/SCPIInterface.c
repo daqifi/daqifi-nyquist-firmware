@@ -408,12 +408,21 @@ static StaticSemaphore_t gScpiRespMutexStorage;
 static SemaphoreHandle_t gScpiRespMutex = NULL;
 
 void SCPI_ResponseBuf_Init(void) {
-    // Idempotent: if SCPI_Init is called more than once (e.g. directly from
-    // app boot AND implicitly from the first CreateSCPIContext), the second
-    // call is a no-op.
+    // Idempotent: if SCPI_ResponseBuf_Init is called more than once (e.g.
+    // directly from app boot AND implicitly from the first CreateSCPIContext),
+    // the second call is a no-op.
+    //
+    // The check-and-create pair is guarded by a critical section. The
+    // intended caller is single-threaded (app_SystemInit runs pre-scheduler,
+    // then CreateSCPIContext runs during serial boot-time transport init)
+    // and taskENTER_CRITICAL is a no-op before the scheduler starts, so this
+    // is cost-free in practice. The guard catches any future misuse where
+    // SCPI_ResponseBuf_Init is invoked concurrently.
+    taskENTER_CRITICAL();
     if (gScpiRespMutex == NULL) {
         gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
     }
+    taskEXIT_CRITICAL();
 }
 
 uint8_t* SCPI_ResponseBuf_Take(void) {
