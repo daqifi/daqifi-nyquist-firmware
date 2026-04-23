@@ -303,7 +303,13 @@ void ADC_Tasks(void) {
         const AInModuleRuntimeConfig* moduleRuntime =
                 &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
 
-        bool isEnabled = (module->Type == AIn_MC12bADC || module->Type == AIn_AD7609 || isPowered) &&
+        // AD7609 needs the 10 V rail, so it can't be "enabled" without power.
+        // MC12b is on-die and works in any power state. Original expression
+        // `(MC12b || AD7609 || isPowered)` was tautological (exhaustive over the
+        // two AInTypes) and the isPowered disjunct was dead — the real intent
+        // (mirrored by canInit below) is power-gate AD7609 only.
+        bool isEnabled = ((module->Type == AIn_MC12bADC) ||
+                          (module->Type == AIn_AD7609 && isPowered)) &&
                 moduleRuntime->IsEnabled;
         if (!isEnabled) {
             gpBoardData->AInState.Data[moduleIndex].AInTaskState =
@@ -452,11 +458,19 @@ static bool ADC_InitHardware(AInModule* pBoardAInModule) {
     bool result = false;
 
     switch (pBoardAInModule->Type) {
-        case AIn_MC12bADC:
+        case AIn_MC12bADC: {
+            // Use the module's position in AInModules, NOT its enum Type, to
+            // index AInModulesRuntimeConfig. Type-as-index happens to work when
+            // board config order matches enum order but is a latent bug.
+            uint8_t moduleIndex = ADC_FindModuleIndex(pBoardAInModule);
+            if (moduleIndex >= gpBoardRuntimeConfig->AInModules.Size) {
+                break;
+            }
             result = MC12b_InitHardware(
                     &pBoardAInModule->Config.MC12b,
-                    &gpBoardRuntimeConfig->AInModules.Data[pBoardAInModule->Type]);
+                    &gpBoardRuntimeConfig->AInModules.Data[moduleIndex]);
             break;
+        }
         case AIn_AD7609:
             result = AD7609_InitHardware(&pBoardAInModule->Config.AD7609);
             break;
