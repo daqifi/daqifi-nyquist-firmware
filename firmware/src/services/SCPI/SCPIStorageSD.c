@@ -403,16 +403,33 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
 
     // Start benchmark timing
     uint32_t startTime = xTaskGetTickCount();
-    
-    // Generate and write test data
-    uint8_t testBuffer[512]; // Write in 512-byte blocks
+
+    // #347 / #350: take and release the shared SCPI response buffer PER
+    // CHUNK. A large benchmark can run for many seconds; holding the shared
+    // mutex across the whole loop would make every other SCPI command
+    // (on either transport) wait for the benchmark to finish. Per-chunk
+    // take/give lets other SCPI callbacks interleave between 512-byte
+    // SD writes without losing the stack-safety properties of the shared
+    // buffer pattern.
+    const uint32_t kTestBufferChunk = 512;  // benchmark writes in 512 B blocks
     uint32_t bytesToWrite = testSizeKB * 1024;
     uint32_t bytesWritten = 0;
     
     while (bytesWritten < bytesToWrite) {
-        uint32_t chunkSize = (bytesToWrite - bytesWritten > sizeof(testBuffer)) ? 
-                            sizeof(testBuffer) : (bytesToWrite - bytesWritten);
-        
+        uint32_t chunkSize = (bytesToWrite - bytesWritten > kTestBufferChunk) ?
+                            kTestBufferChunk : (bytesToWrite - bytesWritten);
+
+        uint8_t* testBuffer = (uint8_t*)SCPI_ResponseBuf_Take();
+        if (testBuffer == NULL) {
+            LOG_E("SD:BENCH - Could not acquire SCPI response buffer\r\n");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            gSDBenchmarkResults.testInProgress = false;
+            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+            result = SCPI_RES_ERR;
+            goto __exit_point;  // Take failed — nothing to Give
+        }
+
         // Fill buffer based on pattern
         switch (pattern) {
             case 0: // All zeros
@@ -429,9 +446,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                 }
                 break;
         }
-        
-        // Write to SD card (WriteToBuffer has timeout protection)
+
+        // Write to SD card (WriteToBuffer has timeout protection). Release
+        // the shared mutex before checking the result so the error path
+        // doesn't need to remember to give it back.
         size_t written = sd_card_manager_WriteToBuffer((const char*)testBuffer, chunkSize);
+        SCPI_ResponseBuf_Give();
+
         if (written != chunkSize) {
             LOG_E("SD:BENCH - Write failed at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -441,7 +462,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        
+
         bytesWritten += written;
     }
 

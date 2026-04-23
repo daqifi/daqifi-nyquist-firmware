@@ -395,18 +395,55 @@ scpi_result_t SCPI_Help(scpi_t* context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 
-// #347: mutex guarding gSysInfoBuffer. Created once in CreateSCPIContext().
-// USB and TCP SCPI run on separate tasks at different priorities; both may
-// call SCPI_SysInfoGet concurrently, so the shared buffer must be serialized.
-static SemaphoreHandle_t gSysInfoMutex = NULL;
+// #347: Shared SCPI response scratch buffer. Any SCPI callback needing
+// ≥256 B of scratch should use this instead of a stack local — keeps
+// WifiTask's 1024-word stack safe on the TCP path (see SCPI_ResponseBuf_Take
+// docs and issue #347 for the underlying stack-overflow story).
+// Statically allocated mutex (configSUPPORT_STATIC_ALLOCATION=1) so there's
+// no heap-allocation failure path.
+_Static_assert(SCPI_RESPONSE_BUF_SIZE >= DaqifiOutMessage_size,
+               "SCPI_RESPONSE_BUF_SIZE must hold the largest SCPI response");
+static uint8_t gScpiRespBuf[SCPI_RESPONSE_BUF_SIZE];
+static StaticSemaphore_t gScpiRespMutexStorage;
+static SemaphoreHandle_t gScpiRespMutex = NULL;
 
-// #347: moved from stack to BSS to avoid WifiTask stack overflow. WifiTask
-// has a 1024-word stack; TCP → microrl → libscpi already consumes ~808
-// words on entry, leaving only ~216 free. A 2008-byte stack-local buffer
-// plus Nanopb frame overhead would push total demand past the stack end,
-// corrupting adjacent FreeRTOS state (observed: USB CDC + TCP both hang
-// until power cycle). USB CDC path has a 3 KB+ stack so it was safe there.
-static uint8_t gSysInfoBuffer[DaqifiOutMessage_size];
+void SCPI_ResponseBuf_Init(void) {
+    // Idempotent: if SCPI_ResponseBuf_Init is called more than once (e.g.
+    // directly from app boot AND implicitly from the first CreateSCPIContext),
+    // the second call is a no-op.
+    //
+    // The check-and-create pair is guarded by a critical section. The
+    // intended caller is single-threaded (app_SystemInit runs pre-scheduler,
+    // then CreateSCPIContext runs during serial boot-time transport init)
+    // and taskENTER_CRITICAL is a no-op before the scheduler starts, so this
+    // is cost-free in practice. The guard catches any future misuse where
+    // SCPI_ResponseBuf_Init is invoked concurrently.
+    taskENTER_CRITICAL();
+    if (gScpiRespMutex == NULL) {
+        gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
+    }
+    taskEXIT_CRITICAL();
+}
+
+uint8_t* SCPI_ResponseBuf_Take(void) {
+    // gScpiRespMutex is NULL only if SCPI_ResponseBuf_Init() was not called
+    // before any SCPI dispatch — that would be a programming error. Defensive
+    // NULL return keeps the device alive (caller returns SCPI_RES_ERR) rather
+    // than dereferencing a NULL handle.
+    if (gScpiRespMutex == NULL) {
+        return NULL;
+    }
+    if (xSemaphoreTake(gScpiRespMutex, portMAX_DELAY) != pdTRUE) {
+        return NULL;
+    }
+    return gScpiRespBuf;
+}
+
+void SCPI_ResponseBuf_Give(void) {
+    if (gScpiRespMutex != NULL) {
+        xSemaphoreGive(gScpiRespMutex);
+    }
+}
 
 static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     int param1;
@@ -416,25 +453,23 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
         param1 = 0;
     }
 
-    if (gSysInfoMutex != NULL &&
-        xSemaphoreTake(gSysInfoMutex, portMAX_DELAY) != pdTRUE) {
+    uint8_t* buf = SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
         return SCPI_RES_ERR;
     }
 
     size_t count = Nanopb_Encode(
             pBoardData,
             (const NanopbFlagsArray *) &fields_info,
-            gSysInfoBuffer, DaqifiOutMessage_size);
+            buf, DaqifiOutMessage_size);
     scpi_result_t result = SCPI_RES_OK;
     if (count < 1) {
         result = SCPI_RES_ERR;
     } else {
-        context->interface->write(context, (char*) gSysInfoBuffer, count);
+        context->interface->write(context, (char*) buf, count);
     }
 
-    if (gSysInfoMutex != NULL) {
-        xSemaphoreGive(gSysInfoMutex);
-    }
+    SCPI_ResponseBuf_Give();
     return result;
 }
 
@@ -444,14 +479,14 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
  * @return SCPI_RES_OK on success
  */
 static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
-    char buffer[256];
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     tBoardData * pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, 0);
     wifi_manager_settings_t * pWifiSettings = BoardData_Get(BOARDDATA_WIFI_SETTINGS, 0);
     AInRuntimeArray * pAInConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     DIORuntimeArray * pDIOConfig = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
 
-    // Check for NULL pointers to prevent crashes
+    // Check for NULL pointers to prevent crashes (before taking the shared
+    // buffer so we don't need to release it on this early return).
     if (!pBoardData || !pBoardConfig) {
         const char* err = !pBoardData ? "ERROR: BoardData not available\r\n"
                                       : "ERROR: BoardConfig not available\r\n";
@@ -459,8 +494,14 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #347: use shared SCPI response scratch buffer (was stack-local char[256]).
+    char* buffer = (char*)SCPI_ResponseBuf_Take();
+    if (buffer == NULL) {
+        return SCPI_RES_ERR;
+    }
+
     // Header with device identification
-    snprintf(buffer, sizeof(buffer), "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n",
+    snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n",
         pBoardConfig->BoardVariant, pBoardConfig->boardHardwareRev, pBoardConfig->boardFirmwareRev);
     context->interface->write(context, buffer, strlen(buffer));
     
@@ -480,12 +521,12 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             (uint8_t)((pWifiSettings->ipAddr.Val >> 16) & 0xFF),
             (uint8_t)((pWifiSettings->ipAddr.Val >> 24) & 0xFF));
         
-        snprintf(buffer, sizeof(buffer), "  2.4GHz: On | Mode: %s | SSID: %s\r\n", 
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.4GHz: On | Mode: %s | SSID: %s\r\n", 
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
             pWifiSettings->ssid);
         context->interface->write(context, buffer, strlen(buffer));
         
-        snprintf(buffer, sizeof(buffer), "  IP: %s | Port: %d | Security: %s\r\n", 
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  IP: %s | Port: %d | Security: %s\r\n", 
             ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
         context->interface->write(context, buffer, strlen(buffer));
@@ -510,7 +551,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         case USBHS_VBUS_VALID: vbusLevelStr = "Valid"; break;
         default: break;
     }
-    snprintf(buffer, sizeof(buffer), "  USB: %s | WiFi: %s | Ext power: %s | VBUS: %s (HW: %s)\r\n",
+    snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  USB: %s | WiFi: %s | Ext power: %s | VBUS: %s (HW: %s)\r\n",
         hasUSBPower ? "Connected" : "Disconnected",
         wifiStatus == WIFI_STATUS_CONNECTED ? "Connected" :
         (wifiStatus == WIFI_STATUS_DISCONNECTED ? "Disconnected" : "Disabled"),
@@ -536,7 +577,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         shutdownStatus = pBoardData->PowerData.shutdownNotified ? " | Shutdown: Ready" : " | Shutdown: Pending";
     }
     
-    snprintf(buffer, sizeof(buffer), "  State: %s (%d) | USB: %s%s\r\n", 
+    snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  State: %s (%d) | USB: %s%s\r\n", 
         powerState,
         pBoardData->PowerData.powerState,
         pBoardData->PowerData.USBSleep ? "Sleep" : "Active",
@@ -559,7 +600,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                 default: chargeStatus = "?"; break;
             }
         }
-        snprintf(buffer, sizeof(buffer), "  Battery: -- (--) [--] | Charging: %s\r\n", chargeStatus);
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  Battery: -- (--) [--] | Charging: %s\r\n", chargeStatus);
     } else {
         // Battery monitoring active - show actual values
         const char* chargeStatus = "Off";
@@ -575,7 +616,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                 default: chargeStatus = "?"; break;
             }
         }
-        snprintf(buffer, sizeof(buffer), "  Battery: %.2fV (%d%%) %s | Charging: %s\r\n", 
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  Battery: %.2fV (%d%%) %s | Charging: %s\r\n", 
             pBoardData->PowerData.battVoltage, 
             pBoardData->PowerData.chargePct,
             pBoardData->PowerData.battLow ? "[Low]" : "[Ok]",
@@ -626,7 +667,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     }
     
     // Display separated ADC counts
-    snprintf(buffer, sizeof(buffer), "  User ADC: %d/%d | Internal ADC: %d/%d | DIO: %d/%d inputs\r\n", 
+    snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  User ADC: %d/%d | Internal ADC: %d/%d | DIO: %d/%d inputs\r\n", 
         userAdcEnabled, userAdcTotal,
         internalAdcEnabled, internalAdcTotal,
         dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
@@ -641,7 +682,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             // Only show user channels (ID < 248, not internal monitoring)
             if (channelId < ADC_CHANNEL_3_3V && pAInConfig->Data[i].IsEnabled) {
                 if (!first) context->interface->write(context, ",", 1);
-                snprintf(buffer, sizeof(buffer), "%d", channelId);
+                snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "%d", channelId);
                 context->interface->write(context, buffer, strlen(buffer));
                 first = false;
             }
@@ -657,7 +698,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         
         if (DIO_ReadSampleByMask(&sample, channelMask)) {
             // Debug: show raw value
-            snprintf(buffer, sizeof(buffer), "  DIO raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
+            snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  DIO raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
             context->interface->write(context, buffer, strlen(buffer));
             
             context->interface->write(context, "  DIO state: ", 13);
@@ -678,7 +719,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     
     // Streaming and sampling - cannot be active in STANDBY
     bool canStream = (pBoardData->PowerData.powerState != STANDBY);
-    snprintf(buffer, sizeof(buffer), "  Streaming: %s\r\n",
+    snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  Streaming: %s\r\n",
         (canStream && pRunTimeStreamConfig && pRunTimeStreamConfig->IsEnabled) ? "Active" : 
         (!canStream ? "Disabled" : "Idle"));
     context->interface->write(context, buffer, strlen(buffer));
@@ -693,7 +734,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         const char* adcInactive = "  ADC: -- | --\r\n";
         context->interface->write(context, adcInactive, strlen(adcInactive));
     } else {
-        snprintf(buffer, sizeof(buffer), "  ADC: %d%% | %.2fV\r\n",
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  ADC: %d%% | %.2fV\r\n",
             pBoardData->PowerData.chargePct,
             pBoardData->PowerData.battVoltage);
         context->interface->write(context, buffer, strlen(buffer));
@@ -706,13 +747,13 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         
         // Battery detection and charging
         const char* chgStatStr[] = {"Not Charging", "Pre-charge", "Fast Charge", "Charge Done"};
-        snprintf(buffer, sizeof(buffer), "  BQ24297: Battery %s | Charging: %s\r\n",
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  BQ24297: Battery %s | Charging: %s\r\n",
             pBQ24297Data->status.batPresent ? "Present" : "Not Present",
             (pBQ24297Data->status.chgStat < 4) ? chgStatStr[pBQ24297Data->status.chgStat] : "Unknown");
         context->interface->write(context, buffer, strlen(buffer));
         
         // Power conditions with clear explanations
-        snprintf(buffer, sizeof(buffer), "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext power: %s)\r\n",
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext power: %s)\r\n",
             pBQ24297Data->status.vsysStat,
             pBQ24297Data->status.vsysStat ? "No" : "Yes",
             pBQ24297Data->status.pgStat,
@@ -726,7 +767,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         // Read OTG GPIO pin state for debugging
         bool otgGpioState = BATT_MAN_OTG_Get();
         
-        snprintf(buffer, sizeof(buffer), "  NTC: %s | Current limit: %s | OTG: %s (GPIO: %s)\r\n",
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  NTC: %s | Current limit: %s | OTG: %s (GPIO: %s)\r\n",
             (pBQ24297Data->status.ntcFault < 4) ? ntcStr[pBQ24297Data->status.ntcFault] : "Fault",
             (pBQ24297Data->status.inLim < 8) ? iLimStr[pBQ24297Data->status.inLim] : "Unknown",
             pBQ24297Data->status.otg ? "On" : "Off",
@@ -743,14 +784,14 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
 
         // REG01 breakdown: [7:6]=watchdog, [5]=OTG, [4]=CHG_CONFIG, [3:1]=SYS_MIN, [0]=reserved
         if (reg01Ok && reg07Ok) {
-            snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: 0x%02X (OTG=%d, CHG=%d) | REG07: 0x%02X\r\n",
+            snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  BATFET: %s | REG01: 0x%02X (OTG=%d, CHG=%d) | REG07: 0x%02X\r\n",
                 batfetEnabled ? "Enabled" : "Disabled!",
                 reg01,
                 (reg01 >> 5) & 1,  // OTG bit
                 (reg01 >> 4) & 1,  // Charge enable bit
                 reg07);
         } else {
-            snprintf(buffer, sizeof(buffer), "  BATFET: %s | REG01: %s | REG07: %s\r\n",
+            snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  BATFET: %s | REG01: %s | REG07: %s\r\n",
                 reg07Ok ? (batfetEnabled ? "Enabled" : "Disabled!") : "ERR",
                 reg01Ok ? "OK" : "ERR",
                 reg07Ok ? "OK" : "ERR");
@@ -759,7 +800,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         
         // Power-up readiness - the key diagnostic info
         bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
-        snprintf(buffer, sizeof(buffer), "  >>> Power-up ready: %s %s\r\n",
+        snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  >>> Power-up ready: %s %s\r\n",
             canPowerUp ? "Yes" : "No",
             canPowerUp ? "" : "(Battery <3.0V and no external power)");
         context->interface->write(context, buffer, strlen(buffer));
@@ -871,16 +912,16 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             }
 
             // Display power rails
-            snprintf(buffer, sizeof(buffer), "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
+            snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
                 str3_3, str5, str10);
             context->interface->write(context, buffer, strlen(buffer));
 
-            snprintf(buffer, sizeof(buffer), "  VSYS: %s | VBATT: %s\r\n",
+            snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  VSYS: %s | VBATT: %s\r\n",
                 strSys, strBatt);
             context->interface->write(context, buffer, strlen(buffer));
 
             // Display reference voltages
-            snprintf(buffer, sizeof(buffer), "  2.5V Ref: %s | 5V Ref: %s\r\n",
+            snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.5V Ref: %s | 5V Ref: %s\r\n",
                 str2_5Ref, str5Ref);
             context->interface->write(context, buffer, strlen(buffer));
 
@@ -895,7 +936,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                     StreamingRuntimeConfig *pStrmCfg = BoardRunTimeConfig_Get(
                             BOARDRUNTIME_STREAMING_CONFIGURATION);
                     bool diagOff = pStrmCfg->Running && !pStrmCfg->OnboardDiagEnabled;
-                    snprintf(buffer, sizeof(buffer),
+                    snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
                              "  * Stale: last update %lus ago%s\r\n",
                              (unsigned long)ageSec,
                              diagOff ? " (diag scanning disabled)" : "");
@@ -907,6 +948,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         }
     }
 
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 
@@ -2778,29 +2820,44 @@ scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context) {
 
 static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     UsbCdcData_t* usbSettings = UsbCdc_GetSettings();
-    char buffer[256];
-    
+
     if (usbSettings->cmdHistoryCount == 0) {
         SCPI_ResultCharacters(context, "No command history", 18);
         return SCPI_RES_OK;
     }
-    
+
+    // #347: shared SCPI response scratch buffer (was stack-local char[256]).
+    char* buffer = (char*)SCPI_ResponseBuf_Take();
+    if (buffer == NULL) {
+        return SCPI_RES_ERR;
+    }
+
     // Calculate starting position in circular buffer
     int startIdx = (usbSettings->cmdHistoryHead - usbSettings->cmdHistoryCount + SCPI_CMD_HISTORY_SIZE) % SCPI_CMD_HISTORY_SIZE;
-    
-    // Send header
-    int len = snprintf(buffer, sizeof(buffer), "Last %d commands:\r\n", usbSettings->cmdHistoryCount);
-    context->interface->write(context, buffer, len);
-    
+
+    // Send header — guard against snprintf encoding errors (< 0) and
+    // clamp to buffer size if the output would otherwise be truncated.
+    int len = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "Last %d commands:\r\n", usbSettings->cmdHistoryCount);
+    if (len > 0) {
+        size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
+                      ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+        context->interface->write(context, buffer, wlen);
+    }
+
     // Send command history
     for (int i = 0; i < usbSettings->cmdHistoryCount; i++) {
         int idx = (startIdx + i) % SCPI_CMD_HISTORY_SIZE;
-        len = snprintf(buffer, sizeof(buffer), "%d: %s\r\n", 
-                      usbSettings->cmdHistoryCount - i, 
+        len = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "%d: %s\r\n",
+                      usbSettings->cmdHistoryCount - i,
                       usbSettings->cmdHistory[idx]);
-        context->interface->write(context, buffer, len);
+        if (len > 0) {
+            size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
+                          ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+            context->interface->write(context, buffer, wlen);
+        }
     }
-    
+
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 
@@ -3495,23 +3552,46 @@ static const scpi_command_t scpi_commands[] = {
 char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
 scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
 
+// Append formatted text to `buffer` at offset `count`, flushing via
+// `context->interface->write` when the next chunk would overflow. Returns
+// the updated count. snprintf negative returns (encoding errors) are
+// treated as empty append — safer than storing -1 into size_t.
+static size_t scpi_help_append(scpi_t* context, char* buffer, size_t count,
+                               const char* pattern) {
+    size_t cmdSize = strlen(pattern) + 5;  // "  " + pattern + "\r\n"
+    if (count + cmdSize >= SCPI_RESPONSE_BUF_SIZE) {
+        buffer[count] = '\0';
+        context->interface->write(context, buffer, count);
+        count = 0;
+    }
+    int n = snprintf(buffer + count, SCPI_RESPONSE_BUF_SIZE - count,
+                     "  %s\r\n", pattern);
+    if (n > 0) {
+        size_t added = (size_t)n < (SCPI_RESPONSE_BUF_SIZE - count)
+                       ? (size_t)n
+                       : (SCPI_RESPONSE_BUF_SIZE - count - 1);
+        count += added;
+    }
+    return count;
+}
+
 scpi_result_t SCPI_Help(scpi_t* context) {
-    char buffer[512];
+    // #347: shared SCPI response scratch buffer (was stack-local char[512]).
+    char* buffer = (char*)SCPI_ResponseBuf_Take();
+    if (buffer == NULL) {
+        return SCPI_RES_ERR;
+    }
     size_t numCommands = sizeof (scpi_commands) / sizeof (scpi_command_t);
     size_t i = 0;
 
-    size_t count = snprintf(buffer, 512, "%s", "\r\nImplemented:\r\n");
+    int hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
+                       "%s", "\r\nImplemented:\r\n");
+    size_t count = (hdr > 0) ? (size_t)hdr : 0;
     for (i = 0; i < numCommands; ++i) {
         if (scpi_commands[i].callback != SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
-            size_t cmdSize = strlen(scpi_commands[i].pattern) + 5;
-            if (count + cmdSize >= 512) {
-                buffer[count] = '\0';
-                context->interface->write(context, buffer, count);
-                count = 0;
-            }
-
-            count += snprintf(buffer + count, 512 - count, "  %s\r\n", scpi_commands[i].pattern);
+            count = scpi_help_append(context, buffer, count,
+                                     scpi_commands[i].pattern);
         }
     }
 
@@ -3519,18 +3599,14 @@ scpi_result_t SCPI_Help(scpi_t* context) {
         context->interface->write(context, buffer, count);
     }
 
-    count = snprintf(buffer, 512, "%s", "\r\nNot Implemented:\r\n");
+    hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
+                   "%s", "\r\nNot Implemented:\r\n");
+    count = (hdr > 0) ? (size_t)hdr : 0;
     for (i = 0; i < numCommands; ++i) {
         if (scpi_commands[i].callback == SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
-            size_t cmdSize = strlen(scpi_commands[i].pattern) + 5;
-            if (count + cmdSize >= 512) {
-                buffer[count] = '\0';
-                context->interface->write(context, buffer, count);
-                count = 0;
-            }
-
-            count += snprintf(buffer + count, 512 - count, "  %s\r\n", scpi_commands[i].pattern);
+            count = scpi_help_append(context, buffer, count,
+                                     scpi_commands[i].pattern);
         }
     }
 
@@ -3538,6 +3614,7 @@ scpi_result_t SCPI_Help(scpi_t* context) {
         context->interface->write(context, buffer, count);
     }
 
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 
@@ -3559,18 +3636,11 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
 }
 
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
-    // #347: init the SysInfoGet buffer mutex once (both USB and WiFi init
-    // call this during boot; boot is single-threaded so no race here).
-    // If creation fails (OOM at boot — extremely unlikely since heap is
-    // fresh), SCPI_SysInfoGet falls through without serialization. This
-    // LOG_E surfaces the degraded state so operators can notice.
-    if (gSysInfoMutex == NULL) {
-        gSysInfoMutex = xSemaphoreCreateMutex();
-        if (gSysInfoMutex == NULL) {
-            LOG_E("SCPI: failed to create SysInfoGet mutex — concurrent "
-                  "USB+TCP SysInfoPB may corrupt responses");
-        }
-    }
+    // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been
+    // called during app boot before any transport creates its SCPI context.
+    // Call it again here — it's idempotent — so the shared response-buffer
+    // mutex is guaranteed to exist before any callback could dispatch.
+    SCPI_ResponseBuf_Init();
 
     // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
     static char modelString[8] = {0};  // Initialize to prevent garbage data

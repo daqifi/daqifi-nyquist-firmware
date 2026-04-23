@@ -123,6 +123,40 @@ void vApplicationMallocFailedHook( void )
 }
 /*-----------------------------------------------------------*/
 
+#if ( configSUPPORT_STATIC_ALLOCATION == 1 )
+
+/* Required when configSUPPORT_STATIC_ALLOCATION == 1. FreeRTOS calls this to
+ * obtain storage for the Idle task TCB + stack. */
+void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer,
+                                    StackType_t **ppxIdleTaskStackBuffer,
+                                    configSTACK_DEPTH_TYPE *puxIdleTaskStackSize )
+{
+    static StaticTask_t xIdleTaskTCB;
+    static StackType_t uxIdleTaskStack[configMINIMAL_STACK_SIZE];
+    *ppxIdleTaskTCBBuffer = &xIdleTaskTCB;
+    *ppxIdleTaskStackBuffer = uxIdleTaskStack;
+    *puxIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+
+#if ( configUSE_TIMERS == 1 )
+/* Required only when configUSE_TIMERS == 1 (not currently — this firmware
+ * has configUSE_TIMERS == 0). Provided for future-proofing: if software
+ * timers are later enabled, this hook will already be in place. */
+void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer,
+                                     StackType_t **ppxTimerTaskStackBuffer,
+                                     configSTACK_DEPTH_TYPE *puxTimerTaskStackSize )
+{
+    static StaticTask_t xTimerTaskTCB;
+    static StackType_t uxTimerTaskStack[configTIMER_TASK_STACK_DEPTH];
+    *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;
+    *ppxTimerTaskStackBuffer = uxTimerTaskStack;
+    *puxTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
+}
+#endif /* configUSE_TIMERS */
+
+#endif /* configSUPPORT_STATIC_ALLOCATION */
+/*-----------------------------------------------------------*/
+
 void vApplicationIdleHook( void )
 {
     /* vApplicationIdleHook() will only be called if configUSE_IDLE_HOOK is set

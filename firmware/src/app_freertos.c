@@ -109,6 +109,7 @@ bool SPI0_Mutex_Initialize(void);  // No-op function when coordination disabled
 #include "HAL/ADC.h"
 #include "services/streaming.h"
 #include "HAL/UI/UI.h"
+#include "services/SCPI/SCPIInterface.h"
 // *****************************************************************************
 // *****************************************************************************
 // Section: Global Data Definitions
@@ -426,6 +427,10 @@ void app_PowerAndUITask(void) {
 }
 
 void app_SystemInit() {
+    // #347 / #350: init the shared SCPI response-buffer mutex before any
+    // transport creates its SCPI context or dispatches a callback.
+    SCPI_ResponseBuf_Init();
+
     // Initialize SPI coordination framework (currently disabled)
     // Note: Coordination disabled (SPI0_COORDINATION_ENABLED=0) - no runtime overhead
     // To enable frequency benchmarking: Set SPI0_COORDINATION_ENABLED=1 and rebuild
