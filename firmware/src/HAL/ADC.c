@@ -525,7 +525,14 @@ static bool ADC_InitHardware(AInModule* pBoardAInModule) {
             // index AInModulesRuntimeConfig. Type-as-index happens to work when
             // board config order matches enum order but is a latent bug.
             uint8_t moduleIndex = ADC_FindModuleIndex(pBoardAInModule);
+            if (moduleIndex == (uint8_t)-1) {
+                LOG_E("ADC_InitHardware: MC12b module not found in config");
+                break;
+            }
             if (moduleIndex >= gpBoardRuntimeConfig->AInModules.Size) {
+                LOG_E("ADC_InitHardware: MC12b runtime index OOB idx=%u size=%u",
+                      (unsigned)moduleIndex,
+                      (unsigned)gpBoardRuntimeConfig->AInModules.Size);
                 break;
             }
             result = MC12b_InitHardware(
