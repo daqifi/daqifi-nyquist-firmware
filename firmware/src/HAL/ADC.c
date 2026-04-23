@@ -296,9 +296,16 @@ void ADC_Tasks(void) {
     const AInArray* pChannels = &gpBoardConfig->AInChannels;
     AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
 
-    for (moduleIndex = 0;
-            moduleIndex < gpBoardRuntimeConfig->AInModules.Size;
-            ++moduleIndex) {
+    // Use min(config, runtime) so a size mismatch between board config and
+    // runtime config (their compile-time MAX_AIN_MOD vs MAX_AIN_RUNTIME_MOD
+    // differ) can't produce an out-of-bounds access in either array. On
+    // current NQ1/NQ3 both .Size fields agree; this is defensive.
+    size_t moduleCount = gpBoardRuntimeConfig->AInModules.Size;
+    if (gpBoardConfig->AInModules.Size < moduleCount) {
+        moduleCount = gpBoardConfig->AInModules.Size;
+    }
+
+    for (moduleIndex = 0; moduleIndex < moduleCount; ++moduleIndex) {
         AInModule* module = &gpBoardConfig->AInModules.Data[moduleIndex];
         const AInModuleRuntimeConfig* moduleRuntime =
                 &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
@@ -345,7 +352,7 @@ void ADC_Tasks(void) {
         }
     }
     if (!gpBoardRuntimeConfig->StreamingConfig.IsEnabled) {
-        for (size_t i = 0; i < gpBoardRuntimeConfig->AInModules.Size; i++) {
+        for (size_t i = 0; i < moduleCount; i++) {
             const AInModule* m = &gpBoardConfig->AInModules.Data[i];
             const AInModuleRuntimeConfig* mr =
                     &gpBoardRuntimeConfig->AInModules.Data[i];
