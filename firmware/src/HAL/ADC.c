@@ -310,17 +310,20 @@ void ADC_Tasks(void) {
         const AInModuleRuntimeConfig* moduleRuntime =
                 &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
 
-        // AD7609 needs the 10 V rail, so it can't be "enabled" without power.
-        // MC12b is on-die and works in any power state. Original expression
-        // `(MC12b || AD7609 || isPowered)` was tautological (exhaustive over the
-        // two AInTypes) and the isPowered disjunct was dead — the real intent
-        // (mirrored by canInit below) is power-gate AD7609 only.
-        bool isEnabled = ((module->Type == AIn_MC12bADC) ||
-                          (module->Type == AIn_AD7609 && isPowered)) &&
-                moduleRuntime->IsEnabled;
-        if (!isEnabled) {
+        // Outer gate: only mark DISABLED when the user has actually disabled
+        // the module (IsEnabled=false). Don't confuse "unpowered right now"
+        // with "disabled" — an AD7609 with IsEnabled=true but no 10 V rail
+        // should stay in AINTASK_INITIALIZING so it initializes when power
+        // returns. canInit below handles the real power-gate for init.
+        if (!moduleRuntime->IsEnabled) {
             gpBoardData->AInState.Data[moduleIndex].AInTaskState =
                     AINTASK_DISABLED;
+            continue;
+        }
+        // AD7609 without power can't do anything meaningful this tick; skip
+        // the init/trigger machinery but leave state untouched so it resumes
+        // as soon as power returns.
+        if (module->Type == AIn_AD7609 && !isPowered) {
             continue;
         }
 
