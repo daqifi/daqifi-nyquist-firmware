@@ -196,6 +196,16 @@ bool ADC_WriteChannelStateAll(void) {
     const AInArray* pChannels = &gpBoardConfig->AInChannels;
     AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
 
+    // MC12b_WriteStateAll / AD7609_WriteStateAll iterate pChannels->Size and
+    // index pRuntime->Data[i] in lock-step. Sizes should match by
+    // construction; bail out with a log if they don't rather than risk a
+    // mis-indexed runtime access.
+    if (pChannels->Size != pRuntime->Size) {
+        LOG_E("ADC_WriteChannelStateAll: channel size mismatch cfg=%u rt=%u",
+              (unsigned)pChannels->Size, (unsigned)pRuntime->Size);
+        return false;
+    }
+
     for (i = 0; i < gpBoardConfig->AInModules.Size; ++i) {
         switch (gpBoardConfig->AInModules.Data[i].Type) {
             case AIn_MC12bADC:
