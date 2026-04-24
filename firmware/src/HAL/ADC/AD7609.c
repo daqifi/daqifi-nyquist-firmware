@@ -314,18 +314,11 @@ bool AD7609_WriteStateSingle(
     return true;
 }
 
-bool AD7609_WriteStateAll(
-                        const AInArray* channelConfig,
-                        AInRuntimeArray* channelRuntimeConfig)
-{
-    UNUSED(channelConfig);
-    UNUSED(channelRuntimeConfig);
-
+bool AD7609_WriteStateAll(void) {
     if (pModuleConfigAD7609 == NULL) {
         LOG_E("AD7609_WriteStateAll: AD7609 not initialized");
         return false;
     }
-
     return true;
 }
 

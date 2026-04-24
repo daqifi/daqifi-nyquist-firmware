@@ -45,13 +45,13 @@ bool AD7609_WriteStateSingle(                                               \
 
 
 /*!
- * Sets the state for all ADC channels
- * @param[in] channelConfig Channel configuration
- * @param[in] channelRuntimeConfig Channel configuration in runtime
+ * Verifies AD7609 is initialized. AD7609 has no per-channel hardware enable
+ * (it's a simultaneous 8-ch ADC), so this doesn't apply any per-channel
+ * state — the "enabled" flag is a software concept the streaming engine
+ * uses to filter samples. Returns false if the module isn't initialized
+ * (i.e. 10 V rail wasn't powered when ADC_InitHardware last ran).
  */
-bool AD7609_WriteStateAll(                                                  \
-                        const AInArray* channelConfig,                      \
-                        AInRuntimeArray* channelRuntimeConfig);
+bool AD7609_WriteStateAll(void);
     
 
     

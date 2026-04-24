@@ -236,7 +236,7 @@ bool ADC_WriteChannelStateAll(void) {
         bool isPowered = (powerState == POWERED_UP ||
                           powerState == POWERED_UP_EXT_DOWN);
         if (isPowered) {
-            result &= AD7609_WriteStateAll(pChannels, pRuntime);
+            result &= AD7609_WriteStateAll();
         }
     }
 

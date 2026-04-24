@@ -263,11 +263,11 @@ void SYS_Tasks ( void )
     // conservative — driver internals have unknown stack depth.
     BaseType_t wifiResult = xTaskCreate( lWDRV_WINC_Tasks,
         "WDRV_WINC_Tasks",
-        1500,   // Post-#353 profile: 778 words peak during SCPI-over-TCP dispatch
-                // (SOCKET_MSG_RECV → ProcessReceivedBuff → microrl → SCPI_Input →
-                // handler). Earlier 290-word figure was pre-#347-v2 — SCPI never
-                // completed on this stack because it overflowed first.
-                // 1500 gives ~50% margin over real workload.
+        1024,   // Post-#353 Option 2: SCPI dispatch deferred to WifiTask, so
+                // this task only hosts WDRV_WINC_Tasks itself. Post-decouple
+                // peak: ~320 words (WINC driver + socket-callback overhead).
+                // 1024 restores the original #353 acceptance target with
+                // comfortable 3x margin.
         (void*)NULL,
         DRV_WIFI_WINC_RTOS_TASK_PRIORITY,
         (TaskHandle_t*)NULL

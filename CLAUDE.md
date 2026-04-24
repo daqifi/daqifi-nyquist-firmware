@@ -652,8 +652,8 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 | 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use shared response buffer (see below) |
 | 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
 | 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
-| 2 | `app_WifiTask` | 1024 | 360 | WiFi state machine + TCP |
-| 2 | `lWDRV_WINC_Tasks` | 1500 | 778 | WINC1500 driver + SCPI-over-TCP dispatch context. Peak rose from 290 pre-#353 fix — SCPI callbacks now actually run to completion on this stack (previously overflowed) |
+| 2 | `app_WifiTask` | 1500 | 780 | WiFi state machine + TCP + SCPI-over-TCP dispatch (post-#353 Opt 2: microrl + libscpi + handlers all run here instead of on WDRV_WINC_Tasks) |
+| 2 | `lWDRV_WINC_Tasks` | 1024 | 320 | WINC1500 driver only. SCPI dispatch moved to app_WifiTask per #353 Option 2 |
 | 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
 | 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
 | 1 | `F_USB_DEVICE_Tasks` | 144 | 72 | USB device stack |

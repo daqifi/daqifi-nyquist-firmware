@@ -119,21 +119,22 @@ static scpi_result_t SCPI_LANStringGetImpl(scpi_t * context, const char* string)
 }
 
 static scpi_result_t SCPI_LANStringSetImpl(scpi_t * context, char* string, size_t maxLen) {
-    char value[128];
-    size_t len = SCPI_SafeParamString(context, value, 127, TRUE);
+    // Parse straight into the caller's buffer — no intermediate 128 B stack
+    // local. (#355)
+    //
+    // API contract shared with the other SCPI_SafeParamString callers in
+    // this file: `maxLen` is the max PAYLOAD length. Callers allocate
+    // `maxLen + 1` bytes so SafeParamString's `value[len] = '\0'` write at
+    // index `len == maxLen` lands inside the buffer. Current outer caller
+    // `SCPI_LANSsidSet` passes `pRunTimeWifiSettings->ssid` (char[33]) with
+    // maxLen = WDRV_WINC_MAX_SSID_LEN (= 32), matching the convention also
+    // used by SCPI_LANAddrSetImpl, SCPI_LANPasskeySet, and
+    // SCPI_LANPasskeyGet (all of which declare `char value[FOO_LEN + 1]`
+    // and pass maxLength = FOO_LEN).
+    size_t len = SCPI_SafeParamString(context, string, maxLen, TRUE);
     if (len < 1) {
         return SCPI_RES_ERR;
     }
-
-    if (len > maxLen) {
-        return SCPI_RES_ERR;
-    } else if (len < 1) {
-        string[0] = '\0';
-    } else {
-        memcpy(string, value, len);
-        string[len] = '\0';
-    }
-
     return SCPI_RES_OK;
 }
 
@@ -141,7 +142,13 @@ static size_t SCPI_SafeParamString(scpi_t * context, char* value, const size_t m
     const char* buffer;
     size_t len;
     if (!SCPI_ParamCharacters(context, &buffer, &len, mandatory)) {
-        return SCPI_RES_ERR;
+        // Return 0 on parse failure, not SCPI_RES_ERR (= -1). This function
+        // returns size_t, and (size_t)-1 is a huge positive number that
+        // bypasses `if (len < 1)` checks in callers. 0 makes "failure" and
+        // "empty" indistinguishable at the type level, but every caller
+        // treats both the same way ("nothing usable was parsed") and the
+        // parser separately raises an SCPI error for the client.
+        return 0;
     }
 
     if (len > 0) {
