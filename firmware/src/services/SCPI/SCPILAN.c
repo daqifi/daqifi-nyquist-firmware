@@ -120,8 +120,17 @@ static scpi_result_t SCPI_LANStringGetImpl(scpi_t * context, const char* string)
 
 static scpi_result_t SCPI_LANStringSetImpl(scpi_t * context, char* string, size_t maxLen) {
     // Parse straight into the caller's buffer — no intermediate 128 B stack
-    // local. SCPI_SafeParamString null-terminates on success and returns 0
-    // (via the maxLength check) for too-long input. (#355)
+    // local. (#355)
+    //
+    // API contract shared with the other SCPI_SafeParamString callers in
+    // this file: `maxLen` is the max PAYLOAD length. Callers allocate
+    // `maxLen + 1` bytes so SafeParamString's `value[len] = '\0'` write at
+    // index `len == maxLen` lands inside the buffer. Current outer caller
+    // `SCPI_LANSsidSet` passes `pRunTimeWifiSettings->ssid` (char[33]) with
+    // maxLen = WDRV_WINC_MAX_SSID_LEN (= 32), matching the convention also
+    // used by SCPI_LANAddrSetImpl, SCPI_LANPasskeySet, and
+    // SCPI_LANPasskeyGet (all of which declare `char value[FOO_LEN + 1]`
+    // and pass maxLength = FOO_LEN).
     size_t len = SCPI_SafeParamString(context, string, maxLen, TRUE);
     if (len < 1) {
         return SCPI_RES_ERR;
