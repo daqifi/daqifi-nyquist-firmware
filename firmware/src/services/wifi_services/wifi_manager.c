@@ -99,6 +99,20 @@ static wifi_tcp_server_context_t gTcpServerContext;
 
 // Volatile flags for on-demand RSSI queries
 static volatile bool gRssiUpdatePending = false;
+
+// #353 Option 2: decouple SCPI dispatch from WINC callback context.
+// SOCKET_MSG_RECV fires on WDRV_WINC_Tasks (the WINC driver's task). Prior
+// to this change, the handler ran the whole microrl + libscpi + SCPI handler
+// chain inline on that task's stack — which caused #347 v2 (stack overflow
+// on SCPI handlers with large locals). PR #354 fixed the specific overflow;
+// this decouples the dispatch path entirely so the next SCPI handler with a
+// fat stack frame can't cause a similar crash.
+//
+// Flow: SOCKET_MSG_RECV stores size + sets flag + returns (no ProcessRx,
+// no recv re-arm). WifiTask's wifi_manager_ProcessState() picks up the flag,
+// runs wifi_tcp_server_ProcessReceivedBuff on WifiTask's stack, then re-arms
+// recv. WINC buffers inbound TCP while we process (per WINC docs).
+static volatile bool gTcpRxPending = false;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
@@ -276,9 +290,13 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             tstrSocketRecvMsg *pRecvMessage = (tstrSocketRecvMsg*) pMessage;
 
             if ((NULL != pRecvMessage) && (pRecvMessage->s16BufferSize > 0)) {
+                // #353 Option 2: defer ProcessReceivedBuff + recv re-arm to
+                // WifiTask context. See gTcpRxPending comment above. The
+                // WINC driver buffers subsequent TCP data internally until
+                // we call recv() again, so missing this tick's re-arm is
+                // safe.
                 gStateMachineContext.pTcpServerContext->client.readBufferLength = pRecvMessage->s16BufferSize;
-                wifi_tcp_server_ProcessReceivedBuff();
-                recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
+                gTcpRxPending = true;
 
             } else {
                 LOG_E("[%s:%d]Error Socket MSG Recv", __FILE__, __LINE__);
@@ -1370,7 +1388,27 @@ void wifi_manager_ProcessState() {
         return;
     }
     wifi_tcp_server_TransmitBufferedData();
-    
+
+    // #353 Option 2: drain any deferred TCP rx data on this task's stack.
+    // SOCKET_MSG_RECV (WDRV_WINC_Tasks context) stored length + set the flag
+    // but did NOT call ProcessReceivedBuff or re-arm recv — so all of that
+    // runs here, on WifiTask's stack, with ~4 KB of headroom for the
+    // microrl + libscpi + handler chain.
+    //
+    // Always clear the flag under the socket-valid guard, so a RECV that
+    // arrived just before the client disconnected doesn't leave stale data
+    // queued for the next client.
+    if (gTcpRxPending) {
+        gTcpRxPending = false;
+        if (gStateMachineContext.pTcpServerContext != NULL &&
+            gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
+            wifi_tcp_server_ProcessReceivedBuff();
+            recv(gStateMachineContext.pTcpServerContext->client.clientSocket,
+                 gStateMachineContext.pTcpServerContext->client.readBuffer,
+                 WIFI_RBUFFER_SIZE, 0);
+        }
+    }
+
     if (xQueueReceive(gEventQH, &event, 1) != pdPASS) {
         return;
     }

@@ -706,7 +706,10 @@ static void app_TasksCreate() {
 
     errStatus = xTaskCreate((TaskFunction_t) app_WifiTask,
             "WifiTask",
-            1024,  // Profiled: 360 words peak. 3x margin for unknown WiFi driver depth. (was 3000)
+            1500,  // Post-#353 Option 2: SCPI dispatch via TCP now runs on this
+                   // task's stack (microrl + libscpi + handler chain). Pre-change
+                   // profile: 360 peak. Sized to match WDRV_WINC_Tasks'
+                   // post-#354 budget (1500 words, ~800 SCPI-over-TCP peak).
             NULL,
             2,
             NULL);
