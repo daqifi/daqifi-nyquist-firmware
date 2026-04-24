@@ -119,21 +119,13 @@ static scpi_result_t SCPI_LANStringGetImpl(scpi_t * context, const char* string)
 }
 
 static scpi_result_t SCPI_LANStringSetImpl(scpi_t * context, char* string, size_t maxLen) {
-    char value[128];
-    size_t len = SCPI_SafeParamString(context, value, 127, TRUE);
+    // Parse straight into the caller's buffer — no intermediate 128 B stack
+    // local. SCPI_SafeParamString null-terminates on success and returns 0
+    // (via the maxLength check) for too-long input. (#355)
+    size_t len = SCPI_SafeParamString(context, string, maxLen, TRUE);
     if (len < 1) {
         return SCPI_RES_ERR;
     }
-
-    if (len > maxLen) {
-        return SCPI_RES_ERR;
-    } else if (len < 1) {
-        string[0] = '\0';
-    } else {
-        memcpy(string, value, len);
-        string[len] = '\0';
-    }
-
     return SCPI_RES_OK;
 }
 
