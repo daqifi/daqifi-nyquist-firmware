@@ -133,7 +133,13 @@ static size_t SCPI_SafeParamString(scpi_t * context, char* value, const size_t m
     const char* buffer;
     size_t len;
     if (!SCPI_ParamCharacters(context, &buffer, &len, mandatory)) {
-        return SCPI_RES_ERR;
+        // Return 0 on parse failure, not SCPI_RES_ERR (= -1). This function
+        // returns size_t, and (size_t)-1 is a huge positive number that
+        // bypasses `if (len < 1)` checks in callers. 0 makes "failure" and
+        // "empty" indistinguishable at the type level, but every caller
+        // treats both the same way ("nothing usable was parsed") and the
+        // parser separately raises an SCPI error for the client.
+        return 0;
     }
 
     if (len > 0) {
