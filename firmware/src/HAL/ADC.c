@@ -53,22 +53,8 @@ static bool ADC_WriteModuleState(
 
 /*! This function initialice the hardware neccesary for ADC
  * @param[in] pBoardAInModule Pointer to analog input module configuration
- * @param[in] pModuleChannels Pointer to module channels
  */
-static bool ADC_InitHardware(
-        AInModule* pBoardAInModule,
-        AInArray* pModuleChannels);
-
-/*!
- * Extracts channel information for the specified module
- * @param moduleChannels [out] Static channel data
- * @param moduleChannelRuntime [out] Runtime channel data
- * @param moduleId The module to search for
- */
-static void GetModuleChannelRuntimeData(
-        AInArray* moduleChannels,
-        AInRuntimeArray* moduleChannelRuntime,
-        uint8_t moduleId);
+static bool ADC_InitHardware(AInModule* pBoardAInModule);
 
 /*!
  * Handles AD7609 data acquisition from deferred interrupt task
@@ -199,31 +185,58 @@ void ADC_Init(
 }
 
 bool ADC_WriteChannelStateAll(void) {
+    // Pass global config pointers directly to per-ADC writers (#353). Earlier
+    // code stack-allocated AInArray + AInRuntimeArray (~5 KB) and memcpy'd
+    // the globals into them before calling. The callers never filtered by
+    // module — they just scanned the full list and skipped entries by Type —
+    // so the copy was pure overhead. On the WDRV_WINC_Tasks stack (4 KB)
+    // this overran and triggered vApplicationStackOverflowHook (#347 v2).
     size_t i;
     bool result = true;
-    AInArray moduleChannels;
-    AInRuntimeArray moduleChannelRuntime;
+    const AInArray* pChannels = &gpBoardConfig->AInChannels;
+    AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
 
+    // MC12b_WriteStateAll / AD7609_WriteStateAll iterate pChannels->Size and
+    // index pRuntime->Data[i] in lock-step. Sizes should match by
+    // construction; bail out with a log if they don't rather than risk a
+    // mis-indexed runtime access.
+    if (pChannels->Size != pRuntime->Size) {
+        LOG_E("ADC_WriteChannelStateAll: channel size mismatch cfg=%u rt=%u",
+              (unsigned)pChannels->Size, (unsigned)pRuntime->Size);
+        return false;
+    }
+
+    // Post-#353 the writers scan the global channel list and filter by Type
+    // themselves, so each needs to run at most once regardless of how many
+    // AInModule entries declare that Type. Detect which types are present,
+    // then invoke each writer exactly once.
+    bool hasMc12b = false;
+    bool hasAd7609 = false;
     for (i = 0; i < gpBoardConfig->AInModules.Size; ++i) {
-        // Get channels associated with the current module
-        GetModuleChannelRuntimeData(
-                &moduleChannels,
-                &moduleChannelRuntime,
-                i);
-
-        // Delegate to the implementation
         switch (gpBoardConfig->AInModules.Data[i].Type) {
-            case AIn_MC12bADC:
-                result &= MC12b_WriteStateAll(
-                        &moduleChannels,
-                        &moduleChannelRuntime);
-                break;
-            case AIn_AD7609:
-                result &= AD7609_WriteStateAll(&moduleChannels, &moduleChannelRuntime);
-                break;
-            default:
-                // Not implemented yet
-                break;
+            case AIn_MC12bADC: hasMc12b = true; break;
+            case AIn_AD7609:   hasAd7609 = true; break;
+            default: break;
+        }
+    }
+
+    if (hasMc12b) {
+        result &= MC12b_WriteStateAll(pChannels, pRuntime);
+    }
+    if (hasAd7609) {
+        // AD7609_WriteStateAll short-circuits to false + LOG_E when the chip
+        // isn't initialized (pModuleConfigAD7609 == NULL), which happens
+        // whenever the board hasn't been powered up yet. Without this gate,
+        // any ENAble:VOLTage:DC call on an NQ3 booted unpowered would fail
+        // — even for MC12b-only enables — because AD7609's false would
+        // propagate up. Skip the call here when unpowered; the runtime
+        // config still holds the desired state, and AD7609_InitHardware
+        // will honor it once power comes on.
+        POWER_STATE powerState = gpBoardData->PowerData.powerState;
+        bool isPowered = (powerState == POWERED_UP ||
+                          powerState == POWERED_UP_EXT_DOWN);
+        if (isPowered) {
+            result &= AD7609_WriteStateAll(pChannels, pRuntime);
         }
     }
 
@@ -305,51 +318,69 @@ const AInModule* ADC_FindModule(AInType moduleType) {
 }
 
 void ADC_Tasks(void) {
-    size_t moduleIndex = 0;
+    // Uses global config pointers directly (#353). See ADC_WriteChannelStateAll
+    // for rationale — eliminates ~5 KB of stack use per call.
+    size_t moduleIndex;
     POWER_STATE powerState = gpBoardData->PowerData.powerState;
-    bool isPowered = (powerState == POWERED_UP ||                    
+    bool isPowered = (powerState == POWERED_UP ||
              powerState == POWERED_UP_EXT_DOWN);
-    AInArray moduleChannels;
-    bool canInit, initialized;
-    AInModule* module = &gpBoardConfig->AInModules.Data[moduleIndex];
-    const AInModuleRuntimeConfig* moduleRuntime =
-            &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
-    AInRuntimeArray moduleChannelRuntime;
+    const AInArray* pChannels = &gpBoardConfig->AInChannels;
+    AInRuntimeArray* pRuntime = &gpBoardRuntimeConfig->AInChannels;
 
-    for (moduleIndex = 0;
-            moduleIndex < gpBoardRuntimeConfig->AInModules.Size;
-            ++moduleIndex) {
-        // Update module pointer for current iteration
-        module = &gpBoardConfig->AInModules.Data[moduleIndex];
-        moduleRuntime = &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
-        
-        // Get channels associated with the current module
-        GetModuleChannelRuntimeData(
-                &moduleChannels,
-                &moduleChannelRuntime,
-                moduleIndex);
+    // MC12b_WriteStateAll below indexes pRuntime->Data[i] for i < pChannels->Size.
+    // Catch any mismatch here rather than in the writer, same as
+    // ADC_WriteChannelStateAll's guard.
+    if (pChannels->Size != pRuntime->Size) {
+        LOG_E("ADC_Tasks: channel size mismatch cfg=%u rt=%u",
+              (unsigned)pChannels->Size, (unsigned)pRuntime->Size);
+        return;
+    }
 
-        // Check if the module is enabled - if not, skip it
-        bool isEnabled = (module->Type == AIn_MC12bADC || module->Type == AIn_AD7609 || isPowered) &&
-                moduleRuntime->IsEnabled;
-        if (!isEnabled) {
+    // Use min(config, runtime, state) so a size mismatch across any of the
+    // three parallel arrays (their compile-time MAX_AIN_MOD vs
+    // MAX_AIN_RUNTIME_MOD vs the AInState array differ) can't produce an
+    // out-of-bounds access. On current NQ1/NQ3 all three .Size fields
+    // agree; this is defensive.
+    size_t moduleCount = gpBoardRuntimeConfig->AInModules.Size;
+    if (gpBoardConfig->AInModules.Size < moduleCount) {
+        moduleCount = gpBoardConfig->AInModules.Size;
+    }
+    if (gpBoardData->AInState.Size < moduleCount) {
+        moduleCount = gpBoardData->AInState.Size;
+    }
+
+    for (moduleIndex = 0; moduleIndex < moduleCount; ++moduleIndex) {
+        AInModule* module = &gpBoardConfig->AInModules.Data[moduleIndex];
+        const AInModuleRuntimeConfig* moduleRuntime =
+                &gpBoardRuntimeConfig->AInModules.Data[moduleIndex];
+
+        // Outer gate: only mark DISABLED when the user has actually disabled
+        // the module (IsEnabled=false). Don't confuse "unpowered right now"
+        // with "disabled" — an AD7609 with IsEnabled=true but no 10 V rail
+        // should stay in AINTASK_INITIALIZING so it initializes when power
+        // returns. canInit below handles the real power-gate for init.
+        if (!moduleRuntime->IsEnabled) {
             gpBoardData->AInState.Data[moduleIndex].AInTaskState =
                     AINTASK_DISABLED;
+            continue;
+        }
+        // AD7609 without power can't do anything meaningful this tick; skip
+        // the init/trigger machinery but leave state untouched so it resumes
+        // as soon as power returns.
+        if (module->Type == AIn_AD7609 && !isPowered) {
             continue;
         }
 
         if (gpBoardData->AInState.Data[moduleIndex].AInTaskState ==
                 AINTASK_INITIALIZING) {
             // MC12bADC can init anytime, AD7609 requires isPowered (needs 10V rail)
-            canInit = (module->Type == AIn_MC12bADC) || (module->Type == AIn_AD7609 && isPowered);
-            initialized = false;
+            bool canInit = (module->Type == AIn_MC12bADC) || (module->Type == AIn_AD7609 && isPowered);
+            bool initialized = false;
 
             if (canInit) {
-                if (ADC_InitHardware(module, &moduleChannels)) {
+                if (ADC_InitHardware(module)) {
                     if (module->Type == AIn_MC12bADC) {
-                        MC12b_WriteStateAll(
-                                &moduleChannels,
-                                &moduleChannelRuntime);
+                        MC12b_WriteStateAll(pChannels, pRuntime);
                     }
                     ADC_WriteModuleState(moduleIndex, powerState);
                     gpBoardData->AInState.Data[moduleIndex].AInTaskState =
@@ -368,8 +399,29 @@ void ADC_Tasks(void) {
         }
     }
     if (!gpBoardRuntimeConfig->StreamingConfig.IsEnabled) {
-        for (int i = 0; i < gpBoardRuntimeConfig->AInModules.Size; i++)
-            ADC_TriggerConversion(&gpBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_ALL);
+        for (size_t i = 0; i < moduleCount; i++) {
+            const AInModule* m = &gpBoardConfig->AInModules.Data[i];
+            const AInModuleRuntimeConfig* mr =
+                    &gpBoardRuntimeConfig->AInModules.Data[i];
+
+            // Mirror the outer gate plus runtime IsEnabled.
+            bool enabled = ((m->Type == AIn_MC12bADC) ||
+                            (m->Type == AIn_AD7609 && isPowered)) &&
+                           mr->IsEnabled;
+            if (!enabled) {
+                continue;
+            }
+
+            // Only trigger on a module whose init completed. Anything other
+            // than AINTASK_IDLE (INITIALIZING, DISABLED, or already-running
+            // CONVSTART/BUSY) means the hardware is not in a safe state to
+            // kick off a new conversion here.
+            if (gpBoardData->AInState.Data[i].AInTaskState != AINTASK_IDLE) {
+                continue;
+            }
+
+            ADC_TriggerConversion(m, MC12B_ADC_TYPE_ALL);
+        }
     }
 }
 
@@ -477,45 +529,38 @@ bool ADC_WriteModuleState(size_t moduleId, POWER_STATE powerState) {
     return result;
 }
 
-static bool ADC_InitHardware(
-        AInModule* pBoardAInModule,
-        AInArray* pModuleChannels) {
+static bool ADC_InitHardware(AInModule* pBoardAInModule) {
     bool result = false;
 
     switch (pBoardAInModule->Type) {
-        case AIn_MC12bADC:
+        case AIn_MC12bADC: {
+            // Use the module's position in AInModules, NOT its enum Type, to
+            // index AInModulesRuntimeConfig. Type-as-index happens to work when
+            // board config order matches enum order but is a latent bug.
+            uint8_t moduleIndex = ADC_FindModuleIndex(pBoardAInModule);
+            if (moduleIndex == (uint8_t)-1) {
+                LOG_E("ADC_InitHardware: MC12b module not found in config");
+                break;
+            }
+            if (moduleIndex >= gpBoardRuntimeConfig->AInModules.Size) {
+                LOG_E("ADC_InitHardware: MC12b runtime index OOB idx=%u size=%u",
+                      (unsigned)moduleIndex,
+                      (unsigned)gpBoardRuntimeConfig->AInModules.Size);
+                break;
+            }
             result = MC12b_InitHardware(
                     &pBoardAInModule->Config.MC12b,
-                    &gpBoardRuntimeConfig->AInModules.Data[pBoardAInModule->Type]);
+                    &gpBoardRuntimeConfig->AInModules.Data[moduleIndex]);
             break;
+        }
         case AIn_AD7609:
             result = AD7609_InitHardware(&pBoardAInModule->Config.AD7609);
             break;
         default:
-            // Not implemented yet
             break;
     }
 
     return result;
-}
-
-static void GetModuleChannelRuntimeData(
-        AInArray* moduleChannels,
-        AInRuntimeArray* moduleChannelRuntime,
-        uint8_t moduleId) {
-    moduleChannels->Size = 0;
-    moduleChannelRuntime->Size = 0;
-    size_t i;
-    for (i = 0; i < gpBoardConfig->AInChannels.Size; ++i) {
-
-        moduleChannels->Data[moduleChannels->Size] =
-                gpBoardConfig->AInChannels.Data[i];
-        moduleChannels->Size += 1;
-
-        moduleChannelRuntime->Data[moduleChannelRuntime->Size] =
-                gpBoardRuntimeConfig->AInChannels.Data[i];
-        moduleChannelRuntime->Size += 1;
-    }
 }
 
 void ADC_EOSInterruptCB(uintptr_t context) {
