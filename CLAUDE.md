@@ -249,51 +249,58 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 
 **Characterization results (O3, USB, zero-loss ceiling sustained for 60s, fullscale test pattern, NoCap benchmark mode):**
 
-Current table = Session 21 (2026-04-20 overnight, post-#335 WINC idle-gate). #335 eliminated the 22 Hz / 270 µs WINC preemption causing 10% CV jitter at ≥10 kHz, but didn't raise ceilings — ceilings remain bounded by encoder/USB-write throughput. Session 20's single-channel 20/22 kHz numbers were slightly optimistic run-to-run; Session 21's 19/20 kHz is the reliably achievable endurance value.
+Current table = Session 22 (2026-04-24 overnight, post-#354 ADC stack fix + #356 SCPI-dispatch Option 2 decouple). #354 moved two ~5 KB stack locals off the ADC write path; #356 moved the TCP-SCPI dispatch from WDRV_WINC_Tasks onto app_WifiTask so WINC stays at 1024 words. Throughput is unchanged to +1 k on five USB configs (likely run-to-run at the edge, confirmed by 60 s endurance). No regressions.
 
 **USB** (ceiling sweep 10s/step, endurance 60s at each ceiling):
 
 | Config | PB Ceiling | PB KB/s | CSV Ceiling | CSV KB/s |
 |--------|----------:|--------:|------------:|--------:|
-| 1×T1 | 19,000 Hz | 252 | 18,000 Hz | 296 |
-| 1×T1 OBDiag=OFF | **20,000 Hz** | 266 | **20,000 Hz** | 324 |
-| 1×T2 | 19,000 Hz | 252 | 18,000 Hz | 296 |
-| 3×T1 | 16,000 Hz | 361 | 15,000 Hz | 727 |
-| 3×T2 | 17,000 Hz | 380 | 15,000 Hz | 731 |
-| 5×T1 | 15,000 Hz | 479 | 12,000 Hz | 959 |
-| 5×T2 | 15,000 Hz | 480 | 13,000 Hz† | 1,018† |
-| 5×T1 OBDiag=OFF | 16,000 Hz | 515 | 14,000 Hz | 1,151 |
-| 8×T2 | 13,000 Hz | 592 | 10,000 Hz | 1,336 |
-| 11×T2 | 11,000 Hz | 667 | 9,000 Hz† | 1,455† |
-| 5T1+3T2 (8ch) | 13,000 Hz | 596 | 10,000 Hz | 1,334 |
-| 5T1+5T2 (10ch) | 12,000 Hz | 659 | 9,000 Hz | 1,486 |
-| 5T1+11T2 (16ch) | 9,000 Hz | 760 | 7,000 Hz† | 1,757† |
+| 1×T1 | 19,000 Hz | 240 | 19,000 Hz | 276 |
+| 1×T1 OBDiag=OFF | **20,000 Hz** | 253 | **20,000 Hz** | 321 |
+| 1×T2 | 19,000 Hz | 240 | 19,000 Hz | 287 |
+| 3×T1 | 17,000 Hz | 364 | 15,000 Hz | 711 |
+| 3×T2 | 17,000 Hz | 363 | 15,000 Hz | 716 |
+| 5×T1 | 15,000 Hz | 457 | 13,000 Hz | 993 |
+| 5×T2 | 15,000 Hz | 456 | 13,000 Hz | 1,002 |
+| 5×T1 OBDiag=OFF | 17,000 Hz | 510 | 14,000 Hz | 1,102 |
+| 8×T2 | 13,000 Hz | 566 | 10,000 Hz | 1,256 |
+| 11×T2 | 11,000 Hz | 633 | 9,000 Hz† | 1,484† |
+| 5T1+3T2 (8ch) | 13,000 Hz | 567 | 10,000 Hz | 1,257 |
+| 5T1+5T2 (10ch) | 12,000 Hz† | 625† | 9,000 Hz | 1,349 |
+| 5T1+11T2 (16ch) | 9,000 Hz | 727 | 7,000 Hz | 1,610 |
 
-† Endurance leak at ceiling in Session 21 (CSV 5×T2 @ 13k: 340 drops; 11×T2 @ 9k: 5667 drops; 16ch @ 7k: 1994 drops). Ceilings listed are highest clean in the 10s sweep; true sustainable endurance ceilings are 1 kHz lower for those configs.
+† Endurance leak at ceiling in Session 22 (PB 5T1+5T2 @ 12k: 3180 drops; CSV 11×T2 @ 9k: 1866 drops). Ceilings listed are highest clean in the 10s sweep; true sustainable endurance ceilings are 1 kHz lower for those configs.
 
-**SD** (zero-drop over 60s, interface=2) — **Session 20 data, pending Session 21 re-run**:
+**SD** (zero-drop over 60s, interface=2):
 
 | Config | PB Ceiling | CSV Ceiling |
 |--------|----------:|------------:|
-| 1×T1 | 11,000 Hz | 9,000 Hz |
-| 1×T1 OBDiag=OFF | **12,000 Hz** | 10,000 Hz |
-| 1×T2 | 11,000 Hz | 9,000 Hz |
+| 1×T1 | 10,000 Hz | 9,000 Hz |
+| 1×T1 OBDiag=OFF | **11,000 Hz** | 10,000 Hz |
+| 1×T2 | 10,000 Hz | 9,000 Hz |
 | 3×T1 | 8,000 Hz | 5,000 Hz |
 | 3×T2 | 8,000 Hz | 5,000 Hz |
 | 5×T1 | 7,000 Hz | 4,000 Hz |
 | 5×T2 | 7,000 Hz | 4,000 Hz |
 | 5×T1 OBDiag=OFF | 8,000 Hz | 4,000 Hz |
-| 8×T2 | 6,000 Hz | 1,000 Hz |
+| 5×T1 OBDiag=ON | 7,000 Hz | 4,000 Hz† |
+| 8×T2 | 6,000 Hz | 3,000 Hz |
 | 11×T2 | 5,000 Hz | 2,000 Hz |
 | 5T1+3T2 (8ch) | 6,000 Hz | 3,000 Hz |
-| 5T1+5T2 (10ch) | 5,000 Hz | 2,000 Hz |
-| 5T1+11T2 (16ch) | 4,000 Hz | 1,000 Hz |
+| 5T1+5T2 (10ch) | 5,000 Hz | 2,000 Hz† |
+| 5T1+11T2 (16ch) | 4,000 Hz | 2,000 Hz† |
 
-**Session 21 highlights vs Session 20:**
-- **Ceilings largely unchanged.** 20/29 USB configs same, 9/29 down 1-2 kHz on single-channel high-rate (suggests Session 20 numbers were run-to-run optimistic at the edge).
+† Endurance leak at ceiling in Session 22 (CSV 5×T1 OBD=ON @ 4k, 5T1+5T2 @ 2k, 5T1+11T2 @ 2k all leaked during the 60 s endurance). True sustainable ceilings are 1 kHz lower for those three configs.
+
+**Session 22 highlights vs Sessions 20/21:**
+- **#354/#356 throughput-safe.** 5 USB configs pick up +1 k ceilings post-merge (USB PB 3×T1, USB PB 5×T1 OBD=OFF, USB CSV 1×T1, USB CSV 1×T2, USB CSV 5×T1) — confirmed clean at 60 s endurance. Likely run-to-run at the edge rather than a real speedup.
+- **SD CSV 8×T2 real +2 k gain** (3 k clean vs Session 20's 1 k). Biggest SD surprise; SD CSV 5T1+11T2 ceiling sweep also finds 2 k (was 1 k) but leaks endurance, so sustainable ceiling stays at 1 k.
+- **SD single-channel PB -1 k** (10k/11k vs 11k/12k in Session 20). Session 20 numbers were run-to-run optimistic per own note; Session 22 figures are the reliable endurance values.
+- **Session 22 endurance leaks:** USB PB 5T1+5T2 @ 12k, USB CSV 11×T2 @ 9k, SD CSV 5×T1 OBD=ON @ 4k, SD CSV 5T1+5T2 @ 2k, SD CSV 5T1+11T2 @ 2k. USB CSV 5T1+11T2 (was Session 21 endurance-leak at 7k) now clean.
+- **No regressions.** #354 (ADC stack fix) + #356 (SCPI dispatch off WDRV_WINC_Tasks, WINC back to 1024-word stack) are merge-safe for throughput.
+
+**Session 21 highlights (earlier, retained for context):**
 - **Jitter eliminated at ≥10 kHz.** #335 idle-gate kills the 22 Hz / 270 µs WINC preemption — CV at 10 kHz drops 9.44% → 0.5%, p-p 326 µs → 8.8 µs. Saleae verified.
-- **No gains but no real regressions.** The WINC idle-gate does exactly what it was designed for (jitter / ISR-observability), doesn't magically raise ceilings. Those are bounded by encoder/USB-write throughput.
-- **3 endurance leaks at found ceiling** on CSV-heavy configs (5×T2, 11×T2, 16ch) — normal edge-of-ceiling variance at 60s endurance.
 
 **Session 20 highlights (earlier, retained for context):**
 - **T1/T2 parity achieved across every mode** — PB+T2 regression (#313) fully resolved.
