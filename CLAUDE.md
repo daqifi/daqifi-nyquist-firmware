@@ -539,9 +539,32 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 | SD | PB | 1 | 13 kHz | 148 |
 | SD | PB | 8 | 7 kHz | 185 |
 | SD | PB | 16 | 7 kHz | 199 |
-| WiFi | PB | 16 | 3 kHz | 49 |
-| WiFi | CSV | 16 | 1 kHz | 206 |
 | SD | raw write | — | — | 665 |
+
+**WiFi STA characterization (NQ1, fullscale test pattern, Session 23 — 2026-04-25):**
+
+Single-trial ceiling sweep, no endurance. Best wire rate = **183 KB/s = 1.5 Mbps** (CSV 1×T1 OBD=OFF @ 8 kHz). WINC1500 spec is 5–10 Mbps real TCP — **~25 % of available bandwidth, 3-7× headroom**. WiFi-side bottleneck is `WifiDroppedBytes` in every leak (pipeline up to encoder is clean; WINC SPI staging is the bottleneck).
+
+| Config | PB Hz | PB KB/s | CSV Hz | CSV KB/s |
+|--------|------:|--------:|-------:|---------:|
+| 1×T1 | 7,000 | 89 | 5,000 | 108 |
+| 1×T2 | 7,000 | 96 | 6,000 | 103 |
+| 1×T1 OBD=OFF | **8,000** | 107 | **8,000** | **183** |
+| 1×T1 OBD=ON | 7,000 | 99 | 6,000 | 115 |
+| 3×T1 | 5,000 | 113 | 3,000 | 116 |
+| 3×T2 | 5,000 | 118 | 3,000 | 157 |
+| 5×T1 | 3,000 | 104 | 700 | 65 |
+| 5×T2 | 3,000 | 105 | 1,000 | 108 |
+| 5×T1 OBD=OFF | 4,000 | 139 | 1,000 | 93 |
+| 5×T1 OBD=ON | 3,000 | 104 | 1,000 | 103 |
+| 8×T2 | 2,000 | 102 | 1,000 | 146 |
+| 11×T2 | 2,000 | 135 | 700 | 174 |
+| 5T1+3T2 (8ch) | 2,000 | 98 | 500 | 87 |
+| 5T1+5T2 (10ch) | 2,000 | 125 | 100 | 23 |
+| 5T1+11T2 (16ch) | 1,000 | 89 | 500 | — † |
+| 5T1+11T2 OBD=OFF (16ch) | 1,000 | 85 | 300 | 102 |
+
+† Reconnect mid-rate-step reset the byte counter; firmware-side counters confirmed clean stream. **OBD=OFF is lower than OBD=ON at 16ch** (300 vs 500 Hz) — opposite of the single-channel pattern; warrants multi-trial verification.
 
 **Benchmark variance:** With the improved SPS measurement methodology (blocking FastReader, sleep-duration denominator), run-to-run variance is near zero for identical firmware. Previous ~10-15% variance was caused by unreliable first-byte-time SPS calculation.
 

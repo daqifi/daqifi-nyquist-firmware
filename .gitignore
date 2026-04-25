@@ -27,6 +27,11 @@
 *.debug
 memoryfile.xml
 
+# Local secrets / env (e.g. WIFI_PASS for bench testing)
+.env
+.env.*
+!.env.example
+
 # OS-specific files
 .DS_Store
 Thumbs.db
