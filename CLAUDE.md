@@ -545,6 +545,12 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 
 Single-trial ceiling sweep, no endurance. Best wire rate = **183 KB/s = 1.5 Mbps** (CSV 1×T1 OBD=OFF @ 8 kHz). WINC1500 spec is 5–10 Mbps real TCP — **~25 % of available bandwidth, 3-7× headroom**. WiFi-side bottleneck is `WifiDroppedBytes` in every leak (pipeline up to encoder is clean; WINC SPI staging is the bottleneck).
 
+**SPI4 SCK (WINC bus) measurement (Saleae Logic 8, 100 MS/s):**
+- **Clock = 16.67 MHz** (60 ns period, ±10 ns sampling jitter).
+- **Bus is idle 92.9 %** of the time during a sustained ~100 KB/s WiFi stream (4.64 s of every 5 s window). 123,674 idle gaps averaging 37.5 µs each.
+- Implication: clock is *not* the bottleneck. Theoretical 16.67 MHz × 1 byte = ~2 MB/s on the bus alone; we use ~5 % of that. The remaining 93 % is host-side (task scheduling, callback serialization, buffer underrun) — see #361 / #362 / #363.
+- SPI4 baud is shared with SD card constraints; do not change as a "WiFi fix" without SD validation.
+
 | Config | PB Hz | PB KB/s | CSV Hz | CSV KB/s |
 |--------|------:|--------:|-------:|---------:|
 | 1×T1 | 7,000 | 89 | 5,000 | 108 |
