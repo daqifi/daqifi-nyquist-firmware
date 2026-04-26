@@ -723,8 +723,8 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
     // WINC's per-packet callback-paced drain catches up. Sample-pool
     // floor with USB+WiFi active is ~520 samples (well above
     // MIN_AIN_SAMPLE_COUNT=100).
-    *outWifiSize = hasWifi ? (64U * 1024U) : STREAMING_WIFI_MIN;
-    *outUsbSize  = hasUsb  ? (64U * 1024U) : STREAMING_USB_MIN;
+    *outWifiSize = hasWifi ? STREAMING_WIFI_DEFAULT : STREAMING_WIFI_MIN;
+    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT  : STREAMING_USB_MIN;
 }
 
 /*!
