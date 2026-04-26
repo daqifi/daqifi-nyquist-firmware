@@ -34,6 +34,10 @@ extern "C" {
 #define ENCODER_BUFFER_DEFAULT      8192   /* Optimal for USB; SD benefits from 16384 */
 #define STREAMING_SD_CIRCULAR_MIN   512    /* Min valid circular buffer (unused when inactive) */
 
+/** Active-interface defaults used by Streaming_ComputeAutoBuffers */
+#define STREAMING_USB_DEFAULT       (64U * 1024U)  /* USB circular when active */
+#define STREAMING_WIFI_DEFAULT      (64U * 1024U)  /* WiFi circular when active (#362/#363) */
+
 /**
  * Initialize the pool and set default partition.
  * Call once at boot before USB/WiFi/sample pool init.

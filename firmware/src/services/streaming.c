@@ -719,10 +719,12 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
 
     // Circular buffers: larger buffers reduce retry frequency for
     // all-or-nothing writes, but must leave enough pool for samples.
-    // 64KB USB (85ms at 3kHz×250B) and 32KB WiFi (23ms at 1kHz×1400B)
-    // balance retry avoidance with sample pool depth (~500+ samples).
-    *outWifiSize = hasWifi ? (32U * 1024U) : STREAMING_WIFI_MIN;
-    *outUsbSize  = hasUsb  ? (64U * 1024U) : STREAMING_USB_MIN;
+    // WiFi at 64KB absorbs ~44ms of encoder lead at 1kHz×1400B before
+    // WINC's per-packet callback-paced drain catches up. Sample-pool
+    // floor with USB+WiFi active is ~520 samples (well above
+    // MIN_AIN_SAMPLE_COUNT=100).
+    *outWifiSize = hasWifi ? STREAMING_WIFI_DEFAULT : STREAMING_WIFI_MIN;
+    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT  : STREAMING_USB_MIN;
 }
 
 /*!
