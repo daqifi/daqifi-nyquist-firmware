@@ -217,11 +217,9 @@ extern "C" {
         LOG_SESSION_DIO_DROP,              /**< DIO.c: DIO queue full (#296) */
         LOG_SESSION_EOS_OVERRUN,           /**< ADC.c: EOS result register overrun (#295) */
         LOG_SESSION_ENCODER_SAMPLE_LOSS,   /**< streaming.c: samples consumed by failed encode (#297) */
-        LOG_SESSION_VALUES_AT_WRITE,       /**< streaming.c: Values[0] at test-pattern/ADC write (#368 diag) */
-        LOG_SESSION_VALUES_AT_ENCODE,      /**< NanoPB_Encoder.c: Values[0] at encoder read (#368 diag) */
-        LOG_SESSION_PACKETSIZE,            /**< streaming.c: encoder packetSize before WriteBuffer (#367 diag) */
-        LOG_SESSION_PARTIAL_SHORTFALL,     /**< wifi_manager.c: partial-send shortfall observed (#367 diag) */
-        LOG_SESSION_BUFFER_TAIL,           /**< streaming.c: bytes left in WiFi circular buffer at Stop (#367 diag) */
+        LOG_SESSION_VALUES_AT_ENCODE,      /**< NanoPB_Encoder.c: Values[0] at encoder read */
+        LOG_SESSION_PACKETSIZE,            /**< streaming.c: encoder packetSize before WriteBuffer */
+        LOG_SESSION_BUFFER_TAIL,           /**< streaming.c: bytes left in WiFi circular buffer at Stop */
         /* Add new entries above this line */
         LOG_SESSION_COUNT                  /**< Must be <= 32 */
     } LogSessionBit_t;
