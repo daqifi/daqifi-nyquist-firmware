@@ -139,6 +139,9 @@ typedef struct {
     // a snapshot copy taken inside taskENTER_CRITICAL (which makes the
     // non-atomic 64-bit read coherent by blocking the timer ISR).
     uint64_t timerISRCalls;          // Actual timer ISR entry count this session
+    // #367 diagnostics — populated at Streaming_Stop() to reconcile the
+    // accounting gap (TotalBytesStreamed vs WifiTcpBytesSent at saturation).
+    uint32_t circularBufferEndBytes; // Bytes still in WiFi circular buffer at Stop
 } StreamingStats;
 
 // Copies stats into *out inside a critical section (atomic snapshot)

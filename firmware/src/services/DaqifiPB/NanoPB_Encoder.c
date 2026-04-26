@@ -417,6 +417,16 @@ size_t Nanopb_Encode(tBoardData* state,
                             break;  // Array full
                         // Use sequential packing
                         message.analog_in_data[message.analog_in_data_count] = pPublicSampleList->Values[j];
+                        // #368 diag: log first encoded sample value once per
+                        // session.  If WriteValues was 0xFFF (4095) but here
+                        // we see something else, memory corruption between
+                        // sample-pool slots and encoder read.
+                        LOG_E_SESSION(LOG_SESSION_VALUES_AT_ENCODE,
+                            "diag368-slow: analog_in_data[%d]=0x%08x j=%d listVal=0x%08x",
+                            (int)message.analog_in_data_count,
+                            (unsigned)message.analog_in_data[message.analog_in_data_count],
+                            (int)j,
+                            (unsigned)pPublicSampleList->Values[j]);
                         message.analog_in_data_count++;
                     }
 
@@ -1407,7 +1417,17 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
                     continue;
                 if (count >= MAX_AIN_PUBLIC_CHANNELS)
                     break;
-                values[count++] = pPublicSampleList->Values[j];
+                values[count] = pPublicSampleList->Values[j];
+                // #368 diag (fast path): log first encoded value per session
+                LOG_E_SESSION(LOG_SESSION_VALUES_AT_ENCODE,
+                    "diag368-fast: values[%d]=0x%08x j=%d listVal=0x%08x mask=0x%04x cnt=%d",
+                    (int)count,
+                    (unsigned)values[count],
+                    (int)j,
+                    (unsigned)pPublicSampleList->Values[j],
+                    (unsigned)pPublicSampleList->validMask,
+                    (int)chCount);
+                count++;
             }
 
             AInSampleList_FreeToPool(pPublicSampleList);

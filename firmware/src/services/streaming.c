@@ -374,10 +374,16 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
                 uint32_t adcMax;
+                // #368: XC32/GCC at -O3 mis-compiles direct (uint32_t)double
+                // cast on PIC32MZ — produces garbage like 0x80000FE6 instead
+                // of the integer value. Going through (int32_t) intermediate
+                // forces the proper cvt.w.d instruction and gets the right
+                // answer. Verified in diag log: bytes=4096.0, dir-cast=garbage,
+                // int-cast=4096.
                 if (pBoardConfig->AInChannels.Data[cfgIdx].Type == AIn_AD7609) {
-                    adcMax = (uint32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution - 1;
+                    adcMax = (uint32_t)(int32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution - 1;
                 } else {
-                    adcMax = (uint32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution - 1;
+                    adcMax = (uint32_t)(int32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution - 1;
                 }
 
                 if (gBenchmarkMode == BENCHMARK_PIPELINE) {
@@ -804,6 +810,18 @@ static void Streaming_Stop(void) {
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
         gpRuntimeConfigStream->Running = false;
+
+        // #367 diagnostics: snapshot bytes still sitting in the WiFi TCP
+        // circular buffer at session end.  If TotalBytesStreamed -
+        // WifiTcpBytesSent - WifiDroppedBytes equals this value, the
+        // accounting gap is "tail bytes never drained at Stop".
+        gStreamStats.circularBufferEndBytes =
+            wifi_tcp_server_GetCircularBufferAvailable();
+        if (gStreamStats.circularBufferEndBytes > 0) {
+            LOG_E_SESSION(LOG_SESSION_BUFFER_TAIL,
+                "diag367: circular buffer tail at Stop = %u bytes",
+                (unsigned)gStreamStats.circularBufferEndBytes);
+        }
 
         // Log session summary if any data was lost
         bool hadDrops = gStreamStats.queueDroppedSamples > 0 ||
@@ -1274,6 +1292,11 @@ void streaming_Task(void) {
                 }
             }
             if (hasWifi) {
+                LOG_E_SESSION(LOG_SESSION_PACKETSIZE,
+                    "diag367: encoder packetSize=%u first4=0x%02x%02x%02x%02x",
+                    (unsigned)packetSize,
+                    (unsigned)buffer[0], (unsigned)buffer[1],
+                    (unsigned)buffer[2], (unsigned)buffer[3]);
                 if (wifi_manager_WriteToBuffer((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.wifiDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
