@@ -374,16 +374,19 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
                 uint32_t adcMax;
-                // #368: XC32/GCC at -O3 mis-compiles direct (uint32_t)double
-                // cast on PIC32MZ — produces garbage like 0x80000FE6 instead
-                // of the integer value. Going through (int32_t) intermediate
-                // forces the proper cvt.w.d instruction and gets the right
-                // answer. Verified in diag log: bytes=4096.0, dir-cast=garbage,
-                // int-cast=4096.
+                // #368: this task is registered as pure-integer (see comment
+                // at top of _Streaming_Deferred_Interrupt_Task — no
+                // portTASK_USES_FLOATING_POINT()).  Reading the double
+                // Resolution field and casting it emits FPU instructions
+                // that pick up register-contamination from FPU-using tasks
+                // during context switches, producing garbage like 0x80000FE6
+                // instead of the integer value.  The Resolution field IS
+                // a fixed compile-time constant per ADC type, so just use
+                // hardcoded integer constants and avoid the FPU entirely.
                 if (pBoardConfig->AInChannels.Data[cfgIdx].Type == AIn_AD7609) {
-                    adcMax = (uint32_t)(int32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution - 1;
+                    adcMax = 262143u;  // 18-bit AD7609
                 } else {
-                    adcMax = (uint32_t)(int32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution - 1;
+                    adcMax = 4095u;    // 12-bit MC12bADC
                 }
 
                 if (gBenchmarkMode == BENCHMARK_PIPELINE) {
@@ -1292,11 +1295,17 @@ void streaming_Task(void) {
                 }
             }
             if (hasWifi) {
-                LOG_E_SESSION(LOG_SESSION_PACKETSIZE,
-                    "diag367: encoder packetSize=%u first4=0x%02x%02x%02x%02x",
-                    (unsigned)packetSize,
-                    (unsigned)buffer[0], (unsigned)buffer[1],
-                    (unsigned)buffer[2], (unsigned)buffer[3]);
+                if (packetSize >= 4) {
+                    LOG_E_SESSION(LOG_SESSION_PACKETSIZE,
+                        "diag367: encoder packetSize=%u first4=0x%02x%02x%02x%02x",
+                        (unsigned)packetSize,
+                        (unsigned)buffer[0], (unsigned)buffer[1],
+                        (unsigned)buffer[2], (unsigned)buffer[3]);
+                } else {
+                    LOG_E_SESSION(LOG_SESSION_PACKETSIZE,
+                        "diag367: encoder packetSize=%u (<4 bytes)",
+                        (unsigned)packetSize);
+                }
                 if (wifi_manager_WriteToBuffer((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.wifiDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
