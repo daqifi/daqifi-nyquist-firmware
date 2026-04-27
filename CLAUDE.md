@@ -533,7 +533,20 @@ SYST:STR:STATS?
 SYST:STR:BENCH 0                    # Restore normal
 ```
 
-If PIPELINE wire rate >> NOCAP wire rate at the same Hz, ADC is contributing to the bottleneck (cache pressure, ISR load, mutex contention with the encoder task). Measured: at 5 kHz × 1 ch on Tesla AP, NOCAP delivers ~150 KB/s while PIPELINE delivers **~230 KB/s** (≈+50 %) — ADC is real cost, not zero.
+If PIPELINE wire rate >> NOCAP wire rate at the same Hz, ADC is contributing to the bottleneck (cache pressure, ISR load, mutex contention with the encoder task).
+
+**Empirical NOCAP-vs-PIPELINE curve (1×T1 PB on Tesla AP, fullscale, 6 s):**
+
+| Rate | PIPELINE wire | NOCAP wire | ADC cost |
+|----:|--------------:|-----------:|---------:|
+| 1 kHz | 50 KB/s | 50 KB/s | 0 % |
+| 2 kHz | 95 KB/s | 95 KB/s | 0 % |
+| 3 kHz | 134 KB/s | 135 KB/s | 0 % |
+| 5 kHz | 211 KB/s | 211 KB/s | 0 % |
+| **8 kHz** | **194 KB/s** | **70 KB/s** | **–64 %** |
+| **12 kHz** | **33 KB/s** | **1 KB/s** + `qd=1793` | **–97 %** |
+
+**Below the Tesla wire ceiling (~5 kHz × 1 ch ≈ 230 KB/s), ADC is invisible** — encoder + WiFi keep up without contention. **Above wire ceiling, ADC pipeline (ISRs, EOS task, BoardData mutex) takes enough CPU that the encoder/output stalls.** NOCAP saturates earlier than PIPELINE because of this. The "ADC cost" reported by simple side-by-side numbers depends entirely on whether you tested at saturation or below — if anyone reports ADC as "free" without specifying rate, treat it skeptically.
 
 **Throughput-claim discipline:** when reporting wire-rate measurements, always state the benchmark level and the test pattern. A "5 kHz / 230 KB/s" number is meaningless without "(NOCAP)" or "(PIPELINE)" — they measure different things. PIPELINE numbers represent the **upper bound** for streaming work that doesn't read the ADC; NOCAP numbers represent the **realistic** ceiling for actual data acquisition.
 
