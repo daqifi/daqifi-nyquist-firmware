@@ -122,13 +122,17 @@ static bool TcpServerFlush() {
     if (sockRet == SOCK_ERR_CONN_ABORTED) {
         funRet = false;
     } else if (sockRet == SOCK_ERR_NO_ERROR) {
-        // Update stats and lastSendSize BEFORE setting tcpSendPending,
-        // so the callback reads consistent data if it fires immediately.
+        // Update stats, ring slot, and inflight counter atomically so
+        // the SOCKET_MSG_SEND callback reads consistent values if it
+        // fires immediately on the WiFi task as soon as we exit.
         taskENTER_CRITICAL();
-        gpServerData->client.lastSendSize = gpServerData->client.writeBufferLength;
+        gpServerData->client.inflightSizes[gpServerData->client.inflightHead] =
+            gpServerData->client.writeBufferLength;
+        gpServerData->client.inflightHead =
+            (gpServerData->client.inflightHead + 1) % WIFI_TCP_MAX_IN_FLIGHT;
         gpServerData->client.wifiTcpBytesSent += gpServerData->client.writeBufferLength;
+        gpServerData->client.tcpInFlight++;
         taskEXIT_CRITICAL();
-        gpServerData->client.tcpSendPending = 1;  // Signal after data is ready
         gpServerData->client.writeBufferLength = 0;
         funRet = true;
     } else if (sockRet == SOCK_ERR_BUFFER_FULL) {
@@ -316,7 +320,15 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         gpServerData->client.writeBufferLength = 0;
         gpServerData->serverSocket = -1;
         gpServerData->client.clientSocket = -1;
-        gpServerData->client.tcpSendPending = 0;
+        gpServerData->client.tcpInFlight = 0;
+        gpServerData->client.wifiPartialBytesMissing = 0;
+        gpServerData->client.wifiWriteBufferRejectedCalls = 0;
+        gpServerData->client.wifiWriteBufferRejectedBytes = 0;
+        gpServerData->client.inflightHead = 0;
+        gpServerData->client.inflightTail = 0;
+        for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
+            gpServerData->client.inflightSizes[i] = 0;
+        }
         microrl_init(&gpServerData->client.console, microrl_echo);
         microrl_set_echo(&gpServerData->client.console, false);
         microrl_set_execute_callback(&gpServerData->client.console, microrl_commandComplete);
@@ -361,7 +373,7 @@ void wifi_tcp_server_CloseSocket() {
     
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.writeBufferLength = 0;
-    gpServerData->client.tcpSendPending = 0;
+    gpServerData->client.tcpInFlight = 0;
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
 }
 
@@ -372,7 +384,7 @@ void wifi_tcp_server_CloseClientSocket() {
     }
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.writeBufferLength = 0;
-    gpServerData->client.tcpSendPending = 0;
+    gpServerData->client.tcpInFlight = 0;
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
 }
 
@@ -417,6 +429,9 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
     // This prevents the streaming task from stalling for 10-60ms
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
     if (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
+        // #371: count rejections to verify wifiDroppedBytes accounting is working.
+        gpServerData->client.wifiWriteBufferRejectedCalls++;
+        gpServerData->client.wifiWriteBufferRejectedBytes += (uint32_t)len;
         xSemaphoreGive(gpServerData->client.wMutex);
         return 0;  // No space available - return immediately
     }
@@ -431,9 +446,12 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
     bool shouldFlush = (bytesInBuffer > (WIFI_WBUFFER_SIZE * 3 / 10));
     xSemaphoreGive(gpServerData->client.wMutex);
 
-    // Trigger flush outside mutex to avoid blocking other writers
-    // Check tcpSendPending first to avoid unnecessary function calls
-    if (shouldFlush && gpServerData->client.tcpSendPending == 0) {
+    // Trigger flush outside mutex to avoid blocking other writers.
+    // #362 Step C: drain when WINC has any free in-flight slot, not just
+    // when zero in-flight. Lets streaming task queue a 2nd send while the
+    // first is still being radio-TXed by WINC, instead of waiting for
+    // SOCKET_MSG_SEND callback delivery latency between every packet.
+    if (shouldFlush && gpServerData->client.tcpInFlight < WIFI_TCP_MAX_IN_FLIGHT) {
         wifi_tcp_server_TransmitBufferedData();
     }
 
@@ -453,10 +471,14 @@ bool wifi_tcp_server_ProcessReceivedBuff() {
 bool wifi_tcp_server_TransmitBufferedData() {
     int ret;
     UNUSED(ret);
-    if (gpServerData->client.tcpSendPending != 0) {
+    // #362 Step C: bail when WINC's HIF queue is at our cap.  Re-entry
+    // (from streaming_Task WriteBuffer trigger or WDRV_WINC_Tasks
+    // SOCKET_MSG_SEND chain) drains one packet per call and increments
+    // tcpInFlight in TcpServerFlush — the callback is what decrements it.
+    if (gpServerData->client.tcpInFlight >= WIFI_TCP_MAX_IN_FLIGHT) {
         return false;
     }
-  
+
     // Check if data available with mutex protection
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
     bool hasData = (CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf) > 0);
@@ -479,9 +501,9 @@ bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize) {
 void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     if (gpServerData == NULL || buf == NULL || size == 0) return;
 
-    // Wait for any pending TCP send before swapping buffers
+    // Wait for any in-flight TCP sends to drain before swapping buffers
     TickType_t start = xTaskGetTickCount();
-    while (gpServerData->client.tcpSendPending) {
+    while (gpServerData->client.tcpInFlight) {
         if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(1000)) {
             LOG_E("WiFi buffer swap: TCP send stuck, proceeding anyway");
             break;

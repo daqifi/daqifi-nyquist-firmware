@@ -1913,7 +1913,14 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->client.wifiTcpBytesConfirmed = 0;
         pTcp->client.wifiTcpSendErrors = 0;
         pTcp->client.wifiTcpPartialSends = 0;
-        pTcp->client.lastSendSize = 0;
+        pTcp->client.wifiPartialBytesMissing = 0;
+        pTcp->client.wifiWriteBufferRejectedCalls = 0;
+        pTcp->client.wifiWriteBufferRejectedBytes = 0;
+        for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
+            pTcp->client.inflightSizes[i] = 0;
+        }
+        pTcp->client.inflightHead = 0;
+        pTcp->client.inflightTail = 0;
         taskEXIT_CRITICAL();
     }
     // Reset SD write metrics
@@ -1988,6 +1995,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     {
         uint64_t bytesSent = 0, bytesConfirmed = 0;
         uint32_t sendErrors = 0, partialSends = 0, partialMissing = 0;
+        uint32_t rejectedCalls = 0, rejectedBytes = 0;
+        uint32_t cirbufProduced = 0, cirbufConsumed = 0, cirbufBufSize = 0;
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {
             // Atomic snapshot of 64-bit counters (not atomic on 32-bit PIC32MZ)
@@ -1997,6 +2006,11 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
             sendErrors = pTcp->client.wifiTcpSendErrors;
             partialSends = pTcp->client.wifiTcpPartialSends;
             partialMissing = pTcp->client.wifiPartialBytesMissing;
+            rejectedCalls = pTcp->client.wifiWriteBufferRejectedCalls;
+            rejectedBytes = pTcp->client.wifiWriteBufferRejectedBytes;
+            cirbufProduced = pTcp->client.wCirbuf.producedBytes;
+            cirbufConsumed = pTcp->client.wCirbuf.consumedBytes;
+            cirbufBufSize  = pTcp->client.wCirbuf.buf_size;
             taskEXIT_CRITICAL();
         }
         // Always print for consistent response schema
@@ -2006,6 +2020,14 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiTcpPartialSends=%u\r\n", (unsigned)partialSends);
         // #367 diag: cumulative byte shortfall across all partial sends
         scpi_printf(context, "WifiPartialBytesMissing=%u\r\n", (unsigned)partialMissing);
+        // #371 diag: WriteBuffer-side rejection counters (should match wifiDroppedBytes)
+        scpi_printf(context, "WifiWriteBufferRejectedCalls=%u\r\n", (unsigned)rejectedCalls);
+        scpi_printf(context, "WifiWriteBufferRejectedBytes=%u\r\n", (unsigned)rejectedBytes);
+        // #371 diag: raw circular-buffer SPSC counters — invariant: produced >= consumed,
+        // and (produced - consumed) <= buf_size.  If violated, NumBytesFree underflows.
+        scpi_printf(context, "WifiCirbufProduced=%u\r\n", (unsigned)cirbufProduced);
+        scpi_printf(context, "WifiCirbufConsumed=%u\r\n", (unsigned)cirbufConsumed);
+        scpi_printf(context, "WifiCirbufBufSize=%u\r\n", (unsigned)cirbufBufSize);
     }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
     {
@@ -2310,7 +2332,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             pTcp->client.wifiTcpBytesConfirmed = 0;
             pTcp->client.wifiTcpSendErrors = 0;
             pTcp->client.wifiTcpPartialSends = 0;
-            pTcp->client.lastSendSize = 0;
+            pTcp->client.wifiPartialBytesMissing = 0;
+            for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
+                pTcp->client.inflightSizes[i] = 0;
+            }
+            pTcp->client.inflightHead = 0;
+            pTcp->client.inflightTail = 0;
             taskEXIT_CRITICAL();
         }
     }

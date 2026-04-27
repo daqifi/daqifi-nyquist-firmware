@@ -23,6 +23,16 @@ extern "C" {
 #define WIFI_WBUFFER_SIZE SOCKET_BUFFER_MAX_LENGTH  // Use full WINC1500 buffer capacity (1400 bytes)
 #define WIFI_CIRCULAR_BUFF_SIZE SOCKET_BUFFER_MAX_LENGTH*10
 
+// Max simultaneous m2m_send packets queued at WINC.  hif_send is synchronous
+// (writes to WINC SPI before returning), so our local writeBuffer is free
+// right after send() returns — the only constraint is WINC's internal HIF
+// queue depth.  Microchip's reference iperf uses 2 for UDP TX queue.
+// Empirically N=3 lifts 1-channel WiFi PB ceiling from ~14 kHz → ~17 kHz on
+// Tesla AP (no further gain at N=4); the previous N=2 was the WiFi
+// pipelining bottleneck.  Multi-channel ceilings (8ch+) are unchanged
+// because they're sample-queue-limited upstream of WiFi.
+#define WIFI_TCP_MAX_IN_FLIGHT 4
+
 /**
  * Data for a particular TCP client
  */
@@ -50,7 +60,12 @@ typedef struct s_tcpClientContext
     /** The associated SCPI context */
     scpi_t scpiContext;
     
-    bool tcpSendPending;
+    /** Count of m2m_send calls queued at WINC, decremented by SOCKET_MSG_SEND
+     *  callback.  Caps at WIFI_TCP_MAX_IN_FLIGHT.  Replaces the prior
+     *  `bool tcpSendPending` (which capped at 1).  Updated under
+     *  taskENTER_CRITICAL — concurrent writers are streaming_Task (priority 6)
+     *  and WDRV_WINC_Tasks (priority 2). */
+    volatile uint8_t tcpInFlight;
 
     /** Bytes handed to radio send() successfully (64-bit for long sessions) */
     uint64_t wifiTcpBytesSent;
@@ -62,9 +77,19 @@ typedef struct s_tcpClientContext
     uint32_t wifiTcpPartialSends;
     /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across all partial sends */
     uint32_t wifiPartialBytesMissing;
-    /** Pending send size (to compare against callback confirmation).
-     *  Written by streaming task (TcpServerFlush), read by WiFi task (callback). */
-    volatile uint16_t lastSendSize;
+    /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
+     *  because the circular buffer didn't have enough free space.  Streaming task
+     *  charges the same packet to wifiDroppedBytes; if these don't match the
+     *  per-call mismatch is a bug in the silent-loss path. */
+    uint32_t wifiWriteBufferRejectedCalls;
+    uint32_t wifiWriteBufferRejectedBytes;
+    /** FIFO ring of in-flight send sizes — one slot per concurrent send.
+     *  Producer (TcpServerFlush) writes at inflightHead, consumer (SOCKET_MSG_SEND
+     *  callback) reads at inflightTail.  Both indices wrap mod WIFI_TCP_MAX_IN_FLIGHT.
+     *  Replaces the prior scalar `lastSendSize` which raced under N>1 concurrent sends. */
+    volatile uint16_t inflightSizes[WIFI_TCP_MAX_IN_FLIGHT];
+    volatile uint8_t inflightHead;
+    volatile uint8_t inflightTail;
 } wifi_tcp_server_clientContext_t;
 
 /**
