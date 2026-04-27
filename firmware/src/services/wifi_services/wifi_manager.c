@@ -8,6 +8,7 @@
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
+#include "iperf2/iperf2.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
 
@@ -222,6 +223,15 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
 
 static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessage) {
     static uint8_t udpBuffer[UDP_BUFFER_SIZE];
+
+    // #377: iperf2 first claim — when an iperf benchmark is running it owns
+    // its own listen + data sockets and dispatches the full state machine
+    // here.  Skip the wifi_tcp_server / UDP-discovery cases below if iperf2
+    // handles the event.
+    if (Iperf2_HandleSocketEvent(socket, messageType, pMessage)) {
+        return;
+    }
+
     switch (messageType) {
         case SOCKET_MSG_BIND:
         {
@@ -1268,6 +1278,10 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
     gStateMachineContext.nextState = NULL;
 
+    // #377: iperf2 module — initialize once at boot.  Doesn't open any
+    // sockets until SYST:WIFI:IPERF:* is invoked.
+    Iperf2_Initialize();
+
     return true;
 }
 
@@ -1406,6 +1420,10 @@ void wifi_manager_ProcessState() {
         return;
     }
     wifi_tcp_server_TransmitBufferedData();
+
+    // #377: iperf2 client mode — keep the TX cap topped up.  No-op in
+    // SERVER / IDLE.  Cheap when idle (single mode-check).
+    Iperf2_Tasks();
 
     // #353 Option 2: drain any deferred TCP rx data on this task's stack.
     // SOCKET_MSG_RECV (WDRV_WINC_Tasks context) stored length + set the flag
