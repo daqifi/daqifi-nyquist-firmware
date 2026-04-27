@@ -203,7 +203,9 @@ bool Iperf2_StartTcpClient(const char* remote_ip, uint16_t remote_port,
     addr.sin_family = AF_INET;
     addr.sin_port = _htons(remote_port);
     addr.sin_addr.s_addr = inet_addr((char*)remote_ip);
-    if (addr.sin_addr.s_addr == 0) {
+    // WINC inet_addr returns 0 on parse failure; also reject 0xFFFFFFFFU
+    // (POSIX INADDR_NONE / "255.255.255.255") — not a valid iperf target.
+    if (addr.sin_addr.s_addr == 0 || addr.sin_addr.s_addr == 0xFFFFFFFFU) {
         LOG_E("iperf2: bad remote IP %s", remote_ip);
         CloseAll();
         return false;
@@ -246,7 +248,8 @@ bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
     gCtx.udp_remote.sin_family = AF_INET;
     gCtx.udp_remote.sin_port = _htons(remote_port);
     gCtx.udp_remote.sin_addr.s_addr = inet_addr((char*)remote_ip);
-    if (gCtx.udp_remote.sin_addr.s_addr == 0) {
+    if (gCtx.udp_remote.sin_addr.s_addr == 0 ||
+        gCtx.udp_remote.sin_addr.s_addr == 0xFFFFFFFFU) {
         LOG_E("iperf2: bad remote IP %s", remote_ip);
         CloseAll();
         return false;
