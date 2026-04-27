@@ -593,8 +593,12 @@ static void TasksUdpClient(void) {
                             (struct sockaddr*)&gCtx.udp_remote,
                             sizeof(gCtx.udp_remote));
             if (rc == SOCK_ERR_NO_ERROR) {
+                // 8-bit RMW; same critical-section pattern as the TX-phase
+                // path above for consistency.
+                taskENTER_CRITICAL();
                 gCtx.pending_tx++;
                 gCtx.udp_fin_count++;
+                taskEXIT_CRITICAL();
             }
         }
     }
