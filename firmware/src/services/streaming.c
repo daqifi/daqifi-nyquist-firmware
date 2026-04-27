@@ -374,10 +374,19 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
                 uint32_t adcMax;
+                // #368: this task is registered as pure-integer (see comment
+                // at top of _Streaming_Deferred_Interrupt_Task — no
+                // portTASK_USES_FLOATING_POINT()).  Reading the double
+                // Resolution field and casting it emits FPU instructions
+                // that pick up register-contamination from FPU-using tasks
+                // during context switches, producing garbage like 0x80000FE6
+                // instead of the integer value.  The Resolution field IS
+                // a fixed compile-time constant per ADC type, so just use
+                // hardcoded integer constants and avoid the FPU entirely.
                 if (pBoardConfig->AInChannels.Data[cfgIdx].Type == AIn_AD7609) {
-                    adcMax = (uint32_t)pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution - 1;
+                    adcMax = 262143u;  // 18-bit AD7609
                 } else {
-                    adcMax = (uint32_t)pBoardConfig->AInModules.Data[0].Config.MC12b.Resolution - 1;
+                    adcMax = 4095u;    // 12-bit MC12bADC
                 }
 
                 if (gBenchmarkMode == BENCHMARK_PIPELINE) {
@@ -804,6 +813,18 @@ static void Streaming_Stop(void) {
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
         gpRuntimeConfigStream->Running = false;
+
+        // #367 diagnostics: snapshot bytes still sitting in the WiFi TCP
+        // circular buffer at session end.  If TotalBytesStreamed -
+        // WifiTcpBytesSent - WifiDroppedBytes equals this value, the
+        // accounting gap is "tail bytes never drained at Stop".
+        gStreamStats.circularBufferEndBytes =
+            wifi_tcp_server_GetCircularBufferAvailable();
+        if (gStreamStats.circularBufferEndBytes > 0) {
+            LOG_E_SESSION(LOG_SESSION_BUFFER_TAIL,
+                "diag367: circular buffer tail at Stop = %u bytes",
+                (unsigned)gStreamStats.circularBufferEndBytes);
+        }
 
         // Log session summary if any data was lost
         bool hadDrops = gStreamStats.queueDroppedSamples > 0 ||
@@ -1274,6 +1295,17 @@ void streaming_Task(void) {
                 }
             }
             if (hasWifi) {
+                if (packetSize >= 4) {
+                    LOG_E_SESSION(LOG_SESSION_PACKETSIZE,
+                        "diag367: encoder packetSize=%u first4=0x%02x%02x%02x%02x",
+                        (unsigned)packetSize,
+                        (unsigned)buffer[0], (unsigned)buffer[1],
+                        (unsigned)buffer[2], (unsigned)buffer[3]);
+                } else {
+                    LOG_E_SESSION(LOG_SESSION_PACKETSIZE,
+                        "diag367: encoder packetSize=%u (<4 bytes)",
+                        (unsigned)packetSize);
+                }
                 if (wifi_manager_WriteToBuffer((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.wifiDroppedBytes += packetSize;
                     taskENTER_CRITICAL();

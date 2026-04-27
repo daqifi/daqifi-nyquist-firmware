@@ -60,6 +60,8 @@ typedef struct s_tcpClientContext
     uint32_t wifiTcpSendErrors;
     /** Partial sends (callback confirmed fewer bytes than requested — normal TCP segmentation) */
     uint32_t wifiTcpPartialSends;
+    /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across all partial sends */
+    uint32_t wifiPartialBytesMissing;
     /** Pending send size (to compare against callback confirmation).
      *  Written by streaming task (TcpServerFlush), read by WiFi task (callback). */
     volatile uint16_t lastSendSize;
@@ -100,6 +102,14 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size);
  * plane is in use.
  */
 bool wifi_tcp_server_HasActiveClient(void);
+
+/**
+ * Returns the current count of bytes sitting in the WiFi TCP write
+ * circular buffer (queued for send() but not yet drained).
+ * Used by Streaming_Stop to capture session-end "tail" bytes for the
+ * #367 accounting reconciliation. Returns 0 if not initialized.
+ */
+uint32_t wifi_tcp_server_GetCircularBufferAvailable(void);
 
     /* Provide C++ Compatibility */
 #ifdef __cplusplus

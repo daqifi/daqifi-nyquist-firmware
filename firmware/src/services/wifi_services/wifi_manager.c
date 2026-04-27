@@ -362,6 +362,10 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     client->wifiTcpBytesConfirmed += (uint16_t)sentBytes;
                     if (sendSize > 0 && (uint16_t)sentBytes < sendSize) {
                         client->wifiTcpPartialSends++;
+                        // #367 diag: track cumulative shortfall to test the
+                        // partial-send-loss hypothesis as the gap source.
+                        client->wifiPartialBytesMissing +=
+                            (uint32_t)(sendSize - (uint16_t)sentBytes);
                         isPartial = true;
                     }
                 } else {

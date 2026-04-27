@@ -382,6 +382,14 @@ bool wifi_tcp_server_HasActiveClient(void) {
     return (gpServerData != NULL) && (gpServerData->client.clientSocket >= 0);
 }
 
+// #367 diagnostics: bytes queued in the WiFi TCP write circular buffer
+// that haven't been drained to send() yet. Streaming_Stop snapshots this
+// to reconcile the accounting gap.
+uint32_t wifi_tcp_server_GetCircularBufferAvailable(void) {
+    if (gpServerData == NULL) return 0;
+    return CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf);
+}
+
 size_t wifi_tcp_server_GetWriteBuffFreeSize() {
     if (gpServerData->client.clientSocket < 0) {
         return 0;
