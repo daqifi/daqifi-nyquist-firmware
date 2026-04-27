@@ -15,7 +15,6 @@ extern "C" {
 // on-the-wire format and are NOT subject to local style rules.
 
 #define IPERF2_HEADER_VERSION1   0x80000000U
-#define IPERF2_RUN_NOW           0x00000001U
 
 // UDP datagram header — first 12 bytes of every UDP iperf2 packet.
 // Negative `id` marks the last packet (end-of-test signal).
@@ -100,8 +99,9 @@ bool Iperf2_StartTcpClient(const char* remote_ip, uint16_t remote_port,
 
 /**
  * Start an iperf2 UDP client sending to `remote_ip:remote_port` for
- * `duration_sec` seconds.  Sends 1500-byte datagrams with monotonic
- * sequence IDs.  Final 10 packets carry negated ID for end-of-test.
+ * `duration_sec` seconds.  Sends 1470-byte datagrams (matches
+ * IPERF2_UDP_BUF_SIZE) with monotonic sequence IDs.  Final 10
+ * packets carry negated ID for end-of-test.
  */
 bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
                            uint32_t duration_sec);

@@ -29,7 +29,6 @@ typedef struct {
     Iperf2_Mode    mode;
     SOCKET         listen_sock;     // TCP server only
     SOCKET         data_sock;       // active TCP connection or UDP socket
-    bool           server_running;
     bool           client_connected;
     uint8_t        pending_tx;      // count of m2m_send not yet ACKed
     TickType_t     start_tick;
@@ -65,7 +64,6 @@ static void ResetContext(void) {
     gCtx.mode = IPERF2_MODE_IDLE;
     gCtx.listen_sock = -1;
     gCtx.data_sock = -1;
-    gCtx.server_running = false;
     gCtx.client_connected = false;
     gCtx.pending_tx = 0;
     gCtx.start_tick = 0;
@@ -143,7 +141,6 @@ bool Iperf2_StartTcpServer(uint16_t port) {
     }
 
     gCtx.mode = IPERF2_MODE_TCP_SERVER;
-    gCtx.server_running = true;
     gCtx.start_tick = xTaskGetTickCount();
     gCtx.last_stats.active = true;
     gCtx.last_stats.completed = false;
@@ -176,7 +173,6 @@ bool Iperf2_StartUdpServer(uint16_t port) {
     }
 
     gCtx.mode = IPERF2_MODE_UDP_SERVER;
-    gCtx.server_running = true;
     gCtx.start_tick = xTaskGetTickCount();
     gCtx.last_stats.active = true;
     gCtx.last_stats.completed = false;
