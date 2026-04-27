@@ -1911,7 +1911,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 static bool Iperf2_RefuseIfStreaming(scpi_t * context) {
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg && pStreamCfg->IsEnabled && pStreamCfg->Running) {
+    if (pStreamCfg->IsEnabled && pStreamCfg->Running) {
         SCPI_ExecutionError(context, "SYST:WIFI:IPERF: stop streaming first");
         return true;
     }
@@ -3649,10 +3649,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:BENCHmark?", .callback = SCPI_GetBenchmarkMode,},
     {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
     // #377 iperf2 wire-rate benchmarks (TCP + UDP).  Refuse if streaming.
-    {.pattern = "SYSTem:WIFI:IPERF:TSERVer", .callback = SCPI_Iperf2_TcpServer,}, // [port=5001]
-    {.pattern = "SYSTem:WIFI:IPERF:USERVer", .callback = SCPI_Iperf2_UdpServer,}, // [port=5001]
-    {.pattern = "SYSTem:WIFI:IPERF:TCLIent", .callback = SCPI_Iperf2_TcpClient,}, // <ip>,[port=5001],[dur_s=10]
-    {.pattern = "SYSTem:WIFI:IPERF:UCLIent", .callback = SCPI_Iperf2_UdpClient,}, // <ip>,[port=5001],[dur_s=10]
+    {.pattern = "SYSTem:WIFI:IPERF:TCPServer", .callback = SCPI_Iperf2_TcpServer,}, // [port=5001]
+    {.pattern = "SYSTem:WIFI:IPERF:UDPServer", .callback = SCPI_Iperf2_UdpServer,}, // [port=5001]
+    {.pattern = "SYSTem:WIFI:IPERF:TCPClient", .callback = SCPI_Iperf2_TcpClient,}, // <ip>,[port=5001],[dur_s=10]
+    {.pattern = "SYSTem:WIFI:IPERF:UDPClient", .callback = SCPI_Iperf2_UdpClient,}, // <ip>,[port=5001],[dur_s=10]
     {.pattern = "SYSTem:WIFI:IPERF:STOP", .callback = SCPI_Iperf2_Stop,},
     {.pattern = "SYSTem:WIFI:IPERF:STATs?", .callback = SCPI_Iperf2_Stats,},
     // Dynamic memory configuration

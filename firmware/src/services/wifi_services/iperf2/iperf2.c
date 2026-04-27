@@ -49,8 +49,10 @@ typedef struct {
 static Iperf2_Context gCtx;
 
 // Static TX/RX buffers — keep off task stacks.  Sized to the larger of TCP/UDP.
-static uint8_t gTxBuf[IPERF2_UDP_BUF_SIZE];
-static uint8_t gRxBuf[IPERF2_UDP_BUF_SIZE];
+// 4-byte aligned: HandleUdpRecvFrom casts gRxBuf to Iperf2_PktInfo* (which has
+// int32_t/uint32_t fields).  MIPS would fault on unaligned 32-bit access.
+static uint8_t gTxBuf[IPERF2_UDP_BUF_SIZE] __attribute__((aligned(4)));
+static uint8_t gRxBuf[IPERF2_UDP_BUF_SIZE] __attribute__((aligned(4)));
 
 static void FillTxBuffer(void) {
     // Counter pattern — defeats PC-side TCP coalescing optimizations and gives
@@ -278,6 +280,10 @@ void Iperf2_Stop(void) {
 
 void Iperf2_GetStats(Iperf2_Stats* out) {
     if (out == NULL) return;
+    // bytes_transferred / bytes_confirmed are 64-bit and updated by the
+    // socket-event task; reading them needs a critical section so we don't
+    // get torn 32-bit halves.  See PIC32MZ atomicity rules in CLAUDE.md.
+    taskENTER_CRITICAL();
     if (gCtx.mode != IPERF2_MODE_IDLE && gCtx.last_stats.active) {
         // Update on-the-fly so STATS? during a run shows progress
         TickType_t elapsed = xTaskGetTickCount() - gCtx.start_tick;
@@ -296,6 +302,7 @@ void Iperf2_GetStats(Iperf2_Stats* out) {
     } else {
         *out = gCtx.last_stats;
     }
+    taskEXIT_CRITICAL();
 }
 
 // ----------------------------------------------------------------------------
@@ -304,8 +311,11 @@ void Iperf2_GetStats(Iperf2_Stats* out) {
 
 static void HandleTcpRecv(tstrSocketRecvMsg* m) {
     if (m && m->s16BufferSize > 0) {
+        // 64-bit RMW + paired with USB-priority Iperf2_GetStats reader
+        taskENTER_CRITICAL();
         gCtx.bytes_transferred += (uint64_t)m->s16BufferSize;
         gCtx.bytes_confirmed += (uint64_t)m->s16BufferSize;
+        taskEXIT_CRITICAL();
         recv(gCtx.data_sock, gRxBuf, IPERF2_TCP_BUF_SIZE, 0);
     } else {
         // Disconnect or error → finalize
@@ -325,6 +335,14 @@ static void HandleUdpRecvFrom(tstrSocketRecvMsg* m) {
         return;
     }
 
+    // Reject runt datagrams: a valid iperf2 UDP packet has at least the
+    // 12-byte Iperf2_PktInfo header.  Without this guard, casting gRxBuf
+    // to Iperf2_PktInfo* would read past the actual payload.
+    if ((size_t)m->s16BufferSize < sizeof(Iperf2_PktInfo)) {
+        recvfrom(gCtx.data_sock, gRxBuf, sizeof(gRxBuf), 0);
+        return;
+    }
+
     // Capture remote on first packet (where peer port comes from)
     if (gCtx.bytes_transferred == 0) {
         gCtx.udp_remote = m->strRemoteAddr;
@@ -334,7 +352,9 @@ static void HandleUdpRecvFrom(tstrSocketRecvMsg* m) {
     int32_t id = (int32_t)_ntohl((uint32_t)pkt->id);
 
     if (id >= 0) {
-        // Normal packet — track sequence/loss
+        // Normal packet — track sequence/loss.  RMW + 64-bit, paired with
+        // USB-priority Iperf2_GetStats reader.
+        taskENTER_CRITICAL();
         if (gCtx.udp_id != id) {
             // Gap or out-of-order — only count gaps as lost (forward-only count)
             if (id > gCtx.udp_id) {
@@ -349,6 +369,7 @@ static void HandleUdpRecvFrom(tstrSocketRecvMsg* m) {
         gCtx.udp_total_pkt++;
         gCtx.bytes_transferred += (uint64_t)m->s16BufferSize;
         gCtx.bytes_confirmed += (uint64_t)m->s16BufferSize;
+        taskEXIT_CRITICAL();
     } else {
         // Negative ID = end-of-test marker.  iperf2 client retransmits this 10
         // times to ensure the server sees it.  Finalize on first observation.
@@ -434,7 +455,8 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                 hdr.mPort = _htonl((uint32_t)IPERF2_DEFAULT_PORT);
                 hdr.bufferlen = _htonl((uint32_t)IPERF2_TCP_BUF_SIZE);
                 hdr.mWinBand = _htonl((uint32_t)0U);
-                int32_t signed_amount = -(int32_t)(gCtx.duration_ms * 10U);
+                // iperf2 mAmount is in 10ms units (negative = duration mode)
+                int32_t signed_amount = -(int32_t)(gCtx.duration_ms / 10U);
                 hdr.mAmount = _htonl((uint32_t)signed_amount);
                 int rc = send(gCtx.data_sock, (char*)&hdr, sizeof(hdr), 0);
                 if (rc == SOCK_ERR_NO_ERROR) {
@@ -461,12 +483,17 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
         case SOCKET_MSG_SEND:
         case SOCKET_MSG_SENDTO: {
             int16_t sent = (pMessage != NULL) ? *(int16_t*)pMessage : -1;
+            // 64-bit + 8-bit RMW, paired with USB-priority reader / driver-task writer
+            taskENTER_CRITICAL();
             if (sent > 0) {
                 gCtx.bytes_confirmed += (uint64_t)sent;
                 if (gCtx.pending_tx > 0) gCtx.pending_tx--;
             } else {
-                LOG_E("iperf2: send cb err=%d", (int)sent);
                 if (gCtx.pending_tx > 0) gCtx.pending_tx--;
+            }
+            taskEXIT_CRITICAL();
+            if (sent <= 0) {
+                LOG_E("iperf2: send cb err=%d", (int)sent);
             }
             return true;
         }
@@ -496,8 +523,11 @@ static void TasksTcpClient(void) {
     while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
         int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
         if (rc == SOCK_ERR_NO_ERROR) {
+            // 64-bit RMW, paired with USB-priority reader
+            taskENTER_CRITICAL();
             gCtx.bytes_transferred += IPERF2_TCP_BUF_SIZE;
             gCtx.pending_tx++;
+            taskEXIT_CRITICAL();
         } else if (rc == SOCK_ERR_BUFFER_FULL) {
             break;
         } else {
@@ -528,9 +558,12 @@ static void TasksUdpClient(void) {
                             (struct sockaddr*)&gCtx.udp_remote,
                             sizeof(gCtx.udp_remote));
             if (rc == SOCK_ERR_NO_ERROR) {
+                // 64-bit RMW, paired with USB-priority reader
+                taskENTER_CRITICAL();
                 gCtx.bytes_transferred += IPERF2_UDP_BUF_SIZE;
                 gCtx.pending_tx++;
                 gCtx.udp_id++;
+                taskEXIT_CRITICAL();
             } else if (rc == SOCK_ERR_BUFFER_FULL) {
                 break;
             } else {
