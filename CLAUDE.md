@@ -486,25 +486,58 @@ SYSTem:STReam:TEST:PATtern?            # Query current pattern (0=disabled)
 
 Two benchmark tools for measuring streaming pipeline throughput:
 
-**1. Benchmark Mode** (`SYST:STR:BENCHmark`): Bypasses the frequency cap so the timer ISR fires at any requested rate. Uses the real ISR→deferred task→encoder→output pipeline. Combine with test patterns for pure throughput measurement.
+**1. Benchmark Mode** (`SYST:STR:BENCHmark`): Three levels, each isolating a different stage of the pipeline so you can locate the actual bottleneck. **Read this carefully — the right level depends on what you are trying to measure.**
 
 ```bash
-SYSTem:STReam:BENCHmark <0|1>     # 0=normal (freq cap active), 1=uncapped
+SYSTem:STReam:BENCHmark <0|1|2>   # 0=OFF, 1=NOCAP, 2=PIPELINE
 SYSTem:STReam:BENCHmark?           # Query current mode
 ```
 
-Usage:
+| Level | Name | Frequency cap | ADC in loop | Encoder runs | Use when |
+|---|---|---|---|---|---|
+| **0** | OFF (normal) | Active (per-channel safe rate) | Yes (real conversions) | Yes | Production / data integrity testing |
+| **1** | NOCAP | Bypassed (any rate up to 100 kHz) | Yes (real conversions) | Yes | Measuring **end-to-end** throughput including ADC overhead |
+| **2** | PIPELINE | Bypassed | **NO — ADC entirely skipped** | Yes (synthetic data only) | Measuring **WiFi/USB/SD pipeline ceiling** with ADC overhead removed |
+
+**Decision tree — which level to use:**
+
+- **OFF (0)**: don't override. This is the normal cap-gated mode that protects real ADC accuracy.
+- **NOCAP (1)**: when you want to know *"what does the system actually deliver under real-world conditions?"* — ADC contention, encoder load, output pipeline all in play. **This is what you compare to documented ceilings.**
+- **PIPELINE (2)**: when you suspect the ADC is contributing to bottleneck and want to measure **just** the encoder + output pipeline. Bypasses `BoardData_Get(BOARDDATA_AIN_LATEST, ...)` and writes synthetic test-pattern values directly. **Use this to isolate WiFi/USB/SD pipeline cost from ADC cost.**
+
+PIPELINE mode requires a non-zero test pattern (`SYST:STR:TEST:PATtern`) — it skips ADC entirely so it has nothing to encode otherwise. The streaming task automatically rejects PIPELINE if test pattern is 0.
+
+Usage example — comparing ADC-cost vs ADC-free pipeline:
 ```bash
-SYST:STR:TEST:PATtern 2             # Midscale test data
-SYST:STR:BENCHmark 1               # Uncap frequency
-SYST:StartStreamData 11000         # Start at 11kHz (normally capped)
-# ... wait ...
+# Setup (same for both)
+SYST:STR:TEST:PATtern 3             # Fullscale (deterministic)
+SYST:STR:INT 1                      # WiFi
+ENA:VOLT:DC 4,1                     # 1×T1
+SYST:STR:STATS:CLE
+
+# Test 1: NOCAP — full path including ADC
+SYST:STR:BENCH 1
+SYST:StartStreamData 5000
+# wait 8 s, then stop, snapshot WifiTcpBytesSent
 SYST:StopStreamData
-SYST:STR:STATS?                    # Check throughput and drops
-SYST:STR:BENCHmark 0               # Restore normal mode
+SYST:STR:STATS?
+
+# Test 2: PIPELINE — same rate, ADC bypassed
+SYST:STR:STATS:CLE
+SYST:STR:BENCH 2
+SYST:StartStreamData 5000
+# wait 8 s, then stop
+SYST:StopStreamData
+SYST:STR:STATS?
+
+SYST:STR:BENCH 0                    # Restore normal
 ```
 
-When enabled, the deferred ISR task priority is lowered from 8 to 2 for fair scheduling with the encoder. Priority is saved and restored on disable.
+If PIPELINE wire rate >> NOCAP wire rate at the same Hz, ADC is contributing to the bottleneck (cache pressure, ISR load, mutex contention with the encoder task). Measured: at 5 kHz × 1 ch on Tesla AP, NOCAP delivers ~150 KB/s while PIPELINE delivers **~230 KB/s** (≈+50 %) — ADC is real cost, not zero.
+
+**Throughput-claim discipline:** when reporting wire-rate measurements, always state the benchmark level and the test pattern. A "5 kHz / 230 KB/s" number is meaningless without "(NOCAP)" or "(PIPELINE)" — they measure different things. PIPELINE numbers represent the **upper bound** for streaming work that doesn't read the ADC; NOCAP numbers represent the **realistic** ceiling for actual data acquisition.
+
+**Frequency-cap interaction:** in NOCAP and PIPELINE modes the freq cap is bypassed and `SYST:StartStreamData` accepts up to 100 kHz. The PIC32MZ timer can fire that fast but everything downstream usually can't keep up — expect `QueueDroppedSamples > 0` (encoder/queue saturation) at very high rates.
 
 **2. Self-Contained Throughput Test** (`SYST:STR:THRoughput`): Runs a complete benchmark internally — enables benchmark mode + test pattern, streams for the specified duration, stops, and returns all stats in one response.
 
