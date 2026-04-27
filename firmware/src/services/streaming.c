@@ -1075,6 +1075,7 @@ void streaming_Task(void) {
     NanopbFlagsArray nanopbFlag;
     size_t usbSize, wifiSize, sdSize, maxSize;
     bool hasUsb, hasWifi, hasSD;
+    (void)hasWifi;  /* #371: ActiveInterface check used directly now; flag retained for symmetry */
     bool AINDataAvailable;
     bool DIODataAvailable;
     size_t packetSize=0;    
@@ -1294,7 +1295,14 @@ void streaming_Task(void) {
                     LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB buffer overflow detected");
                 }
             }
-            if (hasWifi) {
+            // #371: ActiveInterface == WiFi means we should ALWAYS push to WiFi
+            // (or count the drop).  Previously `hasWifi = (wifiSize >= 128)` made
+            // this per-iteration, silently skipping WriteBuffer when buffer
+            // was nearly full — losing 86% of bytes at saturation with
+            // wifiDroppedBytes=0.  Now we call WriteBuffer unconditionally when
+            // WiFi is the active interface; WriteBuffer's pre-check returns 0
+            // on no-space, and we count that as a drop.
+            if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_WiFi) {
                 if (packetSize >= 4) {
                     LOG_E_SESSION(LOG_SESSION_PACKETSIZE,
                         "diag367: encoder packetSize=%u first4=0x%02x%02x%02x%02x",

@@ -343,21 +343,35 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL) {
                 int16_t sentBytes = *(int16_t*)pMessage;
                 wifi_tcp_server_clientContext_t* client = &gStateMachineContext.pTcpServerContext->client;
-                client->tcpSendPending = 0;
 
-                // Immediately try to send next chunk — don't wait for
-                // the WiFi task tick (5ms). This runs in WINC_Tasks context.
-                wifi_tcp_server_TransmitBufferedData();
-
-                // Single critical section for all counter updates + lastSendSize read
-                uint16_t sendSize;
+                // #362 Step C: consume one ring slot per callback so partial-send
+                // accounting matches the actual send size, not the most-recently-
+                // queued one.  Decrement tcpInFlight + advance ring tail in the
+                // SAME critical section so a re-armed send (TransmitBufferedData
+                // below) writes to a fresh head slot without aliasing the slot
+                // we just snapshotted.
+                uint16_t sendSize = 0;
                 uint32_t errorCount, partialCount;
                 bool isPartial = false;
                 bool isError = false;
+                bool hasInflight;
 
                 taskENTER_CRITICAL();
-                sendSize = client->lastSendSize;
-                client->lastSendSize = 0;  // One-shot: consumed by callback
+                hasInflight = (client->tcpInFlight > 0);
+                if (hasInflight) {
+                    client->tcpInFlight--;
+                    sendSize = client->inflightSizes[client->inflightTail];
+                    client->inflightTail =
+                        (client->inflightTail + 1) % WIFI_TCP_MAX_IN_FLIGHT;
+                }
+                taskEXIT_CRITICAL();
+
+                // Re-arm AFTER snapshotting sendSize from the ring tail —
+                // otherwise the new send writes to head, which can alias
+                // tail when the ring is full at cap.
+                wifi_tcp_server_TransmitBufferedData();
+
+                taskENTER_CRITICAL();
                 if (sentBytes >= 0) {
                     client->wifiTcpBytesConfirmed += (uint16_t)sentBytes;
                     if (sendSize > 0 && (uint16_t)sentBytes < sendSize) {

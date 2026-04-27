@@ -36,7 +36,13 @@ extern "C" {
 
 /** Active-interface defaults used by Streaming_ComputeAutoBuffers */
 #define STREAMING_USB_DEFAULT       (64U * 1024U)  /* USB circular when active */
-#define STREAMING_WIFI_DEFAULT      (64U * 1024U)  /* WiFi circular when active (#362/#363) */
+/* WiFi circular when active.  PR #364 bumped this 32→64 KB and was originally
+ * reported as +5x ceiling — but #371 retrospective A/B (with truthful drop
+ * counter) showed the 64KB had ZERO effect on wire rate vs 32KB at any
+ * tested rate.  The original "win" was a measurement artifact of the
+ * silent-loss bug.  Reverting to 32 KB to free 32 KB of streaming pool
+ * memory for the sample pool / encoder.  See #373. */
+#define STREAMING_WIFI_DEFAULT      (32U * 1024U)
 
 /**
  * Initialize the pool and set default partition.
