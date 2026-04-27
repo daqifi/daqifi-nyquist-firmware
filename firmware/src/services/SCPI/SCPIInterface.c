@@ -1908,56 +1908,90 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 // #377 iperf2 SCPI handlers
 // =====================================================================
 
-static scpi_result_t SCPI_Iperf2_Server(scpi_t * context) {
-    int32_t port = IPERF2_DEFAULT_PORT;
-    // Optional port argument; default 5001
-    if (!SCPI_ParamInt32(context, &port, FALSE)) {
-        port = IPERF2_DEFAULT_PORT;
-    }
-    if (port <= 0 || port > 65535) {
-        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
-        return SCPI_RES_ERR;
-    }
-    // Refuse if streaming is active — iperf needs the socket stack quiet
+static bool Iperf2_RefuseIfStreaming(scpi_t * context) {
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     if (pStreamCfg && pStreamCfg->IsEnabled && pStreamCfg->Running) {
         SCPI_ExecutionError(context, "SYST:WIFI:IPERF: stop streaming first");
+        return true;
+    }
+    return false;
+}
+
+// Optional [port=5001] arg
+static scpi_result_t SCPI_Iperf2_TcpServer(scpi_t * context) {
+    int32_t port = IPERF2_DEFAULT_PORT;
+    if (!SCPI_ParamInt32(context, &port, FALSE)) port = IPERF2_DEFAULT_PORT;
+    if (port <= 0 || port > 65535) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
-    if (!Iperf2_StartServer((uint16_t)port)) {
+    if (Iperf2_RefuseIfStreaming(context)) return SCPI_RES_ERR;
+    if (!Iperf2_StartTcpServer((uint16_t)port)) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_Iperf2_Client(scpi_t * context) {
-    char ipBuf[32];
-    size_t ipLen = 0;
+static scpi_result_t SCPI_Iperf2_UdpServer(scpi_t * context) {
     int32_t port = IPERF2_DEFAULT_PORT;
-    int32_t duration_sec = 10;
-    if (!SCPI_ParamCopyText(context, ipBuf, sizeof(ipBuf), &ipLen, TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
-        return SCPI_RES_ERR;
-    }
-    if (!SCPI_ParamInt32(context, &port, FALSE)) {
-        port = IPERF2_DEFAULT_PORT;
-    }
-    if (!SCPI_ParamInt32(context, &duration_sec, FALSE)) {
-        duration_sec = 10;
-    }
-    if (port <= 0 || port > 65535 || duration_sec < 1 || duration_sec > 3600) {
+    if (!SCPI_ParamInt32(context, &port, FALSE)) port = IPERF2_DEFAULT_PORT;
+    if (port <= 0 || port > 65535) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
-    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
-            BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg && pStreamCfg->IsEnabled && pStreamCfg->Running) {
-        SCPI_ExecutionError(context, "SYST:WIFI:IPERF: stop streaming first");
+    if (Iperf2_RefuseIfStreaming(context)) return SCPI_RES_ERR;
+    if (!Iperf2_StartUdpServer((uint16_t)port)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
-    if (!Iperf2_StartClient(ipBuf, (uint16_t)port, (uint32_t)duration_sec)) {
+    return SCPI_RES_OK;
+}
+
+// Common <ip>,[port=5001],[dur_s=10] parser
+static bool Iperf2_ParseClientArgs(scpi_t * context, char* ipBuf,
+                                   size_t ipBufLen, int32_t* port,
+                                   int32_t* duration_sec) {
+    size_t ipLen = 0;
+    *port = IPERF2_DEFAULT_PORT;
+    *duration_sec = 10;
+    if (!SCPI_ParamCopyText(context, ipBuf, ipBufLen, &ipLen, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
+        return false;
+    }
+    if (!SCPI_ParamInt32(context, port, FALSE)) *port = IPERF2_DEFAULT_PORT;
+    if (!SCPI_ParamInt32(context, duration_sec, FALSE)) *duration_sec = 10;
+    if (*port <= 0 || *port > 65535 || *duration_sec < 1 ||
+        *duration_sec > 3600) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return false;
+    }
+    return true;
+}
+
+static scpi_result_t SCPI_Iperf2_TcpClient(scpi_t * context) {
+    char ipBuf[32];
+    int32_t port, duration_sec;
+    if (!Iperf2_ParseClientArgs(context, ipBuf, sizeof(ipBuf), &port,
+                                 &duration_sec)) return SCPI_RES_ERR;
+    if (Iperf2_RefuseIfStreaming(context)) return SCPI_RES_ERR;
+    if (!Iperf2_StartTcpClient(ipBuf, (uint16_t)port,
+                               (uint32_t)duration_sec)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_Iperf2_UdpClient(scpi_t * context) {
+    char ipBuf[32];
+    int32_t port, duration_sec;
+    if (!Iperf2_ParseClientArgs(context, ipBuf, sizeof(ipBuf), &port,
+                                 &duration_sec)) return SCPI_RES_ERR;
+    if (Iperf2_RefuseIfStreaming(context)) return SCPI_RES_ERR;
+    if (!Iperf2_StartUdpClient(ipBuf, (uint16_t)port,
+                               (uint32_t)duration_sec)) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -1978,6 +2012,9 @@ static scpi_result_t SCPI_Iperf2_Stats(scpi_t * context) {
     scpi_printf(context, "Bytes=%llu\r\n", (unsigned long long)s.bytes_transferred);
     scpi_printf(context, "DurationMs=%u\r\n", (unsigned)s.duration_ms);
     scpi_printf(context, "KBps=%u\r\n", (unsigned)s.kbps);
+    scpi_printf(context, "UdpTotalPkt=%u\r\n", (unsigned)s.udp_total_pkt);
+    scpi_printf(context, "UdpLostPkt=%u\r\n", (unsigned)s.udp_lost_pkt);
+    scpi_printf(context, "UdpOutOfOrder=%u\r\n", (unsigned)s.udp_outoforder);
     return SCPI_RES_OK;
 }
 
@@ -3611,9 +3648,11 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 0=normal, 1=nocap, 2=pipeline (skip ADC)
     {.pattern = "SYSTem:STReam:BENCHmark?", .callback = SCPI_GetBenchmarkMode,},
     {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
-    // #377 iperf2 wire-rate benchmarks (TCP only).  Refuse if streaming.
-    {.pattern = "SYSTem:WIFI:IPERF:SERVer", .callback = SCPI_Iperf2_Server,}, // [port=5001]
-    {.pattern = "SYSTem:WIFI:IPERF:CLIent", .callback = SCPI_Iperf2_Client,}, // <ip>,[port=5001],[dur_s=10]
+    // #377 iperf2 wire-rate benchmarks (TCP + UDP).  Refuse if streaming.
+    {.pattern = "SYSTem:WIFI:IPERF:TSERVer", .callback = SCPI_Iperf2_TcpServer,}, // [port=5001]
+    {.pattern = "SYSTem:WIFI:IPERF:USERVer", .callback = SCPI_Iperf2_UdpServer,}, // [port=5001]
+    {.pattern = "SYSTem:WIFI:IPERF:TCLIent", .callback = SCPI_Iperf2_TcpClient,}, // <ip>,[port=5001],[dur_s=10]
+    {.pattern = "SYSTem:WIFI:IPERF:UCLIent", .callback = SCPI_Iperf2_UdpClient,}, // <ip>,[port=5001],[dur_s=10]
     {.pattern = "SYSTem:WIFI:IPERF:STOP", .callback = SCPI_Iperf2_Stop,},
     {.pattern = "SYSTem:WIFI:IPERF:STATs?", .callback = SCPI_Iperf2_Stats,},
     // Dynamic memory configuration
