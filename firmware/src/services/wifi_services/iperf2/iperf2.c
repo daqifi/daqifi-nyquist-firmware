@@ -7,6 +7,7 @@
 #include "task.h"
 #include "socket.h"
 #include "m2m_wifi.h"
+#include "services/wifi_services/wifi_manager.h"
 #include <string.h>
 
 // ============================================================================
@@ -48,6 +49,11 @@ typedef struct {
 } Iperf2_Context;
 
 static Iperf2_Context gCtx;
+
+// Active-mode task delay (ms).  Runtime-tunable via SCPI for sweep tests.
+// 5 ms default per empirical observation that 5 ms paces well with the
+// callback chain (over-aggressive 1 ms polling caught WINC mid-state).
+static volatile uint8_t gActiveDelayMs = 5;
 
 // Static TX/RX buffers — keep off task stacks.  Sized to the larger of TCP/UDP.
 // 4-byte aligned: HandleUdpRecvFrom casts gRxBuf to Iperf2_PktInfo* (which has
@@ -99,6 +105,17 @@ static void FinalizeStats(void) {
     gCtx.last_stats.completed = true;
 }
 
+// Refuse to call socket()/connect()/bind() unless WiFi is fully associated and
+// has an IP. Calling sockets against an un-ready WINC leaves stuck state on
+// the PIC32 side that survives WDRV_WINC_Deinitialize/Init cycles (#383).
+static bool RequireWifiConnected(const char* where) {
+    if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
+        LOG_E("iperf2: %s refused — WiFi not CONNECTED", where);
+        return false;
+    }
+    return true;
+}
+
 static void CloseAll(void) {
     if (gCtx.data_sock >= 0) {
         shutdown(gCtx.data_sock);
@@ -121,6 +138,7 @@ void Iperf2_Initialize(void) {
 }
 
 bool Iperf2_StartTcpServer(uint16_t port) {
+    if (!RequireWifiConnected("TCP server")) return false;
     if (gCtx.mode != IPERF2_MODE_IDLE) {
         LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
         return false;
@@ -153,6 +171,7 @@ bool Iperf2_StartTcpServer(uint16_t port) {
 }
 
 bool Iperf2_StartUdpServer(uint16_t port) {
+    if (!RequireWifiConnected("UDP server")) return false;
     if (gCtx.mode != IPERF2_MODE_IDLE) {
         LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
         return false;
@@ -186,6 +205,7 @@ bool Iperf2_StartUdpServer(uint16_t port) {
 
 bool Iperf2_StartTcpClient(const char* remote_ip, uint16_t remote_port,
                            uint32_t duration_sec) {
+    if (!RequireWifiConnected("TCP client")) return false;
     if (gCtx.mode != IPERF2_MODE_IDLE) {
         LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
         return false;
@@ -233,6 +253,7 @@ bool Iperf2_StartTcpClient(const char* remote_ip, uint16_t remote_port,
 
 bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
                            uint32_t duration_sec) {
+    if (!RequireWifiConnected("UDP client")) return false;
     if (gCtx.mode != IPERF2_MODE_IDLE) {
         LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
         return false;
@@ -671,8 +692,22 @@ static void Iperf2TaskMain(void* arg) {
         Iperf2_Tasks();
         bool active = (gCtx.mode == IPERF2_MODE_TCP_CLIENT) ||
                       (gCtx.mode == IPERF2_MODE_UDP_CLIENT);
-        vTaskDelay(active ? pdMS_TO_TICKS(5) : pdMS_TO_TICKS(50));
+        uint32_t ms = active ? gActiveDelayMs : 50U;
+        if (ms == 0U) {
+            taskYIELD();
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(ms));
+        }
     }
+}
+
+void Iperf2_SetActiveDelayMs(uint8_t ms) {
+    if (ms > 100U) ms = 100U;  // sanity cap
+    gActiveDelayMs = ms;
+}
+
+uint8_t Iperf2_GetActiveDelayMs(void) {
+    return gActiveDelayMs;
 }
 
 void Iperf2_StartTask(void) {
