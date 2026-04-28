@@ -988,6 +988,8 @@
           <itemPath>../src/services/wifi_services/wifi_serial_bridge_interface.c</itemPath>
           <itemPath>../src/services/wifi_services/wifi_tcp_server.c</itemPath>
           <itemPath>../src/services/wifi_services/wifi_manager.c</itemPath>
+          <itemPath>../src/services/wifi_services/iperf2/iperf2.c</itemPath>
+          <itemPath>../src/services/wifi_services/iperf2/iperf2.h</itemPath>
         </logicalFolder>
         <itemPath>../src/services/daqifi_settings.c</itemPath>
         <itemPath>../src/services/streaming.c</itemPath>

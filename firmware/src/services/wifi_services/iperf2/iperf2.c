@@ -1,0 +1,616 @@
+#define LOG_LVL LOG_LEVEL_WIFI
+#define LOG_MODULE LOG_MODULE_WIFI
+
+#include "iperf2.h"
+#include "Util/Logger.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "socket.h"
+#include "m2m_wifi.h"
+#include <string.h>
+
+// ============================================================================
+// iperf2 — TCP + UDP iperf 2 protocol over WINC m2m sockets, control via
+// SCPI.
+//
+// Modeled on avrxml/asf WINC1500 module-mode iperf_server_example
+// (common/components/wifi/winc1500/iperf_server_example/iperf.c) but
+// callback-driven instead of poll-driven so it integrates with our
+// existing wifi_manager event dispatcher.
+// ============================================================================
+
+#define IPERF2_TCP_BUF_SIZE     1400U   // matches WINC SOCKET_BUFFER_MAX_LENGTH for TCP
+#define IPERF2_UDP_BUF_SIZE     1470U   // standard iperf2 UDP datagram size (1500 - IP/UDP overhead)
+#define IPERF2_MAX_DURATION_S   3600U   // 1h cap
+#define IPERF2_MAX_PENDING_TX   2U      // WINC HIF queue cap (mirror tcp_server)
+#define IPERF2_FIN_RETRANSMITS  10U     // iperf2 protocol: 10× retransmit of last UDP pkt
+
+typedef struct {
+    Iperf2_Mode    mode;
+    SOCKET         listen_sock;     // TCP server only
+    SOCKET         data_sock;       // active TCP connection or UDP socket
+    bool           client_connected;
+    uint8_t        pending_tx;      // count of m2m_send not yet ACKed
+    TickType_t     start_tick;
+    TickType_t     deadline_tick;   // *_CLIENT mode TX deadline
+    uint32_t       duration_ms;     // requested duration
+    uint64_t       bytes_transferred;
+    uint64_t       bytes_confirmed; // server: rcv'd; client: ACKed by m2m_send callback
+    // UDP-specific:
+    struct sockaddr_in udp_remote;  // remote peer (set on first recvfrom in server, or in client setup)
+    int32_t        udp_id;          // client: next seq to send; server: next expected seq
+    uint32_t       udp_total_pkt;
+    uint32_t       udp_lost_pkt;
+    uint32_t       udp_outoforder;
+    uint8_t        udp_fin_count;   // FIN retransmits sent
+    Iperf2_Stats   last_stats;
+} Iperf2_Context;
+
+static Iperf2_Context gCtx;
+
+// Static TX/RX buffers — keep off task stacks.  Sized to the larger of TCP/UDP.
+// 4-byte aligned: HandleUdpRecvFrom casts gRxBuf to Iperf2_PktInfo* (which has
+// int32_t/uint32_t fields).  MIPS would fault on unaligned 32-bit access.
+static uint8_t gTxBuf[IPERF2_UDP_BUF_SIZE] __attribute__((aligned(4)));
+static uint8_t gRxBuf[IPERF2_UDP_BUF_SIZE] __attribute__((aligned(4)));
+
+static void FillTxBuffer(void) {
+    // Counter pattern — defeats PC-side TCP coalescing optimizations and gives
+    // a predictable wire stream.  Pre-filled at init.
+    for (uint16_t i = 0; i < sizeof(gTxBuf); i++) {
+        gTxBuf[i] = (uint8_t)(i & 0xFFU);
+    }
+}
+
+static void ResetContext(void) {
+    gCtx.mode = IPERF2_MODE_IDLE;
+    gCtx.listen_sock = -1;
+    gCtx.data_sock = -1;
+    gCtx.client_connected = false;
+    gCtx.pending_tx = 0;
+    gCtx.start_tick = 0;
+    gCtx.deadline_tick = 0;
+    gCtx.duration_ms = 0;
+    gCtx.bytes_transferred = 0;
+    gCtx.bytes_confirmed = 0;
+    memset(&gCtx.udp_remote, 0, sizeof(gCtx.udp_remote));
+    gCtx.udp_id = 0;
+    gCtx.udp_total_pkt = 0;
+    gCtx.udp_lost_pkt = 0;
+    gCtx.udp_outoforder = 0;
+    gCtx.udp_fin_count = 0;
+}
+
+static void FinalizeStats(void) {
+    TickType_t elapsed = xTaskGetTickCount() - gCtx.start_tick;
+    uint32_t elapsed_ms = elapsed * portTICK_PERIOD_MS;
+    gCtx.last_stats.mode = gCtx.mode;
+    gCtx.last_stats.bytes_transferred = gCtx.bytes_confirmed;
+    gCtx.last_stats.duration_ms = elapsed_ms;
+    gCtx.last_stats.kbps = (elapsed_ms > 0)
+        ? (uint32_t)((gCtx.bytes_confirmed * 1000ULL) / (uint64_t)elapsed_ms / 1024ULL)
+        : 0U;
+    gCtx.last_stats.udp_total_pkt = gCtx.udp_total_pkt;
+    gCtx.last_stats.udp_lost_pkt = gCtx.udp_lost_pkt;
+    gCtx.last_stats.udp_outoforder = gCtx.udp_outoforder;
+    gCtx.last_stats.active = false;
+    gCtx.last_stats.completed = true;
+}
+
+static void CloseAll(void) {
+    if (gCtx.data_sock >= 0) {
+        shutdown(gCtx.data_sock);
+        gCtx.data_sock = -1;
+    }
+    if (gCtx.listen_sock >= 0) {
+        shutdown(gCtx.listen_sock);
+        gCtx.listen_sock = -1;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Public API
+// ----------------------------------------------------------------------------
+
+void Iperf2_Initialize(void) {
+    ResetContext();
+    FillTxBuffer();
+    memset(&gCtx.last_stats, 0, sizeof(gCtx.last_stats));
+}
+
+bool Iperf2_StartTcpServer(uint16_t port) {
+    if (gCtx.mode != IPERF2_MODE_IDLE) {
+        LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
+        return false;
+    }
+
+    gCtx.listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (gCtx.listen_sock < 0) {
+        LOG_E("iperf2: TCP socket() failed");
+        return false;
+    }
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = _htons(port);
+    addr.sin_addr.s_addr = 0;  // INADDR_ANY
+
+    int rc = bind(gCtx.listen_sock, (struct sockaddr*)&addr, sizeof(addr));
+    if (rc != 0) {
+        LOG_E("iperf2: TCP bind() rc=%d", rc);
+        CloseAll();
+        return false;
+    }
+
+    gCtx.mode = IPERF2_MODE_TCP_SERVER;
+    gCtx.start_tick = xTaskGetTickCount();
+    gCtx.last_stats.active = true;
+    gCtx.last_stats.completed = false;
+    LOG_I("iperf2: TCP server listening on port %u", (unsigned)port);
+    return true;
+}
+
+bool Iperf2_StartUdpServer(uint16_t port) {
+    if (gCtx.mode != IPERF2_MODE_IDLE) {
+        LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
+        return false;
+    }
+
+    gCtx.data_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (gCtx.data_sock < 0) {
+        LOG_E("iperf2: UDP socket() failed");
+        return false;
+    }
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = _htons(port);
+    addr.sin_addr.s_addr = 0;
+
+    int rc = bind(gCtx.data_sock, (struct sockaddr*)&addr, sizeof(addr));
+    if (rc != 0) {
+        LOG_E("iperf2: UDP bind() rc=%d", rc);
+        CloseAll();
+        return false;
+    }
+
+    gCtx.mode = IPERF2_MODE_UDP_SERVER;
+    gCtx.start_tick = xTaskGetTickCount();
+    gCtx.last_stats.active = true;
+    gCtx.last_stats.completed = false;
+    LOG_I("iperf2: UDP server listening on port %u", (unsigned)port);
+    return true;
+}
+
+bool Iperf2_StartTcpClient(const char* remote_ip, uint16_t remote_port,
+                           uint32_t duration_sec) {
+    if (gCtx.mode != IPERF2_MODE_IDLE) {
+        LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
+        return false;
+    }
+    if (duration_sec == 0 || duration_sec > IPERF2_MAX_DURATION_S) {
+        LOG_E("iperf2: invalid duration %u s", (unsigned)duration_sec);
+        return false;
+    }
+
+    gCtx.data_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (gCtx.data_sock < 0) {
+        LOG_E("iperf2: TCP client socket() failed");
+        return false;
+    }
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = _htons(remote_port);
+    addr.sin_addr.s_addr = inet_addr((char*)remote_ip);
+    // WINC inet_addr returns 0 on parse failure; also reject 0xFFFFFFFFU
+    // (POSIX INADDR_NONE / "255.255.255.255") — not a valid iperf target.
+    if (addr.sin_addr.s_addr == 0 || addr.sin_addr.s_addr == 0xFFFFFFFFU) {
+        LOG_E("iperf2: bad remote IP %s", remote_ip);
+        CloseAll();
+        return false;
+    }
+
+    int rc = connect(gCtx.data_sock, (struct sockaddr*)&addr, sizeof(addr));
+    if (rc != 0) {
+        LOG_E("iperf2: TCP connect() rc=%d", rc);
+        CloseAll();
+        return false;
+    }
+
+    gCtx.mode = IPERF2_MODE_TCP_CLIENT;
+    gCtx.client_connected = false;
+    gCtx.duration_ms = duration_sec * 1000U;
+    gCtx.last_stats.active = true;
+    gCtx.last_stats.completed = false;
+    LOG_I("iperf2: TCP client connecting to %s:%u for %u s",
+          remote_ip, (unsigned)remote_port, (unsigned)duration_sec);
+    return true;
+}
+
+bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
+                           uint32_t duration_sec) {
+    if (gCtx.mode != IPERF2_MODE_IDLE) {
+        LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
+        return false;
+    }
+    if (duration_sec == 0 || duration_sec > IPERF2_MAX_DURATION_S) {
+        LOG_E("iperf2: invalid duration %u s", (unsigned)duration_sec);
+        return false;
+    }
+
+    gCtx.data_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (gCtx.data_sock < 0) {
+        LOG_E("iperf2: UDP client socket() failed");
+        return false;
+    }
+
+    gCtx.udp_remote.sin_family = AF_INET;
+    gCtx.udp_remote.sin_port = _htons(remote_port);
+    gCtx.udp_remote.sin_addr.s_addr = inet_addr((char*)remote_ip);
+    if (gCtx.udp_remote.sin_addr.s_addr == 0 ||
+        gCtx.udp_remote.sin_addr.s_addr == 0xFFFFFFFFU) {
+        LOG_E("iperf2: bad remote IP %s", remote_ip);
+        CloseAll();
+        return false;
+    }
+
+    // UDP is connectionless — start sending immediately from Iperf2_Tasks
+    gCtx.mode = IPERF2_MODE_UDP_CLIENT;
+    gCtx.client_connected = true;
+    gCtx.duration_ms = duration_sec * 1000U;
+    gCtx.start_tick = xTaskGetTickCount();
+    gCtx.deadline_tick = gCtx.start_tick + pdMS_TO_TICKS(gCtx.duration_ms);
+    gCtx.udp_id = 0;
+    gCtx.udp_fin_count = 0;
+    gCtx.last_stats.active = true;
+    gCtx.last_stats.completed = false;
+    LOG_I("iperf2: UDP client → %s:%u for %u s", remote_ip,
+          (unsigned)remote_port, (unsigned)duration_sec);
+    return true;
+}
+
+void Iperf2_Stop(void) {
+    if (gCtx.mode == IPERF2_MODE_IDLE) {
+        return;
+    }
+    LOG_I("iperf2: stop requested (mode=%d, bytes=%llu)",
+          (int)gCtx.mode, (unsigned long long)gCtx.bytes_confirmed);
+    FinalizeStats();
+    CloseAll();
+    ResetContext();
+}
+
+void Iperf2_GetStats(Iperf2_Stats* out) {
+    if (out == NULL) return;
+    // bytes_transferred / bytes_confirmed are 64-bit and updated by the
+    // socket-event task; reading them needs a critical section so we don't
+    // get torn 32-bit halves.  See PIC32MZ atomicity rules in CLAUDE.md.
+    taskENTER_CRITICAL();
+    if (gCtx.mode != IPERF2_MODE_IDLE && gCtx.last_stats.active) {
+        // Update on-the-fly so STATS? during a run shows progress
+        TickType_t elapsed = xTaskGetTickCount() - gCtx.start_tick;
+        uint32_t elapsed_ms = elapsed * portTICK_PERIOD_MS;
+        out->mode = gCtx.mode;
+        out->bytes_transferred = gCtx.bytes_confirmed;
+        out->duration_ms = elapsed_ms;
+        out->kbps = (elapsed_ms > 0)
+            ? (uint32_t)((gCtx.bytes_confirmed * 1000ULL) / (uint64_t)elapsed_ms / 1024ULL)
+            : 0U;
+        out->udp_total_pkt = gCtx.udp_total_pkt;
+        out->udp_lost_pkt = gCtx.udp_lost_pkt;
+        out->udp_outoforder = gCtx.udp_outoforder;
+        out->active = true;
+        out->completed = false;
+    } else {
+        *out = gCtx.last_stats;
+    }
+    taskEXIT_CRITICAL();
+}
+
+// ----------------------------------------------------------------------------
+// Socket event dispatch
+// ----------------------------------------------------------------------------
+
+static void HandleTcpRecv(tstrSocketRecvMsg* m) {
+    if (m && m->s16BufferSize > 0) {
+        // 64-bit RMW + paired with USB-priority Iperf2_GetStats reader
+        taskENTER_CRITICAL();
+        gCtx.bytes_transferred += (uint64_t)m->s16BufferSize;
+        gCtx.bytes_confirmed += (uint64_t)m->s16BufferSize;
+        taskEXIT_CRITICAL();
+        recv(gCtx.data_sock, gRxBuf, IPERF2_TCP_BUF_SIZE, 0);
+    } else {
+        // Disconnect or error → finalize
+        LOG_I("iperf2: TCP peer closed (size=%d)", m ? m->s16BufferSize : 0);
+        FinalizeStats();
+        CloseAll();
+        ResetContext();
+    }
+}
+
+static void HandleUdpRecvFrom(tstrSocketRecvMsg* m) {
+    if (m == NULL || m->pu8Buffer == NULL || m->s16BufferSize <= 0) {
+        // Re-arm for next datagram
+        if (gCtx.data_sock >= 0) {
+            recvfrom(gCtx.data_sock, gRxBuf, sizeof(gRxBuf), 0);
+        }
+        return;
+    }
+
+    // Reject runt datagrams: a valid iperf2 UDP packet has at least the
+    // 12-byte Iperf2_PktInfo header.  Without this guard, casting gRxBuf
+    // to Iperf2_PktInfo* would read past the actual payload.
+    if ((size_t)m->s16BufferSize < sizeof(Iperf2_PktInfo)) {
+        recvfrom(gCtx.data_sock, gRxBuf, sizeof(gRxBuf), 0);
+        return;
+    }
+
+    // Capture remote on first packet (where peer port comes from)
+    if (gCtx.bytes_transferred == 0) {
+        gCtx.udp_remote = m->strRemoteAddr;
+    }
+
+    Iperf2_PktInfo* pkt = (Iperf2_PktInfo*)gRxBuf;
+    int32_t id = (int32_t)_ntohl((uint32_t)pkt->id);
+
+    if (id >= 0) {
+        // Normal packet — track sequence/loss.  RMW + 64-bit, paired with
+        // USB-priority Iperf2_GetStats reader.
+        taskENTER_CRITICAL();
+        if (gCtx.udp_id != id) {
+            // Gap or out-of-order — only count gaps as lost (forward-only count)
+            if (id > gCtx.udp_id) {
+                gCtx.udp_lost_pkt += (uint32_t)(id - gCtx.udp_id);
+                gCtx.udp_id = id + 1;
+            } else {
+                gCtx.udp_outoforder++;
+            }
+        } else {
+            gCtx.udp_id += 1;
+        }
+        gCtx.udp_total_pkt++;
+        gCtx.bytes_transferred += (uint64_t)m->s16BufferSize;
+        gCtx.bytes_confirmed += (uint64_t)m->s16BufferSize;
+        taskEXIT_CRITICAL();
+    } else {
+        // Negative ID = end-of-test marker.  iperf2 client retransmits this 10
+        // times to ensure the server sees it.  Finalize on first observation.
+        LOG_I("iperf2: UDP end-of-test (id=%d, %u pkts, %u lost, %u oo)",
+              (int)id, (unsigned)gCtx.udp_total_pkt,
+              (unsigned)gCtx.udp_lost_pkt, (unsigned)gCtx.udp_outoforder);
+        FinalizeStats();
+        CloseAll();
+        ResetContext();
+        return;
+    }
+
+    // Re-arm
+    recvfrom(gCtx.data_sock, gRxBuf, sizeof(gRxBuf), 0);
+}
+
+bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
+    if (gCtx.mode == IPERF2_MODE_IDLE) {
+        return false;
+    }
+    // Only handle sockets we own
+    if (sock != gCtx.listen_sock && sock != gCtx.data_sock) {
+        return false;
+    }
+
+    switch (msg_type) {
+        case SOCKET_MSG_BIND: {
+            tstrSocketBindMsg* m = (tstrSocketBindMsg*)pMessage;
+            if (m && m->status == 0) {
+                if (gCtx.mode == IPERF2_MODE_TCP_SERVER && sock == gCtx.listen_sock) {
+                    listen(gCtx.listen_sock, 0);
+                } else if (gCtx.mode == IPERF2_MODE_UDP_SERVER && sock == gCtx.data_sock) {
+                    // UDP: bind succeeded, start recv loop
+                    recvfrom(gCtx.data_sock, gRxBuf, sizeof(gRxBuf), 0);
+                }
+            } else {
+                LOG_E("iperf2: bind status=%d", m ? m->status : -1);
+                Iperf2_Stop();
+            }
+            return true;
+        }
+        case SOCKET_MSG_LISTEN: {
+            tstrSocketListenMsg* m = (tstrSocketListenMsg*)pMessage;
+            if (m && m->status == 0 && sock == gCtx.listen_sock) {
+                accept(gCtx.listen_sock, NULL, NULL);
+            } else {
+                LOG_E("iperf2: listen status=%d", m ? m->status : -1);
+                Iperf2_Stop();
+            }
+            return true;
+        }
+        case SOCKET_MSG_ACCEPT: {
+            tstrSocketAcceptMsg* m = (tstrSocketAcceptMsg*)pMessage;
+            if (m && m->sock >= 0 && sock == gCtx.listen_sock) {
+                if (gCtx.data_sock >= 0) {
+                    shutdown(gCtx.data_sock);
+                }
+                gCtx.data_sock = m->sock;
+                gCtx.start_tick = xTaskGetTickCount();
+                gCtx.bytes_transferred = 0;
+                gCtx.bytes_confirmed = 0;
+                LOG_I("iperf2: TCP server accepted connection (sock=%d)",
+                      (int)m->sock);
+                recv(gCtx.data_sock, gRxBuf, IPERF2_TCP_BUF_SIZE, 0);
+            } else {
+                LOG_E("iperf2: accept failed");
+                Iperf2_Stop();
+            }
+            return true;
+        }
+        case SOCKET_MSG_CONNECT: {
+            tstrSocketConnectMsg* m = (tstrSocketConnectMsg*)pMessage;
+            if (m && m->s8Error == 0 && sock == gCtx.data_sock) {
+                gCtx.client_connected = true;
+                gCtx.start_tick = xTaskGetTickCount();
+                gCtx.deadline_tick = gCtx.start_tick +
+                                     pdMS_TO_TICKS(gCtx.duration_ms);
+                // Send iperf2 client header (24 bytes)
+                Iperf2_ClientHdr hdr;
+                memset(&hdr, 0, sizeof(hdr));
+                hdr.flags = _htonl((uint32_t)IPERF2_HEADER_VERSION1);
+                hdr.numThreads = _htonl((uint32_t)1U);
+                hdr.mPort = _htonl((uint32_t)IPERF2_DEFAULT_PORT);
+                hdr.bufferlen = _htonl((uint32_t)IPERF2_TCP_BUF_SIZE);
+                hdr.mWinBand = _htonl((uint32_t)0U);
+                // iperf2 mAmount is in 10ms units (negative = duration mode)
+                int32_t signed_amount = -(int32_t)(gCtx.duration_ms / 10U);
+                hdr.mAmount = _htonl((uint32_t)signed_amount);
+                int rc = send(gCtx.data_sock, (char*)&hdr, sizeof(hdr), 0);
+                if (rc == SOCK_ERR_NO_ERROR) {
+                    gCtx.pending_tx = 1;
+                    LOG_I("iperf2: TCP client connected, header queued");
+                } else {
+                    LOG_E("iperf2: header send rc=%d", rc);
+                    Iperf2_Stop();
+                }
+            } else {
+                LOG_E("iperf2: connect err=%d", m ? m->s8Error : -1);
+                Iperf2_Stop();
+            }
+            return true;
+        }
+        case SOCKET_MSG_RECV: {
+            HandleTcpRecv((tstrSocketRecvMsg*)pMessage);
+            return true;
+        }
+        case SOCKET_MSG_RECVFROM: {
+            HandleUdpRecvFrom((tstrSocketRecvMsg*)pMessage);
+            return true;
+        }
+        case SOCKET_MSG_SEND:
+        case SOCKET_MSG_SENDTO: {
+            int16_t sent = (pMessage != NULL) ? *(int16_t*)pMessage : -1;
+            // 64-bit + 8-bit RMW, paired with USB-priority reader / driver-task writer
+            taskENTER_CRITICAL();
+            if (sent > 0) {
+                gCtx.bytes_confirmed += (uint64_t)sent;
+                if (gCtx.pending_tx > 0) gCtx.pending_tx--;
+            } else {
+                if (gCtx.pending_tx > 0) gCtx.pending_tx--;
+            }
+            taskEXIT_CRITICAL();
+            if (sent <= 0) {
+                LOG_E("iperf2: send cb err=%d", (int)sent);
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Driver-task hook for *_CLIENT mode
+// ----------------------------------------------------------------------------
+
+static void TasksTcpClient(void) {
+    if (!gCtx.client_connected) return;
+
+    if ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0) {
+        if (gCtx.pending_tx == 0) {
+            LOG_I("iperf2: TCP client TX done, %llu bytes sent",
+                  (unsigned long long)gCtx.bytes_confirmed);
+            FinalizeStats();
+            CloseAll();
+            ResetContext();
+        }
+        return;
+    }
+
+    while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+        int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
+        if (rc == SOCK_ERR_NO_ERROR) {
+            // 64-bit RMW, paired with USB-priority reader
+            taskENTER_CRITICAL();
+            gCtx.bytes_transferred += IPERF2_TCP_BUF_SIZE;
+            gCtx.pending_tx++;
+            taskEXIT_CRITICAL();
+        } else if (rc == SOCK_ERR_BUFFER_FULL) {
+            break;
+        } else {
+            LOG_E("iperf2: TCP send err rc=%d, aborting", rc);
+            FinalizeStats();
+            CloseAll();
+            ResetContext();
+            return;
+        }
+    }
+}
+
+static void TasksUdpClient(void) {
+    if (!gCtx.client_connected) return;
+
+    Iperf2_PktInfo* pkt = (Iperf2_PktInfo*)gTxBuf;
+    bool past_deadline = ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0);
+
+    if (!past_deadline) {
+        // Normal TX phase — send datagrams with monotonic IDs while pending_tx
+        // has slots.  WINC UDP has more headroom than TCP, but cap at the same
+        // value to stay safe.
+        while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+            pkt->id = (int32_t)_htonl((uint32_t)gCtx.udp_id);
+            pkt->tv_sec = 0;
+            pkt->tv_usec = 0;
+            int rc = sendto(gCtx.data_sock, (char*)gTxBuf, IPERF2_UDP_BUF_SIZE, 0,
+                            (struct sockaddr*)&gCtx.udp_remote,
+                            sizeof(gCtx.udp_remote));
+            if (rc == SOCK_ERR_NO_ERROR) {
+                // 64-bit RMW, paired with USB-priority reader
+                taskENTER_CRITICAL();
+                gCtx.bytes_transferred += IPERF2_UDP_BUF_SIZE;
+                gCtx.pending_tx++;
+                gCtx.udp_id++;
+                taskEXIT_CRITICAL();
+            } else if (rc == SOCK_ERR_BUFFER_FULL) {
+                break;
+            } else {
+                LOG_E("iperf2: UDP sendto err rc=%d, aborting", rc);
+                FinalizeStats();
+                CloseAll();
+                ResetContext();
+                return;
+            }
+        }
+    } else {
+        // FIN phase — send final packet with negated ID 10× to ensure server
+        // sees end-of-test.  Once done, finalize.
+        if (gCtx.udp_fin_count >= IPERF2_FIN_RETRANSMITS) {
+            LOG_I("iperf2: UDP client TX done, %u pkts sent",
+                  (unsigned)gCtx.udp_id);
+            FinalizeStats();
+            CloseAll();
+            ResetContext();
+            return;
+        }
+        if (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+            pkt->id = (int32_t)_htonl((uint32_t)(-gCtx.udp_id));
+            pkt->tv_sec = 0;
+            pkt->tv_usec = 0;
+            int rc = sendto(gCtx.data_sock, (char*)gTxBuf, IPERF2_UDP_BUF_SIZE, 0,
+                            (struct sockaddr*)&gCtx.udp_remote,
+                            sizeof(gCtx.udp_remote));
+            if (rc == SOCK_ERR_NO_ERROR) {
+                // 8-bit RMW; same critical-section pattern as the TX-phase
+                // path above for consistency.
+                taskENTER_CRITICAL();
+                gCtx.pending_tx++;
+                gCtx.udp_fin_count++;
+                taskEXIT_CRITICAL();
+            }
+        }
+    }
+}
+
+void Iperf2_Tasks(void) {
+    switch (gCtx.mode) {
+        case IPERF2_MODE_TCP_CLIENT: TasksTcpClient(); break;
+        case IPERF2_MODE_UDP_CLIENT: TasksUdpClient(); break;
+        default: break;  // IDLE / *_SERVER are pure callback-driven
+    }
+}
