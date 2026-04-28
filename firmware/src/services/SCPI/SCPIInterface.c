@@ -2003,21 +2003,6 @@ static scpi_result_t SCPI_Iperf2_Stop(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_Iperf2_Delay(scpi_t * context) {
-    int32_t ms = 0;
-    if (!SCPI_ParamInt32(context, &ms, TRUE) || ms < 0 || ms > 100) {
-        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
-        return SCPI_RES_ERR;
-    }
-    Iperf2_SetActiveDelayMs((uint8_t)ms);
-    return SCPI_RES_OK;
-}
-
-static scpi_result_t SCPI_Iperf2_DelayGet(scpi_t * context) {
-    SCPI_ResultUInt32(context, (uint32_t)Iperf2_GetActiveDelayMs());
-    return SCPI_RES_OK;
-}
-
 static scpi_result_t SCPI_Iperf2_Stats(scpi_t * context) {
     Iperf2_Stats s;
     Iperf2_GetStats(&s);
@@ -3670,8 +3655,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:WIFI:IPERF:UDPClient", .callback = SCPI_Iperf2_UdpClient,}, // <ip>,[port=5001],[dur_s=10]
     {.pattern = "SYSTem:WIFI:IPERF:STOP", .callback = SCPI_Iperf2_Stop,},
     {.pattern = "SYSTem:WIFI:IPERF:STATs?", .callback = SCPI_Iperf2_Stats,},
-    {.pattern = "SYSTem:WIFI:IPERF:DELay", .callback = SCPI_Iperf2_Delay,},   // active-mode task delay (ms, 0-100)
-    {.pattern = "SYSTem:WIFI:IPERF:DELay?", .callback = SCPI_Iperf2_DelayGet,},
     // Dynamic memory configuration
     {.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = SCPI_SetMemSdBuf,},
     {.pattern = "SYSTem:MEMory:SD:BUFfer?", .callback = SCPI_GetMemSdBuf,},
