@@ -22,7 +22,7 @@
 #define IPERF2_TCP_BUF_SIZE     1400U   // matches WINC SOCKET_BUFFER_MAX_LENGTH for TCP
 #define IPERF2_UDP_BUF_SIZE     1470U   // standard iperf2 UDP datagram size (1500 - IP/UDP overhead)
 #define IPERF2_MAX_DURATION_S   3600U   // 1h cap
-#define IPERF2_MAX_PENDING_TX   1U      // single-shot send-per-tick (Microchip pattern)
+#define IPERF2_MAX_PENDING_TX   4U      // matches WINC HIF queue depth (mirrors wifi_tcp_server)
 #define IPERF2_FIN_RETRANSMITS  10U     // iperf2 protocol: 10× retransmit of last UDP pkt
 
 typedef struct {
@@ -555,19 +555,17 @@ static void TasksTcpClient(void) {
         return;
     }
 
-    // Drain the WINC HIF queue: keep sending until WINC reports
-    // SOCK_ERR_BUFFER_FULL.  This is what wifi_tcp_server does internally
-    // and lets us saturate the chip without per-callback gating.
-    //
-    // Cap iterations per call so we don't starve the WifiTask state
-    // machine.  On WINC HIF (~4 in-flight slots) one Tasks() pass typically
-    // fills 1-4 slots before BUFFER_FULL.
-    for (int i = 0; i < 16; i++) {
+    // Drain WINC HIF up to IPERF2_MAX_PENDING_TX (4, matching WINC chip's
+    // internal HIF queue depth — same cap as wifi_tcp_server's
+    // WIFI_TCP_MAX_IN_FLIGHT). Going over this risks pushing past WINC's
+    // accept-without-error threshold even before BUFFER_FULL fires, which
+    // can corrupt internal state.
+    while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
         int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
         if (rc == SOCK_ERR_NO_ERROR) {
             taskENTER_CRITICAL();
             gCtx.bytes_transferred += IPERF2_TCP_BUF_SIZE;
-            if (gCtx.pending_tx < UINT8_MAX) gCtx.pending_tx++;
+            gCtx.pending_tx++;
             taskEXIT_CRITICAL();
         } else if (rc == SOCK_ERR_BUFFER_FULL) {
             break;  // WINC HIF full — let WINC drain, retry next tick.
@@ -586,9 +584,8 @@ static void TasksUdpClient(void) {
     bool past_deadline = ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0);
 
     if (!past_deadline) {
-        // Drain the WINC HIF queue with sendto until BUFFER_FULL.  Same
-        // pattern as TCP path — saturate WINC's HIF without per-send gating.
-        for (int i = 0; i < 16; i++) {
+        // Drain UDP up to IPERF2_MAX_PENDING_TX (matches WINC HIF depth).
+        while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
             pkt->id = (int32_t)_htonl((uint32_t)gCtx.udp_id);
             pkt->tv_sec = 0;
             pkt->tv_usec = 0;
@@ -598,7 +595,7 @@ static void TasksUdpClient(void) {
             if (rc == SOCK_ERR_NO_ERROR) {
                 taskENTER_CRITICAL();
                 gCtx.bytes_transferred += IPERF2_UDP_BUF_SIZE;
-                if (gCtx.pending_tx < UINT8_MAX) gCtx.pending_tx++;
+                gCtx.pending_tx++;
                 gCtx.udp_id++;
                 taskEXIT_CRITICAL();
             } else if (rc == SOCK_ERR_BUFFER_FULL) {
