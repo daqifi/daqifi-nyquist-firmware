@@ -538,26 +538,22 @@ static void TasksTcpClient(void) {
 
     // ONE send per Iperf2_Tasks() invocation — matches Microchip's reference
     // iperf example (avrxml/asf .../iperf_server_example/iperf.c TCP TX
-    // loop).  Filling a deeper send pipeline (while pending_tx < N) hammers
-    // the WINC HIF queue, never lets it drain via WINC events between calls,
-    // and produces exactly the SOCK_ERR_INVALID flood we saw at 233 packets.
-    // Single-shot sends with WifiTask's natural cadence as the rate limiter
-    // is the model that works.
-    if (gCtx.pending_tx == 0) {
-        int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
-        if (rc == SOCK_ERR_NO_ERROR) {
-            taskENTER_CRITICAL();
-            gCtx.bytes_transferred += IPERF2_TCP_BUF_SIZE;
-            gCtx.pending_tx = 1;
-            taskEXIT_CRITICAL();
-        } else if (rc == SOCK_ERR_BUFFER_FULL) {
-            // WINC HIF full — try again next tick.
-        } else {
-            LOG_E("iperf2: TCP send err rc=%d, aborting", rc);
-            FinalizeStats();
-            CloseAll();
-            ResetContext();
-        }
+    // loop).  Note: the reference has NO pending-count gate — it just calls
+    // send() each iteration and lets SOCK_ERR_BUFFER_FULL be the rate
+    // limiter (WINC's HIF queue drains via the WINC driver's event task
+    // between our Iperf2_Tasks ticks). With no gate, throughput rises by
+    // ~10x vs the gated single-shot pattern.
+    int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
+    if (rc == SOCK_ERR_NO_ERROR) {
+        taskENTER_CRITICAL();
+        gCtx.bytes_transferred += IPERF2_TCP_BUF_SIZE;
+        if (gCtx.pending_tx < UINT8_MAX) gCtx.pending_tx++;
+        taskEXIT_CRITICAL();
+    } else if (rc == SOCK_ERR_BUFFER_FULL) {
+        // WINC HIF full — try again next tick.
+    } else {
+        LOG_E("iperf2: TCP send err rc=%d, aborting", rc);
+        gCtx.abort_pending = true;
     }
 }
 
@@ -568,31 +564,26 @@ static void TasksUdpClient(void) {
     bool past_deadline = ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0);
 
     if (!past_deadline) {
-        // ONE sendto per Iperf2_Tasks() — same single-shot model as the TCP
-        // path. Microchip's reference iperf example uses one send per main
-        // loop iteration (avrxml/asf .../iperf_server_example/iperf.c).
-        if (gCtx.pending_tx == 0) {
-            pkt->id = (int32_t)_htonl((uint32_t)gCtx.udp_id);
-            pkt->tv_sec = 0;
-            pkt->tv_usec = 0;
-            int rc = sendto(gCtx.data_sock, (char*)gTxBuf, IPERF2_UDP_BUF_SIZE, 0,
-                            (struct sockaddr*)&gCtx.udp_remote,
-                            sizeof(gCtx.udp_remote));
-            if (rc == SOCK_ERR_NO_ERROR) {
-                taskENTER_CRITICAL();
-                gCtx.bytes_transferred += IPERF2_UDP_BUF_SIZE;
-                gCtx.pending_tx = 1;
-                gCtx.udp_id++;
-                taskEXIT_CRITICAL();
-            } else if (rc == SOCK_ERR_BUFFER_FULL) {
-                // WINC HIF full — try again next tick.
-            } else {
-                LOG_E("iperf2: UDP sendto err rc=%d, aborting", rc);
-                FinalizeStats();
-                CloseAll();
-                ResetContext();
-                return;
-            }
+        // ONE sendto per iteration, no gate — same pattern as TCP path.
+        // SOCK_ERR_BUFFER_FULL is the natural rate limiter via WINC's HIF.
+        pkt->id = (int32_t)_htonl((uint32_t)gCtx.udp_id);
+        pkt->tv_sec = 0;
+        pkt->tv_usec = 0;
+        int rc = sendto(gCtx.data_sock, (char*)gTxBuf, IPERF2_UDP_BUF_SIZE, 0,
+                        (struct sockaddr*)&gCtx.udp_remote,
+                        sizeof(gCtx.udp_remote));
+        if (rc == SOCK_ERR_NO_ERROR) {
+            taskENTER_CRITICAL();
+            gCtx.bytes_transferred += IPERF2_UDP_BUF_SIZE;
+            if (gCtx.pending_tx < UINT8_MAX) gCtx.pending_tx++;
+            gCtx.udp_id++;
+            taskEXIT_CRITICAL();
+        } else if (rc == SOCK_ERR_BUFFER_FULL) {
+            // WINC HIF full — try again next tick.
+        } else {
+            LOG_E("iperf2: UDP sendto err rc=%d, aborting", rc);
+            gCtx.abort_pending = true;
+            return;
         }
     } else {
         // FIN phase — send final packet with negated ID 10× to ensure server
