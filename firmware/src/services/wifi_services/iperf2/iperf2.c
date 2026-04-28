@@ -22,7 +22,7 @@
 #define IPERF2_TCP_BUF_SIZE     1400U   // matches WINC SOCKET_BUFFER_MAX_LENGTH for TCP
 #define IPERF2_UDP_BUF_SIZE     1470U   // standard iperf2 UDP datagram size (1500 - IP/UDP overhead)
 #define IPERF2_MAX_DURATION_S   3600U   // 1h cap
-#define IPERF2_MAX_PENDING_TX   2U      // WINC HIF queue cap (mirror tcp_server)
+#define IPERF2_MAX_PENDING_TX   1U      // single-shot send-per-tick (Microchip pattern)
 #define IPERF2_FIN_RETRANSMITS  10U     // iperf2 protocol: 10× retransmit of last UDP pkt
 
 typedef struct {
@@ -43,6 +43,7 @@ typedef struct {
     uint32_t       udp_lost_pkt;
     uint32_t       udp_outoforder;
     uint8_t        udp_fin_count;   // FIN retransmits sent
+    bool           abort_pending;   // set in callback context, processed in Iperf2_Tasks
     Iperf2_Stats   last_stats;
 } Iperf2_Context;
 
@@ -79,6 +80,7 @@ static void ResetContext(void) {
     gCtx.udp_lost_pkt = 0;
     gCtx.udp_outoforder = 0;
     gCtx.udp_fin_count = 0;
+    gCtx.abort_pending = false;
 }
 
 static void FinalizeStats(void) {
@@ -495,8 +497,18 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                 if (gCtx.pending_tx > 0) gCtx.pending_tx--;
             }
             taskEXIT_CRITICAL();
+            // For TCP, a negative send callback (e.g. SOCK_ERR_INVALID = -9)
+            // means the underlying connection is dead.  Don't tear down the
+            // socket from inside its own callback — WINC's HIF event loop may
+            // still be referencing it and shutdown() here can wedge USB CDC
+            // (observed: serial write hangs after iperf2 test completes).
+            // Set a flag instead and let Iperf2_Tasks() do the cleanup
+            // outside the callback context.
             if (sent <= 0) {
-                LOG_E("iperf2: send cb err=%d", (int)sent);
+                LOG_E("iperf2: send cb err=%d, scheduling abort", (int)sent);
+                if (gCtx.mode == IPERF2_MODE_TCP_CLIENT) {
+                    gCtx.abort_pending = true;
+                }
             }
             return true;
         }
@@ -513,32 +525,38 @@ static void TasksTcpClient(void) {
     if (!gCtx.client_connected) return;
 
     if ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0) {
-        if (gCtx.pending_tx == 0) {
-            LOG_I("iperf2: TCP client TX done, %llu bytes sent",
-                  (unsigned long long)gCtx.bytes_confirmed);
-            FinalizeStats();
-            CloseAll();
-            ResetContext();
-        }
+        // Deadline reached — finalize unconditionally.  Don't gate on
+        // pending_tx==0 because the previous design could deadlock if a
+        // send-callback was lost.
+        LOG_I("iperf2: TCP client TX done, %llu bytes sent",
+              (unsigned long long)gCtx.bytes_confirmed);
+        FinalizeStats();
+        CloseAll();
+        ResetContext();
         return;
     }
 
-    while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+    // ONE send per Iperf2_Tasks() invocation — matches Microchip's reference
+    // iperf example (avrxml/asf .../iperf_server_example/iperf.c TCP TX
+    // loop).  Filling a deeper send pipeline (while pending_tx < N) hammers
+    // the WINC HIF queue, never lets it drain via WINC events between calls,
+    // and produces exactly the SOCK_ERR_INVALID flood we saw at 233 packets.
+    // Single-shot sends with WifiTask's natural cadence as the rate limiter
+    // is the model that works.
+    if (gCtx.pending_tx == 0) {
         int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
         if (rc == SOCK_ERR_NO_ERROR) {
-            // 64-bit RMW, paired with USB-priority reader
             taskENTER_CRITICAL();
             gCtx.bytes_transferred += IPERF2_TCP_BUF_SIZE;
-            gCtx.pending_tx++;
+            gCtx.pending_tx = 1;
             taskEXIT_CRITICAL();
         } else if (rc == SOCK_ERR_BUFFER_FULL) {
-            break;
+            // WINC HIF full — try again next tick.
         } else {
             LOG_E("iperf2: TCP send err rc=%d, aborting", rc);
             FinalizeStats();
             CloseAll();
             ResetContext();
-            return;
         }
     }
 }
@@ -550,10 +568,10 @@ static void TasksUdpClient(void) {
     bool past_deadline = ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0);
 
     if (!past_deadline) {
-        // Normal TX phase — send datagrams with monotonic IDs while pending_tx
-        // has slots.  WINC UDP has more headroom than TCP, but cap at the same
-        // value to stay safe.
-        while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+        // ONE sendto per Iperf2_Tasks() — same single-shot model as the TCP
+        // path. Microchip's reference iperf example uses one send per main
+        // loop iteration (avrxml/asf .../iperf_server_example/iperf.c).
+        if (gCtx.pending_tx == 0) {
             pkt->id = (int32_t)_htonl((uint32_t)gCtx.udp_id);
             pkt->tv_sec = 0;
             pkt->tv_usec = 0;
@@ -561,14 +579,13 @@ static void TasksUdpClient(void) {
                             (struct sockaddr*)&gCtx.udp_remote,
                             sizeof(gCtx.udp_remote));
             if (rc == SOCK_ERR_NO_ERROR) {
-                // 64-bit RMW, paired with USB-priority reader
                 taskENTER_CRITICAL();
                 gCtx.bytes_transferred += IPERF2_UDP_BUF_SIZE;
-                gCtx.pending_tx++;
+                gCtx.pending_tx = 1;
                 gCtx.udp_id++;
                 taskEXIT_CRITICAL();
             } else if (rc == SOCK_ERR_BUFFER_FULL) {
-                break;
+                // WINC HIF full — try again next tick.
             } else {
                 LOG_E("iperf2: UDP sendto err rc=%d, aborting", rc);
                 FinalizeStats();
@@ -608,6 +625,18 @@ static void TasksUdpClient(void) {
 }
 
 void Iperf2_Tasks(void) {
+    // Process any deferred abort from a SOCKET_MSG_SEND callback first.  We
+    // can't tear down the socket from inside the WINC's event handler — do
+    // it here from app_WifiTask context, after the event loop returns.
+    if (gCtx.abort_pending) {
+        LOG_I("iperf2: deferred abort (mode=%d, %llu bytes)",
+              (int)gCtx.mode, (unsigned long long)gCtx.bytes_confirmed);
+        FinalizeStats();
+        CloseAll();
+        ResetContext();
+        return;
+    }
+
     switch (gCtx.mode) {
         case IPERF2_MODE_TCP_CLIENT: TasksTcpClient(); break;
         case IPERF2_MODE_UDP_CLIENT: TasksUdpClient(); break;
