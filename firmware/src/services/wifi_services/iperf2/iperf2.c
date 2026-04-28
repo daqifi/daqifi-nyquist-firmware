@@ -323,11 +323,13 @@ static void HandleTcpRecv(tstrSocketRecvMsg* m) {
         taskEXIT_CRITICAL();
         recv(gCtx.data_sock, gRxBuf, IPERF2_TCP_BUF_SIZE, 0);
     } else {
-        // Disconnect or error → finalize
-        LOG_I("iperf2: TCP peer closed (size=%d)", m ? m->s16BufferSize : 0);
-        FinalizeStats();
-        CloseAll();
-        ResetContext();
+        // Disconnect or error.  Defer cleanup to Iperf2_Tasks() — calling
+        // shutdown(sock) from inside the socket's own callback corrupts
+        // shared SPI4/DMA state with USB CDC (same wedge we hit on the
+        // SEND callback abort path).
+        LOG_I("iperf2: TCP peer closed (size=%d), scheduling abort",
+              m ? m->s16BufferSize : 0);
+        gCtx.abort_pending = true;
     }
 }
 
@@ -376,14 +378,12 @@ static void HandleUdpRecvFrom(tstrSocketRecvMsg* m) {
         gCtx.bytes_confirmed += (uint64_t)m->s16BufferSize;
         taskEXIT_CRITICAL();
     } else {
-        // Negative ID = end-of-test marker.  iperf2 client retransmits this 10
-        // times to ensure the server sees it.  Finalize on first observation.
-        LOG_I("iperf2: UDP end-of-test (id=%d, %u pkts, %u lost, %u oo)",
+        // Negative ID = end-of-test marker.  Defer cleanup to Iperf2_Tasks()
+        // — same in-callback teardown safety as TCP RECV/SEND.
+        LOG_I("iperf2: UDP end-of-test (id=%d, %u pkts, %u lost, %u oo), scheduling abort",
               (int)id, (unsigned)gCtx.udp_total_pkt,
               (unsigned)gCtx.udp_lost_pkt, (unsigned)gCtx.udp_outoforder);
-        FinalizeStats();
-        CloseAll();
-        ResetContext();
+        gCtx.abort_pending = true;
         return;
     }
 
