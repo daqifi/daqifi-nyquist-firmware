@@ -51,9 +51,11 @@ typedef struct {
 static Iperf2_Context gCtx;
 
 // Active-mode task delay (ms).  Runtime-tunable via SCPI for sweep tests.
-// 5 ms default per empirical observation that 5 ms paces well with the
-// callback chain (over-aggressive 1 ms polling caught WINC mid-state).
-static volatile uint8_t gActiveDelayMs = 5;
+// Default 2 ms — empirical sweep with cross-verified PC iperf2 +
+// firmware-side counters (2026-04-28): delay=2ms yields ~454 KB/s
+// (3.70 Mbps), which is the peak.  delay=1ms is over-aggressive and
+// drops to ~334 KB/s; delay=3-5ms tie at ~415 KB/s.
+static volatile uint8_t gActiveDelayMs = 2;
 
 // Static TX/RX buffers — keep off task stacks.  Sized to the larger of TCP/UDP.
 // 4-byte aligned: HandleUdpRecvFrom casts gRxBuf to Iperf2_PktInfo* (which has

@@ -146,7 +146,8 @@ void Iperf2_StartTask(void);
 /**
  * Active-mode task delay tunable for sweep testing.  ms range 0..100;
  * 0 means taskYIELD() (no explicit delay, just give other priorities a
- * chance).  Default 5 ms.  Idle (server/IDLE) uses fixed 50 ms.
+ * chance).  Default 2 ms (empirical peak — see iperf2.c).  Idle
+ * (server/IDLE) uses fixed 50 ms.
  */
 void Iperf2_SetActiveDelayMs(uint8_t ms);
 uint8_t Iperf2_GetActiveDelayMs(void);
