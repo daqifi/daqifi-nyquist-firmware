@@ -315,6 +315,12 @@ void Iperf2_GetStats(Iperf2_Stats* out) {
 // Socket event dispatch
 // ----------------------------------------------------------------------------
 
+// Forward declarations — TasksTcpClient/TasksUdpClient are defined later in
+// the file but called from SOCKET_MSG_SEND/SENDTO callbacks for event-driven
+// send chaining (mirrors wifi_tcp_server's pattern).
+static void TasksTcpClient(void);
+static void TasksUdpClient(void);
+
 static void HandleTcpRecv(tstrSocketRecvMsg* m) {
     if (m && m->s16BufferSize > 0) {
         // 64-bit RMW + paired with USB-priority Iperf2_GetStats reader
@@ -498,6 +504,19 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                 if (gCtx.pending_tx > 0) gCtx.pending_tx--;
             }
             taskEXIT_CRITICAL();
+            // Event-driven send chaining (mirrors wifi_tcp_server pattern):
+            // when WINC frees a HIF slot, immediately refill it from here
+            // instead of waiting for the next Iperf2 task tick.  Pacing is
+            // then naturally rate-limited by WINC's actual completion rate,
+            // not our task delay.  The 5 ms task tick is just a backup /
+            // initial trigger.
+            if (sent > 0 && !gCtx.abort_pending) {
+                if (gCtx.mode == IPERF2_MODE_TCP_CLIENT) {
+                    TasksTcpClient();
+                } else if (gCtx.mode == IPERF2_MODE_UDP_CLIENT) {
+                    TasksUdpClient();
+                }
+            }
             // For TCP, a negative send callback (e.g. SOCK_ERR_INVALID = -9)
             // means the underlying connection is dead.  Don't tear down the
             // socket from inside its own callback — WINC's HIF event loop may
@@ -636,17 +655,23 @@ static void TasksUdpClient(void) {
     }
 }
 
-// Task body — runs continuously, adapting delay to active state.  Lives in
-// its own FreeRTOS task at priority above WifiTask so client-mode TX gets
-// tight pacing (1 ms tick) without affecting other WiFi paths' 5 ms cadence.
-// When iperf2 is idle/server-only, sleeps 50 ms between ticks (cheap).
+// Task body — runs continuously at modest cadence as a backup/initial
+// trigger.  The hot path is event-driven via SOCKET_MSG_SEND callback
+// chaining (see HandleSocketEvent) — this loop just kicks off the first
+// send and catches any missed callbacks.  5 ms cadence is enough for
+// bring-up; the actual send rate is set by WINC HIF completion timing.
+//
+// Empirically (this session): 1 ms cadence was less stable than 5 ms —
+// over-aggressive polling caught WINC mid-state and triggered more
+// BUFFER_FULL churn / TCP cwnd issues.  5 ms paces well with the
+// callback-chain doing the heavy lifting.
 static void Iperf2TaskMain(void* arg) {
     (void)arg;
     for (;;) {
         Iperf2_Tasks();
         bool active = (gCtx.mode == IPERF2_MODE_TCP_CLIENT) ||
                       (gCtx.mode == IPERF2_MODE_UDP_CLIENT);
-        vTaskDelay(active ? pdMS_TO_TICKS(1) : pdMS_TO_TICKS(50));
+        vTaskDelay(active ? pdMS_TO_TICKS(5) : pdMS_TO_TICKS(50));
     }
 }
 
