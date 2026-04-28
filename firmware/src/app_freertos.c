@@ -16,6 +16,7 @@
 #include "state/data/AInSample.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "services/wifi_services/wifi_tcp_server.h"
+#include "services/wifi_services/iperf2/iperf2.h"
 
 /*
  * SPI Coordination Framework for Future Extensibility
@@ -258,7 +259,7 @@ static void app_WifiTask(void* p_arg) {
             }
                 break;
         }
-        vTaskDelay(5 / portTICK_PERIOD_MS);  
+        vTaskDelay(5 / portTICK_PERIOD_MS);
     }
 }
 
@@ -729,6 +730,11 @@ static void app_TasksCreate() {
         LOG_E("FATAL: Failed to create SDCardTask\r\n");
         while (1);
     }
+
+    // Dedicated iperf2 task for tight client-mode pacing (#377).  Runs at
+    // pri 5 with adaptive 1 ms (active) / 50 ms (idle) cadence.  WifiTask
+    // (pri 2) keeps its 5 ms cadence for streaming + SCPI dispatch paths.
+    Iperf2_StartTask();
 }
 
 void APP_FREERTOS_Initialize(void) {

@@ -223,6 +223,7 @@ bool Iperf2_StartTcpClient(const char* remote_ip, uint16_t remote_port,
     gCtx.mode = IPERF2_MODE_TCP_CLIENT;
     gCtx.client_connected = false;
     gCtx.duration_ms = duration_sec * 1000U;
+    gCtx.start_tick = xTaskGetTickCount();  // baseline for connect timeout
     gCtx.last_stats.active = true;
     gCtx.last_stats.completed = false;
     LOG_I("iperf2: TCP client connecting to %s:%u for %u s",
@@ -521,8 +522,26 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
 // Driver-task hook for *_CLIENT mode
 // ----------------------------------------------------------------------------
 
+// Time we'll wait for the WINC SOCKET_MSG_CONNECT callback before bailing.
+// Connect attempts to a closed/firewalled host normally hang forever
+// because TasksTcpClient early-returns until client_connected is set.
+#define IPERF2_CONNECT_TIMEOUT_MS  10000U
+
 static void TasksTcpClient(void) {
-    if (!gCtx.client_connected) return;
+    if (!gCtx.client_connected) {
+        // Bail if connect has been pending too long.  start_tick is set in
+        // Iperf2_StartTcpClient() before connect(), updated again in the
+        // CONNECT callback if it succeeds.
+        TickType_t elapsed = xTaskGetTickCount() - gCtx.start_tick;
+        if (elapsed > pdMS_TO_TICKS(IPERF2_CONNECT_TIMEOUT_MS)) {
+            LOG_E("iperf2: TCP connect timeout (%u ms), aborting",
+                  (unsigned)(elapsed * portTICK_PERIOD_MS));
+            FinalizeStats();
+            CloseAll();
+            ResetContext();
+        }
+        return;
+    }
 
     if ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0) {
         // Deadline reached — finalize unconditionally.  Don't gate on
@@ -617,6 +636,31 @@ static void TasksUdpClient(void) {
                 taskEXIT_CRITICAL();
             }
         }
+    }
+}
+
+// Task body — runs continuously, adapting delay to active state.  Lives in
+// its own FreeRTOS task at priority above WifiTask so client-mode TX gets
+// tight pacing (1 ms tick) without affecting other WiFi paths' 5 ms cadence.
+// When iperf2 is idle/server-only, sleeps 50 ms between ticks (cheap).
+static void Iperf2TaskMain(void* arg) {
+    (void)arg;
+    for (;;) {
+        Iperf2_Tasks();
+        bool active = (gCtx.mode == IPERF2_MODE_TCP_CLIENT) ||
+                      (gCtx.mode == IPERF2_MODE_UDP_CLIENT);
+        vTaskDelay(active ? pdMS_TO_TICKS(1) : pdMS_TO_TICKS(50));
+    }
+}
+
+void Iperf2_StartTask(void) {
+    static StaticTask_t taskTcb;
+    static StackType_t  taskStack[512];
+    TaskHandle_t h = xTaskCreateStatic(Iperf2TaskMain, "Iperf2",
+                                       (uint32_t)(sizeof(taskStack) / sizeof(taskStack[0])),
+                                       NULL, 5, taskStack, &taskTcb);
+    if (h == NULL) {
+        LOG_E("iperf2: failed to create dedicated task");
     }
 }
 

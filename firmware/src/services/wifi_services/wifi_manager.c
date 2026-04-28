@@ -1421,9 +1421,10 @@ void wifi_manager_ProcessState() {
     }
     wifi_tcp_server_TransmitBufferedData();
 
-    // #377: iperf2 client mode — keep the TX cap topped up.  No-op in
-    // SERVER / IDLE.  Cheap when idle (single mode-check).
-    Iperf2_Tasks();
+    // #377 iperf2 now runs in its own dedicated task with adaptive 1 ms
+    // (active) / 50 ms (idle) cadence — see Iperf2_StartTask() in iperf2.c.
+    // Removed from this task's loop so streaming + SCPI dispatch keep their
+    // 5 ms cadence undisturbed.
 
     // #353 Option 2: drain any deferred TCP rx data on this task's stack.
     // SOCKET_MSG_RECV (WDRV_WINC_Tasks context) stored length + set the flag
