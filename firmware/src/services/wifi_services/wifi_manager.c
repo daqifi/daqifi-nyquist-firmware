@@ -594,7 +594,8 @@ static bool SendEvent(wifi_manager_event_t event) {
     // which doesn't block long, but the drain-loop approach is
     // safer-by-construction.
     if (event == WIFI_MANAGER_EVENT_DEINIT ||
-        event == WIFI_MANAGER_EVENT_INIT) {
+        event == WIFI_MANAGER_EVENT_INIT ||
+        event == WIFI_MANAGER_EVENT_REINIT) {
         LOG_E("WiFi SendEvent: queue full, draining for lifecycle event=%u",
               (unsigned)event);
         wifi_manager_event_t drop;
