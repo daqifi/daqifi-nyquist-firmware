@@ -561,12 +561,22 @@ static bool SendEvent(wifi_manager_event_t event) {
 
     // Bounded timeout: SendEvent can be called from inside
     // wifi_manager_ProcessState (state-machine handlers, deferred-INIT
-    // path).  ProcessState holds gProcessStateMutex, and it's also
-    // the queue-drainer.  A blocking portMAX_DELAY send on a full
-    // queue would deadlock — the same task can't drain.  20 ms is
-    // long enough for a higher-priority drainer (USB SCPI pump path)
-    // to clear room, short enough not to wedge the calling task.
-    const TickType_t timeout = pdMS_TO_TICKS(20);
+    // path).  ProcessState holds gProcessStateMutex AND is the
+    // queue-drainer.  A blocking portMAX_DELAY send on a full queue
+    // would deadlock — the same task can't drain.
+    //
+    // Detect "I'm already the holder" via xSemaphoreGetMutexHolder and
+    // use timeout=0 in that case: waiting can't possibly help when
+    // we're the only drainer.  Otherwise 20 ms — long enough for a
+    // higher-priority drainer (USB SCPI pump path) to clear room,
+    // short enough not to wedge the calling task.
+    TickType_t timeout = pdMS_TO_TICKS(20);
+    if (gProcessStateMutex != NULL) {
+        if (xSemaphoreGetMutexHolder(gProcessStateMutex) ==
+            xTaskGetCurrentTaskHandle()) {
+            timeout = 0;
+        }
+    }
     if (xQueueSend(gEventQH, &event, timeout) == pdPASS) {
         return true;
     }

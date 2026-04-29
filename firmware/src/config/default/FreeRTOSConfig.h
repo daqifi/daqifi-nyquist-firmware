@@ -428,7 +428,7 @@
 #define INCLUDE_xTaskAbortDelay                 0
 #define INCLUDE_xTaskGetHandle                  0
 #define INCLUDE_xQueueGetMutexHolder            0
-#define INCLUDE_xSemaphoreGetMutexHolder        0
+#define INCLUDE_xSemaphoreGetMutexHolder        1
 #define INCLUDE_uxTaskGetStackHighWaterMark2    0
 #define INCLUDE_xTaskResumeFromISR              0
 
