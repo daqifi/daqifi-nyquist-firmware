@@ -1363,34 +1363,34 @@ bool wifi_manager_Deinit() {
     return true;
 }
 
+// Deadline (in ticks) at which wifi_manager_ProcessState should queue
+// the deferred WIFI_MANAGER_EVENT_INIT after a HardReset.  0 = none
+// pending.  32-bit reads/writes are atomic on PIC32MZ (see CLAUDE.md
+// concurrency rules).  Marked volatile because it's set from any task
+// calling HardReset and read every tick from app_WifiTask.
+static volatile TickType_t gWifiReinitDeadlineTick = 0;
+
 // True hardware reset of the WINC chip: disable -> DEINIT (toggles
-// CHIP_EN/RESET_N GPIOs via wifi_manager_FixWincResetState) -> wait
-// for the state machine to process -> re-enable -> REINIT to bring
-// the chip back up.
+// CHIP_EN/RESET_N GPIOs via wifi_manager_FixWincResetState) -> after
+// 2 s settle, re-enable -> REINIT to bring the chip back up.
 //
 // This is the only path that recovers a wedged outbound TCP stack
 // (#383). APPLY's REINIT path explicitly skips Deinitialize because
 // of a Microchip driver bug (see comment near line 867), so APPLY
 // alone never drives the WINC reset GPIOs.
 //
-// Caller note: this fires events asynchronously and returns
-// immediately. The full recovery (DEINIT settle + STA reassoc +
-// DHCP) typically takes ~20 s; poll SYST:COMM:LAN:ADDR? to confirm
-// the WiFi is back up.
+// Returns immediately — the deferred-INIT runs from
+// wifi_manager_ProcessState's deadline check, so this works
+// correctly whether HardReset is called from app_WifiTask itself
+// (TCP SCPI dispatch path, post-#353) or from another task (USB
+// CDC).  Full recovery (DEINIT settle + STA reassoc + DHCP)
+// typically takes ~20 s; poll SYST:COMM:LAN:ADDR? to confirm.
 bool wifi_manager_HardReset(void) {
     if (gStateMachineContext.pWifiSettings == NULL) return false;
-    LOG_I("WiFi: hard reset (DEINIT -> REINIT)");
-    // Phase 1: disable + DEINIT (drives WINC GPIO reset)
+    LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     SendEvent(WIFI_MANAGER_EVENT_DEINIT);
-    // Phase 2: brief block so the state machine can process DEINIT
-    // before we flip isEnabled back. Without this, the REINIT we
-    // queue below could be processed before DEINIT fully completes.
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    // Phase 3: re-enable + INIT (full re-init — REINIT assumes the
-    // driver handle is still valid, which it isn't after DEINIT).
-    gStateMachineContext.pWifiSettings->isEnabled = 1;
-    SendEvent(WIFI_MANAGER_EVENT_INIT);
+    gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
     return true;
 }
 
@@ -1450,6 +1450,21 @@ void wifi_manager_ProcessState() {
     while (gEventQH == NULL) {
         return;
     }
+
+    // Deferred-INIT after wifi_manager_HardReset(): once the 2 s settle
+    // window has elapsed, re-enable WiFi and queue INIT.  See HardReset
+    // for why we can't just vTaskDelay(2000) — the calling task may be
+    // app_WifiTask itself (TCP SCPI dispatch path post-#353), and that
+    // task is what drains gEventQH.
+    if (gWifiReinitDeadlineTick != 0 &&
+        (int32_t)(xTaskGetTickCount() - gWifiReinitDeadlineTick) >= 0) {
+        gWifiReinitDeadlineTick = 0;
+        if (gStateMachineContext.pWifiSettings != NULL) {
+            gStateMachineContext.pWifiSettings->isEnabled = 1;
+            SendEvent(WIFI_MANAGER_EVENT_INIT);
+        }
+    }
+
     wifi_tcp_server_TransmitBufferedData();
 
     // #377 iperf2 now runs in its own dedicated task with adaptive 2 ms

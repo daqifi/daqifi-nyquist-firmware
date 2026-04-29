@@ -62,6 +62,11 @@ static Iperf2_Context gCtx;
 static uint8_t gTxBuf[IPERF2_UDP_BUF_SIZE] __attribute__((aligned(4)));
 static uint8_t gRxBuf[IPERF2_UDP_BUF_SIZE] __attribute__((aligned(4)));
 
+// Handle for the dedicated Iperf2 task — used by the SOCKET_MSG_SEND
+// callback to wake the task immediately on slot completion.  Set in
+// Iperf2_StartTask, NULL until then.
+static TaskHandle_t gIperf2TaskHandle = NULL;
+
 static void FillTxBuffer(void) {
     // Counter pattern — defeats PC-side TCP coalescing optimizations and gives
     // a predictable wire stream.  Pre-filled at init.
@@ -345,12 +350,6 @@ void Iperf2_GetStats(Iperf2_Stats* out) {
 // Socket event dispatch
 // ----------------------------------------------------------------------------
 
-// Forward declarations — TasksTcpClient/TasksUdpClient are defined later in
-// the file but called from SOCKET_MSG_SEND/SENDTO callbacks for event-driven
-// send chaining (mirrors wifi_tcp_server's pattern).
-static void TasksTcpClient(void);
-static void TasksUdpClient(void);
-
 static void HandleTcpRecv(tstrSocketRecvMsg* m) {
     if (m && m->s16BufferSize > 0) {
         // 64-bit RMW + paired with USB-priority Iperf2_GetStats reader
@@ -548,18 +547,16 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                 if (gCtx.pending_tx > 0) gCtx.pending_tx--;
             }
             taskEXIT_CRITICAL();
-            // Event-driven send chaining (mirrors wifi_tcp_server pattern):
-            // when WINC frees a HIF slot, immediately refill it from here
-            // instead of waiting for the next Iperf2 task tick.  Pacing is
-            // then naturally rate-limited by WINC's actual completion rate,
-            // not our task delay.  The task tick is just a backup / initial
-            // trigger (see IPERF2_ACTIVE_DELAY_MS).
-            if (sent > 0 && !gCtx.abort_pending) {
-                if (gCtx.mode == IPERF2_MODE_TCP_CLIENT) {
-                    TasksTcpClient();
-                } else if (gCtx.mode == IPERF2_MODE_UDP_CLIENT) {
-                    TasksUdpClient();
-                }
+            // Event-driven wake: when WINC frees a HIF slot, kick the
+            // dedicated Iperf2 task so it refills immediately instead of
+            // waiting for the next IPERF2_ACTIVE_DELAY_MS tick. Calling
+            // TasksTcpClient() directly here would be unsafe — TasksTcpClient
+            // calls FinalizeStats/CloseAll/ResetContext on deadline-reached,
+            // and synchronous teardown from inside a WINC callback is what
+            // the deferred-abort design is meant to avoid (see SEND-error
+            // path comment below + #385 A/B verdict).
+            if (sent > 0 && !gCtx.abort_pending && gIperf2TaskHandle != NULL) {
+                xTaskNotifyGive(gIperf2TaskHandle);
             }
             // For TCP, a negative send callback (e.g. SOCK_ERR_INVALID = -9)
             // means the underlying connection is dead.  Don't tear down the
@@ -699,28 +696,28 @@ static void TasksUdpClient(void) {
     }
 }
 
-// Task body — backup/initial trigger only.  The hot path is event-driven
-// via SOCKET_MSG_SEND callback chaining (see HandleSocketEvent); this
-// loop kicks off the first send and catches any missed callbacks.
-// Active-mode cadence comes from IPERF2_ACTIVE_DELAY_MS — see the
-// define for the empirical sweep that picked 2 ms.
+// Task body — runs Iperf2_Tasks then sleeps until either notified by a
+// SOCKET_MSG_SEND callback (instant wake on HIF slot completion) or the
+// fallback timeout fires (IPERF2_ACTIVE_DELAY_MS in client mode, 50 ms
+// idle).  See the define for the empirical sweep that picked 2 ms.
 static void Iperf2TaskMain(void* arg) {
     (void)arg;
     for (;;) {
         Iperf2_Tasks();
         bool active = (gCtx.mode == IPERF2_MODE_TCP_CLIENT) ||
                       (gCtx.mode == IPERF2_MODE_UDP_CLIENT);
-        vTaskDelay(pdMS_TO_TICKS(active ? IPERF2_ACTIVE_DELAY_MS : 50U));
+        ulTaskNotifyTake(pdTRUE,
+                         pdMS_TO_TICKS(active ? IPERF2_ACTIVE_DELAY_MS : 50U));
     }
 }
 
 void Iperf2_StartTask(void) {
     static StaticTask_t taskTcb;
     static StackType_t  taskStack[512];
-    TaskHandle_t h = xTaskCreateStatic(Iperf2TaskMain, "Iperf2",
-                                       (uint32_t)(sizeof(taskStack) / sizeof(taskStack[0])),
-                                       NULL, 5, taskStack, &taskTcb);
-    if (h == NULL) {
+    gIperf2TaskHandle = xTaskCreateStatic(Iperf2TaskMain, "Iperf2",
+                                          (uint32_t)(sizeof(taskStack) / sizeof(taskStack[0])),
+                                          NULL, 5, taskStack, &taskTcb);
+    if (gIperf2TaskHandle == NULL) {
         LOG_E("iperf2: failed to create dedicated task");
     }
 }
