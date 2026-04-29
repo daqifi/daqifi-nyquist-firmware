@@ -1532,12 +1532,21 @@ void wifi_manager_ProcessState() {
     }
 
     // Serialize re-entrant callers (app_WifiTask + SCPI_Reset active pump,
-    // and any future call site).  portMAX_DELAY blocks until owner releases;
-    // priority inheritance keeps the holder unblocked.  Recursive — same
-    // task can re-enter (TCP SCPI nests ProcessState inside ProcessState);
-    // see gProcessStateMutex declaration for the rationale.
+    // and any future call site).  Recursive — same task can re-enter
+    // (TCP SCPI nests ProcessState inside ProcessState); see
+    // gProcessStateMutex declaration for the rationale.
+    //
+    // Bounded 100 ms timeout (instead of portMAX_DELAY): if the holder
+    // is genuinely wedged, the caller must be able to bail and return
+    // — otherwise the SCPI_Reset active pump would hang and the device
+    // could never reboot.  Normal ProcessState body completes in <10 ms,
+    // so 100 ms gives generous headroom for healthy operation while
+    // failing fast on actual stalls.  Skipped iterations recover
+    // naturally on the next invocation.
     if (gProcessStateMutex != NULL) {
-        if (xSemaphoreTakeRecursive(gProcessStateMutex, portMAX_DELAY) != pdTRUE) {
+        if (xSemaphoreTakeRecursive(gProcessStateMutex,
+                                    pdMS_TO_TICKS(100)) != pdTRUE) {
+            LOG_E("WiFi ProcessState: mutex timeout — skipping iteration");
             return;
         }
     }
