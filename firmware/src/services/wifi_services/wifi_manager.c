@@ -1452,7 +1452,7 @@ void wifi_manager_ProcessState() {
     }
     wifi_tcp_server_TransmitBufferedData();
 
-    // #377 iperf2 now runs in its own dedicated task with adaptive 1 ms
+    // #377 iperf2 now runs in its own dedicated task with adaptive 2 ms
     // (active) / 50 ms (idle) cadence — see Iperf2_StartTask() in iperf2.c.
     // Removed from this task's loop so streaming + SCPI dispatch keep their
     // 5 ms cadence undisturbed.

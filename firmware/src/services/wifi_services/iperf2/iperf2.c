@@ -552,8 +552,8 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
             // when WINC frees a HIF slot, immediately refill it from here
             // instead of waiting for the next Iperf2 task tick.  Pacing is
             // then naturally rate-limited by WINC's actual completion rate,
-            // not our task delay.  The 5 ms task tick is just a backup /
-            // initial trigger.
+            // not our task delay.  The task tick is just a backup / initial
+            // trigger (see IPERF2_ACTIVE_DELAY_MS).
             if (sent > 0 && !gCtx.abort_pending) {
                 if (gCtx.mode == IPERF2_MODE_TCP_CLIENT) {
                     TasksTcpClient();
@@ -699,16 +699,11 @@ static void TasksUdpClient(void) {
     }
 }
 
-// Task body — runs continuously at modest cadence as a backup/initial
-// trigger.  The hot path is event-driven via SOCKET_MSG_SEND callback
-// chaining (see HandleSocketEvent) — this loop just kicks off the first
-// send and catches any missed callbacks.  5 ms cadence is enough for
-// bring-up; the actual send rate is set by WINC HIF completion timing.
-//
-// Empirically (this session): 1 ms cadence was less stable than 5 ms —
-// over-aggressive polling caught WINC mid-state and triggered more
-// BUFFER_FULL churn / TCP cwnd issues.  5 ms paces well with the
-// callback-chain doing the heavy lifting.
+// Task body — backup/initial trigger only.  The hot path is event-driven
+// via SOCKET_MSG_SEND callback chaining (see HandleSocketEvent); this
+// loop kicks off the first send and catches any missed callbacks.
+// Active-mode cadence comes from IPERF2_ACTIVE_DELAY_MS — see the
+// define for the empirical sweep that picked 2 ms.
 static void Iperf2TaskMain(void* arg) {
     (void)arg;
     for (;;) {

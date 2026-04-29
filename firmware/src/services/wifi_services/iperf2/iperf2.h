@@ -129,14 +129,14 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage);
  * mode.  Drives the TX deadline + send loop.  No-op in IDLE / *_SERVER
  * modes (servers are purely callback-driven).
  *
- * Called from the dedicated Iperf2 task at adaptive cadence (1 ms when
+ * Called from the dedicated Iperf2 task at adaptive cadence (2 ms when
  * active, 50 ms idle).
  */
 void Iperf2_Tasks(void);
 
 /**
  * Create the dedicated iperf2 FreeRTOS task.  Call once at boot, after
- * Iperf2_Initialize().  Task self-paces: 1 ms tick during active client
+ * Iperf2_Initialize().  Task self-paces: 2 ms tick during active client
  * mode, 50 ms tick when idle/server (cheap).
  *
  * Task priority is 5 (above WifiTask 2, SD 5; below encoder 6, USB SCPI 7).

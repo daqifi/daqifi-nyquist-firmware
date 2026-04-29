@@ -732,7 +732,7 @@ static void app_TasksCreate() {
     }
 
     // Dedicated iperf2 task for tight client-mode pacing (#377).  Runs at
-    // pri 5 with adaptive 1 ms (active) / 50 ms (idle) cadence.  WifiTask
+    // pri 5 with adaptive 2 ms (active) / 50 ms (idle) cadence.  WifiTask
     // (pri 2) keeps its 5 ms cadence for streaming + SCPI dispatch paths.
     Iperf2_StartTask();
 }
