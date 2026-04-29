@@ -154,6 +154,21 @@ Services Layer
      - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
      - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
 
+#### Quiescence Rule — No SCPI queries during a benchmarked test
+
+Send no SCPI to the device while a streaming or iperf2 run is in
+progress — every query preempts the data path being measured (USB
+SCPI = priority 7; TCP SCPI runs on the WifiTask itself).
+
+The firmware preserves end-of-test stats in IDLE: `IPERF:STATs?`
+returns `gCtx.last_stats` (frozen by `FinalizeStats`); `STR:STATS?`
+survives across `StopStreamData` until the next start or
+`STATS:CLEar`.
+
+**Pattern:** `start → time.sleep(duration + margin) → single STATS query`.
+Out-of-band visibility (Saleae, PC-side iperf2.log) for long runs;
+never poll the device under test. Mirrored in the SCPI wiki.
+
 #### SCPI Command Verification Protocol
 
 **⚠️ CRITICAL: NEVER guess SCPI command syntax. ALWAYS verify first.**
