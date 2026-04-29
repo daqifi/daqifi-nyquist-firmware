@@ -563,6 +563,21 @@ static bool SendEvent(wifi_manager_event_t event) {
         if (xQueueSend(gEventQH, &event, timeout) == pdPASS) {
             return true;
         }
+
+        // DEINIT/INIT are lifecycle-critical: the manager can wedge if these
+        // are dropped.  If the queue is full enough that we couldn't even
+        // wait 20 ms, something has already gone wrong; reset the queue
+        // and force the event in.  Pending stale events would have been
+        // invalidated by the lifecycle transition anyway.
+        if (event == WIFI_MANAGER_EVENT_DEINIT ||
+            event == WIFI_MANAGER_EVENT_INIT) {
+            LOG_E("WiFi SendEvent: queue full, force-flushing for lifecycle event=%u",
+                  (unsigned)event);
+            xQueueReset(gEventQH);
+            if (xQueueSend(gEventQH, &event, 0) == pdPASS) {
+                return true;
+            }
+        }
         LOG_E("WiFi SendEvent: queue full (event=%u)", (unsigned)event);
         return false;
     }

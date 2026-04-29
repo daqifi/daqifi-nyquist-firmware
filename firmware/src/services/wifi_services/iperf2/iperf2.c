@@ -27,13 +27,13 @@
 #define IPERF2_FIN_RETRANSMITS  10U     // iperf2 protocol: 10× retransmit of last UDP pkt
 
 typedef struct {
-    Iperf2_Mode    mode;
+    volatile Iperf2_Mode    mode;
     SOCKET         listen_sock;     // TCP server only
     SOCKET         data_sock;       // active TCP connection or UDP socket
     volatile bool  client_connected;
     volatile uint8_t pending_tx;    // count of m2m_send not yet ACKed
-    TickType_t     start_tick;
-    TickType_t     deadline_tick;   // *_CLIENT mode TX deadline
+    volatile TickType_t start_tick;
+    volatile TickType_t deadline_tick;   // *_CLIENT mode TX deadline
     uint32_t       duration_ms;     // requested duration
     uint64_t       bytes_transferred;
     uint64_t       bytes_confirmed; // server: rcv'd; client: ACKed by m2m_send callback
