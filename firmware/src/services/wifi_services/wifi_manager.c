@@ -1420,10 +1420,14 @@ bool wifi_manager_Deinit() {
     // the dedicated Iperf2 task could call send() against an
     // already-deinitialized chip and wedge the HIF queue.
     Iperf2_Stop();
-    // Cancel any pending deferred-INIT — without this, a Deinit shortly
-    // after HardReset would still see WiFi come back up after 2 s.
+    // Cancel any pending deferred-INIT and clear isEnabled atomically —
+    // without the critical section, a higher-priority caller of Deinit
+    // could race ProcessState's deferred-INIT branch and end up with
+    // isEnabled=1 even though the user requested Deinit.
+    taskENTER_CRITICAL();
     gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
+    taskEXIT_CRITICAL();
     SendEvent(WIFI_MANAGER_EVENT_DEINIT);
     return true;
 }
@@ -1449,9 +1453,14 @@ bool wifi_manager_HardReset(void) {
     // as wifi_manager_Deinit).
     Iperf2_Stop();
     LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
+    // Set isEnabled=0 + arm deadline atomically so a concurrent Deinit
+    // can't race the (deadline, isEnabled) pair into an inconsistent
+    // state.
+    taskENTER_CRITICAL();
     gStateMachineContext.pWifiSettings->isEnabled = 0;
-    SendEvent(WIFI_MANAGER_EVENT_DEINIT);
     gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    taskEXIT_CRITICAL();
+    SendEvent(WIFI_MANAGER_EVENT_DEINIT);
     return true;
 }
 
@@ -1528,13 +1537,29 @@ void wifi_manager_ProcessState() {
     // for why we can't just vTaskDelay(2000) — the calling task may be
     // app_WifiTask itself (TCP SCPI dispatch path post-#353), and that
     // task is what drains gEventQH.
+    //
+    // Double-checked under a critical section: a concurrent Deinit could
+    // clear gWifiReinitDeadlineTick between the outer check and the
+    // isEnabled write, leaving us with isEnabled=1 even though the user
+    // called Deinit.  Re-check while holding the lock so only one of
+    // (Deinit, deferred-INIT) wins atomically.  SendEvent runs outside
+    // the critical section because it can take a queue mutex.
+    bool doInit = false;
     if (gWifiReinitDeadlineTick != 0 &&
         (int32_t)(xTaskGetTickCount() - gWifiReinitDeadlineTick) >= 0) {
-        gWifiReinitDeadlineTick = 0;
-        if (gStateMachineContext.pWifiSettings != NULL) {
-            gStateMachineContext.pWifiSettings->isEnabled = 1;
-            SendEvent(WIFI_MANAGER_EVENT_INIT);
+        taskENTER_CRITICAL();
+        if (gWifiReinitDeadlineTick != 0 &&
+            (int32_t)(xTaskGetTickCount() - gWifiReinitDeadlineTick) >= 0) {
+            gWifiReinitDeadlineTick = 0;
+            if (gStateMachineContext.pWifiSettings != NULL) {
+                gStateMachineContext.pWifiSettings->isEnabled = 1;
+                doInit = true;
+            }
         }
+        taskEXIT_CRITICAL();
+    }
+    if (doInit) {
+        SendEvent(WIFI_MANAGER_EVENT_INIT);
     }
 
     wifi_tcp_server_TransmitBufferedData();
