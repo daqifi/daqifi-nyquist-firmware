@@ -88,6 +88,14 @@ static void ResetContext(void) {
     gCtx.udp_outoforder = 0;
     gCtx.udp_fin_count = 0;
     gCtx.abort_pending = false;
+    // Stale-cache cleanup: STAT? returns last_stats when gCtx.mode==IDLE.
+    // last_stats.mode was set by the previous FinalizeStats to whatever
+    // mode was running, which is misleading after we ResetContext —
+    // user sees "Mode=2" and thinks a TCP client is still active.
+    // Other last_stats fields (bytes, kbps) stay valid — they describe
+    // what the last test transferred — but Mode should reflect "no
+    // current operation".
+    gCtx.last_stats.mode = IPERF2_MODE_IDLE;
 }
 
 static void FinalizeStats(void) {
