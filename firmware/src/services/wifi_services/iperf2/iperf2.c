@@ -755,8 +755,15 @@ void Iperf2_Tasks(void) {
     // can't tear down the socket from inside the WINC's event handler — do
     // it here from app_WifiTask context, after the event loop returns.
     if (gCtx.abort_pending) {
+        // Copy bytes_confirmed under critical section — 64-bit reads are
+        // not atomic on PIC32MZ, and bytes_confirmed is updated from
+        // the WINC callback context.  Without this, the LOG_I could
+        // print a torn 32-bit-half value.
+        taskENTER_CRITICAL();
+        uint64_t snap_bytes = gCtx.bytes_confirmed;
+        taskEXIT_CRITICAL();
         LOG_I("iperf2: deferred abort (mode=%d, %llu bytes)",
-              (int)gCtx.mode, (unsigned long long)gCtx.bytes_confirmed);
+              (int)gCtx.mode, (unsigned long long)snap_bytes);
         FinalizeStats();
         CloseAll();
         ResetContext();

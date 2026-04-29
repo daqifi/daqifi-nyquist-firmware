@@ -367,7 +367,15 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
     // with stale state and ends up out-of-sync with the freshly-booted
     // driver (#383). Firing DEINIT drives WDRV_WINC_Deinitialize +
     // wifi_manager_FixWincResetState (CHIP_EN/RESET_N GPIO toggle).
-    wifi_manager_Deinit();
+    //
+    // Surface failure: if the event queue is uninitialized or saturated,
+    // we'll proceed with the PIC32 reset even though the WINC won't have
+    // been reset.  Better than wedging — the user's reboot still
+    // happens, and the LOG_E gives them a breadcrumb.
+    if (!wifi_manager_Deinit()) {
+        LOG_E("SYST:REboot: wifi_manager_Deinit failed, WINC may not "
+              "be reset before PIC32 reboot");
+    }
 
     // Actively pump wifi_manager_ProcessState() during the 500 ms settle —
     // not just sleep.  Reason: TCP-SCPI dispatch runs on app_WifiTask
