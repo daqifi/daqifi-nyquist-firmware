@@ -122,9 +122,21 @@ static void FinalizeStats(void) {
 // Refuse to call socket()/connect()/bind() unless WiFi is fully associated and
 // has an IP. Calling sockets against an un-ready WINC leaves stuck state on
 // the PIC32 side that survives WDRV_WINC_Deinitialize/Init cycles (#383).
+//
+// RequireWifiConnected — strict check for client modes (we need to send out).
+// RequireWifiReadyForSockets — looser check for server modes; SoftAP with no
+// connected station is still a valid configuration to listen on.
 static bool RequireWifiConnected(const char* where) {
     if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
         LOG_E("iperf2: %s refused — WiFi not CONNECTED", where);
+        return false;
+    }
+    return true;
+}
+
+static bool RequireWifiReadyForSockets(const char* where) {
+    if (wifi_manager_GetWiFiStatus() == WIFI_STATUS_DISABLED) {
+        LOG_E("iperf2: %s refused — WiFi DISABLED", where);
         return false;
     }
     return true;
@@ -152,7 +164,7 @@ void Iperf2_Initialize(void) {
 }
 
 bool Iperf2_StartTcpServer(uint16_t port) {
-    if (!RequireWifiConnected("TCP server")) return false;
+    if (!RequireWifiReadyForSockets("TCP server")) return false;
     if (gCtx.mode != IPERF2_MODE_IDLE) {
         LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
         return false;
@@ -185,7 +197,7 @@ bool Iperf2_StartTcpServer(uint16_t port) {
 }
 
 bool Iperf2_StartUdpServer(uint16_t port) {
-    if (!RequireWifiConnected("UDP server")) return false;
+    if (!RequireWifiReadyForSockets("UDP server")) return false;
     if (gCtx.mode != IPERF2_MODE_IDLE) {
         LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
         return false;

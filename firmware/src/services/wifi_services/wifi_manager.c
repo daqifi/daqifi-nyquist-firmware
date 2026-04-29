@@ -114,6 +114,13 @@ static volatile bool gRssiUpdatePending = false;
 // runs wifi_tcp_server_ProcessReceivedBuff on WifiTask's stack, then re-arms
 // recv. WINC buffers inbound TCP while we process (per WINC docs).
 static volatile bool gTcpRxPending = false;
+
+// Deadline (in ticks) at which wifi_manager_ProcessState should queue
+// the deferred WIFI_MANAGER_EVENT_INIT after a HardReset.  0 = none
+// pending.  32-bit reads/writes are atomic on PIC32MZ (see CLAUDE.md
+// concurrency rules).  Marked volatile because it's set from any task
+// calling HardReset/Deinit and read every tick from app_WifiTask.
+static volatile TickType_t gWifiReinitDeadlineTick = 0;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
@@ -1358,17 +1365,14 @@ bool wifi_manager_IsWiFiConnected(void) {
 }
 
 bool wifi_manager_Deinit() {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    // Cancel any pending deferred-INIT — without this, a Deinit shortly
+    // after HardReset would still see WiFi come back up after 2 s.
+    gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     SendEvent(WIFI_MANAGER_EVENT_DEINIT);
     return true;
 }
-
-// Deadline (in ticks) at which wifi_manager_ProcessState should queue
-// the deferred WIFI_MANAGER_EVENT_INIT after a HardReset.  0 = none
-// pending.  32-bit reads/writes are atomic on PIC32MZ (see CLAUDE.md
-// concurrency rules).  Marked volatile because it's set from any task
-// calling HardReset and read every tick from app_WifiTask.
-static volatile TickType_t gWifiReinitDeadlineTick = 0;
 
 // True hardware reset of the WINC chip: disable -> DEINIT (toggles
 // CHIP_EN/RESET_N GPIOs via wifi_manager_FixWincResetState) -> after

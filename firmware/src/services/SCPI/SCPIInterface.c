@@ -365,12 +365,22 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
     // Reset the WINC chip via GPIO toggle BEFORE the PIC32 soft reset.
     // RCON_SoftwareReset() only resets the PIC32 — the WINC keeps running
     // with stale state and ends up out-of-sync with the freshly-booted
-    // driver (#383). Firing DEINIT here drives WDRV_WINC_Deinitialize +
-    // wifi_manager_FixWincResetState (CHIP_EN/RESET_N GPIO toggle), so
-    // both halves reboot together and the user gets the expected
-    // "device is fresh" state after *RST.
+    // driver (#383). Firing DEINIT drives WDRV_WINC_Deinitialize +
+    // wifi_manager_FixWincResetState (CHIP_EN/RESET_N GPIO toggle).
     wifi_manager_Deinit();
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    // Actively pump wifi_manager_ProcessState() during the 500 ms settle —
+    // not just sleep.  Reason: TCP-SCPI dispatch runs on app_WifiTask
+    // (post-#353), the same task that drains the WiFi event queue.  A
+    // passive vTaskDelay there blocks the queue and DEINIT never gets
+    // processed before RCON_SoftwareReset() reboots the chip.
+    {
+        TickType_t start = xTaskGetTickCount();
+        while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(500)) {
+            wifi_manager_ProcessState();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
 
     // Allow time for message transmission and any pending operations
     vTaskDelay(100 / portTICK_PERIOD_MS);
