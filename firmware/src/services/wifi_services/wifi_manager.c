@@ -1279,11 +1279,21 @@ void fwUpdateTask(void *pvParameters) {
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
 
-    if (gEventQH == NULL)
-        gEventQH = xQueueCreate(20, sizeof (wifi_manager_event_t));
-    else return true;
+    // Init order matters: mutex first (so ProcessState calls before queue
+    // creation are still safe), then queue.  If queue already exists, we
+    // were already initialized — bail.
     if (gProcessStateMutex == NULL) {
         gProcessStateMutex = xSemaphoreCreateMutexStatic(&gProcessStateMutexBuf);
+    }
+
+    if (gEventQH == NULL) {
+        gEventQH = xQueueCreate(20, sizeof (wifi_manager_event_t));
+        if (gEventQH == NULL) {
+            LOG_E("WiFi Init: failed to create event queue");
+            return false;
+        }
+    } else {
+        return true;
     }
     if (pSettings != NULL)
         gStateMachineContext.pWifiSettings = pSettings;
