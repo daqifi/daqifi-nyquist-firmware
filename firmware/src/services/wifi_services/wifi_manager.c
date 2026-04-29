@@ -1363,6 +1363,37 @@ bool wifi_manager_Deinit() {
     return true;
 }
 
+// True hardware reset of the WINC chip: disable -> DEINIT (toggles
+// CHIP_EN/RESET_N GPIOs via wifi_manager_FixWincResetState) -> wait
+// for the state machine to process -> re-enable -> REINIT to bring
+// the chip back up.
+//
+// This is the only path that recovers a wedged outbound TCP stack
+// (#383). APPLY's REINIT path explicitly skips Deinitialize because
+// of a Microchip driver bug (see comment near line 867), so APPLY
+// alone never drives the WINC reset GPIOs.
+//
+// Caller note: this fires events asynchronously and returns
+// immediately. The full recovery (DEINIT settle + STA reassoc +
+// DHCP) typically takes ~20 s; poll SYST:COMM:LAN:ADDR? to confirm
+// the WiFi is back up.
+bool wifi_manager_HardReset(void) {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    LOG_I("WiFi: hard reset (DEINIT -> REINIT)");
+    // Phase 1: disable + DEINIT (drives WINC GPIO reset)
+    gStateMachineContext.pWifiSettings->isEnabled = 0;
+    SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+    // Phase 2: brief block so the state machine can process DEINIT
+    // before we flip isEnabled back. Without this, the REINIT we
+    // queue below could be processed before DEINIT fully completes.
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    // Phase 3: re-enable + INIT (full re-init — REINIT assumes the
+    // driver handle is still valid, which it isn't after DEINIT).
+    gStateMachineContext.pWifiSettings->isEnabled = 1;
+    SendEvent(WIFI_MANAGER_EVENT_INIT);
+    return true;
+}
+
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
     // Always allow settings to be updated regardless of power state

@@ -559,6 +559,15 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+scpi_result_t SCPI_LANHardReset(scpi_t * context) {
+    (void)context;
+    if (!wifi_manager_HardReset()) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANFwUpdate(scpi_t * context) {
     // Block if SD card is actively logging (shared SPI bus)
     if (sd_card_manager_IsBusy()) {

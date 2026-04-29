@@ -362,12 +362,22 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
         context->interface->flush(context);
     }
     
+    // Reset the WINC chip via GPIO toggle BEFORE the PIC32 soft reset.
+    // RCON_SoftwareReset() only resets the PIC32 — the WINC keeps running
+    // with stale state and ends up out-of-sync with the freshly-booted
+    // driver (#383). Firing DEINIT here drives WDRV_WINC_Deinitialize +
+    // wifi_manager_FixWincResetState (CHIP_EN/RESET_N GPIO toggle), so
+    // both halves reboot together and the user gets the expected
+    // "device is fresh" state after *RST.
+    wifi_manager_Deinit();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+
     // Allow time for message transmission and any pending operations
     vTaskDelay(100 / portTICK_PERIOD_MS);
-    
+
     // Perform the software reset
     RCON_SoftwareReset();
-    
+
     // If we get here, the reset didn't work
     SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
     return SCPI_RES_ERR;
@@ -3573,6 +3583,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:PASSCHECK?", .callback = SCPI_LANPasskeyGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:DISPlay", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_LANSettingsApply,},
+    {.pattern = "SYSTem:COMMunicate:LAN:HRESet", .callback = SCPI_LANHardReset,},   // hard reset WINC (#383 recovery)
     {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad,},
     {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave,},
     {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad,},

@@ -199,6 +199,29 @@ extern "C" {
     bool wifi_manager_Deinit();
 
     /**
+     * @brief Hardware reset the WINC chip (true GPIO reset).
+     *
+     * Disables WiFi (fires DEINIT event which toggles CHIP_EN/RESET_N
+     * GPIOs via wifi_manager_FixWincResetState), waits ~2 s for the
+     * state machine to process, then re-enables (REINIT) to bring the
+     * chip back up.
+     *
+     * This is the only software path that drives a real WINC hardware
+     * reset. APPLY's REINIT path is a soft restart only (see comment
+     * near wifi_manager.c:867 explaining the Microchip driver bug).
+     *
+     * Use to recover a wedged outbound TCP stack (#383): symptoms are
+     * ICMP ping still works but TCP connect() from MCU times out.
+     *
+     * Returns immediately after queueing events. Full recovery
+     * (DEINIT + reassoc + DHCP) takes ~20 s — poll
+     * SYST:COMM:LAN:ADDR? to confirm.
+     *
+     * @return True on success, false if WiFi settings not initialized.
+     */
+    bool wifi_manager_HardReset(void);
+
+    /**
      * @brief Updates the WiFi network settings.
      * 
      * Changes the current WiFi configuration and reinitializes the WiFi manager with the updated settings.

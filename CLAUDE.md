@@ -76,10 +76,21 @@ The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.
 
 Command options:
 - `-TPPK4`: Use PICkit 4 as programmer
-- `-P32MZ2048EFM144`: Target device
+- `-TS<serial>`: Pick a specific PICkit when multiple are connected
+- `-P32MZ2048EFM144`: Target device (no `PIC` prefix)
 - `-M`: Program mode
-- `-F`: Hex file to program
+- `-F`: Hex file to program (must be Windows-style path; `/mnt/c/...` fails silently)
 - `-OL`: Use loaded memories only
+
+### Bench tool inventory (this dev station)
+| Item | Identifier | Notes |
+|------|-----------|-------|
+| Primary PICkit 4 (this board) | `BUR184882598` | Pass `-TSBUR184882598` to ipecmd when multiple PICkits are attached |
+| Secondary PICkit 4 | `BUR202272588` | On other board(s) — ignore unless re-targeting |
+| MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix; with the prefix you get exit 36 / "Unable to locate DFP") |
+| Serial port (USB CDC) | `/dev/ttyACM0` (WSL) / `COM3` (Windows) | usbipd busid `2-4`; reattach via `powershell.exe -Command "usbipd attach --wsl --busid 2-4"` after each reboot/flash |
+| Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
+| Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets

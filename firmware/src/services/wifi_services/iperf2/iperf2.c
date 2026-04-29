@@ -440,8 +440,9 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                     recvfrom(gCtx.data_sock, gRxBuf, sizeof(gRxBuf), 0);
                 }
             } else {
-                LOG_E("iperf2: bind status=%d", m ? m->status : -1);
-                Iperf2_Stop();
+                // Defer teardown — see #383 / SEND-callback note below.
+                LOG_E("iperf2: bind status=%d, scheduling abort", m ? m->status : -1);
+                gCtx.abort_pending = true;
             }
             return true;
         }
@@ -450,8 +451,8 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
             if (m && m->status == 0 && sock == gCtx.listen_sock) {
                 accept(gCtx.listen_sock, NULL, NULL);
             } else {
-                LOG_E("iperf2: listen status=%d", m ? m->status : -1);
-                Iperf2_Stop();
+                LOG_E("iperf2: listen status=%d, scheduling abort", m ? m->status : -1);
+                gCtx.abort_pending = true;
             }
             return true;
         }
@@ -469,8 +470,8 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                       (int)m->sock);
                 recv(gCtx.data_sock, gRxBuf, IPERF2_TCP_BUF_SIZE, 0);
             } else {
-                LOG_E("iperf2: accept failed");
-                Iperf2_Stop();
+                LOG_E("iperf2: accept failed, scheduling abort");
+                gCtx.abort_pending = true;
             }
             return true;
         }
@@ -497,12 +498,12 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                     gCtx.pending_tx = 1;
                     LOG_I("iperf2: TCP client connected, header queued");
                 } else {
-                    LOG_E("iperf2: header send rc=%d", rc);
-                    Iperf2_Stop();
+                    LOG_E("iperf2: header send rc=%d, scheduling abort", rc);
+                    gCtx.abort_pending = true;
                 }
             } else {
-                LOG_E("iperf2: connect err=%d", m ? m->s8Error : -1);
-                Iperf2_Stop();
+                LOG_E("iperf2: connect err=%d, scheduling abort", m ? m->s8Error : -1);
+                gCtx.abort_pending = true;
             }
             return true;
         }
