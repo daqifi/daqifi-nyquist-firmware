@@ -30,8 +30,8 @@ typedef struct {
     Iperf2_Mode    mode;
     SOCKET         listen_sock;     // TCP server only
     SOCKET         data_sock;       // active TCP connection or UDP socket
-    bool           client_connected;
-    uint8_t        pending_tx;      // count of m2m_send not yet ACKed
+    volatile bool  client_connected;
+    volatile uint8_t pending_tx;    // count of m2m_send not yet ACKed
     TickType_t     start_tick;
     TickType_t     deadline_tick;   // *_CLIENT mode TX deadline
     uint32_t       duration_ms;     // requested duration
@@ -44,7 +44,7 @@ typedef struct {
     uint32_t       udp_lost_pkt;
     uint32_t       udp_outoforder;
     uint8_t        udp_fin_count;   // FIN retransmits sent
-    bool           abort_pending;   // set in callback context, processed in Iperf2_Tasks
+    volatile bool  abort_pending;   // set in callback context, processed in Iperf2_Tasks
     Iperf2_Stats   last_stats;
 } Iperf2_Context;
 

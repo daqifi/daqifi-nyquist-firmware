@@ -10,6 +10,7 @@
 #include "wifi_serial_bridge_interface.h"
 #include "iperf2/iperf2.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
+#include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
 
 #define UNUSED(x) (void)(x)
@@ -121,6 +122,15 @@ static volatile bool gTcpRxPending = false;
 // concurrency rules).  Marked volatile because it's set from any task
 // calling HardReset/Deinit and read every tick from app_WifiTask.
 static volatile TickType_t gWifiReinitDeadlineTick = 0;
+
+// Mutex serializing wifi_manager_ProcessState across callers.  Today
+// app_WifiTask is the primary owner; SCPI_Reset's active pump
+// (SYSTem:REboot path) also enters from the SCPI dispatch task.  Without
+// the mutex, the body's xQueueReceive + state-machine update on shared
+// gStateMachineContext could corrupt under any future priority change
+// that lets the two callers interleave.  Created in wifi_manager_Init.
+static StaticSemaphore_t gProcessStateMutexBuf;
+static SemaphoreHandle_t gProcessStateMutex = NULL;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
@@ -1272,6 +1282,9 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     if (gEventQH == NULL)
         gEventQH = xQueueCreate(20, sizeof (wifi_manager_event_t));
     else return true;
+    if (gProcessStateMutex == NULL) {
+        gProcessStateMutex = xSemaphoreCreateMutexStatic(&gProcessStateMutexBuf);
+    }
     if (pSettings != NULL)
         gStateMachineContext.pWifiSettings = pSettings;
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
@@ -1455,6 +1468,16 @@ void wifi_manager_ProcessState() {
         return;
     }
 
+    // Serialize re-entrant callers (app_WifiTask + SCPI_Reset active pump,
+    // and any future call site).  portMAX_DELAY blocks until owner releases;
+    // priority inheritance keeps the holder unblocked.  See gProcessStateMutex
+    // declaration for the rationale.
+    if (gProcessStateMutex != NULL) {
+        if (xSemaphoreTake(gProcessStateMutex, portMAX_DELAY) != pdTRUE) {
+            return;
+        }
+    }
+
     // Deferred-INIT after wifi_manager_HardReset(): once the 2 s settle
     // window has elapsed, re-enable WiFi and queue INIT.  See HardReset
     // for why we can't just vTaskDelay(2000) — the calling task may be
@@ -1496,18 +1519,21 @@ void wifi_manager_ProcessState() {
         }
     }
 
-    if (xQueueReceive(gEventQH, &event, 1) != pdPASS) {
-        return;
-    }
-    ret = gStateMachineContext.active(&gStateMachineContext, event);
-    if (ret == WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN) {
-        gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_EXIT);
-        if (gStateMachineContext.nextState != NULL) {
-            gStateMachineContext.active = gStateMachineContext.nextState;
-            gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
-        } else {
-            LOG_E("%s : %d : State Change Requested, but NextSate is NULL", __func__, __LINE__);
+    if (xQueueReceive(gEventQH, &event, 1) == pdPASS) {
+        ret = gStateMachineContext.active(&gStateMachineContext, event);
+        if (ret == WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN) {
+            gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_EXIT);
+            if (gStateMachineContext.nextState != NULL) {
+                gStateMachineContext.active = gStateMachineContext.nextState;
+                gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
+            } else {
+                LOG_E("%s : %d : State Change Requested, but NextSate is NULL", __func__, __LINE__);
+            }
         }
+    }
+
+    if (gProcessStateMutex != NULL) {
+        xSemaphoreGive(gProcessStateMutex);
     }
 }
 
