@@ -552,13 +552,19 @@ static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
 
 static bool SendEvent(wifi_manager_event_t event) {
     if (gEventQH != NULL) {
-        if (xQueueSend(gEventQH, &event, portMAX_DELAY) == pdPASS) {
+        // Bounded timeout: SendEvent can be called from inside
+        // wifi_manager_ProcessState (state-machine handlers, deferred-INIT
+        // path).  ProcessState holds gProcessStateMutex, and it's also
+        // the queue-drainer.  A blocking portMAX_DELAY send on a full
+        // queue would deadlock — the same task can't drain.  20 ms is
+        // long enough for a higher-priority drainer (USB SCPI pump path)
+        // to clear room, short enough not to wedge the calling task.
+        const TickType_t timeout = pdMS_TO_TICKS(20);
+        if (xQueueSend(gEventQH, &event, timeout) == pdPASS) {
             return true;
-        } else {
-            LOG_E("WiFi SendEvent: queue send failed");
-            return false;
         }
-
+        LOG_E("WiFi SendEvent: queue full (event=%u)", (unsigned)event);
+        return false;
     }
     return true;
 }

@@ -560,7 +560,6 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANHardReset(scpi_t * context) {
-    (void)context;
     if (!wifi_manager_HardReset()) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
