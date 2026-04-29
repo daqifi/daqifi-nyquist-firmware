@@ -551,47 +551,52 @@ static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
 }
 
 static bool SendEvent(wifi_manager_event_t event) {
-    if (gEventQH != NULL) {
-        // Bounded timeout: SendEvent can be called from inside
-        // wifi_manager_ProcessState (state-machine handlers, deferred-INIT
-        // path).  ProcessState holds gProcessStateMutex, and it's also
-        // the queue-drainer.  A blocking portMAX_DELAY send on a full
-        // queue would deadlock — the same task can't drain.  20 ms is
-        // long enough for a higher-priority drainer (USB SCPI pump path)
-        // to clear room, short enough not to wedge the calling task.
-        const TickType_t timeout = pdMS_TO_TICKS(20);
-        if (xQueueSend(gEventQH, &event, timeout) == pdPASS) {
-            return true;
-        }
-
-        // DEINIT/INIT are lifecycle-critical: the manager can wedge if these
-        // are dropped.  If the queue is full enough that we couldn't even
-        // wait 20 ms, something has already gone wrong; drain the queue
-        // and force the event in.  Pending stale events would have been
-        // invalidated by the lifecycle transition anyway.
-        //
-        // Use xQueueReceive(timeout=0) drain instead of xQueueReset:
-        // FreeRTOS docs warn xQueueReset is unsafe if any task is blocked
-        // on the queue (would leave it in inconsistent state).  In our
-        // case the only drainer is ProcessState's xQueueReceive(timeout=1)
-        // which doesn't block long, but the drain-loop approach is
-        // safer-by-construction.
-        if (event == WIFI_MANAGER_EVENT_DEINIT ||
-            event == WIFI_MANAGER_EVENT_INIT) {
-            LOG_E("WiFi SendEvent: queue full, draining for lifecycle event=%u",
-                  (unsigned)event);
-            wifi_manager_event_t drop;
-            while (xQueueReceive(gEventQH, &drop, 0) == pdPASS) {
-                /* drop stale events */
-            }
-            if (xQueueSend(gEventQH, &event, 0) == pdPASS) {
-                return true;
-            }
-        }
-        LOG_E("WiFi SendEvent: queue full (event=%u)", (unsigned)event);
+    if (gEventQH == NULL) {
+        // Init hasn't run yet — caller is misusing the API.  Surface as
+        // an error rather than silently succeeding.
+        LOG_E("WiFi SendEvent: queue not initialized (event=%u)",
+              (unsigned)event);
         return false;
     }
-    return true;
+
+    // Bounded timeout: SendEvent can be called from inside
+    // wifi_manager_ProcessState (state-machine handlers, deferred-INIT
+    // path).  ProcessState holds gProcessStateMutex, and it's also
+    // the queue-drainer.  A blocking portMAX_DELAY send on a full
+    // queue would deadlock — the same task can't drain.  20 ms is
+    // long enough for a higher-priority drainer (USB SCPI pump path)
+    // to clear room, short enough not to wedge the calling task.
+    const TickType_t timeout = pdMS_TO_TICKS(20);
+    if (xQueueSend(gEventQH, &event, timeout) == pdPASS) {
+        return true;
+    }
+
+    // DEINIT/INIT are lifecycle-critical: the manager can wedge if these
+    // are dropped.  If the queue is full enough that we couldn't even
+    // wait 20 ms, something has already gone wrong; drain the queue
+    // and force the event in.  Pending stale events would have been
+    // invalidated by the lifecycle transition anyway.
+    //
+    // Use xQueueReceive(timeout=0) drain instead of xQueueReset:
+    // FreeRTOS docs warn xQueueReset is unsafe if any task is blocked
+    // on the queue (would leave it in inconsistent state).  In our
+    // case the only drainer is ProcessState's xQueueReceive(timeout=1)
+    // which doesn't block long, but the drain-loop approach is
+    // safer-by-construction.
+    if (event == WIFI_MANAGER_EVENT_DEINIT ||
+        event == WIFI_MANAGER_EVENT_INIT) {
+        LOG_E("WiFi SendEvent: queue full, draining for lifecycle event=%u",
+              (unsigned)event);
+        wifi_manager_event_t drop;
+        while (xQueueReceive(gEventQH, &drop, 0) == pdPASS) {
+            /* drop stale events */
+        }
+        if (xQueueSend(gEventQH, &event, 0) == pdPASS) {
+            return true;
+        }
+    }
+    LOG_E("WiFi SendEvent: queue full (event=%u)", (unsigned)event);
+    return false;
 }
 
 static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event) {
@@ -1438,8 +1443,7 @@ bool wifi_manager_Deinit() {
     gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     taskEXIT_CRITICAL();
-    SendEvent(WIFI_MANAGER_EVENT_DEINIT);
-    return true;
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
 // True hardware reset of the WINC chip: disable -> DEINIT (toggles
@@ -1470,8 +1474,7 @@ bool wifi_manager_HardReset(void) {
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
     taskEXIT_CRITICAL();
-    SendEvent(WIFI_MANAGER_EVENT_DEINIT);
-    return true;
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
