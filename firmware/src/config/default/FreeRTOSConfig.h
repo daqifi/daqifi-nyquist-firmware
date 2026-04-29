@@ -399,7 +399,7 @@
  * the build, or 0 to exclude the named feature from the build. */
 #define configUSE_TASK_NOTIFICATIONS            1
 #define configUSE_MUTEXES                       1
-#define configUSE_RECURSIVE_MUTEXES             0
+#define configUSE_RECURSIVE_MUTEXES             1
 #define configUSE_COUNTING_SEMAPHORES           1
 #define configUSE_QUEUE_SETS                    0
 #define configUSE_APPLICATION_TASK_TAG          0

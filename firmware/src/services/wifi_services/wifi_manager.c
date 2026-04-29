@@ -123,12 +123,18 @@ static volatile bool gTcpRxPending = false;
 // calling HardReset/Deinit and read every tick from app_WifiTask.
 static volatile TickType_t gWifiReinitDeadlineTick = 0;
 
-// Mutex serializing wifi_manager_ProcessState across callers.  Today
-// app_WifiTask is the primary owner; SCPI_Reset's active pump
+// Recursive mutex serializing wifi_manager_ProcessState across callers.
+// Today app_WifiTask is the primary owner; SCPI_Reset's active pump
 // (SYSTem:REboot path) also enters from the SCPI dispatch task.  Without
 // the mutex, the body's xQueueReceive + state-machine update on shared
 // gStateMachineContext could corrupt under any future priority change
-// that lets the two callers interleave.  Created in wifi_manager_Init.
+// that lets the two callers interleave.
+//
+// Recursive: TCP-SCPI dispatch nests ProcessState → wifi_tcp_server callback
+// → SCPI_Reset → active pump → ProcessState.  Same task takes the mutex
+// twice on that path; recursive avoids self-deadlock.  Requires
+// configUSE_RECURSIVE_MUTEXES=1 in FreeRTOSConfig.h.  Created in
+// wifi_manager_Init.
 static StaticSemaphore_t gProcessStateMutexBuf;
 static SemaphoreHandle_t gProcessStateMutex = NULL;
 static volatile bool gRssiUpdateComplete = false;
@@ -1283,7 +1289,7 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     // creation are still safe), then queue.  If queue already exists, we
     // were already initialized — bail.
     if (gProcessStateMutex == NULL) {
-        gProcessStateMutex = xSemaphoreCreateMutexStatic(&gProcessStateMutexBuf);
+        gProcessStateMutex = xSemaphoreCreateRecursiveMutexStatic(&gProcessStateMutexBuf);
     }
 
     if (gEventQH == NULL) {
@@ -1487,10 +1493,11 @@ void wifi_manager_ProcessState() {
 
     // Serialize re-entrant callers (app_WifiTask + SCPI_Reset active pump,
     // and any future call site).  portMAX_DELAY blocks until owner releases;
-    // priority inheritance keeps the holder unblocked.  See gProcessStateMutex
-    // declaration for the rationale.
+    // priority inheritance keeps the holder unblocked.  Recursive — same
+    // task can re-enter (TCP SCPI nests ProcessState inside ProcessState);
+    // see gProcessStateMutex declaration for the rationale.
     if (gProcessStateMutex != NULL) {
-        if (xSemaphoreTake(gProcessStateMutex, portMAX_DELAY) != pdTRUE) {
+        if (xSemaphoreTakeRecursive(gProcessStateMutex, portMAX_DELAY) != pdTRUE) {
             return;
         }
     }
@@ -1550,7 +1557,7 @@ void wifi_manager_ProcessState() {
     }
 
     if (gProcessStateMutex != NULL) {
-        xSemaphoreGive(gProcessStateMutex);
+        xSemaphoreGiveRecursive(gProcessStateMutex);
     }
 }
 
