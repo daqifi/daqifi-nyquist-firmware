@@ -1379,6 +1379,10 @@ bool wifi_manager_IsWiFiConnected(void) {
 
 bool wifi_manager_Deinit() {
     if (gStateMachineContext.pWifiSettings == NULL) return false;
+    // Tear down iperf2 sockets before the WINC GPIO toggle — otherwise
+    // the dedicated Iperf2 task could call send() against an
+    // already-deinitialized chip and wedge the HIF queue.
+    Iperf2_Stop();
     // Cancel any pending deferred-INIT — without this, a Deinit shortly
     // after HardReset would still see WiFi come back up after 2 s.
     gWifiReinitDeadlineTick = 0;
@@ -1404,6 +1408,9 @@ bool wifi_manager_Deinit() {
 // typically takes ~20 s; poll SYST:COMM:LAN:ADDR? to confirm.
 bool wifi_manager_HardReset(void) {
     if (gStateMachineContext.pWifiSettings == NULL) return false;
+    // Tear down iperf2 sockets before the WINC GPIO toggle (same reason
+    // as wifi_manager_Deinit).
+    Iperf2_Stop();
     LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     SendEvent(WIFI_MANAGER_EVENT_DEINIT);

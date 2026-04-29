@@ -119,16 +119,25 @@ static void FinalizeStats(void) {
     gCtx.last_stats.completed = true;
 }
 
-// Refuse to call socket()/connect()/bind() unless WiFi is fully associated and
-// has an IP. Calling sockets against an un-ready WINC leaves stuck state on
-// the PIC32 side that survives WDRV_WINC_Deinitialize/Init cycles (#383).
+// Refuse to call socket()/connect()/bind() unless the WINC driver is fully
+// started.  Calling sockets against a chip in WIFI_STATE_INIT (transitional)
+// leaves stuck state on the PIC32 side that survives
+// WDRV_WINC_Deinitialize/Init cycles (#383).
 //
 // RequireWifiConnected — strict check for client modes (we need to send out).
 // RequireWifiReadyForSockets — looser check for server modes; SoftAP with no
 // connected station is still a valid configuration to listen on.
+//
+// Both also gate on m2m_wifi_get_state() == WIFI_STATE_START so we don't even
+// start the socket stack mid-init (where GetWiFiStatus may briefly return
+// DISCONNECTED but the WINC isn't actually up yet).
 static bool RequireWifiConnected(const char* where) {
     if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
         LOG_E("iperf2: %s refused — WiFi not CONNECTED", where);
+        return false;
+    }
+    if (m2m_wifi_get_state() != WIFI_STATE_START) {
+        LOG_E("iperf2: %s refused — WINC not started", where);
         return false;
     }
     return true;
@@ -137,6 +146,10 @@ static bool RequireWifiConnected(const char* where) {
 static bool RequireWifiReadyForSockets(const char* where) {
     if (wifi_manager_GetWiFiStatus() == WIFI_STATUS_DISABLED) {
         LOG_E("iperf2: %s refused — WiFi DISABLED", where);
+        return false;
+    }
+    if (m2m_wifi_get_state() != WIFI_STATE_START) {
+        LOG_E("iperf2: %s refused — WINC not started", where);
         return false;
     }
     return true;
