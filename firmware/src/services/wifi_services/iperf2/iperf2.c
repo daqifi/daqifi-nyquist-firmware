@@ -737,6 +737,9 @@ static void Iperf2TaskMain(void* arg) {
 }
 
 void Iperf2_StartTask(void) {
+    if (gIperf2TaskHandle != NULL) {
+        return;  // already created — re-using static taskTcb/taskStack would corrupt
+    }
     static StaticTask_t taskTcb;
     static StackType_t  taskStack[512];
     gIperf2TaskHandle = xTaskCreateStatic(Iperf2TaskMain, "Iperf2",
