@@ -495,7 +495,14 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                 memset(&hdr, 0, sizeof(hdr));
                 hdr.flags = _htonl((uint32_t)IPERF2_HEADER_VERSION1);
                 hdr.numThreads = _htonl((uint32_t)1U);
-                hdr.mPort = _htonl((uint32_t)IPERF2_DEFAULT_PORT);
+                // mPort = 0 → tell iperf2 server to NOT attempt dual-mode
+                // reverse connection back to us. We don't service the
+                // reverse direction (port 5001 server). Setting mPort=5001
+                // (default) caused the server to connect back, fail to
+                // reach us at 5001, time out at 10 s, and abort the inbound
+                // session — which capped all our tests at 10 s and
+                // triggered SOCK_ERR_CONN_ABORTED. See #385.
+                hdr.mPort = _htonl((uint32_t)0U);
                 hdr.bufferlen = _htonl((uint32_t)IPERF2_TCP_BUF_SIZE);
                 hdr.mWinBand = _htonl((uint32_t)0U);
                 // iperf2 mAmount is in 10ms units (negative = duration mode)
