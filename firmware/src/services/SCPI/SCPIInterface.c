@@ -2046,6 +2046,33 @@ static scpi_result_t SCPI_Iperf2_Stats(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// #399 diagnostic — visibility into WINC HIF state across iperf2 sessions.
+// Shows current/last gCtx state plus a free-socket probe (only when IDLE).
+static scpi_result_t SCPI_Iperf2_Diag(scpi_t * context) {
+    Iperf2_Diag d;
+    Iperf2_GetDiag(&d);
+    scpi_printf(context, "Mode=%d\r\n", (int)d.mode);
+    scpi_printf(context, "DataSock=%d\r\n", (int)d.data_sock);
+    scpi_printf(context, "ListenSock=%d\r\n", (int)d.listen_sock);
+    scpi_printf(context, "PendingTx=%u\r\n", (unsigned)d.pending_tx);
+    scpi_printf(context, "AbortPending=%d\r\n", (int)(d.abort_pending ? 1 : 0));
+    scpi_printf(context, "BytesConfirmed=%llu\r\n",
+                (unsigned long long)d.bytes_confirmed);
+    scpi_printf(context, "LastSendRc=%d\r\n", (int)d.last_send_rc);
+    scpi_printf(context, "SendErrCount=%u\r\n", (unsigned)d.send_err_count);
+    scpi_printf(context, "WincState=%u\r\n", (unsigned)d.winc_state);
+    if (d.free_tcp_sockets == 0xFF) {
+        scpi_printf(context, "FreeTcpSockets=skipped\r\n");
+        scpi_printf(context, "FreeUdpSockets=skipped\r\n");
+    } else {
+        scpi_printf(context, "FreeTcpSockets=%u\r\n",
+                    (unsigned)d.free_tcp_sockets);
+        scpi_printf(context, "FreeUdpSockets=%u\r\n",
+                    (unsigned)d.free_udp_sockets);
+    }
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
     Streaming_ClearStats();
     // Reset WiFi TCP send tracking counters atomically
@@ -3684,6 +3711,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:WIFI:IPERF:UDPClient", .callback = SCPI_Iperf2_UdpClient,}, // <ip>,[port=5001],[dur_s=10]
     {.pattern = "SYSTem:WIFI:IPERF:STOP", .callback = SCPI_Iperf2_Stop,},
     {.pattern = "SYSTem:WIFI:IPERF:STATs?", .callback = SCPI_Iperf2_Stats,},
+    {.pattern = "SYSTem:WIFI:IPERF:DIAGnostics?", .callback = SCPI_Iperf2_Diag,}, // #399
     // Dynamic memory configuration
     {.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = SCPI_SetMemSdBuf,},
     {.pattern = "SYSTem:MEMory:SD:BUFfer?", .callback = SCPI_GetMemSdBuf,},

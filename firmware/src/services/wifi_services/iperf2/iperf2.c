@@ -45,6 +45,11 @@ typedef struct {
     uint32_t       udp_outoforder;
     uint8_t        udp_fin_count;   // FIN retransmits sent
     volatile bool  abort_pending;   // set in callback context, processed in Iperf2_Tasks
+    // Diagnostic / sticky tracking for #399 investigation.  Not zeroed by
+    // ResetContext — these survive across sessions so GetDiag can show
+    // accumulating evidence of HIF leak.  Cleared explicitly by Initialize.
+    volatile int16_t last_send_rc;
+    volatile uint8_t send_err_count;
     Iperf2_Stats   last_stats;
 } Iperf2_Context;
 
@@ -371,6 +376,52 @@ void Iperf2_GetStats(Iperf2_Stats* out) {
     taskEXIT_CRITICAL();
 }
 
+void Iperf2_GetDiag(Iperf2_Diag* out) {
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+
+    taskENTER_CRITICAL();
+    out->mode = gCtx.mode;
+    out->data_sock = gCtx.data_sock;
+    out->listen_sock = gCtx.listen_sock;
+    out->pending_tx = gCtx.pending_tx;
+    out->abort_pending = gCtx.abort_pending;
+    out->bytes_confirmed = gCtx.bytes_confirmed;
+    out->last_send_rc = gCtx.last_send_rc;
+    out->send_err_count = gCtx.send_err_count;
+    taskEXIT_CRITICAL();
+
+    out->winc_state = (uint8_t)m2m_wifi_get_state();
+
+    // Free-socket probe — only safe when iperf2 is IDLE.  Open up to
+    // TCP_SOCK_MAX TCP sockets and UDP_SOCK_MAX UDP sockets, count
+    // successes, then shutdown each.  Reveals whether prior iperf2
+    // sessions left WINC slots stuck (#399).
+    if (out->mode != IPERF2_MODE_IDLE) {
+        out->free_tcp_sockets = 0xFF;  // sentinel "not probed"
+        out->free_udp_sockets = 0xFF;
+        return;
+    }
+
+    SOCKET tcp_probes[TCP_SOCK_MAX];
+    SOCKET udp_probes[UDP_SOCK_MAX];
+
+    for (int i = 0; i < TCP_SOCK_MAX; i++) {
+        tcp_probes[i] = socket(AF_INET, SOCK_STREAM, 0);
+        if (tcp_probes[i] >= 0) out->free_tcp_sockets++;
+    }
+    for (int i = 0; i < UDP_SOCK_MAX; i++) {
+        udp_probes[i] = socket(AF_INET, SOCK_DGRAM, 0);
+        if (udp_probes[i] >= 0) out->free_udp_sockets++;
+    }
+    for (int i = 0; i < TCP_SOCK_MAX; i++) {
+        if (tcp_probes[i] >= 0) shutdown(tcp_probes[i]);
+    }
+    for (int i = 0; i < UDP_SOCK_MAX; i++) {
+        if (udp_probes[i] >= 0) shutdown(udp_probes[i]);
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Socket event dispatch
 // ----------------------------------------------------------------------------
@@ -565,11 +616,13 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
             int16_t sent = (pMessage != NULL) ? *(int16_t*)pMessage : -1;
             // 64-bit + 8-bit RMW, paired with USB-priority reader / driver-task writer
             taskENTER_CRITICAL();
+            gCtx.last_send_rc = sent;  // diag: record latest WINC return code
             if (sent > 0) {
                 gCtx.bytes_confirmed += (uint64_t)sent;
                 if (gCtx.pending_tx > 0) gCtx.pending_tx--;
             } else {
                 if (gCtx.pending_tx > 0) gCtx.pending_tx--;
+                if (gCtx.send_err_count < 0xFF) gCtx.send_err_count++;
             }
             taskEXIT_CRITICAL();
             // Event-driven wake: when WINC frees a HIF slot, kick the

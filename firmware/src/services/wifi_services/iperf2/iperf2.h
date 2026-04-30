@@ -69,6 +69,22 @@ typedef struct {
     bool     completed;
 } Iperf2_Stats;
 
+// Diagnostic snapshot for #399 investigation — visibility into WINC HIF
+// state across iperf2 sessions.  Populated by Iperf2_GetDiag().
+typedef struct {
+    Iperf2_Mode  mode;             // current mode
+    int16_t      data_sock;        // current/last data socket descriptor
+    int16_t      listen_sock;      // current/last listen socket descriptor
+    uint8_t      pending_tx;       // m2m_send calls not yet ACKed
+    bool         abort_pending;    // deferred-abort flag
+    uint64_t     bytes_confirmed;  // current/last session
+    int16_t      last_send_rc;     // most recent send() return value
+    uint8_t      send_err_count;   // sticky count of negative send rcs since last reset
+    uint8_t      winc_state;       // m2m_wifi_get_state()
+    uint8_t      free_tcp_sockets; // probed: socket()/shutdown() loop, max 7
+    uint8_t      free_udp_sockets; // probed: socket()/shutdown() loop, max 4
+} Iperf2_Diag;
+
 // Default iperf2 port (matches `iperf -s` default)
 #define IPERF2_DEFAULT_PORT  5001
 
@@ -116,6 +132,14 @@ void Iperf2_Stop(void);
  * the most recent completed test until a new one starts.
  */
 void Iperf2_GetStats(Iperf2_Stats* out);
+
+/**
+ * Diagnostic snapshot for #399 investigation.  Probes WINC's free socket
+ * slots (opens up to TCP_SOCK_MAX/UDP_SOCK_MAX, counts successes, closes
+ * them) — refuses if iperf2 is currently running (would steal the running
+ * session's resources).  Otherwise reads internal context state into out.
+ */
+void Iperf2_GetDiag(Iperf2_Diag* out);
 
 /**
  * Hook into wifi_manager's SocketEventCallback dispatcher.  Returns true
