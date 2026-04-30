@@ -399,7 +399,7 @@
  * the build, or 0 to exclude the named feature from the build. */
 #define configUSE_TASK_NOTIFICATIONS            1
 #define configUSE_MUTEXES                       1
-#define configUSE_RECURSIVE_MUTEXES             0
+#define configUSE_RECURSIVE_MUTEXES             1
 #define configUSE_COUNTING_SEMAPHORES           1
 #define configUSE_QUEUE_SETS                    0
 #define configUSE_APPLICATION_TASK_TAG          0
@@ -428,7 +428,7 @@
 #define INCLUDE_xTaskAbortDelay                 0
 #define INCLUDE_xTaskGetHandle                  0
 #define INCLUDE_xQueueGetMutexHolder            0
-#define INCLUDE_xSemaphoreGetMutexHolder        0
+#define INCLUDE_xSemaphoreGetMutexHolder        1
 #define INCLUDE_uxTaskGetStackHighWaterMark2    0
 #define INCLUDE_xTaskResumeFromISR              0
 

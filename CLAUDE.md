@@ -76,10 +76,21 @@ The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.
 
 Command options:
 - `-TPPK4`: Use PICkit 4 as programmer
-- `-P32MZ2048EFM144`: Target device
+- `-TS<serial>`: Pick a specific PICkit when multiple are connected
+- `-P32MZ2048EFM144`: Target device (no `PIC` prefix)
 - `-M`: Program mode
-- `-F`: Hex file to program
+- `-F`: Hex file to program (must be Windows-style path; `/mnt/c/...` fails silently)
 - `-OL`: Use loaded memories only
+
+### Bench tool inventory (this dev station)
+| Item | Identifier | Notes |
+|------|-----------|-------|
+| Primary PICkit 4 (this board) | `BUR184882598` | Pass `-TSBUR184882598` to ipecmd when multiple PICkits are attached |
+| Secondary PICkit 4 | `BUR202272588` | On other board(s) — ignore unless re-targeting |
+| MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix; with the prefix you get exit 36 / "Unable to locate DFP") |
+| Serial port (USB CDC) | `/dev/ttyACM0` (WSL) / `COM3` (Windows) | usbipd busid `2-4`; reattach via `powershell.exe -Command "usbipd attach --wsl --busid 2-4"` after each reboot/flash |
+| Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
+| Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
@@ -142,6 +153,21 @@ Services Layer
    - **SCPI Abbreviation Rule**: Commands can be abbreviated based on the capitalization in the full command. The abbreviated command must contain all letters that are in CAPS. For example:
      - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
      - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
+
+#### Quiescence Rule — No SCPI queries during a benchmarked test
+
+Send no SCPI to the device while a streaming or iperf2 run is in
+progress — every query preempts the data path being measured (USB
+SCPI = priority 7; TCP SCPI runs on the WifiTask itself).
+
+The firmware preserves end-of-test stats in IDLE: `IPERF:STATs?`
+returns `gCtx.last_stats` (frozen by `FinalizeStats`); `STR:STATS?`
+survives across `StopStreamData` until the next start or
+`STATS:CLEar`.
+
+**Pattern:** `start → time.sleep(duration + margin) → single STATS query`.
+Out-of-band visibility (Saleae, PC-side iperf2.log) for long runs;
+never poll the device under test. Mirrored in the SCPI wiki.
 
 #### SCPI Command Verification Protocol
 

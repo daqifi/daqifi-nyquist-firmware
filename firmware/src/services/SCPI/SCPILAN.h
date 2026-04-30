@@ -141,6 +141,13 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context);
  */
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
 /**
+ * SCPI Callback: Hardware-reset the WINC chip (toggles GPIO reset).
+ * Use to recover a wedged outbound TCP stack (#383). Returns
+ * immediately; full recovery takes ~20 s — poll ADDR? to confirm.
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHardReset(scpi_t * context);
+/**
  * @brief
  * @param context
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error

@@ -10,6 +10,7 @@
 #include "wifi_serial_bridge_interface.h"
 #include "iperf2/iperf2.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
+#include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
 
 #define UNUSED(x) (void)(x)
@@ -114,6 +115,28 @@ static volatile bool gRssiUpdatePending = false;
 // runs wifi_tcp_server_ProcessReceivedBuff on WifiTask's stack, then re-arms
 // recv. WINC buffers inbound TCP while we process (per WINC docs).
 static volatile bool gTcpRxPending = false;
+
+// Deadline (in ticks) at which wifi_manager_ProcessState should queue
+// the deferred WIFI_MANAGER_EVENT_INIT after a HardReset.  0 = none
+// pending.  32-bit reads/writes are atomic on PIC32MZ (see CLAUDE.md
+// concurrency rules).  Marked volatile because it's set from any task
+// calling HardReset/Deinit and read every tick from app_WifiTask.
+static volatile TickType_t gWifiReinitDeadlineTick = 0;
+
+// Recursive mutex serializing wifi_manager_ProcessState across callers.
+// Today app_WifiTask is the primary owner; SCPI_Reset's active pump
+// (SYSTem:REboot path) also enters from the SCPI dispatch task.  Without
+// the mutex, the body's xQueueReceive + state-machine update on shared
+// gStateMachineContext could corrupt under any future priority change
+// that lets the two callers interleave.
+//
+// Recursive: TCP-SCPI dispatch nests ProcessState → wifi_tcp_server callback
+// → SCPI_Reset → active pump → ProcessState.  Same task takes the mutex
+// twice on that path; recursive avoids self-deadlock.  Requires
+// configUSE_RECURSIVE_MUTEXES=1 in FreeRTOSConfig.h.  Created in
+// wifi_manager_Init.
+static StaticSemaphore_t gProcessStateMutexBuf;
+static SemaphoreHandle_t gProcessStateMutex = NULL;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
@@ -528,16 +551,63 @@ static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
 }
 
 static bool SendEvent(wifi_manager_event_t event) {
-    if (gEventQH != NULL) {
-        if (xQueueSend(gEventQH, &event, portMAX_DELAY) == pdPASS) {
-            return true;
-        } else {
-            LOG_E("WiFi SendEvent: queue send failed");
-            return false;
-        }
-
+    if (gEventQH == NULL) {
+        // Init hasn't run yet — caller is misusing the API.  Surface as
+        // an error rather than silently succeeding.
+        LOG_E("WiFi SendEvent: queue not initialized (event=%u)",
+              (unsigned)event);
+        return false;
     }
-    return true;
+
+    // Bounded timeout: SendEvent can be called from inside
+    // wifi_manager_ProcessState (state-machine handlers, deferred-INIT
+    // path).  ProcessState holds gProcessStateMutex AND is the
+    // queue-drainer.  A blocking portMAX_DELAY send on a full queue
+    // would deadlock — the same task can't drain.
+    //
+    // Detect "I'm already the holder" via xSemaphoreGetMutexHolder and
+    // use timeout=0 in that case: waiting can't possibly help when
+    // we're the only drainer.  Otherwise 20 ms — long enough for a
+    // higher-priority drainer (USB SCPI pump path) to clear room,
+    // short enough not to wedge the calling task.
+    TickType_t timeout = pdMS_TO_TICKS(20);
+    if (gProcessStateMutex != NULL) {
+        if (xSemaphoreGetMutexHolder(gProcessStateMutex) ==
+            xTaskGetCurrentTaskHandle()) {
+            timeout = 0;
+        }
+    }
+    if (xQueueSend(gEventQH, &event, timeout) == pdPASS) {
+        return true;
+    }
+
+    // DEINIT/INIT are lifecycle-critical: the manager can wedge if these
+    // are dropped.  If the queue is full enough that we couldn't even
+    // wait 20 ms, something has already gone wrong; drain the queue
+    // and force the event in.  Pending stale events would have been
+    // invalidated by the lifecycle transition anyway.
+    //
+    // Use xQueueReceive(timeout=0) drain instead of xQueueReset:
+    // FreeRTOS docs warn xQueueReset is unsafe if any task is blocked
+    // on the queue (would leave it in inconsistent state).  In our
+    // case the only drainer is ProcessState's xQueueReceive(timeout=1)
+    // which doesn't block long, but the drain-loop approach is
+    // safer-by-construction.
+    if (event == WIFI_MANAGER_EVENT_DEINIT ||
+        event == WIFI_MANAGER_EVENT_INIT ||
+        event == WIFI_MANAGER_EVENT_REINIT) {
+        LOG_E("WiFi SendEvent: queue full, draining for lifecycle event=%u",
+              (unsigned)event);
+        wifi_manager_event_t drop;
+        while (xQueueReceive(gEventQH, &drop, 0) == pdPASS) {
+            /* drop stale events */
+        }
+        if (xQueueSend(gEventQH, &event, 0) == pdPASS) {
+            return true;
+        }
+    }
+    LOG_E("WiFi SendEvent: queue full (event=%u)", (unsigned)event);
+    return false;
 }
 
 static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event) {
@@ -1262,9 +1332,22 @@ void fwUpdateTask(void *pvParameters) {
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
 
-    if (gEventQH == NULL)
+    // Init order matters: mutex first (so ProcessState calls before queue
+    // creation are still safe), then queue.  If queue already exists, we
+    // were already initialized — bail.
+    if (gProcessStateMutex == NULL) {
+        gProcessStateMutex = xSemaphoreCreateRecursiveMutexStatic(&gProcessStateMutexBuf);
+    }
+
+    if (gEventQH == NULL) {
         gEventQH = xQueueCreate(20, sizeof (wifi_manager_event_t));
-    else return true;
+        if (gEventQH == NULL) {
+            LOG_E("WiFi Init: failed to create event queue");
+            return false;
+        }
+    } else {
+        return true;
+    }
     if (pSettings != NULL)
         gStateMachineContext.pWifiSettings = pSettings;
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
@@ -1358,9 +1441,51 @@ bool wifi_manager_IsWiFiConnected(void) {
 }
 
 bool wifi_manager_Deinit() {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    // Tear down iperf2 sockets before the WINC GPIO toggle — otherwise
+    // the dedicated Iperf2 task could call send() against an
+    // already-deinitialized chip and wedge the HIF queue.
+    Iperf2_Stop();
+    // Cancel any pending deferred-INIT and clear isEnabled atomically —
+    // without the critical section, a higher-priority caller of Deinit
+    // could race ProcessState's deferred-INIT branch and end up with
+    // isEnabled=1 even though the user requested Deinit.
+    taskENTER_CRITICAL();
+    gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
-    SendEvent(WIFI_MANAGER_EVENT_DEINIT);
-    return true;
+    taskEXIT_CRITICAL();
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+}
+
+// True hardware reset of the WINC chip: disable -> DEINIT (toggles
+// CHIP_EN/RESET_N GPIOs via wifi_manager_FixWincResetState) -> after
+// 2 s settle, re-enable -> REINIT to bring the chip back up.
+//
+// This is the only path that recovers a wedged outbound TCP stack
+// (#383). APPLY's REINIT path explicitly skips Deinitialize because
+// of a Microchip driver bug (see comment near line 867), so APPLY
+// alone never drives the WINC reset GPIOs.
+//
+// Returns immediately — the deferred-INIT runs from
+// wifi_manager_ProcessState's deadline check, so this works
+// correctly whether HardReset is called from app_WifiTask itself
+// (TCP SCPI dispatch path, post-#353) or from another task (USB
+// CDC).  Full recovery (DEINIT settle + STA reassoc + DHCP)
+// typically takes ~20 s; poll SYST:COMM:LAN:ADDR? to confirm.
+bool wifi_manager_HardReset(void) {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    // Tear down iperf2 sockets before the WINC GPIO toggle (same reason
+    // as wifi_manager_Deinit).
+    Iperf2_Stop();
+    LOG_I("WiFi: hard reset (DEINIT -> REINIT in 2 s)");
+    // Set isEnabled=0 + arm deadline atomically so a concurrent Deinit
+    // can't race the (deadline, isEnabled) pair into an inconsistent
+    // state.
+    taskENTER_CRITICAL();
+    gStateMachineContext.pWifiSettings->isEnabled = 0;
+    gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    taskEXIT_CRITICAL();
+    return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
@@ -1419,11 +1544,63 @@ void wifi_manager_ProcessState() {
     while (gEventQH == NULL) {
         return;
     }
+
+    // Serialize re-entrant callers (app_WifiTask + SCPI_Reset active pump,
+    // and any future call site).  Recursive — same task can re-enter
+    // (TCP SCPI nests ProcessState inside ProcessState); see
+    // gProcessStateMutex declaration for the rationale.
+    //
+    // Bounded 100 ms timeout (instead of portMAX_DELAY): if the holder
+    // is genuinely wedged, the caller must be able to bail and return
+    // — otherwise the SCPI_Reset active pump would hang and the device
+    // could never reboot.  Normal ProcessState body completes in <10 ms,
+    // so 100 ms gives generous headroom for healthy operation while
+    // failing fast on actual stalls.  Skipped iterations recover
+    // naturally on the next invocation.
+    if (gProcessStateMutex != NULL) {
+        if (xSemaphoreTakeRecursive(gProcessStateMutex,
+                                    pdMS_TO_TICKS(100)) != pdTRUE) {
+            LOG_E("WiFi ProcessState: mutex timeout — skipping iteration");
+            return;
+        }
+    }
+
+    // Deferred-INIT after wifi_manager_HardReset(): once the 2 s settle
+    // window has elapsed, re-enable WiFi and queue INIT.  See HardReset
+    // for why we can't just vTaskDelay(2000) — the calling task may be
+    // app_WifiTask itself (TCP SCPI dispatch path post-#353), and that
+    // task is what drains gEventQH.
+    //
+    // Double-checked under a critical section: a concurrent Deinit could
+    // clear gWifiReinitDeadlineTick between the outer check and the
+    // isEnabled write, leaving us with isEnabled=1 even though the user
+    // called Deinit.  Re-check while holding the lock so only one of
+    // (Deinit, deferred-INIT) wins atomically.  SendEvent runs outside
+    // the critical section because it can take a queue mutex.
+    bool doInit = false;
+    if (gWifiReinitDeadlineTick != 0 &&
+        (int32_t)(xTaskGetTickCount() - gWifiReinitDeadlineTick) >= 0) {
+        taskENTER_CRITICAL();
+        if (gWifiReinitDeadlineTick != 0 &&
+            (int32_t)(xTaskGetTickCount() - gWifiReinitDeadlineTick) >= 0) {
+            gWifiReinitDeadlineTick = 0;
+            if (gStateMachineContext.pWifiSettings != NULL) {
+                gStateMachineContext.pWifiSettings->isEnabled = 1;
+                doInit = true;
+            }
+        }
+        taskEXIT_CRITICAL();
+    }
+    if (doInit) {
+        SendEvent(WIFI_MANAGER_EVENT_INIT);
+    }
+
     wifi_tcp_server_TransmitBufferedData();
 
-    // #377: iperf2 client mode — keep the TX cap topped up.  No-op in
-    // SERVER / IDLE.  Cheap when idle (single mode-check).
-    Iperf2_Tasks();
+    // #377 iperf2 now runs in its own dedicated task with adaptive 2 ms
+    // (active) / 50 ms (idle) cadence — see Iperf2_StartTask() in iperf2.c.
+    // Removed from this task's loop so streaming + SCPI dispatch keep their
+    // 5 ms cadence undisturbed.
 
     // #353 Option 2: drain any deferred TCP rx data on this task's stack.
     // SOCKET_MSG_RECV (WDRV_WINC_Tasks context) stored length + set the flag
@@ -1445,18 +1622,21 @@ void wifi_manager_ProcessState() {
         }
     }
 
-    if (xQueueReceive(gEventQH, &event, 1) != pdPASS) {
-        return;
-    }
-    ret = gStateMachineContext.active(&gStateMachineContext, event);
-    if (ret == WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN) {
-        gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_EXIT);
-        if (gStateMachineContext.nextState != NULL) {
-            gStateMachineContext.active = gStateMachineContext.nextState;
-            gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
-        } else {
-            LOG_E("%s : %d : State Change Requested, but NextSate is NULL", __func__, __LINE__);
+    if (xQueueReceive(gEventQH, &event, 1) == pdPASS) {
+        ret = gStateMachineContext.active(&gStateMachineContext, event);
+        if (ret == WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN) {
+            gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_EXIT);
+            if (gStateMachineContext.nextState != NULL) {
+                gStateMachineContext.active = gStateMachineContext.nextState;
+                gStateMachineContext.active(&gStateMachineContext, WIFI_MANAGER_EVENT_ENTRY);
+            } else {
+                LOG_E("%s : %d : State Change Requested, but NextSate is NULL", __func__, __LINE__);
+            }
         }
+    }
+
+    if (gProcessStateMutex != NULL) {
+        xSemaphoreGiveRecursive(gProcessStateMutex);
     }
 }
 
