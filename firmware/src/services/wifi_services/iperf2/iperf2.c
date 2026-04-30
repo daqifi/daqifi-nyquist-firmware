@@ -24,6 +24,12 @@
 #define IPERF2_UDP_BUF_SIZE     1470U   // standard iperf2 UDP datagram size (1500 - IP/UDP overhead)
 #define IPERF2_MAX_DURATION_S   3600U   // 1h cap
 #define IPERF2_MAX_PENDING_TX   4U      // matches WINC HIF queue depth (mirrors wifi_tcp_server)
+
+// Runtime override of MAX_PENDING_TX (0 = use compile-time default).  Lets
+// us deliberately back off WINC HIF saturation as a workaround for #399 —
+// the CONN_ABORTED cascade may be triggered by hammering WINC at peak.  N=3
+// → ~75% rate; N=2 → ~50%.  Set via SYST:WIFI:IPERF:MAXPending.
+static volatile uint8_t gMaxPendingOverride = 0;
 #define IPERF2_FIN_RETRANSMITS  10U     // iperf2 protocol: 10× retransmit of last UDP pkt
 
 typedef struct {
@@ -376,6 +382,15 @@ void Iperf2_GetStats(Iperf2_Stats* out) {
     taskEXIT_CRITICAL();
 }
 
+void Iperf2_SetMaxPending(uint8_t n) {
+    if (n > IPERF2_MAX_PENDING_TX) n = IPERF2_MAX_PENDING_TX;
+    gMaxPendingOverride = n;
+}
+
+uint8_t Iperf2_GetMaxPending(void) {
+    return gMaxPendingOverride ? gMaxPendingOverride : IPERF2_MAX_PENDING_TX;
+}
+
 void Iperf2_GetDiag(Iperf2_Diag* out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
@@ -699,7 +714,7 @@ static void TasksTcpClient(void) {
     // WIFI_TCP_MAX_IN_FLIGHT). Going over this risks pushing past WINC's
     // accept-without-error threshold even before BUFFER_FULL fires, which
     // can corrupt internal state.
-    while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+    while (gCtx.pending_tx < (gMaxPendingOverride ? gMaxPendingOverride : IPERF2_MAX_PENDING_TX)) {
         int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
         if (rc == SOCK_ERR_NO_ERROR) {
             taskENTER_CRITICAL();
@@ -724,7 +739,7 @@ static void TasksUdpClient(void) {
 
     if (!past_deadline) {
         // Drain UDP up to IPERF2_MAX_PENDING_TX (matches WINC HIF depth).
-        while (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+        while (gCtx.pending_tx < (gMaxPendingOverride ? gMaxPendingOverride : IPERF2_MAX_PENDING_TX)) {
             pkt->id = (int32_t)_htonl((uint32_t)gCtx.udp_id);
             pkt->tv_sec = 0;
             pkt->tv_usec = 0;
@@ -756,7 +771,7 @@ static void TasksUdpClient(void) {
             ResetContext();
             return;
         }
-        if (gCtx.pending_tx < IPERF2_MAX_PENDING_TX) {
+        if (gCtx.pending_tx < (gMaxPendingOverride ? gMaxPendingOverride : IPERF2_MAX_PENDING_TX)) {
             pkt->id = (int32_t)_htonl((uint32_t)(-gCtx.udp_id));
             pkt->tv_sec = 0;
             pkt->tv_usec = 0;

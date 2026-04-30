@@ -134,6 +134,14 @@ void Iperf2_Stop(void);
 void Iperf2_GetStats(Iperf2_Stats* out);
 
 /**
+ * Override IPERF2_MAX_PENDING_TX at runtime (1-4, or 0 for compile-time
+ * default).  Lower values throttle TX rate as a workaround for #399 — N=3
+ * yields ~75% of peak, N=2 ~50%.  Takes effect on the next iperf2 run.
+ */
+void Iperf2_SetMaxPending(uint8_t n);
+uint8_t Iperf2_GetMaxPending(void);
+
+/**
  * Diagnostic snapshot for #399 investigation.  Probes WINC's free socket
  * slots (opens up to TCP_SOCK_MAX/UDP_SOCK_MAX, counts successes, closes
  * them) — refuses if iperf2 is currently running (would steal the running

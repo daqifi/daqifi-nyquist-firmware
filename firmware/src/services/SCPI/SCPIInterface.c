@@ -2046,6 +2046,24 @@ static scpi_result_t SCPI_Iperf2_Stats(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// #399 workaround — limit MAX_PENDING_TX (= WINC HIF queue depth in flight).
+// 0 restores compile-time default (4), 1-4 throttle TX rate.
+static scpi_result_t SCPI_Iperf2_SetMaxPending(scpi_t * context) {
+    int32_t n;
+    if (!SCPI_ParamInt32(context, &n, TRUE)) return SCPI_RES_ERR;
+    if (n < 0 || n > 4) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    Iperf2_SetMaxPending((uint8_t)n);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_Iperf2_GetMaxPending(scpi_t * context) {
+    SCPI_ResultInt32(context, (int32_t)Iperf2_GetMaxPending());
+    return SCPI_RES_OK;
+}
+
 // #399 diagnostic — visibility into WINC HIF state across iperf2 sessions.
 // Shows current/last gCtx state plus a free-socket probe (only when IDLE).
 static scpi_result_t SCPI_Iperf2_Diag(scpi_t * context) {
@@ -3712,6 +3730,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:WIFI:IPERF:STOP", .callback = SCPI_Iperf2_Stop,},
     {.pattern = "SYSTem:WIFI:IPERF:STATs?", .callback = SCPI_Iperf2_Stats,},
     {.pattern = "SYSTem:WIFI:IPERF:DIAGnostics?", .callback = SCPI_Iperf2_Diag,}, // #399
+    {.pattern = "SYSTem:WIFI:IPERF:MAXPending", .callback = SCPI_Iperf2_SetMaxPending,}, // #399 throttle (0=default, 1-4)
+    {.pattern = "SYSTem:WIFI:IPERF:MAXPending?", .callback = SCPI_Iperf2_GetMaxPending,},
     // Dynamic memory configuration
     {.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = SCPI_SetMemSdBuf,},
     {.pattern = "SYSTem:MEMory:SD:BUFfer?", .callback = SCPI_GetMemSdBuf,},
