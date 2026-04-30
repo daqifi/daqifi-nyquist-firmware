@@ -592,7 +592,8 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
             // outside the callback context.
             if (sent <= 0) {
                 LOG_E("iperf2: send cb err=%d, scheduling abort", (int)sent);
-                if (gCtx.mode == IPERF2_MODE_TCP_CLIENT) {
+                if (gCtx.mode == IPERF2_MODE_TCP_CLIENT ||
+                    gCtx.mode == IPERF2_MODE_UDP_CLIENT) {
                     gCtx.abort_pending = true;
                 }
             }
