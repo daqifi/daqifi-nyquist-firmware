@@ -53,7 +53,8 @@ typedef enum {
     IPERF2_MODE_TCP_SERVER,
     IPERF2_MODE_TCP_CLIENT,
     IPERF2_MODE_UDP_SERVER,
-    IPERF2_MODE_UDP_CLIENT
+    IPERF2_MODE_UDP_CLIENT,
+    IPERF2_MODE_TX_BLAST       // listen+accept, blast TX for duration (#399 workaround)
 } Iperf2_Mode;
 
 typedef struct {
@@ -123,6 +124,17 @@ bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
                            uint32_t duration_sec);
 
 /**
+ * TX-blast mode (#399 workaround for repeated throughput testing).
+ * Listen+accept on `port`, on first connection blast 1400-byte chunks
+ * for `duration_sec` then close.  Uses listen+accept (not connect)
+ * so it avoids WINC's outbound-TCP state bug — back-to-back sessions
+ * stay clean without HRESet between.  PC connects with any TCP client
+ * (e.g. `iperf -c <ip> -p <port>` or `nc <ip> <port> > /dev/null`)
+ * and measures bytes received as the device's TX throughput.
+ */
+bool Iperf2_StartTxBlast(uint16_t port, uint32_t duration_sec);
+
+/**
  * Cancel the in-flight iperf2 session (closes sockets, finalizes stats).
  */
 void Iperf2_Stop(void);
@@ -140,6 +152,16 @@ void Iperf2_GetStats(Iperf2_Stats* out);
  */
 void Iperf2_SetMaxPending(uint8_t n);
 uint8_t Iperf2_GetMaxPending(void);
+
+/**
+ * Auto-HRESet on iperf2 session end (#399 workaround).  When true,
+ * Iperf2 fires wifi_manager_HardReset() after FinalizeStats/CloseAll/
+ * ResetContext.  Costs ~12 s WiFi reassoc per session but ensures every
+ * subsequent iperf2 starts from clean WINC state (no multi-session
+ * degradation).  Default true for iperf2 since it's a debug tool.
+ */
+void Iperf2_SetAutoReset(bool enable);
+bool Iperf2_GetAutoReset(void);
 
 /**
  * Diagnostic snapshot for #399 investigation.  Probes WINC's free socket

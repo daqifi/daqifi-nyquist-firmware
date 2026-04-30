@@ -2026,6 +2026,27 @@ static scpi_result_t SCPI_Iperf2_UdpClient(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// SYST:WIFI:IPERF:TXBLast <port>,<duration_s>
+// Listen+accept TX-blast for #399 — repeated-session-safe TX throughput.
+// Device listens on port; on accept, sends 1400-byte chunks for duration.
+// PC connects with any TCP client (iperf -c, nc, etc.) and measures bytes
+// received as device's TX throughput.
+static scpi_result_t SCPI_Iperf2_TxBlast(scpi_t * context) {
+    int32_t port, duration_sec;
+    if (!SCPI_ParamInt32(context, &port, TRUE)) return SCPI_RES_ERR;
+    if (!SCPI_ParamInt32(context, &duration_sec, TRUE)) return SCPI_RES_ERR;
+    if (port <= 0 || port > 65535 || duration_sec <= 0) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    if (Iperf2_RefuseIfStreaming(context)) return SCPI_RES_ERR;
+    if (!Iperf2_StartTxBlast((uint16_t)port, (uint32_t)duration_sec)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_Iperf2_Stop(scpi_t * context) {
     Iperf2_Stop();
     return SCPI_RES_OK;
@@ -2061,6 +2082,19 @@ static scpi_result_t SCPI_Iperf2_SetMaxPending(scpi_t * context) {
 
 static scpi_result_t SCPI_Iperf2_GetMaxPending(scpi_t * context) {
     SCPI_ResultInt32(context, (int32_t)Iperf2_GetMaxPending());
+    return SCPI_RES_OK;
+}
+
+// #399 workaround toggle — auto-HRESet WiFi after every iperf2 session.
+static scpi_result_t SCPI_Iperf2_SetAutoReset(scpi_t * context) {
+    int32_t v;
+    if (!SCPI_ParamInt32(context, &v, TRUE)) return SCPI_RES_ERR;
+    Iperf2_SetAutoReset(v != 0);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_Iperf2_GetAutoReset(scpi_t * context) {
+    SCPI_ResultInt32(context, Iperf2_GetAutoReset() ? 1 : 0);
     return SCPI_RES_OK;
 }
 
@@ -3724,6 +3758,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
     // #377 iperf2 wire-rate benchmarks (TCP + UDP).  Refuse if streaming.
     {.pattern = "SYSTem:WIFI:IPERF:TCPServer", .callback = SCPI_Iperf2_TcpServer,}, // [port=5001]
+    {.pattern = "SYSTem:WIFI:IPERF:TXBLast", .callback = SCPI_Iperf2_TxBlast,}, // <port>,<duration_s>  #399 workaround
     {.pattern = "SYSTem:WIFI:IPERF:UDPServer", .callback = SCPI_Iperf2_UdpServer,}, // [port=5001]
     {.pattern = "SYSTem:WIFI:IPERF:TCPClient", .callback = SCPI_Iperf2_TcpClient,}, // <ip>,[port=5001],[dur_s=10]
     {.pattern = "SYSTem:WIFI:IPERF:UDPClient", .callback = SCPI_Iperf2_UdpClient,}, // <ip>,[port=5001],[dur_s=10]
@@ -3732,6 +3767,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:WIFI:IPERF:DIAGnostics?", .callback = SCPI_Iperf2_Diag,}, // #399
     {.pattern = "SYSTem:WIFI:IPERF:MAXPending", .callback = SCPI_Iperf2_SetMaxPending,}, // #399 throttle (0=default, 1-4)
     {.pattern = "SYSTem:WIFI:IPERF:MAXPending?", .callback = SCPI_Iperf2_GetMaxPending,},
+    {.pattern = "SYSTem:WIFI:IPERF:AUTOReset", .callback = SCPI_Iperf2_SetAutoReset,}, // #399 auto-HRESet on stop
+    {.pattern = "SYSTem:WIFI:IPERF:AUTOReset?", .callback = SCPI_Iperf2_GetAutoReset,},
     // Dynamic memory configuration
     {.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = SCPI_SetMemSdBuf,},
     {.pattern = "SYSTem:MEMory:SD:BUFfer?", .callback = SCPI_GetMemSdBuf,},

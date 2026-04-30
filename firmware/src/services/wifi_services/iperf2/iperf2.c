@@ -30,6 +30,14 @@
 // the CONN_ABORTED cascade may be triggered by hammering WINC at peak.  N=3
 // → ~75% rate; N=2 → ~50%.  Set via SYST:WIFI:IPERF:MAXPending.
 static volatile uint8_t gMaxPendingOverride = 0;
+
+// #399 workaround: auto-HRESet WiFi after every iperf2 session.  The bug
+// fires whenever WINC creates new TCP-state objects per session (proven
+// via TXBlast + iperf2 client both degrading multi-session).  Streaming
+// avoids it because its listen socket is created once at boot.  HRESet
+// is the only known reliable recovery — costs ~12 s WiFi reassoc per
+// session.  Default ON for iperf2 (debug tool); SCPI toggle to disable.
+static volatile bool gAutoResetOnStop = true;
 #define IPERF2_FIN_RETRANSMITS  10U     // iperf2 protocol: 10× retransmit of last UDP pkt
 
 typedef struct {
@@ -77,6 +85,9 @@ static uint8_t gRxBuf[IPERF2_UDP_BUF_SIZE] __attribute__((aligned(4)));
 // callback to wake the task immediately on slot completion.  Set in
 // Iperf2_StartTask, NULL until then.
 static TaskHandle_t gIperf2TaskHandle = NULL;
+
+// Forward decl — body lives below the public API setters/getters.
+static void MaybeAutoReset(void);
 
 static void FillTxBuffer(void) {
     // Counter pattern — defeats PC-side TCP coalescing optimizations and gives
@@ -220,6 +231,47 @@ bool Iperf2_StartTcpServer(uint16_t port) {
     return true;
 }
 
+bool Iperf2_StartTxBlast(uint16_t port, uint32_t duration_sec) {
+    if (!RequireWifiReadyForSockets("TX blast")) return false;
+    if (gCtx.mode != IPERF2_MODE_IDLE) {
+        LOG_E("iperf2: already running (mode=%d)", (int)gCtx.mode);
+        return false;
+    }
+    if (duration_sec == 0 || duration_sec > IPERF2_MAX_DURATION_S) {
+        LOG_E("iperf2: invalid duration %u s", (unsigned)duration_sec);
+        return false;
+    }
+
+    gCtx.listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (gCtx.listen_sock < 0) {
+        LOG_E("iperf2: TX blast socket() failed");
+        return false;
+    }
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = _htons(port);
+    addr.sin_addr.s_addr = 0;  // INADDR_ANY
+
+    int rc = bind(gCtx.listen_sock, (struct sockaddr*)&addr, sizeof(addr));
+    if (rc != 0) {
+        LOG_E("iperf2: TX blast bind() rc=%d", rc);
+        CloseAll();
+        return false;
+    }
+
+    gCtx.mode = IPERF2_MODE_TX_BLAST;
+    gCtx.duration_ms = duration_sec * 1000U;
+    // start_tick / deadline_tick are set in SOCKET_MSG_ACCEPT once a peer
+    // arrives — duration is measured from accept, not bind, so the test
+    // doesn't time out while the user is starting their PC-side iperf.
+    gCtx.last_stats.active = true;
+    gCtx.last_stats.completed = false;
+    LOG_I("iperf2: TX blast listening on port %u for %u s",
+          (unsigned)port, (unsigned)duration_sec);
+    return true;
+}
+
 bool Iperf2_StartUdpServer(uint16_t port) {
     if (!RequireWifiReadyForSockets("UDP server")) return false;
     if (gCtx.mode != IPERF2_MODE_IDLE) {
@@ -353,6 +405,7 @@ void Iperf2_Stop(void) {
     FinalizeStats();
     CloseAll();
     ResetContext();
+    MaybeAutoReset();
 }
 
 void Iperf2_GetStats(Iperf2_Stats* out) {
@@ -389,6 +442,24 @@ void Iperf2_SetMaxPending(uint8_t n) {
 
 uint8_t Iperf2_GetMaxPending(void) {
     return gMaxPendingOverride ? gMaxPendingOverride : IPERF2_MAX_PENDING_TX;
+}
+
+void Iperf2_SetAutoReset(bool enable) {
+    gAutoResetOnStop = enable;
+}
+
+bool Iperf2_GetAutoReset(void) {
+    return gAutoResetOnStop;
+}
+
+// Called from every session-end path (Iperf2_Stop, deferred-abort,
+// natural completion).  If gAutoResetOnStop, fires HRESet so the next
+// session starts from clean WINC state (#399 workaround).
+static void MaybeAutoReset(void) {
+    if (!gAutoResetOnStop) return;
+    LOG_I("iperf2: auto-HRESet armed (~12 s WiFi reassoc); next session "
+          "will start from clean WINC state");
+    wifi_manager_HardReset();
 }
 
 void Iperf2_GetDiag(Iperf2_Diag* out) {
@@ -531,7 +602,9 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
         case SOCKET_MSG_BIND: {
             tstrSocketBindMsg* m = (tstrSocketBindMsg*)pMessage;
             if (m && m->status == 0) {
-                if (gCtx.mode == IPERF2_MODE_TCP_SERVER && sock == gCtx.listen_sock) {
+                if ((gCtx.mode == IPERF2_MODE_TCP_SERVER ||
+                     gCtx.mode == IPERF2_MODE_TX_BLAST) &&
+                    sock == gCtx.listen_sock) {
                     listen(gCtx.listen_sock, 0);
                 } else if (gCtx.mode == IPERF2_MODE_UDP_SERVER && sock == gCtx.data_sock) {
                     // UDP: bind succeeded, start recv loop
@@ -570,9 +643,21 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
                 gCtx.start_tick = xTaskGetTickCount();
                 gCtx.bytes_transferred = 0;
                 gCtx.bytes_confirmed = 0;
-                LOG_I("iperf2: TCP server accepted connection (sock=%d)",
-                      (int)m->sock);
-                recv(gCtx.data_sock, gRxBuf, IPERF2_TCP_BUF_SIZE, 0);
+                if (gCtx.mode == IPERF2_MODE_TX_BLAST) {
+                    // Set deadline relative to accept() — duration starts now,
+                    // not at bind().  TasksTxBlast() drives the send loop.
+                    gCtx.deadline_tick = gCtx.start_tick +
+                                         pdMS_TO_TICKS(gCtx.duration_ms);
+                    LOG_I("iperf2: TX blast accepted connection (sock=%d), "
+                          "blasting for %u ms",
+                          (int)m->sock, (unsigned)gCtx.duration_ms);
+                    // No recv() — we're transmit-only.  TasksTxBlast picks up
+                    // on next tick and starts pumping.
+                } else {
+                    LOG_I("iperf2: TCP server accepted connection (sock=%d)",
+                          (int)m->sock);
+                    recv(gCtx.data_sock, gRxBuf, IPERF2_TCP_BUF_SIZE, 0);
+                }
             } else {
                 LOG_E("iperf2: accept failed");
                 Iperf2_Stop();
@@ -661,7 +746,8 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
             if (sent <= 0) {
                 LOG_E("iperf2: send cb err=%d, scheduling abort", (int)sent);
                 if (gCtx.mode == IPERF2_MODE_TCP_CLIENT ||
-                    gCtx.mode == IPERF2_MODE_UDP_CLIENT) {
+                    gCtx.mode == IPERF2_MODE_UDP_CLIENT ||
+                    gCtx.mode == IPERF2_MODE_TX_BLAST) {
                     gCtx.abort_pending = true;
                 }
             }
@@ -681,6 +767,44 @@ bool Iperf2_HandleSocketEvent(SOCKET sock, uint8_t msg_type, void* pMessage) {
 // because TasksTcpClient early-returns until client_connected is set.
 #define IPERF2_CONNECT_TIMEOUT_MS  10000U
 
+static void TasksTxBlast(void) {
+    // Idle-listening — no peer connected yet.  Just wait.  No deadline at
+    // this stage; user can take their time starting the PC client.
+    if (gCtx.data_sock < 0) {
+        return;
+    }
+
+    // Connection accepted — check deadline.
+    if ((int32_t)(xTaskGetTickCount() - gCtx.deadline_tick) >= 0) {
+        LOG_I("iperf2: TX blast done, %llu bytes sent",
+              (unsigned long long)gCtx.bytes_confirmed);
+        FinalizeStats();
+        CloseAll();
+        ResetContext();
+        MaybeAutoReset();
+        return;
+    }
+
+    // Same drain pattern as TasksTcpClient — fill WINC HIF until BUFFER_FULL,
+    // pacing via IPERF2_MAX_PENDING_TX gate.  See TasksTcpClient comments.
+    while (gCtx.pending_tx <
+           (gMaxPendingOverride ? gMaxPendingOverride : IPERF2_MAX_PENDING_TX)) {
+        int rc = send(gCtx.data_sock, (char*)gTxBuf, IPERF2_TCP_BUF_SIZE, 0);
+        if (rc == SOCK_ERR_NO_ERROR) {
+            taskENTER_CRITICAL();
+            gCtx.bytes_transferred += IPERF2_TCP_BUF_SIZE;
+            gCtx.pending_tx++;
+            taskEXIT_CRITICAL();
+        } else if (rc == SOCK_ERR_BUFFER_FULL) {
+            break;
+        } else {
+            LOG_E("iperf2: TX blast send err rc=%d, aborting", rc);
+            gCtx.abort_pending = true;
+            break;
+        }
+    }
+}
+
 static void TasksTcpClient(void) {
     if (!gCtx.client_connected) {
         // Bail if connect has been pending too long.  start_tick is set in
@@ -693,6 +817,7 @@ static void TasksTcpClient(void) {
             FinalizeStats();
             CloseAll();
             ResetContext();
+            MaybeAutoReset();
         }
         return;
     }
@@ -706,6 +831,7 @@ static void TasksTcpClient(void) {
         FinalizeStats();
         CloseAll();
         ResetContext();
+        MaybeAutoReset();
         return;
     }
 
@@ -769,6 +895,7 @@ static void TasksUdpClient(void) {
             FinalizeStats();
             CloseAll();
             ResetContext();
+            MaybeAutoReset();
             return;
         }
         if (gCtx.pending_tx < (gMaxPendingOverride ? gMaxPendingOverride : IPERF2_MAX_PENDING_TX)) {
@@ -799,7 +926,9 @@ static void Iperf2TaskMain(void* arg) {
     for (;;) {
         Iperf2_Tasks();
         bool active = (gCtx.mode == IPERF2_MODE_TCP_CLIENT) ||
-                      (gCtx.mode == IPERF2_MODE_UDP_CLIENT);
+                      (gCtx.mode == IPERF2_MODE_UDP_CLIENT) ||
+                      (gCtx.mode == IPERF2_MODE_TX_BLAST &&
+                       gCtx.data_sock >= 0);  // accepted, blasting
         ulTaskNotifyTake(pdTRUE,
                          pdMS_TO_TICKS(active ? IPERF2_ACTIVE_DELAY_MS : 50U));
     }
@@ -836,12 +965,14 @@ void Iperf2_Tasks(void) {
         FinalizeStats();
         CloseAll();
         ResetContext();
+        MaybeAutoReset();
         return;
     }
 
     switch (gCtx.mode) {
         case IPERF2_MODE_TCP_CLIENT: TasksTcpClient(); break;
         case IPERF2_MODE_UDP_CLIENT: TasksUdpClient(); break;
+        case IPERF2_MODE_TX_BLAST:  TasksTxBlast();   break;
         default: break;  // IDLE / *_SERVER are pure callback-driven
     }
 }
