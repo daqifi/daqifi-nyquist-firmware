@@ -3233,10 +3233,19 @@ static void EmitAinChannelJson(scpi_t* context,
         resolutionBits = 18;
     }
 
-    /* Range at the terminal is bipolar ±(span/2) for NON-RSE
-     * wiring. Clients that need exact raw→volts use
-     * calibration.slope + calibration.intercept. */
-    double rangeHalf = moduleRangeSpan / 2.0;
+    /* Terminal range depends on ADC type:
+     *   - MC12b (NQ1): single-ended unipolar input, 0..span
+     *   - AD7609 (NQ2/NQ3): true-differential bipolar input, ±(span/2)
+     * Clients that need exact raw→volts use calibration.slope +
+     * calibration.intercept regardless. */
+    double rangeMin, rangeMax;
+    if (ch->Type == AIn_MC12bADC) {
+        rangeMin = 0.0;
+        rangeMax = moduleRangeSpan;
+    } else {
+        rangeMin = -moduleRangeSpan / 2.0;
+        rangeMax =  moduleRangeSpan / 2.0;
+    }
 
     scpi_printf(context,
         "{\"id\":%u,\"kind\":\"analog-input\","
@@ -3252,7 +3261,7 @@ static void EmitAinChannelJson(scpi_t* context,
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],",
         simultaneous      ? "true" : "false",
         allowDifferential ? "true" : "false",
-        -rangeHalf, rangeHalf);
+        rangeMin, rangeMax);
 
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
