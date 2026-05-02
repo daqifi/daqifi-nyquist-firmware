@@ -928,6 +928,36 @@ All DMA buffers (SD write, USB write, WiFi SPI staging) are auto-balanced from t
 - Respect board variant differences in runtime checks
 - Protocol buffer definitions in `services/DaqifiPB/DaqifiOutMessage.proto`
 
+### Debugging discipline
+
+Hardware debugging produces confident-sounding writeups that don't survive a "how do you know that?" question unless every claim is tagged with its epistemic source. Mixing levels of evidence is how we get wedged on the wrong root cause.
+
+**Tag every load-bearing claim:**
+
+| Tag | Meaning | Example |
+|---|---|---|
+| **V** | Verified from primary source — vendor code, datasheet, errata. Cite file:line or doc number. | `m2m_hif.c:115 short-circuits hif_chip_wake when u8HifRXDone==1` |
+| **E** | Empirical from a test we ran. Cite the test output + date. | `Variant C produced Bytes=0 across 4/4 trials, /tmp/iperf_simple.out 2026-05-01` |
+| **I** | Inference / hypothesis linking V and E. *Mark explicitly. Always offer the experiment that would close the gap.* | `the V mechanism is plausibly the cause of the E symptom — confirm by instrumenting u8ChipSleep` |
+| **X** | External authority — Microchip docs, errata, forum threads, third-party writeups. Cite URL or doc number. | `DS80000663 erratum #5 documents this PMD behavior` |
+| **N** | Our own prior notes — code comments we authored, memory files, PR descriptions. **Not external authority.** | `the line-588 comment in iperf2.c (we wrote it in PR #393)` |
+
+**Rules:**
+
+1. **Verify before assuming.** When the user asks for a test, the first action is to confirm device state (firmware version, association, NVM) — don't assume it's the same as last session. Flashing wipes NVM. APs change state. Last week's measurement is historical.
+2. **Don't say "known [hazard / bug / behavior]" without an X-class citation.** Use "observed" or "hypothesized" instead.
+3. **Don't cite a code comment we authored as evidence for the claim that comment makes.** That's circular — the comment was someone's prior I or E, not independent confirmation.
+4. **V + E + plausibility ≠ proof.** When the mechanism (V) and the symptom (E) match by inference (I), say so explicitly and state the experiment that would close the gap. Three Is do not equal a V.
+5. **Single-trial empirical results are E, not V.** Two independent reproductions are stronger E. Still not V.
+6. **A/B tests must keep the firmware build, AP, and time window adjacent.** Comparing today's measurement to a number from a different firmware build, different AP state, or three weeks ago is a different test, not a comparison. Re-measure the baseline on the same firmware in the same session.
+7. **Don't extrapolate test methodology that produced the wrong answer.** If a measurement tool was wrong (e.g., #371 silent-loss accounting bug, USB CDC slow-reader), pre-fix numbers from that tool are not "the baseline minus a bug" — they are unreliable, full stop. Re-measure with the fixed tool.
+
+**Before posting a debug summary or PR description, scan it and label each load-bearing claim. If anything labeled I is load-bearing for a decision, either upgrade to V/E/X or downgrade the conclusion.**
+
+If the user pushes back with "is this verified?" the honest answer is to enumerate which parts are V/E/I/X/N — not to defend the conclusion as a whole.
+
+See user-memory `feedback_debugging_discipline.md` for the originating incident and the personal version of this rule.
+
 ### DAC7718 Integration (NQ3 Board)
 
 The NQ3 board variant includes a DAC7718 8-channel 12-bit DAC for analog output functionality:
