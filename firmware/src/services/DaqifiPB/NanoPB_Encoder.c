@@ -17,7 +17,6 @@
 #include "HAL/TimerApi/TimerApi.h"
 #include "state/board/BoardConfig.h"
 #include "HAL/DIO.h"
-#include "services/Capabilities.h"
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
 #endif // min
@@ -320,18 +319,6 @@ static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
                 len += sizeof (out->device_sn);
                 break;
 
-            case DaqifiOutMessage_cap_version_tag:
-            case DaqifiOutMessage_cap_max_freq_hz_tag:
-            case DaqifiOutMessage_cap_isr_max_hz_tag:
-            case DaqifiOutMessage_cap_type1_agg_hz_tag:
-            case DaqifiOutMessage_cap_tick_budget_tag:
-            case DaqifiOutMessage_cap_tick_overhead_tag:
-                /* Worst-case varint + 2-byte tag (field numbers 70–75
-                 * are > 15 so PB_TAG2_SIZE applies). sizeof(uint32_t)
-                 * would under-estimate by ~3 bytes per field. */
-                len += PB_VARINT32_MAX + PB_TAG2_SIZE;
-                break;
-
             default:
                 // Skip unknown fields
                 break;
@@ -389,13 +376,6 @@ size_t Nanopb_Encode(tBoardData* state,
         LOG_E("NanoPB: NULL buffer");
         return 0;
     }
-
-    /* Streaming cap summary is the same for every cap_* tag in this
-     * field list — lazy-init once here instead of re-walking the
-     * channel config on each case-block hit. */
-    CapabilitiesStreamingSummary capStream;
-    bool capStreamCached = false;
-
 
     for (i = 0; i < fields->Size; i++) {
         switch (fields->Data[i]) {
@@ -1068,49 +1048,6 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             case DaqifiOutMessage_device_sn_tag:
                 message.device_sn = pBoardConfig->boardSerialNumber;
-                break;
-            case DaqifiOutMessage_cap_version_tag:
-                message.cap_version = DAQIFI_CAPABILITIES_VERSION;
-                break;
-            /* Each cap_* tag must set only its own message field.
-             * The length pre-calc upstream adds varint space per-tag;
-             * setting additional fields here makes them non-zero and
-             * proto3 encodes them, which would overflow the buffer
-             * sized for only the tags the caller requested. */
-            case DaqifiOutMessage_cap_max_freq_hz_tag:
-                if (!capStreamCached) {
-                    Capabilities_GetStreamingSummary(&capStream);
-                    capStreamCached = true;
-                }
-                message.cap_max_freq_hz = capStream.maxFreqHz;
-                break;
-            case DaqifiOutMessage_cap_isr_max_hz_tag:
-                if (!capStreamCached) {
-                    Capabilities_GetStreamingSummary(&capStream);
-                    capStreamCached = true;
-                }
-                message.cap_isr_max_hz = capStream.isrMaxHz;
-                break;
-            case DaqifiOutMessage_cap_type1_agg_hz_tag:
-                if (!capStreamCached) {
-                    Capabilities_GetStreamingSummary(&capStream);
-                    capStreamCached = true;
-                }
-                message.cap_type1_agg_hz = capStream.type1AggMaxHz;
-                break;
-            case DaqifiOutMessage_cap_tick_budget_tag:
-                if (!capStreamCached) {
-                    Capabilities_GetStreamingSummary(&capStream);
-                    capStreamCached = true;
-                }
-                message.cap_tick_budget = capStream.tickBudget;
-                break;
-            case DaqifiOutMessage_cap_tick_overhead_tag:
-                if (!capStreamCached) {
-                    Capabilities_GetStreamingSummary(&capStream);
-                    capStreamCached = true;
-                }
-                message.cap_tick_overhead = capStream.tickOverhead;
                 break;
             default:
                 // Skip unknown fields

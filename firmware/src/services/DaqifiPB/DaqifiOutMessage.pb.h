@@ -125,15 +125,6 @@ typedef struct _DaqifiOutMessage { /* Put repetitive information in first 15 fie
     char device_hw_rev[16]; /* Device hardware revision */
     char device_fw_rev[16]; /* Device firmware revision */
     uint64_t device_sn; /* Device serial number */
-    /* Capability framework (#327) — streaming cap metadata emitted
-     * alongside device identity so a PB-only client can dispatch
-     * without issuing a parallel SCPI query. */
-    uint32_t cap_version;       /* DAQIFI_CAPABILITIES_VERSION */
-    uint32_t cap_max_freq_hz;   /* current-config streaming cap */
-    uint32_t cap_isr_max_hz;    /* formula constant */
-    uint32_t cap_type1_agg_hz;  /* formula constant */
-    uint32_t cap_tick_budget;   /* formula constant */
-    uint32_t cap_tick_overhead; /* formula constant */
 } DaqifiOutMessage;
 
 
@@ -211,12 +202,6 @@ extern "C" {
 #define DaqifiOutMessage_device_hw_rev_tag       67
 #define DaqifiOutMessage_device_fw_rev_tag       68
 #define DaqifiOutMessage_device_sn_tag           69
-#define DaqifiOutMessage_cap_version_tag         70
-#define DaqifiOutMessage_cap_max_freq_hz_tag     71
-#define DaqifiOutMessage_cap_isr_max_hz_tag      72
-#define DaqifiOutMessage_cap_type1_agg_hz_tag    73
-#define DaqifiOutMessage_cap_tick_budget_tag     74
-#define DaqifiOutMessage_cap_tick_overhead_tag   75
 
 /* Struct field encoding specification for nanopb */
 #define DaqifiOutMessage_FIELDLIST(X, a) \
@@ -284,13 +269,7 @@ X(a, STATIC,   REPEATED, UINT32,   av_wifi_inf_mode,  65) \
 X(a, STATIC,   SINGULAR, STRING,   device_pn,        66) \
 X(a, STATIC,   SINGULAR, STRING,   device_hw_rev,    67) \
 X(a, STATIC,   SINGULAR, STRING,   device_fw_rev,    68) \
-X(a, STATIC,   SINGULAR, UINT64,   device_sn,        69) \
-X(a, STATIC,   SINGULAR, UINT32,   cap_version,      70) \
-X(a, STATIC,   SINGULAR, UINT32,   cap_max_freq_hz,  71) \
-X(a, STATIC,   SINGULAR, UINT32,   cap_isr_max_hz,   72) \
-X(a, STATIC,   SINGULAR, UINT32,   cap_type1_agg_hz, 73) \
-X(a, STATIC,   SINGULAR, UINT32,   cap_tick_budget,  74) \
-X(a, STATIC,   SINGULAR, UINT32,   cap_tick_overhead, 75)
+X(a, STATIC,   SINGULAR, UINT64,   device_sn,        69)
 #define DaqifiOutMessage_CALLBACK NULL
 #define DaqifiOutMessage_DEFAULT NULL
 
