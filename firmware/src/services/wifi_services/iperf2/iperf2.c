@@ -25,18 +25,39 @@
 #define IPERF2_MAX_DURATION_S   3600U   // 1h cap
 #define IPERF2_MAX_PENDING_TX   4U      // matches WINC HIF queue depth (mirrors wifi_tcp_server)
 
-// Runtime override of MAX_PENDING_TX (0 = use compile-time default).  Lets
-// us deliberately back off WINC HIF saturation as a workaround for #399 —
-// the CONN_ABORTED cascade may be triggered by hammering WINC at peak.  N=3
-// → ~75% rate; N=2 → ~50%.  Set via SYST:WIFI:IPERF:MAXPending.
+// DORMANT debug knob — gMaxPendingOverride defaults to 0 (use compile-time
+// IPERF2_MAX_PENDING_TX = 4).  Set via SYST:WIFI:IPERF:MAXPending 0..4 to
+// throttle the WINC HIF queue at runtime (N=3 ≈ 75% rate, N=2 ≈ 50%).
+//
+// Tested 2026-04-30 / 2026-05-01 against the #399 sustained-rate decay
+// hypothesis: hypothesis was that hammering WINC HIF at peak triggers the
+// CONN_ABORTED cascade, so backing off should improve stability.  Empirical
+// verdict (commit 85adddfd): didn't help.  Throttle is functional (verified
+// via getter and observed rate reduction) but did not reduce wedging or
+// improve sustained throughput.
+//
+// Kept available because the knob is benign (affects only iperf2's own send
+// loop) and re-enables the experiment cheaply if a future investigation
+// wants to revisit at a different SPI clock, AP, or workload.
 static volatile uint8_t gMaxPendingOverride = 0;
 
-// #399 workaround: auto-HRESet WiFi after every iperf2 session.  The bug
-// fires whenever WINC creates new TCP-state objects per session (proven
-// via TXBlast + iperf2 client both degrading multi-session).  Streaming
-// avoids it because its listen socket is created once at boot.  HRESet
-// is the only known reliable recovery — costs ~12 s WiFi reassoc per
-// session.  Default ON for iperf2 (debug tool); SCPI toggle to disable.
+// ACTIVE BY DEFAULT — auto-HRESet WiFi after every iperf2 session.
+// Toggle via SYST:WIFI:IPERF:AUTOReset 0|1.
+//
+// Why on by default: iperf2 is a debug tool, and across multiple
+// sessions WINC accumulates TCP-state per new socket (E: observed
+// 2026-04-30 multi-session sustained-rate decay matches per-session
+// socket creation pattern; see project_399_*).  HRESet is the only
+// known reliable recovery (E: tested 2026-04-30 / 2026-05-01).
+// Streaming avoids the symptom because its listen socket is created
+// once at boot.
+//
+// Cost: ~12 s WiFi reassociation per session.  Set AUTOReset 0 if you
+// need back-to-back fast trials where reassoc overhead dominates
+// measurement.  E: 2026-05-02 5×60s iperf2 + 5×TXBlast alternating
+// battery with default AUTOReset=1 produced 0 wedges across 10 trials,
+// median 354 KBps iperf2 / 346 KBps TXBlast — auto-HRESet between
+// trials is what kept WINC clean.
 static volatile bool gAutoResetOnStop = true;
 #define IPERF2_FIN_RETRANSMITS  10U     // iperf2 protocol: 10× retransmit of last UDP pkt
 
