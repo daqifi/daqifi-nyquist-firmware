@@ -10,6 +10,7 @@
 #include "wifi_serial_bridge_interface.h"
 #include "iperf2/iperf2.h"
 #include "driver/winc/include/dev/wdrv_winc_gpio.h"
+#include "driver/winc/include/drv/common/nm_common.h"  // nm_reset (canonical WINC reset pulse)
 #include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
 
@@ -463,15 +464,26 @@ static uint8_t __attribute__((unused)) GetEventFlagStatus(wifi_manager_stateFlag
  * leaves the module in reset state by asserting reset but never deasserting it.
  */
 static void wifi_manager_FixWincResetState(void) {
-    // The WINC driver's deinit leaves the module with:
-    // - CHIP_EN deasserted (low)
-    // - RESET_N asserted (low) 
-    // This leaves the module in permanent reset. We need to take it out of reset
-    // so it can be re-initialized later.
-    
-    // Assert chip enable and deassert reset to take module out of reset state
-    WDRV_WINC_GPIOChipEnableAssert();
-    WDRV_WINC_GPIOResetDeassert();
+    // Run Microchip's canonical WINC1500 power-cycle pulse (nm_reset, in
+    // drv/common/nm_common.c).  Sequence + timing:
+    //
+    //   CHIP_EN low + RESET_N low   (held in full reset)
+    //   sleep 100 ms
+    //   CHIP_EN high                (power on)
+    //   sleep 10 ms                 (rail settle)
+    //   RESET_N high                (release from reset; chip starts boot)
+    //   sleep 10 ms                 (boot before next SPI access)
+    //
+    // Earlier this function only did a half-reset — Assert(CHIP_EN) +
+    // Deassert(RESET_N) — which left the chip "powered but undefined"
+    // between Deinit and the next Init.  Across multiple POW:STAT or
+    // HRESet cycles, the chip would accumulate stuck state that no
+    // amount of partial GPIO toggling could recover (#400 multi-cycle
+    // wedge).  The full nm_reset pulse is what Microchip's own driver
+    // (nmbus.c:66, nm_common.c:56) uses internally and what their
+    // wdrv_winc.c Deinit ends with — aligning ours fixes the
+    // unrecoverable-soft-wedge class.
+    nm_reset();
 }
 
 static void __attribute__((unused)) ResetAllEventFlags(wifi_manager_stateFlag_t *pEventFlagState) {
