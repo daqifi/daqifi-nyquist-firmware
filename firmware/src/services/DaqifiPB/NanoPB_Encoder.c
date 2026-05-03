@@ -377,7 +377,6 @@ size_t Nanopb_Encode(tBoardData* state,
         return 0;
     }
 
-
     for (i = 0; i < fields->Size; i++) {
         switch (fields->Data[i]) {
             case DaqifiOutMessage_msg_time_stamp_tag:

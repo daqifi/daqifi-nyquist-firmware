@@ -40,6 +40,7 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
 #include "../csv_encoder.h"
@@ -2291,41 +2292,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // timer running frequency
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
 
-    //int i;
     uint16_t activeType1ChannelCount = 0;
     uint16_t totalEnabledPublicChannels = 0;
-    bool hasActiveAD7609Channels __attribute__((unused)) = false;
-    int i;
-    bool hasEnabledChannels = false;
-
-    // Count active PUBLIC ADC channels and detect AD7609 usage
-    // Internal monitoring channels (IsPublic=false) don't count as user channels
-    // Use minimum of both array sizes to prevent out-of-bounds access
-    size_t adcCount = pBoardConfigADC->Size < pRuntimeAInChannels->Size ?
-                      pBoardConfigADC->Size : pRuntimeAInChannels->Size;
-    for (i = 0; i < (int)adcCount; i++) {
-        if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            // Check IsPublic based on channel type (it's in the union)
-            bool isPublic = false;
-            if (pBoardConfigADC->Data[i].Type == AIn_AD7609) {
-                isPublic = pBoardConfigADC->Data[i].Config.AD7609.IsPublic;
-                if (isPublic) {
-                    hasEnabledChannels = true;
-                    hasActiveAD7609Channels = true;
-                    totalEnabledPublicChannels++;
-                }
-            } else if (pBoardConfigADC->Data[i].Type == AIn_MC12bADC) {
-                isPublic = pBoardConfigADC->Data[i].Config.MC12b.IsPublic;
-                if (isPublic) {
-                    hasEnabledChannels = true;
-                    totalEnabledPublicChannels++;
-                    if (pBoardConfigADC->Data[i].Config.MC12b.ChannelType == 1) {
-                        activeType1ChannelCount++;
-                    }
-                }
-            }
-        }
-    }
+    bool hasActiveAD7609Channels = false;
+    Streaming_CountActiveChannels(&activeType1ChannelCount,
+                                  &totalEnabledPublicChannels,
+                                  &hasActiveAD7609Channels);
+    bool hasEnabledChannels = (totalEnabledPublicChannels > 0);
 
     // Build channel mapping for compact sample pool (#177).
     // Must happen before pool partitioning (needs channel count for element sizing).
@@ -2702,6 +2675,7 @@ static scpi_result_t SCPI_IsStreaming(scpi_t * context) {
     SCPI_ResultInt32(context, (int) pRunTimeStreamConfig->IsEnabled);
     return SCPI_RES_OK;
 }
+
 
 static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
     int param1;
@@ -3470,6 +3444,440 @@ static scpi_result_t SCPI_WincGateQ(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/*
+ * CONFigure:CAPabilities:APIVersion?
+ * Returns the capability schema version byte so clients can dispatch
+ * to the right parser before issuing any other capability query. See
+ * Capabilities.h (DAQIFI_CAPABILITIES_VERSION) and issue #327.
+ */
+static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
+    SCPI_ResultUInt32(context, (uint32_t)DAQIFI_CAPABILITIES_VERSION);
+    return SCPI_RES_OK;
+}
+
+/* -------- CONFigure:CAPabilities:JSON? emitter helpers -----------
+ * Each helper emits one channel object with the schema shape
+ *   { "id", "kind", "signal_type", ... }
+ * Kept file-scope (not in Capabilities.c) because they're coupled
+ * to the libscpi transport via scpi_printf. */
+
+/* Design principle (see #327): emit client-actionable facts only.
+ * No IC names, no module internals, no formula constants — just
+ * "what can the client DO with this channel/pin/transport?" An
+ * "extensions":{} escape hatch on each object reserves space for
+ * vendor-specific or future fields that older clients MUST ignore.
+ *
+ * Chunked to stay under the 192-byte scpi_printf buffer per call. */
+
+static void EmitAinChannelJson(scpi_t* context,
+                               const AInChannel* ch,
+                               const AInRuntimeConfig* rt,
+                               double moduleRangeSpan) {
+    uint8_t id = ch->DaqifiAdcChannelId;
+    bool    isTemperature     = false;
+    bool    allowDifferential = false;
+    bool    simultaneous      = false;   /* true = dedicated ADC, zero inter-channel skew */
+    uint8_t resolutionBits    = 12;
+
+    if (ch->Type == AIn_MC12bADC) {
+        isTemperature     = ch->Config.MC12b.IsTemperatureSensor;
+        allowDifferential = ch->Config.MC12b.AllowDifferential;
+        simultaneous      = (ch->Config.MC12b.ChannelType == 1);
+        resolutionBits    = 12;
+    } else if (ch->Type == AIn_AD7609) {
+        simultaneous   = true;   /* AD7609 converts all 8 channels together */
+        resolutionBits = 18;
+    }
+
+    /* Terminal range depends on ADC type:
+     *   - MC12b (NQ1): single-ended unipolar input, 0..span
+     *   - AD7609 (NQ2/NQ3): true-differential bipolar input, ±(span/2)
+     * Clients that need exact raw→volts use calibration.slope +
+     * calibration.intercept regardless. */
+    double rangeMin, rangeMax;
+    if (ch->Type == AIn_MC12bADC) {
+        rangeMin = 0.0;
+        rangeMax = moduleRangeSpan;
+    } else {
+        rangeMin = -moduleRangeSpan / 2.0;
+        rangeMax =  moduleRangeSpan / 2.0;
+    }
+
+    scpi_printf(context,
+        "{\"id\":%u,\"kind\":\"analog-input\","
+        "\"signal_type\":\"%s\",\"unit\":\"%s\","
+        "\"resolution_bits\":%u,",
+        (unsigned)id,
+        isTemperature ? "temperature" : "voltage",
+        isTemperature ? "Cel"         : "V",
+        (unsigned)resolutionBits);
+
+    scpi_printf(context,
+        "\"simultaneous\":%s,\"differential\":%s,"
+        "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],",
+        simultaneous      ? "true" : "false",
+        allowDifferential ? "true" : "false",
+        rangeMin, rangeMax);
+
+    scpi_printf(context,
+        "\"calibration\":{\"model\":\"linear\","
+        "\"user_override_supported\":true,"
+        "\"slope\":%.6f,\"intercept\":%.6f},"
+        "\"extensions\":{}}",
+        rt->CalM, rt->CalB);
+}
+
+static void EmitAoutChannelJson(scpi_t* context,
+                                const AOutChannel* ch,
+                                const CapabilitiesAoutSummary* ao) {
+    scpi_printf(context,
+        "{\"id\":%u,\"kind\":\"analog-output\","
+        "\"signal_type\":\"voltage\",\"unit\":\"V\","
+        "\"resolution_bits\":%u,",
+        (unsigned)ch->DaqifiDacChannelId,
+        (unsigned)ao->resolutionBits);
+
+    scpi_printf(context,
+        "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],"
+        "\"calibration\":{\"model\":\"linear\","
+        "\"user_override_supported\":true},"
+        "\"extensions\":{}}",
+        ao->moduleMinVoltage, ao->moduleMaxVoltage);
+}
+
+static void EmitDioChannelJson(scpi_t* context,
+                               const DIOConfig* dio,
+                               uint8_t channelIndex) {
+    /* features{} only contains keys for features the pin actually
+     * supports. Absent key = unavailable. Forward-compat:
+     *   - new feature kinds (spi, uart, i2c, counter, trigger, …)
+     *     just add a new key here and clients that know the key
+     *     pick it up; older clients ignore it.
+     *   - richer settings for existing features (e.g. PWM dead-time)
+     *     go under the feature's own object.
+     * "extensions":{} is the catch-all for vendor-specific keys. */
+    scpi_printf(context,
+        "{\"id\":%u,\"kind\":\"digital-io\","
+        "\"features\":{\"input\":true,\"output\":true%s",
+        (unsigned)channelIndex,
+        dio->IsPwmCapable ? "," : "},\"extensions\":{}}");
+
+    if (dio->IsPwmCapable) {
+        /* PWM freq/res reflect OCMP HAL support
+         * (HAL/DIO.c:DIO_PWMFrequencySet, 16-bit OCMP timer). */
+        scpi_printf(context,
+            "\"pwm\":{\"min_freq_hz\":1,\"max_freq_hz\":50000,"
+            "\"resolution_bits\":16}},\"extensions\":{}}");
+    }
+}
+
+/*
+ * CONFigure:CAPabilities:JSON?
+ * Emits the unified V1 capability schema (see #327 and
+ * Capabilities.h) for the current board. Includes identity,
+ * per-channel capabilities, streaming, storage, power, transports,
+ * and triggers blocks — enough that a client can render its UI
+ * from the single query without hard-coding board variants.
+ *
+ * The schema version byte is DAQIFI_CAPABILITIES_VERSION; bump it
+ * in Capabilities.h on breaking changes (see history comment
+ * there for the evolution rules).
+ *
+ * Emission uses scpi_printf in chunks — each call writes directly
+ * to the libscpi transport via interface->write. The 192-byte
+ * per-call buffer is never exceeded because the helpers above
+ * split each channel object across multiple calls.
+ *
+ * INVARIANT: boardFirmwareRev and boardHardwareRev come from
+ * FIRMWARE_REVISION / HARDWARE_REVISION macros in version.h and
+ * are version strings like "3.4.6b1" — no characters that need
+ * JSON escaping (no `"`, `\`, or control chars). If a future
+ * revision scheme introduces such characters, add a small JSON
+ * string escaper before embedding these fields.
+ */
+static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
+    const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    const tBoardRuntimeConfig* rt =
+        (const tBoardRuntimeConfig*)BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_ALL_CONFIG);
+
+    CapabilitiesAinSummary        ai;
+    CapabilitiesAoutSummary       ao;
+    CapabilitiesDioSummary        di;
+    CapabilitiesStreamingSummary  st;
+    CapabilitiesStorageSummary    stor;
+    CapabilitiesPowerSummary      pw;
+    CapabilitiesTransportsSummary tr;
+    Capabilities_GetAinSummary(&ai);
+    Capabilities_GetAoutSummary(&ao);
+    Capabilities_GetDioSummary(&di);
+    Capabilities_GetStreamingSummary(&st);
+    Capabilities_GetStorageSummary(&stor);
+    Capabilities_GetPowerSummary(&pw);
+    Capabilities_GetTransportsSummary(&tr);
+
+    const char* variantName =
+        (cfg->BoardVariant == 1) ? "NQ1" :
+        (cfg->BoardVariant == 2) ? "NQ2" :
+        (cfg->BoardVariant == 3) ? "NQ3" : "UNK";
+
+    /* Each scpi_printf call is capped at 192 bytes by the helper's
+     * internal buffer (see SCPIInterface.h). Chunks below are kept
+     * well under that so there's headroom for longer firmware_rev
+     * strings, larger variant codes, etc. */
+
+    /* ---- Schema header + extensions escape hatch ----
+     * "extensions":{} is a reserved object at every level clients
+     * parse. Older clients MUST ignore unknown keys inside it; new
+     * keys can be added without bumping schema_version. Breaking
+     * changes (renames, removals, retypes) still require a
+     * schema_version bump. */
+    scpi_printf(context,
+        "{\"schema_version\":%u,"
+        "\"schema_uri\":\"https://daqifi.com/schemas/capability/v1\","
+        "\"extensions\":{},",
+        (unsigned)DAQIFI_CAPABILITIES_VERSION);
+
+    /* ---- identity ----
+     * Vendor/model/variant strings identify the product. USB VID/PID
+     * live here (not transports) because they're device-identity
+     * information the host uses for enumeration / driver matching,
+     * not a configurable transport setting. */
+    scpi_printf(context,
+        "\"identity\":{\"vendor\":\"DAQiFi\",\"model\":\"Nyquist\","
+        "\"variant\":\"%s\",",
+        variantName);
+
+    scpi_printf(context,
+        "\"serial\":\"%llX\","
+        "\"firmware_rev\":\"%s\",\"hardware_rev\":\"%s\",",
+        (unsigned long long)cfg->boardSerialNumber,
+        cfg->boardFirmwareRev,
+        cfg->boardHardwareRev);
+
+    scpi_printf(context,
+        "\"usb\":{\"vid\":%u,\"pid\":%u,\"class\":\"CDC\"}},",
+        (unsigned)0x04D8,   /* Microchip VID (matches usb_device_init_data) */
+        (unsigned)0xF794);  /* DAQiFi Nyquist PID */
+
+    /* ---- channels[] array (flat, kind-grouped) ----
+     * Order: all analog-input first (sorted by DaqifiAdcChannelId
+     * via board-config array order), then analog-output (by
+     * DaqifiDacChannelId), then digital-io (by index). See
+     * plan doc for the grouping contract. */
+    scpi_printf(context, "\"channels\":[");
+    bool firstEntry = true;
+
+    /* AIn — public only. Bound the loop by the smaller of the
+     * two arrays so a runtime-config shape mismatch can't walk
+     * past the end of rt->AInChannels.Data[]. In practice both
+     * arrays have MAX_AIN_CHANNEL (48) capacity and matching Size,
+     * but defending the read is cheap. */
+    uint32_t ainLoopCount = (cfg->AInChannels.Size < rt->AInChannels.Size)
+        ? cfg->AInChannels.Size : rt->AInChannels.Size;
+    for (uint32_t i = 0; i < ainLoopCount; i++) {
+        const AInChannel* ch = &cfg->AInChannels.Data[i];
+        bool isPublic =
+            (ch->Type == AIn_MC12bADC && ch->Config.MC12b.IsPublic) ||
+            (ch->Type == AIn_AD7609   && ch->Config.AD7609.IsPublic);
+        if (!isPublic) continue;
+
+        /* Module range feeds per-channel range emission. MC12b
+         * channels belong to the single MC12b module (index 0 by
+         * board-config convention); AD7609 is a separate module. */
+        uint32_t modIdx = 0;
+        for (uint32_t m = 0; m < cfg->AInModules.Size; m++) {
+            if ((cfg->AInModules.Data[m].Type == ch->Type)) {
+                modIdx = m;
+                break;
+            }
+        }
+        double moduleRange = (modIdx < rt->AInModules.Size)
+            ? rt->AInModules.Data[modIdx].Range : 0.0;
+
+        if (!firstEntry) scpi_printf(context, ",");
+        firstEntry = false;
+
+        const AInRuntimeConfig* rc = &rt->AInChannels.Data[i];
+        EmitAinChannelJson(context, ch, rc, moduleRange);
+    }
+
+    /* AOut — always emitted, just empty on boards without a DAC */
+    for (uint32_t i = 0; i < cfg->AOutChannels.Size; i++) {
+        if (!firstEntry) scpi_printf(context, ",");
+        firstEntry = false;
+        EmitAoutChannelJson(context, &cfg->AOutChannels.Data[i], &ao);
+    }
+
+    /* DIO — emitted in board-config array order, which equals
+     * user-facing channel number by the DIOConfig invariant
+     * documented in Capabilities.c. */
+    for (uint32_t i = 0; i < cfg->DIOChannels.Size; i++) {
+        if (!firstEntry) scpi_printf(context, ",");
+        firstEntry = false;
+        EmitDioChannelJson(context, &cfg->DIOChannels.Data[i], (uint8_t)i);
+    }
+
+    scpi_printf(context, "],");
+
+    /* ---- streaming ----
+     * Client-actionable facts: what encodings, which transports,
+     * what sample rates, and — importantly — a predictive rate_model
+     * so a client UI can preview "if the user enables this set of
+     * channels, the max rate will be X Hz" without round-tripping
+     * for every checkbox change. */
+    scpi_printf(context,
+        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
+        "\"transports\":[");
+    {
+        bool first = true;
+        if (tr.usbSupported)  { scpi_printf(context, "\"usb\"");                     first = false; }
+        if (tr.wifiSupported) { scpi_printf(context, first ? "\"wifi\"" : ",\"wifi\""); first = false; }
+        if (stor.sdSupported) { scpi_printf(context, first ? "\"sd\""   : ",\"sd\"");                 }
+    }
+
+    /* Three rate tiers, each a different contract (see issue #344):
+     *
+     * - sample_rate_range_hz.max: the absolute ISR ceiling — hardware
+     *   envelope, never achievable under real load.
+     *
+     * - conservative_envelope_hz: rate guaranteed zero-drop regardless
+     *   of how the client configures channels / interface / encoder /
+     *   DIO / OBDiag. Measured via the worst-case test in #344. A
+     *   client that always picks this rate is never surprised.
+     *
+     * - current_max_rate_hz: device's authoritative cap for the
+     *   channel set enabled right now. Today only reflects channel
+     *   count/type; future work (#344 Phase 3) extends it to apply
+     *   interface / encoder / DIO caps too.
+     *
+     * - rate_model: client-side formula for optimistic previews
+     *   across hypothetical channel groupings. Channel-count only —
+     *   real max for a committed configuration may be lower. Count
+     *   channels[] entries with kind=="analog-input" and
+     *   simultaneous==true to get simultaneous_count; count all
+     *   enabled kind=="analog-input" to get total_count. DIO / AOut
+     *   do not factor (DIO is amortized in per_tick_overhead; AOut
+     *   is not streamed).
+     *
+     * rate_validation documents over-ask handling. Today: silent_cap
+     * (firmware lowers to current_max_rate_hz, logs LOG_I). Clients
+     * needing explicit feedback MUST pre-validate against
+     * current_max_rate_hz before SYSTem:StartStreamData. */
+    scpi_printf(context,
+        "],\"sample_rate_range_hz\":{\"min\":1,\"max\":%u},"
+        "\"conservative_envelope_hz\":%u,"
+        "\"current_max_rate_hz\":%u,",
+        (unsigned)st.isrMaxHz,
+        (unsigned)cfg->CapabilitiesFlags.streamingConservativeEnvelopeHz,
+        (unsigned)st.maxFreqHz);
+
+    scpi_printf(context,
+        "\"rate_model\":{\"formula\":"
+        "\"min(absolute_max_hz,"
+        " type1_aggregate_max_hz/simultaneous_count,"
+        " per_tick_budget_hz/(per_tick_overhead+total_count))\",");
+
+    scpi_printf(context,
+        "\"absolute_max_hz\":%u,\"type1_aggregate_max_hz\":%u,"
+        "\"per_tick_budget_hz\":%u,\"per_tick_overhead\":%u},",
+        (unsigned)st.isrMaxHz,
+        (unsigned)st.type1AggMaxHz,
+        (unsigned)st.tickBudget,
+        (unsigned)st.tickOverhead);
+
+    scpi_printf(context, "\"rate_validation\":\"silent_cap\",");
+
+    scpi_printf(context,
+        "\"buffer_ranges_bytes\":{"
+        "\"usb\":{\"min\":2048,\"max\":65536,\"default\":16384},"
+        "\"wifi\":{\"min\":1400,\"max\":65536,\"default\":14000},");
+
+    scpi_printf(context,
+        "\"sd\":{\"min\":4096,\"max\":65536,\"default\":32768},"
+        "\"encoder\":{\"min\":1024,\"max\":65536,\"default\":8192},"
+        "\"sample_pool\":{\"min\":100,\"max\":2000,\"default\":1100}},");
+
+    scpi_printf(context,
+        "\"test_patterns\":[0,1,2,3,4,5,6],\"extensions\":{}},");
+
+    /* ---- storage ----
+     * Client cares about: can I write files, what filesystems do
+     * you support, and what's the max file size I can expect
+     * before the auto-split kicks in. */
+    scpi_printf(context,
+        "\"storage\":{\"sd_supported\":%s,"
+        "\"filesystems\":[\"FAT32\"],"
+        "\"max_file_size_bytes\":%llu,"
+        "\"extensions\":{}},",
+        stor.sdSupported ? "true" : "false",
+        (unsigned long long)SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE);
+
+    /* ---- power ----
+     * Client cares about: where does this device take power from,
+     * does it have a battery I should monitor, can it source 5V
+     * (OTG) to peripherals. Charger IC, IIN-limit rungs, and
+     * internal power-state enum values are firmware/datasheet
+     * facts, not client-actionable — dropped. */
+    scpi_printf(context, "\"power\":{\"sources\":[");
+    {
+        bool first = true;
+        if (tr.usbSupported)           { scpi_printf(context, "\"usb\"");                               first = false; }
+        if (pw.externalPowerSupported) { scpi_printf(context, first ? "\"external\"" : ",\"external\""); first = false; }
+        if (pw.batteryPresent)         { scpi_printf(context, first ? "\"battery\""  : ",\"battery\"");                }
+    }
+    scpi_printf(context,
+        "],\"battery_present\":%s,"
+        "\"external_power_supported\":%s,"
+        "\"otg_output_supported\":%s,"
+        "\"extensions\":{}},",
+        pw.batteryPresent ? "true" : "false",
+        pw.externalPowerSupported ? "true" : "false",
+        pw.otgSupported ? "true" : "false");
+
+    /* ---- transports ----
+     * Client-actionable facts per channel: what bands / security
+     * modes am I restricted to, what port do I connect my command
+     * stream on, what UDP port do I send discovery broadcasts to.
+     * Internal chipset names and USB class (in identity.usb) are
+     * not relevant here. */
+    scpi_printf(context,
+        "\"transports\":{"
+        "\"usb\":{\"supported\":%s,\"extensions\":{}},",
+        tr.usbSupported ? "true" : "false");
+
+    scpi_printf(context,
+        "\"wifi\":{\"supported\":%s,"
+        "\"bands\":[\"2.4GHz\"],"
+        "\"modes\":[\"sta\",\"ap\"],",
+        tr.wifiSupported ? "true" : "false");
+
+    scpi_printf(context,
+        "\"security\":[\"open\",\"wpa\",\"wpa2\"],"
+        "\"tcp_command_port\":%u,"
+        "\"udp_announce_port\":%u,"
+        "\"extensions\":{}},",
+        (unsigned)DEFAULT_TCP_PORT,
+        (unsigned)WIFI_MANAGER_UDP_LISTEN_PORT);
+
+    scpi_printf(context,
+        "\"ethernet\":{\"supported\":%s,\"extensions\":{}},"
+        "\"serial_debug\":{\"supported\":%s,\"baud\":921600,"
+        "\"extensions\":{}}},",
+        tr.ethernetSupported ? "true" : "false",
+        tr.serialDebugSupported ? "true" : "false");
+
+    /* ---- triggers (stub for V1; no HW trigger feature yet) ----
+     * When HW triggers ship, hardware_inputs[] fills with objects
+     * describing each input (pin, supported edges, debounce). */
+    scpi_printf(context,
+        "\"triggers\":{\"hardware_inputs\":[],\"software\":true,"
+        "\"extensions\":{}}}"
+        "\r\n");
+
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -3617,6 +4025,11 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:RANGe?", .callback = SCPI_ADCChanRangeGet,},
     {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_ADCChanEnableSet,},
     {.pattern = "CONFigure:ADC:CHANnel?", .callback = SCPI_ADCChanEnableGet,},
+    /* Capability framework — JSON? is the canonical source of truth.
+     * APIVersion? is a fast pre-parse compat probe. See
+     * Capabilities.h for the schema and evolution rules. */
+    {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
+    {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
     {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
     {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
     {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},

@@ -40,10 +40,16 @@ const tBoardConfig NQ1BoardConfig = {
     },
     .AInChannels =
     {
+        // Differential is disabled on every channel.  NQ1 board routing
+        // does not present a working differential path on this hardware
+        // revision (2.0.0); enabling the firmware flag would have the
+        // device advertise a capability it cannot deliver.  Re-enable
+        // per-channel after a future hardware revision validates
+        // differential measurement on the affected pins.
         .Data =
         {
             // Internal ADC
-            // Internal scale = (R1Ain+R2Ain)/(R2Ain) * ((R1+R2)/(R2)) 
+            // Internal scale = (R1Ain+R2Ain)/(R2Ain) * ((R1+R2)/(R2))
             // where RAin is the resistor divider for the 16 RAin channels
             // and R is the resistor divider for the internal channels
 
@@ -108,7 +114,7 @@ const tBoardConfig NQ1BoardConfig = {
                 .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH0, ADCHS_MODULE0_MASK, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1
+                    {false, ADCHS_CH0, ADCHS_MODULE0_MASK, 1, true, 1}} //Ch 0 using alternate pin AN45 - Type 1 (differential off, see top of AInChannels)
             },
             {
                 .DaqifiAdcChannelId = 9,
@@ -122,7 +128,7 @@ const tBoardConfig NQ1BoardConfig = {
                 .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH1, ADCHS_MODULE1_MASK, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1
+                    {false, ADCHS_CH1, ADCHS_MODULE1_MASK, 1, true, 1}} //Ch 1 using alternate pin AN46 - Type 1 (differential off, see top of AInChannels)
             },
             {
                 .DaqifiAdcChannelId = 11,
@@ -136,7 +142,7 @@ const tBoardConfig NQ1BoardConfig = {
                 .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH2, ADCHS_MODULE2_MASK, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1
+                    {false, ADCHS_CH2, ADCHS_MODULE2_MASK, 1, true, 1}} //Ch 2 using alternate pin AN47 - Type 1 (differential off, see top of AInChannels)
             },
             {
                 .DaqifiAdcChannelId = 13,
@@ -150,7 +156,7 @@ const tBoardConfig NQ1BoardConfig = {
                 .Type = AIn_MC12bADC,
                 .Config =
                 {.MC12b =
-                    {true, ADCHS_CH3, ADCHS_MODULE3_MASK, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1
+                    {false, ADCHS_CH3, ADCHS_MODULE3_MASK, 1, true, 1}} //Ch 3 using alternate pin AN48 - Type 1 (differential off, see top of AInChannels)
             },
             {
                 .DaqifiAdcChannelId = 15,
@@ -170,7 +176,12 @@ const tBoardConfig NQ1BoardConfig = {
     .StreamingConfig = COMMON_STREAMING_CONFIG,
     .csvChannelHeadersFirst = COMMON_CSV_CHANNEL_HEADERS_FIRST,
     .csvChannelHeadersSubsequent = COMMON_CSV_CHANNEL_HEADERS_SUBSEQUENT,
-    .DefaultVoltagePrecision = 4  // 12-bit ADC (MC12bADC): LSB = 1.22mV
+    .DefaultVoltagePrecision = 4,  // 12-bit ADC (MC12bADC): LSB = 1.22mV
+    /* Placeholder until the worst-case test in #344 runs. Based on
+     * Session 20/21 data, SD CSV at 16 public channels zero-drops
+     * at ~1 kHz; adding DIO streaming + OBDiag + concurrent USB is
+     * unmeasured — pick 500 Hz to leave headroom until measured. */
+    .CapabilitiesFlags = COMMON_CAPABILITIES_FLAGS(500)
 };
 
 /*! This function is used for getting a board configuration parameter

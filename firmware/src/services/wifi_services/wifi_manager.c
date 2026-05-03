@@ -14,7 +14,8 @@
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
 
 #define UNUSED(x) (void)(x)
-#define WIFI_MANAGER_UDP_LISTEN_PORT         (uint16_t)30303
+/* WIFI_MANAGER_UDP_LISTEN_PORT moved to wifi_manager.h so the
+ * capability rollup can reference it without duplication. */
 
 // Standard IPv4 address string length (xxx.xxx.xxx.xxx + null = 16)
 #ifndef INET_ADDRSTRLEN
