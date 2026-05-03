@@ -131,9 +131,14 @@ void Power_Init(
 
     // CRITICAL: Force 3.3V rail ON regardless of initial config
     // The microcontroller is running, so 3.3V must already be on
-    // This ensures it stays on during USB disconnect
-    PWR_3_3V_EN_OutputEnable();  // Set RH12 as output
-    PWR_3_3V_EN_Set();          // Drive 3.3V_EN high
+    // This ensures it stays on during USB disconnect.
+    //
+    // Order matters — RH12 must NEVER be driven LOW (see Power_Write
+    // for the full rationale). Set the latch HIGH first while the pin
+    // is still input (no pin change yet), THEN enable output, so the
+    // pin transitions HiZ → output-HIGH directly with no LOW glitch.
+    PWR_3_3V_EN_Set();           // LATH bit 12 = 1 (no pin change yet — still input)
+    PWR_3_3V_EN_OutputEnable();  // TRIS bit 12 = 0 (output, drives high)
     pWriteVariables->EN_3_3V_Val = true;
     
     // Initialize other power pins to their default states
@@ -185,19 +190,32 @@ void Power_Write(void) {
 
     // Check to see if we are changing the state of this power pin
     if (EN_3_3V_Val_Current != pWriteVariables->EN_3_3V_Val) {
-        
-        // CRITICAL: Only drive HIGH or set as INPUT (HiZ) - never drive LOW
-        // There's a pulldown resistor that will drop the line when in HiZ
+
+        // CRITICAL: Never drive RH12 LOW — even momentarily.
+        // RH12 (PWR_3_3V_EN) is held high externally by:
+        //   - USB power (forces EN high while VBUS present)
+        //   - Power-button press (pulses EN high)
+        //   - MCU output-high (firmware self-hold)
+        // and is pulled low by an external pulldown only when all three
+        // sources release. The MCU's only legal moves are output-HIGH or
+        // input (HiZ). A LOW pulse from the MCU could short an active
+        // external source and disturb the rail/latch.
+        //
+        // Subtle ordering: at cold boot LATH bit 12 = 0 (initial 0xa114).
+        // If we did OutputEnable first, the pin would transition HiZ →
+        // output-LOW for one instruction before _Set() drives it high —
+        // a brief but real LOW glitch on RH12. Set the latch HIGH FIRST
+        // (no-op while pin is still input), THEN enable output, so the
+        // pin transitions HiZ → output-HIGH directly.
         if (pWriteVariables->EN_3_3V_Val) {
-            // Set as OUTPUT and drive high to enable 3.3V
-            PWR_3_3V_EN_OutputEnable();
-            PWR_3_3V_EN_Set();
+            PWR_3_3V_EN_Set();           // LATH bit 12 = 1 (still input — no pin change yet)
+            PWR_3_3V_EN_OutputEnable();  // TRIS bit 12 = 0 (output, drives high)
         } else {
-            // Set as INPUT (HiZ) to disable - pulldown will handle the rest
-            // Never actively drive low to avoid conflicts
+            // Disable: HiZ. Pulldown drops the line if no other source
+            // (USB / button / MCU) is asserting it. Never drive low.
             PWR_3_3V_EN_InputEnable();
         }
-        
+
     }
 
     // Check to see if we are changing the state of these power pins
