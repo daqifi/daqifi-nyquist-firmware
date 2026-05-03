@@ -53,7 +53,8 @@ typedef enum {
     IPERF2_MODE_TCP_SERVER,
     IPERF2_MODE_TCP_CLIENT,
     IPERF2_MODE_UDP_SERVER,
-    IPERF2_MODE_UDP_CLIENT
+    IPERF2_MODE_UDP_CLIENT,
+    IPERF2_MODE_TX_BLAST       // listen+accept, blast TX for duration (#399 workaround)
 } Iperf2_Mode;
 
 typedef struct {
@@ -68,6 +69,22 @@ typedef struct {
     bool     active;
     bool     completed;
 } Iperf2_Stats;
+
+// Diagnostic snapshot for #399 investigation — visibility into WINC HIF
+// state across iperf2 sessions.  Populated by Iperf2_GetDiag().
+typedef struct {
+    Iperf2_Mode  mode;             // current mode
+    int16_t      data_sock;        // current/last data socket descriptor
+    int16_t      listen_sock;      // current/last listen socket descriptor
+    uint8_t      pending_tx;       // m2m_send calls not yet ACKed
+    bool         abort_pending;    // deferred-abort flag
+    uint64_t     bytes_confirmed;  // current/last session
+    int16_t      last_send_rc;     // most recent send() return value
+    uint8_t      send_err_count;   // sticky count of negative send rcs since last reset
+    uint8_t      winc_state;       // m2m_wifi_get_state()
+    uint8_t      free_tcp_sockets; // probed: socket()/shutdown() loop, max 7
+    uint8_t      free_udp_sockets; // probed: socket()/shutdown() loop, max 4
+} Iperf2_Diag;
 
 // Default iperf2 port (matches `iperf -s` default)
 #define IPERF2_DEFAULT_PORT  5001
@@ -107,6 +124,17 @@ bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
                            uint32_t duration_sec);
 
 /**
+ * TX-blast mode (#399 workaround for repeated throughput testing).
+ * Listen+accept on `port`, on first connection blast 1400-byte chunks
+ * for `duration_sec` then close.  Uses listen+accept (not connect)
+ * so it avoids WINC's outbound-TCP state bug — back-to-back sessions
+ * stay clean without HRESet between.  PC connects with any TCP client
+ * (e.g. `iperf -c <ip> -p <port>` or `nc <ip> <port> > /dev/null`)
+ * and measures bytes received as the device's TX throughput.
+ */
+bool Iperf2_StartTxBlast(uint16_t port, uint32_t duration_sec);
+
+/**
  * Cancel the in-flight iperf2 session (closes sockets, finalizes stats).
  */
 void Iperf2_Stop(void);
@@ -116,6 +144,32 @@ void Iperf2_Stop(void);
  * the most recent completed test until a new one starts.
  */
 void Iperf2_GetStats(Iperf2_Stats* out);
+
+/**
+ * Override IPERF2_MAX_PENDING_TX at runtime (1-4, or 0 for compile-time
+ * default).  Lower values throttle TX rate as a workaround for #399 — N=3
+ * yields ~75% of peak, N=2 ~50%.  Takes effect on the next iperf2 run.
+ */
+void Iperf2_SetMaxPending(uint8_t n);
+uint8_t Iperf2_GetMaxPending(void);
+
+/**
+ * Auto-HRESet on iperf2 session end (#399 workaround).  When true,
+ * Iperf2 fires wifi_manager_HardReset() after FinalizeStats/CloseAll/
+ * ResetContext.  Costs ~12 s WiFi reassoc per session but ensures every
+ * subsequent iperf2 starts from clean WINC state (no multi-session
+ * degradation).  Default true for iperf2 since it's a debug tool.
+ */
+void Iperf2_SetAutoReset(bool enable);
+bool Iperf2_GetAutoReset(void);
+
+/**
+ * Diagnostic snapshot for #399 investigation.  Probes WINC's free socket
+ * slots (opens up to TCP_SOCK_MAX/UDP_SOCK_MAX, counts successes, closes
+ * them) — refuses if iperf2 is currently running (would steal the running
+ * session's resources).  Otherwise reads internal context state into out.
+ */
+void Iperf2_GetDiag(Iperf2_Diag* out);
 
 /**
  * Hook into wifi_manager's SocketEventCallback dispatcher.  Returns true
