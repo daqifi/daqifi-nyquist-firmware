@@ -521,11 +521,21 @@ void Iperf2_GetDiag(Iperf2_Diag* out) {
         udp_probes[i] = socket(AF_INET, SOCK_DGRAM, 0);
         if (udp_probes[i] >= 0) out->free_udp_sockets++;
     }
+    // Yield 1 ms between shutdowns so the WINC driver task can drain
+    // SOCKET_CMD_CLOSE before we queue the next one — same pattern as
+    // the encoder retry loop (#312).  Total adds ~11 ms to the SCPI
+    // response, which is acceptable on a diagnostic-only path.
     for (int i = 0; i < TCP_SOCK_MAX; i++) {
-        if (tcp_probes[i] >= 0) shutdown(tcp_probes[i]);
+        if (tcp_probes[i] >= 0) {
+            shutdown(tcp_probes[i]);
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
     for (int i = 0; i < UDP_SOCK_MAX; i++) {
-        if (udp_probes[i] >= 0) shutdown(udp_probes[i]);
+        if (udp_probes[i] >= 0) {
+            shutdown(udp_probes[i]);
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
 }
 
