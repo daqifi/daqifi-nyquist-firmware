@@ -1215,6 +1215,34 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
+    // #400: when transitioning from POWERED_UP* → STANDBY, clean up WiFi
+    // BEFORE PowerAndUITask runs Power_Down (which kills the WINC's 3.3V
+    // rail). Without this, app_WifiTask sees the power-state change only
+    // AFTER rails drop, calls wifi_manager_Deinit on a chip that no longer
+    // has power, gets stuck in WDRV_WINC_Status==SYS_STATUS_BUSY forever,
+    // and every subsequent POW:STAT 1 cycle never recovers WiFi (all
+    // SYST:COMM:LAN:* queries return -200 "WiFi not ready" indefinitely).
+    //
+    // Mirrors SCPI_Reset's pattern (above): wifi_manager_Deinit() just
+    // queues an event; we must pump wifi_manager_ProcessState() actively
+    // because if this SCPI command arrived over TCP it's running on
+    // app_WifiTask itself (post-#353) — sleeping there would deadlock
+    // the queue. 500 ms is enough for healthy WDRV_WINC_Deinitialize
+    // (~50 ms) plus margin for a busy HIF queue.
+    if (param1 == 0 &&
+        (pPowerData->powerState == POWERED_UP ||
+         pPowerData->powerState == POWERED_UP_EXT_DOWN)) {
+        if (!wifi_manager_Deinit()) {
+            LOG_E("SYST:POW:STAT 0: wifi_manager_Deinit failed; "
+                  "WINC may wedge if rails drop before chip is idle");
+        }
+        TickType_t start = xTaskGetTickCount();
+        while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(500)) {
+            wifi_manager_ProcessState();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+
     switch (param1) {
         case 0:  // STANDBY
             pPowerData->requestedPowerState = DO_POWER_DOWN;
@@ -1226,7 +1254,7 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
             pPowerData->requestedPowerState = DO_POWER_UP_EXT_DOWN;
             break;
     }
-    
+
     BoardData_Set(
             BOARDDATA_POWER_DATA,
             0,
