@@ -42,6 +42,43 @@ extern "C" {
     //! Size in chars of the board firmware revision field
 #define BOARDCONFIG_FIRMWARE_REVISION_SIZE              64
 
+    /**
+     * Per-variant capability flags surfaced by the #327 rollup.
+     * Each flag answers "does this board have the hardware / firmware
+     * support for feature X?" — structural, not runtime state.
+     * Populated in NQ1/NQ2/NQ3 BoardConfig.c; read by the Capabilities
+     * module at rollup-query time.
+     *
+     * Add new fields here rather than hardcoding strings in
+     * Capabilities.c so that a new variant (NQ4, third-party fork,
+     * etc.) becomes fully declarative: a new BoardConfig.c entry
+     * with the right flags automatically drives the capability JSON.
+     */
+    typedef struct sCapabilitiesFlags {
+        bool sdSupported;               //!< SD SPI hardware fitted
+        uint8_t nvmSettingsSlots;       //!< Number of NVM config slots
+        bool batteryPresent;            //!< Battery connector + BMS
+        bool externalPowerSupported;    //!< 5V external rail path
+        bool otgSupported;              //!< BQ24297 OTG boost available
+        bool usbSupported;              //!< USB CDC interface fitted
+        bool wifiSupported;             //!< WiFi chipset fitted
+        bool ethernetSupported;         //!< Ethernet PHY fitted
+        bool serialDebugSupported;      //!< ICSP / debug UART pins broken out
+
+        //! Streaming rate that is guaranteed zero-drop for 60s
+        //! regardless of which other dials the client turns
+        //! (all channels, heaviest encoder, all interfaces, DIO +
+        //! OBDiag on). See issue #344 for the worst-case
+        //! characterization test that populates this field. Clients
+        //! may use it as a safe default without having to reason
+        //! about transport / encoder / DIO interactions.
+        //!
+        //! Placeholder value pending actual measurement — set
+        //! conservatively based on existing Session 20/21 SD CSV
+        //! 16ch ceilings until characterization lands.
+        uint32_t streamingConservativeEnvelopeHz;
+    } tCapabilitiesFlags;
+
     //! Enumeration with the board configuration parameters.
 
     enum eBoardParameter {
@@ -118,6 +155,8 @@ extern "C" {
         //! Default voltage precision for this board's ADC resolution.
         //! 0 = integer mV, 4 = 12-bit, 6 = 18-bit, 7 = 24-bit
         uint8_t DefaultVoltagePrecision;
+        //! Per-variant capability flags consumed by the #327 rollup
+        tCapabilitiesFlags CapabilitiesFlags;
     } tBoardConfig;
 
     /*!

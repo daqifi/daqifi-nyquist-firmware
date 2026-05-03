@@ -222,32 +222,11 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     }
     uint16_t activeType1ChannelCount = 0;
     uint16_t totalEnabledPublicChannels = 0;
-    bool hasActiveAD7609Channels __attribute__((unused)) = false;
+    Streaming_CountActiveChannels(&activeType1ChannelCount,
+                                  &totalEnabledPublicChannels,
+                                  NULL);
     uint64_t freq = pRunTimeStreamConfig->Frequency;
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
-    int i;
-
-    // Count active channels and detect AD7609 usage
-    for (i = 0; i < pBoardConfigAInChannels->Size; i++) {
-        if (pRuntimeAInChannels->Data[i].IsEnabled == 1) {
-            bool isPublic = false;
-            if (pBoardConfigAInChannels->Data[i].Type == AIn_AD7609) {
-                isPublic = pBoardConfigAInChannels->Data[i].Config.AD7609.IsPublic;
-                if (isPublic) {
-                    hasActiveAD7609Channels = true;
-                    totalEnabledPublicChannels++;
-                }
-            } else if (pBoardConfigAInChannels->Data[i].Type == AIn_MC12bADC) {
-                isPublic = pBoardConfigAInChannels->Data[i].Config.MC12b.IsPublic;
-                if (isPublic) {
-                    totalEnabledPublicChannels++;
-                    if (pBoardConfigAInChannels->Data[i].Config.MC12b.ChannelType == 1) {
-                        activeType1ChannelCount++;
-                    }
-                }
-            }
-        }
-    }
 
     // Three-constraint frequency capping (see streaming.h)
     {
