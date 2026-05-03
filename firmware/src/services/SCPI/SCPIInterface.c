@@ -3966,7 +3966,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "*IDN?", .callback = SCPI_CoreIdnQ,},
     {.pattern = "*OPC", .callback = SCPI_CoreOpc,},
     {.pattern = "*OPC?", .callback = SCPI_CoreOpcQ,},
-    {.pattern = "*RST", .callback = SCPI_CoreRst,},
+    // *RST → SCPI_Reset directly. libscpi's SCPI_CoreRst dispatches to
+    // interface->reset, which is NULL on both USB CDC and TCP server
+    // scpi_interface_t structs — going through CoreRst would no-op.
+    {.pattern = "*RST", .callback = SCPI_Reset,},
     {.pattern = "*SRE", .callback = SCPI_CoreSre,},
     {.pattern = "*SRE?", .callback = SCPI_CoreSreQ,},
     {.pattern = "*STB?", .callback = SCPI_CoreStbQ,},
