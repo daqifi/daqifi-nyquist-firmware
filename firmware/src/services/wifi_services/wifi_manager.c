@@ -9,7 +9,6 @@
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
 #include "iperf2/iperf2.h"
-#include "driver/winc/include/dev/wdrv_winc_gpio.h"
 #include "driver/winc/include/drv/common/nm_common.h"  // nm_reset (canonical WINC reset pulse)
 #include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
