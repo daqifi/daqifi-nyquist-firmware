@@ -1358,6 +1358,24 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
             return false;
         }
     } else {
+        // Re-init path: queue already exists from a prior Init.  Previously
+        // this short-circuited with `return true`, but that path leaves the
+        // state machine stuck in DEINIT after a POW:STAT 0 → 1 cycle (queue
+        // and FSM state survive but the chip was reset by Deinit) — the
+        // chip never gets driven back through INIT.  Instead, re-arm
+        // isEnabled and queue a fresh INIT event to walk the state machine
+        // back up to MAIN.  Mirrors the deferred-INIT branch in
+        // wifi_manager_ProcessState.
+        if (pSettings != NULL) {
+            gStateMachineContext.pWifiSettings = pSettings;
+        }
+        if (gStateMachineContext.pWifiSettings != NULL) {
+            taskENTER_CRITICAL();
+            gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
+            gStateMachineContext.pWifiSettings->isEnabled = 1;
+            taskEXIT_CRITICAL();
+        }
+        SendEvent(WIFI_MANAGER_EVENT_INIT);
         return true;
     }
     if (pSettings != NULL)
