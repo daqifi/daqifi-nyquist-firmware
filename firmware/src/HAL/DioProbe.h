@@ -16,7 +16,7 @@
  * 1) STANDARD probes 0..9 — fired by `DioProbe_Toggle(N)` calls in
  *    the streaming/ADC pipeline. Default mapping is probe N -> DIO N
  *    via SCPI `SYSTem:DIOProbe:MODE <probe>,<OFF|TOGGLE|PULSE>`.
- *    Use `SYSTem:DIOProbe:MAP <probe>,<channel>,<mode>` to redirect
+ *    Use `SYSTem:DIOProbe:ROUTe <probe>,<channel>,<mode>` to redirect
  *    any standard probe to any DIO (handy when the LA isn't wired
  *    to DIO_0..DIO_9).
  *
@@ -24,7 +24,7 @@
  *    `DIO_PROBE_TOGGLE(n)` or `DIO_PROBE_PULSE_START(n)/END(n)` into
  *    any code path, set the corresponding bit in
  *    `DIO_PROBE_ENABLE_MASK`, recompile. Default mapping at boot is
- *    probe N -> DIO N. Override at runtime with `SYST:DIOP:MAP` to
+ *    probe N -> DIO N. Override at runtime with `SYST:DIOP:ROUT` to
  *    route the probe to whichever DIO is wired to the LA.
  *
  * Hot-path cost when disabled: one load + branch-if-zero. Zero cost
@@ -109,7 +109,7 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode);
  *  driver enabled. Rejects if PWM is active on the target channel.
  *
  *  Use cases:
- *    - SCPI `SYST:DIOP:MAP <probeId>,<channel>,<mode>` for ad-hoc
+ *    - SCPI `SYST:DIOP:ROUT <probeId>,<channel>,<mode>` for ad-hoc
  *      remapping during debug.
  *    - Re-routing standard probes 0..9 onto wired DIOs when the LA
  *      doesn't reach DIO_0..DIO_9.

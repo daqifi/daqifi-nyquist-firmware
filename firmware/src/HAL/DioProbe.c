@@ -77,7 +77,7 @@ void DioProbe_Init(void) {
 
     /* Activate ad-hoc probes whose bit is set in the compile-time
      * enable mask. Default mapping is probe N -> DIO N; remap at
-     * runtime via DioProbe_AssignToChannel / SYST:DIOP:MAP. */
+     * runtime via DioProbe_AssignToChannel / SYST:DIOP:ROUT. */
 #if (DIO_PROBE_ENABLE_MASK) != 0u
     for (uint8_t i = DIO_PROBE_ADHOC_FIRST; i < DIO_PROBE_SLOTS; ++i) {
         if (((DIO_PROBE_ENABLE_MASK) & (1u << i)) == 0u) continue;
