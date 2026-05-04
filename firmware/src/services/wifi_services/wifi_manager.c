@@ -1550,28 +1550,36 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
     return wifi_tcp_server_WriteBuffer(pData, len);
 }
 
-void wifi_manager_ProcessState() {
+// Internal worker for both ProcessState entry points.  drainTcpRx=true
+// is the normal WifiTask path (drains deferred TCP rx and re-arms recv).
+// drainTcpRx=false is the SCPI active-pump path: it drives WiFi
+// lifecycle/event-queue work without dispatching new TCP-arrived SCPI,
+// to prevent re-entrant SCPI_Input() on the same scpiContext when the
+// outer SCPI command itself arrived over TCP.
+static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     wifi_manager_event_t event;
     wifi_manager_stateMachineReturnStatus_t ret;
     while (gEventQH == NULL) {
         return;
     }
 
-    // Serialize re-entrant callers (app_WifiTask + SCPI_Reset active pump,
-    // and any future call site).  Recursive — same task can re-enter
-    // (TCP SCPI nests ProcessState inside ProcessState); see
+    // Serialize re-entrant callers (app_WifiTask + SCPI active-pump
+    // paths, and any future call site).  Recursive — same task can
+    // re-enter (TCP SCPI nests ProcessState inside ProcessState); see
     // gProcessStateMutex declaration for the rationale.
     //
-    // Bounded 100 ms timeout (instead of portMAX_DELAY): if the holder
+    // Bounded 250 ms timeout (instead of portMAX_DELAY): if the holder
     // is genuinely wedged, the caller must be able to bail and return
-    // — otherwise the SCPI_Reset active pump would hang and the device
-    // could never reboot.  Normal ProcessState body completes in <10 ms,
-    // so 100 ms gives generous headroom for healthy operation while
+    // — otherwise SCPI active pumps would hang and the device could
+    // never reboot.  250 ms must exceed the worst-case in-mutex delay,
+    // which is nm_reset()'s ~120 ms during DEINIT (CHIP_EN/RESET_N
+    // pulse with vTaskDelays).  Normal body completes in <10 ms, so
+    // 250 ms gives generous headroom for healthy operation while
     // failing fast on actual stalls.  Skipped iterations recover
     // naturally on the next invocation.
     if (gProcessStateMutex != NULL) {
         if (xSemaphoreTakeRecursive(gProcessStateMutex,
-                                    pdMS_TO_TICKS(100)) != pdTRUE) {
+                                    pdMS_TO_TICKS(250)) != pdTRUE) {
             LOG_E("WiFi ProcessState: mutex timeout — skipping iteration");
             return;
         }
@@ -1620,10 +1628,16 @@ void wifi_manager_ProcessState() {
     // runs here, on WifiTask's stack, with ~4 KB of headroom for the
     // microrl + libscpi + handler chain.
     //
+    // Skipped on the SCPI active-pump path (drainTcpRx=false) so we
+    // don't re-enter SCPI_Input() on the same scpiContext when the
+    // outer command itself arrived over TCP.  TCP rx remains queued
+    // (gTcpRxPending stays set) and gets drained by the normal
+    // WifiTask loop after the SCPI handler returns.
+    //
     // Always clear the flag under the socket-valid guard, so a RECV that
     // arrived just before the client disconnected doesn't leave stale data
     // queued for the next client.
-    if (gTcpRxPending) {
+    if (drainTcpRx && gTcpRxPending) {
         gTcpRxPending = false;
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
@@ -1650,6 +1664,14 @@ void wifi_manager_ProcessState() {
     if (gProcessStateMutex != NULL) {
         xSemaphoreGiveRecursive(gProcessStateMutex);
     }
+}
+
+void wifi_manager_ProcessState() {
+    wifi_manager_ProcessStateImpl(true);
+}
+
+void wifi_manager_ProcessStateNoTcpRx(void) {
+    wifi_manager_ProcessStateImpl(false);
 }
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {

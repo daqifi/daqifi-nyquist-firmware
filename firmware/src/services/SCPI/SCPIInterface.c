@@ -378,15 +378,19 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
               "be reset before PIC32 reboot");
     }
 
-    // Actively pump wifi_manager_ProcessState() during the 500 ms settle —
-    // not just sleep.  Reason: TCP-SCPI dispatch runs on app_WifiTask
-    // (post-#353), the same task that drains the WiFi event queue.  A
-    // passive vTaskDelay there blocks the queue and DEINIT never gets
-    // processed before RCON_SoftwareReset() reboots the chip.
+    // Actively pump wifi_manager_ProcessStateNoTcpRx() during the 500 ms
+    // settle — not just sleep.  Reason: TCP-SCPI dispatch runs on
+    // app_WifiTask (post-#353), the same task that drains the WiFi event
+    // queue.  A passive vTaskDelay there blocks the queue and DEINIT
+    // never gets processed before RCON_SoftwareReset() reboots the chip.
+    //
+    // NoTcpRx variant skips the deferred TCP-rx drain so we don't
+    // re-enter SCPI_Input() on the same scpiContext when *RST itself
+    // arrived over TCP.
     {
         TickType_t start = xTaskGetTickCount();
         while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(500)) {
-            wifi_manager_ProcessState();
+            wifi_manager_ProcessStateNoTcpRx();
             vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
@@ -1236,9 +1240,12 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
             LOG_E("SYST:POW:STAT 0: wifi_manager_Deinit failed; "
                   "WINC may wedge if rails drop before chip is idle");
         }
+        // NoTcpRx variant: skips the deferred TCP-rx drain so we don't
+        // re-enter SCPI_Input() on the same scpiContext when this SCPI
+        // command itself arrived over TCP.  Mirrors SCPI_Reset.
         TickType_t start = xTaskGetTickCount();
         while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(500)) {
-            wifi_manager_ProcessState();
+            wifi_manager_ProcessStateNoTcpRx();
             vTaskDelay(pdMS_TO_TICKS(5));
         }
     }

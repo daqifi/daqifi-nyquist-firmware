@@ -243,11 +243,25 @@ extern "C" {
 
     /**
      * @brief Processes the current state of the WiFi manager.
-     * 
+     *
      * Handles queued events and processes the WiFi state machine, including TCP and UDP operations,
      * and serial bridge communication if WiFi firmware update mode is active.
      */
     void wifi_manager_ProcessState();
+
+    /**
+     * @brief Same as wifi_manager_ProcessState, but skips draining
+     *        deferred TCP rx (SCPI dispatch).
+     *
+     * For use ONLY from inside a SCPI handler that needs to actively
+     * pump WiFi lifecycle (e.g. drive WIFI_MANAGER_EVENT_DEINIT
+     * forward without deadlocking the WifiTask).  Skipping the TCP
+     * rx drain prevents nested SCPI_Input() on the same scpiContext
+     * when the outer SCPI command itself arrived over TCP.  Queued
+     * TCP rx remains pending and is drained by the next normal
+     * WifiTask iteration after the SCPI handler returns.
+     */
+    void wifi_manager_ProcessStateNoTcpRx(void);
 
     /**
      * @brief Gets the available free size in the write buffer.
