@@ -76,38 +76,74 @@ void DioProbe_Init(void) {
     gDioProbeAnyActive = false;
 
     /* Activate ad-hoc probes whose bit is set in the compile-time
-     * enable mask. Each ad-hoc probe i maps to DIO channel i. */
+     * enable mask. Default mapping is probe N -> DIO N; remap at
+     * runtime via DioProbe_AssignToChannel / SYST:DIOP:MAP. */
 #if (DIO_PROBE_ENABLE_MASK) != 0u
     for (uint8_t i = DIO_PROBE_ADHOC_FIRST; i < DIO_PROBE_SLOTS; ++i) {
         if (((DIO_PROBE_ENABLE_MASK) & (1u << i)) == 0u) continue;
         if (i > DIO_PROBE_MAX_DIO_CHANNEL) continue;
-
-        uint8_t channel = i;
-        if (!probe_configure_pin(channel)) {
-            LOG_E("DioProbe: ad-hoc probe %u pin config failed", (unsigned)i);
-            continue;
+        if (!DioProbe_AssignToChannel(i, i, DIO_PROBE_MODE_TOGGLE)) {
+            LOG_E("DioProbe: ad-hoc probe %u init failed", (unsigned)i);
         }
-
-        tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-        const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
-
-        volatile DioProbeSlot_t* slot = &gDioProbeSlots[i];
-        slot->port    = dio->DataChannel;
-        slot->mask    = 1u << dio->DataBitPos;
-        slot->channel = channel;
-        slot->mode    = DIO_PROBE_MODE_TOGGLE;  /* publish last */
-
-        gDioProbeOwnedMask |= (1u << channel);
     }
-    recompute_any_active();
 #endif
 }
 
 bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
     if (probeId >= DIO_PROBE_STANDARD_COUNT) return false;
     if (mode == DIO_PROBE_MODE_OFF) return DioProbe_Clear(probeId);
+    return DioProbe_AssignToChannel(probeId, probeId, mode);
+}
 
-    uint8_t channel = probeId;  /* standard probes: probe N -> DIO N */
+bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
+                              DioProbeMode_t mode) {
+    if (probeId >= DIO_PROBE_SLOTS) return false;
+    if (channel > DIO_PROBE_MAX_DIO_CHANNEL) return false;
+    if (mode == DIO_PROBE_MODE_OFF) {
+        /* Standard probes go through the public Clear; ad-hoc slots
+         * use the same teardown via the inline path below. */
+        if (probeId < DIO_PROBE_STANDARD_COUNT) {
+            return DioProbe_Clear(probeId);
+        }
+        /* Ad-hoc clear: release pin + slot fields. Mirrors DioProbe_Clear
+         * but skips the DIO_WriteStateSingle restore (ad-hoc probes are
+         * developer-instrumentation; user runtime config doesn't apply). */
+        volatile DioProbeSlot_t* s = &gDioProbeSlots[probeId];
+        uint8_t prev_ch = s->channel;
+        s->mode = DIO_PROBE_MODE_OFF;
+        taskENTER_CRITICAL();
+        if (prev_ch <= DIO_PROBE_MAX_DIO_CHANNEL) {
+            probe_release_pin(prev_ch);
+            gDioProbeOwnedMask &= (uint16_t)~(1u << prev_ch);
+        }
+        s->channel = 0xFF;
+        s->mask = 0;
+        taskEXIT_CRITICAL();
+        recompute_any_active();
+        return true;
+    }
+
+    /* If this slot already owns a different channel, release the old
+     * one first so the owned-mask invariant stays clean across remap. */
+    volatile DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
+    uint8_t prev_ch = slot->channel;
+    if (prev_ch != 0xFF && prev_ch != channel &&
+        prev_ch <= DIO_PROBE_MAX_DIO_CHANNEL) {
+        slot->mode = DIO_PROBE_MODE_OFF;
+        taskENTER_CRITICAL();
+        probe_release_pin(prev_ch);
+        gDioProbeOwnedMask &= (uint16_t)~(1u << prev_ch);
+        taskEXIT_CRITICAL();
+        (void)DIO_WriteStateSingle(prev_ch);
+    }
+
+    /* Reject if the target channel is already owned by a DIFFERENT
+     * probe slot (avoid two probes fighting over one pin). */
+    if (prev_ch != channel && (gDioProbeOwnedMask & (1u << channel)) != 0u) {
+        LOG_E("DioProbe: channel %u already owned by another probe",
+              (unsigned)channel);
+        return false;
+    }
 
     if (!probe_configure_pin(channel)) {
         return false;
@@ -116,17 +152,11 @@ bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode) {
     tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
 
-    /* Publication protocol:
-     *   1. Clear mode to OFF (belt-and-suspenders — CS will block ISR
-     *      readers anyway, but any read that slips before the CS sees
-     *      OFF and bails)
-     *   2. Single critical section: rewrite fields + masks + publish
-     *      mode=NEW + set any_active. Mode publish MUST be inside the
-     *      CS so recompute_any_active on the other SCPI task cannot
-     *      observe mode=OFF and stomp any_active=false.
-     *   3. Volatile fields (see DioProbeSlot_t) prevent the compiler
-     *      from reordering writes out of the CS. */
-    volatile DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
+    /* Publication protocol: clear mode first (ISR readers bail on OFF),
+     * then critical section: rewrite fields + publish mode + set
+     * any_active. Mode publish MUST be inside the CS so a concurrent
+     * recompute_any_active on the other SCPI task can't observe mode=OFF
+     * and stomp any_active=false. */
     slot->mode = DIO_PROBE_MODE_OFF;
 
     taskENTER_CRITICAL();
