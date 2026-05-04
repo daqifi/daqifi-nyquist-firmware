@@ -123,47 +123,81 @@ bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
         return true;
     }
 
-    volatile DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
-    uint8_t prev_ch = slot->channel;
+    /* Preflight: validate target channel BEFORE any destructive state
+     * change so a remap that's going to fail (channel out of range for
+     * BoardConfig, or PWM active on the channel) doesn't tear down the
+     * slot's existing working assignment. Mirrors the checks inside
+     * probe_configure_pin so that helper becomes the redundant belt. */
+    tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    if (channel >= cfg->DIOChannels.Size) return false;
+    {
+        tBoardRuntimeConfig* rt =
+            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_ALL_CONFIG);
+        if (rt->DIOChannels.Data[channel].IsPwmActive) {
+            LOG_E("DioProbe: channel %u rejected (PWM active)",
+                  (unsigned)channel);
+            return false;
+        }
+    }
+    const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
 
-    /* Reject FIRST if the target channel is already owned by a
-     * DIFFERENT probe slot. Order matters: if we released prev_ch
-     * before this check and the rejection then fired, the slot
-     * would be left holding stale (channel, mask) for a pin we no
-     * longer own — visible to LIST? and confusing the next remap. */
+    volatile DioProbeSlot_t* slot = &gDioProbeSlots[probeId];
+    uint8_t prev_ch;
+
+    /* Atomic check-and-reserve. Two concurrent SCPI tasks (USB pri 7
+     * and WiFi pri 2) can both call AssignToChannel; if the ownership
+     * check on gDioProbeOwnedMask runs outside a CS, both can pass it
+     * for the same channel before either sets the owned bit. Hold the
+     * CS across check + prev_ch release + new-channel reservation so
+     * the second arrival sees the first's bit set and rejects. */
+    taskENTER_CRITICAL();
+    prev_ch = slot->channel;
     if (prev_ch != channel && (gDioProbeOwnedMask & (1u << channel)) != 0u) {
+        taskEXIT_CRITICAL();
         LOG_E("DioProbe: channel %u already owned by another probe",
               (unsigned)channel);
         return false;
     }
-
-    /* Now safe to release the old channel. Also clear slot fields
-     * so that if probe_configure_pin below fails, the slot lands in
-     * a clean unassigned state rather than referencing a released pin. */
+    /* Release prev_ch's pin and clear slot fields if remapping. */
     if (prev_ch != 0xFF && prev_ch != channel &&
         prev_ch <= DIO_PROBE_MAX_DIO_CHANNEL) {
         slot->mode = DIO_PROBE_MODE_OFF;
-        taskENTER_CRITICAL();
         probe_release_pin(prev_ch);
         gDioProbeOwnedMask &= (uint16_t)~(1u << prev_ch);
         slot->channel = 0xFF;
         slot->mask = 0;
-        taskEXIT_CRITICAL();
+    }
+    /* Reserve the new channel. Visible to other SCPI tasks immediately
+     * via the owned mask; their AssignToChannel calls will reject. */
+    gDioProbeOwnedMask |= (uint16_t)(1u << channel);
+    taskEXIT_CRITICAL();
+
+    /* Restore prev_ch to its user-DIO state outside CS (the DIO HAL
+     * uses its own mutex for this). */
+    if (prev_ch != 0xFF && prev_ch != channel &&
+        prev_ch <= DIO_PROBE_MAX_DIO_CHANNEL) {
         (void)DIO_WriteStateSingle(prev_ch);
     }
 
+    /* Configure the new pin. Preflight passed, so this should succeed,
+     * but DIO_ProbeActivatePair can still report failure (defensive
+     * check inside DIO HAL). On failure, roll back the reservation and
+     * recompute the any-active gate so it can't remain stale-true if
+     * we were the last live probe. */
     if (!probe_configure_pin(channel)) {
+        taskENTER_CRITICAL();
+        gDioProbeOwnedMask &= (uint16_t)~(1u << channel);
+        taskEXIT_CRITICAL();
+        recompute_any_active();
         return false;
     }
-
-    tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    const DIOConfig* dio = &cfg->DIOChannels.Data[channel];
 
     /* Publication protocol: clear mode first (ISR readers bail on OFF),
      * then critical section: rewrite fields + publish mode + set
      * any_active. Mode publish MUST be inside the CS so a concurrent
      * recompute_any_active on the other SCPI task can't observe mode=OFF
-     * and stomp any_active=false. */
+     * and stomp any_active=false. The owned-mask bit was already set
+     * above as the reservation. */
     slot->mode = DIO_PROBE_MODE_OFF;
 
     taskENTER_CRITICAL();
@@ -171,7 +205,6 @@ bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
     slot->mask    = 1u << dio->DataBitPos;
     slot->channel = channel;
     slot->mode    = (uint8_t)mode;
-    gDioProbeOwnedMask |= (uint16_t)(1u << channel);
     gDioProbeAnyActive = true;
     taskEXIT_CRITICAL();
     return true;
