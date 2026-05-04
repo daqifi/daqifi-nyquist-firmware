@@ -378,15 +378,19 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
               "be reset before PIC32 reboot");
     }
 
-    // Actively pump wifi_manager_ProcessState() during the 500 ms settle —
-    // not just sleep.  Reason: TCP-SCPI dispatch runs on app_WifiTask
-    // (post-#353), the same task that drains the WiFi event queue.  A
-    // passive vTaskDelay there blocks the queue and DEINIT never gets
-    // processed before RCON_SoftwareReset() reboots the chip.
+    // Actively pump wifi_manager_ProcessStateNoTcpRx() during the 500 ms
+    // settle — not just sleep.  Reason: TCP-SCPI dispatch runs on
+    // app_WifiTask (post-#353), the same task that drains the WiFi event
+    // queue.  A passive vTaskDelay there blocks the queue and DEINIT
+    // never gets processed before RCON_SoftwareReset() reboots the chip.
+    //
+    // NoTcpRx variant skips the deferred TCP-rx drain so we don't
+    // re-enter SCPI_Input() on the same scpiContext when *RST itself
+    // arrived over TCP.
     {
         TickType_t start = xTaskGetTickCount();
         while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(500)) {
-            wifi_manager_ProcessState();
+            wifi_manager_ProcessStateNoTcpRx();
             vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
@@ -1215,6 +1219,37 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
+    // #400: when transitioning from POWERED_UP* → STANDBY, clean up WiFi
+    // BEFORE PowerAndUITask runs Power_Down (which kills the WINC's 3.3V
+    // rail). Without this, app_WifiTask sees the power-state change only
+    // AFTER rails drop, calls wifi_manager_Deinit on a chip that no longer
+    // has power, gets stuck in WDRV_WINC_Status==SYS_STATUS_BUSY forever,
+    // and every subsequent POW:STAT 1 cycle never recovers WiFi (all
+    // SYST:COMM:LAN:* queries return -200 "WiFi not ready" indefinitely).
+    //
+    // Mirrors SCPI_Reset's pattern (above): wifi_manager_Deinit() just
+    // queues an event; we must pump wifi_manager_ProcessState() actively
+    // because if this SCPI command arrived over TCP it's running on
+    // app_WifiTask itself (post-#353) — sleeping there would deadlock
+    // the queue. 500 ms is enough for healthy WDRV_WINC_Deinitialize
+    // (~50 ms) plus margin for a busy HIF queue.
+    if (param1 == 0 &&
+        (pPowerData->powerState == POWERED_UP ||
+         pPowerData->powerState == POWERED_UP_EXT_DOWN)) {
+        if (!wifi_manager_Deinit()) {
+            LOG_E("SYST:POW:STAT 0: wifi_manager_Deinit failed; "
+                  "WINC may wedge if rails drop before chip is idle");
+        }
+        // NoTcpRx variant: skips the deferred TCP-rx drain so we don't
+        // re-enter SCPI_Input() on the same scpiContext when this SCPI
+        // command itself arrived over TCP.  Mirrors SCPI_Reset.
+        TickType_t start = xTaskGetTickCount();
+        while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(500)) {
+            wifi_manager_ProcessStateNoTcpRx();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+
     switch (param1) {
         case 0:  // STANDBY
             pPowerData->requestedPowerState = DO_POWER_DOWN;
@@ -1226,7 +1261,7 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
             pPowerData->requestedPowerState = DO_POWER_UP_EXT_DOWN;
             break;
     }
-    
+
     BoardData_Set(
             BOARDDATA_POWER_DATA,
             0,
@@ -3966,7 +4001,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "*IDN?", .callback = SCPI_CoreIdnQ,},
     {.pattern = "*OPC", .callback = SCPI_CoreOpc,},
     {.pattern = "*OPC?", .callback = SCPI_CoreOpcQ,},
-    {.pattern = "*RST", .callback = SCPI_CoreRst,},
+    // *RST → SCPI_Reset directly. libscpi's SCPI_CoreRst dispatches to
+    // interface->reset, which is NULL on both USB CDC and TCP server
+    // scpi_interface_t structs — going through CoreRst would no-op.
+    {.pattern = "*RST", .callback = SCPI_Reset,},
     {.pattern = "*SRE", .callback = SCPI_CoreSre,},
     {.pattern = "*SRE?", .callback = SCPI_CoreSreQ,},
     {.pattern = "*STB?", .callback = SCPI_CoreStbQ,},

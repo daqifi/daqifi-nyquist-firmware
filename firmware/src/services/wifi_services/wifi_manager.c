@@ -9,7 +9,7 @@
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
 #include "iperf2/iperf2.h"
-#include "driver/winc/include/dev/wdrv_winc_gpio.h"
+#include "driver/winc/include/drv/common/nm_common.h"  // nm_reset (canonical WINC reset pulse)
 #include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
 
@@ -463,15 +463,26 @@ static uint8_t __attribute__((unused)) GetEventFlagStatus(wifi_manager_stateFlag
  * leaves the module in reset state by asserting reset but never deasserting it.
  */
 static void wifi_manager_FixWincResetState(void) {
-    // The WINC driver's deinit leaves the module with:
-    // - CHIP_EN deasserted (low)
-    // - RESET_N asserted (low) 
-    // This leaves the module in permanent reset. We need to take it out of reset
-    // so it can be re-initialized later.
-    
-    // Assert chip enable and deassert reset to take module out of reset state
-    WDRV_WINC_GPIOChipEnableAssert();
-    WDRV_WINC_GPIOResetDeassert();
+    // Run Microchip's canonical WINC1500 power-cycle pulse (nm_reset, in
+    // drv/common/nm_common.c).  Sequence + timing:
+    //
+    //   CHIP_EN low + RESET_N low   (held in full reset)
+    //   sleep 100 ms
+    //   CHIP_EN high                (power on)
+    //   sleep 10 ms                 (rail settle)
+    //   RESET_N high                (release from reset; chip starts boot)
+    //   sleep 10 ms                 (boot before next SPI access)
+    //
+    // Earlier this function only did a half-reset — Assert(CHIP_EN) +
+    // Deassert(RESET_N) — which left the chip "powered but undefined"
+    // between Deinit and the next Init.  Across multiple POW:STAT or
+    // HRESet cycles, the chip would accumulate stuck state that no
+    // amount of partial GPIO toggling could recover (#400 multi-cycle
+    // wedge).  The full nm_reset pulse is what Microchip's own driver
+    // (nmbus.c:66, nm_common.c:56) uses internally and what their
+    // wdrv_winc.c Deinit ends with — aligning ours fixes the
+    // unrecoverable-soft-wedge class.
+    nm_reset();
 }
 
 static void __attribute__((unused)) ResetAllEventFlags(wifi_manager_stateFlag_t *pEventFlagState) {
@@ -1347,6 +1358,24 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
             return false;
         }
     } else {
+        // Re-init path: queue already exists from a prior Init.  Previously
+        // this short-circuited with `return true`, but that path leaves the
+        // state machine stuck in DEINIT after a POW:STAT 0 → 1 cycle (queue
+        // and FSM state survive but the chip was reset by Deinit) — the
+        // chip never gets driven back through INIT.  Instead, re-arm
+        // isEnabled and queue a fresh INIT event to walk the state machine
+        // back up to MAIN.  Mirrors the deferred-INIT branch in
+        // wifi_manager_ProcessState.
+        if (pSettings != NULL) {
+            gStateMachineContext.pWifiSettings = pSettings;
+        }
+        if (gStateMachineContext.pWifiSettings != NULL) {
+            taskENTER_CRITICAL();
+            gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
+            gStateMachineContext.pWifiSettings->isEnabled = 1;
+            taskEXIT_CRITICAL();
+        }
+        SendEvent(WIFI_MANAGER_EVENT_INIT);
         return true;
     }
     if (pSettings != NULL)
@@ -1539,28 +1568,36 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
     return wifi_tcp_server_WriteBuffer(pData, len);
 }
 
-void wifi_manager_ProcessState() {
+// Internal worker for both ProcessState entry points.  drainTcpRx=true
+// is the normal WifiTask path (drains deferred TCP rx and re-arms recv).
+// drainTcpRx=false is the SCPI active-pump path: it drives WiFi
+// lifecycle/event-queue work without dispatching new TCP-arrived SCPI,
+// to prevent re-entrant SCPI_Input() on the same scpiContext when the
+// outer SCPI command itself arrived over TCP.
+static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     wifi_manager_event_t event;
     wifi_manager_stateMachineReturnStatus_t ret;
     while (gEventQH == NULL) {
         return;
     }
 
-    // Serialize re-entrant callers (app_WifiTask + SCPI_Reset active pump,
-    // and any future call site).  Recursive — same task can re-enter
-    // (TCP SCPI nests ProcessState inside ProcessState); see
+    // Serialize re-entrant callers (app_WifiTask + SCPI active-pump
+    // paths, and any future call site).  Recursive — same task can
+    // re-enter (TCP SCPI nests ProcessState inside ProcessState); see
     // gProcessStateMutex declaration for the rationale.
     //
-    // Bounded 100 ms timeout (instead of portMAX_DELAY): if the holder
+    // Bounded 250 ms timeout (instead of portMAX_DELAY): if the holder
     // is genuinely wedged, the caller must be able to bail and return
-    // — otherwise the SCPI_Reset active pump would hang and the device
-    // could never reboot.  Normal ProcessState body completes in <10 ms,
-    // so 100 ms gives generous headroom for healthy operation while
+    // — otherwise SCPI active pumps would hang and the device could
+    // never reboot.  250 ms must exceed the worst-case in-mutex delay,
+    // which is nm_reset()'s ~120 ms during DEINIT (CHIP_EN/RESET_N
+    // pulse with vTaskDelays).  Normal body completes in <10 ms, so
+    // 250 ms gives generous headroom for healthy operation while
     // failing fast on actual stalls.  Skipped iterations recover
     // naturally on the next invocation.
     if (gProcessStateMutex != NULL) {
         if (xSemaphoreTakeRecursive(gProcessStateMutex,
-                                    pdMS_TO_TICKS(100)) != pdTRUE) {
+                                    pdMS_TO_TICKS(250)) != pdTRUE) {
             LOG_E("WiFi ProcessState: mutex timeout — skipping iteration");
             return;
         }
@@ -1609,10 +1646,16 @@ void wifi_manager_ProcessState() {
     // runs here, on WifiTask's stack, with ~4 KB of headroom for the
     // microrl + libscpi + handler chain.
     //
+    // Skipped on the SCPI active-pump path (drainTcpRx=false) so we
+    // don't re-enter SCPI_Input() on the same scpiContext when the
+    // outer command itself arrived over TCP.  TCP rx remains queued
+    // (gTcpRxPending stays set) and gets drained by the normal
+    // WifiTask loop after the SCPI handler returns.
+    //
     // Always clear the flag under the socket-valid guard, so a RECV that
     // arrived just before the client disconnected doesn't leave stale data
     // queued for the next client.
-    if (gTcpRxPending) {
+    if (drainTcpRx && gTcpRxPending) {
         gTcpRxPending = false;
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
@@ -1639,6 +1682,14 @@ void wifi_manager_ProcessState() {
     if (gProcessStateMutex != NULL) {
         xSemaphoreGiveRecursive(gProcessStateMutex);
     }
+}
+
+void wifi_manager_ProcessState() {
+    wifi_manager_ProcessStateImpl(true);
+}
+
+void wifi_manager_ProcessStateNoTcpRx(void) {
+    wifi_manager_ProcessStateImpl(false);
 }
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
