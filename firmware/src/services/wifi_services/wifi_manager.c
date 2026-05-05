@@ -1342,6 +1342,23 @@ void fwUpdateTask(void *pvParameters) {
     }
 }
 
+void wifi_manager_BootInit(void) {
+    /* Defensive zero-init of every file-static in this module so retained
+     * RAM doesn't leak across MCLR / IPE flash (#409). Must run BEFORE
+     * the scheduler starts and BEFORE wifi_manager_Init can be called.
+     * No locking needed — pre-scheduler, single-threaded. */
+    memset(&gStateMachineContext, 0, sizeof(gStateMachineContext));
+    memset(&gTcpServerContext, 0, sizeof(gTcpServerContext));
+    memset(&gProcessStateMutexBuf, 0, sizeof(gProcessStateMutexBuf));
+    gEventQH = NULL;
+    gProcessStateMutex = NULL;
+    gRssiUpdatePending = false;
+    gRssiUpdateComplete = false;
+    gTcpRxPending = false;
+    gLastRssiPercentage = 0;
+    gWifiReinitDeadlineTick = 0;
+}
+
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
 
     // Init order matters: mutex first (so ProcessState calls before queue

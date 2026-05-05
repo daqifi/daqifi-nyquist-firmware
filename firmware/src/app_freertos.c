@@ -534,7 +534,14 @@ void app_SystemInit() {
                 DaqifiSettings_UserAInCalParams,
                 &gpBoardRuntimeConfig->AInChannels);
     }
-    // Power initialization - enables 3.3V rail by default - other power 
+    /* Defensive boot-time zero-init of file-static module state for
+     * subsystems whose globals live in retained-RAM regions (kseg0
+     * best-fit `.bss.*` outside `_bss_begin..end`, COHERENTBSS in
+     * kseg1). crt0 does not zero those; without these calls the
+     * statics retain values across MCLR / IPE flash. See #409. */
+    wifi_manager_BootInit();
+
+    // Power initialization - enables 3.3V rail by default - other power
     // functions are in power task
     Power_Init(&gpBoardConfig->PowerConfig,
             &gpBoardData->PowerData,

@@ -13,6 +13,7 @@
 /* ************************************************************************** */
 
 #include "UI.h"
+#include <string.h>  /* memset (#409 retained-RAM defensive init) */
 #include "state/runtime/StreamingRuntimeConfig.h"
 
 #define UI_TASK_CALLING_PRD 100 //  100ms
@@ -31,14 +32,19 @@ static tUIReadVars *gpReadVariables;
 //! Pointer to the data structure where the UI Power Data will be stored
 static tPowerData *gpPowerData;
 
-void UI_Init(                                                               
-                tUIConfig *pConfigInit,                                     
-                tUIReadVars *pReadVarsInit,                                 
+void UI_Init(
+                tUIConfig *pConfigInit,
+                tUIReadVars *pReadVarsInit,
                 tPowerData *pPowerDataInit )
 {
     gpConfig = pConfigInit;
     gpReadVariables = pReadVarsInit;
     gpPowerData = pPowerDataInit;
+
+    /* Defensive zero of the UI read-vars struct (LED1/LED2/button bools).
+     * Lives in retained RAM; without this, button state could be
+     * misread immediately at boot before the first GPIO read. See #409. */
+    memset(pReadVarsInit, 0, sizeof(*pReadVarsInit));
 }
 
 void Button_Tasks( void )
