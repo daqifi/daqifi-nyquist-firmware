@@ -105,9 +105,14 @@ bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
         if (probeId < DIO_PROBE_STANDARD_COUNT) {
             return DioProbe_Clear(probeId);
         }
-        /* Ad-hoc clear: release pin + slot fields. Mirrors DioProbe_Clear
-         * but skips the DIO_WriteStateSingle restore (ad-hoc probes are
-         * developer-instrumentation; user runtime config doesn't apply). */
+        /* Ad-hoc clear: release pin + slot fields, then restore the
+         * channel's user-DIO state. The original implementation skipped
+         * DIO_WriteStateSingle on the assumption that ad-hoc probes only
+         * touched DIO_10..DIO_15 (no user runtime config). With
+         * DioProbe_AssignToChannel an ad-hoc probe can be remapped onto
+         * any DIO 0..15, including standard channels that DO carry
+         * runtime config — so the restore is required to avoid leaving
+         * a user pin in probe-output state after an OFF. */
         volatile DioProbeSlot_t* s = &gDioProbeSlots[probeId];
         uint8_t prev_ch = s->channel;
         s->mode = DIO_PROBE_MODE_OFF;
@@ -119,6 +124,9 @@ bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
         s->channel = 0xFF;
         s->mask = 0;
         taskEXIT_CRITICAL();
+        if (prev_ch <= DIO_PROBE_MAX_DIO_CHANNEL) {
+            (void)DIO_WriteStateSingle(prev_ch);
+        }
         recompute_any_active();
         return true;
     }
