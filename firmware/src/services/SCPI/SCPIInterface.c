@@ -3524,6 +3524,33 @@ static scpi_result_t SCPI_DioProbePipeline(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_DioProbeMap(scpi_t * context) {
+    int32_t probeId, channel;
+    if (!SCPI_ParamInt32(context, &probeId, TRUE)) return SCPI_RES_ERR;
+    if (probeId < 0 || probeId >= DIO_PROBE_SLOTS) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamInt32(context, &channel, TRUE)) return SCPI_RES_ERR;
+    if (channel < 0 || channel > DIO_PROBE_MAX_DIO_CHANNEL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    const char* modeStr;
+    size_t modeLen;
+    if (!SCPI_ParamCharacters(context, &modeStr, &modeLen, TRUE)) return SCPI_RES_ERR;
+    DioProbeMode_t mode;
+    if (!dioprobe_parse_mode(modeStr, modeLen, &mode)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    if (!DioProbe_AssignToChannel((uint8_t)probeId, (uint8_t)channel, mode)) {
+        SCPI_ExecutionError(context, "SYST:DIOP:ROUT: assign failed (PWM active or channel owned?)");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_DioProbeList(scpi_t * context) {
     for (uint8_t i = 0; i < DIO_PROBE_SLOTS; ++i) {
         DioProbeSlot_t s;
@@ -4254,6 +4281,7 @@ static const scpi_command_t scpi_commands[] = {
     // DIO debug probe framework
     {.pattern = "SYSTem:DIOProbe:MODE", .callback = SCPI_DioProbeModeSet,},
     {.pattern = "SYSTem:DIOProbe:MODE?", .callback = SCPI_DioProbeModeGet,},
+    {.pattern = "SYSTem:DIOProbe:ROUTe", .callback = SCPI_DioProbeMap,},
     {.pattern = "SYSTem:DIOProbe:CLEar", .callback = SCPI_DioProbeClear,},
     {.pattern = "SYSTem:DIOProbe:CLEar:ALL", .callback = SCPI_DioProbeClearAll,},
     {.pattern = "SYSTem:DIOProbe:PIPELine", .callback = SCPI_DioProbePipeline,},

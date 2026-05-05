@@ -10,17 +10,22 @@
  * single spurious edge from another code path would make scope
  * measurements untrustworthy.
  *
- * Two probe classes:
+ * Two probe classes (distinguished by who initiates them, NOT by which
+ * DIO they drive — channel mapping is fully flexible at runtime):
  *
- * 1) STANDARD probes 0..9 — permanently wired to streaming pipeline
- *    stages. Mapped 1:1 to DIO_0..DIO_9. Mode set at runtime via
- *    SCPI `SYSTem:DIOProbe:MODE <probe>,<OFF|TOGGLE|PULSE>`
- *    (no abbreviation on MODE — all caps).
+ * 1) STANDARD probes 0..9 — fired by `DioProbe_Toggle(N)` calls in
+ *    the streaming/ADC pipeline. Default mapping is probe N -> DIO N
+ *    via SCPI `SYSTem:DIOProbe:MODE <probe>,<OFF|TOGGLE|PULSE>`.
+ *    Use `SYSTem:DIOProbe:ROUTe <probe>,<channel>,<mode>` to redirect
+ *    any standard probe to any DIO (handy when the LA isn't wired
+ *    to DIO_0..DIO_9).
  *
  * 2) AD-HOC probes 10..15 — compile-time instrumentation. Drop
  *    `DIO_PROBE_TOGGLE(n)` or `DIO_PROBE_PULSE_START(n)/END(n)` into
  *    any code path, set the corresponding bit in
- *    `DIO_PROBE_ENABLE_MASK`, recompile. Mapped 1:1 to DIO_10..DIO_15.
+ *    `DIO_PROBE_ENABLE_MASK`, recompile. Default mapping at boot is
+ *    probe N -> DIO N. Override at runtime with `SYST:DIOP:ROUT` to
+ *    route the probe to whichever DIO is wired to the LA.
  *
  * Hot-path cost when disabled: one load + branch-if-zero. Zero cost
  * for ad-hoc probes whose bit is not set in DIO_PROBE_ENABLE_MASK.
@@ -89,11 +94,30 @@ extern volatile uint16_t gDioProbeOwnedMask;
  *  DIO_InitHardware so default DIO writes settle first. */
 void DioProbe_Init(void);
 
-/*! Assign a standard probe (0..9) to a mode. Channel = probeId.
- *  Forces pin LOW then configures as output with driver enabled.
- *  Rejects if PWM is active on the target channel.
+/*! Assign a standard probe (0..9) to a mode using the default 1:1
+ *  mapping (channel = probeId). Thin wrapper around
+ *  DioProbe_AssignToChannel for backward compatibility.
  *  @return true on success */
 bool DioProbe_Assign(uint8_t probeId, DioProbeMode_t mode);
+
+/*! Assign ANY probe slot (0..15) to ANY DIO channel (0..15) at runtime.
+ *  Decouples probe ID from physical pin so the caller can route a
+ *  probe to whichever DIO is wired to the logic analyzer.
+ *
+ *  Releases the slot's previous channel (if any) before claiming the
+ *  new one. Forces the new pin LOW, configures it as output with
+ *  driver enabled. Rejects if PWM is active on the target channel.
+ *
+ *  Use cases:
+ *    - SCPI `SYST:DIOP:ROUT <probeId>,<channel>,<mode>` for ad-hoc
+ *      remapping during debug.
+ *    - Re-routing standard probes 0..9 onto wired DIOs when the LA
+ *      doesn't reach DIO_0..DIO_9.
+ *    - Configuring ad-hoc probes 10..15 to drive arbitrary DIOs
+ *      (overrides the default DIO_PROBE_ENABLE_MASK auto-init mapping).
+ *  @return true on success */
+bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
+                              DioProbeMode_t mode);
 
 /*! Release a standard probe. Drives pin LOW, clears ownership,
  *  returns channel to normal DIO control. */
