@@ -112,11 +112,16 @@ bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
          * DioProbe_AssignToChannel an ad-hoc probe can be remapped onto
          * any DIO 0..15, including standard channels that DO carry
          * runtime config — so the restore is required to avoid leaving
-         * a user pin in probe-output state after an OFF. */
+         * a user pin in probe-output state after an OFF.
+         *
+         * Read prev_ch and publish mode=OFF INSIDE the CS so a concurrent
+         * AssignToChannel from the other SCPI task can't see a half-torn-
+         * down slot or double-release the same pin. */
         volatile DioProbeSlot_t* s = &gDioProbeSlots[probeId];
-        uint8_t prev_ch = s->channel;
-        s->mode = DIO_PROBE_MODE_OFF;
+        uint8_t prev_ch;
         taskENTER_CRITICAL();
+        prev_ch = s->channel;
+        s->mode = DIO_PROBE_MODE_OFF;
         if (prev_ch <= DIO_PROBE_MAX_DIO_CHANNEL) {
             probe_release_pin(prev_ch);
             gDioProbeOwnedMask &= (uint16_t)~(1u << prev_ch);
@@ -225,17 +230,16 @@ bool DioProbe_Clear(uint8_t probeId) {
         return true;  /* already clear */
     }
 
-    uint8_t channel = slot->channel;
+    uint8_t channel;
 
-    /* Mode=OFF first (stops any further toggles from ISR context),
-     * then wrap everything else in a single critical section: pin
-     * release + owned mask clear + slot field reset all publish
-     * together. Tightens the "owned" invariant — there's no window
-     * where the mask says owned but the pin has already been reverted
-     * to high-Z. probe_release_pin only does SFR writes, safe in CS. */
-    slot->mode = DIO_PROBE_MODE_OFF;
-
+    /* Read channel + publish mode=OFF + release pin + clear slot fields
+     * all under one CS so a concurrent AssignToChannel on the other SCPI
+     * task can't observe a half-torn-down slot or race us into double-
+     * releasing the same pin. probe_release_pin only does SFR writes,
+     * safe in CS. */
     taskENTER_CRITICAL();
+    channel = slot->channel;
+    slot->mode = DIO_PROBE_MODE_OFF;
     if (channel <= DIO_PROBE_MAX_DIO_CHANNEL) {
         probe_release_pin(channel);
         gDioProbeOwnedMask &= (uint16_t)~(1u << channel);
