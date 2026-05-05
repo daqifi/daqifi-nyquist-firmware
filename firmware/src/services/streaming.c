@@ -922,6 +922,11 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gFlowWindowOverride = 0;
     gQuesBits = 0;
     gInTimerHandler = false;
+    /* buffer/bufferSize are file-statics that may also live in
+     * retained-RAM. Reset before the `if (buffer == NULL)` guard
+     * below so a stale non-NULL pointer doesn't skip the pool fetch. */
+    buffer = NULL;
+    bufferSize = 0;
 
     gpStreamingConfig = pStreamingConfigInit;
     gpRuntimeConfigStream = pStreamingRuntimeConfigInit;
