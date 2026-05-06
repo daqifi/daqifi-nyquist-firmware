@@ -91,8 +91,13 @@ typedef struct sPowerConfig{
 typedef struct sPowerData{
 
     uint8_t chargePct;
-    POWER_STATE powerState;
-    POWER_STATE_REQUEST requestedPowerState;
+    /* volatile: written by app_PowerAndUITask (pri 7), read across loop
+     * iterations by app_WifiTask (pri 2) and app_SDCardTask (pri 5).
+     * Function-call compiler-barriers in those loops currently force
+     * re-loads each iteration at -O3, so this is defense-in-depth
+     * against future inlining or refactoring. See #410. */
+    volatile POWER_STATE powerState;
+    volatile POWER_STATE_REQUEST requestedPowerState;
     EXT_POWER_SOURCE externalPowerSource;
 
     // Variables below are meant to be updated externally
