@@ -6,6 +6,7 @@
 #define LOG_MODULE LOG_MODULE_POWER
 
 #include "HAL/Power/PowerApi.h"
+#include <string.h>  /* memset (#409 retained-RAM defensive init) */
 #include "definitions.h"
 #include "state/board/BoardConfig.h"
 #include "state/data/BoardData.h"
@@ -118,9 +119,16 @@ void Power_Init(
     pData = pInitData;
     pWriteVariables = pInitVars;
 
-    // NOTE: This is called before the RTOS is running.  
+    /* Defensive zero-init for retained-RAM safety (#409). tPowerData and
+     * tPowerWriteVars live in COHERENTBSS / kseg0 best-fit .bss.* — neither
+     * is zeroed by crt0, so values survive MCLR / IPE flash unless we wipe
+     * them here. */
+    memset(pData, 0, sizeof(*pData));
+    memset(pWriteVariables, 0, sizeof(*pWriteVariables));
+
+    // NOTE: This is called before the RTOS is running.
     // Don't call any RTOS functions here!
-    
+
     // Initialize auto external power control (enabled by default)
     pData->autoExtPowerEnabled = true;
     

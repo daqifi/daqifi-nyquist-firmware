@@ -904,6 +904,30 @@ static void Streaming_Stop(void) {
 
 void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
         StreamingRuntimeConfig* pStreamingRuntimeConfigInit) {
+    /* Defensive zero-init for retained-RAM safety (#409). With -fdata-sections
+     * each file-static lands in its own .bss.<name> section, often placed by
+     * the best-fit allocator OUTSIDE [_bss_begin,_bss_end] — so the
+     * compile-time `= 0` initializers are not honored across MCLR / IPE flash.
+     * No critical section needed: this runs pre-scheduler with interrupts off. */
+    gTestPattern = 0;
+    gTestPatternSampleCount = 0;
+    gBenchmarkMode = BENCHMARK_OFF;
+    gSdPbMetadataSent = false;
+    gSdFileWasReady = false;
+    memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
+    gTimerISRCalls = 0;
+    memset(gFlowWindow, 0, sizeof(gFlowWindow));
+    gFlowWindowCount = 0;
+    gFlowWindowSize = FLOW_WINDOW_MIN;
+    gFlowWindowOverride = 0;
+    gQuesBits = 0;
+    gInTimerHandler = false;
+    /* buffer/bufferSize are file-statics that may also live in
+     * retained-RAM. Reset before the `if (buffer == NULL)` guard
+     * below so a stale non-NULL pointer doesn't skip the pool fetch. */
+    buffer = NULL;
+    bufferSize = 0;
+
     gpStreamingConfig = pStreamingConfigInit;
     gpRuntimeConfigStream = pStreamingRuntimeConfigInit;
 

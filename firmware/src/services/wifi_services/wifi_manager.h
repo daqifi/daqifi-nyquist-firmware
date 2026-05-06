@@ -179,6 +179,20 @@ extern "C" {
      * @return True if initialization is successful, false otherwise.
      */
     bool wifi_manager_Init(wifi_manager_settings_t* settings);
+
+    /**
+     * @brief Boot-time defensive zero-init of file-static module state.
+     *
+     * Called once from app_freertos.c BEFORE the scheduler starts and
+     * before the WiFi task can run. Zeroes module-level state (state
+     * machine context, FreeRTOS handles, RSSI flags, etc.) so retained
+     * RAM (kseg0 best-fit `.bss.*` outside `_bss_begin..end`) cannot
+     * leak across MCLR / IPE flash. See #409.
+     *
+     * Distinct from `wifi_manager_Init`, which is re-entrant and runs
+     * after the scheduler is up.
+     */
+    void wifi_manager_BootInit(void);
     /**
      * @brief Reads the Wi-Fi chip information and populates the provided structure.
      *
