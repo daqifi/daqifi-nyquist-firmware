@@ -18,6 +18,8 @@ cd "$(git rev-parse --show-toplevel)"
 OUT="${1:-tools/lint/cppcheck-baseline.txt}"
 
 cppcheck \
+  --quiet \
+  --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
   --enable=warning,style,performance,portability \
   --inconclusive \
   --suppressions-list=tools/lint/cppcheck-suppress.txt \
