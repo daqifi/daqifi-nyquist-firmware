@@ -14,6 +14,9 @@ on:
       - 'tools/lint/**'
       - '.github/workflows/cppcheck.yml'
 
+permissions:
+  contents: read   # only checking out + running a local tool, no writes
+
 jobs:
   lint:
     name: Static analysis
@@ -23,10 +26,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install cppcheck
+        env:
+          # Pin the version we developed/baselined against. Future Ubuntu
+          # apt updates that bump cppcheck can change output for the same
+          # source — without this gate, that would silently fail every PR
+          # until someone regenerates the baseline.
+          EXPECTED_CPPCHECK_VERSION: "Cppcheck 2.13.0"
         run: |
           sudo apt-get update
           sudo apt-get install -y cppcheck
-          cppcheck --version
+          ACTUAL=$(cppcheck --version)
+          echo "$ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED_CPPCHECK_VERSION" ]; then
+            echo "::error::cppcheck version drift — got '$ACTUAL', expected '$EXPECTED_CPPCHECK_VERSION'"
+            echo "Either bump EXPECTED_CPPCHECK_VERSION in this workflow + regenerate the baseline,"
+            echo "or pin runs-on to an Ubuntu image that still ships the expected version."
+            exit 1
+          fi
 
       - name: Run cppcheck
         run: bash tools/lint/cppcheck.sh /tmp/cppcheck-current.txt

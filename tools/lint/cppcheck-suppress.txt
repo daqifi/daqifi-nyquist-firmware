@@ -5,7 +5,7 @@
 # DioProbe.c:120 — cppcheck flow analysis can't see that probeId is bounded
 # by DIO_PROBE_SLOTS (16) at the function entry, so it warns about a path
 # where probeId could be 17. Verified safe by code review (#409).
-arrayIndexOutOfBoundsCond:firmware/src/HAL/DioProbe.c
+arrayIndexOutOfBoundsCond:firmware/src/HAL/DioProbe.c:120
 
 # FreeRTOS portmacro.h:150 — cppcheck doesn't define the chip-specific
 # FPU support macro (__PIC32_HAS_FPU64 etc.) so it triggers the
