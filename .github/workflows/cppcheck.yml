@@ -33,7 +33,11 @@ jobs:
 
       - name: Compare against committed baseline
         run: |
-          if diff -u tools/lint/cppcheck-baseline.txt /tmp/cppcheck-current.txt; then
+          # --strip-trailing-cr makes the comparison robust against
+          # CRLF stragglers from .gitattributes drift on Windows-edited
+          # files. The baseline + suppress + workflow files are pinned
+          # to LF in .gitattributes, but this is a cheap safety net.
+          if diff -u --strip-trailing-cr tools/lint/cppcheck-baseline.txt /tmp/cppcheck-current.txt; then
             echo "✓ Cppcheck baseline unchanged ($(wc -l < tools/lint/cppcheck-baseline.txt) lines)"
             exit 0
           fi
