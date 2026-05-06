@@ -38,9 +38,14 @@ cppcheck \
   -I firmware/src/third_party/rtos/FreeRTOS/Source/include \
   -I firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ \
   -DHAVE_CONFIG_H \
-  -j"$(nproc)" \
   firmware/src/ 2>"$OUT"
+# Note: no -j flag — parallel cppcheck emits findings in non-deterministic
+# order, which makes the CI baseline diff flaky. The whole-tree scan is
+# fast enough single-threaded (~10 s) that the determinism is worth more
+# than the parallelism.
 
 echo "Findings: $(wc -l < "$OUT") lines → $OUT"
 echo "By severity:"
-grep -oE '\[[a-zA-Z]+\]' "$OUT" | sort | uniq -c | sort -rn | head -20
+# `|| true` so the script doesn't exit non-zero under `set -euo pipefail`
+# when there are zero findings (grep returns 1 when nothing matches).
+grep -oE '\[[a-zA-Z]+\]' "$OUT" | sort | uniq -c | sort -rn | head -20 || true
