@@ -19,13 +19,18 @@
 
 #define UNUSED(x) (void)(x)
 
-//! Pointer to the board configuration data structure to be set in initialization
-static tBoardConfig *gpBoardConfig;
-//! Pointer to the board runtime configuration data structure, to be set 
-// !in initialization
-static tBoardRuntimeConfig *gpBoardRuntimeConfig;
-// Pointer to the BoardData data structure, to be set in initialization
-static tBoardData* gpBoardData;
+//! Pointer to the board configuration data structure to be set in initialization.
+// volatile: set once in ADC_Init (before scheduler) and dereferenced from
+// SCPI tasks AND priority-1 ADC_DATAx ISRs. Without volatile, GCC at -O3
+// could hoist/merge the address loads and apply aliasing assumptions that
+// don't hold across the task↔ISR boundary. See #354 ch15 regression.
+static tBoardConfig * volatile gpBoardConfig;
+//! Pointer to the board runtime configuration data structure (see gpBoardConfig
+//! comment for the volatile rationale). Set in ADC_Init; read across ISR/task.
+static tBoardRuntimeConfig * volatile gpBoardRuntimeConfig;
+//! Pointer to the BoardData data structure (see gpBoardConfig comment for the
+//! volatile rationale). Set in ADC_Init; read across ISR/task.
+static tBoardData * volatile gpBoardData;
 static TaskHandle_t gADCInterruptHandle;
 
 // FreeRTOS tick count of the last successful monitoring channel read.
