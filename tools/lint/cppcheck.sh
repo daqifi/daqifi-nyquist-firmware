@@ -17,7 +17,16 @@ cd "$(git rev-parse --show-toplevel)"
 
 OUT="${1:-tools/lint/cppcheck-baseline.txt}"
 
-LC_ALL=C LANG=C cppcheck \
+# Capture cppcheck output to a temp file first, then sort into the final
+# OUT path. Sorting (LC_ALL=C bytewise) eliminates baseline drift from
+# filesystem-traversal-order differences across runners and OSes.
+TMP_OUT="$(mktemp)"
+trap 'rm -f "$TMP_OUT"' EXIT
+
+# `if !` so set -e doesn't abort on cppcheck failure; we want to surface
+# cppcheck's own error output (which goes to TMP_OUT via stderr) before
+# exiting, otherwise CI just shows "step failed" with no diagnostic.
+if ! LC_ALL=C LANG=C cppcheck \
   --quiet \
   --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
   --enable=warning,style,performance,portability \
@@ -40,11 +49,16 @@ LC_ALL=C LANG=C cppcheck \
   -I firmware/src/third_party/rtos/FreeRTOS/Source/include \
   -I firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ \
   -DHAVE_CONFIG_H \
-  firmware/src/ 2>"$OUT"
+  firmware/src/ 2>"$TMP_OUT"; then
+  echo "::error::cppcheck exited non-zero — captured output below:"
+  cat "$TMP_OUT"
+  exit 1
+fi
 # Note: no -j flag — parallel cppcheck emits findings in non-deterministic
-# order, which makes the CI baseline diff flaky. The whole-tree scan is
-# fast enough single-threaded (~10 s) that the determinism is worth more
-# than the parallelism.
+# order, which sort below would normalize anyway, but single-threaded is
+# also a belt-and-suspenders against any future ordering oddities.
+
+LC_ALL=C sort "$TMP_OUT" >"$OUT"
 
 echo "Findings: $(wc -l < "$OUT") lines → $OUT"
 echo "By severity:"
