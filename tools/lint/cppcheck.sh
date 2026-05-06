@@ -17,7 +17,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 OUT="${1:-tools/lint/cppcheck-baseline.txt}"
 
-cppcheck \
+LC_ALL=C LANG=C cppcheck \
   --quiet \
   --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
   --enable=warning,style,performance,portability \
@@ -50,4 +50,4 @@ echo "Findings: $(wc -l < "$OUT") lines → $OUT"
 echo "By severity:"
 # `|| true` so the script doesn't exit non-zero under `set -euo pipefail`
 # when there are zero findings (grep returns 1 when nothing matches).
-grep -oE '\[[a-zA-Z]+\]' "$OUT" | sort | uniq -c | sort -rn | head -20 || true
+grep -oE '\[[[:alnum:]_]+\]' "$OUT" | sort | uniq -c | sort -rn | head -20 || true
