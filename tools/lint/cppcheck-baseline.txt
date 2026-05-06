@@ -1,0 +1,2 @@
+firmware/src/services/wifi_services/wifi_serial_bridge.c:155:69: style: Parameter 'pContext' can be declared as pointer to const [constParameterPointer]
+firmware/src/services/wifi_services/wifi_serial_bridge.c:65:19: style: The scope of the variable 'cnt' can be reduced. [variableScope]

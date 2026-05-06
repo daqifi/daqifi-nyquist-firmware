@@ -1,0 +1,73 @@
+name: cppcheck
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/src/**'
+      - 'tools/lint/**'
+      - '.github/workflows/cppcheck.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/src/**'
+      - 'tools/lint/**'
+      - '.github/workflows/cppcheck.yml'
+
+permissions:
+  contents: read   # only checking out + running a local tool, no writes
+
+jobs:
+  lint:
+    name: Static analysis
+    runs-on: ubuntu-24.04   # ships cppcheck 2.13.0 — matches the baseline
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        env:
+          # Pin the version we developed/baselined against. Future Ubuntu
+          # apt updates that bump cppcheck can change output for the same
+          # source — without this gate, that would silently fail every PR
+          # until someone regenerates the baseline.
+          EXPECTED_CPPCHECK_VERSION: "Cppcheck 2.13.0"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+          ACTUAL=$(cppcheck --version)
+          echo "$ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED_CPPCHECK_VERSION" ]; then
+            echo "::error::cppcheck version drift — got '$ACTUAL', expected '$EXPECTED_CPPCHECK_VERSION'"
+            echo "Either bump EXPECTED_CPPCHECK_VERSION in this workflow + regenerate the baseline,"
+            echo "or pin runs-on to an Ubuntu image that still ships the expected version."
+            exit 1
+          fi
+
+      - name: Run cppcheck
+        run: bash tools/lint/cppcheck.sh /tmp/cppcheck-current.txt
+
+      - name: Compare against committed baseline
+        run: |
+          # --strip-trailing-cr makes the comparison robust against
+          # CRLF stragglers from .gitattributes drift on Windows-edited
+          # files. The baseline + suppress + workflow files are pinned
+          # to LF in .gitattributes, but this is a cheap safety net.
+          if diff -u --strip-trailing-cr tools/lint/cppcheck-baseline.txt /tmp/cppcheck-current.txt; then
+            echo "✓ Cppcheck baseline unchanged ($(wc -l < tools/lint/cppcheck-baseline.txt) lines)"
+            exit 0
+          fi
+
+          echo ""
+          echo "::error::cppcheck findings differ from committed baseline"
+          echo ""
+          echo "If new findings appeared (lines starting with '+'):"
+          echo "  - Real bug → fix it"
+          echo "  - False positive → add to tools/lint/cppcheck-suppress.txt"
+          echo ""
+          echo "If existing findings were resolved (lines starting with '-'):"
+          echo "  - Regenerate the baseline:"
+          echo "      bash tools/lint/cppcheck.sh"
+          echo "    and commit the updated tools/lint/cppcheck-baseline.txt"
+          echo ""
+          exit 1

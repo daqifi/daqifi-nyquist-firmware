@@ -47,3 +47,10 @@
 Makefile text eol=lf
 makefile text eol=lf
 *.mk text eol=lf
+
+# CI-consumed files must stay LF regardless of the .txt/.yml defaults
+# above — Linux runners compare these byte-for-byte and a stray CR
+# would fail the cppcheck baseline diff.
+.github/workflows/*.yml text eol=lf
+tools/lint/cppcheck-baseline.txt text eol=lf
+tools/lint/cppcheck-suppress.txt text eol=lf

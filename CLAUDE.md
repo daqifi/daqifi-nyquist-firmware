@@ -63,6 +63,40 @@ The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.
 
 **When upgrading XC32 or third-party libraries**, try removing source patches 1 and 3 and rebuild with -Werror. If the build passes clean, the patches can be deleted. The FreeRTOS O1 override should be kept regardless of compiler version.
 
+### Static Analysis (cppcheck)
+
+`tools/lint/cppcheck.sh` runs cppcheck on `firmware/src/` excluding
+third-party (`third_party/`, `libraries/`, `config/`). The committed
+baseline `tools/lint/cppcheck-baseline.txt` is the accepted finding
+set; suppressions live in `tools/lint/cppcheck-suppress.txt`.
+
+Run locally:
+
+```bash
+bash tools/lint/cppcheck.sh
+```
+
+CI gate: `.github/workflows/cppcheck.yml` runs on every PR push that
+touches `firmware/src/**` or `tools/lint/**` and **fails the check
+if the new output differs from the committed baseline** (added
+findings = potential bugs; removed findings = baseline drift). The
+runner is Ubuntu 24.04 (cppcheck 2.13.0) — same version we develop
+against locally.
+
+When the gate fails:
+- New findings (`+` lines in the diff) → either fix the bug or, if
+  it's a false positive, add a suppression to
+  `tools/lint/cppcheck-suppress.txt` and regenerate the baseline.
+- Removed findings (`-` lines) → someone fixed an existing finding;
+  regenerate the baseline (`bash tools/lint/cppcheck.sh`) and commit
+  the updated `cppcheck-baseline.txt`.
+
+The current baseline is 2 style findings (both in
+`firmware/src/services/wifi_services/wifi_serial_bridge.c` —
+ergonomic, not bugs). The suppression file documents the
+DioProbe.c array-bounds false positive and the FreeRTOS portmacro
+FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
+
 ### Programming with PICkit 4 from Command Line
 1. Connect PICkit 4 to the device
 2. Use ipecmd to program the hex file:
