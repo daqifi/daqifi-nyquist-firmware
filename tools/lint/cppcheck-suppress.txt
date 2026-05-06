@@ -1,0 +1,14 @@
+# Cppcheck suppressions — false positives + accepted findings.
+# Format: <id>:<file>:<line>   (line optional)
+# Tracked here instead of in-source so the diff stays out of firmware code.
+
+# DioProbe.c:120 — cppcheck flow analysis can't see that probeId is bounded
+# by DIO_PROBE_SLOTS (16) at the function entry, so it warns about a path
+# where probeId could be 17. Verified safe by code review (#409).
+arrayIndexOutOfBoundsCond:firmware/src/HAL/DioProbe.c
+
+# FreeRTOS portmacro.h:150 — cppcheck doesn't define the chip-specific
+# FPU support macro (__PIC32_HAS_FPU64 etc.) so it triggers the
+# guard #error meant to fire on parts without an FPU. PIC32MZ EFM
+# does have hardware FPU — the build sets the macro correctly.
+preprocessorErrorDirective:firmware/src/third_party/rtos/FreeRTOS/Source/portable/MPLAB/PIC32MZ/portmacro.h

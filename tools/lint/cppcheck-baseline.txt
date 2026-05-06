@@ -1,0 +1,6 @@
+firmware/src/services/wifi_services/wifi_serial_bridge.c:65:19: style: The scope of the variable 'cnt' can be reduced. [variableScope]
+    uint_fast16_t cnt;
+                  ^
+firmware/src/services/wifi_services/wifi_serial_bridge.c:155:69: style: Parameter 'pContext' can be declared as pointer to const [constParameterPointer]
+void wifi_serial_bridge_Deinit(wifi_serial_bridge_context_t * const pContext) {
+                                                                    ^

@@ -1,0 +1,53 @@
+name: cppcheck
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/src/**'
+      - 'tools/lint/**'
+      - '.github/workflows/cppcheck.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/src/**'
+      - 'tools/lint/**'
+      - '.github/workflows/cppcheck.yml'
+
+jobs:
+  lint:
+    name: Static analysis
+    runs-on: ubuntu-24.04   # ships cppcheck 2.13.0 — matches the baseline
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+          cppcheck --version
+
+      - name: Run cppcheck
+        run: bash tools/lint/cppcheck.sh /tmp/cppcheck-current.txt
+
+      - name: Compare against committed baseline
+        run: |
+          if diff -u tools/lint/cppcheck-baseline.txt /tmp/cppcheck-current.txt; then
+            echo "✓ Cppcheck baseline unchanged ($(wc -l < tools/lint/cppcheck-baseline.txt) lines)"
+            exit 0
+          fi
+
+          echo ""
+          echo "::error::cppcheck findings differ from committed baseline"
+          echo ""
+          echo "If new findings appeared (lines starting with '+'):"
+          echo "  - Real bug → fix it"
+          echo "  - False positive → add to tools/lint/cppcheck-suppress.txt"
+          echo ""
+          echo "If existing findings were resolved (lines starting with '-'):"
+          echo "  - Regenerate the baseline:"
+          echo "      bash tools/lint/cppcheck.sh"
+          echo "    and commit the updated tools/lint/cppcheck-baseline.txt"
+          echo ""
+          exit 1
