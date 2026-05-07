@@ -101,6 +101,23 @@ PR #282's "deterministic synchronization" claim refers to the **Type 1 ↔ Type 
 
 If a downstream user needs sub-µs Type 1 ↔ Type 2 alignment, the only path is interleaving Type 2 inputs onto dedicated modules (AN5-AN11 alternate inputs to MODULE0-4 via `ADCTRGMODE.SHxALT` — see FRM Section 22 page 22-3 Figure 22-1). That is out of scope for this fix; the bug being addressed is "channels report zero", not "channels are 4 µs apart from Type 1".
 
+### Sample-rate impact
+
+For the NQ1 default 16-channel + monitoring config (19 scan slots, ~4.6 µs scan time), the Type 2 spread becomes a progressively larger fraction of the streaming period as rate increases:
+
+| Streaming rate | Period | Scan time / period | Last-Type-2-vs-Type-1 spread | Notes |
+|---|---|---|---|---|
+| 1 kHz | 1000 µs | 0.46% | ~4.3 µs | Negligible |
+| 5 kHz | 200 µs | 2.3% | ~4.3 µs | Negligible |
+| 10 kHz | 100 µs | 4.6% | ~4.3 µs | Visible but small |
+| 20 kHz | 50 µs | 9% | ~4.3 µs | Becoming significant |
+| 50 kHz | 20 µs | 23% | ~4.3 µs | Dominant timing source |
+| ≥100 kHz | ≤10 µs | ≥46% | scan ≥ period | Hardware/firmware caps reject |
+
+Spread is **fixed at ~4.3 µs** regardless of streaming rate (it's the scan completion time, set by SAMC and slot count, not by the trigger period). What changes with rate is whether that fixed spread is a noise-level offset (1-10 kHz) or a meaningful fraction of the inter-sample interval (≥20 kHz).
+
+The firmware enforces upper bounds via `Streaming_ComputeMaxFreq` (CLAUDE.md "Streaming Frequency Capping" section) — practical caps land between 5-13 kHz depending on enabled-channel mix, before the Type 2 spread becomes problematic. To push spread below ~4 µs at any rate, reduce CSS scan list size (disable monitoring channels via `OnboardDiagEnabled=0` or trim user channels), or reduce SAMC (impacts S/H accuracy — see FRM Section 22 page 22-117 ADC Sampling Requirements).
+
 ## Hypotheses ruled out (and why they looked plausible)
 
 The investigation went through several wrong turns before finding the real bug. Listed here so future-you doesn't repeat them:
