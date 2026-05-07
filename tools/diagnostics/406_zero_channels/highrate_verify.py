@@ -8,11 +8,23 @@ to accumulate the full output.
 """
 import serial, sys, time
 
-# Accept the device path as argv[1] OR fall back to /dev/ttyACM0. An empty
-# string (e.g., from a failed `$(bash find_bench_device.sh)` substitution
-# in the README example) falls back too — better than crashing with an
-# obscure SerialException on Serial("").
-dev = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].strip() else '/dev/ttyACM0'
+# Accept the device path as argv[1]; with no arg, default to /dev/ttyACM0.
+# Empty/whitespace argv[1] is treated as an error (likely a failed
+# `$(bash find_bench_device.sh)` substitution) — silently falling back to
+# /dev/ttyACM0 in that case can target the wrong board on multi-DAQiFi
+# benches. Exit with a clear message instead.
+if len(sys.argv) > 1:
+    dev = sys.argv[1].strip()
+    if not dev:
+        print(
+            'ERROR: empty device argument — likely a failed $(...) '
+            'substitution. Pass /dev/ttyACMn explicitly, or run with '
+            'no arg to default to /dev/ttyACM0.',
+            file=sys.stderr,
+        )
+        sys.exit(2)
+else:
+    dev = '/dev/ttyACM0'
 print(f'Using device: {dev}')
 
 s = serial.Serial(dev, 115200, timeout=0.05)
