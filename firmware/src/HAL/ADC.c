@@ -19,17 +19,32 @@
 
 #define UNUSED(x) (void)(x)
 
-//! Pointer to the board configuration data structure to be set in initialization.
-// volatile: set once in ADC_Init (before scheduler) and dereferenced from
-// SCPI tasks AND priority-1 ADC_DATAx ISRs. Without volatile, GCC at -O3
-// could hoist/merge the address loads and apply aliasing assumptions that
-// don't hold across the task↔ISR boundary. See #354 ch15 regression.
+//! Pointer to the board configuration data structure, set once in ADC_Init.
+//! `T * volatile` (pointer volatile, NOT data volatile) is a *partial* fix
+//! for the #354 ch15 regression: it forces GCC at -O3 to reload the pointer
+//! on each access, which empirically restored correct behaviour by defeating
+//! the optimization that miscompiled cross-context reads.
+//!
+//! The strictly-correct C-standard fix would be `volatile T *` (data
+//! volatile) — that propagates volatile semantics through every dereference,
+//! which is what concurrency correctness actually requires. We use
+//! pointer-only volatile here because making the data volatile cascades
+//! qualifier-mismatch errors through every caller of every internal API
+//! that takes a `T *` (e.g. AD7609_ReadSamples, MC12b_TriggerConversion,
+//! BoardConfig_Get); a full propagation is a separate refactor scoped to
+//! issue #421. Per Qodo's PR #420 review: be aware that volatile on the
+//! pointer alone does NOT provide ordering/visibility guarantees for the
+//! pointed-to fields, and does NOT make non-atomic accesses to shared
+//! fields safe — those still need critical sections.
+//!
+//! Pointer is set once in ADC_Init (before the scheduler) and dereferenced
+//! from SCPI tasks AND priority-1 ADC_DATAx ISRs.
 static tBoardConfig * volatile gpBoardConfig;
 //! Pointer to the board runtime configuration data structure (see gpBoardConfig
-//! comment for the volatile rationale). Set in ADC_Init; read across ISR/task.
+//! comment for the qualifier rationale and Qodo caveat).
 static tBoardRuntimeConfig * volatile gpBoardRuntimeConfig;
 //! Pointer to the BoardData data structure (see gpBoardConfig comment for the
-//! volatile rationale). Set in ADC_Init; read across ISR/task.
+//! qualifier rationale and Qodo caveat).
 static tBoardData * volatile gpBoardData;
 static TaskHandle_t gADCInterruptHandle;
 
