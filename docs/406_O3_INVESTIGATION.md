@@ -89,6 +89,17 @@ CH5=216  CH6=216  CH7=216  CH8=216  CH11=216 | CH24=216  CH38=216
 
 All scan-list channels fire equally — every TMR5 trigger drives one MODULE7 scan that visits every CSS-selected slot.
 
+**Type 1 ↔ Type 2 skew bounds (calculated from datasheet timing, full derivation in "Inter-type timing relationship" below):**
+
+| Quantity                               | Formula                       | NQ1 default config (19 CSS slots, SAMC=0, ADC_CLK=50 MHz) |
+|----------------------------------------|-------------------------------|-----------------------------------------------------------|
+| Slot conversion time                   | `(SAMC + 12) × T_AD`          | `12 × 20 ns = 240 ns`                                     |
+| MODULE7 scan completion time           | `N_CSS × slot`                | `19 × 240 ns = 4.56 µs`                                   |
+| Type 1 vs first Type 2 skew            | `~0`                          | coincident at ~240 ns post-trigger                        |
+| **Type 1 vs last Type 2 skew (worst)** | `(N_CSS − 1) × slot`          | `18 × 240 ns = 4.32 µs`                                   |
+
+Bounds scale linearly with `N_CSS` (count of bits set in `ADCCSS1 ∪ ADCCSS2`); reduce CSS slots to tighten the spread. SAMC tradeoff covered in "Inter-type timing relationship" → "Sample-rate impact" below.
+
 Pre-fix on the same firmware after STA association:
 
 ```
