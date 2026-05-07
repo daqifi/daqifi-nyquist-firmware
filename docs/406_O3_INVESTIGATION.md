@@ -87,6 +87,20 @@ CH5=1    CH6=1    CH7=1    CH8=1    CH11=1   | CH24=33   CH38=33
 
 Five-fire-once is the canonical "per-channel TRGSRC waiting for a trigger source that's not being driven" signature.
 
+## Inter-type (Type 1 vs Type 2) timing relationship
+
+The fix enrols Type 2 channels via `TRGSRC=STRIG`, which makes them follow MODULE7's scan trigger (`STRGSRC=TMR5` during streaming). This is the only way per the FRM to include a Class 1/Class 2 input in the shared-module scan — see ADCCSS1 Note 2 quote above. A few timing implications worth surfacing for downstream consumers:
+
+- **Type 1 channels (dedicated MODULE0-4)** convert in parallel. They're all triggered simultaneously on the TMR5 edge and all complete in `(SAMC + 12) × T_AD` ≈ **240 ns** at default `SAMC=0` and `ADC_CLK=50 MHz` (`T_AD = 20 ns`). Per-channel completion is identical to within hardware tolerance.
+- **Type 2 channels (shared MODULE7 mux)** are visited serially per scan. Each slot takes the same `(SAMC + 12) × T_AD` ≈ **240 ns**, but completion time is offset by the channel's position in the CSS scan order. With N channels in `CSS1 ∪ CSS2`, the last Type 2 channel completes at approximately `N × 240 ns` after the trigger edge.
+- **Worst-case Type 1 vs Type 2 skew** at the 16-channel NQ1 default (CSS1=`0xef0809e0`, CSS2=`0x16c1` → 13 + 6 = **19 scan slots**, including monitoring channels): `(19 − 1) × 240 ns ≈ 4.3 µs` between the simultaneous Type 1 completion and the last Type 2 sample. The first Type 2 channel and Type 1 channels are coincident (within hardware tolerance) at `~240 ns` post-edge.
+
+This serial scanning behaviour is **inherent to MODULE7 mux operation** (FRM Section 22 "ADC Module Configuration") and is unchanged from pre-#282 code — the original `ADCHS_GlobalEdgeConversionStart()` path also serialised Type 2 channels through MODULE7. The `TRGSRC=STRIG` fix restores that pre-#282 behaviour by routing them through the documented scan-trigger path instead of via the side-channel they relied on before.
+
+PR #282's "deterministic synchronization" claim refers to the **Type 1 ↔ Type 2 trigger alignment** (both fire on the same TMR5 edge), not to per-channel completion alignment. That property is preserved by this fix: the trigger edge is shared; only the completion-time spread of Type 2 channels depends on scan ordering, and that spread is bounded by `N × 240 ns` and known at config time from CSS1/CSS2.
+
+If a downstream user needs sub-µs Type 1 ↔ Type 2 alignment, the only path is interleaving Type 2 inputs onto dedicated modules (AN5-AN11 alternate inputs to MODULE0-4 via `ADCTRGMODE.SHxALT` — see FRM Section 22 page 22-3 Figure 22-1). That is out of scope for this fix; the bug being addressed is "channels report zero", not "channels are 4 µs apart from Type 1".
+
 ## Hypotheses ruled out (and why they looked plausible)
 
 The investigation went through several wrong turns before finding the real bug. Listed here so future-you doesn't repeat them:

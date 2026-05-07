@@ -329,13 +329,20 @@ void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared) {
     // healthy (FreeRTOS tick at 1 kHz) and collapsed when other code
     // paths (WiFi STA association) disturbed TMR1 cadence. Fixed
     // 2026-05-07 after datasheet citation. See docs/406_O3_INVESTIGATION.md.
-    for (size_t i = 0; i < pCfg->AInChannels.Size; i++) {
-        const AInChannel* ch = &pCfg->AInChannels.Data[i];
-        if (ch->Type != AIn_MC12bADC) continue;
-        if (ch->Config.MC12b.ChannelType == 1) continue;  // Type 1 handled above
-        uint8_t chId = ch->Config.MC12b.ChannelId;
-        if (chId > 11) continue;  // CH12+ have no per-channel TRGSRC field
-        SetChannelTrigSrc(trg, chId, ADC_TRGSRC_STRIG);
+    //
+    // Gated on hwShared (mirrors the hwDedicated branch above): when
+    // shared HW triggering is off, MODULE7 isn't being scan-driven and
+    // the saved per-channel GSWTRG defaults are correct for the
+    // non-streaming software-trigger path (ADCHS_GlobalEdgeConversionStart).
+    if (hwShared) {
+        for (size_t i = 0; i < pCfg->AInChannels.Size; i++) {
+            const AInChannel* ch = &pCfg->AInChannels.Data[i];
+            if (ch->Type != AIn_MC12bADC) continue;
+            if (ch->Config.MC12b.ChannelType == 1) continue;  // Type 1 handled above
+            uint8_t chId = ch->Config.MC12b.ChannelId;
+            if (chId > 11) continue;  // CH12+ have no per-channel TRGSRC field
+            SetChannelTrigSrc(trg, chId, ADC_TRGSRC_STRIG);
+        }
     }
 
     ADCTRG1 = trg[0];
