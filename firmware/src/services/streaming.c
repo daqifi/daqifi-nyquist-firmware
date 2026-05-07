@@ -836,13 +836,17 @@ static void Streaming_Start(void) {
 
             // #421 diagnostic: zero per-channel ISR counters so the Stop-time
             // log reflects fires from this session only (not cumulative across
-            // boots/streams).
+            // boots/streams). Wrapped in a critical section so an
+            // ADC_DATAn_Handler can't read-modify-write its counter between
+            // the load and our store, which would lose the reset.
             extern volatile uint32_t gAdcIsrCount_5, gAdcIsrCount_6, gAdcIsrCount_7;
             extern volatile uint32_t gAdcIsrCount_8, gAdcIsrCount_11;
             extern volatile uint32_t gAdcIsrCount_24, gAdcIsrCount_38;
+            taskENTER_CRITICAL();
             gAdcIsrCount_5 = gAdcIsrCount_6 = gAdcIsrCount_7 = 0;
             gAdcIsrCount_8 = gAdcIsrCount_11 = 0;
             gAdcIsrCount_24 = gAdcIsrCount_38 = 0;
+            taskEXIT_CRITICAL();
 
             // #421 diagnostic: dump SFRs immediately after trigger config so we
             // can see how the Type 2 scan list (CSS1/2) and CH5/6/7/8/11 IRQ
