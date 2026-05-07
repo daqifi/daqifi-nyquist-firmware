@@ -2,6 +2,7 @@
 # Pin one Makefile source file's compile at a given -O level. Run+test.
 # Usage: bash /tmp/pin_file_olevel.sh <line_no> <-O level> [<obj path to delete>]
 set -e
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 LINE_NO="$1"
 LEVEL="$2"
 OBJPATH="${3:-}"
@@ -18,7 +19,7 @@ if ! grep -q "Program Succeeded" /tmp/build.log; then
   echo "[BUILD FAIL]"; tail -10 /tmp/build.log; exit 2
 fi
 sleep 3
-DAQIFI_DEV=$(bash /tmp/find_bench_device.sh 2>/dev/null)
+DAQIFI_DEV=$(bash "${SCRIPT_DIR}/find_bench_device.sh" 2>/dev/null)
 [ -z "$DAQIFI_DEV" ] && { echo "[NO DEV]"; exit 3; }
 
 python3 -c "

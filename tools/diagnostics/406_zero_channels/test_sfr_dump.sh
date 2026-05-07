@@ -1,12 +1,13 @@
 #!/bin/bash
 # Build/flash production, then run a short 16-channel stream and dump LOG.
 set -e
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 bash ~/.claude/skills/flash/flash.sh --build > /tmp/build.log 2>&1
 if ! grep -q "Program Succeeded" /tmp/build.log; then
   echo "[BUILD FAIL]"; tail -10 /tmp/build.log; exit 2
 fi
 sleep 3
-DAQIFI_DEV=$(bash /tmp/find_bench_device.sh 2>/dev/null)
+DAQIFI_DEV=$(bash "${SCRIPT_DIR}/find_bench_device.sh" 2>/dev/null)
 [ -z "$DAQIFI_DEV" ] && { echo "[NO DEV]"; exit 3; }
 echo "[device] $DAQIFI_DEV"
 

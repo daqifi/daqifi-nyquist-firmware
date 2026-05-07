@@ -2,6 +2,7 @@
 # Test ADC.c built at -O3 + a specific -fno-<flag>. Returns "fixed" or "broken".
 # Usage: bash /tmp/bisect_o3_flag.sh "-fno-inline-functions"
 set -e
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 FLAG="${1:-}"
 MAKEFILE=firmware/daqifi.X/nbproject/Makefile-default.mk
 LINE_NO=2407  # production ADC.c compile line
@@ -22,7 +23,7 @@ if ! grep -q "Program Succeeded" /tmp/build.log; then
   echo "[BUILD FAIL]"; tail -10 /tmp/build.log; exit 2
 fi
 sleep 3
-DAQIFI_DEV=$(bash /tmp/find_bench_device.sh 2>/dev/null)
+DAQIFI_DEV=$(bash "${SCRIPT_DIR}/find_bench_device.sh" 2>/dev/null)
 [ -z "$DAQIFI_DEV" ] && { echo "[NO DEV]"; exit 3; }
 
 python3 -c "

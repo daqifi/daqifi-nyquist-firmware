@@ -2,6 +2,7 @@
 # Test ADC.c built at a specific -O level. Returns "FIXED 16/16" or "broken N/16".
 # Usage: bash /tmp/bisect_olevel.sh "-O2"
 set -e
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 LEVEL="${1:--O3}"
 MAKEFILE=firmware/daqifi.X/nbproject/Makefile-default.mk
 LINE_NO=2407
@@ -17,7 +18,7 @@ if ! grep -q "Program Succeeded" /tmp/build.log; then
   echo "[BUILD FAIL]"; tail -10 /tmp/build.log; exit 2
 fi
 sleep 3
-DAQIFI_DEV=$(bash /tmp/find_bench_device.sh 2>/dev/null)
+DAQIFI_DEV=$(bash "${SCRIPT_DIR}/find_bench_device.sh" 2>/dev/null)
 [ -z "$DAQIFI_DEV" ] && { echo "[NO DEV]"; exit 3; }
 
 python3 -c "

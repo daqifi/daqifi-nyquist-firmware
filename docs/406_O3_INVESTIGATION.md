@@ -79,7 +79,7 @@ For the skew bounds and rate-impact discussion in the next section to be load-be
 | 10 kHz  | 20,000        | 9,957         | 50%       | 16     | 16     | 16.00   | **FIXED** |
 | 13 kHz  | 26,000        | 9,988         | 38%       | 16     | 16     | 16.00   | **FIXED** |
 
-Run via `tools/diagnostics/406_zero_channels/highrate_verify.py /dev/ttyACM0`. 13 kHz is at or above the firmware-enforced 16-channel cap from `Streaming_ComputeMaxFreq`; pushing higher returns capped frequencies and the cap landing depends on enabled-channel mix (see CLAUDE.md "Streaming Frequency Capping"). The capture % drops above 5 kHz because the host-side serial transport saturates around ~5000 rows/s through USB CDC ACM on this bench setup; **what matters is that every body row that does land carries all 16 enabled channels**, confirming the scan continues to enroll every CSS-selected slot at rates well above the 1 kHz bench default. The Type 1 vs last-Type-2 spread bound (~4.3 µs, see "Inter-type timing relationship" below) holds at all three rates.
+Run via `tools/diagnostics/406_zero_channels/highrate_verify.py /dev/ttyACM0`. 13 kHz is at or above the firmware-enforced 16-channel cap from `Streaming_ComputeMaxFreq`; pushing higher returns capped frequencies and the cap landing depends on enabled-channel mix (see CLAUDE.md "Streaming Frequency Capping"). The capture % drops above 5 kHz because the host-side serial transport saturates around ~5000 rows/s through USB CDC ACM on this bench setup; **what matters is that every body row that does land carries all 16 enabled channels**, confirming the scan continues to enroll every CSS-selected slot at rates well above the 1 kHz bench default. The Type 1 vs last-Type-2 spread bound (~40.3 µs at the MHC-default SAMC=100, see "Inter-type timing relationship" below) holds at all three rates.
 
 Per-channel ISR counts in a 4 s session at 50 Hz post-fix:
 
@@ -91,12 +91,14 @@ All scan-list channels fire equally — every TMR5 trigger drives one MODULE7 sc
 
 **Type 1 ↔ Type 2 skew bounds (calculated from datasheet timing, full derivation in "Inter-type timing relationship" below):**
 
-| Quantity                               | Formula                       | NQ1 default config (19 CSS slots, SAMC=0, ADC_CLK=50 MHz) |
-|----------------------------------------|-------------------------------|-----------------------------------------------------------|
-| Slot conversion time                   | `(SAMC + 12) × T_AD`          | `12 × 20 ns = 240 ns`                                     |
-| MODULE7 scan completion time           | `N_CSS × slot`                | `19 × 240 ns = 4.56 µs`                                   |
-| Type 1 vs first Type 2 skew            | `~0`                          | coincident at ~240 ns post-trigger                        |
-| **Type 1 vs last Type 2 skew (worst)** | `(N_CSS − 1) × slot`          | `18 × 240 ns = 4.32 µs`                                   |
+| Quantity                               | Formula                       | NQ1 default config (19 CSS slots, SAMC=100, ADC_CLK=50 MHz) |
+|----------------------------------------|-------------------------------|-------------------------------------------------------------|
+| Slot conversion time                   | `(SAMC + 12) × T_AD`          | `112 × 20 ns = 2.24 µs`                                     |
+| MODULE7 scan completion time           | `N_CSS × slot`                | `19 × 2.24 µs = 42.56 µs`                                   |
+| Type 1 vs first Type 2 skew            | `~0`                          | coincident at ~2.24 µs post-trigger                         |
+| **Type 1 vs last Type 2 skew (worst)** | `(N_CSS − 1) × slot`          | `18 × 2.24 µs = 40.32 µs`                                   |
+
+The MHC-generated `plib_adchs.c::ADCHS_Initialize()` programs `ADC0TIME=0x3010064` … `ADC4TIME=0x3010064` (dedicated modules) and `ADCCON2=0x642001` (shared MODULE7), both encoding `SAMC=0x064=100` in their `SAMC<9:0>` field. SAMC is runtime-tunable via `SYST:CONF:ADC:SAMC` (see `MC12b_SetAcquisitionSamc` in `firmware/src/HAL/ADC/MC12bADC.c`); the bounds above are for the boot default. Lowering SAMC tightens slot conversion time toward the FRM's recommended-minimum sample-and-hold accuracy floor (see DS60001344E §22.10 ADC Sampling Requirements).
 
 Bounds scale linearly with `N_CSS` (count of bits set in `ADCCSS1 ∪ ADCCSS2`); reduce CSS slots to tighten the spread. SAMC tradeoff covered in "Inter-type timing relationship" → "Sample-rate impact" below.
 
@@ -112,38 +114,37 @@ Five-fire-once is the canonical "per-channel TRGSRC waiting for a trigger source
 
 The fix enrols Type 2 channels via `TRGSRC=STRIG`, which makes them follow MODULE7's scan trigger (`STRGSRC=TMR5` during streaming). This is the only way per the FRM to include a Class 1/Class 2 input in the shared-module scan — see ADCCSS1 Note 2 quote above. A few timing implications worth surfacing for downstream consumers:
 
-- **Type 1 channels (dedicated MODULE0-4)** convert in parallel. They're all triggered simultaneously on the TMR5 edge and all complete in `(SAMC + 12) × T_AD` ≈ **240 ns** at default `SAMC=0` and `ADC_CLK=50 MHz` (`T_AD = 20 ns`). Per-channel completion is identical to within hardware tolerance.
-- **Type 2 channels (shared MODULE7 mux)** are visited serially per scan. Each slot takes the same `(SAMC + 12) × T_AD` ≈ **240 ns**, but completion time is offset by the channel's position in the CSS scan order. With N channels in `CSS1 ∪ CSS2`, the last Type 2 channel completes at approximately `N × 240 ns` after the trigger edge.
-- **Worst-case Type 1 vs Type 2 skew** at the 16-channel NQ1 default (CSS1=`0xef0809e0`, CSS2=`0x16c1` → 13 + 6 = **19 scan slots**, including monitoring channels): `(19 − 1) × 240 ns ≈ 4.3 µs` between the simultaneous Type 1 completion and the last Type 2 sample. The first Type 2 channel and Type 1 channels are coincident (within hardware tolerance) at `~240 ns` post-edge.
+- **Type 1 channels (dedicated MODULE0-4)** convert in parallel. They're all triggered simultaneously on the TMR5 edge and all complete in `(SAMC + 12) × T_AD` ≈ **2.24 µs** at the MHC-generated default `SAMC=100` and `ADC_CLK=50 MHz` (`T_AD = 20 ns`). Per-channel completion is identical to within hardware tolerance.
+- **Type 2 channels (shared MODULE7 mux)** are visited serially per scan. Each slot takes the same `(SAMC + 12) × T_AD` ≈ **2.24 µs**, but completion time is offset by the channel's position in the CSS scan order. With N channels in `CSS1 ∪ CSS2`, the last Type 2 channel completes at approximately `N × 2.24 µs` after the trigger edge.
+- **Worst-case Type 1 vs Type 2 skew** at the 16-channel NQ1 default (CSS1=`0xef0809e0`, CSS2=`0x16c1` → 13 + 6 = **19 scan slots**, including monitoring channels): `(19 − 1) × 2.24 µs ≈ 40.3 µs` between the simultaneous Type 1 completion and the last Type 2 sample. The first Type 2 channel and Type 1 channels are coincident (within hardware tolerance) at `~2.24 µs` post-edge.
 
 This serial scanning behaviour is **inherent to MODULE7 mux operation** (FRM Section 22 "ADC Module Configuration") and is unchanged from pre-#282 code — the original `ADCHS_GlobalEdgeConversionStart()` path also serialised Type 2 channels through MODULE7. The `TRGSRC=STRIG` fix restores that pre-#282 behaviour by routing them through the documented scan-trigger path instead of via the side-channel they relied on before.
 
-PR #282's "deterministic synchronization" claim refers to the **Type 1 ↔ Type 2 trigger alignment** (both fire on the same TMR5 edge), not to per-channel completion alignment. That property is preserved by this fix: the trigger edge is shared; only the completion-time spread of Type 2 channels depends on scan ordering, and that spread is bounded by `N × 240 ns` and known at config time from CSS1/CSS2.
+PR #282's "deterministic synchronization" claim refers to the **Type 1 ↔ Type 2 trigger alignment** (both fire on the same TMR5 edge), not to per-channel completion alignment. That property is preserved by this fix: the trigger edge is shared; only the completion-time spread of Type 2 channels depends on scan ordering, and that spread is bounded by `(N − 1) × (SAMC + 12) × T_AD` and known at config time from CSS1/CSS2 + the SAMC programmed in `ADCxTIME`/`ADCCON2`.
 
 If a downstream user needs sub-µs Type 1 ↔ Type 2 alignment, the only path is interleaving Type 2 inputs onto dedicated modules (AN5-AN11 alternate inputs to MODULE0-4 via `ADCTRGMODE.SHxALT` — see FRM Section 22 page 22-3 Figure 22-1). That is out of scope for this fix; the bug being addressed is "channels report zero", not "channels are 4 µs apart from Type 1".
 
 ### Sample-rate impact
 
-For the NQ1 default 16-channel + monitoring config (19 scan slots, ~4.6 µs scan time), the Type 2 spread becomes a progressively larger fraction of the streaming period as rate increases:
+For the NQ1 default 16-channel + monitoring config (19 scan slots, ~42.6 µs scan time at the MHC-generated `SAMC=100`), the Type 2 spread becomes a progressively larger fraction of the streaming period as rate increases:
 
 Two distinct timing numbers — keep them separate:
 
-- **Scan completion time** = `N × (SAMC + 12) × T_AD` ≈ `19 × 240 ns` ≈ **4.6 µs** (the time from TMR5 edge until MODULE7's *last* slot's data-ready latch sets).
-- **Type 1 vs last-Type-2 spread** = `(N − 1) × 240 ns` ≈ **4.3 µs** (the time between Type 1 channels' simultaneous completion at ~240 ns and the last Type 2 channel's completion at ~4.6 µs — i.e. one slot less than the scan time, because Type 1 and the first Type 2 slot finish coincidentally).
+- **Scan completion time** = `N × (SAMC + 12) × T_AD` ≈ `19 × 2.24 µs` ≈ **42.6 µs** (the time from TMR5 edge until MODULE7's *last* slot's data-ready latch sets).
+- **Type 1 vs last-Type-2 spread** = `(N − 1) × 2.24 µs` ≈ **40.3 µs** (the time between Type 1 channels' simultaneous completion at ~2.24 µs and the last Type 2 channel's completion at ~42.6 µs — i.e. one slot less than the scan time, because Type 1 and the first Type 2 slot finish coincidentally).
 
 | Streaming rate | Period | Scan / period | Type1↔last-T2 spread | Notes |
 |---|---|---|---|---|
-| 1 kHz | 1000 µs | 0.46% | ~4.3 µs | Negligible |
-| 5 kHz | 200 µs | 2.3% | ~4.3 µs | Negligible |
-| 10 kHz | 100 µs | 4.6% | ~4.3 µs | Visible but small |
-| 20 kHz | 50 µs | 9.2% | ~4.3 µs | Becoming significant |
-| 50 kHz | 20 µs | 23% | ~4.3 µs | Dominant timing source |
-| 100 kHz | 10 µs | 46% | ~4.3 µs | Approaches half the period |
-| ≥217 kHz | ≤4.6 µs | ≥100% | (scan exceeds period) | Hardware impossible — firmware caps below this |
+| 1 kHz | 1000 µs | 4.3% | ~40.3 µs | Negligible |
+| 2 kHz | 500 µs | 8.5% | ~40.3 µs | Negligible |
+| 5 kHz | 200 µs | 21% | ~40.3 µs | Becoming significant |
+| 10 kHz | 100 µs | 43% | ~40.3 µs | Significant fraction of period |
+| 13 kHz | 77 µs | 55% | ~40.3 µs | Firmware-cap territory for 16ch |
+| ≥23.5 kHz | ≤42.6 µs | ≥100% | (scan ≥ period) | Hardware impossible — firmware caps below this |
 
-Spread is **fixed at ~4.3 µs** regardless of streaming rate (it's set by SAMC and CSS slot count, not by trigger period). What changes with rate is whether that fixed spread is a noise-level offset (1-10 kHz) or a meaningful fraction of the inter-sample interval (≥20 kHz).
+Spread is **fixed at ~40.3 µs** regardless of streaming rate at the boot SAMC=100 default (it's set by SAMC and CSS slot count, not by trigger period). What changes with rate is whether that fixed spread is a small fraction of the inter-sample interval (≤2 kHz) or a meaningful fraction (≥5 kHz). For applications that need tighter Type 2 alignment, drop SAMC via `SYST:CONF:ADC:SAMC` — at the FRM-recommended minimum SAMC=0, slot time falls to 240 ns and the 19-slot spread to ~4.3 µs (10× tighter), at the cost of S/H accuracy on high-impedance sources.
 
-The firmware enforces upper bounds via `Streaming_ComputeMaxFreq` (CLAUDE.md "Streaming Frequency Capping" section) — practical caps land between 5-13 kHz depending on enabled-channel mix, well below where the scan time approaches the period. To push spread below ~4 µs at any rate, reduce CSS scan list size (disable monitoring channels via `OnboardDiagEnabled=0` or trim user channels), or reduce SAMC (impacts S/H accuracy — see FRM Section 22 page 22-117 ADC Sampling Requirements).
+The firmware enforces upper bounds via `Streaming_ComputeMaxFreq` (CLAUDE.md "Streaming Frequency Capping" section) — practical caps land between 5-13 kHz depending on enabled-channel mix, all of which sit below the ~23.5 kHz hardware ceiling where the scan would exceed the trigger period. To push spread below ~4 µs at any rate, reduce CSS scan list size (disable monitoring channels via `OnboardDiagEnabled=0` or trim user channels), or reduce SAMC (impacts S/H accuracy — see FRM Section 22 page 22-117 ADC Sampling Requirements).
 
 ## Hypotheses ruled out (and why they looked plausible)
 
