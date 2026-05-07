@@ -71,6 +71,16 @@ Production -O3 build, NQ1 (serial `7E2898F46200E8A7`), 16-channel CSV stream, 4 
 | USB stream, WiFi STA associated to AP | 0/10 | **10/10** |
 | WiFi TCP stream | 0/10 | **10/10** |
 
+For the skew bounds and rate-impact discussion in the next section to be load-bearing, the fix needs to actually work at the rates listed. High-rate verification on the same hardware (16 enabled user channels + 3 monitoring = 19 CSS slots, 2 s capture per rate, body rows after warmup transient):
+
+| Rate    | Rows captured | min nz | max nz | mean nz | Verdict   |
+|--------:|--------------:|-------:|-------:|--------:|-----------|
+| 5 kHz   | 14            | 16     | 16     | 16.00   | **FIXED** |
+| 10 kHz  | 16            | 16     | 16     | 16.00   | **FIXED** |
+| 13 kHz  | 15            | 16     | 16     | 16.00   | **FIXED** |
+
+Run via `tools/diagnostics/406_zero_channels/highrate_verify.py /dev/ttyACM0`. 13 kHz is at or above the firmware-enforced 16-channel cap from `Streaming_ComputeMaxFreq`; pushing higher returns capped frequencies and the cap landing depends on enabled-channel mix (see CLAUDE.md "Streaming Frequency Capping"). All three rates show every body row carrying all 16 enabled channels, confirming the scan continues to enroll every CSS-selected slot at rates well above the 1 kHz bench default.
+
 Per-channel ISR counts in a 4 s session at 50 Hz post-fix:
 
 ```
@@ -105,18 +115,24 @@ If a downstream user needs sub-µs Type 1 ↔ Type 2 alignment, the only path is
 
 For the NQ1 default 16-channel + monitoring config (19 scan slots, ~4.6 µs scan time), the Type 2 spread becomes a progressively larger fraction of the streaming period as rate increases:
 
-| Streaming rate | Period | Scan time / period | Last-Type-2-vs-Type-1 spread | Notes |
+Two distinct timing numbers — keep them separate:
+
+- **Scan completion time** = `N × (SAMC + 12) × T_AD` ≈ `19 × 240 ns` ≈ **4.6 µs** (the time from TMR5 edge until MODULE7's *last* slot's data-ready latch sets).
+- **Type 1 vs last-Type-2 spread** = `(N − 1) × 240 ns` ≈ **4.3 µs** (the time between Type 1 channels' simultaneous completion at ~240 ns and the last Type 2 channel's completion at ~4.6 µs — i.e. one slot less than the scan time, because Type 1 and the first Type 2 slot finish coincidentally).
+
+| Streaming rate | Period | Scan / period | Type1↔last-T2 spread | Notes |
 |---|---|---|---|---|
 | 1 kHz | 1000 µs | 0.46% | ~4.3 µs | Negligible |
 | 5 kHz | 200 µs | 2.3% | ~4.3 µs | Negligible |
 | 10 kHz | 100 µs | 4.6% | ~4.3 µs | Visible but small |
-| 20 kHz | 50 µs | 9% | ~4.3 µs | Becoming significant |
+| 20 kHz | 50 µs | 9.2% | ~4.3 µs | Becoming significant |
 | 50 kHz | 20 µs | 23% | ~4.3 µs | Dominant timing source |
-| ≥100 kHz | ≤10 µs | ≥46% | scan ≥ period | Hardware/firmware caps reject |
+| 100 kHz | 10 µs | 46% | ~4.3 µs | Approaches half the period |
+| ≥217 kHz | ≤4.6 µs | ≥100% | (scan exceeds period) | Hardware impossible — firmware caps below this |
 
-Spread is **fixed at ~4.3 µs** regardless of streaming rate (it's the scan completion time, set by SAMC and slot count, not by the trigger period). What changes with rate is whether that fixed spread is a noise-level offset (1-10 kHz) or a meaningful fraction of the inter-sample interval (≥20 kHz).
+Spread is **fixed at ~4.3 µs** regardless of streaming rate (it's set by SAMC and CSS slot count, not by trigger period). What changes with rate is whether that fixed spread is a noise-level offset (1-10 kHz) or a meaningful fraction of the inter-sample interval (≥20 kHz).
 
-The firmware enforces upper bounds via `Streaming_ComputeMaxFreq` (CLAUDE.md "Streaming Frequency Capping" section) — practical caps land between 5-13 kHz depending on enabled-channel mix, before the Type 2 spread becomes problematic. To push spread below ~4 µs at any rate, reduce CSS scan list size (disable monitoring channels via `OnboardDiagEnabled=0` or trim user channels), or reduce SAMC (impacts S/H accuracy — see FRM Section 22 page 22-117 ADC Sampling Requirements).
+The firmware enforces upper bounds via `Streaming_ComputeMaxFreq` (CLAUDE.md "Streaming Frequency Capping" section) — practical caps land between 5-13 kHz depending on enabled-channel mix, well below where the scan time approaches the period. To push spread below ~4 µs at any rate, reduce CSS scan list size (disable monitoring channels via `OnboardDiagEnabled=0` or trim user channels), or reduce SAMC (impacts S/H accuracy — see FRM Section 22 page 22-117 ADC Sampling Requirements).
 
 ## Hypotheses ruled out (and why they looked plausible)
 
