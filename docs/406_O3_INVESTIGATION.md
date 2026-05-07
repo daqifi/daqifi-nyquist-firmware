@@ -71,15 +71,15 @@ Production -O3 build, NQ1 (serial `7E2898F46200E8A7`), 16-channel CSV stream, 4 
 | USB stream, WiFi STA associated to AP | 0/10 | **10/10** |
 | WiFi TCP stream | 0/10 | **10/10** |
 
-For the skew bounds and rate-impact discussion in the next section to be load-bearing, the fix needs to actually work at the rates listed. High-rate verification on the same hardware (16 enabled user channels + 3 monitoring = 19 CSS slots, 2 s capture per rate, body rows after warmup transient):
+For the skew bounds and rate-impact discussion in the next section to be load-bearing, the fix needs to actually work at the rates listed. High-rate verification on the same hardware (16 enabled user channels + 3 monitoring = 19 CSS slots, 2 s capture per rate, chunked-read during stream to avoid buffer-tail-only reads, body rows after warmup transient):
 
-| Rate    | Rows captured | min nz | max nz | mean nz | Verdict   |
-|--------:|--------------:|-------:|-------:|--------:|-----------|
-| 5 kHz   | 14            | 16     | 16     | 16.00   | **FIXED** |
-| 10 kHz  | 16            | 16     | 16     | 16.00   | **FIXED** |
-| 13 kHz  | 15            | 16     | 16     | 16.00   | **FIXED** |
+| Rate    | Expected rows | Rows captured | Capture % | min nz | max nz | mean nz | Verdict   |
+|--------:|--------------:|--------------:|----------:|-------:|-------:|--------:|-----------|
+| 5 kHz   | 10,000        | 9,863         | 99%       | 16     | 16     | 16.00   | **FIXED** |
+| 10 kHz  | 20,000        | 9,957         | 50%       | 16     | 16     | 16.00   | **FIXED** |
+| 13 kHz  | 26,000        | 9,988         | 38%       | 16     | 16     | 16.00   | **FIXED** |
 
-Run via `tools/diagnostics/406_zero_channels/highrate_verify.py /dev/ttyACM0`. 13 kHz is at or above the firmware-enforced 16-channel cap from `Streaming_ComputeMaxFreq`; pushing higher returns capped frequencies and the cap landing depends on enabled-channel mix (see CLAUDE.md "Streaming Frequency Capping"). All three rates show every body row carrying all 16 enabled channels, confirming the scan continues to enroll every CSS-selected slot at rates well above the 1 kHz bench default.
+Run via `tools/diagnostics/406_zero_channels/highrate_verify.py /dev/ttyACM0`. 13 kHz is at or above the firmware-enforced 16-channel cap from `Streaming_ComputeMaxFreq`; pushing higher returns capped frequencies and the cap landing depends on enabled-channel mix (see CLAUDE.md "Streaming Frequency Capping"). The capture % drops above 5 kHz because the host-side serial transport saturates around ~5000 rows/s through USB CDC ACM on this bench setup; **what matters is that every body row that does land carries all 16 enabled channels**, confirming the scan continues to enroll every CSS-selected slot at rates well above the 1 kHz bench default. The Type 1 vs last-Type-2 spread bound (~4.3 µs, see "Inter-type timing relationship" below) holds at all three rates.
 
 Per-channel ISR counts in a 4 s session at 50 Hz post-fix:
 
