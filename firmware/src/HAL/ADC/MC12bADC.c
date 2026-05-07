@@ -9,6 +9,7 @@
 #include "definitions.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
+#include "Util/Logger.h"
 
 //#define UNUSED(x) (void)(x)
 #define UNUSED(identifier) /* identifier */
@@ -34,12 +35,27 @@ static MC12bModuleConfig* gpModuleConfigMC12;
 //! Pointer to the module configuration data structure in runtime
 //! to be set in initialization
 static AInModuleRuntimeConfig* gpModuleRuntimeConfigMC12;
-//! Boolean to indicate if this module is enabled
-static bool gIsEnabled = false;
+//! Boolean to indicate if this module is enabled.
+//! volatile per #421 — set by MC12b_WriteModuleState (called from
+//! ADC_Tasks polling and SCPI ENA paths), read in the same function.
+//! Without volatile -O3 may treat it as an independent truth source
+//! and skip re-fetching from the module runtime config it shadows.
+static volatile bool gIsEnabled = false;
 
-// --- Hardware trigger constants (DS60001320) ---
+// --- Hardware trigger constants (Section 22 ADC FRM DS60001344E) ---
 // Trigger source encoding shared by per-channel TRGSRC (ADCTRGx) and
-// scan trigger STRGSRC (ADCCON1[20:16]).
+// scan trigger STRGSRC (ADCCON1[20:16]). Verbatim from Register 22-19
+// (page 22-38) of the 12-bit HS SAR ADC FRM:
+//   00000 = No Trigger
+//   00001 = GSWTRG (Global Software Edge — fires on ADCCON3.GSWTRG)
+//   00010 = GLSWTRG (Global Level Software Trigger)
+//   00011 = STRIG (Scan Trigger — required for MODULE7 mux scan
+//                  inclusion; see ADCCSS1 Note 2 page 22-32)
+//   00100..11111 = device-specific (TMR1/3/5/OC1 etc., per
+//                  PIC32MZ-EF datasheet DS60001320H ADC chapter)
+#define ADC_TRGSRC_NONE             0       // No trigger / channel disabled
+#define ADC_TRGSRC_GSWTRG           1       // Fired by ADCHS_GlobalEdgeConversionStart()
+#define ADC_TRGSRC_STRIG            3       // Follow MODULE7 STRGSRC scan trigger
 #define ADC_TRGSRC_TMR5             7       // Timer4/5 match (streaming timer)
 
 // ADCTRGx register layout: 4 channels per register, each TRGSRC field
@@ -282,6 +298,44 @@ void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared) {
             if (ch->Config.MC12b.ChannelType != 1) continue;
             SetChannelTrigSrc(trg, ch->Config.MC12b.ChannelId, ADC_TRGSRC_TMR5);
         }
+    }
+
+    // #421 fix v2: per-channel TRGSRC fields for shared MODULE7 channels
+    // (HW channels 0-11) come up with TRGSRC=1 (GSWTRG) in the Microchip-
+    // generated boot config (plib_adchs.c ADCTRG2/3). With TRGSRC=GSWTRG,
+    // the channel converts only when ADCCON3.GSWTRG is pulsed via
+    // ADCHS_GlobalEdgeConversionStart(). Pre-#282 (commit f114f44e) the
+    // streaming task explicitly fired GSWTRG every cycle, so this worked
+    // implicitly. After #282, hardware-trigger sync replaced that call
+    // with STRGSRC=TMR5 (which fires the MODULE7 scan), but the per-
+    // channel TRGSRC field takes precedence over STRGSRC for channels
+    // 0-11 — so they stayed waiting for a GSWTRG that never arrived,
+    // firing exactly once during ADCANCON warmup and then going silent.
+    // HW channels 24+ are Class 3 (no per-channel TRGSRC slot) and
+    // automatically follow STRGSRC, which is why they kept working.
+    //
+    // The correct value to enroll a Class 1/2 channel in MODULE7 scan is
+    // TRGSRC=STRIG (3), per Section 22 ADC FRM DS60001344E:
+    //   - Register 22-19 (page 22-38) defines TRGSRC=00011 = STRIG.
+    //   - ADCCSS1 Note 2 (page 22-32): "If a Class 1 or Class 2 input
+    //     is included in the scan by setting the CSSx bit to '1' and
+    //     by setting the TRGSRCx<4:0> bits to STRIG mode ('0b011'),
+    //     the user application must ensure that no other triggers are
+    //     generated for that input using the RQCNVRT bit in the
+    //     ADCCON3 register or the hardware input or any digital filter."
+    //
+    // The previous v1 patch used TRGSRC=4 — that is TMR1 trigger per
+    // device datasheet, not STRIG. It accidentally worked when TMR1 was
+    // healthy (FreeRTOS tick at 1 kHz) and collapsed when other code
+    // paths (WiFi STA association) disturbed TMR1 cadence. Fixed
+    // 2026-05-07 after datasheet citation. See docs/406_O3_INVESTIGATION.md.
+    for (size_t i = 0; i < pCfg->AInChannels.Size; i++) {
+        const AInChannel* ch = &pCfg->AInChannels.Data[i];
+        if (ch->Type != AIn_MC12bADC) continue;
+        if (ch->Config.MC12b.ChannelType == 1) continue;  // Type 1 handled above
+        uint8_t chId = ch->Config.MC12b.ChannelId;
+        if (chId > 11) continue;  // CH12+ have no per-channel TRGSRC field
+        SetChannelTrigSrc(trg, chId, ADC_TRGSRC_STRIG);
     }
 
     ADCTRG1 = trg[0];
