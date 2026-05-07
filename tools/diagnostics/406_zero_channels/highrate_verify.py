@@ -8,7 +8,12 @@ to accumulate the full output.
 """
 import serial, sys, time
 
-dev = sys.argv[1] if len(sys.argv) > 1 else '/dev/ttyACM0'
+# Accept the device path as argv[1] OR fall back to /dev/ttyACM0. An empty
+# string (e.g., from a failed `$(bash find_bench_device.sh)` substitution
+# in the README example) falls back too — better than crashing with an
+# obscure SerialException on Serial("").
+dev = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].strip() else '/dev/ttyACM0'
+print(f'Using device: {dev}')
 
 s = serial.Serial(dev, 115200, timeout=0.05)
 time.sleep(0.5)
