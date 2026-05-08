@@ -184,50 +184,66 @@ void __attribute__((used)) ADC_DATA4_Handler(void) {
     ADC_DATA4_InterruptHandler();
 }
 
+// #421 diagnostic counters: prove whether the broken-set Type 2 ISRs
+// (CH5/6/7/8/11) actually fire at runtime. Read via Streaming_Stop log.
+volatile uint32_t gAdcIsrCount_5  = 0;
+volatile uint32_t gAdcIsrCount_6  = 0;
+volatile uint32_t gAdcIsrCount_7  = 0;
+volatile uint32_t gAdcIsrCount_8  = 0;
+volatile uint32_t gAdcIsrCount_11 = 0;
+volatile uint32_t gAdcIsrCount_24 = 0;  // working — control sample
+volatile uint32_t gAdcIsrCount_38 = 0;  // working — control sample
+
 void __attribute__((used)) ADC_DATA5_Handler (void)
 {
+    gAdcIsrCount_5++;
     if (ADCHS_ChannelResultIsReady(5)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(5), 5);        
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(5), 5);
     }
     ADC_DATA5_InterruptHandler();
 }
 
 void __attribute__((used)) ADC_DATA6_Handler (void)
 {
+    gAdcIsrCount_6++;
     if (ADCHS_ChannelResultIsReady(6)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(6), 6);        
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(6), 6);
     }
     ADC_DATA6_InterruptHandler();
 }
 
 void __attribute__((used)) ADC_DATA7_Handler (void)
 {
+    gAdcIsrCount_7++;
     if (ADCHS_ChannelResultIsReady(7)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(7), 7);        
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(7), 7);
     }
     ADC_DATA7_InterruptHandler();
 }
 
 void __attribute__((used)) ADC_DATA8_Handler (void)
 {
+    gAdcIsrCount_8++;
     if (ADCHS_ChannelResultIsReady(8)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(8), 8);        
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(8), 8);
     }
     ADC_DATA8_InterruptHandler();
 }
 
 void __attribute__((used)) ADC_DATA11_Handler (void)
 {
+    gAdcIsrCount_11++;
     if (ADCHS_ChannelResultIsReady(11)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(11), 11);        
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(11), 11);
     }
     ADC_DATA11_InterruptHandler();
 }
 
 void __attribute__((used)) ADC_DATA24_Handler (void)
 {
+    gAdcIsrCount_24++;
     if (ADCHS_ChannelResultIsReady(24)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(24), 24);        
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(24), 24);
     }
     ADC_DATA24_InterruptHandler();
 }
@@ -258,8 +274,9 @@ void __attribute__((used)) ADC_DATA27_Handler (void)
 
 void __attribute__((used)) ADC_DATA38_Handler (void)
 {
+    gAdcIsrCount_38++;
     if (ADCHS_ChannelResultIsReady(38)) {
-        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(38), 38);        
+        ADC_ReadADCSampleFromISR(ADCHS_ChannelResultGet(38), 38);
     }
     ADC_DATA38_InterruptHandler();
 }
