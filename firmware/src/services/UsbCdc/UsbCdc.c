@@ -718,7 +718,11 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
                 if (consumed == 0) continue;
 
                 size_t trailing = client->readBufferLength - consumed;
-                if (trailing > 2) continue;  // not the whole buffer = not a clean exit
+                // Require at least one explicit terminator: trailing==0 means
+                // the keyword landed at end-of-buffer with no CR/LF, which is
+                // not a real line. trailing>2 means more bytes follow than a
+                // CR+LF pair — likely raw payload, not a clean exit.
+                if (trailing == 0 || trailing > 2) continue;
 
                 // Validate trailing bytes are actual terminators (CR or LF).
                 bool terminators_ok = true;
