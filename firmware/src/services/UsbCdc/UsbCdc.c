@@ -641,29 +641,44 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
             // This mode is used for raw binary data passthrough (e.g.,
             // firmware updates). Filtering would corrupt the data stream.
             //
-            // Try each accepted escape form. After a successful match, up
-            // to 2 trailing terminator chars are allowed (\r, \r\n).
+            // Try each accepted escape form. The escape path triggers ONLY
+            // when the matched command is followed by 0/1/2 actual CR/LF
+            // bytes — checking length alone is unsafe in transparent mode
+            // because any 2 random binary bytes following a coincidental
+            // command-prefix would otherwise silently drop into the escape
+            // path and be lost to the binary passthrough.
             for (size_t k = 0; k < (sizeof(UNSET_TRANSPARENT_FORMS) / sizeof(UNSET_TRANSPARENT_FORMS[0])); ++k) {
                 size_t consumed = UsbCdc_ScpiKeywordMatch(
                     UNSET_TRANSPARENT_FORMS[k],
                     client->readBuffer, client->readBufferLength);
-                if (consumed > 0 &&
-                    (client->readBufferLength == consumed ||
-                     client->readBufferLength == consumed + 1 ||
-                     client->readBufferLength == consumed + 2)) {
-                    // Forward the matched bytes to the SCPI parser via microrl.
-                    // The SCPI parser will recognize the command (alias or
-                    // canonical, abbreviated or full) and route it to
-                    // SCPI_UsbSetTransparentMode.
-                    for (size_t i = 0; i < consumed; ++i) {
-                        microrl_insert_char(&client->console, client->readBuffer[i]);
+                if (consumed == 0) continue;
+
+                size_t trailing = client->readBufferLength - consumed;
+                if (trailing > 2) continue;  // not the whole buffer = not a clean exit
+
+                // Validate trailing bytes are actual terminators (CR or LF).
+                bool terminators_ok = true;
+                for (size_t t = 0; t < trailing; ++t) {
+                    uint8_t b = client->readBuffer[consumed + t];
+                    if (b != '\r' && b != '\n') {
+                        terminators_ok = false;
+                        break;
                     }
-                    // Since we truncated the read buffer, supply termination chars.
-                    microrl_insert_char(&client->console, '\n');
-                    microrl_insert_char(&client->console, '\r');
-                    client->readBufferLength = 0;
-                    return true;
                 }
+                if (!terminators_ok) continue;
+
+                // Match confirmed. Forward the matched bytes to the SCPI
+                // parser via microrl, supplying canonical \n\r terminators
+                // (the SCPI parser will then recognize the command — alias
+                // or canonical, abbreviated or full — and route it to
+                // SCPI_UsbSetTransparentMode).
+                for (size_t i = 0; i < consumed; ++i) {
+                    microrl_insert_char(&client->console, client->readBuffer[i]);
+                }
+                microrl_insert_char(&client->console, '\n');
+                microrl_insert_char(&client->console, '\r');
+                client->readBufferLength = 0;
+                return true;
             }
             if (UsbCdc_TransparentReadCmpltCB(client->readBuffer, client->readBufferLength) == true) {
                 client->readBufferLength = 0;
