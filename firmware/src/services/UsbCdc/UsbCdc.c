@@ -589,6 +589,21 @@ static bool UsbCdc_CaseInsensitiveMatch(const char* p, const uint8_t* b, size_t 
  *   "SYSTE:USB:TRANS:MODE 0"          → REJECTED (partial optional tail)
  *   "SYSTm:USB:TRANS:MODE 0"          → REJECTED (skipped 'e' but used 'm')
  */
+/**
+ * Separator characters between SCPI keywords and between header and
+ * parameter. We accept ' ' but NOT '\t' here, even though libscpi's
+ * lexer treats them as equivalent whitespace, because USB CDC packets
+ * may be delivered in chunks at TAB boundaries (the host driver flushes
+ * on whitespace) — that splits "cmd\t0\r" across two reads, and the
+ * detector is stateless per-call so a fragment never matches. Users
+ * who need tab-separated SCPI must use normal mode (where microrl
+ * accumulates input across reads). The full PuTTY workflow in the
+ * utilities README only uses space, so this is a non-issue in practice.
+ */
+static bool UsbCdc_IsScpiSeparator(char c) {
+    return c == ':' || c == ' ';
+}
+
 static size_t UsbCdc_ScpiKeywordMatch(const char* pattern, const uint8_t* buf, size_t bufLen) {
     size_t pi = 0;
     size_t bi = 0;
@@ -606,6 +621,7 @@ static size_t UsbCdc_ScpiKeywordMatch(const char* pattern, const uint8_t* buf, s
         }
 
         // Find end of this keyword in the pattern (next ':' / ' ' / '\0').
+        // (Pattern strings here are author-controlled and use ' ', not '\t'.)
         size_t kw_start = pi;
         while (pattern[pi] != '\0' && pattern[pi] != ':' && pattern[pi] != ' ') {
             ++pi;
@@ -626,14 +642,14 @@ static size_t UsbCdc_ScpiKeywordMatch(const char* pattern, const uint8_t* buf, s
         }
 
         // After matching, the next byte in buf must be a keyword separator
-        // (':', ' ') or end-of-input or a terminator. Letter/digit immediately
-        // after means buf has more characters than the matched form claimed —
-        // partial-match rejection.
+        // (':', ' ', '\t') or end-of-input or a line terminator ('\r', '\n').
+        // Letter/digit immediately after means buf has more characters than
+        // the matched form claimed — partial-match rejection.
         bool matched = false;
         if (bufLen - bi >= kw_full_len &&
             UsbCdc_CaseInsensitiveMatch(&pattern[kw_start], &buf[bi], kw_full_len)) {
             char next = (bi + kw_full_len < bufLen) ? (char)buf[bi + kw_full_len] : '\0';
-            if (next == ':' || next == ' ' || next == '\0' || next == '\r' || next == '\n') {
+            if (UsbCdc_IsScpiSeparator(next) || next == '\0' || next == '\r' || next == '\n') {
                 bi += kw_full_len;
                 matched = true;
             }
@@ -641,7 +657,7 @@ static size_t UsbCdc_ScpiKeywordMatch(const char* pattern, const uint8_t* buf, s
         if (!matched && bufLen - bi >= kw_short_len &&
             UsbCdc_CaseInsensitiveMatch(&pattern[kw_start], &buf[bi], kw_short_len)) {
             char next = (bi + kw_short_len < bufLen) ? (char)buf[bi + kw_short_len] : '\0';
-            if (next == ':' || next == ' ' || next == '\0' || next == '\r' || next == '\n') {
+            if (UsbCdc_IsScpiSeparator(next) || next == '\0' || next == '\r' || next == '\n') {
                 bi += kw_short_len;
                 matched = true;
             }
@@ -720,7 +736,7 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
                 // or canonical, abbreviated or full — and route it to
                 // SCPI_UsbSetTransparentMode).
                 for (size_t i = 0; i < consumed; ++i) {
-                    microrl_insert_char(&client->console, client->readBuffer[i]);
+                    microrl_insert_char(&client->console, (char)client->readBuffer[i]);
                 }
                 microrl_insert_char(&client->console, '\n');
                 microrl_insert_char(&client->console, '\r');
