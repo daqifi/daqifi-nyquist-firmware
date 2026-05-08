@@ -642,9 +642,10 @@ static size_t UsbCdc_ScpiKeywordMatch(const char* pattern, const uint8_t* buf, s
         }
 
         // After matching, the next byte in buf must be a keyword separator
-        // (':', ' ', '\t') or end-of-input or a line terminator ('\r', '\n').
-        // Letter/digit immediately after means buf has more characters than
-        // the matched form claimed — partial-match rejection.
+        // (':' or ' ' — see UsbCdc_IsScpiSeparator), or end-of-input, or a
+        // line terminator ('\r', '\n'). Letter/digit immediately after means
+        // buf has more characters than the matched form claimed —
+        // partial-match rejection.
         bool matched = false;
         if (bufLen - bi >= kw_full_len &&
             UsbCdc_CaseInsensitiveMatch(&pattern[kw_start], &buf[bi], kw_full_len)) {
