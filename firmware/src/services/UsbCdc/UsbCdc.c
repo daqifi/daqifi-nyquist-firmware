@@ -541,12 +541,88 @@ static bool UsbCdc_WaitForRead(UsbCdcData_t* client) {
 }
 
 /**
+ * SCPI-aware keyword match for the transparent-mode escape detector.
+ *
+ * @param pattern Canonical pattern, e.g. "SYSTem:USB:TRANSparent:MODE 0".
+ *                Within each colon-separated keyword, uppercase letters are
+ *                required and lowercase letters are optional. Optional letters
+ *                must be matched as a continuous prefix from the start of the
+ *                lowercase tail (per IEEE 488.2 §6.1.4.1). ':' and ' ' are
+ *                literal separators; digits in the pattern (e.g. " 0") are
+ *                literal-required. The whole match is case-insensitive.
+ * @param buf     The raw read buffer (no NUL terminator required).
+ * @param bufLen  Number of valid bytes in buf to consider.
+ *
+ * @return Number of buf bytes consumed by a successful match, or 0 if no
+ *         valid SCPI abbreviation of pattern matches a prefix of buf.
+ *
+ * Examples for pattern "SYSTem:USB:TRANSparent:MODE 0":
+ *   "SYST:USB:TRANS:MODE 0"           → matches (consumes 21)
+ *   "SYSTem:USB:TRANSparent:MODE 0"   → matches (consumes 29)
+ *   "syst:usb:trans:mode 0"           → matches (case-insensitive)
+ *   "SYSTm:USB:TRANS:MODE 0"          → REJECTED (skipped 'e' but used 'm';
+ *                                       must be continuous prefix of "em")
+ */
+static size_t UsbCdc_ScpiKeywordMatch(const char* pattern, const uint8_t* buf, size_t bufLen) {
+    size_t pi = 0;
+    size_t bi = 0;
+    bool optional_skipped = false;  // within current keyword: did we skip an optional?
+
+    while (pattern[pi] != '\0') {
+        char pc = pattern[pi];
+
+        if (pc >= 'A' && pc <= 'Z') {
+            // Required uppercase letter (case-insensitive against buf)
+            if (bi >= bufLen) return 0;
+            char bc = buf[bi];
+            if (bc >= 'a' && bc <= 'z') bc = (char)(bc - 'a' + 'A');
+            if (bc != pc) return 0;
+            ++pi; ++bi;
+        } else if (pc >= 'a' && pc <= 'z') {
+            // Optional lowercase letter — match if present, otherwise skip
+            char pcU = (char)(pc - 'a' + 'A');
+            if (!optional_skipped && bi < bufLen) {
+                char bc = buf[bi];
+                if (bc >= 'a' && bc <= 'z') bc = (char)(bc - 'a' + 'A');
+                if (bc == pcU) {
+                    ++pi; ++bi;
+                    continue;
+                }
+            }
+            // Skip this optional. Once one is skipped, no later optional in
+            // this keyword may be matched (IEEE 488.2 continuous-prefix rule).
+            optional_skipped = true;
+            ++pi;
+        } else {
+            // Literal separator/digit/space — must match exactly
+            if (bi >= bufLen) return 0;
+            if (buf[bi] != pc) return 0;
+            ++pi; ++bi;
+            optional_skipped = false;  // reset on keyword boundary
+        }
+    }
+    return bi;
+}
+
+/**
  * Called to complete a read operation, feeding data to the rest of the system
  */
 static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
-    static const char UNSET_TRANSPARENT_MODE_COMMAND[] = "SYSTem:USB:TRANSparent:MODE 0"; // NOTE: PuTTY sends \r not \r\n by default so we are going to check for all terminating scenarios below
-    static uint8_t transparentModeCmdLength = 0;
-    
+    // Escape-hatch command(s) accepted while transparent mode is active.
+    // The SCPI parser is bypassed in transparent mode, so the alias table
+    // can't help us here — the raw detector must accept BOTH the legacy
+    // and the new canonical command names directly, including any valid
+    // SCPI keyword abbreviations of either. Up to 2 terminating chars
+    // (\r, \r\n) are tolerated after the matched command (PuTTY sends \r,
+    // others send \r\n).
+    //
+    // Listed in canonical form; UsbCdc_ScpiKeywordMatch handles all valid
+    // abbreviations and case variants per IEEE 488.2 keyword rules.
+    static const char* const UNSET_TRANSPARENT_FORMS[] = {
+        "SYSTem:USB:TRANSparent:MODE 0",  // canonical (#311 round 3)
+        "SYSTem:USB:SetTransparentMode 0",  // legacy alias
+    };
+
     if (client->readBufferLength > 0) {
         if (client->isTransparentModeActive == 0) {
             for (size_t i = 0; i < client->readBufferLength; ++i) {
@@ -560,27 +636,34 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
             }
             client->readBufferLength = 0;
             return true;
-        } else { 
-            // IMPORTANT: Transparent mode should NOT filter characters
-            // This mode is used for raw binary data passthrough (e.g., firmware updates)
-            // Filtering would corrupt the data stream
-            
-            // Check for UNSET_TRANSPARENT_MODE_COMMAND length plus up to two terminating characters (\n\r).
-            transparentModeCmdLength = strlen(UNSET_TRANSPARENT_MODE_COMMAND);
-            if ((client->readBufferLength == transparentModeCmdLength) ||       \
-                (client->readBufferLength == transparentModeCmdLength + 1) ||   \
-                (client->readBufferLength == transparentModeCmdLength + 2)) {
-                //  Now check to see if the string actually matches the command UNSET_TRANSPARENT_MODE_COMMAND
-                if ((strspn(UNSET_TRANSPARENT_MODE_COMMAND, (const char *)client->readBuffer)) == transparentModeCmdLength) {
-                    for (size_t i = 0; i < transparentModeCmdLength; ++i) {
+        } else {
+            // IMPORTANT: Transparent mode should NOT filter characters.
+            // This mode is used for raw binary data passthrough (e.g.,
+            // firmware updates). Filtering would corrupt the data stream.
+            //
+            // Try each accepted escape form. After a successful match, up
+            // to 2 trailing terminator chars are allowed (\r, \r\n).
+            for (size_t k = 0; k < (sizeof(UNSET_TRANSPARENT_FORMS) / sizeof(UNSET_TRANSPARENT_FORMS[0])); ++k) {
+                size_t consumed = UsbCdc_ScpiKeywordMatch(
+                    UNSET_TRANSPARENT_FORMS[k],
+                    client->readBuffer, client->readBufferLength);
+                if (consumed > 0 &&
+                    (client->readBufferLength == consumed ||
+                     client->readBufferLength == consumed + 1 ||
+                     client->readBufferLength == consumed + 2)) {
+                    // Forward the matched bytes to the SCPI parser via microrl.
+                    // The SCPI parser will recognize the command (alias or
+                    // canonical, abbreviated or full) and route it to
+                    // SCPI_UsbSetTransparentMode.
+                    for (size_t i = 0; i < consumed; ++i) {
                         microrl_insert_char(&client->console, client->readBuffer[i]);
                     }
-                    // Since we truncated the read buffer, be sure to pass the proper termination characters
+                    // Since we truncated the read buffer, supply termination chars.
                     microrl_insert_char(&client->console, '\n');
                     microrl_insert_char(&client->console, '\r');
+                    client->readBufferLength = 0;
+                    return true;
                 }
-                client->readBufferLength = 0;
-                return true;
             }
             if (UsbCdc_TransparentReadCmpltCB(client->readBuffer, client->readBufferLength) == true) {
                 client->readBufferLength = 0;

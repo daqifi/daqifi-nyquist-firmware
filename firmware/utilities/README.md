@@ -59,7 +59,11 @@ The script performs a fully automated 4-step update:
 
 3. **Restore Operation** - Reconnects and restores WiFi
    ```
-   SYST:USB:TRANS:MODE 0  # Exit transparent mode
+   SYST:USB:TRANS:MODE 0          # Exit transparent mode (any valid SCPI abbreviation
+                                  # of SYSTem:USB:TRANSparent:MODE works; legacy
+                                  # SYST:USB:SetTransparentMode 0 also accepted.
+                                  # The raw detector that fires while SCPI parsing
+                                  # is bypassed knows the IEEE 488.2 keyword rules.)
    SYST:COMM:LAN:ENabled 1        # Re-enable WiFi
    SYST:COMM:LAN:APPLY            # Apply settings
    ```
