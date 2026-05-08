@@ -122,9 +122,53 @@ Command options:
 | Primary PICkit 4 (this board) | `BUR184882598` | Pass `-TSBUR184882598` to ipecmd when multiple PICkits are attached |
 | Secondary PICkit 4 | `BUR202272588` | On other board(s) — ignore unless re-targeting |
 | MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix; with the prefix you get exit 36 / "Unable to locate DFP") |
-| Serial port (USB CDC) | `/dev/ttyACM0` (WSL) / `COM3` (Windows) | usbipd busid `2-4`; reattach via `powershell.exe -Command "usbipd attach --wsl --busid 2-4"` after each reboot/flash |
+| Serial port (USB CDC) | `/dev/ttyACMn` (WSL) / `COM3` (Windows) | usbipd busid `2-4`; reattach via `powershell.exe -Command "usbipd attach --wsl --busid 2-4"` after each reboot/flash. **DO NOT assume `/dev/ttyACM0` — verify by serial number (see below)** |
+| Bench primary device serial | `7E2898F46200E8A7` | The board PICkit `BUR184882598` programs (busid 2-4 / Windows COM3). Verify before issuing SCPI |
 | Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
 | Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
+
+#### ⚠️ Device verification protocol — ALWAYS run before SCPI tests
+
+Multiple DAQiFi boards may be attached to WSL simultaneously. `usbipd
+attach` in arbitrary order means `/dev/ttyACM0` is **not guaranteed** to
+be the bench primary — it might be a totally different board you didn't
+flash. This caused a >30-minute false bisect on 2026-05-06: every
+firmware version "looked the same" because the test script was reading
+an unflashed second board on `/dev/ttyACM0`.
+
+**Verification steps before any SCPI work:**
+
+1. Enumerate USB devices and confirm only the expected DAQiFi(s) are attached:
+   ```bash
+   powershell.exe -Command "usbipd list" 2>&1 | grep -E "04d8:f794|ACM"
+   ls -la /dev/ttyACM*
+   ```
+2. For each `/dev/ttyACMn`, capture the firmware-reported serial via
+   the streaming metadata header (the most reliable identifier):
+   ```bash
+   for dev in /dev/ttyACM*; do
+     python3 -c "
+   import serial, time
+   s = serial.Serial('$dev', 115200, timeout=1.0)
+   time.sleep(0.5); s.reset_input_buffer()
+   s.write(b'SYST:STR:FOR 2\r'); time.sleep(0.3); s.read_all()
+   s.write(b'SYST:StartStreamData 1\r'); time.sleep(2.0)
+   s.write(b'SYST:StopStreamData\r'); time.sleep(0.3)
+   for line in s.read_all().decode(errors='replace').splitlines():
+     if line.startswith('# Serial'): print('$dev =>', line.strip())
+   s.close()" 2>&1 | grep "Serial"
+   done
+   ```
+3. Match the printed serial to the **Bench primary device serial** in
+   the inventory table above (`7E2898F46200E8A7`). Use that `/dev/ttyACMn`
+   path explicitly in your test scripts — DO NOT hardcode `ACM0`.
+4. If the wrong board is selected, re-target rather than detaching the
+   other board. (Detaching usbipd devices that aren't yours is rude and
+   can disrupt other workflows.)
+
+`*IDN?` is **not** sufficient for ID — it returns a generic
+`DAQiFi,Nq1,0,01-02` with no per-unit serial. The streaming CSV metadata
+header is currently the only SCPI-accessible per-unit identifier.
 
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
@@ -745,6 +789,18 @@ The firmware supports building for different board variants using MPLAB X config
 - **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`, `x += n`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
 - **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
 - **`volatile`** is needed when a variable is written by one task/ISR and read by another — it prevents the compiler from caching the value in a register. `volatile` alone does NOT make RMW atomic; you still need critical sections for `+=`, `|=`, etc.
+- **`volatile` also applies to "set-once-then-shared" pointers**, not just frequently-written variables. Pattern: a `static T *gp = NULL;` set in `Init()` (before the scheduler) and then dereferenced from BOTH SCPI tasks and priority-1 ADC ISRs. At -O3 GCC may hoist/merge address loads or cache cross-context reads of the data because the pointer "never changes" and the data has no volatile qualifier.
+
+  Two qualifier forms are relevant; **understand the difference and pick deliberately**:
+  - **`volatile T * p;` (data volatile, pointer non-volatile)** — the strictly-correct fix: every `p->field` access is a volatile access, so the compiler cannot cache, reorder, or elide reads. **Required when `p->field` is RMW'd or read across task↔ISR boundaries.** Caveat: this propagates qualifier-mismatch errors through every API that takes a `T *` derived from this pointer (callers must also accept `volatile T *` or cast at boundaries). For deeply-nested struct types (e.g. `tBoardConfig`) this is a substantial refactor.
+  - **`T * volatile p;` (pointer volatile, data non-volatile)** — *partial* fix: the pointer is reloaded each access, but `*p` may still be register-cached. Defeats some specific -O3 miscompiles by poisoning aliasing analysis enough, but is **not a strict concurrency guarantee** — it's a pragmatic optimization-barrier hammer. Requires empirical justification (a real miscompile observed and fixed by the qualifier) before it's worth applying.
+  - **`volatile T * volatile p;`** combines both — strictest, but inherits the data-volatile cascade.
+
+  Quick rules of thumb:
+  1. If the data hanging off the pointer is RMW'd across contexts → use the data-volatile form (or `volatile` on the specific RMW'd field).
+  2. If reads are simple non-atomic loads but you suspect -O3 caching → either form usually works empirically; prefer the data-volatile form when the cascade cost is acceptable.
+  3. **`volatile` does NOT make multi-byte / RMW accesses atomic.** Fields RMW'd across contexts still need critical sections regardless of volatile.
+  4. **Don't apply pointer-only volatile speculatively.** Microchip's published best-practice list (Harmony Sync/Async drivers tech brief DS90003269A, etc.) prescribes critical sections + mutexes for cross-context shared data — NOT `volatile` for set-once pointers. Add the qualifier only when there's a concrete -O3 miscompile that goes away with it. Issue #430 tracks the audit on the streaming/coherent pool publisher pointers, where the case for the qualifier is concrete.
 - Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
 - **ISR context vs task context**: `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()` is for **task context only**. Inside an ISR, use `taskENTER_CRITICAL_FROM_ISR()`/`taskEXIT_CRITICAL_FROM_ISR()`. In our firmware, hardware ISRs (streaming timer, ADC EOS) immediately defer to FreeRTOS tasks via `xTaskNotifyGive()`/`ulTaskNotifyTake()`, so all sample processing and critical section usage runs in task context — never directly in ISR handlers.
 - **FPU in RTOS tasks**: Any task that uses floating-point (`float` or `double`) **must** call `portTASK_USES_FLOATING_POINT()` at the start of its task function, before any FP operations. This tells FreeRTOS to save/restore the 32×64-bit FPU registers on context switches. Without this call, FPU register state will be corrupted when switching between tasks. Currently registered: USB, WiFi, PowerAndUI, streaming, and deferred interrupt tasks.
@@ -1303,10 +1359,23 @@ The project can be built using Microchip tools in WSL/Linux:
    cd /mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/firmware/daqifi.X
    ```
 
-2. Generate Linux-compatible makefiles:
+2. Regenerate makefiles:
    ```bash
+   # Linux-side (often FAILS with "Device pack missing" — DFP path differs):
    prjMakefilesGenerator -v .
+
+   # Windows-side via PowerShell from WSL (VERIFIED WORKING 2026-05-06):
+   powershell.exe -Command 'cd "C:\Users\User\Documents\GitHub\daqifi-nyquist-firmware\firmware\daqifi.X"; & "C:\Program Files\Microchip\MPLABX\v6.30\mplab_platform\bin\prjMakefilesGenerator.bat" -v .'
    ```
+
+   **⚠️ `nbproject/Makefile-*.mk` files are gitignored** (auto-generated from
+   `configurations.xml` by MPLAB X). After `git checkout` to a different
+   commit, the on-disk makefiles do NOT update — they keep referencing
+   source files from whichever branch was last built. Symptom: build fails
+   with `No rule to make target '../src/.../<file>.c'` for a file added or
+   removed by the new commit. **Fix:** regenerate using the Windows-side
+   PowerShell command above. This is critical when bisecting — every
+   checkout needs fresh makefiles.
 
 3. Clean build directories (if previous build failed):
    ```bash
