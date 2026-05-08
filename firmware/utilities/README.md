@@ -43,34 +43,43 @@ python update_wifi_firmware.py COM3 --tool-path "C:\path\to\winc_flash_tool.cmd"
 
 ### Update Process
 
-The script performs a fully automated 4-step update:
+The script performs a fully automated 4-step update. This is also the canonical manual procedure when running the steps yourself via PuTTY:
 
-1. **Prepare Device** - Powers up and enters firmware update mode
+1. **Prepare Device** — Connect PuTTY (115200 8-N-1) to the COM port and issue:
    ```
-   SYST:POW:STAT 1              # Power up device
-   SYST:COMM:LAN:FWUpdate       # Enter update mode
-   SYST:COMM:LAN:APPLY          # Apply settings
+   SYSTem:POWer:STATe 1                # Power up
+   SYSTem:COMMunicate:LAN:FWUpdate     # Enter WINC firmware update mode
+                                       # (engages USB CDC transparent mode via wifi_serial_bridge_interface)
+   SYSTem:COMMunicate:LAN:APPLY        # Apply — SCPI parsing is now bypassed
    ```
+   At this point USB CDC is forwarding raw bytes to the WINC SPI bus; no SCPI prompt will respond.
 
-2. **Flash Firmware** - Runs winc_flash_tool.cmd
+2. **Disconnect PuTTY** (free the COM port for the WINC tool), then run:
    ```
-   winc_flash_tool.cmd /p COM3 /d WINC1500 /v 19.7.7 /x /e /i aio /w
+   .\winc_flash_tool.cmd /p COM3 /d WINC1500 /v 19.7.7 /x /e /i aio /w
    ```
-
-3. **Restore Operation** - Reconnects and restores WiFi
+   or with the full Harmony path:
    ```
-   SYST:USB:TRANS:MODE 0          # Exit transparent mode (any valid SCPI abbreviation
-                                  # of SYSTem:USB:TRANSparent:MODE works; legacy
-                                  # SYST:USB:SetTransparentMode 0 also accepted.
-                                  # The raw detector that fires while SCPI parsing
-                                  # is bypassed knows the IEEE 488.2 keyword rules.)
-   SYST:COMM:LAN:ENabled 1        # Re-enable WiFi
-   SYST:COMM:LAN:APPLY            # Apply settings
+   C:\Users\<username>\.mcc\harmony\content\wireless_wifi\v3.12.1\utilities\wifi\winc\winc_flash_tool.cmd /p COM3 /d WINC1500 /v 19.7.7 /x /e /i aio /w
    ```
 
-4. **Verify** - Confirms firmware version
+3. **Reconnect PuTTY** and exit transparent mode:
    ```
-   SYST:COMM:LAN:GETChipInfo?  # Check WiFi chip info
+   SYSTem:USB:TRANSparent:MODE 0       # Exit transparent mode (canonical, #311 round 3)
+                                       # Legacy alias also works:
+                                       #   SYSTem:USB:SetTransparentMode 0
+                                       # Any valid SCPI keyword abbreviation of either is accepted
+                                       # (e.g. SYST:USB:TRANS:MODE 0, syst:usb:trans:mode 0). The
+                                       # raw detector in UsbCdc_FinalizeRead implements IEEE 488.2
+                                       # §6.1.4.1 abbreviation rules so the keyword form you use
+                                       # in normal SCPI also works here while parsing is bypassed.
+   SYSTem:COMMunicate:LAN:ENabled 1    # Re-enable WiFi
+   SYSTem:COMMunicate:LAN:APPLY        # Apply
+   ```
+
+4. **Verify** — confirm the new WINC firmware version:
+   ```
+   SYSTem:COMMunicate:LAN:GETChipInfo?
    ```
 
 ### Default Tool Location
