@@ -46,8 +46,9 @@ The project builds with **-O3** globally, with per-file overrides where needed. 
 
 | File | Optimization | Reason | Permanent? |
 |------|-------------|--------|-----------|
-| `third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c` | **-O1** | O2 miscompiles FreeRTOS list operations — `listINSERT_END` stores reordered so `pxContainer` is NULL when `xTaskResumeAll` reads it, causing crash (BadVAddr=4). See Issue #271. | **Yes** — common RTOS practice; kernel perf impact negligible |
 | `third_party/wolfssl/wolfcrypt/src/tfm.c` | -O3 with `-Wno-error=array-bounds` | GCC loses track of loop variable range after inlining in wolfSSL big-number math. Known third-party issue. | No — reevaluate after wolfSSL upgrade (currently pinned to v5.4.0) |
+
+The previous `FreeRTOS_tasks.c -O1` override was replaced (issue #426) by defining `configLIST_VOLATILE volatile` in `FreeRTOSConfig.h` — the upstream-blessed back door for compilers that hoist/reorder stores in `listINSERT_END` at -O2+. The kernel now builds at the global -O3 level alongside the rest of the firmware.
 
 #### Source Patches for -O2/-O3
 
@@ -59,9 +60,9 @@ The project builds with **-O3** globally, with per-file overrides where needed. 
 
 #### Known Linker Issue (Issue #271, informational)
 
-The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.bss.*` sections. At O2+ with `-fdata-sections`, this can place variables at two addresses (`.sbss` GP-relative vs `.bss.*` best-fit), causing dual-address bugs. This was the root cause of the O2 FreeRTOS crash. The fix is to keep `FreeRTOS_tasks.c` at O1 (which prevents `.bss.*` section creation for its statics). The linker script is left at Microchip default — no modification needed as long as FreeRTOS stays at O1.
+The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.bss.*` sections. At O2+ with `-fdata-sections`, this can place variables at two addresses (`.sbss` GP-relative vs `.bss.*` best-fit), causing dual-address bugs. This was the original symptom that triggered investigation of the O2 FreeRTOS crash, but the actual fix landed elsewhere: defining `configLIST_VOLATILE volatile` in `FreeRTOSConfig.h` forces the kernel's list-item link fields to be volatile, preventing the reorder of `listINSERT_END` stores that was the real cause. With that macro defined, `FreeRTOS_tasks.c` builds cleanly at -O3 alongside the rest of the firmware. The linker script is left at Microchip default.
 
-**When upgrading XC32 or third-party libraries**, try removing source patches 1 and 3 and rebuild with -Werror. If the build passes clean, the patches can be deleted. The FreeRTOS O1 override should be kept regardless of compiler version.
+**When upgrading XC32 or third-party libraries**, try removing source patches 1 and 3 (under "Source Patches for -O2/-O3" above) and rebuild with -Werror. If the build passes clean, the patches can be deleted. The `configLIST_VOLATILE` define should be kept regardless of compiler version — it's the upstream FreeRTOS-blessed pattern, not a workaround.
 
 ### Static Analysis (cppcheck)
 

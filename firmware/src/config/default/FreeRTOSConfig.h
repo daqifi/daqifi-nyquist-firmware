@@ -54,6 +54,17 @@
  * calculated from the configCPU_CLOCK_HZ value. */
 #define configTICK_RATE_HZ                      ( ( TickType_t ) 1000 )
 
+/* Force list-item link fields (pxNext/pxPrevious/pxContainer/xItemValue) to
+ * be volatile — upstream-blessed back door for compilers that hoist/reorder
+ * stores in listINSERT_END at -O2 and above. Without this, GCC at -O3 on
+ * MIPS reordered the listINSERT_END stores so xTaskResumeAll → listREMOVE_ITEM
+ * read NULL pxContainer and crashed (see issue #271). The previous fix was a
+ * per-file -O1 override on FreeRTOS_tasks.c; defining this macro lets that
+ * file go to -O3 like the rest of the kernel.
+ *
+ * Source: https://forums.freertos.org/t/configlist-volatile-required-missing-configassert-in-listremove-item/16400 */
+#define configLIST_VOLATILE                     volatile
+
 /* Set configUSE_PREEMPTION to 1 to use pre-emptive scheduling.  Set
  * configUSE_PREEMPTION to 0 to use co-operative scheduling.
  * See https://www.freertos.org/single-core-amp-smp-rtos-scheduling.html. */
