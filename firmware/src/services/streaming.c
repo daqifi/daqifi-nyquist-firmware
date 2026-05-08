@@ -834,30 +834,6 @@ static void Streaming_Start(void) {
                             (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
             MC12b_ConfigureHardwareTrigger(true, hwShared);
 
-            // #421 diagnostic: zero per-channel ISR counters so the Stop-time
-            // log reflects fires from this session only (not cumulative across
-            // boots/streams). Wrapped in a critical section so an
-            // ADC_DATAn_Handler can't read-modify-write its counter between
-            // the load and our store, which would lose the reset.
-            extern volatile uint32_t gAdcIsrCount_5, gAdcIsrCount_6, gAdcIsrCount_7;
-            extern volatile uint32_t gAdcIsrCount_8, gAdcIsrCount_11;
-            extern volatile uint32_t gAdcIsrCount_24, gAdcIsrCount_38;
-            taskENTER_CRITICAL();
-            gAdcIsrCount_5 = gAdcIsrCount_6 = gAdcIsrCount_7 = 0;
-            gAdcIsrCount_8 = gAdcIsrCount_11 = 0;
-            gAdcIsrCount_24 = gAdcIsrCount_38 = 0;
-            taskEXIT_CRITICAL();
-
-            // #421 diagnostic: dump SFRs immediately after trigger config so we
-            // can see how the Type 2 scan list (CSS1/2) and CH5/6/7/8/11 IRQ
-            // enable bits are programmed at stream start.
-            LOG_E("diag421-start: hwShared=%d CSS1=0x%x CSS2=0x%x GIRQEN1=0x%x GIRQEN2=0x%x",
-                  (int)hwShared, (unsigned)ADCCSS1, (unsigned)ADCCSS2,
-                  (unsigned)ADCGIRQEN1, (unsigned)ADCGIRQEN2);
-            LOG_E("diag421-start: TRG1=0x%x TRG2=0x%x TRG3=0x%x CON1=0x%x ANCON=0x%x",
-                  (unsigned)ADCTRG1, (unsigned)ADCTRG2, (unsigned)ADCTRG3,
-                  (unsigned)ADCCON1, (unsigned)ADCANCON);
-
             // #292: EOS stays enabled across all modes. The EOS deferred
             // task now reads T1 user channels (moved from ADC_DATA3 ISR),
             // so disabling EOS would break T1 streaming. OBDiag=0 gating
@@ -878,31 +854,10 @@ static void Streaming_Stop(void) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
 
-        // #421 diagnostic: read SFRs BEFORE Configure(false,false) reverts them.
-        // Captures the during-streaming peripheral state, which is the actual
-        // moment of the bug. Production firmware needed because mdb's debug
-        // build masks the bug via xc32_monitor BSS-layout shift.
-        LOG_E("diag421: streaming SFRs — CSS1=0x%x GIRQEN1=0x%x DSTAT1=0x%x",
-              (unsigned)ADCCSS1, (unsigned)ADCGIRQEN1, (unsigned)ADCDSTAT1);
-        LOG_E("diag421: streaming SFRs — TRG1=0x%x TRG2=0x%x TRG3=0x%x",
-              (unsigned)ADCTRG1, (unsigned)ADCTRG2, (unsigned)ADCTRG3);
-        LOG_E("diag421: streaming SFRs — CON1=0x%x ANCON=0x%x IEC2=0x%x",
-              (unsigned)ADCCON1, (unsigned)ADCANCON, (unsigned)IEC2);
-
         // Revert ADC to software triggering so non-streaming reads
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
         gpRuntimeConfigStream->Running = false;
-
-        // #421 diagnostic: dump per-channel ADC ISR fire counts.
-        extern volatile uint32_t gAdcIsrCount_5, gAdcIsrCount_6, gAdcIsrCount_7;
-        extern volatile uint32_t gAdcIsrCount_8, gAdcIsrCount_11;
-        extern volatile uint32_t gAdcIsrCount_24, gAdcIsrCount_38;
-        LOG_E("diag421: ISR counts CH5=%u CH6=%u CH7=%u CH8=%u CH11=%u | CH24=%u CH38=%u",
-              (unsigned)gAdcIsrCount_5, (unsigned)gAdcIsrCount_6,
-              (unsigned)gAdcIsrCount_7, (unsigned)gAdcIsrCount_8,
-              (unsigned)gAdcIsrCount_11, (unsigned)gAdcIsrCount_24,
-              (unsigned)gAdcIsrCount_38);
 
         // #367 diagnostics: snapshot bytes still sitting in the WiFi TCP
         // circular buffer at session end.  If TotalBytesStreamed -
