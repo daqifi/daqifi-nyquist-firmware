@@ -541,65 +541,112 @@ static bool UsbCdc_WaitForRead(UsbCdcData_t* client) {
 }
 
 /**
+ * Case-insensitive byte-by-byte compare. Returns true if all n bytes match
+ * (treating ASCII A-Z and a-z as equal).
+ */
+static bool UsbCdc_CaseInsensitiveMatch(const char* p, const uint8_t* b, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        char pc = p[i];
+        char bc = (char)b[i];
+        if (pc >= 'A' && pc <= 'Z') pc = (char)(pc - 'A' + 'a');
+        if (bc >= 'A' && bc <= 'Z') bc = (char)(bc - 'A' + 'a');
+        if (pc != bc) return false;
+    }
+    return true;
+}
+
+/**
  * SCPI-aware keyword match for the transparent-mode escape detector.
  *
+ * Matches libscpi's `matchPattern` semantics (see firmware/src/libraries/scpi/
+ * libscpi/src/utils.c around line 478): for each colon/space-separated
+ * keyword in the pattern, accept EITHER the full keyword OR the required
+ * (leading-uppercase) prefix only — nothing in between. This is stricter
+ * than IEEE 488.2's "continuous prefix of optional tail" interpretation
+ * but matches libscpi exactly, so the escape detector never consumes
+ * bytes that the SCPI parser would later reject (which would leave
+ * transparent mode active and silently drop the user's bytes).
+ *
+ * Patterns with mid-keyword uppercase (e.g. "SetTransparentMode") are
+ * handled correctly: only "S" (required prefix) and "SetTransparentMode"
+ * (full) match — NOT "Set" or "SetTrans". libscpi's
+ * patternSeparatorShortPos cuts the keyword at the first lowercase letter,
+ * so "S" is the short form. We mirror that.
+ *
  * @param pattern Canonical pattern, e.g. "SYSTem:USB:TRANSparent:MODE 0".
- *                Within each colon-separated keyword, uppercase letters are
- *                required and lowercase letters are optional. Optional letters
- *                must be matched as a continuous prefix from the start of the
- *                lowercase tail (per IEEE 488.2 §6.1.4.1). ':' and ' ' are
- *                literal separators; digits in the pattern (e.g. " 0") are
- *                literal-required. The whole match is case-insensitive.
+ *                ':' and ' ' are keyword separators; digits and other
+ *                non-letter bytes are required literals.
  * @param buf     The raw read buffer (no NUL terminator required).
  * @param bufLen  Number of valid bytes in buf to consider.
  *
- * @return Number of buf bytes consumed by a successful match, or 0 if no
- *         valid SCPI abbreviation of pattern matches a prefix of buf.
+ * @return Number of buf bytes consumed by a successful match (>0), or 0
+ *         if no valid SCPI abbreviation of pattern matches a prefix of buf.
  *
  * Examples for pattern "SYSTem:USB:TRANSparent:MODE 0":
- *   "SYST:USB:TRANS:MODE 0"           → matches (consumes 21)
- *   "SYSTem:USB:TRANSparent:MODE 0"   → matches (consumes 29)
+ *   "SYST:USB:TRANS:MODE 0"           → matches (short form for each keyword)
+ *   "SYSTem:USB:TRANSparent:MODE 0"   → matches (full form for each keyword)
  *   "syst:usb:trans:mode 0"           → matches (case-insensitive)
- *   "SYSTm:USB:TRANS:MODE 0"          → REJECTED (skipped 'e' but used 'm';
- *                                       must be continuous prefix of "em")
+ *   "SYSTE:USB:TRANS:MODE 0"          → REJECTED (partial optional tail)
+ *   "SYSTm:USB:TRANS:MODE 0"          → REJECTED (skipped 'e' but used 'm')
  */
 static size_t UsbCdc_ScpiKeywordMatch(const char* pattern, const uint8_t* buf, size_t bufLen) {
     size_t pi = 0;
     size_t bi = 0;
-    bool optional_skipped = false;  // within current keyword: did we skip an optional?
 
     while (pattern[pi] != '\0') {
         char pc = pattern[pi];
+        bool is_keyword_start = (pc >= 'A' && pc <= 'Z') || (pc >= 'a' && pc <= 'z');
 
-        if (pc >= 'A' && pc <= 'Z') {
-            // Required uppercase letter (case-insensitive against buf)
-            if (bi >= bufLen) return 0;
-            char bc = buf[bi];
-            if (bc >= 'a' && bc <= 'z') bc = (char)(bc - 'a' + 'A');
-            if (bc != pc) return 0;
-            ++pi; ++bi;
-        } else if (pc >= 'a' && pc <= 'z') {
-            // Optional lowercase letter — match if present, otherwise skip
-            char pcU = (char)(pc - 'a' + 'A');
-            if (!optional_skipped && bi < bufLen) {
-                char bc = buf[bi];
-                if (bc >= 'a' && bc <= 'z') bc = (char)(bc - 'a' + 'A');
-                if (bc == pcU) {
-                    ++pi; ++bi;
-                    continue;
-                }
-            }
-            // Skip this optional. Once one is skipped, no later optional in
-            // this keyword may be matched (IEEE 488.2 continuous-prefix rule).
-            optional_skipped = true;
-            ++pi;
-        } else {
-            // Literal separator/digit/space — must match exactly
+        if (!is_keyword_start) {
+            // Required literal byte (':', ' ', digit, etc.) — must match exactly.
             if (bi >= bufLen) return 0;
             if (buf[bi] != pc) return 0;
             ++pi; ++bi;
-            optional_skipped = false;  // reset on keyword boundary
+            continue;
         }
+
+        // Find end of this keyword in the pattern (next ':' / ' ' / '\0').
+        size_t kw_start = pi;
+        while (pattern[pi] != '\0' && pattern[pi] != ':' && pattern[pi] != ' ') {
+            ++pi;
+        }
+        size_t kw_full_len = pi - kw_start;
+
+        // Short form = leading uppercase run (mirrors libscpi's
+        // patternSeparatorShortPos: stop at first lowercase letter).
+        size_t kw_short_len = 0;
+        while (kw_short_len < kw_full_len &&
+               pattern[kw_start + kw_short_len] >= 'A' &&
+               pattern[kw_start + kw_short_len] <= 'Z') {
+            ++kw_short_len;
+        }
+        if (kw_short_len == 0) {
+            // Pattern keyword without leading uppercase — reject (malformed).
+            return 0;
+        }
+
+        // After matching, the next byte in buf must be a keyword separator
+        // (':', ' ') or end-of-input or a terminator. Letter/digit immediately
+        // after means buf has more characters than the matched form claimed —
+        // partial-match rejection.
+        bool matched = false;
+        if (bufLen - bi >= kw_full_len &&
+            UsbCdc_CaseInsensitiveMatch(&pattern[kw_start], &buf[bi], kw_full_len)) {
+            char next = (bi + kw_full_len < bufLen) ? (char)buf[bi + kw_full_len] : '\0';
+            if (next == ':' || next == ' ' || next == '\0' || next == '\r' || next == '\n') {
+                bi += kw_full_len;
+                matched = true;
+            }
+        }
+        if (!matched && bufLen - bi >= kw_short_len &&
+            UsbCdc_CaseInsensitiveMatch(&pattern[kw_start], &buf[bi], kw_short_len)) {
+            char next = (bi + kw_short_len < bufLen) ? (char)buf[bi + kw_short_len] : '\0';
+            if (next == ':' || next == ' ' || next == '\0' || next == '\r' || next == '\n') {
+                bi += kw_short_len;
+                matched = true;
+            }
+        }
+        if (!matched) return 0;
     }
     return bi;
 }
