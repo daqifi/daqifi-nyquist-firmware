@@ -1235,20 +1235,31 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         LOG_E("STA reconfig with active socket — diverting to HardReset (#435)");
                         if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
                             wifi_tcp_server_CloseSocket();
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
                         }
                         if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                             CloseUdpSocket(&pInstance->udpServerSocket);
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                         }
+                        // Reset socket + STA state flags atomically so callers
+                        // that check status during the chip-reset window
+                        // (~2 s) don't observe stale "connected" state.
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                         // wifi_manager_HardReset arms the deferred-INIT
                         // deadline and queues DEINIT.  isEnabled was just
                         // set to 1 by UpdateNetworkSettings (since this
                         // REINIT was queued) — HardReset will clear it
                         // for the DEINIT path, then ProcessState's
                         // deferred-INIT branch flips it back and queues
-                        // INIT once the 2 s settle elapses.
-                        wifi_manager_HardReset();
+                        // INIT once the 2 s settle elapses.  If the DEINIT
+                        // event can't be queued, propagate the failure as
+                        // an ERROR event so the manager retries instead of
+                        // silently leaving the chip in a half-reset state.
+                        if (!wifi_manager_HardReset()) {
+                            LOG_E("HardReset divert failed to queue DEINIT");
+                            SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                        }
                         break;
                     }
 
