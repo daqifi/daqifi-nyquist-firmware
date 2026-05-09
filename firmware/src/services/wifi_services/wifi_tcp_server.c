@@ -376,14 +376,27 @@ void wifi_tcp_server_CloseSocket() {
     // — all of which take wMutex around CircularBuf operations.  Without
     // this, a concurrent streaming write could be mid-CircularBuf_AddBytes
     // when CircularBuf_Reset wipes head/tail, corrupting the buffer state.
+    //
+    // Bounded 100 ms timeout — every other wMutex holder is a short
+    // CircularBuf_* operation that completes in <1 ms, so 100 ms is
+    // 100x headroom; if we somehow can't acquire it (deadlock,
+    // priority inversion, etc.) we proceed without the lock rather
+    // than wedging the REINIT path.  The worst case without the lock
+    // is the original race (occasional buffer-state corruption during
+    // close) which the WINC chip-reset that follows clears anyway.
+    bool gotLock = false;
     if (gpServerData->client.wMutex != NULL) {
-        xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+        gotLock = (xSemaphoreTake(gpServerData->client.wMutex,
+                                   pdMS_TO_TICKS(100)) == pdTRUE);
+        if (!gotLock) {
+            // Don't fail closed — REINIT path needs to make progress.
+        }
     }
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.writeBufferLength = 0;
     gpServerData->client.tcpInFlight = 0;
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
-    if (gpServerData->client.wMutex != NULL) {
+    if (gotLock) {
         xSemaphoreGive(gpServerData->client.wMutex);
     }
 }
