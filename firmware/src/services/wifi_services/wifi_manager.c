@@ -1217,16 +1217,42 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // Currently in STA mode and need to update STA settings
                 if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
                     LOG_D("Restarting STA mode with new settings...\r\n");
-                    
+
+                    // #435: close TCP/UDP sockets BEFORE BSSDisconnect.  Without
+                    // this, the WINC chip's internal socket table retains stale
+                    // state (sockets bound to the prior association handle) when
+                    // the BSS goes away — and after the new BSSConnect succeeds,
+                    // the chip flaps STA disconnects every ~1.5 s in a tight loop
+                    // because the socket table is inconsistent.  Mirrors the
+                    // AP-restart path above (line ~1109) which already does this.
+                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
+                        wifi_tcp_server_CloseSocket();
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                    }
+                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
+                        CloseUdpSocket(&pInstance->udpServerSocket);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                    }
+                    // Let the WINC HIF queue drain the socket-close commands
+                    // before stacking BSSDisconnect on top.  Without this delay,
+                    // a subsequent IPUseDHCPSet returns REQUEST_ERROR and we
+                    // spin in MainState INIT.
+                    vTaskDelay(pdMS_TO_TICKS(200));
+
                     // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    
-                    // Wait for disconnect
-                    vTaskDelay(pdMS_TO_TICKS(500));
+
+                    // Wait for disconnect (BSSDisconnect → chip drops association
+                    // → callback → STA_DISCONNECTED event drained by next
+                    // ProcessState).  Bumped from 500 ms to 1500 ms because the
+                    // TCP socket closes added HIF queue work that needs to settle
+                    // before IPUseDHCPSet below — without the longer delay, that
+                    // call returns WDRV_WINC_STATUS_REQUEST_ERROR.
+                    vTaskDelay(pdMS_TO_TICKS(1500));
                     
                     // Reconfigure BSS context for STA mode
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetDefaults(&pInstance->bssCtx)) {
