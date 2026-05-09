@@ -1243,19 +1243,23 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                             CloseUdpSocket(&pInstance->udpServerSocket);
                         }
-                        // Reset socket + STA state flags atomically so callers
-                        // that check status during the chip-reset window
-                        // (~2 s) don't observe stale "connected" state.  The
-                        // ResetEventFlag helper does RMW on a shared bitmask;
-                        // wrap the cluster in a critical section even though
-                        // all current writers are on WifiTask, to silence
-                        // future cross-task races if a callback is added.
-                        taskENTER_CRITICAL();
+                        // Clear socket + STA state flags so callers that
+                        // check status during the chip-reset window (~2 s)
+                        // don't observe stale "connected" state.  No
+                        // critical section: every writer of
+                        // pInstance->eventFlags in this codebase is on
+                        // WifiTask (StaEventCallback / SocketEventCallback
+                        // only call SendEvent — no flag mutations) so the
+                        // RMW is single-threaded.  Per CLAUDE.md
+                        // ("do not add unnecessary critical sections"), the
+                        // earlier speculative wrap was inappropriate.  Also
+                        // clear UDP_SOCKET_CONNECTED so it doesn't outlast
+                        // UDP_SOCKET_OPEN.
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                        taskEXIT_CRITICAL();
                         // wifi_manager_HardReset arms the deferred-INIT
                         // deadline and queues DEINIT.  isEnabled was just
                         // set to 1 by UpdateNetworkSettings (since this
@@ -1268,7 +1272,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // silently leaving the chip in a half-reset state.
                         if (!wifi_manager_HardReset()) {
                             LOG_E("HardReset divert failed to queue DEINIT");
-                            SendEvent(WIFI_MANAGER_EVENT_ERROR);
+                            // Try ERROR fallback so the manager retries; if
+                            // *that* enqueue also fails, the queue is wedged
+                            // and the only recovery is SYST:REBoot — log
+                            // explicitly so the user sees it in SYST:LOG?.
+                            if (!SendEvent(WIFI_MANAGER_EVENT_ERROR)) {
+                                LOG_E("HardReset divert: ERROR fallback also failed; manager may be stuck — SYST:REBoot");
+                            }
                         }
                         break;
                     }
