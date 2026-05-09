@@ -556,7 +556,15 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
         memcpy(&daqifiSettings.settings.wifi, pRunTimeWifiSettings, sizeof (wifi_manager_settings_t));
         daqifiSettings.type = DaqifiSettings_Wifi;
         if (!daqifi_settings_SaveToNvm(&daqifiSettings)) {
-            return SCPI_RES_ERR;
+            // Apply already succeeded and REINIT may already be in flight.
+            // Returning -200 here would mislead the client into thinking
+            // the apply itself failed (#425 r4 Qodo bug 5).  Instead push
+            // an error so SYST:ERR? reports the persistence failure, but
+            // return OK because the apply itself succeeded.  Settings will
+            // revert to NVM contents on next boot.
+            LOG_E("WiFi APPLY: settings applied, but NVM save failed");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_OK;
         }
     }
     // Note: WiFi firmware update mode request (if set via FWUPDATE) is handled by the WiFi state machine.
