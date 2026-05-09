@@ -67,6 +67,13 @@ typedef struct s_tcpClientContext
      *  and WDRV_WINC_Tasks (priority 2). */
     volatile uint8_t tcpInFlight;
 
+    /** #437: pending CircularBuf_Reset deferred from a context that
+     *  couldn't acquire wMutex (notably WINC driver task running
+     *  CloseClientSocket from SocketEventCallback).  Drained by the
+     *  next wMutex holder before its operation, ensuring the reset
+     *  happens under lock without ever blocking the WINC driver task. */
+    volatile bool pendingBufferReset;
+
     /** Bytes handed to radio send() successfully (64-bit for long sessions) */
     uint64_t wifiTcpBytesSent;
     /** Bytes confirmed by radio send callback (64-bit for long sessions) */

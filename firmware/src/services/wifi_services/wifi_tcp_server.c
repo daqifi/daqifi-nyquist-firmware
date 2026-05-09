@@ -321,6 +321,7 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         gpServerData->serverSocket = -1;
         gpServerData->client.clientSocket = -1;
         gpServerData->client.tcpInFlight = 0;
+        gpServerData->client.pendingBufferReset = false;
         gpServerData->client.wifiPartialBytesMissing = 0;
         gpServerData->client.wifiWriteBufferRejectedCalls = 0;
         gpServerData->client.wifiWriteBufferRejectedBytes = 0;
@@ -371,33 +372,22 @@ void wifi_tcp_server_CloseSocket() {
         gpServerData->serverSocket = -1;
     }
 
-    // Reset write-buffer state under wMutex to serialize against
-    // wifi_tcp_server_WriteBuffer / GetWriteBuffFreeSize / TransmitBuffered
-    // — all of which take wMutex around CircularBuf operations.  Without
-    // this, a concurrent streaming write could be mid-CircularBuf_AddBytes
-    // when CircularBuf_Reset wipes head/tail, corrupting the buffer state.
-    //
-    // Bounded 100 ms timeout — every other wMutex holder is a short
-    // CircularBuf_* operation that completes in <1 ms, so 100 ms is
-    // 100x headroom; if we somehow can't acquire it (deadlock,
-    // priority inversion, etc.) we proceed without the lock rather
-    // than wedging the REINIT path.  The worst case without the lock
-    // is the original race (occasional buffer-state corruption during
-    // close) which the WINC chip-reset that follows clears anyway.
-    bool gotLock = false;
-    if (gpServerData->client.wMutex != NULL) {
-        gotLock = (xSemaphoreTake(gpServerData->client.wMutex,
-                                   pdMS_TO_TICKS(100)) == pdTRUE);
-        if (!gotLock) {
-            // Don't fail closed — REINIT path needs to make progress.
-        }
-    }
+    // Read buffer fields are owned by WifiTask drain — no wMutex needed.
     gpServerData->client.readBufferLength = 0;
-    gpServerData->client.writeBufferLength = 0;
-    gpServerData->client.tcpInFlight = 0;
-    CircularBuf_Reset(&gpServerData->client.wCirbuf);
-    if (gotLock) {
+    // wCirbuf reset must hold wMutex.  Try non-blocking — if a writer
+    // currently holds the mutex, defer the reset to the next wMutex
+    // holder via pendingBufferReset.  Never block CloseSocket because
+    // it may be called from REINIT paths that need to make progress.
+    if (gpServerData->client.wMutex != NULL &&
+        xSemaphoreTake(gpServerData->client.wMutex, 0) == pdTRUE) {
+        gpServerData->client.writeBufferLength = 0;
+        gpServerData->client.tcpInFlight = 0;
+        CircularBuf_Reset(&gpServerData->client.wCirbuf);
+        gpServerData->client.pendingBufferReset = false;
         xSemaphoreGive(gpServerData->client.wMutex);
+    } else {
+        // Defer: next wMutex holder drains the flag (#437).
+        gpServerData->client.pendingBufferReset = true;
     }
 }
 
@@ -407,9 +397,37 @@ void wifi_tcp_server_CloseClientSocket() {
         gpServerData->client.clientSocket = -1;
     }
     gpServerData->client.readBufferLength = 0;
-    gpServerData->client.writeBufferLength = 0;
-    gpServerData->client.tcpInFlight = 0;
-    CircularBuf_Reset(&gpServerData->client.wCirbuf);
+    // #437: deferred-reset pattern — never block the WINC driver task
+    // (which calls us from SocketEventCallback on ACCEPT/RECV(0)
+    // events).  Try non-blocking; on miss, set pendingBufferReset and
+    // let the next wMutex holder reset the buffer under lock.  This
+    // closes both the original race (Reset without mutex) AND the
+    // "blocks WINC callback for 100 ms" issue.  Future writers bail
+    // early on clientSocket == -1 (we just set it), so no new writer
+    // will start before the deferred reset drains.
+    if (gpServerData->client.wMutex != NULL &&
+        xSemaphoreTake(gpServerData->client.wMutex, 0) == pdTRUE) {
+        gpServerData->client.writeBufferLength = 0;
+        gpServerData->client.tcpInFlight = 0;
+        CircularBuf_Reset(&gpServerData->client.wCirbuf);
+        gpServerData->client.pendingBufferReset = false;
+        xSemaphoreGive(gpServerData->client.wMutex);
+    } else {
+        gpServerData->client.pendingBufferReset = true;
+    }
+}
+
+// #437: helper called at the start of every wMutex critical section.
+// Drains a deferred CircularBuf_Reset that CloseClientSocket /
+// CloseSocket couldn't perform from a non-blocking context.  Caller
+// must hold gpServerData->client.wMutex.
+static inline void DrainPendingBufferReset(void) {
+    if (gpServerData->client.pendingBufferReset) {
+        gpServerData->client.writeBufferLength = 0;
+        gpServerData->client.tcpInFlight = 0;
+        CircularBuf_Reset(&gpServerData->client.wCirbuf);
+        gpServerData->client.pendingBufferReset = false;
+    }
 }
 
 // #331: used by the WINC idle-gate to back off pacing when a TCP client
@@ -433,9 +451,10 @@ size_t wifi_tcp_server_GetWriteBuffFreeSize() {
 
     // Must protect circular buffer access with mutex
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    DrainPendingBufferReset();
     size_t freeSize = CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf);
     xSemaphoreGive(gpServerData->client.wMutex);
-    
+
     return freeSize;
 }
 
@@ -452,6 +471,7 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
     // If buffer is full, return 0 immediately instead of blocking
     // This prevents the streaming task from stalling for 10-60ms
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    DrainPendingBufferReset();
     if (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
         // #371: count rejections to verify wifiDroppedBytes accounting is working.
         gpServerData->client.wifiWriteBufferRejectedCalls++;
@@ -505,6 +525,7 @@ bool wifi_tcp_server_TransmitBufferedData() {
 
     // Check if data available with mutex protection
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    DrainPendingBufferReset();
     bool hasData = (CircularBuf_NumBytesAvailable(&gpServerData->client.wCirbuf) > 0);
     if (hasData) {
         CircularBuf_ProcessBytes(&gpServerData->client.wCirbuf, NULL, WIFI_WBUFFER_SIZE, &ret);
@@ -536,6 +557,9 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size) {
     }
 
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    // Buffer swap completely replaces wCirbuf state below — any pending
+    // deferred reset is implicitly satisfied.  Clear the flag.
+    gpServerData->client.pendingBufferReset = false;
 
     uint32_t oldSize = gpServerData->client.wCirbuf.buf_size;
     gpServerData->client.wCirbuf.buf_ptr = buf;
