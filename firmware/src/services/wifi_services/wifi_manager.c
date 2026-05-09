@@ -1643,6 +1643,14 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
     WDRV_WINC_MAC_ADDR savedMacAddr;
     memcpy(&savedMacAddr, &gStateMachineContext.pWifiSettings->macAddr, sizeof(WDRV_WINC_MAC_ADDR));
 
+    // Snapshot prior settings so we can roll back on REINIT enqueue failure
+    // (#425 round 3 / Qodo).  When willReinit is false we don't need this —
+    // there's no failure path that mutates between this point and return.
+    wifi_manager_settings_t prevSettings;
+    if (willReinit) {
+        memcpy(&prevSettings, gStateMachineContext.pWifiSettings, sizeof(prevSettings));
+    }
+
     // Copy new settings
     memcpy(gStateMachineContext.pWifiSettings, pSettings, sizeof (wifi_manager_settings_t));
 
@@ -1654,14 +1662,16 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
     if (willReinit) {
         if (!SendEvent(WIFI_MANAGER_EVENT_REINIT)) {
-            // Queue full or queue not initialized — REINIT won't fire, so
-            // the gate would lock APPLY for 30 s with nothing in flight.
-            // Roll back atomically (#425).  Reverse store order on release.
+            // Queue full or queue not initialized — REINIT won't fire.
+            // Roll back the settings copy so a "false" return cleanly means
+            // "no state changed", and release the gate (reverse store order).
+            memcpy(gStateMachineContext.pWifiSettings, &prevSettings, sizeof(prevSettings));
+            BoardData_Set(BOARDDATA_WIFI_SETTINGS, 0, gStateMachineContext.pWifiSettings);
             taskENTER_CRITICAL();
             gApplyInProgressDeadlineTick = 0;
             gApplyInProgress = false;
             taskEXIT_CRITICAL();
-            LOG_E("WiFi REINIT enqueue failed; APPLY gate rolled back");
+            LOG_E("WiFi REINIT enqueue failed; settings + APPLY gate rolled back");
             return false;
         }
     }
