@@ -254,23 +254,6 @@ extern "C" {
      */
     bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t* pSettings);
 
-    /**
-     * @brief Returns true while a previous APPLY's REINIT is still being
-     *        processed by the state machine.
-     *
-     * Used by SCPI APPLY (and FWUpdate APPLY) to reject back-to-back
-     * APPLYs faster than the state machine can drain them — without this
-     * gate, rapid APPLY storms collide with in-flight WINC HIF requests
-     * and wedge the state machine into a tight WDRV_WINC_STATUS_REQUEST_ERROR
-     * loop that requires a power-cycle to clear (#425).
-     *
-     * Cleared automatically when the state machine reaches STA_CONNECTED
-     * or AP_STARTED, or after a 30 s safety deadline.
-     *
-     * @return True if a re-apply is in flight; false if APPLY may proceed.
-     */
-    bool wifi_manager_IsApplyInProgress(void);
-
 
     /**
      * @brief Processes the current state of the WiFi manager.

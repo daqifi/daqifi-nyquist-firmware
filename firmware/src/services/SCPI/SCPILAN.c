@@ -541,15 +541,6 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
         saveSettings = (bool) param1;
     }
 
-    // #425 gate: reject APPLY while a previous APPLY's REINIT is still in
-    // flight.  Without this, rapid APPLY storms collide with in-flight WINC
-    // HIF requests, the state machine spins on WDRV_WINC_STATUS_REQUEST_ERROR
-    // (8) returned by IPUseDHCPSet, and the device wedges until power-cycle.
-    if (wifi_manager_IsApplyInProgress()) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
-
     // Concurrent WiFi and SD card operations now supported with enhanced SPI coordination
 
     if (saveSettings) {
@@ -560,7 +551,11 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
             return SCPI_RES_ERR;
         }
     }
+    // #425: gate is now centralized inside wifi_manager_UpdateNetworkSettings
+    // (atomic test-and-set under taskENTER_CRITICAL).  A false return here
+    // means a prior APPLY's REINIT is still in flight; surface as -200.
     if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
     // Note: WiFi firmware update mode request (if set via FWUPDATE) is handled by the WiFi state machine.
@@ -636,7 +631,10 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
     memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
 
     if (applySettings) {
+        // #425: gate covered by UpdateNetworkSettings's atomic test-and-set;
+        // false return = APPLY in flight, surface as -200.
         if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
     }
@@ -665,7 +663,10 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
     memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
 
     if (applySettings) {
+        // #425: gate covered by UpdateNetworkSettings's atomic test-and-set;
+        // false return = APPLY in flight, surface as -200.
         if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
     }

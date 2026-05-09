@@ -142,26 +142,30 @@ static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
 // Apply-in-progress gate (#425).
-// Set true when wifi_manager_UpdateNetworkSettings queues a REINIT and the
-// device is enabled+powered; cleared when the state machine reaches a
-// steady state (STA_CONNECTED or AP_STARTED) or the safety deadline elapses.
+// Set true under taskENTER_CRITICAL by wifi_manager_UpdateNetworkSettings
+// when a REINIT is about to be queued; cleared when the state machine
+// reaches a steady state (STA_CONNECTED, AP_STARTED, or FW_UPDATE_READY)
+// or the safety deadline elapses.
 //
-// SCPI APPLY (SCPI_LANSettingsApply) checks this and returns -200 Execution
-// error while true, so back-to-back APPLY storms can't stack REINIT events
-// faster than the state machine can drain them.  Without this gate,
-// WDRV_WINC_IPUseDHCPSet returns WDRV_WINC_STATUS_REQUEST_ERROR (the WINC
-// chip rejects HIF requests during a prior REINIT's teardown) and the
-// state machine spins on WIFI_MANAGER_EVENT_ERROR until power-cycle.
+// Test-and-set is atomic so concurrent SCPI callers (USB pri 7 + WifiTask
+// TCP-SCPI pri 2) can't both pass the gate and stack REINIT events faster
+// than the state machine can drain them.  Without this gate, the second-
+// and-later REINIT enters INIT processing while the WINC chip is still
+// tearing down the prior attempt, WDRV_WINC_IPUseDHCPSet returns
+// WDRV_WINC_STATUS_REQUEST_ERROR (8), and the manager spins on
+// WIFI_MANAGER_EVENT_ERROR until power-cycle.
 //
-// 32-bit/bool reads+writes are atomic on PIC32MZ; volatile prevents -O3
-// caching across cross-context reads (USB SCPI task pri 7 sets, WifiTask
-// pri 2 clears; SCPI Apply pri 7 reads).
+// volatile because cleared from WifiTask (pri 2 — steady-state events,
+// safety deadline) but set from any task that calls UpdateNetworkSettings
+// (USB SCPI pri 7, TCP SCPI on WifiTask itself).
 static volatile bool gApplyInProgress = false;
 // Safety deadline: clear gApplyInProgress unconditionally if the state
 // machine hasn't reached steady state within ~30 s (e.g. unreachable AP,
 // stuck WINC).  Without this, a stuck transition could permanently lock
 // out further APPLYs.  0 = no deadline armed.  Read from
 // wifi_manager_ProcessState every tick when gApplyInProgress is true.
+// Computed deadline is bumped from 0 to 1 to keep the sentinel reliable
+// across tick wraparound.
 #define WIFI_APPLY_GATE_TIMEOUT_MS 30000u
 static volatile TickType_t gApplyInProgressDeadlineTick = 0;
 
@@ -695,6 +699,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             }
             wifi_serial_bridge_Init(&pInstance->serialBridgeContext);
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
+            // Reached steady state for FW-update mode — release APPLY gate (#425).
+            // Without this, FW-update mode never clears the gate (no STA_CONNECTED
+            // / AP_STARTED in this lifecycle), so APPLY is locked out for 30 s
+            // and a misleading "safety release" log fires every FW-update cycle.
+            // Reverse store order — see AP_STARTED comment.
+            gApplyInProgressDeadlineTick = 0;
+            gApplyInProgress = false;
             vTaskResume(pInstance->fwUpdateTaskHandle);
         }
             break;
@@ -860,8 +871,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                 // Reached steady state — release APPLY gate (#425).
-                gApplyInProgress = false;
+                // Order: deadline first, flag second.  If a higher-priority
+                // task preempts between the two stores and tries to claim
+                // the gate, it will see flag=true and reject — preventing
+                // a corrupt (flag=true, deadline=0) state where the safety
+                // release path would never fire.
                 gApplyInProgressDeadlineTick = 0;
+                gApplyInProgress = false;
 
                 // IMPORTANT: Register socket callback BEFORE opening sockets
                 // This ensures we don't miss the SOCKET_MSG_BIND event
@@ -892,9 +908,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
         case WIFI_MANAGER_EVENT_STA_CONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-            // Reached steady state — release APPLY gate (#425).
-            gApplyInProgress = false;
+            // Reached steady state — release APPLY gate (#425).  Reverse
+            // store order (deadline first, flag second) — see AP_STARTED
+            // comment for why.
             gApplyInProgressDeadlineTick = 0;
+            gApplyInProgress = false;
 
             // Reset reconnect attempts on successful connection
             pInstance->staReconnectAttempts = 0;
@@ -1387,6 +1405,8 @@ void wifi_manager_BootInit(void) {
     gTcpRxPending = false;
     gLastRssiPercentage = 0;
     gWifiReinitDeadlineTick = 0;
+    gApplyInProgress = false;
+    gApplyInProgressDeadlineTick = 0;
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
@@ -1530,6 +1550,10 @@ bool wifi_manager_Deinit() {
     taskENTER_CRITICAL();
     gWifiReinitDeadlineTick = 0;
     gStateMachineContext.pWifiSettings->isEnabled = 0;
+    // Explicit teardown — release APPLY gate so a follow-up APPLY isn't
+    // blocked by the 30 s safety timeout.  Reverse store order (#425).
+    gApplyInProgressDeadlineTick = 0;
+    gApplyInProgress = false;
     taskEXIT_CRITICAL();
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
@@ -1561,56 +1585,80 @@ bool wifi_manager_HardReset(void) {
     taskENTER_CRITICAL();
     gStateMachineContext.pWifiSettings->isEnabled = 0;
     gWifiReinitDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(2000);
+    // Explicit teardown — release APPLY gate (#425).  Reverse store order.
+    gApplyInProgressDeadlineTick = 0;
+    gApplyInProgress = false;
     taskEXIT_CRITICAL();
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
-}
-
-bool wifi_manager_IsApplyInProgress(void) {
-    return gApplyInProgress;
 }
 
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
     // Always allow settings to be updated regardless of power state
     // This allows configuration while the device is off or WiFi is disabled
-    
-    if (pSettings != NULL && gStateMachineContext.pWifiSettings != NULL) {
-        
-        // Preserve the MAC address before copying new settings
-        WDRV_WINC_MAC_ADDR savedMacAddr;
-        memcpy(&savedMacAddr, &gStateMachineContext.pWifiSettings->macAddr, sizeof(WDRV_WINC_MAC_ADDR));
-        
-        // Copy new settings
-        memcpy(gStateMachineContext.pWifiSettings, pSettings, sizeof (wifi_manager_settings_t));
-        
-        // Restore the MAC address
-        memcpy(&gStateMachineContext.pWifiSettings->macAddr, &savedMacAddr, sizeof(WDRV_WINC_MAC_ADDR));
-        
-        // Also update BoardData so the app task sees the changes
-        BoardData_Set(BOARDDATA_WIFI_SETTINGS, 0, gStateMachineContext.pWifiSettings);
-        // LOG_D("BoardData updated with new WiFi settings\r\n");
-        
-        // Only trigger a reinit if WiFi is enabled and powered
-        const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDDATA_POWER_DATA, 0);
-        bool isPowered = (pPowerState != NULL && 
-                         (pPowerState->powerState == POWERED_UP || 
-                          pPowerState->powerState == POWERED_UP_EXT_DOWN));
-        
-        // Trigger REINIT if WiFi is enabled OR if WiFi firmware update mode is requested
-        bool wifiFwUpdateRequested = GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
-        if ((pSettings->isEnabled || wifiFwUpdateRequested) && isPowered) {
-            // WiFi is enabled or WiFi firmware update requested, and board is
-            // powered - apply changes immediately.  Arm the gate so SCPI
-            // APPLY rejects further requests until the state machine settles
-            // (#425).
-            gApplyInProgressDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(WIFI_APPLY_GATE_TIMEOUT_MS);
-            gApplyInProgress = true;
-            SendEvent(WIFI_MANAGER_EVENT_REINIT);
-        } else {
-            // Settings saved but not applied - they'll be applied when WiFi is enabled
-            // and the board is powered
-            // No SCPI error here - settings are successfully saved
+    if (pSettings == NULL || gStateMachineContext.pWifiSettings == NULL) {
+        return true;
+    }
+
+    // Decide up front whether this call would queue a REINIT.  If yes, the
+    // gate must be claimed atomically before we touch runtime state — see
+    // #425 bugs 2 & 3: a check-then-act window let two concurrent SCPI
+    // tasks (USB pri 7 + WifiTask TCP-SCPI) both pass the check and stack
+    // REINIT events, AND callers other than SCPI APPLY (LANSettingsLoad,
+    // LANSettingsFactoryLoad) bypassed the gate entirely.  Centralizing
+    // the gate here protects every caller automatically.
+    const tPowerData *pPowerState = (tPowerData *) BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    bool isPowered = (pPowerState != NULL &&
+                     (pPowerState->powerState == POWERED_UP ||
+                      pPowerState->powerState == POWERED_UP_EXT_DOWN));
+    bool wifiFwUpdateRequested = GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
+    bool willReinit = (pSettings->isEnabled || wifiFwUpdateRequested) && isPowered;
+
+    if (willReinit) {
+        TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(WIFI_APPLY_GATE_TIMEOUT_MS);
+        // 0 is the "unarmed" sentinel — bump to 1 so a wraparound landing
+        // exactly on 0 doesn't disable the safety release.
+        if (deadline == 0) {
+            deadline = 1;
+        }
+        // Atomic test-and-set.  Without the critical section, two SCPI
+        // contexts can both observe gApplyInProgress=false and both
+        // proceed to set it true and queue REINIT — defeating the gate.
+        taskENTER_CRITICAL();
+        if (gApplyInProgress) {
+            taskEXIT_CRITICAL();
+            return false;  // gate engaged — caller translates to -200
+        }
+        gApplyInProgress = true;
+        gApplyInProgressDeadlineTick = deadline;
+        taskEXIT_CRITICAL();
+    }
+
+    // Preserve the MAC address before copying new settings
+    WDRV_WINC_MAC_ADDR savedMacAddr;
+    memcpy(&savedMacAddr, &gStateMachineContext.pWifiSettings->macAddr, sizeof(WDRV_WINC_MAC_ADDR));
+
+    // Copy new settings
+    memcpy(gStateMachineContext.pWifiSettings, pSettings, sizeof (wifi_manager_settings_t));
+
+    // Restore the MAC address
+    memcpy(&gStateMachineContext.pWifiSettings->macAddr, &savedMacAddr, sizeof(WDRV_WINC_MAC_ADDR));
+
+    // Also update BoardData so the app task sees the changes
+    BoardData_Set(BOARDDATA_WIFI_SETTINGS, 0, gStateMachineContext.pWifiSettings);
+
+    if (willReinit) {
+        if (!SendEvent(WIFI_MANAGER_EVENT_REINIT)) {
+            // Queue full or queue not initialized — REINIT won't fire, so
+            // the gate would lock APPLY for 30 s with nothing in flight.
+            // Roll back atomically (#425).  Reverse store order on release.
+            taskENTER_CRITICAL();
+            gApplyInProgressDeadlineTick = 0;
+            gApplyInProgress = false;
+            taskEXIT_CRITICAL();
+            LOG_E("WiFi REINIT enqueue failed; APPLY gate rolled back");
+            return false;
         }
     }
     return true;
@@ -1690,15 +1738,17 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     }
 
     // APPLY gate safety release (#425): drop gApplyInProgress if the state
-    // machine hasn't reached STA_CONNECTED / AP_STARTED within the timeout.
-    // Without this, a stuck transition (e.g. unreachable AP) would lock
-    // out further SCPI APPLYs permanently.
+    // machine hasn't reached steady state within the timeout.  Without this,
+    // a stuck transition (e.g. unreachable AP) would lock out further SCPI
+    // APPLYs permanently.  The arm path bumps the computed deadline from 0
+    // to 1, so deadline is never 0 while armed — no separate sentinel check
+    // needed (and dropping it lets us recover even if a race somehow leaves
+    // flag=true with deadline=0).  Reverse store order on release.
     if (gApplyInProgress &&
-        gApplyInProgressDeadlineTick != 0 &&
         (int32_t)(xTaskGetTickCount() - gApplyInProgressDeadlineTick) >= 0) {
         LOG_E("APPLY gate safety release after %u ms", (unsigned)WIFI_APPLY_GATE_TIMEOUT_MS);
-        gApplyInProgress = false;
         gApplyInProgressDeadlineTick = 0;
+        gApplyInProgress = false;
     }
 
     wifi_tcp_server_TransmitBufferedData();
