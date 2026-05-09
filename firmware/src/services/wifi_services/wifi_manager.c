@@ -1602,7 +1602,10 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
     // This allows configuration while the device is off or WiFi is disabled
 
     if (pSettings == NULL || gStateMachineContext.pWifiSettings == NULL) {
-        return true;
+        // Caller programming error — surface as -200 rather than silently
+        // pretending success.
+        LOG_E("WiFi UpdateNetworkSettings: NULL settings pointer");
+        return false;
     }
 
     // Decide up front whether this call would queue a REINIT.  If yes, the
@@ -1757,12 +1760,25 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // APPLYs permanently.  The arm path bumps the computed deadline from 0
     // to 1, so deadline is never 0 while armed — no separate sentinel check
     // needed (and dropping it lets us recover even if a race somehow leaves
-    // flag=true with deadline=0).  Reverse store order on release.
+    // flag=true with deadline=0).
+    //
+    // Critical section: between the condition check and the clear, a
+    // preempting Deinit→APPLY sequence (USB SCPI pri 7 vs WifiTask pri 2)
+    // could clear the gate then re-arm with a fresh deadline.  Without the
+    // critical section, we would then stomp that new state and trigger a
+    // spurious safety release.  Reverse store order is preserved inside.
+    bool armed_release = false;
+    taskENTER_CRITICAL();
     if (gApplyInProgress &&
         (int32_t)(xTaskGetTickCount() - gApplyInProgressDeadlineTick) >= 0) {
-        LOG_E("APPLY gate safety release after %u ms", (unsigned)WIFI_APPLY_GATE_TIMEOUT_MS);
         gApplyInProgressDeadlineTick = 0;
         gApplyInProgress = false;
+        armed_release = true;
+    }
+    taskEXIT_CRITICAL();
+    if (armed_release) {
+        // LOG_E does its own queue work — keep it outside the critical section.
+        LOG_E("APPLY gate safety release after %u ms", (unsigned)WIFI_APPLY_GATE_TIMEOUT_MS);
     }
 
     wifi_tcp_server_TransmitBufferedData();
