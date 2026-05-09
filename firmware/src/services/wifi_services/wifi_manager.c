@@ -1217,14 +1217,79 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // Currently in STA mode and need to update STA settings
                 if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
                     LOG_D("Restarting STA mode with new settings...\r\n");
-                    
+
+                    // #435: if a TCP socket is active when APPLY hits, the
+                    // WINC chip's internal socket table retains stale state
+                    // through soft reconfigure and the new association
+                    // oscillates (8+ CONNECT→DISCONNECT cycles before
+                    // settling).  Bench-confirmed via instrumentation.  Soft
+                    // reconfigure of just the BSS context isn't enough — we
+                    // need a full chip reset to clear the socket table.
+                    //
+                    // Divert to HardReset (DEINIT → 2 s settle → INIT) which
+                    // pulls RESET_N + CHIP_EN low and brings the chip back
+                    // up clean.  The deferred-INIT path in ProcessState
+                    // picks up the new settings on its way back up.
+                    // Only divert when an actual TCP client is connected,
+                    // not merely when the listening server socket is bound
+                    // (which is true throughout normal STA operation).  The
+                    // wedge requires the chip's socket table to hold an
+                    // *accepted* connection state; bare listening sockets
+                    // tear down cleanly through the soft-reconfigure path
+                    // below.
+                    if (wifi_tcp_server_HasActiveClient()) {
+                        LOG_E("STA reconfig with active TCP client — diverting to HardReset (#435)");
+                        wifi_tcp_server_CloseSocket();
+                        if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
+                            CloseUdpSocket(&pInstance->udpServerSocket);
+                        }
+                        // Clear socket + STA state flags so callers that
+                        // check status during the chip-reset window (~2 s)
+                        // don't observe stale "connected" state.  No
+                        // critical section: every writer of
+                        // pInstance->eventFlags in this codebase is on
+                        // WifiTask (StaEventCallback / SocketEventCallback
+                        // only call SendEvent — no flag mutations) so the
+                        // RMW is single-threaded.  Per CLAUDE.md
+                        // ("do not add unnecessary critical sections"), the
+                        // earlier speculative wrap was inappropriate.  Also
+                        // clear UDP_SOCKET_CONNECTED so it doesn't outlast
+                        // UDP_SOCKET_OPEN.
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                        // wifi_manager_HardReset arms the deferred-INIT
+                        // deadline and queues DEINIT.  isEnabled was just
+                        // set to 1 by UpdateNetworkSettings (since this
+                        // REINIT was queued) — HardReset will clear it
+                        // for the DEINIT path, then ProcessState's
+                        // deferred-INIT branch flips it back and queues
+                        // INIT once the 2 s settle elapses.  If the DEINIT
+                        // event can't be queued, propagate the failure as
+                        // an ERROR event so the manager retries instead of
+                        // silently leaving the chip in a half-reset state.
+                        if (!wifi_manager_HardReset()) {
+                            LOG_E("HardReset divert failed to queue DEINIT");
+                            // Try ERROR fallback so the manager retries; if
+                            // *that* enqueue also fails, the queue is wedged
+                            // and the only recovery is SYST:REBoot — log
+                            // explicitly so the user sees it in SYST:LOG?.
+                            if (!SendEvent(WIFI_MANAGER_EVENT_ERROR)) {
+                                LOG_E("HardReset divert: ERROR fallback also failed; manager may be stuck — SYST:REBoot");
+                            }
+                        }
+                        break;
+                    }
+
                     // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    
+
                     // Wait for disconnect
                     vTaskDelay(pdMS_TO_TICKS(500));
                     
@@ -1278,13 +1343,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
                     
                     // Connect to network
-                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, 
+                    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle,
                         &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
                         SendEvent(WIFI_MANAGER_EVENT_ERROR);
                         LOG_E("Error connecting to network\r\n");
                         break;
                     }
-                    
+
                     SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     LOG_D("STA mode connection initiated\r\n");
                 }
