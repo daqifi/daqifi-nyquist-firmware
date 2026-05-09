@@ -2679,7 +2679,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // Quiesce all DMA consumers (SD file close, WiFi SPI idle) and reset pool.
         // USB writeTransferHandle already waited above.
         if (!SCPI_QuiesceAndResetCoherentPool()) {
-            SCPI_ExecutionError(context, "SYST:StartStreamData: coherent pool quiesce failed");
+            SCPI_ExecutionError(context, "SYST:STR:START: coherent pool quiesce failed");
             return SCPI_RES_ERR;
         }
         uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
@@ -4065,6 +4065,8 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:NVMWrite", .callback = SCPI_NVMWrite, }, 
     //    {.pattern = "SYSTem:NVMErasePage", .callback = SCPI_NVMErasePage, },
     {.pattern = "SYSTem:FORceBoot", .callback = SCPI_ForceBootloader,},
+    // USB transparent mode — new namespace form is canonical; legacy alias kept for back-compat (#311 round 3).
+    {.pattern = "SYSTem:USB:TRANSparent:MODE", .callback = SCPI_UsbSetTransparentMode},
     {.pattern = "SYSTem:USB:SetTransparentMode", .callback = SCPI_UsbSetTransparentMode},
     {.pattern = "SYSTem:SERialNUMber?", .callback = SCPI_GetSerialNumber,},
 
@@ -4215,7 +4217,12 @@ static const scpi_command_t scpi_commands[] = {
     //    // SPI
     //    {.pattern = "OUTPut:SPI:WRIte", .callback = SCPI_NotImplemented, },
     //    
-    // Streaming
+    // Streaming control — new SYST:STR:* namespace forms are canonical; legacy
+    // SYSTem:Start/Stop/StreamData aliases kept for back-compat with existing
+    // client libraries and user scripts (#311 round 3).
+    {.pattern = "SYSTem:STReam:START", .callback = SCPI_StartStreaming,},
+    {.pattern = "SYSTem:STReam:STOP", .callback = SCPI_StopStreaming,},
+    {.pattern = "SYSTem:STReam:DATA?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
     {.pattern = "SYSTem:StopStreamData", .callback = SCPI_StopStreaming,},
     {.pattern = "SYSTem:StreamData?", .callback = SCPI_IsStreaming,},

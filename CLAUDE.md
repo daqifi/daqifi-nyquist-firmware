@@ -265,10 +265,10 @@ never poll the device under test. Mirrored in the SCPI wiki.
 
 **Common Mistakes to Avoid:**
 - ❌ `SYST:STAR 5000` (guessed)
-- ✅ `SYST:StartStreamData 5000` (verified from SCPIInterface.c:1521)
+- ✅ `SYST:STR:START 5000` (verified from SCPIInterface.c:1521)
 
 - ❌ `SYST:STOP` (guessed)
-- ✅ `SYST:StopStreamData` (verified from SCPIInterface.c:1522)
+- ✅ `SYST:STR:STOP` (verified from SCPIInterface.c:1522)
 
 - ❌ `SYST:STOR:SD:GET DAQiFi/file.csv` (unquoted path)
 - ✅ `SYST:STOR:SD:GET "file.csv"` (quoted, verified from SCPIStorageSD.c)
@@ -277,13 +277,26 @@ never poll the device under test. Mirrored in the SCPI wiki.
 ```bash
 # Step 1: Search for streaming commands
 grep -n "pattern.*Stream" firmware/src/services/SCPI/SCPIInterface.c
-# Result: Line 1521: {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
+# Result: Line 1521: {.pattern = "SYSTem:STReam:START", .callback = SCPI_StartStreaming,},
 
 # Step 2: Use exact command
-device._comm.send_command("SYST:StartStreamData 5000")  # Correct!
+device._comm.send_command("SYST:STR:START 5000")  # Correct!
 ```
 
 **If you use a SCPI command without verifying it first, STOP immediately and verify the syntax.**
+
+#### Stream-control namespace migration (round 3, see #311 / #324)
+
+The streaming start/stop/query commands consolidated into the `SYST:STR:*` namespace, alongside the rest of the streaming family (`SYST:STR:FOR`, `SYST:STR:INT`, `SYST:STR:STATS?`, etc.). Legacy forms remain as aliases — both work:
+
+| Canonical (preferred)     | Legacy alias (still works)   |
+|---------------------------|------------------------------|
+| `SYST:STR:START <freq>`   | `SYST:StartStreamData <freq>` |
+| `SYST:STR:STOP`           | `SYST:StopStreamData`         |
+| `SYST:STR:DATA?`          | `SYST:StreamData?`            |
+| `SYST:USB:TRANSparent:MODE` | `SYST:USB:SetTransparentMode` |
+
+New code, docs, and the wiki should use the canonical forms. Existing client libraries (`daqifi-python-core`, `daqifi-core` (.NET), `daqifi-java-api`, etc.) continue to work without changes; migrate them on their own schedule. The legacy aliases will not be removed without a separate, scheduled deprecation cycle (months out, with explicit comm to client maintainers).
 
 #### SCPI Wiki Maintenance
 
@@ -553,7 +566,7 @@ The firmware automatically caps the requested streaming frequency based on a thr
 | 16ch | 5,000 Hz | 6,400 Hz | 78% |
 
 **Where capping is applied:**
-- `SYSTem:StartStreamData <freq>` — caps frequency before starting the timer
+- `SYSTem:STReam:START <freq>` — caps frequency before starting the timer
 - `CONFigure:ADC:CHANnel` — recalculates cap when channels are enabled/disabled during streaming
 
 **Diagnosing capped frequency:** Check `SYST:LOG?` for `"Frequency capped: X Hz -> Y Hz"` messages. The actual streaming frequency is stored in the runtime config and can be verified by checking sample timestamps.
@@ -622,17 +635,17 @@ SYST:STR:STATS:CLE
 
 # Test 1: NOCAP — full path including ADC
 SYST:STR:BENCH 1
-SYST:StartStreamData 5000
+SYST:STR:START 5000
 # wait 8 s, then stop, snapshot WifiTcpBytesSent
-SYST:StopStreamData
+SYST:STR:STOP
 SYST:STR:STATS?
 
 # Test 2: PIPELINE — same rate, ADC bypassed
 SYST:STR:STATS:CLE
 SYST:STR:BENCH 2
-SYST:StartStreamData 5000
+SYST:STR:START 5000
 # wait 8 s, then stop
-SYST:StopStreamData
+SYST:STR:STOP
 SYST:STR:STATS?
 
 SYST:STR:BENCH 0                    # Restore normal
@@ -1495,7 +1508,7 @@ USB streaming data delivery to the host is inherently bursty due to the firmware
    (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 /dev/ttyACM0 | tail -5
 
    # Bad: streaming — picocom will hang
-   (echo -e "SYST:StartStreamData 1000\r"; sleep 5; echo -e "SYST:StopStreamData\r") | picocom ...
+   (echo -e "SYST:STR:START 1000\r"; sleep 5; echo -e "SYST:STR:STOP\r") | picocom ...
 
    # Never use 2>&1 with picocom
    ```

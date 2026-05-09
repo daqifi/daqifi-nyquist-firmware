@@ -26,11 +26,12 @@ if sys.platform == 'win32':
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 class WiFiFirmwareUpdater:
-    def __init__(self, port, firmware_version='19.7.7', tool_path=None):
+    def __init__(self, port, firmware_version='19.7.7', tool_path=None, force=False):
         """Initialize WiFi firmware updater"""
         self.port = port
         self.firmware_version = firmware_version
         self.tool_path = tool_path or self.find_winc_tool()
+        self.force = force
         self.ser = None
 
     def find_winc_tool(self):
@@ -197,7 +198,7 @@ class WiFiFirmwareUpdater:
 
         # Disable USB transparent mode
         self.log("\nDisabling USB transparent mode...")
-        self.send_command("SYSTem:USB:SetTransparentMode 0", delay=0.5)
+        self.send_command("SYSTem:USB:TRANSparent:MODE 0", delay=0.5)
 
         # Enable WiFi
         self.log("\nEnabling WiFi...")
@@ -318,13 +319,16 @@ class WiFiFirmwareUpdater:
 
         try:
             already_updated = self.check_current_version()
-            if already_updated:
+            if already_updated and not self.force:
                 # Already at target version, no update needed
                 self.disconnect()
                 self.log("\n" + "=" * 60)
                 self.log("✓ NO UPDATE REQUIRED - Already at target version")
+                self.log("  (use --force to re-flash anyway)")
                 self.log("=" * 60)
                 return True
+            if already_updated and self.force:
+                self.log("\n--force specified — re-flashing despite version match")
         except Exception as e:
             self.log(f"\n⚠ Warning during version check: {e}")
             self.log("  Proceeding with update...")
@@ -368,7 +372,7 @@ class WiFiFirmwareUpdater:
             # Try to at least disable transparent mode before exiting
             try:
                 self.log("\nAttempting emergency restore to normal mode...")
-                self.send_command("SYSTem:USB:SetTransparentMode 0", delay=0.5)
+                self.send_command("SYSTem:USB:TRANSparent:MODE 0", delay=0.5)
             except:
                 pass
             self.disconnect()
@@ -407,7 +411,7 @@ Manual Process (for reference):
      winc_flash_tool.cmd /p COM3 /d WINC1500 /v 19.7.7 /x /e /i aio /w
 
   3. Reconnect and send:
-     SYST:USB:SetTransparentMode 0
+     SYST:USB:TRANS:MODE 0
      SYST:COMM:LAN:ENabled 1
      SYST:COMM:LAN:APPLY
         '''
@@ -418,10 +422,12 @@ Manual Process (for reference):
                         help='WiFi firmware version to flash (default: 19.7.7)')
     parser.add_argument('--tool-path',
                         help='Path to winc_flash_tool.cmd (auto-detected if not specified)')
+    parser.add_argument('--force', action='store_true',
+                        help='Re-flash even if device already reports the target version')
 
     args = parser.parse_args()
 
-    updater = WiFiFirmwareUpdater(args.port, args.firmware_version, args.tool_path)
+    updater = WiFiFirmwareUpdater(args.port, args.firmware_version, args.tool_path, args.force)
     success = updater.update()
 
     sys.exit(0 if success else 1)
