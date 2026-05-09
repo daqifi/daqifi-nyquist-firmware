@@ -141,6 +141,30 @@ static SemaphoreHandle_t gProcessStateMutex = NULL;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
+// Apply-in-progress gate (#425).
+// Set true when wifi_manager_UpdateNetworkSettings queues a REINIT and the
+// device is enabled+powered; cleared when the state machine reaches a
+// steady state (STA_CONNECTED or AP_STARTED) or the safety deadline elapses.
+//
+// SCPI APPLY (SCPI_LANSettingsApply) checks this and returns -200 Execution
+// error while true, so back-to-back APPLY storms can't stack REINIT events
+// faster than the state machine can drain them.  Without this gate,
+// WDRV_WINC_IPUseDHCPSet returns WDRV_WINC_STATUS_REQUEST_ERROR (the WINC
+// chip rejects HIF requests during a prior REINIT's teardown) and the
+// state machine spins on WIFI_MANAGER_EVENT_ERROR until power-cycle.
+//
+// 32-bit/bool reads+writes are atomic on PIC32MZ; volatile prevents -O3
+// caching across cross-context reads (USB SCPI task pri 7 sets, WifiTask
+// pri 2 clears; SCPI Apply pri 7 reads).
+static volatile bool gApplyInProgress = false;
+// Safety deadline: clear gApplyInProgress unconditionally if the state
+// machine hasn't reached steady state within ~30 s (e.g. unreachable AP,
+// stuck WINC).  Without this, a stuck transition could permanently lock
+// out further APPLYs.  0 = no deadline armed.  Read from
+// wifi_manager_ProcessState every tick when gApplyInProgress is true.
+#define WIFI_APPLY_GATE_TIMEOUT_MS 30000u
+static volatile TickType_t gApplyInProgressDeadlineTick = 0;
+
 //===========================================================
 //=====================Private Callbacks=====================
 
@@ -835,7 +859,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
 
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
-                
+                // Reached steady state — release APPLY gate (#425).
+                gApplyInProgress = false;
+                gApplyInProgressDeadlineTick = 0;
+
                 // IMPORTANT: Register socket callback BEFORE opening sockets
                 // This ensures we don't miss the SOCKET_MSG_BIND event
                 WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
@@ -865,7 +892,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
         case WIFI_MANAGER_EVENT_STA_CONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-            
+            // Reached steady state — release APPLY gate (#425).
+            gApplyInProgress = false;
+            gApplyInProgressDeadlineTick = 0;
+
             // Reset reconnect attempts on successful connection
             pInstance->staReconnectAttempts = 0;
             LOG_D("STA connection successful, reset reconnect counter\r\n");
@@ -1535,6 +1565,10 @@ bool wifi_manager_HardReset(void) {
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
+bool wifi_manager_IsApplyInProgress(void) {
+    return gApplyInProgress;
+}
+
 bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
 
     // Always allow settings to be updated regardless of power state
@@ -1566,7 +1600,12 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
         bool wifiFwUpdateRequested = GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
         if ((pSettings->isEnabled || wifiFwUpdateRequested) && isPowered) {
-            // WiFi is enabled or WiFi firmware update requested, and board is powered - apply changes immediately
+            // WiFi is enabled or WiFi firmware update requested, and board is
+            // powered - apply changes immediately.  Arm the gate so SCPI
+            // APPLY rejects further requests until the state machine settles
+            // (#425).
+            gApplyInProgressDeadlineTick = xTaskGetTickCount() + pdMS_TO_TICKS(WIFI_APPLY_GATE_TIMEOUT_MS);
+            gApplyInProgress = true;
             SendEvent(WIFI_MANAGER_EVENT_REINIT);
         } else {
             // Settings saved but not applied - they'll be applied when WiFi is enabled
@@ -1648,6 +1687,18 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     }
     if (doInit) {
         SendEvent(WIFI_MANAGER_EVENT_INIT);
+    }
+
+    // APPLY gate safety release (#425): drop gApplyInProgress if the state
+    // machine hasn't reached STA_CONNECTED / AP_STARTED within the timeout.
+    // Without this, a stuck transition (e.g. unreachable AP) would lock
+    // out further SCPI APPLYs permanently.
+    if (gApplyInProgress &&
+        gApplyInProgressDeadlineTick != 0 &&
+        (int32_t)(xTaskGetTickCount() - gApplyInProgressDeadlineTick) >= 0) {
+        LOG_E("APPLY gate safety release after %u ms", (unsigned)WIFI_APPLY_GATE_TIMEOUT_MS);
+        gApplyInProgress = false;
+        gApplyInProgressDeadlineTick = 0;
     }
 
     wifi_tcp_server_TransmitBufferedData();
