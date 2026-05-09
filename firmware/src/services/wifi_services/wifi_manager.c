@@ -1230,22 +1230,32 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // pulls RESET_N + CHIP_EN low and brings the chip back
                     // up clean.  The deferred-INIT path in ProcessState
                     // picks up the new settings on its way back up.
-                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN) ||
-                        GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
-                        LOG_E("STA reconfig with active socket — diverting to HardReset (#435)");
-                        if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
-                            wifi_tcp_server_CloseSocket();
-                        }
+                    // Only divert when an actual TCP client is connected,
+                    // not merely when the listening server socket is bound
+                    // (which is true throughout normal STA operation).  The
+                    // wedge requires the chip's socket table to hold an
+                    // *accepted* connection state; bare listening sockets
+                    // tear down cleanly through the soft-reconfigure path
+                    // below.
+                    if (wifi_tcp_server_HasActiveClient()) {
+                        LOG_E("STA reconfig with active TCP client — diverting to HardReset (#435)");
+                        wifi_tcp_server_CloseSocket();
                         if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                             CloseUdpSocket(&pInstance->udpServerSocket);
                         }
                         // Reset socket + STA state flags atomically so callers
                         // that check status during the chip-reset window
-                        // (~2 s) don't observe stale "connected" state.
+                        // (~2 s) don't observe stale "connected" state.  The
+                        // ResetEventFlag helper does RMW on a shared bitmask;
+                        // wrap the cluster in a critical section even though
+                        // all current writers are on WifiTask, to silence
+                        // future cross-task races if a callback is added.
+                        taskENTER_CRITICAL();
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                        taskEXIT_CRITICAL();
                         // wifi_manager_HardReset arms the deferred-INIT
                         // deadline and queues DEINIT.  isEnabled was just
                         // set to 1 by UpdateNetworkSettings (since this

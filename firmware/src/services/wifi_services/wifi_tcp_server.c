@@ -365,16 +365,27 @@ void wifi_tcp_server_CloseSocket() {
         shutdown(gpServerData->client.clientSocket);
         gpServerData->client.clientSocket = -1;
     }
-    
+
     if (gpServerData->serverSocket != -1) {
         shutdown(gpServerData->serverSocket);
         gpServerData->serverSocket = -1;
     }
-    
+
+    // Reset write-buffer state under wMutex to serialize against
+    // wifi_tcp_server_WriteBuffer / GetWriteBuffFreeSize / TransmitBuffered
+    // — all of which take wMutex around CircularBuf operations.  Without
+    // this, a concurrent streaming write could be mid-CircularBuf_AddBytes
+    // when CircularBuf_Reset wipes head/tail, corrupting the buffer state.
+    if (gpServerData->client.wMutex != NULL) {
+        xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
+    }
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.writeBufferLength = 0;
     gpServerData->client.tcpInFlight = 0;
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
+    if (gpServerData->client.wMutex != NULL) {
+        xSemaphoreGive(gpServerData->client.wMutex);
+    }
 }
 
 void wifi_tcp_server_CloseClientSocket() {
