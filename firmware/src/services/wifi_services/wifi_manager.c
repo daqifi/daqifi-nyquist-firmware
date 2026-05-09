@@ -872,10 +872,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                 // Reached steady state — release APPLY gate (#425).
                 // Order: deadline first, flag second.  If a higher-priority
-                // task preempts between the two stores and tries to claim
-                // the gate, it will see flag=true and reject — preventing
-                // a corrupt (flag=true, deadline=0) state where the safety
-                // release path would never fire.
+                // SCPI APPLY preempts between the two stores, it enters
+                // UpdateNetworkSettings's critical section and sees flag=true
+                // (still set by us) — so it cleanly rejects with -200.
+                // Original order (flag first) would let the preempting arm
+                // observe flag=false, set its own deadline+flag, and then
+                // we'd resume to overwrite its deadline with 0 — causing
+                // the safety release to fire prematurely against the
+                // newly-armed gate.
                 gApplyInProgressDeadlineTick = 0;
                 gApplyInProgress = false;
 

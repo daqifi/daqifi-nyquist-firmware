@@ -543,6 +543,14 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
 
     // Concurrent WiFi and SD card operations now supported with enhanced SPI coordination
 
+    // #425: apply first so a gate rejection (REINIT in flight) doesn't leave
+    // the rejected settings persisted in NVM after we tell the client the
+    // call failed.  The gate is centralized inside UpdateNetworkSettings
+    // (atomic test-and-set); false return = surface as -200.
+    if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     if (saveSettings) {
         DaqifiSettings daqifiSettings;
         memcpy(&daqifiSettings.settings.wifi, pRunTimeWifiSettings, sizeof (wifi_manager_settings_t));
@@ -550,13 +558,6 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
         if (!daqifi_settings_SaveToNvm(&daqifiSettings)) {
             return SCPI_RES_ERR;
         }
-    }
-    // #425: gate is now centralized inside wifi_manager_UpdateNetworkSettings
-    // (atomic test-and-set under taskENTER_CRITICAL).  A false return here
-    // means a prior APPLY's REINIT is still in flight; surface as -200.
-    if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
     }
     // Note: WiFi firmware update mode request (if set via FWUPDATE) is handled by the WiFi state machine.
     // The REQUESTED flag will be checked and cleared in ENTRY event handler.
@@ -626,17 +627,21 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
             &daqifiSettings)) {
         return SCPI_RES_ERR;
     }
-    
-    // Copy loaded settings to runtime config
-    memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
 
     if (applySettings) {
-        // #425: gate covered by UpdateNetworkSettings's atomic test-and-set;
-        // false return = APPLY in flight, surface as -200.
-        if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
+        // #425: pass the loaded struct straight to UpdateNetworkSettings —
+        // it copies into runtime config under the gate's critical section
+        // and fires REINIT.  If the gate rejects (REINIT in flight), runtime
+        // stays at the prior values: callers get -200 with no half-applied
+        // mutation.  Don't memcpy first.
+        if (!wifi_manager_UpdateNetworkSettings(&daqifiSettings.settings.wifi)) {
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
+    } else {
+        // No apply requested — just stage in runtime so callers can inspect /
+        // edit before a future APPLY.
+        memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
     }
 
     return SCPI_RES_OK;
@@ -658,17 +663,15 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
             &daqifiSettings)) {
         return SCPI_RES_ERR;
     }
-    
-    // Copy loaded settings to runtime config
-    memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
 
     if (applySettings) {
-        // #425: gate covered by UpdateNetworkSettings's atomic test-and-set;
-        // false return = APPLY in flight, surface as -200.
-        if (!wifi_manager_UpdateNetworkSettings(pRunTimeWifiSettings)) {
+        // #425: see SCPI_LANSettingsLoad for rationale — gated copy + REINIT.
+        if (!wifi_manager_UpdateNetworkSettings(&daqifiSettings.settings.wifi)) {
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
+    } else {
+        memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
     }
 
     return SCPI_RES_OK;
