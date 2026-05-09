@@ -406,10 +406,26 @@ void wifi_tcp_server_CloseClientSocket() {
         shutdown(gpServerData->client.clientSocket);
         gpServerData->client.clientSocket = -1;
     }
+    // #437: same race as CloseSocket — resetting the circular buffer
+    // without wMutex collides with streaming-task writers mid-AddBytes,
+    // and CloseClientSocket runs on every peer-close (SOCKET_MSG_RECV
+    // with 0 bytes) AND every ACCEPT-replaces-existing-client cycle,
+    // i.e. far more often than CloseSocket.  Take wMutex with a bounded
+    // 100 ms timeout (every other holder is a fast CircularBuf_*
+    // operation); proceed without it on timeout rather than wedging the
+    // ACCEPT/RECV callback path that drives WiFi-SCPI lifecycle.
+    bool gotLock = false;
+    if (gpServerData->client.wMutex != NULL) {
+        gotLock = (xSemaphoreTake(gpServerData->client.wMutex,
+                                   pdMS_TO_TICKS(100)) == pdTRUE);
+    }
     gpServerData->client.readBufferLength = 0;
     gpServerData->client.writeBufferLength = 0;
     gpServerData->client.tcpInFlight = 0;
     CircularBuf_Reset(&gpServerData->client.wCirbuf);
+    if (gotLock) {
+        xSemaphoreGive(gpServerData->client.wMutex);
+    }
 }
 
 // #331: used by the WINC idle-gate to back off pacing when a TCP client
