@@ -472,10 +472,13 @@ void app_SystemInit() {
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
 
-    // #436 round 2: build *IDN? model+SN AFTER InitBoardConfig populates
-    // boardSerialNumber from DEVSN1:DEVSN0.  Earlier placement (right after
-    // SCPI_ResponseBuf_Init) reads the pre-init zero serial.  Still pre-
-    // scheduler, so the writes are race-free.
+    // #436: build *IDN? model+SN strings here, AFTER InitBoardConfig
+    // populated boardSerialNumber from DEVSN1:DEVSN0 and BEFORE any of
+    // the transport tasks (USB / WiFi / SCPI) are xTaskCreate'd later in
+    // this same function.  Sequential ordering inside app_SystemInit is
+    // the synchronization — see SCPI_InitIdentification's docstring for
+    // the full rationale, including why "pre-scheduler" is the wrong
+    // mental model (we're inside priority-1 APP_FREERTOS_Tasks).
     SCPI_InitIdentification();
 
     CoherentPool_Init();

@@ -468,12 +468,18 @@ void SCPI_ResponseBuf_Init(void) {
 }
 
 void SCPI_InitIdentification(void) {
-    // #441 Qodo finding: must run pre-scheduler.  CreateSCPIContext is called
-    // from both UsbCdc_Initialize (USB task) and wifi_tcp_server_Initialize
-    // (WiFi task) — concurrent snprintf() into shared gIdn* buffers would race
-    // and libscpi stores the raw pointers, so corruption would persist in the
-    // *IDN? response.  Calling this once from app_SystemInit before any task
-    // spawns makes the writes atomic by construction.
+    // #441 Qodo finding: CreateSCPIContext is called from both
+    // UsbCdc_Initialize (USB task) and wifi_tcp_server_Initialize (WiFi
+    // task) — concurrent snprintf() into shared gIdn* buffers would race
+    // and libscpi stores the raw pointers, so corruption would persist in
+    // the *IDN? response.  We avoid that race by populating the strings
+    // sequentially in app_SystemInit, AFTER InitBoardConfig sets the
+    // silicon serial AND BEFORE any of those transport tasks are created
+    // (their xTaskCreate calls happen later in the same app_SystemInit
+    // body).  The scheduler is technically running by this point — we're
+    // inside the priority-1 APP_FREERTOS_Tasks boot task — but no higher-
+    // priority task has reached CreateSCPIContext yet because none have
+    // been created.
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     if (pBoardConfig != NULL) {
         snprintf(gIdnModel, sizeof(gIdnModel), "Nq%d", pBoardConfig->BoardVariant);

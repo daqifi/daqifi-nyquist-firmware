@@ -27,10 +27,14 @@ extern "C" {
     /**
      * Build the device-wide model and serial-number strings used in *IDN?
      * (#436).  Reads BoardConfig once and writes module-scope statics that
-     * CreateSCPIContext later passes to SCPI_Init.  MUST be called once
-     * pre-scheduler so the strings are stable before any transport task
-     * creates its SCPI context — running it from a task context with
-     * pre-emption enabled would race the writes.
+     * CreateSCPIContext later passes to SCPI_Init.  MUST be called from
+     * app_SystemInit, AFTER InitBoardConfig populates boardSerialNumber
+     * AND BEFORE any transport task is created (USB/WiFi/SCPI tasks all
+     * call CreateSCPIContext during their own initialization).  The
+     * scheduler IS already running by this point — app_SystemInit runs
+     * inside the priority-1 APP_FREERTOS_Tasks task — but no other task
+     * has reached CreateSCPIContext yet because their xTaskCreate calls
+     * happen later in the same app_SystemInit body, sequentially.
      * Idempotent: subsequent calls just rewrite the same value.
      */
     void SCPI_InitIdentification(void);
