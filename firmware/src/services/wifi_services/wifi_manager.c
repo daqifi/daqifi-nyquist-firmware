@@ -1230,15 +1230,26 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // pulls RESET_N + CHIP_EN low and brings the chip back
                     // up clean.  The deferred-INIT path in ProcessState
                     // picks up the new settings on its way back up.
-                    // Only divert when an actual TCP client is connected,
-                    // not merely when the listening server socket is bound
-                    // (which is true throughout normal STA operation).  The
-                    // wedge requires the chip's socket table to hold an
-                    // *accepted* connection state; bare listening sockets
-                    // tear down cleanly through the soft-reconfigure path
-                    // below.
-                    if (wifi_tcp_server_HasActiveClient()) {
-                        LOG_E("STA reconfig with active TCP client — diverting to HardReset (#435)");
+                    // Divert to HardReset whenever ANY socket is bound on
+                    // the chip (server-listening counts).  Bench evidence
+                    // (#437b regression, 2026-05-09) showed that even a
+                    // bare listening server socket retains stale state
+                    // across BSSDisconnect+BSSConnect and produces the
+                    // same flap-every-1.5 s symptom as the active-client
+                    // case (#435).  The earlier #438 round-3 narrowing
+                    // to HasActiveClient() was based on Qodo's "too broad"
+                    // critique but was disproven by bench storm-after-bind
+                    // testing — soft-reconfigure cannot fully clear the
+                    // chip's per-association socket table without RESET_N.
+                    //
+                    // Cost: ~30 s HardReset cycle on every APPLY in normal
+                    // STA operation (server is bound throughout).  Soft-
+                    // reconfigure was ~10-25 s anyway, so the practical
+                    // difference is minor; reliability beats speed.
+                    if (wifi_tcp_server_HasActiveClient() ||
+                        GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN) ||
+                        GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
+                        LOG_E("STA reconfig with bound socket — diverting to HardReset (#435/#437b)");
                         wifi_tcp_server_CloseSocket();
                         if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                             CloseUdpSocket(&pInstance->udpServerSocket);
