@@ -123,6 +123,16 @@ void MC12bADC_EosInterruptTask(void) {
         }
 
         DioProbe_PulseStart(6);  /* probe 6: result read loop duration */
+        // Snapshot `T * volatile` globals once per wake — set-once at boot,
+        // safe to cache through this iteration.  Saves a volatile load on
+        // every loop iteration below (#421 round 2).
+        tBoardConfig *pCfg = gpBoardConfig;
+        tBoardRuntimeConfig *pRtCfg = gpBoardRuntimeConfig;
+        if (pCfg == NULL || pRtCfg == NULL) {
+            DioProbe_PulseEnd(6);
+            continue;
+        }
+
         AInSample sample;
         int i = 0;
         uint32_t adcval;
@@ -130,14 +140,14 @@ void MC12bADC_EosInterruptTask(void) {
         uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
         uint32_t timestamp = (valueTMR != NULL) ? *valueTMR : 0;
 
-        bool streamingActive = gpBoardRuntimeConfig->StreamingConfig.Running;
+        bool streamingActive = pRtCfg->StreamingConfig.Running;
         bool diagScanning = !streamingActive ||
-                            gpBoardRuntimeConfig->StreamingConfig.OnboardDiagEnabled;
+                            pRtCfg->StreamingConfig.OnboardDiagEnabled;
 
-        for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-            const AInChannel* cfg = &gpBoardConfig->AInChannels.Data[i];
+        for (i = 0; i < pCfg->AInChannels.Size; i++) {
+            const AInChannel* cfg = &pCfg->AInChannels.Data[i];
             if (cfg->Type != AIn_MC12bADC) continue;
-            if (gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled != 1) continue;
+            if (pRtCfg->AInChannels.Data[i].IsEnabled != 1) continue;
 
             bool isMonitoring = (cfg->Config.MC12b.IsPublic != 1);
             bool isType1User = (!isMonitoring && cfg->Config.MC12b.ChannelType == 1);
@@ -488,18 +498,24 @@ static uint8_t ADC_FindModuleIndex(const AInModule* pModule) {
 }
 
 bool ADC_ReadADCSampleFromISR(uint32_t value, uint8_t bufferIndex) {
+    // Snapshot the `T * volatile` globals into locals once per ISR entry to
+    // avoid a fresh volatile load on every loop iteration.  Set-once at boot,
+    // so caching for the duration of this call is safe (#421 round 2).
+    tBoardConfig *pCfg = gpBoardConfig;
+    tBoardRuntimeConfig *pRtCfg = gpBoardRuntimeConfig;
+    if (pCfg == NULL || pRtCfg == NULL) return false;
 
     AInSample sample;
     bool status = false;
     int i = 0;
     sample.Value = value;
     uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-    for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-        if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId == bufferIndex
-                && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
+    for (i = 0; i < pCfg->AInChannels.Size; i++) {
+        if (pCfg->AInChannels.Data[i].Config.MC12b.ChannelId == bufferIndex
+                && pRtCfg->AInChannels.Data[i].IsEnabled == 1) {
 
             sample.Timestamp = *valueTMR;
-            sample.Channel =gpBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId ;
+            sample.Channel = pCfg->AInChannels.Data[i].DaqifiAdcChannelId;
             BoardData_Set(
                     BOARDDATA_AIN_LATEST,
                     i,
@@ -510,7 +526,7 @@ bool ADC_ReadADCSampleFromISR(uint32_t value, uint8_t bufferIndex) {
 
         }
     }
-    
+
     return status;
 }
 
