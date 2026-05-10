@@ -1,7 +1,10 @@
 # Set-Once Shared Pointer Volatile Audit
 
 **Tracking issue:** #421
-**Companion audit:** #430 / `docs/POOL_POINTER_AUDIT.md`
+**Companion audit:** #430 — `docs/POOL_POINTER_AUDIT.md` was committed
+in PR #433 for the investigation record and then archived from `main`
+(commit `283d3024`) per the project's one-off-tools policy. Recover
+with `git show 7c73d974:docs/POOL_POINTER_AUDIT.md` if needed.
 **Date:** 2026-05-10
 **Status:** Audit complete — **no action**. None of the inspected sites
 need `T * volatile`.
@@ -125,17 +128,27 @@ For every site PR #443 proposed to qualify (and for the existing
    protect against. The compiler-cached register copy is observably
    identical to the freshly-reloaded memory value.
 
-3. **Function-call barriers serialize.** Every consumer path
-   crosses opaque function-call boundaries — FreeRTOS API
-   (`ulTaskNotifyTake`, `xSemaphoreTake`, `vTaskDelay`,
-   `xTaskNotifyGive`), Harmony PLIB (`GPIO_PinIntEnable`, `EVIC_*`,
-   `ADCHS_*`), `BoardData_Get`/`BoardData_Set`, etc. At `-O3` without
-   LTO, an opaque function call is a full optimization barrier:
-   GCC must spill caller-saves and reload non-volatile statics
-   afterward. So the "register caching across the loop" hazard the
-   PR #443 commit message warned about does not actually occur in
-   practice — function calls in the loop body force reload regardless
-   of qualifier.
+3. **Function-call boundaries empirically force reload of file-scope
+   statics on this build.** Every consumer path crosses opaque
+   function-call boundaries — FreeRTOS API (`ulTaskNotifyTake`,
+   `xSemaphoreTake`, `vTaskDelay`, `xTaskNotifyGive`), Harmony PLIB
+   (`GPIO_PinIntEnable`, `EVIC_*`, `ADCHS_*`),
+   `BoardData_Get`/`BoardData_Set`, etc. At `-O3` without LTO, GCC
+   *in practice* spills caller-saves and reloads file-scope statics
+   after such calls — verified by the codegen A/B above (the no-vol
+   variants for ADC.c and AD7609.c show the cached-pointer pattern
+   precisely because the function-call barriers force reload). This
+   is **not a guaranteed property of the C language** — file-scope
+   `static` variables have internal linkage, and a sufficiently
+   aggressive compiler (or one with LTO/IPA visibility) could in
+   principle prove the callee doesn't touch them and elide the
+   reload. We rely on the empirical -O3 + no-LTO behavior of this
+   specific XC32 v4.60 build; if that contract changes, re-audit
+   per the triggers in the "Caveats and re-audit triggers" section.
+   The bench A/B for `streaming.c::buffer` (see "What we keep" table)
+   demonstrated that this contract has at least one execution path
+   where it doesn't hold — a useful negative reminder that the
+   barrier story is empirically valid here, not principled.
 
 4. **Consistent with the #430/#433 audit, with one caveat.** The pool-
    publisher audit (`POOL_POINTER_AUDIT.md`) tagged 6 of 7 set-once-
@@ -161,7 +174,7 @@ For every site PR #443 proposed to qualify (and for the existing
 | `gpBoardConfig`, `gpBoardRuntimeConfig`, `gpBoardData` | `firmware/src/HAL/ADC.c` | Leave non-volatile (current main state) |
 | `pModuleConfigAD7609` | `firmware/src/HAL/ADC/AD7609.c:85` | Leave non-volatile |
 | `gpStreamingConfig`, `gpRuntimeConfigStream` | `firmware/src/services/streaming.c:185, 188` | Leave non-volatile |
-| `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Keep volatile.** Bench A/B (NQ1 serial 7E2898F46200E8A7, 4-test sequence, 2026-05-10) showed asymmetric encoder-failure rate: `main` = 0 encoder failures across 722,792 samples; strip-volatile branch = 1 encoder failure across 589,541 samples — and the failure landed in the PAT 3 / 5 kHz deterministic test where encoder output should be invariant. One failure is rare (0.0002%) but the asymmetry against zero on `main` is real signal that *some* execution path doesn't get the function-call-barrier protection the rest of the audit relied on. The codegen savings (8 instructions in `streaming_Task`, 528 bytes total) is too small to justify shipping a non-zero encoder-failure regression. The qualifier is load-bearing intermittently and stays in place. |
+| `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Keep volatile.** Bench A/B (NQ1 unit, 4-test sequence, 2026-05-10) showed asymmetric encoder-failure rate: `main` = 0 encoder failures across 722,792 samples; strip-volatile branch = 1 encoder failure across 589,541 samples — and the failure landed in the PAT 3 / 5 kHz deterministic test where encoder output should be invariant. One failure is rare (0.0002%) but the asymmetry against zero on `main` is real signal that *some* execution path doesn't get the function-call-barrier protection the rest of the audit relied on. The codegen savings (8 instructions in `streaming_Task`, 528 bytes total) is too small to justify shipping a non-zero encoder-failure regression. The qualifier is load-bearing intermittently and stays in place. |
 | `gQuesBits`, `gInTimerHandler`, `gIsEnabled` | various (added in `96e7c840`) | **Keep volatile** — these are NOT set-once pointers; they are RMW flags / single-bit ISR flags where the qualifier serves the standard "volatile flag set in ISR, polled in task" pattern from CLAUDE.md atomicity rules. Different shape, different rationale. |
 
 ## CLAUDE.md update
