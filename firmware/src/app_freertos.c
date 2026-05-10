@@ -432,12 +432,6 @@ void app_SystemInit() {
     // transport creates its SCPI context or dispatches a callback.
     SCPI_ResponseBuf_Init();
 
-    // #436: build the device-wide *IDN? model and serial-number strings now,
-    // before any task spawns — once filled they are read-only, so concurrent
-    // CreateSCPIContext() calls from USB and WiFi tasks see stable values
-    // without needing per-context storage or a runtime lock.
-    SCPI_InitIdentification();
-
     // Initialize SPI coordination framework (currently disabled)
     // Note: Coordination disabled (SPI0_COORDINATION_ENABLED=0) - no runtime overhead
     // To enable frequency benchmarking: Set SPI0_COORDINATION_ENABLED=1 and rebuild
@@ -477,6 +471,13 @@ void app_SystemInit() {
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
+
+    // #436 round 2: build *IDN? model+SN AFTER InitBoardConfig populates
+    // boardSerialNumber from DEVSN1:DEVSN0.  Earlier placement (right after
+    // SCPI_ResponseBuf_Init) reads the pre-init zero serial.  Still pre-
+    // scheduler, so the writes are race-free.
+    SCPI_InitIdentification();
+
     CoherentPool_Init();
     // Allocate WiFi SPI DMA staging buffer from coherent pool at boot
     // (needed before WiFi init; auto-balanced at stream start)
