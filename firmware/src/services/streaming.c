@@ -180,12 +180,15 @@ static volatile uint32_t bufferSize = 0;
 //! Pointer to the board configuration data structure to be set in 
 //! initialization
 //static tStreamingConfig *pConfigStream;
-//! Pointer to the board runtime configuration data structure, to be
-//! set in initialization
-static StreamingRuntimeConfig *gpRuntimeConfigStream;
-//! Pointer to the board configuration data structure, to be
-//! set in initialization
-static tStreamingConfig *gpStreamingConfig;
+//! Pointer to the streaming runtime configuration data structure, to be
+//! set in initialization.  `T * volatile` per #421 — set once in
+//! Streaming_Init and dereferenced from Streaming_TimerHandler (timer ISR
+//! priority 1) + multiple tasks; same -O3 task↔ISR-load-hoisting hazard
+//! as the ADC.c gpBoardConfig set (#354 ch15 regression).
+static StreamingRuntimeConfig * volatile gpRuntimeConfigStream;
+//! Pointer to the streaming configuration data structure, to be
+//! set in initialization.  Same volatile rationale as gpRuntimeConfigStream (#421).
+static tStreamingConfig * volatile gpStreamingConfig;
 //! Indicate if handler is used 
 // volatile per #421 — re-entry guard; written and read in timer ISR.
 // Without volatile, -O3 may elide the read or hoist it out of the function.

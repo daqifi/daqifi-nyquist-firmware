@@ -19,13 +19,17 @@
 
 #define UNUSED(x) (void)(x)
 
-//! Pointer to the board configuration data structure to be set in initialization
-static tBoardConfig *gpBoardConfig;
-//! Pointer to the board runtime configuration data structure, to be set 
-// !in initialization
-static tBoardRuntimeConfig *gpBoardRuntimeConfig;
-// Pointer to the BoardData data structure, to be set in initialization
-static tBoardData* gpBoardData;
+//! Pointer to the board configuration data structure to be set in initialization.
+//! `T * volatile` per #421 — set once in ADC_Init (pre-scheduler) and
+//! dereferenced from ADC ISRs (priority 1) + tasks; without the qualifier,
+//! -O3 hoists/merges loads across the task↔ISR boundary (#354 ch15 regression).
+static tBoardConfig * volatile gpBoardConfig;
+//! Pointer to the board runtime configuration data structure, to be set
+//! in initialization.  Same volatile rationale as gpBoardConfig (#421).
+static tBoardRuntimeConfig * volatile gpBoardRuntimeConfig;
+// Pointer to the BoardData data structure, to be set in initialization.
+// Same volatile rationale as gpBoardConfig (#421).
+static tBoardData * volatile gpBoardData;
 static TaskHandle_t gADCInterruptHandle;
 
 // FreeRTOS tick count of the last successful monitoring channel read.

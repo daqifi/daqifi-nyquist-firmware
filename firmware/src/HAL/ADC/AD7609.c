@@ -81,8 +81,11 @@ static uint32_t AD7609_Extract18Bit(const uint8_t* buf, uint16_t bitPos) {
 //! Timeout: 10x datasheet spec = 100us for safety margin
 #define AD7609_BSY_SETTLE_TIMEOUT_US 100
 
-//! Pointer to the module configuration data structure to be set in initialization
-static const AD7609ModuleConfig* pModuleConfigAD7609;
+//! Pointer to the module configuration data structure to be set in initialization.
+//! `T * volatile` per #421 — set once in AD7609_InitHardware and dereferenced
+//! from AD7609_BSY_InterruptCallback (GPIO ISR) + deferred task; same -O3
+//! task↔ISR-load-hoisting hazard as the ADC.c gpBoardConfig set (#354 ch15).
+static const AD7609ModuleConfig * volatile pModuleConfigAD7609;
 //! Pointer to the module configuration data structure in runtime
 static AInModuleRuntimeConfig* pModuleRuntimeConfigAD7609 __attribute__((unused));
 
