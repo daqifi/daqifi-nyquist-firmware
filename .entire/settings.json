@@ -1,8 +1,12 @@
 {
-  "strategy": "manual-commit",
   "enabled": true,
-  "telemetry": true,
   "strategy_options": {
+    "checkpoint_remote": {
+      "provider": "github",
+      "repo": "daqifi/nyquist-firmware-entire"
+    },
     "push_sessions": false
-  }
+  },
+  "telemetry": true,
+  "strategy": "manual-commit"
 }
