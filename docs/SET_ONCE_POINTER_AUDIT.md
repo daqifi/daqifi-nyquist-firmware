@@ -150,22 +150,19 @@ For every site PR #443 proposed to qualify (and for the existing
    where it doesn't hold — a useful negative reminder that the
    barrier story is empirically valid here, not principled.
 
-4. **Consistent with the #430/#433 audit, with one caveat.** The pool-
-   publisher audit (`POOL_POINTER_AUDIT.md`) tagged 6 of 7 set-once-
-   shared-pointer sites as `SAFE-via-barrier`. For the *six speculative
-   PR #443 sites* (ADC.c × 3, AD7609.c × 1, streaming.c × 2), the
-   reasoning holds — function-call barriers are reliably present on
-   every consumer path, no concurrent writer, no observable hazard.
-   However, the seventh site `streaming.c::buffer` (already qualified
-   on `main`) was bench-tested for safe removal and it failed the test:
-   under PAT 3 / 5 kHz deterministic streaming, no-volatile produced
-   1 encoder failure / 589k samples vs main's 0 / 723k. This means the
-   "function-call barriers always serialize" assumption has at least
-   one execution path where it doesn't hold for `buffer` — possibly a
-   GCC pass that sees through the encoder-write call chain at -O3 and
-   caches the pointer across an iteration, possibly inlining of a
-   helper that was assumed to be a barrier. The bench result is the
-   ground truth; the qualifier stays.
+4. **Consistent with the #430/#433 audit.** The pool-publisher audit
+   (`POOL_POINTER_AUDIT.md`) tagged 6 of 7 set-once-shared-pointer
+   sites as `SAFE-via-barrier`. This audit reaches the same conclusion
+   for the six speculative PR #443 sites (ADC.c × 3, AD7609.c × 1,
+   streaming.c × 2) AND for the seventh site `streaming.c::buffer`.
+   A first-pass n=1 bench (4 tests × ~150k samples) appeared to show
+   `buffer`-novol producing more encoder failures than `main`, but
+   a multi-trial follow-up (8 trials × ~400k samples each per branch,
+   2026-05-10) settled the question: both branches show ~2 encoder
+   failures per 3.2M samples — a rate of ~1 per 1.6M, statistically
+   indistinguishable. The n=1 observation was noise. Strip the
+   qualifier alongside the six speculative sites; codegen savings
+   ~8 instructions in `streaming_Task`.
 
 ## What we keep, what we drop
 
@@ -174,7 +171,7 @@ For every site PR #443 proposed to qualify (and for the existing
 | `gpBoardConfig`, `gpBoardRuntimeConfig`, `gpBoardData` | `firmware/src/HAL/ADC.c` | Leave non-volatile (current main state) |
 | `pModuleConfigAD7609` | `firmware/src/HAL/ADC/AD7609.c:85` | Leave non-volatile |
 | `gpStreamingConfig`, `gpRuntimeConfigStream` | `firmware/src/services/streaming.c:185, 188` | Leave non-volatile |
-| `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Keep volatile.** Bench A/B (NQ1 unit, 4-test sequence, 2026-05-10) showed asymmetric encoder-failure rate: `main` = 0 encoder failures across 722,792 samples; strip-volatile branch = 1 encoder failure across 589,541 samples — and the failure landed in the PAT 3 / 5 kHz deterministic test where encoder output should be invariant. One failure is rare (0.0002%) but the asymmetry against zero on `main` is real signal that *some* execution path doesn't get the function-call-barrier protection the rest of the audit relied on. The codegen savings (8 instructions in `streaming_Task`, 528 bytes total) is too small to justify shipping a non-zero encoder-failure regression. The qualifier is load-bearing intermittently and stays in place. |
+| `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Remove volatile, in this PR.** A first-pass n=1 bench (4 tests × ~150k samples) hinted the qualifier was load-bearing (1 encoder failure on no-volatile vs 0 on main); a multi-trial follow-up (8 trials × ~400k samples per branch) showed both branches produce ~2 encoder failures per 3.2M samples — a baseline rate, not a difference. The n=1 was noise. The qualifier is redundant; codegen saves 8 instructions in `streaming_Task` (528 bytes total). |
 | `gQuesBits`, `gInTimerHandler`, `gIsEnabled` | various (added in `96e7c840`) | **Keep volatile** — these are NOT set-once pointers; they are RMW flags / single-bit ISR flags where the qualifier serves the standard "volatile flag set in ISR, polled in task" pattern from CLAUDE.md atomicity rules. Different shape, different rationale. |
 
 ## CLAUDE.md update
@@ -184,21 +181,24 @@ capturing this finding so future audits don't re-litigate the
 question:
 
 > **Don't add `T * volatile` to set-once shared pointers speculatively.**
-> Codegen A/B at XC32 v4.60 + -O3 + no LTO (2026-05-10) showed the
-> qualifier IS observable — adds redundant reloads + inhibits loop
-> strength reduction — and for the six PR #443 candidate sites
-> (ADC.c × 3, AD7609.c × 1, streaming.c × 2) the function-call barriers
-> on every consumer path already force GCC to reload non-volatile
-> statics, so the volatile reloads are correct-but-redundant.
-> However, the seventh site `streaming.c::buffer` (qualified on main)
-> was bench-tested for safe removal and the strip introduced an
-> encoder failure that wasn't present on main — so don't *remove*
-> existing `T * volatile` qualifiers speculatively either, even when
-> codegen shows the reload is "redundant by inspection." The original
-> #354 ch15 regression (which motivated this whole class of concern)
-> was actually fixed by a hardware TRGSRC register configuration in
-> commit `96e7c840`, not by anything compiler-related. See
-> `docs/SET_ONCE_POINTER_AUDIT.md`.
+> Codegen A/B + multi-trial bench A/B at XC32 v4.60 + -O3 + no LTO
+> (2026-05-10) showed the qualifier IS observable in codegen — adds
+> redundant reloads + inhibits loop strength reduction — but those
+> reloads are correct-but-redundant: function-call barriers on every
+> consumer path (FreeRTOS API, Harmony PLIB, BoardData_Get/Set) already
+> force GCC to reload non-volatile statics. Volatile-on vs volatile-off
+> branches produced the same encoder-failure baseline (~2 per 3.2M
+> samples) under the bench protocol. The original #354 ch15 regression
+> (which motivated this concern) was actually fixed by a hardware
+> TRGSRC register configuration in commit `96e7c840`, not by anything
+> compiler-related.
+>
+> **Methodology lesson:** n=1 bench results are not enough to conclude
+> a rate difference. The initial 1-trial A/B on this audit looked like
+> the qualifier was load-bearing (1 failure on novol vs 0 on main),
+> but multi-trial showed main ALSO had ~1 failure per ~1.6M samples —
+> the n=1 was noise. Always multi-trial before concluding load-bearing-
+> ness for rare events.
 
 ## Caveats and re-audit triggers
 
