@@ -137,12 +137,22 @@ For every site PR #443 proposed to qualify (and for the existing
    practice — function calls in the loop body force reload regardless
    of qualifier.
 
-4. **Consistent with the #430/#433 audit.** The pool-publisher
-   audit (`POOL_POINTER_AUDIT.md`) tagged 6 of 7 set-once-shared-
-   pointer sites as `SAFE-via-barrier` for these same reasons. The
-   one site tagged `SAFE-already-volatile` (`streaming.c::buffer`)
-   is the same shape as the others and the codegen evidence in this
-   audit shows its qualifier is also redundant.
+4. **Consistent with the #430/#433 audit, with one caveat.** The pool-
+   publisher audit (`POOL_POINTER_AUDIT.md`) tagged 6 of 7 set-once-
+   shared-pointer sites as `SAFE-via-barrier`. For the *six speculative
+   PR #443 sites* (ADC.c × 3, AD7609.c × 1, streaming.c × 2), the
+   reasoning holds — function-call barriers are reliably present on
+   every consumer path, no concurrent writer, no observable hazard.
+   However, the seventh site `streaming.c::buffer` (already qualified
+   on `main`) was bench-tested for safe removal and it failed the test:
+   under PAT 3 / 5 kHz deterministic streaming, no-volatile produced
+   1 encoder failure / 589k samples vs main's 0 / 723k. This means the
+   "function-call barriers always serialize" assumption has at least
+   one execution path where it doesn't hold for `buffer` — possibly a
+   GCC pass that sees through the encoder-write call chain at -O3 and
+   caches the pointer across an iteration, possibly inlining of a
+   helper that was assumed to be a barrier. The bench result is the
+   ground truth; the qualifier stays.
 
 ## What we keep, what we drop
 
@@ -151,7 +161,7 @@ For every site PR #443 proposed to qualify (and for the existing
 | `gpBoardConfig`, `gpBoardRuntimeConfig`, `gpBoardData` | `firmware/src/HAL/ADC.c` | Leave non-volatile (current main state) |
 | `pModuleConfigAD7609` | `firmware/src/HAL/ADC/AD7609.c:85` | Leave non-volatile |
 | `gpStreamingConfig`, `gpRuntimeConfigStream` | `firmware/src/services/streaming.c:185, 188` | Leave non-volatile |
-| `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Remove volatile** in a follow-up commit, after bench validation. Source comment claims `-O2+` would cache across the `while(1)` loop; codegen evidence shows that's mooted by per-iteration FreeRTOS API calls. |
+| `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Keep volatile.** Bench A/B (NQ1 serial 7E2898F46200E8A7, 4-test sequence, 2026-05-10) showed asymmetric encoder-failure rate: `main` = 0 encoder failures across 722,792 samples; strip-volatile branch = 1 encoder failure across 589,541 samples — and the failure landed in the PAT 3 / 5 kHz deterministic test where encoder output should be invariant. One failure is rare (0.0002%) but the asymmetry against zero on `main` is real signal that *some* execution path doesn't get the function-call-barrier protection the rest of the audit relied on. The codegen savings (8 instructions in `streaming_Task`, 528 bytes total) is too small to justify shipping a non-zero encoder-failure regression. The qualifier is load-bearing intermittently and stays in place. |
 | `gQuesBits`, `gInTimerHandler`, `gIsEnabled` | various (added in `96e7c840`) | **Keep volatile** — these are NOT set-once pointers; they are RMW flags / single-bit ISR flags where the qualifier serves the standard "volatile flag set in ISR, polled in task" pattern from CLAUDE.md atomicity rules. Different shape, different rationale. |
 
 ## CLAUDE.md update
@@ -160,16 +170,21 @@ The "Atomicity & Concurrency Rules" section gets a new bullet
 capturing this finding so future audits don't re-litigate the
 question:
 
-> **Set-once pointers in this firmware do not need `T * volatile`.**
-> Empirically (codegen A/B at XC32 v4.60 + -O3 + no LTO, 2026-05-10):
-> every consumer path crosses opaque function-call boundaries
-> (FreeRTOS API, Harmony PLIB, BoardData_Get/Set) which force GCC to
-> reload non-volatile statics. The qualifier IS observable — adds
-> redundant reloads + inhibits loop strength reduction — but the
-> reloads are correct-but-redundant since no concurrent writer exists.
-> The original #354 ch15 regression (which motivated this concern) was
-> actually fixed by a hardware TRGSRC register configuration in commit
-> `96e7c840`, not by anything compiler-related. See
+> **Don't add `T * volatile` to set-once shared pointers speculatively.**
+> Codegen A/B at XC32 v4.60 + -O3 + no LTO (2026-05-10) showed the
+> qualifier IS observable — adds redundant reloads + inhibits loop
+> strength reduction — and for the six PR #443 candidate sites
+> (ADC.c × 3, AD7609.c × 1, streaming.c × 2) the function-call barriers
+> on every consumer path already force GCC to reload non-volatile
+> statics, so the volatile reloads are correct-but-redundant.
+> However, the seventh site `streaming.c::buffer` (qualified on main)
+> was bench-tested for safe removal and the strip introduced an
+> encoder failure that wasn't present on main — so don't *remove*
+> existing `T * volatile` qualifiers speculatively either, even when
+> codegen shows the reload is "redundant by inspection." The original
+> #354 ch15 regression (which motivated this whole class of concern)
+> was actually fixed by a hardware TRGSRC register configuration in
+> commit `96e7c840`, not by anything compiler-related. See
 > `docs/SET_ONCE_POINTER_AUDIT.md`.
 
 ## Caveats and re-audit triggers
