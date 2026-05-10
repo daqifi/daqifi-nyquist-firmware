@@ -25,6 +25,17 @@ extern "C" {
     void SCPI_ResponseBuf_Init(void);
 
     /**
+     * Build the device-wide model and serial-number strings used in *IDN?
+     * (#436).  Reads BoardConfig once and writes module-scope statics that
+     * CreateSCPIContext later passes to SCPI_Init.  MUST be called once
+     * pre-scheduler so the strings are stable before any transport task
+     * creates its SCPI context — running it from a task context with
+     * pre-emption enabled would race the writes.
+     * Idempotent: subsequent calls just rewrite the same value.
+     */
+    void SCPI_InitIdentification(void);
+
+    /**
      * Creates a new SCPI context object.
      * This allows us to have multiple independent consoles.
      * @param interface Defines the SCPI callback functions

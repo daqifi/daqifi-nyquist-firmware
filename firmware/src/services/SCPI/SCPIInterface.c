@@ -80,6 +80,14 @@
 // SCPI_IDN3 (serial number) is constructed dynamically from BoardConfig.boardSerialNumber (#436)
 #define SCPI_IDN4 "01-02"
 
+// File-scope IDN strings: built once by SCPI_InitIdentification() pre-scheduler
+// and then read-only.  libscpi stores these as raw pointers in every per-
+// transport SCPI context, so the storage must outlive every context.  Module-
+// scope avoids the data race that function-static buffers would have when
+// CreateSCPIContext() is called concurrently from USB and WiFi tasks (#441
+// Qodo finding) — the writes happen before any SCPI task spawns.
+static char gIdnModel[8]   = "Nq?";  // Filled from BoardConfig.BoardVariant
+static char gIdnSerial[17] = "0";    // 16 hex digits of uint64 + null
 
 // Declare force bootloader RAM flag location
 volatile uint32_t force_bootloader_flag __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
@@ -457,6 +465,26 @@ void SCPI_ResponseBuf_Init(void) {
         gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
     }
     taskEXIT_CRITICAL();
+}
+
+void SCPI_InitIdentification(void) {
+    // #441 Qodo finding: must run pre-scheduler.  CreateSCPIContext is called
+    // from both UsbCdc_Initialize (USB task) and wifi_tcp_server_Initialize
+    // (WiFi task) — concurrent snprintf() into shared gIdn* buffers would race
+    // and libscpi stores the raw pointers, so corruption would persist in the
+    // *IDN? response.  Calling this once from app_SystemInit before any task
+    // spawns makes the writes atomic by construction.
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    if (pBoardConfig != NULL) {
+        snprintf(gIdnModel, sizeof(gIdnModel), "Nq%d", pBoardConfig->BoardVariant);
+        // SCPI 1999.0 §10.14.1 requires a real per-unit identifier.  Use the
+        // silicon serial (DEVSN1:DEVSN0) the rest of the firmware already
+        // exposes via SYST:SN? and the streaming CSV metadata header.
+        snprintf(gIdnSerial, sizeof(gIdnSerial), "%016llX",
+                 (unsigned long long)pBoardConfig->boardSerialNumber);
+    }
+    // pBoardConfig == NULL leaves the file-scope defaults ("Nq?", "0") in
+    // place — same fallback as before, but now no concurrent-write hazard.
 }
 
 uint8_t* SCPI_ResponseBuf_Take(void) {
@@ -4396,34 +4424,16 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // mutex is guaranteed to exist before any callback could dispatch.
     SCPI_ResponseBuf_Init();
 
-    // Construct model + SN strings from BoardConfig (libscpi keeps the pointers,
-    // so the storage must outlive the call — module-shared statics are fine
-    // because every transport gets the same model and SN).
-    static char modelString[8] = {0};
-    static char snString[17] = {0};  // 16 hex digits of uint64 + null
-    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-    if (pBoardConfig) {
-        snprintf(modelString, sizeof(modelString), "Nq%d", pBoardConfig->BoardVariant);
-        // #436: SCPI 1999.0 §10.14.1 requires a real per-unit identifier.
-        // Use the silicon serial (DEVSN1:DEVSN0) the rest of the firmware
-        // already exposes via SYST:SN? and the streaming CSV metadata header.
-        snprintf(snString, sizeof(snString), "%016llX",
-                 (unsigned long long)pBoardConfig->boardSerialNumber);
-    } else {
-        strncpy(modelString, "Nq?", sizeof(modelString));
-        modelString[sizeof(modelString) - 1] = '\0';
-        strncpy(snString, "0", sizeof(snString));
-        snString[sizeof(snString) - 1] = '\0';
-    }
-
     // Create a context
     scpi_t daqifiScpiContext;
-    // Init context
+    // Init context.  gIdnModel and gIdnSerial are populated once pre-scheduler
+    // by SCPI_InitIdentification() so concurrent CreateSCPIContext() calls
+    // from USB and WiFi tasks just read the same finished strings.
     SCPI_Init(&daqifiScpiContext,
             scpi_commands,
             interface,
             scpi_units_def,
-            SCPI_IDN1, modelString, snString, SCPI_IDN4,
+            SCPI_IDN1, gIdnModel, gIdnSerial, SCPI_IDN4,
             scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
             scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
 

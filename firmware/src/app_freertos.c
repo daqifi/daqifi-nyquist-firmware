@@ -432,6 +432,12 @@ void app_SystemInit() {
     // transport creates its SCPI context or dispatches a callback.
     SCPI_ResponseBuf_Init();
 
+    // #436: build the device-wide *IDN? model and serial-number strings now,
+    // before any task spawns — once filled they are read-only, so concurrent
+    // CreateSCPIContext() calls from USB and WiFi tasks see stable values
+    // without needing per-context storage or a runtime lock.
+    SCPI_InitIdentification();
+
     // Initialize SPI coordination framework (currently disabled)
     // Note: Coordination disabled (SPI0_COORDINATION_ENABLED=0) - no runtime overhead
     // To enable frequency benchmarking: Set SPI0_COORDINATION_ENABLED=1 and rebuild
