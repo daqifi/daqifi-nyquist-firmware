@@ -77,7 +77,7 @@
 //
 #define SCPI_IDN1 "DAQiFi"
 // SCPI_IDN2 (model) is constructed dynamically from BoardConfig.BoardVariant
-#define SCPI_IDN3 NULL
+// SCPI_IDN3 (serial number) is constructed dynamically from BoardConfig.boardSerialNumber (#436)
 #define SCPI_IDN4 "01-02"
 
 
@@ -4396,14 +4396,24 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // mutex is guaranteed to exist before any callback could dispatch.
     SCPI_ResponseBuf_Init();
 
-    // Construct model string from BoardConfig.BoardVariant (e.g., "Nq3")
-    static char modelString[8] = {0};  // Initialize to prevent garbage data
+    // Construct model + SN strings from BoardConfig (libscpi keeps the pointers,
+    // so the storage must outlive the call — module-shared statics are fine
+    // because every transport gets the same model and SN).
+    static char modelString[8] = {0};
+    static char snString[17] = {0};  // 16 hex digits of uint64 + null
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     if (pBoardConfig) {
         snprintf(modelString, sizeof(modelString), "Nq%d", pBoardConfig->BoardVariant);
+        // #436: SCPI 1999.0 §10.14.1 requires a real per-unit identifier.
+        // Use the silicon serial (DEVSN1:DEVSN0) the rest of the firmware
+        // already exposes via SYST:SN? and the streaming CSV metadata header.
+        snprintf(snString, sizeof(snString), "%016llX",
+                 (unsigned long long)pBoardConfig->boardSerialNumber);
     } else {
         strncpy(modelString, "Nq?", sizeof(modelString));
-        modelString[sizeof(modelString) - 1] = '\0';  // Ensure null termination
+        modelString[sizeof(modelString) - 1] = '\0';
+        strncpy(snString, "0", sizeof(snString));
+        snString[sizeof(snString) - 1] = '\0';
     }
 
     // Create a context
@@ -4413,7 +4423,7 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
             scpi_commands,
             interface,
             scpi_units_def,
-            SCPI_IDN1, modelString, SCPI_IDN3, SCPI_IDN4,
+            SCPI_IDN1, modelString, snString, SCPI_IDN4,
             scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
             scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
 
