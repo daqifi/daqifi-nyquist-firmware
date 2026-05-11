@@ -1236,9 +1236,16 @@ void streaming_Task(void) {
             }
         }
 
-        // Single-interface streaming: only stream to the interface that initiated streaming.
-        // Only hasSD is consulted by the write path now (USB/WiFi gate on
-        // ActiveInterface directly per #371/#372 silent-loss fixes).
+        // Compute hasSD for the SD write block below.  ActiveInterface
+        // selects which outputs are streamed to:
+        //   - USB:        USB only
+        //   - WiFi:       WiFi only (WiFi+SD unsupported — share SPI bus)
+        //   - SD:         SD only
+        //   - UsbAndSd:   USB + SD concurrent
+        // USB and WiFi write blocks gate on ActiveInterface directly
+        // (per #371 / #372 silent-loss fixes).  Only the SD write block
+        // still consults a free-space flag, since its retry path needs
+        // to distinguish "buffer too full right now" from "SD not active".
         switch (pRunTimeStreamConf->ActiveInterface) {
             case StreamingInterface_SD:
             case StreamingInterface_UsbAndSd:
