@@ -1237,15 +1237,17 @@ void streaming_Task(void) {
         }
 
         // Compute hasSD for the SD write block below.  ActiveInterface
-        // selects which outputs are streamed to:
-        //   - USB:        USB only
-        //   - WiFi:       WiFi only (WiFi+SD unsupported — share SPI bus)
+        // selects which network/USB output(s) are streamed to:
+        //   - USB:        USB only       (+ SD if SD-logging is enabled — see override below)
+        //   - WiFi:       WiFi only      (WiFi+SD unsupported; share SPI bus)
         //   - SD:         SD only
         //   - UsbAndSd:   USB + SD concurrent
         // USB and WiFi write blocks gate on ActiveInterface directly
         // (per #371 / #372 silent-loss fixes).  Only the SD write block
         // still consults a free-space flag, since its retry path needs
         // to distinguish "buffer too full right now" from "SD not active".
+        // The "SD-logging enabled" override below can also enable SD
+        // writes for ActiveInterface=USB or SD — only WiFi is excluded.
         switch (pRunTimeStreamConf->ActiveInterface) {
             case StreamingInterface_SD:
             case StreamingInterface_UsbAndSd:
