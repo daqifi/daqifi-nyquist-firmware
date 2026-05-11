@@ -1,10 +1,13 @@
 # Set-Once Shared Pointer Volatile Audit
 
 **Tracking issue:** #421
-**Companion audit:** #430 — `docs/POOL_POINTER_AUDIT.md` was committed
-in PR #433 for the investigation record and then archived from `main`
-(commit `283d3024`) per the project's one-off-tools policy. Recover
-with `git show 7c73d974:docs/POOL_POINTER_AUDIT.md` if needed.
+**Companion audit:** #430 — `docs/POOL_POINTER_AUDIT.md` was introduced
+on `main` in PR #433's merge commit `7c73d974` for the investigation
+record, then archived (deleted from `main`) in commit `283d3024` per
+the project's one-off-tools policy. Recover the content with
+`git show 7c73d974:docs/POOL_POINTER_AUDIT.md` — i.e. read it at the
+commit that originally added it, since by definition the deletion
+commit no longer contains it.
 **Date:** 2026-05-10
 **Status:** Audit complete — **no action**. None of the inspected sites
 need `T * volatile`.
