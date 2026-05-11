@@ -170,6 +170,55 @@ static volatile bool gApplyInProgress = false;
 #define WIFI_APPLY_GATE_TIMEOUT_MS 30000u
 static volatile TickType_t gApplyInProgressDeadlineTick = 0;
 
+// #423 round-3: bounded window opened immediately before each APPLY-
+// driven BSSDisconnect / HardReset call site.  The async WINC disconnect
+// callback that ensues should be demoted (deliberate teardown, not a
+// real failure) — but ONLY for the ~callback-arrival window.  Past the
+// window, fresh BSSConnect failures (wrong password, scan miss, etc.)
+// still surface as LOG_E.  This outlives gApplyInProgress and
+// STA_CONNECTED across the HardReset cycle (which clears both), which
+// the round-2 (gApplyInProgress && STA_CONNECTED) check could not.
+//
+// Round-4: store the *start* tick and compare elapsed `(now - start)`
+// against the window.  Unsigned subtraction handles FreeRTOS tick wrap
+// (TickType_t rolls over after ~50 days at 1 kHz), which `now < deadline`
+// would silently mis-classify.  Sentinel 0 = disarmed; bumped to 1 if
+// the captured start lands on 0.
+#define WIFI_APPLY_TEARDOWN_WINDOW_MS 2000u
+static volatile TickType_t gApplyTeardownStartTick = 0;
+
+// Arm the teardown-demotion window iff an APPLY is in flight; called
+// immediately before any BSSDisconnect / HardReset on an APPLY path.
+static inline void ArmApplyTeardownDeadline(void) {
+    if (gApplyInProgress) {
+        TickType_t start = xTaskGetTickCount();
+        if (start == 0) {
+            start = 1;  // keep 0 reserved as the disarmed sentinel
+        }
+        gApplyTeardownStartTick = start;
+    }
+}
+
+// True iff we're still inside the teardown-demotion window.  Wrap-safe
+// via unsigned subtraction.  On window-expiry detection, also clears the
+// start tick to avoid a long-uptime + no-APPLY false-positive: if the
+// device never APPLYs for ~50 days (unlikely but reachable), the tick
+// counter wraps back near the stored start value and `elapsed` would
+// collapse to near-zero — putting us spuriously back "inside the
+// window."  Self-disarming closes that hole.
+static inline bool IsWithinApplyTeardownWindow(void) {
+    TickType_t start = gApplyTeardownStartTick;
+    if (start == 0) {
+        return false;
+    }
+    TickType_t elapsed = xTaskGetTickCount() - start;
+    if (elapsed >= pdMS_TO_TICKS(WIFI_APPLY_TEARDOWN_WINDOW_MS)) {
+        gApplyTeardownStartTick = 0;  // disarm; prevents post-wrap false positive
+        return false;
+    }
+    return true;
+}
+
 //===========================================================
 //=====================Private Callbacks=====================
 
@@ -260,13 +309,28 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
             gStateMachineContext.assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
             return;  // Stale disconnect callback from previous connection
         }
-        LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n",
-              errorCode, (unsigned int)xTaskGetTickCount(),
+        const char *reason =
               (errorCode == WDRV_WINC_CONN_ERROR_AUTH) ? "Auth Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_ASSOC) ? "Association Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_SCAN) ? "Scan Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_NOCRED) ? "No Credentials" :
-              "Unknown");
+              "Unknown";
+        // #423: demote LOG_E only when the disconnect callback arrives
+        // within the short window after an APPLY-driven teardown was
+        // initiated (ArmApplyTeardownDeadline, called at each call site).
+        // This decouples the demotion decision from gApplyInProgress /
+        // STA_CONNECTED, both of which are cleared synchronously by the
+        // REINIT and HardReset paths before the async callback fires
+        // (Qodo round-2 finding #1).  Past the window, fresh BSSConnect
+        // failures on new settings still surface as LOG_E.
+        bool isApplyTeardown = IsWithinApplyTeardownWindow();
+        if (isApplyTeardown) {
+            LOG_I("WiFi STA Disconnected during APPLY teardown - errorCode=%d (%s)\r\n",
+                  errorCode, reason);
+        } else {
+            LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n",
+                  errorCode, (unsigned int)xTaskGetTickCount(), reason);
+        }
         gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;  // Clear association handle
         SendEvent(WIFI_MANAGER_EVENT_STA_DISCONNECTED);
     }
@@ -1055,11 +1119,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 
                 // Disconnect STA if connected
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                    ArmApplyTeardownDeadline();  // #423: demote the impending async disconnect callback
                     WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                 }
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                
+
                 // Close sockets
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                     CloseUdpSocket(&pInstance->udpServerSocket);
@@ -1087,11 +1152,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     
                     // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                        ArmApplyTeardownDeadline();  // #423
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    
+
                     // Don't deinitialize - the driver gets into a bad state after deinit
                     // Instead, just wait for STA to disconnect and then configure for AP mode
                     vTaskDelay(pdMS_TO_TICKS(500));  // Let STA fully disconnect
@@ -1311,6 +1377,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // event can't be queued, propagate the failure as
                         // an ERROR event so the manager retries instead of
                         // silently leaving the chip in a half-reset state.
+                        ArmApplyTeardownDeadline();  // #423: HardReset triggers an async disconnect callback during deinit
                         if (!wifi_manager_HardReset()) {
                             LOG_E("HardReset divert failed to queue DEINIT");
                             // Try ERROR fallback so the manager retries; if
@@ -1326,6 +1393,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
                     // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                        ArmApplyTeardownDeadline();  // #423
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
@@ -1446,15 +1514,35 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             {
                 static bool errorLogged = false;
                 static int consecutiveErrors = 0;
-                
+
+                // #423: when this ERROR is the cascade from an APPLY-
+                // triggered teardown (#440 HardReset divert path or
+                // BSSDisconnect-then-reconfig), demote the log and don't
+                // bump the consecutive-error counter — those events are
+                // intentional, not faults.  Same wrap-safe time-window
+                // discriminator used in StaEventCallback so genuine
+                // failures (wrong password etc.) past the window still
+                // LOG_E and bump the counter.  Short-circuit the rest of
+                // the recovery pipeline as well: the existing power-
+                // efficient reconnect logic below is already gated on
+                // STA_STARTED (cleared by the teardown) so it's a no-op
+                // in practice, but breaking here makes the intent
+                // explicit and stops future refactors from accidentally
+                // driving reconnects during a deliberate teardown.
+                if (IsWithinApplyTeardownWindow()) {
+                    LOG_I("WiFi event ERROR during APPLY teardown\r\n");
+                    returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
+                    break;
+                }
+
                 consecutiveErrors++;
-                
-                // Only log error on first occurrence or every 10th error
+                // Only log error on first occurrence or every 10th error.
                 if (!errorLogged || (consecutiveErrors % 10 == 0)) {
-                    LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n", __FILE__, __LINE__, consecutiveErrors);
+                    LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n",
+                          __FILE__, __LINE__, consecutiveErrors);
                     errorLogged = true;
                 }
-                
+
                 // Implement power-efficient reconnect logic for STA mode.
                 // #416: applies to BOTH initial-association failures (the
                 // configured AP isn't reachable yet) AND reconnect-after-
@@ -1567,6 +1655,7 @@ void wifi_manager_BootInit(void) {
     gWifiReinitDeadlineTick = 0;
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
+    gApplyTeardownStartTick = 0;
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
