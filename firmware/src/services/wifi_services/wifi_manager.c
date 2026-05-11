@@ -266,13 +266,20 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
               (errorCode == WDRV_WINC_CONN_ERROR_SCAN) ? "Scan Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_NOCRED) ? "No Credentials" :
               "Unknown";
-        // #423: when an APPLY is in flight (e.g. user re-issued LAN APPLY
-        // while STA was connected — the broadened HardReset divert from
-        // #440 tears the association down before re-init), the WINC
-        // reports the canonical AUTH errorCode on the way out.  That's
-        // expected teardown noise, not a real authentication failure.
-        // Demote to LOG_I so SYST:LOG? doesn't show a spurious error.
-        if (gApplyInProgress) {
+        // #423: demote LOG_E only when this disconnect is the teardown of
+        // an *existing* connection caused by an APPLY in flight (#440
+        // HardReset divert tears the association down before re-init —
+        // the WINC reports its canonical AUTH errorCode on the way out).
+        // Distinguish teardown-of-existing-connection from new-attempt-
+        // failed by checking STA_CONNECTED: it's still set when we tear
+        // down an established connection, but is false when a fresh
+        // BSSConnect attempt fails (e.g. wrong-password APPLY).  Using
+        // gApplyInProgress alone would over-demote real failures during
+        // the APPLY window (PR #447 Qodo round-1 findings #2/#3).
+        bool isApplyTeardown = gApplyInProgress &&
+            GetEventFlagStatus(gStateMachineContext.eventFlags,
+                               WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+        if (isApplyTeardown) {
             LOG_I("WiFi STA Disconnected during APPLY teardown - errorCode=%d (%s)\r\n",
                   errorCode, reason);
         } else {
@@ -1458,21 +1465,30 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             {
                 static bool errorLogged = false;
                 static int consecutiveErrors = 0;
-                
-                consecutiveErrors++;
-                
-                // Only log error on first occurrence or every 10th error.
-                // #423: when an APPLY is in flight, the cascade from the
-                // intentional teardown lands here too — demote so SYST:LOG?
-                // doesn't show a spurious "WiFi error occurred" on every
-                // legitimate re-association.
-                if (!errorLogged || (consecutiveErrors % 10 == 0)) {
-                    if (gApplyInProgress) {
-                        LOG_I("WiFi event ERROR during APPLY teardown (count: %d)\r\n", consecutiveErrors);
-                    } else {
-                        LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n", __FILE__, __LINE__, consecutiveErrors);
+
+                // #423: when this ERROR is the cascade from an APPLY-
+                // triggered teardown of an *existing* connection (#440
+                // HardReset divert path), demote the log and do NOT bump
+                // the consecutive-error counter — those events are
+                // intentional, not faults.  Same STA_CONNECTED-based
+                // teardown discriminator used in StaEventCallback so
+                // genuine failures (wrong password etc.) during an APPLY
+                // window remain LOG_E and still bump the counter.
+                bool isApplyTeardown = gApplyInProgress &&
+                    GetEventFlagStatus(pInstance->eventFlags,
+                                       WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+
+                if (isApplyTeardown) {
+                    // Quietly observe; don't fire the error pipeline.
+                    LOG_I("WiFi event ERROR during APPLY teardown\r\n");
+                } else {
+                    consecutiveErrors++;
+                    // Only log error on first occurrence or every 10th error.
+                    if (!errorLogged || (consecutiveErrors % 10 == 0)) {
+                        LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n",
+                              __FILE__, __LINE__, consecutiveErrors);
+                        errorLogged = true;
                     }
-                    errorLogged = true;
                 }
                 
                 // Implement power-efficient reconnect logic for STA mode.
