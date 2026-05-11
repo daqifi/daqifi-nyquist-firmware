@@ -471,6 +471,16 @@ void app_SystemInit() {
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
+
+    // #436: build *IDN? model+SN strings here, AFTER InitBoardConfig
+    // populated boardSerialNumber from DEVSN1:DEVSN0 and BEFORE any of
+    // the transport tasks (USB / WiFi / SCPI) are xTaskCreate'd later in
+    // this same function.  Sequential ordering inside app_SystemInit is
+    // the synchronization — see SCPI_InitIdentification's docstring for
+    // the full rationale, including why "pre-scheduler" is the wrong
+    // mental model (we're inside priority-1 APP_FREERTOS_Tasks).
+    SCPI_InitIdentification();
+
     CoherentPool_Init();
     // Allocate WiFi SPI DMA staging buffer from coherent pool at boot
     // (needed before WiFi init; auto-balanced at stream start)
