@@ -77,6 +77,7 @@ struct stateMachineInst {
     tstrM2mRev wifiFirmwareVersion;
     TaskHandle_t fwUpdateTaskHandle;
     uint8_t staReconnectAttempts;  // Track STA reconnection attempts
+    TickType_t retryAfterTick;     // Earliest tick the next REINIT attempt is allowed (#416 round 2)
 };
 //===============Private Function Declrations================
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
@@ -666,6 +667,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
+            // Clear any retry-backoff deadline carried over from a previous
+            // ERROR cycle.  ENTRY also fires on transitions back to
+            // MainState (FW-update divert, fresh-init fallback at the
+            // bottom of MainState, #437b HardReset re-entry), where a
+            // stale deadline would unnecessarily delay the next REINIT
+            // attempt by up to 30 s.  Qodo round-3 finding (medium).
+            pInstance->retryAfterTick = 0;
 
             if (wifiFwUpdateRequested) {
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
@@ -973,6 +981,28 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             SendEvent(WIFI_MANAGER_EVENT_ERROR);
             break;
         case WIFI_MANAGER_EVENT_REINIT:
+            // #416 / #446: deadline-based retry backoff.  The ERROR
+            // handler sets retryAfterTick on STA failure; honor it by
+            // polling at 50 ms (same pattern as the BUSY case below)
+            // instead of holding the state-machine mutex for up to 30 s.
+            //
+            // Round-5: gate on STA mode.  If the user APPLY'd a mode
+            // change mid-backoff (STA→AP, FW-update entry, etc.), the
+            // STA-side deadline becomes stale — clear it instead of
+            // delaying the unrelated reinit path.
+            if (pInstance->retryAfterTick != 0) {
+                if (pInstance->pWifiSettings->networkMode != WIFI_MANAGER_NETWORK_MODE_STA) {
+                    pInstance->retryAfterTick = 0;
+                } else {
+                    TickType_t now = xTaskGetTickCount();
+                    if ((int32_t)(pInstance->retryAfterTick - now) > 0) {
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                        SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                        break;
+                    }
+                    pInstance->retryAfterTick = 0;  // deadline reached
+                }
+            }
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY)) {
                 //If WiFi firmware update is running and again initialized, then deinit WiFi firmware update
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
@@ -1425,28 +1455,78 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     errorLogged = true;
                 }
                 
-                // Implement power-efficient reconnect logic for STA mode
-                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
-                    GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
-                    
+                // Implement power-efficient reconnect logic for STA mode.
+                // #416: applies to BOTH initial-association failures (the
+                // configured AP isn't reachable yet) AND reconnect-after-
+                // disconnect, not just post-STA_STARTED.  Previously the
+                // STA_STARTED gate let the else branch below hammer the
+                // WINC at ~30/sec on unreachable APs (200 Hz state-machine
+                // dispatch × ~30 ms per failed BSSConnect cycle) — measured
+                // 18,920 retries in 10 min in the field.
+                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+
+                    // Snapshot the counter BEFORE the increment so the
+                    // delay/log decisions reflect the attempt that JUST
+                    // failed.  Without the snapshot, the increment below
+                    // would bump it to 1 on the first failure and the
+                    // `attempt == 0` log branch would never fire (Qodo
+                    // round-2 suggestion on PR #446).
+                    uint8_t attempt = pInstance->staReconnectAttempts;
+
+                    // For initial-association failures, STA_DISCONNECTED
+                    // never fires (we never connected), so its attempt-
+                    // counter increment at line ~969 is skipped — bump it
+                    // here in that case so backoff escalates the same way
+                    // it does after a disconnect.  Clamp to prevent the
+                    // uint8_t from wrapping to 0 on long-running failures
+                    // (#446 Qodo round 1 finding 3).
+                    if (!GetEventFlagStatus(pInstance->eventFlags,
+                                            WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                        if (pInstance->staReconnectAttempts < 200) {
+                            pInstance->staReconnectAttempts++;
+                        }
+                    }
+
                     uint32_t delayMs;
-                    if (pInstance->staReconnectAttempts < 5) {
+                    if (attempt < 5) {
                         // First 5 attempts: 1 second delay
                         delayMs = 1000;
-                        if (pInstance->staReconnectAttempts == 0) {  // Only log first attempt
-                            LOG_D("STA reconnect attempt %d/5 with 1s delay\r\n", pInstance->staReconnectAttempts + 1);
+                        if (attempt == 0) {  // Only log first attempt
+                            LOG_D("STA reconnect attempt %u/5 with 1s delay\r\n",
+                                  (unsigned)(attempt + 1));
                         }
                     } else {
                         // After 5 attempts: 30 second delay to save power
                         delayMs = 30000;
-                        if (pInstance->staReconnectAttempts == 5) {  // Only log when switching to power save
+                        if (attempt == 5) {  // Only log when switching to power save
                             LOG_D("Switching to power save mode - reconnect attempts with 30s delay\r\n");
                         }
                     }
-                    
-                    // Wait before attempting reconnection
-                    vTaskDelay(pdMS_TO_TICKS(delayMs));
-                    
+
+                    // Set a deadline and let the REINIT handler poll the
+                    // BUSY/RETRY-wait path that's already there (50 ms
+                    // vTaskDelay + re-queue).  Without this, we'd hold
+                    // the state-machine mutex during the 30 s delay,
+                    // blocking SCPI active-pump commands (#446 Qodo
+                    // round 1 finding 2).
+                    //
+                    // Sentinel-collision guard: `0` means "no deadline";
+                    // if the tick arithmetic happens to land on 0 (rare
+                    // at 32-bit wrap), bump to 1 so the REINIT handler's
+                    // `retryAfterTick != 0` check still trips.
+                    //
+                    // Round-5: keep the earliest existing deadline if one
+                    // is already armed.  A burst of ERROR events (e.g.
+                    // queued faster than REINIT drains) would otherwise
+                    // each push the deadline forward, starving the retry.
+                    TickType_t newDeadline = xTaskGetTickCount() + pdMS_TO_TICKS(delayMs);
+                    if (newDeadline == 0) {
+                        newDeadline = 1;
+                    }
+                    if (pInstance->retryAfterTick == 0 ||
+                        (int32_t)(pInstance->retryAfterTick - newDeadline) > 0) {
+                        pInstance->retryAfterTick = newDeadline;
+                    }
                     SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 } else {
                     // For AP mode or other errors, reinit immediately
