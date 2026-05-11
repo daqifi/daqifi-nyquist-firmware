@@ -260,13 +260,25 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
             gStateMachineContext.assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
             return;  // Stale disconnect callback from previous connection
         }
-        LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n",
-              errorCode, (unsigned int)xTaskGetTickCount(),
+        const char *reason =
               (errorCode == WDRV_WINC_CONN_ERROR_AUTH) ? "Auth Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_ASSOC) ? "Association Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_SCAN) ? "Scan Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_NOCRED) ? "No Credentials" :
-              "Unknown");
+              "Unknown";
+        // #423: when an APPLY is in flight (e.g. user re-issued LAN APPLY
+        // while STA was connected — the broadened HardReset divert from
+        // #440 tears the association down before re-init), the WINC
+        // reports the canonical AUTH errorCode on the way out.  That's
+        // expected teardown noise, not a real authentication failure.
+        // Demote to LOG_I so SYST:LOG? doesn't show a spurious error.
+        if (gApplyInProgress) {
+            LOG_I("WiFi STA Disconnected during APPLY teardown - errorCode=%d (%s)\r\n",
+                  errorCode, reason);
+        } else {
+            LOG_E("WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n",
+                  errorCode, (unsigned int)xTaskGetTickCount(), reason);
+        }
         gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;  // Clear association handle
         SendEvent(WIFI_MANAGER_EVENT_STA_DISCONNECTED);
     }
@@ -1449,9 +1461,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 
                 consecutiveErrors++;
                 
-                // Only log error on first occurrence or every 10th error
+                // Only log error on first occurrence or every 10th error.
+                // #423: when an APPLY is in flight, the cascade from the
+                // intentional teardown lands here too — demote so SYST:LOG?
+                // doesn't show a spurious "WiFi error occurred" on every
+                // legitimate re-association.
                 if (!errorLogged || (consecutiveErrors % 10 == 0)) {
-                    LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n", __FILE__, __LINE__, consecutiveErrors);
+                    if (gApplyInProgress) {
+                        LOG_I("WiFi event ERROR during APPLY teardown (count: %d)\r\n", consecutiveErrors);
+                    } else {
+                        LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n", __FILE__, __LINE__, consecutiveErrors);
+                    }
                     errorLogged = true;
                 }
                 
