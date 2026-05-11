@@ -985,14 +985,23 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // handler sets retryAfterTick on STA failure; honor it by
             // polling at 50 ms (same pattern as the BUSY case below)
             // instead of holding the state-machine mutex for up to 30 s.
+            //
+            // Round-5: gate on STA mode.  If the user APPLY'd a mode
+            // change mid-backoff (STA→AP, FW-update entry, etc.), the
+            // STA-side deadline becomes stale — clear it instead of
+            // delaying the unrelated reinit path.
             if (pInstance->retryAfterTick != 0) {
-                TickType_t now = xTaskGetTickCount();
-                if ((int32_t)(pInstance->retryAfterTick - now) > 0) {
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                    SendEvent(WIFI_MANAGER_EVENT_REINIT);
-                    break;
+                if (pInstance->pWifiSettings->networkMode != WIFI_MANAGER_NETWORK_MODE_STA) {
+                    pInstance->retryAfterTick = 0;
+                } else {
+                    TickType_t now = xTaskGetTickCount();
+                    if ((int32_t)(pInstance->retryAfterTick - now) > 0) {
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                        SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                        break;
+                    }
+                    pInstance->retryAfterTick = 0;  // deadline reached
                 }
-                pInstance->retryAfterTick = 0;  // deadline reached
             }
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY)) {
                 //If WiFi firmware update is running and again initialized, then deinit WiFi firmware update
@@ -1505,9 +1514,18 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // if the tick arithmetic happens to land on 0 (rare
                     // at 32-bit wrap), bump to 1 so the REINIT handler's
                     // `retryAfterTick != 0` check still trips.
-                    pInstance->retryAfterTick = xTaskGetTickCount() + pdMS_TO_TICKS(delayMs);
-                    if (pInstance->retryAfterTick == 0) {
-                        pInstance->retryAfterTick = 1;
+                    //
+                    // Round-5: keep the earliest existing deadline if one
+                    // is already armed.  A burst of ERROR events (e.g.
+                    // queued faster than REINIT drains) would otherwise
+                    // each push the deadline forward, starving the retry.
+                    TickType_t newDeadline = xTaskGetTickCount() + pdMS_TO_TICKS(delayMs);
+                    if (newDeadline == 0) {
+                        newDeadline = 1;
+                    }
+                    if (pInstance->retryAfterTick == 0 ||
+                        (int32_t)(pInstance->retryAfterTick - newDeadline) > 0) {
+                        pInstance->retryAfterTick = newDeadline;
                     }
                     SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 } else {
