@@ -170,6 +170,31 @@ static volatile bool gApplyInProgress = false;
 #define WIFI_APPLY_GATE_TIMEOUT_MS 30000u
 static volatile TickType_t gApplyInProgressDeadlineTick = 0;
 
+// #423 round-3: bounded deadline armed immediately before each APPLY-
+// driven BSSDisconnect / HardReset call site.  The async WINC disconnect
+// callback that ensues should be demoted (deliberate teardown, not a
+// real failure) — but ONLY for the ~callback-arrival window.  Past the
+// deadline, fresh BSSConnect failures (wrong password, scan miss, etc.)
+// still surface as LOG_E.  This outlives gApplyInProgress and
+// STA_CONNECTED across the HardReset cycle (which clears both), which
+// the round-2 (gApplyInProgress && STA_CONNECTED) check could not.
+// Sentinel 0 = no deadline armed; bumped to 1 on wrap.
+#define WIFI_APPLY_TEARDOWN_DEADLINE_MS 2000u
+static volatile TickType_t gApplyTeardownDeadlineTick = 0;
+
+// Arm the teardown-demotion deadline iff an APPLY is in flight; called
+// immediately before any BSSDisconnect / HardReset on an APPLY path.
+static inline void ArmApplyTeardownDeadline(void) {
+    if (gApplyInProgress) {
+        TickType_t deadline = xTaskGetTickCount() +
+                              pdMS_TO_TICKS(WIFI_APPLY_TEARDOWN_DEADLINE_MS);
+        if (deadline == 0) {
+            deadline = 1;
+        }
+        gApplyTeardownDeadlineTick = deadline;
+    }
+}
+
 //===========================================================
 //=====================Private Callbacks=====================
 
@@ -266,19 +291,18 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
               (errorCode == WDRV_WINC_CONN_ERROR_SCAN) ? "Scan Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_NOCRED) ? "No Credentials" :
               "Unknown";
-        // #423: demote LOG_E only when this disconnect is the teardown of
-        // an *existing* connection caused by an APPLY in flight (#440
-        // HardReset divert tears the association down before re-init —
-        // the WINC reports its canonical AUTH errorCode on the way out).
-        // Distinguish teardown-of-existing-connection from new-attempt-
-        // failed by checking STA_CONNECTED: it's still set when we tear
-        // down an established connection, but is false when a fresh
-        // BSSConnect attempt fails (e.g. wrong-password APPLY).  Using
-        // gApplyInProgress alone would over-demote real failures during
-        // the APPLY window (PR #447 Qodo round-1 findings #2/#3).
-        bool isApplyTeardown = gApplyInProgress &&
-            GetEventFlagStatus(gStateMachineContext.eventFlags,
-                               WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+        // #423 round-3: demote LOG_E only when the disconnect callback
+        // arrives within the short window after an APPLY-driven teardown
+        // was initiated.  The deadline is armed at each BSSDisconnect /
+        // HardReset call site (ArmApplyTeardownDeadline), so this check
+        // doesn't depend on gApplyInProgress / STA_CONNECTED still being
+        // true at callback time — both are cleared synchronously by the
+        // REINIT and HardReset paths before the async callback fires
+        // (Qodo round-2 finding #1).  Past the 2 s deadline, fresh
+        // BSSConnect failures on new settings still surface as LOG_E.
+        TickType_t teardownDeadline = gApplyTeardownDeadlineTick;
+        bool isApplyTeardown = (teardownDeadline != 0) &&
+                               (xTaskGetTickCount() < teardownDeadline);
         if (isApplyTeardown) {
             LOG_I("WiFi STA Disconnected during APPLY teardown - errorCode=%d (%s)\r\n",
                   errorCode, reason);
@@ -1074,11 +1098,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 
                 // Disconnect STA if connected
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                    ArmApplyTeardownDeadline();  // #423: demote the impending async disconnect callback
                     WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                 }
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                
+
                 // Close sockets
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                     CloseUdpSocket(&pInstance->udpServerSocket);
@@ -1106,11 +1131,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     
                     // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                        ArmApplyTeardownDeadline();  // #423
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    
+
                     // Don't deinitialize - the driver gets into a bad state after deinit
                     // Instead, just wait for STA to disconnect and then configure for AP mode
                     vTaskDelay(pdMS_TO_TICKS(500));  // Let STA fully disconnect
@@ -1330,6 +1356,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // event can't be queued, propagate the failure as
                         // an ERROR event so the manager retries instead of
                         // silently leaving the chip in a half-reset state.
+                        ArmApplyTeardownDeadline();  // #423: HardReset triggers an async disconnect callback during deinit
                         if (!wifi_manager_HardReset()) {
                             LOG_E("HardReset divert failed to queue DEINIT");
                             // Try ERROR fallback so the manager retries; if
@@ -1345,6 +1372,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
 
                     // Disconnect if connected
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                        ArmApplyTeardownDeadline();  // #423
                         WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
@@ -1603,6 +1631,7 @@ void wifi_manager_BootInit(void) {
     gWifiReinitDeadlineTick = 0;
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
+    gApplyTeardownDeadlineTick = 0;
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
