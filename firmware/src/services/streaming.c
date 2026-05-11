@@ -1148,6 +1148,7 @@ void streaming_Task(void) {
     NanopbFlagsArray nanopbFlag;
     size_t usbSize, wifiSize, sdSize, maxSize;
     bool hasUsb, hasWifi, hasSD;
+    (void)hasUsb;   /* #372: ActiveInterface check used directly now; flag retained for symmetry */
     (void)hasWifi;  /* #371: ActiveInterface check used directly now; flag retained for symmetry */
     bool AINDataAvailable;
     bool DIODataAvailable;
@@ -1359,7 +1360,16 @@ void streaming_Task(void) {
             // USB/WiFi: all-or-nothing without retry. Full packet written
             // or cleanly dropped (no garbled partial data). No retry because
             // the ISR→encoder feedback loop causes sample queue overflow.
-            if (hasUsb) {
+            // #372: ActiveInterface == USB / UsbAndSd means we should ALWAYS push
+            // to USB (or count the drop).  Previously `hasUsb = (usbSize >= 128)`
+            // made this per-iteration, silently skipping UsbCdc_WriteToBuffer
+            // when the buffer was nearly full — bytes lost with usbDroppedBytes
+            // never incremented.  Same bug class as #371 on the WiFi path.
+            // Now we call UsbCdc_WriteToBuffer unconditionally when USB is in
+            // the active set; its own pre-check returns 0 on no-space, and
+            // we count that as a drop.
+            if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_USB ||
+                pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
                 if (Streaming_UsbWrite((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.usbDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
