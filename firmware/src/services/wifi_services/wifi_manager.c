@@ -1449,6 +1449,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // 18,920 retries in 10 min in the field.
                 if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
 
+                    // Snapshot the counter BEFORE the increment so the
+                    // delay/log decisions reflect the attempt that JUST
+                    // failed.  Without the snapshot, the increment below
+                    // would bump it to 1 on the first failure and the
+                    // `attempt == 0` log branch would never fire (Qodo
+                    // round-2 suggestion on PR #446).
+                    uint8_t attempt = pInstance->staReconnectAttempts;
+
                     // For initial-association failures, STA_DISCONNECTED
                     // never fires (we never connected), so its attempt-
                     // counter increment at line ~969 is skipped — bump it
@@ -1464,16 +1472,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     }
 
                     uint32_t delayMs;
-                    if (pInstance->staReconnectAttempts < 5) {
+                    if (attempt < 5) {
                         // First 5 attempts: 1 second delay
                         delayMs = 1000;
-                        if (pInstance->staReconnectAttempts == 0) {  // Only log first attempt
-                            LOG_D("STA reconnect attempt %d/5 with 1s delay\r\n", pInstance->staReconnectAttempts + 1);
+                        if (attempt == 0) {  // Only log first attempt
+                            LOG_D("STA reconnect attempt %u/5 with 1s delay\r\n",
+                                  (unsigned)(attempt + 1));
                         }
                     } else {
                         // After 5 attempts: 30 second delay to save power
                         delayMs = 30000;
-                        if (pInstance->staReconnectAttempts == 5) {  // Only log when switching to power save
+                        if (attempt == 5) {  // Only log when switching to power save
                             LOG_D("Switching to power save mode - reconnect attempts with 30s delay\r\n");
                         }
                     }
@@ -1484,7 +1493,15 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // the state-machine mutex during the 30 s delay,
                     // blocking SCPI active-pump commands (#446 Qodo
                     // round 1 finding 2).
+                    //
+                    // Sentinel-collision guard: `0` means "no deadline";
+                    // if the tick arithmetic happens to land on 0 (rare
+                    // at 32-bit wrap), bump to 1 so the REINIT handler's
+                    // `retryAfterTick != 0` check still trips.
                     pInstance->retryAfterTick = xTaskGetTickCount() + pdMS_TO_TICKS(delayMs);
+                    if (pInstance->retryAfterTick == 0) {
+                        pInstance->retryAfterTick = 1;
+                    }
                     SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 } else {
                     // For AP mode or other errors, reinit immediately
