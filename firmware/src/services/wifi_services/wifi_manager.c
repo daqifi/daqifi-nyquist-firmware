@@ -77,6 +77,7 @@ struct stateMachineInst {
     tstrM2mRev wifiFirmwareVersion;
     TaskHandle_t fwUpdateTaskHandle;
     uint8_t staReconnectAttempts;  // Track STA reconnection attempts
+    TickType_t retryAfterTick;     // Earliest tick the next REINIT attempt is allowed (#416 round 2)
 };
 //===============Private Function Declrations================
 static void __attribute__((unused)) SetEventFlag(wifi_manager_stateFlag_t *pEventFlagState, uint16_t flag);
@@ -973,6 +974,19 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             SendEvent(WIFI_MANAGER_EVENT_ERROR);
             break;
         case WIFI_MANAGER_EVENT_REINIT:
+            // #416 / #446: deadline-based retry backoff.  The ERROR
+            // handler sets retryAfterTick on STA failure; honor it by
+            // polling at 50 ms (same pattern as the BUSY case below)
+            // instead of holding the state-machine mutex for up to 30 s.
+            if (pInstance->retryAfterTick != 0) {
+                TickType_t now = xTaskGetTickCount();
+                if ((int32_t)(pInstance->retryAfterTick - now) > 0) {
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                    SendEvent(WIFI_MANAGER_EVENT_REINIT);
+                    break;
+                }
+                pInstance->retryAfterTick = 0;  // deadline reached
+            }
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY)) {
                 //If WiFi firmware update is running and again initialized, then deinit WiFi firmware update
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
@@ -1439,10 +1453,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // never fires (we never connected), so its attempt-
                     // counter increment at line ~969 is skipped — bump it
                     // here in that case so backoff escalates the same way
-                    // it does after a disconnect.
+                    // it does after a disconnect.  Clamp to prevent the
+                    // uint8_t from wrapping to 0 on long-running failures
+                    // (#446 Qodo round 1 finding 3).
                     if (!GetEventFlagStatus(pInstance->eventFlags,
                                             WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
-                        pInstance->staReconnectAttempts++;
+                        if (pInstance->staReconnectAttempts < 200) {
+                            pInstance->staReconnectAttempts++;
+                        }
                     }
 
                     uint32_t delayMs;
@@ -1460,9 +1478,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         }
                     }
 
-                    // Wait before attempting reconnection
-                    vTaskDelay(pdMS_TO_TICKS(delayMs));
-
+                    // Set a deadline and let the REINIT handler poll the
+                    // BUSY/RETRY-wait path that's already there (50 ms
+                    // vTaskDelay + re-queue).  Without this, we'd hold
+                    // the state-machine mutex during the 30 s delay,
+                    // blocking SCPI active-pump commands (#446 Qodo
+                    // round 1 finding 2).
+                    pInstance->retryAfterTick = xTaskGetTickCount() + pdMS_TO_TICKS(delayMs);
                     SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 } else {
                     // For AP mode or other errors, reinit immediately
