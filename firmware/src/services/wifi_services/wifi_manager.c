@@ -1425,10 +1425,26 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     errorLogged = true;
                 }
                 
-                // Implement power-efficient reconnect logic for STA mode
-                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
-                    GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
-                    
+                // Implement power-efficient reconnect logic for STA mode.
+                // #416: applies to BOTH initial-association failures (the
+                // configured AP isn't reachable yet) AND reconnect-after-
+                // disconnect, not just post-STA_STARTED.  Previously the
+                // STA_STARTED gate let the else branch below hammer the
+                // WINC at ~30/sec on unreachable APs (200 Hz state-machine
+                // dispatch × ~30 ms per failed BSSConnect cycle) — measured
+                // 18,920 retries in 10 min in the field.
+                if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+
+                    // For initial-association failures, STA_DISCONNECTED
+                    // never fires (we never connected), so its attempt-
+                    // counter increment at line ~969 is skipped — bump it
+                    // here in that case so backoff escalates the same way
+                    // it does after a disconnect.
+                    if (!GetEventFlagStatus(pInstance->eventFlags,
+                                            WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                        pInstance->staReconnectAttempts++;
+                    }
+
                     uint32_t delayMs;
                     if (pInstance->staReconnectAttempts < 5) {
                         // First 5 attempts: 1 second delay
@@ -1443,10 +1459,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                             LOG_D("Switching to power save mode - reconnect attempts with 30s delay\r\n");
                         }
                     }
-                    
+
                     // Wait before attempting reconnection
                     vTaskDelay(pdMS_TO_TICKS(delayMs));
-                    
+
                     SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 } else {
                     // For AP mode or other errors, reinit immediately
