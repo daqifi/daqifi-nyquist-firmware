@@ -1147,8 +1147,11 @@ void streaming_Task(void) {
      TickType_t xBlockTime = portMAX_DELAY;
     NanopbFlagsArray nanopbFlag;
     size_t usbSize, wifiSize, sdSize, maxSize;
-    bool hasUsb, hasWifi, hasSD;
-    (void)hasWifi;  /* #371: ActiveInterface check used directly now; flag retained for symmetry */
+    /* #371/#372: USB/WiFi gates moved to ActiveInterface checks at the
+     * write sites — hasUsb / hasWifi are no longer consulted, removed
+     * from the per-iteration switch.  hasSD is still consulted by the SD
+     * write block below. */
+    bool hasSD = false;
     bool AINDataAvailable;
     bool DIODataAvailable;
     size_t packetSize=0;    
@@ -1233,36 +1236,24 @@ void streaming_Task(void) {
             }
         }
 
-        // Single-interface streaming: only stream to the interface that initiated streaming
-        // This prevents bandwidth overload at high sample rates
+        // Compute hasSD for the SD write block below.  ActiveInterface
+        // selects which network/USB output(s) are streamed to:
+        //   - USB:        USB only       (+ SD if SD-logging is enabled — see override below)
+        //   - WiFi:       WiFi only      (WiFi+SD unsupported; share SPI bus)
+        //   - SD:         SD only
+        //   - UsbAndSd:   USB + SD concurrent
+        // USB and WiFi write blocks gate on ActiveInterface directly
+        // (per #371 / #372 silent-loss fixes).  Only the SD write block
+        // still consults a free-space flag, since its retry path needs
+        // to distinguish "buffer too full right now" from "SD not active".
+        // The "SD-logging enabled" override below can also enable SD
+        // writes for ActiveInterface=USB or SD — only WiFi is excluded.
         switch (pRunTimeStreamConf->ActiveInterface) {
-            case StreamingInterface_USB:
-                hasUsb = (usbSize >= 128);
-                hasWifi = false;
-                hasSD = false;
-                break;
-            case StreamingInterface_WiFi:
-                hasUsb = false;
-                hasWifi = (wifiSize >= 128);
-                hasSD = false;
-                break;
             case StreamingInterface_SD:
-                hasUsb = false;
-                hasWifi = false;
-                hasSD = (sdSize >= 128);
-                break;
             case StreamingInterface_UsbAndSd:
-                // USB+SD concurrent mode (WiFi excluded — shares SPI bus with SD).
-                hasUsb = (usbSize >= 128);
-                hasWifi = false;
                 hasSD = (sdSize >= 128);
                 break;
             default:
-                // Unreachable with a validated enum, but fail closed so a
-                // future ActiveInterface value not covered above can't
-                // silently fall through with a USB+SD-shaped allocation.
-                hasUsb = false;
-                hasWifi = false;
                 hasSD = false;
                 break;
         }
@@ -1359,7 +1350,16 @@ void streaming_Task(void) {
             // USB/WiFi: all-or-nothing without retry. Full packet written
             // or cleanly dropped (no garbled partial data). No retry because
             // the ISR→encoder feedback loop causes sample queue overflow.
-            if (hasUsb) {
+            // #372: ActiveInterface == USB / UsbAndSd means we should ALWAYS push
+            // to USB (or count the drop).  Previously `hasUsb = (usbSize >= 128)`
+            // made this per-iteration, silently skipping UsbCdc_WriteToBuffer
+            // when the buffer was nearly full — bytes lost with usbDroppedBytes
+            // never incremented.  Same bug class as #371 on the WiFi path.
+            // Now we call UsbCdc_WriteToBuffer unconditionally when USB is in
+            // the active set; its own pre-check returns 0 on no-space, and
+            // we count that as a drop.
+            if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_USB ||
+                pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
                 if (Streaming_UsbWrite((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.usbDroppedBytes += packetSize;
                     taskENTER_CRITICAL();
