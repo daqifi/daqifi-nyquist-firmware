@@ -491,7 +491,12 @@ bool ADC_ReadADCSampleFromISR(uint32_t value, uint8_t bufferIndex) {
     sample.Value = value;
     uint32_t *valueTMR = (uint32_t*) BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
     for (i = 0; i < gpBoardConfig->AInChannels.Size; i++) {
-        if (gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId == bufferIndex
+        /* #139: gate Config.MC12b access on Type so AD7609 channels
+         * (NQ3) don't read garbage from the wrong union member.  NQ1/NQ2
+         * only have MC12b channels so this branch always passed before;
+         * NQ3 needs the explicit type check. */
+        if (gpBoardConfig->AInChannels.Data[i].Type == AIn_MC12bADC
+                && gpBoardConfig->AInChannels.Data[i].Config.MC12b.ChannelId == bufferIndex
                 && gpBoardRuntimeConfig->AInChannels.Data[i].IsEnabled == 1) {
 
             sample.Timestamp = *valueTMR;
