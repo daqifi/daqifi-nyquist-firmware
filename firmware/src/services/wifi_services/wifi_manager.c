@@ -170,29 +170,43 @@ static volatile bool gApplyInProgress = false;
 #define WIFI_APPLY_GATE_TIMEOUT_MS 30000u
 static volatile TickType_t gApplyInProgressDeadlineTick = 0;
 
-// #423 round-3: bounded deadline armed immediately before each APPLY-
+// #423 round-3: bounded window opened immediately before each APPLY-
 // driven BSSDisconnect / HardReset call site.  The async WINC disconnect
 // callback that ensues should be demoted (deliberate teardown, not a
 // real failure) — but ONLY for the ~callback-arrival window.  Past the
-// deadline, fresh BSSConnect failures (wrong password, scan miss, etc.)
+// window, fresh BSSConnect failures (wrong password, scan miss, etc.)
 // still surface as LOG_E.  This outlives gApplyInProgress and
 // STA_CONNECTED across the HardReset cycle (which clears both), which
 // the round-2 (gApplyInProgress && STA_CONNECTED) check could not.
-// Sentinel 0 = no deadline armed; bumped to 1 on wrap.
-#define WIFI_APPLY_TEARDOWN_DEADLINE_MS 2000u
-static volatile TickType_t gApplyTeardownDeadlineTick = 0;
+//
+// Round-4: store the *start* tick and compare elapsed `(now - start)`
+// against the window.  Unsigned subtraction handles FreeRTOS tick wrap
+// (TickType_t rolls over after ~50 days at 1 kHz), which `now < deadline`
+// would silently mis-classify.  Sentinel 0 = disarmed; bumped to 1 if
+// the captured start lands on 0.
+#define WIFI_APPLY_TEARDOWN_WINDOW_MS 2000u
+static volatile TickType_t gApplyTeardownStartTick = 0;
 
-// Arm the teardown-demotion deadline iff an APPLY is in flight; called
+// Arm the teardown-demotion window iff an APPLY is in flight; called
 // immediately before any BSSDisconnect / HardReset on an APPLY path.
 static inline void ArmApplyTeardownDeadline(void) {
     if (gApplyInProgress) {
-        TickType_t deadline = xTaskGetTickCount() +
-                              pdMS_TO_TICKS(WIFI_APPLY_TEARDOWN_DEADLINE_MS);
-        if (deadline == 0) {
-            deadline = 1;
+        TickType_t start = xTaskGetTickCount();
+        if (start == 0) {
+            start = 1;  // keep 0 reserved as the disarmed sentinel
         }
-        gApplyTeardownDeadlineTick = deadline;
+        gApplyTeardownStartTick = start;
     }
+}
+
+// True iff we're still inside the teardown-demotion window.  Wrap-safe.
+static inline bool IsWithinApplyTeardownWindow(void) {
+    TickType_t start = gApplyTeardownStartTick;
+    if (start == 0) {
+        return false;
+    }
+    TickType_t elapsed = xTaskGetTickCount() - start;
+    return elapsed < pdMS_TO_TICKS(WIFI_APPLY_TEARDOWN_WINDOW_MS);
 }
 
 //===========================================================
@@ -291,18 +305,15 @@ static void StaEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHand
               (errorCode == WDRV_WINC_CONN_ERROR_SCAN) ? "Scan Failed" :
               (errorCode == WDRV_WINC_CONN_ERROR_NOCRED) ? "No Credentials" :
               "Unknown";
-        // #423 round-3: demote LOG_E only when the disconnect callback
-        // arrives within the short window after an APPLY-driven teardown
-        // was initiated.  The deadline is armed at each BSSDisconnect /
-        // HardReset call site (ArmApplyTeardownDeadline), so this check
-        // doesn't depend on gApplyInProgress / STA_CONNECTED still being
-        // true at callback time — both are cleared synchronously by the
+        // #423: demote LOG_E only when the disconnect callback arrives
+        // within the short window after an APPLY-driven teardown was
+        // initiated (ArmApplyTeardownDeadline, called at each call site).
+        // This decouples the demotion decision from gApplyInProgress /
+        // STA_CONNECTED, both of which are cleared synchronously by the
         // REINIT and HardReset paths before the async callback fires
-        // (Qodo round-2 finding #1).  Past the 2 s deadline, fresh
-        // BSSConnect failures on new settings still surface as LOG_E.
-        TickType_t teardownDeadline = gApplyTeardownDeadlineTick;
-        bool isApplyTeardown = (teardownDeadline != 0) &&
-                               (xTaskGetTickCount() < teardownDeadline);
+        // (Qodo round-2 finding #1).  Past the window, fresh BSSConnect
+        // failures on new settings still surface as LOG_E.
+        bool isApplyTeardown = IsWithinApplyTeardownWindow();
         if (isApplyTeardown) {
             LOG_I("WiFi STA Disconnected during APPLY teardown - errorCode=%d (%s)\r\n",
                   errorCode, reason);
@@ -1495,16 +1506,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 static int consecutiveErrors = 0;
 
                 // #423: when this ERROR is the cascade from an APPLY-
-                // triggered teardown of an *existing* connection (#440
-                // HardReset divert path), demote the log and do NOT bump
-                // the consecutive-error counter — those events are
-                // intentional, not faults.  Same STA_CONNECTED-based
-                // teardown discriminator used in StaEventCallback so
-                // genuine failures (wrong password etc.) during an APPLY
-                // window remain LOG_E and still bump the counter.
-                bool isApplyTeardown = gApplyInProgress &&
-                    GetEventFlagStatus(pInstance->eventFlags,
-                                       WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                // triggered teardown (#440 HardReset divert path or
+                // BSSDisconnect-then-reconfig), demote the log and don't
+                // bump the consecutive-error counter — those events are
+                // intentional, not faults.  Same wrap-safe time-window
+                // discriminator used in StaEventCallback so genuine
+                // failures (wrong password etc.) past the window still
+                // LOG_E and bump the counter.
+                bool isApplyTeardown = IsWithinApplyTeardownWindow();
 
                 if (isApplyTeardown) {
                     // Quietly observe; don't fire the error pipeline.
@@ -1631,7 +1640,7 @@ void wifi_manager_BootInit(void) {
     gWifiReinitDeadlineTick = 0;
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
-    gApplyTeardownDeadlineTick = 0;
+    gApplyTeardownStartTick = 0;
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
