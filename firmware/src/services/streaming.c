@@ -1147,9 +1147,11 @@ void streaming_Task(void) {
      TickType_t xBlockTime = portMAX_DELAY;
     NanopbFlagsArray nanopbFlag;
     size_t usbSize, wifiSize, sdSize, maxSize;
-    bool hasUsb, hasWifi, hasSD;
-    (void)hasUsb;   /* #372: ActiveInterface check used directly now; flag retained for symmetry */
-    (void)hasWifi;  /* #371: ActiveInterface check used directly now; flag retained for symmetry */
+    /* #371/#372: USB/WiFi gates moved to ActiveInterface checks at the
+     * write sites — hasUsb / hasWifi are no longer consulted, removed
+     * from the per-iteration switch.  hasSD is still consulted by the SD
+     * write block below. */
+    bool hasSD = false;
     bool AINDataAvailable;
     bool DIODataAvailable;
     size_t packetSize=0;    
@@ -1234,36 +1236,15 @@ void streaming_Task(void) {
             }
         }
 
-        // Single-interface streaming: only stream to the interface that initiated streaming
-        // This prevents bandwidth overload at high sample rates
+        // Single-interface streaming: only stream to the interface that initiated streaming.
+        // Only hasSD is consulted by the write path now (USB/WiFi gate on
+        // ActiveInterface directly per #371/#372 silent-loss fixes).
         switch (pRunTimeStreamConf->ActiveInterface) {
-            case StreamingInterface_USB:
-                hasUsb = (usbSize >= 128);
-                hasWifi = false;
-                hasSD = false;
-                break;
-            case StreamingInterface_WiFi:
-                hasUsb = false;
-                hasWifi = (wifiSize >= 128);
-                hasSD = false;
-                break;
             case StreamingInterface_SD:
-                hasUsb = false;
-                hasWifi = false;
-                hasSD = (sdSize >= 128);
-                break;
             case StreamingInterface_UsbAndSd:
-                // USB+SD concurrent mode (WiFi excluded — shares SPI bus with SD).
-                hasUsb = (usbSize >= 128);
-                hasWifi = false;
                 hasSD = (sdSize >= 128);
                 break;
             default:
-                // Unreachable with a validated enum, but fail closed so a
-                // future ActiveInterface value not covered above can't
-                // silently fall through with a USB+SD-shaped allocation.
-                hasUsb = false;
-                hasWifi = false;
                 hasSD = false;
                 break;
         }
