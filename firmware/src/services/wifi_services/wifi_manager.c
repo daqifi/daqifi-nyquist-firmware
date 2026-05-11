@@ -667,6 +667,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
+            // Clear any retry-backoff deadline carried over from a previous
+            // ERROR cycle.  ENTRY also fires on transitions back to
+            // MainState (FW-update divert, fresh-init fallback at the
+            // bottom of MainState, #437b HardReset re-entry), where a
+            // stale deadline would unnecessarily delay the next REINIT
+            // attempt by up to 30 s.  Qodo round-3 finding (medium).
+            pInstance->retryAfterTick = 0;
 
             if (wifiFwUpdateRequested) {
                 SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
