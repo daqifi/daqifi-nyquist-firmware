@@ -199,14 +199,24 @@ static inline void ArmApplyTeardownDeadline(void) {
     }
 }
 
-// True iff we're still inside the teardown-demotion window.  Wrap-safe.
+// True iff we're still inside the teardown-demotion window.  Wrap-safe
+// via unsigned subtraction.  On window-expiry detection, also clears the
+// start tick to avoid a long-uptime + no-APPLY false-positive: if the
+// device never APPLYs for ~50 days (unlikely but reachable), the tick
+// counter wraps back near the stored start value and `elapsed` would
+// collapse to near-zero — putting us spuriously back "inside the
+// window."  Self-disarming closes that hole.
 static inline bool IsWithinApplyTeardownWindow(void) {
     TickType_t start = gApplyTeardownStartTick;
     if (start == 0) {
         return false;
     }
     TickType_t elapsed = xTaskGetTickCount() - start;
-    return elapsed < pdMS_TO_TICKS(WIFI_APPLY_TEARDOWN_WINDOW_MS);
+    if (elapsed >= pdMS_TO_TICKS(WIFI_APPLY_TEARDOWN_WINDOW_MS)) {
+        gApplyTeardownStartTick = 0;  // disarm; prevents post-wrap false positive
+        return false;
+    }
+    return true;
 }
 
 //===========================================================
@@ -1512,22 +1522,27 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // intentional, not faults.  Same wrap-safe time-window
                 // discriminator used in StaEventCallback so genuine
                 // failures (wrong password etc.) past the window still
-                // LOG_E and bump the counter.
-                bool isApplyTeardown = IsWithinApplyTeardownWindow();
-
-                if (isApplyTeardown) {
-                    // Quietly observe; don't fire the error pipeline.
+                // LOG_E and bump the counter.  Short-circuit the rest of
+                // the recovery pipeline as well: the existing power-
+                // efficient reconnect logic below is already gated on
+                // STA_STARTED (cleared by the teardown) so it's a no-op
+                // in practice, but breaking here makes the intent
+                // explicit and stops future refactors from accidentally
+                // driving reconnects during a deliberate teardown.
+                if (IsWithinApplyTeardownWindow()) {
                     LOG_I("WiFi event ERROR during APPLY teardown\r\n");
-                } else {
-                    consecutiveErrors++;
-                    // Only log error on first occurrence or every 10th error.
-                    if (!errorLogged || (consecutiveErrors % 10 == 0)) {
-                        LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n",
-                              __FILE__, __LINE__, consecutiveErrors);
-                        errorLogged = true;
-                    }
+                    returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
+                    break;
                 }
-                
+
+                consecutiveErrors++;
+                // Only log error on first occurrence or every 10th error.
+                if (!errorLogged || (consecutiveErrors % 10 == 0)) {
+                    LOG_E("[%s:%d]WiFi error occurred (count: %d)\r\n",
+                          __FILE__, __LINE__, consecutiveErrors);
+                    errorLogged = true;
+                }
+
                 // Implement power-efficient reconnect logic for STA mode.
                 // #416: applies to BOTH initial-association failures (the
                 // configured AP isn't reachable yet) AND reconnect-after-
