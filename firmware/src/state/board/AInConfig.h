@@ -122,7 +122,9 @@ extern "C" {
         ADCHS_MODULE_MASK ModuleId;
 
         /**
-         * Indicates that this is a type 1 channel
+         * MC12b channel type — see MC12B_CHANNEL_TYPE_* defines below.
+         *   1 = dedicated module (ch 4/8/10/12/14 on NQ1, fast)
+         *   2 = shared MODULE7 mux (sequential scan, ~1 kHz max)
          */
         uint8_t ChannelType;
 
@@ -158,6 +160,10 @@ extern "C" {
          */
         double TempReferenceC;
     } MC12bChannelConfig;
+
+    /** MC12bChannelConfig::ChannelType values (#232). */
+    #define MC12B_CHANNEL_TYPE_DEDICATED  1  /**< Dedicated module — fast (T1) */
+    #define MC12B_CHANNEL_TYPE_MUXED      2  /**< Shared MODULE7 mux — ~1 kHz cap (T2) */
 
     /**
      * Holds intrinsic channel information for an AD7609-backed channel

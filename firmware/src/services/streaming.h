@@ -55,6 +55,14 @@ extern "C" {
 #define STREAMING_TICK_BUDGET       110000
 #define STREAMING_TICK_OVERHEAD     6
 
+// Type 2 (shared MODULE7 mux) hard cap.  T2 channels are scanned via the
+// analog multiplexer sequentially; the firmware applies
+// ChannelScanFreqDiv = freq/1000 in SCPI_StartStreaming so the muxed scan
+// rate stays at 1 kHz regardless of timer rate.  When BENCHMARK_OFF, any
+// freq > this constant with T2 channels enabled is rejected up-front
+// instead of being silently throttled (#232).
+#define STREAMING_MUXED_CAP_HZ      1000
+
 /**
  * Compute maximum safe streaming frequency for a given channel configuration.
  * Uses three-constraint model validated against empirical benchmark data.
