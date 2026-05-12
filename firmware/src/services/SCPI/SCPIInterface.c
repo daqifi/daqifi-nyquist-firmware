@@ -2485,6 +2485,42 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
         // Bypass cap in benchmark mode to measure pure interface throughput.
         if (Streaming_GetBenchmarkMode() == BENCHMARK_OFF) {
+            // #232: reject up-front when any Type 2 (muxed) MC12b channel is
+            // enabled and the requested freq would silently cap the muxed
+            // scan rate.  The firmware always sets
+            //   ChannelScanFreqDiv = freq / 1000 (when freq > 1000)
+            // so T2 channels sample at most 1 kHz regardless of timer rate.
+            // Pre-#232 we silently throttled — user saw "5 kHz streaming"
+            // but T2 data was 1 kHz.  Now we surface that as a SCPI error
+            // so the client can either reduce freq, disable T2 channels,
+            // or opt-in via SYST:STR:BENCHmark (which bypasses the check
+            // since benchmarks intentionally measure timer-rate throughput).
+            if (freq > (int32_t)STREAMING_MUXED_CAP_HZ) {
+                bool hasMuxed = false;
+                volatile AInRuntimeArray* rt = (volatile AInRuntimeArray*)pRuntimeAInChannels;
+                volatile AInArray* cfg = (volatile AInArray*)pBoardConfigADC;
+                size_t cnt = (cfg->Size < rt->Size) ? cfg->Size : rt->Size;
+                for (size_t i = 0; i < cnt; i++) {
+                    if (rt->Data[i].IsEnabled != 1) continue;
+                    if (cfg->Data[i].Type != AIn_MC12bADC) continue;
+                    if (!cfg->Data[i].Config.MC12b.IsPublic) continue;
+                    if (cfg->Data[i].Config.MC12b.ChannelType == 2) {
+                        hasMuxed = true;
+                        break;
+                    }
+                }
+                if (hasMuxed) {
+                    LOG_I("Streaming rejected: T2 channels max %u Hz (requested %d Hz)",
+                          (unsigned)STREAMING_MUXED_CAP_HZ, (int)freq);
+                    static char muxedErrMsg[] =
+                        "T2 (muxed) channels cap at 1000 Hz; reduce freq, "
+                        "disable T2 channels, or use SYST:STR:BENCHmark to bypass";
+                    SCPI_ErrorPushEx(context, SCPI_ERROR_SETTINGS_CONFLICT,
+                                     muxedErrMsg, sizeof(muxedErrMsg) - 1);
+                    return SCPI_RES_ERR;
+                }
+            }
+
             uint32_t maxFreq = Streaming_ComputeMaxFreq(
                 activeType1ChannelCount, totalEnabledPublicChannels);
             if (freq > (int32_t)maxFreq) {
