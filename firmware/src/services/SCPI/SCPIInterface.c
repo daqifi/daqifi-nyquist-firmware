@@ -2504,7 +2504,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                     if (rt->Data[i].IsEnabled != 1) continue;
                     if (cfg->Data[i].Type != AIn_MC12bADC) continue;
                     if (!cfg->Data[i].Config.MC12b.IsPublic) continue;
-                    if (cfg->Data[i].Config.MC12b.ChannelType == 2) {
+                    if (cfg->Data[i].Config.MC12b.ChannelType == MC12B_CHANNEL_TYPE_MUXED) {
                         hasMuxed = true;
                         break;
                     }
@@ -2512,11 +2512,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 if (hasMuxed) {
                     LOG_I("Streaming rejected: T2 channels max %u Hz (requested %d Hz)",
                           (unsigned)STREAMING_MUXED_CAP_HZ, (int)freq);
-                    static char muxedErrMsg[] =
-                        "T2 (muxed) channels cap at 1000 Hz; reduce freq, "
-                        "disable T2 channels, or use SYST:STR:BENCHmark to bypass";
+                    /* Stringify STREAMING_MUXED_CAP_HZ into the user-facing
+                     * error so the message stays in sync if the constant
+                     * ever changes (#449 Qodo r2 finding). */
+                    #define MUXED_CAP_STR_HELPER(x) #x
+                    #define MUXED_CAP_STR(x) MUXED_CAP_STR_HELPER(x)
+                    static const char muxedErrMsg[] =
+                        "T2 (muxed) channels cap at " MUXED_CAP_STR(STREAMING_MUXED_CAP_HZ)
+                        " Hz; reduce freq, disable T2 channels, or use "
+                        "SYST:STR:BENCHmark to bypass";
+                    #undef MUXED_CAP_STR
+                    #undef MUXED_CAP_STR_HELPER
                     SCPI_ErrorPushEx(context, SCPI_ERROR_SETTINGS_CONFLICT,
-                                     muxedErrMsg, sizeof(muxedErrMsg) - 1);
+                                     (char *)muxedErrMsg, sizeof(muxedErrMsg) - 1);
                     return SCPI_RES_ERR;
                 }
             }
