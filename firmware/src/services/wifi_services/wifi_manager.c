@@ -150,11 +150,15 @@ static volatile uint8_t gLastRssiPercentage = 0;
 // "Disconnected" / SSIDStr=0 even though pings + iperf2 work fine.
 // Every ~5 s, when the flag looks drifted (STA_STARTED set, valid
 // assocHandle, but STA_CONNECTED cleared), fire an async RSSI probe.
-// If the chip responds, RssiEventCallback repairs the flag.  No work
-// happens when the flag is in sync, so the overhead is zero in the
-// healthy case.
+// If the chip responds, the RssiEventCallback signals via
+// gStaReconcilePending and the next ProcessStateImpl pump applies
+// SetEventFlag(STA_CONNECTED) from task context — same writer as
+// every other eventFlags mutation (Qodo data-race finding).
+// No work happens when the flag is in sync, so the overhead is zero
+// in the healthy case.
 #define WIFI_STA_RECONCILE_PERIOD_TICKS  pdMS_TO_TICKS(5000)
 static volatile TickType_t gStaReconcileLastTick = 0;
+static volatile bool gStaReconcilePending = false;
 
 // Apply-in-progress gate (#425).
 // Set true under taskENTER_CRITICAL by wifi_manager_UpdateNetworkSettings
@@ -268,14 +272,14 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
         gRssiUpdatePending = false;
     }
     // #382 sub-bug 1: chip confirmed it's associated to the BSS we know
-    // about (assocHandle matched above), so STA_CONNECTED must be true.
-    // If our event flag drifted (chip silently re-associated without
-    // firing CONN_STATE_CHANGED — e.g. AP rekey, brief deauth handled
-    // by chip itself), repair it here.  This is the response side of
-    // MaybeReconcileStaConnected — every successful RSSI callback
-    // self-repairs the flag.
-    gStateMachineContext.eventFlags.value |=
-            WIFI_MANAGER_STATE_FLAG_STA_CONNECTED;
+    // about (assocHandle matched above) — signal the next ProcessState
+    // pump to repair STA_CONNECTED if it drifted.  Don't touch
+    // eventFlags here: this callback runs from WDRV_WINC_Tasks
+    // (priority 2, same as app_WifiTask, time-sliced), and existing
+    // SetEventFlag/ResetEventFlag writers in task context are
+    // unprotected RMWs.  A direct |= here would race with those and
+    // could drop unrelated bits (Qodo #451 review).
+    gStaReconcilePending = true;
     taskEXIT_CRITICAL();
     // No logging in ISR/callback context - keep it minimal
 }
@@ -1964,6 +1968,29 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
 // response (chip confirms it knows about this assocHandle).  No-op when
 // the flag is in sync (the common case) — zero cost on a healthy link.
 static void MaybeReconcileStaConnected(void) {
+    // Phase 1: apply any pending repair signaled by RssiEventCallback.
+    // Snapshot+clear under critical section, then SetEventFlag from
+    // task context — single writer for eventFlags, no race with the
+    // other SetEventFlag/ResetEventFlag callers in this file.  Gate
+    // on STA_STARTED so an out-of-mode reconcile signal (e.g. RSSI
+    // callback racing a mode switch) can't set STA_CONNECTED in AP
+    // mode (where AP_STARTED is the active flag and STA bits are
+    // semantically wrong).
+    bool repairPending;
+    taskENTER_CRITICAL();
+    repairPending = gStaReconcilePending;
+    gStaReconcilePending = false;
+    taskEXIT_CRITICAL();
+    if (repairPending &&
+        GetEventFlagStatus(gStateMachineContext.eventFlags,
+                           WIFI_MANAGER_STATE_FLAG_STA_STARTED) &&
+        !GetEventFlagStatus(gStateMachineContext.eventFlags,
+                            WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+        SetEventFlag(&gStateMachineContext.eventFlags,
+                     WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+    }
+
+    // Phase 2: probe the chip if the flag still looks drifted.
     if (gStateMachineContext.assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
         return;
     }
