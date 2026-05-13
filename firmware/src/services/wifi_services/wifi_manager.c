@@ -142,6 +142,20 @@ static SemaphoreHandle_t gProcessStateMutex = NULL;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
+// #382 sub-bug 1 — STA_CONNECTED reconciliation.
+// The flag is event-driven (set by StaEventCallback on CONN_STATE_CHANGED).
+// If the chip silently re-associates (AP rekey, brief deauth handled
+// internally) without firing a CONN_STATE_CHANGED up to our callback,
+// the flag stays cleared while the TCP stack is healthy — user sees
+// "Disconnected" / SSIDStr=0 even though pings + iperf2 work fine.
+// Every ~5 s, when the flag looks drifted (STA_STARTED set, valid
+// assocHandle, but STA_CONNECTED cleared), fire an async RSSI probe.
+// If the chip responds, RssiEventCallback repairs the flag.  No work
+// happens when the flag is in sync, so the overhead is zero in the
+// healthy case.
+#define WIFI_STA_RECONCILE_PERIOD_TICKS  pdMS_TO_TICKS(5000)
+static volatile TickType_t gStaReconcileLastTick = 0;
+
 // Apply-in-progress gate (#425).
 // Set true under taskENTER_CRITICAL by wifi_manager_UpdateNetworkSettings
 // when a REINIT is about to be queued; cleared when the state machine
@@ -253,6 +267,15 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
         gRssiUpdateComplete = true;
         gRssiUpdatePending = false;
     }
+    // #382 sub-bug 1: chip confirmed it's associated to the BSS we know
+    // about (assocHandle matched above), so STA_CONNECTED must be true.
+    // If our event flag drifted (chip silently re-associated without
+    // firing CONN_STATE_CHANGED — e.g. AP rekey, brief deauth handled
+    // by chip itself), repair it here.  This is the response side of
+    // MaybeReconcileStaConnected — every successful RSSI callback
+    // self-repairs the flag.
+    gStateMachineContext.eventFlags.value |=
+            WIFI_MANAGER_STATE_FLAG_STA_CONNECTED;
     taskEXIT_CRITICAL();
     // No logging in ISR/callback context - keep it minimal
 }
@@ -1934,6 +1957,42 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
     return wifi_tcp_server_WriteBuffer(pData, len);
 }
 
+// #382 sub-bug 1: periodically reconcile STA_CONNECTED with chip reality.
+// Fires an async RSSI probe at most once per WIFI_STA_RECONCILE_PERIOD_TICKS
+// when STA is started, an association handle is valid, but our flag says
+// disconnected.  The RssiEventCallback repairs the flag on a successful
+// response (chip confirms it knows about this assocHandle).  No-op when
+// the flag is in sync (the common case) — zero cost on a healthy link.
+static void MaybeReconcileStaConnected(void) {
+    if (gStateMachineContext.assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
+        return;
+    }
+    if (!GetEventFlagStatus(gStateMachineContext.eventFlags,
+                            WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+        return;
+    }
+    if (GetEventFlagStatus(gStateMachineContext.eventFlags,
+                           WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+        return;  // flag is in sync — nothing to do
+    }
+    TickType_t now = xTaskGetTickCount();
+    // Rate-limit using elapsed delta, not absolute compare — avoids tick
+    // wraparound bugs (~50 days on 1 kHz tick, but a robust pattern is
+    // cheap and matches the deadline math used elsewhere in this file).
+    if ((TickType_t)(now - gStaReconcileLastTick) < WIFI_STA_RECONCILE_PERIOD_TICKS) {
+        return;
+    }
+    gStaReconcileLastTick = now;
+    // Fire-and-forget probe.  If the chip responds (cached or retry-
+    // request), RssiEventCallback runs and sets STA_CONNECTED.  If the
+    // chip is genuinely disconnected, the driver call may return an
+    // error or simply never fire the callback — both leave the flag
+    // cleared, which is the correct state.
+    int8_t rssi;
+    (void)WDRV_WINC_AssocRSSIGet(gStateMachineContext.assocHandle, &rssi,
+                                 RssiEventCallback);
+}
+
 // Internal worker for both ProcessState entry points.  drainTcpRx=true
 // is the normal WifiTask path (drains deferred TCP rx and re-arms recv).
 // drainTcpRx=false is the SCPI active-pump path: it drives WiFi
@@ -2025,6 +2084,10 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
         // LOG_E does its own queue work — keep it outside the critical section.
         LOG_E("APPLY gate safety release after %u ms", (unsigned)WIFI_APPLY_GATE_TIMEOUT_MS);
     }
+
+    // #382 sub-bug 1 — repair STA_CONNECTED flag if it drifted from chip
+    // reality.  Runs at most every WIFI_STA_RECONCILE_PERIOD_TICKS.
+    MaybeReconcileStaConnected();
 
     wifi_tcp_server_TransmitBufferedData();
 
