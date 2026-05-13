@@ -1991,6 +1991,16 @@ static void MaybeReconcileStaConnected(void) {
     }
 
     // Phase 2: probe the chip if the flag still looks drifted.
+    // Skip the probe during APPLY/REINIT teardown: the flag-clear sequence
+    // in the divert-to-HardReset path (STA_CONNECTED before STA_STARTED)
+    // is preemptable at a tick boundary, so we could observe STA_STARTED
+    // still set with a stale gStateMachineContext.assocHandle.  Driving a
+    // WDRV_WINC_AssocRSSIGet against a handle the driver no longer
+    // recognises could trigger an assertion in the chip-state machine
+    // (Qodo #451 pass 2 finding, importance 8).
+    if (gApplyInProgress || IsWithinApplyTeardownWindow()) {
+        return;
+    }
     if (gStateMachineContext.assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
         return;
     }
