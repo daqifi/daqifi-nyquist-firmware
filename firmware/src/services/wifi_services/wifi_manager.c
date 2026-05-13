@@ -159,6 +159,16 @@ static volatile uint8_t gLastRssiPercentage = 0;
 #define WIFI_STA_RECONCILE_PERIOD_TICKS  pdMS_TO_TICKS(5000)
 static volatile TickType_t gStaReconcileLastTick = 0;
 static volatile bool gStaReconcilePending = false;
+// Captured at the same moment as gStaReconcilePending in RssiEventCallback.
+// Phase 1 of MaybeReconcileStaConnected validates that the live
+// gStateMachineContext.assocHandle still equals this snapshot before
+// setting STA_CONNECTED — guards against the disconnect race where
+// StaEventCallback clears assocHandle between the RSSI callback and
+// the next ProcessState pump.  Without this check, a stale repair
+// could promote a now-disconnected chip back to CONNECTED state
+// (Qodo #451 pass 3 finding, observed on bench 2026-05-13 as
+// "ADDR=192.168.1.160 RSSI=92 but device unreachable from network").
+static volatile WDRV_WINC_ASSOC_HANDLE gStaReconcilePendingHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
 
 // Apply-in-progress gate (#425).
 // Set true under taskENTER_CRITICAL by wifi_manager_UpdateNetworkSettings
@@ -279,6 +289,14 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
     // SetEventFlag/ResetEventFlag writers in task context are
     // unprotected RMWs.  A direct |= here would race with those and
     // could drop unrelated bits (Qodo #451 review).
+    //
+    // Capture the assocHandle alongside the pending flag so Phase 1
+    // can detect a disconnect race: if StaEventCallback clears
+    // gStateMachineContext.assocHandle between this point and the
+    // next ProcessState pump, the snapshot vs live compare in Phase 1
+    // will mismatch and the repair will be skipped (Qodo #451 pass 3
+    // "Stale reconcile sets connected" finding).
+    gStaReconcilePendingHandle = assocHandle;
     gStaReconcilePending = true;
     taskEXIT_CRITICAL();
     // No logging in ISR/callback context - keep it minimal
@@ -1969,25 +1987,39 @@ size_t wifi_manager_WriteToBuffer(const char* pData, size_t len) {
 // the flag is in sync (the common case) — zero cost on a healthy link.
 static void MaybeReconcileStaConnected(void) {
     // Phase 1: apply any pending repair signaled by RssiEventCallback.
-    // Snapshot+clear under critical section, then SetEventFlag from
-    // task context — single writer for eventFlags, no race with the
-    // other SetEventFlag/ResetEventFlag callers in this file.  Gate
-    // on STA_STARTED so an out-of-mode reconcile signal (e.g. RSSI
-    // callback racing a mode switch) can't set STA_CONNECTED in AP
-    // mode (where AP_STARTED is the active flag and STA bits are
-    // semantically wrong).
+    // Snapshot+clear pending state + handle atomically under a critical
+    // section.  The handle snapshot guards against the disconnect race:
+    // if StaEventCallback cleared assocHandle between the RSSI callback
+    // and now, the snapshot won't match the live handle and we skip
+    // the repair (otherwise we'd set STA_CONNECTED on a disconnected
+    // chip, misreporting status to userspace).  Gate on STA_STARTED so
+    // an out-of-mode signal can't promote into AP mode where AP_STARTED
+    // is the active flag.
+    //
+    // The SetEventFlag call itself is wrapped in a critical section to
+    // satisfy the PIC32MZ atomicity rule (CLAUDE.md: "RMW |= needs
+    // critical section") — the value |= flag inside SetEventFlag is
+    // a non-atomic RMW shared with other task-context writers in this
+    // file.  Qodo #451 pass 3 findings.
     bool repairPending;
+    WDRV_WINC_ASSOC_HANDLE pendingHandle;
     taskENTER_CRITICAL();
     repairPending = gStaReconcilePending;
+    pendingHandle = gStaReconcilePendingHandle;
     gStaReconcilePending = false;
+    gStaReconcilePendingHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
     taskEXIT_CRITICAL();
     if (repairPending &&
+        pendingHandle != WDRV_WINC_ASSOC_HANDLE_INVALID &&
+        gStateMachineContext.assocHandle == pendingHandle &&
         GetEventFlagStatus(gStateMachineContext.eventFlags,
                            WIFI_MANAGER_STATE_FLAG_STA_STARTED) &&
         !GetEventFlagStatus(gStateMachineContext.eventFlags,
                             WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+        taskENTER_CRITICAL();
         SetEventFlag(&gStateMachineContext.eventFlags,
                      WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+        taskEXIT_CRITICAL();
     }
 
     // Phase 2: probe the chip if the flag still looks drifted.
