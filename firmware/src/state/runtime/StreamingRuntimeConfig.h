@@ -33,10 +33,16 @@ extern "C" {
         bool IsEnabled;
         
         /**
-         * Indicates whether the alarm has been registered
-         * TODO: This probably belongs in 'Data'
+         * Indicates whether the streaming timer is actually ticking.
+         * Written by streaming.c (Streaming_Start sets, Streaming_Stop
+         * clears) and read by ADC.c:129 (EOS deferred task, pri 9),
+         * SCPIInterface/SCPIADC (USB pri 7 / WiFi pri 2).  Marked
+         * volatile so -O3 cannot cache reads across loop iterations
+         * or function-call boundaries — per CLAUDE.md PIC32MZ
+         * cross-context atomicity rules (32-bit RW atomic but
+         * volatile needed for visibility).
          */
-        bool Running;
+        volatile bool Running;
         
         /**
          * The base clock divider
