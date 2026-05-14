@@ -27,7 +27,13 @@ trap 'rm -f "$TMP_OUT"' EXIT
 # `-j N`, but the LC_ALL=C sort below normalizes ordering — so parallel
 # + sort produces exactly the same baseline as single-threaded + sort.
 # Override with CPPCHECK_JOBS env var when bisecting an ordering oddity.
+# Validate: cppcheck rejects non-positive / non-numeric values with a
+# generic argument error; reject early with a clear message instead.
 JOBS="${CPPCHECK_JOBS:-$(nproc 2>/dev/null || echo 1)}"
+if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "::error::CPPCHECK_JOBS must be a positive integer, got: '$JOBS'" >&2
+  exit 2
+fi
 
 # `if !` so set -e doesn't abort on cppcheck failure; we want to surface
 # cppcheck's own error output (which goes to TMP_OUT via stderr) before
