@@ -147,7 +147,11 @@ static volatile TickType_t gTransportDownSinceSd = 0;
 #define TRANSPORT_GRACE_DEFAULT_SEC 60
 #define TRANSPORT_GRACE_MIN_SEC     5
 #define TRANSPORT_GRACE_MAX_SEC     300
-static uint32_t gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
+// volatile: written by SCPI callback context (USBDeviceTask pri 7 or
+// app_WifiTask pri 2) and read by streaming_Task (pri 6) every iteration.
+// 32-bit write/read is atomic on PIC32MZ; volatile prevents -O3 caching
+// the value across the streaming task's tight loop.
+static volatile uint32_t gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
 
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
@@ -989,9 +993,14 @@ static void Streaming_Stop(void) {
                         gStreamStats.encoderFailures > 0 ||
                         gStreamStats.dioDroppedSamples > 0 ||
                         gStreamStats.eosOverruns > 0;
-        // Clear QUES condition bits so they don't persist after streaming ends.
-        // Stats remain available via SYST:STR:STATS? until next session.
-        gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
+        // Clear runtime overflow / data-loss condition bits — they refer to
+        // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
+        // (#397) because it captures the REASON streaming stopped; clearing
+        // it here would make the auto-stop bit unobservable via SCPI
+        // immediately after the stop.  It's cleared by Streaming_ClearStats
+        // at next session start, so STAT:QUES:COND? between auto-stop and
+        // next start correctly reports "transport down was the cause".
+        gQuesBits &= QUES_BIT_TRANSPORT_DOWN;  // keep only bit 12 if set
 
         if (hadDrops) {
             uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
@@ -1039,6 +1048,14 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gFlowWindowOverride = 0;
     gQuesBits = 0;
     gInTimerHandler = false;
+    /* #397 self-heal: defensive reset of transport-down trackers and the
+     * grace window. These live in retained-RAM along with the other
+     * file-statics; the static initializer values are not guaranteed to
+     * survive MCLR / IPE flash. */
+    gTransportDownSinceUsb = 0;
+    gTransportDownSinceWifi = 0;
+    gTransportDownSinceSd = 0;
+    gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
     /* buffer/bufferSize are file-statics that may also live in
      * retained-RAM. Reset before the `if (buffer == NULL)` guard
      * below so a stale non-NULL pointer doesn't skip the pool fetch. */
