@@ -826,16 +826,19 @@ static void Streaming_Start(void) {
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
-        TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
 
-        // Actually start the timer + flip Running only when streaming is
-        // truly enabled.  Streaming_Start runs at boot (via Streaming_
-        // UpdateState's unconditional Stop→Start cycle) with IsEnabled
-        // false; previously we set Running=1 anyway, which lied about
-        // the hardware state to every downstream consumer that checked
-        // `Running` alone (e.g. ADC.c:129, SCPIADC.c:64/439).  Now
-        // `Running` invariant: true iff the streaming timer is actually
-        // ticking — see #379.
+        // Arm the timer ISR + start the timer + flip Running only when
+        // streaming is truly enabled.  Streaming_Start runs at boot via
+        // Streaming_UpdateState's unconditional Stop→Start cycle with
+        // IsEnabled=false; pre-fix this set Running=1 unconditionally,
+        // lying about hardware state to every consumer checking `Running`
+        // alone (HAL/ADC.c:129, SCPIInterface.c:1916 "streaming already
+        // active" guard, SCPIADC.c:64/439).  Now the invariant: Running
+        // == true iff the timer is actually ticking — see #379.
+        // InterruptEnable was previously also unconditional; moving it
+        // inside the gate keeps it symmetric with Streaming_Stop's
+        // TimerApi_InterruptDisable (which only fires when Running was
+        // true), so the timer ISR is never armed-without-source.
         if (gpRuntimeConfigStream->IsEnabled) {
             // Enable hardware ADC triggering only when actually streaming.
             // Streaming_Start runs at boot before ADC_Init — must not
@@ -852,6 +855,7 @@ static void Streaming_Start(void) {
             // is handled in the task body (skips monitoring reads when
             // Running && !OnboardDiagEnabled).
 
+            TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
             TimerApi_Start(gpStreamingConfig->TimerIndex);
             gpRuntimeConfigStream->Running = 1;
         }
