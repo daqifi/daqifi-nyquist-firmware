@@ -1000,7 +1000,12 @@ static void Streaming_Stop(void) {
         // immediately after the stop.  It's cleared by Streaming_ClearStats
         // at next session start, so STAT:QUES:COND? between auto-stop and
         // next start correctly reports "transport down was the cause".
-        gQuesBits &= QUES_BIT_TRANSPORT_DOWN;  // keep only bit 12 if set
+        // RMW (`&=`) needs taskENTER_CRITICAL per the CLAUDE.md atomicity
+        // rules — gQuesBits is also `|=`'d by the deferred ISR task and
+        // streaming task at the overflow sites.
+        taskENTER_CRITICAL();
+        gQuesBits &= QUES_BIT_TRANSPORT_DOWN;
+        taskEXIT_CRITICAL();
 
         if (hadDrops) {
             uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
