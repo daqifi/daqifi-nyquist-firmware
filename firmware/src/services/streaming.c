@@ -860,9 +860,15 @@ static void Streaming_Start(void) {
             // is handled in the task body (skips monitoring reads when
             // Running && !OnboardDiagEnabled).
 
+            // Order matters: set Running=1 BEFORE arming the IRQ and
+            // starting the timer, so any ISR firing on the first tick
+            // sees Running=true.  Streaming_TimerHandler itself gates on
+            // IsEnabled (not Running) so this only matters for async
+            // consumers (HAL/ADC.c:129) that could otherwise momentarily
+            // see Running=0 while the timer is already firing.
+            gpRuntimeConfigStream->Running = 1;
             TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
             TimerApi_Start(gpStreamingConfig->TimerIndex);
-            gpRuntimeConfigStream->Running = 1;
         }
     }
 }
