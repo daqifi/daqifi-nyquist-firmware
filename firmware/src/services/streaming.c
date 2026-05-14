@@ -101,6 +101,7 @@ static void Streaming_UpdateFlowWindow(bool dropped);
 #define QUES_BIT_WIFI_OVERFLOW (1 << 9)  // Bit 9: WiFi buffer overflow
 #define QUES_BIT_SD_OVERFLOW  (1 << 10)  // Bit 10: SD write failure
 #define QUES_BIT_ENCODER_FAIL (1 << 11)  // Bit 11: Encoder failure
+#define QUES_BIT_TRANSPORT_DOWN (1 << 12) // Bit 12: all configured transports down >grace (auto-stop fired)
 
 #define FLOW_WINDOW_MIN   20
 #define FLOW_WINDOW_MAX   10000
@@ -131,6 +132,26 @@ static uint32_t gFlowWindowOverride = 0;  // 0 = auto
 // SCPI tasks. Critical sections protect the RMW; volatile prevents -O3 from
 // caching the value across loop iterations / function calls.
 static volatile uint32_t gQuesBits = 0;
+
+// #397 Self-heal transport tracking.  Per-transport tick of "first observed
+// unhealthy"; 0 = healthy.  Once (now - downSince) exceeds the grace window,
+// the transport is considered dead.  If every transport in ActiveInterface
+// is dead at the same time, streaming auto-stops with QUES_BIT_TRANSPORT_DOWN.
+// Transient blips (router hiccup, brief USB unenum) ride out and recover.
+// Per-transport overflow QUES bits (USB/WiFi/SD) still fire as before for
+// pre-grace drops.  Only written from streaming_Task; volatile so external
+// debug reads via JTAG see the live value.
+static volatile TickType_t gTransportDownSinceUsb = 0;
+static volatile TickType_t gTransportDownSinceWifi = 0;
+static volatile TickType_t gTransportDownSinceSd = 0;
+#define TRANSPORT_GRACE_DEFAULT_SEC 60
+#define TRANSPORT_GRACE_MIN_SEC     5
+#define TRANSPORT_GRACE_MAX_SEC     300
+// volatile: written by SCPI callback context (USBDeviceTask pri 7 or
+// app_WifiTask pri 2) and read by streaming_Task (pri 6) every iteration.
+// 32-bit write/read is atomic on PIC32MZ; volatile prevents -O3 caching
+// the value across the streaming task's tight loop.
+static volatile uint32_t gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
 
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
@@ -850,7 +871,96 @@ static void Streaming_Start(void) {
     }
 }
 
-/*! 
+/*!
+ * #397 Self-heal: check the health of every transport selected by
+ * ActiveInterface.  Returns true if every configured transport has been
+ * unhealthy for longer than the grace window (auto-stop trigger);
+ * returns false otherwise.  Recovered transports clear their down-since
+ * counter and log a recovery line.
+ */
+static bool Streaming_AllConfiguredTransportsDead(StreamingRuntimeConfig *cfg) {
+    TickType_t now = xTaskGetTickCount();
+    TickType_t graceTicks = pdMS_TO_TICKS((TickType_t)gTransportGraceSec * 1000U);
+    bool wantUsb = (cfg->ActiveInterface == StreamingInterface_USB ||
+                    cfg->ActiveInterface == StreamingInterface_UsbAndSd);
+    bool wantWifi = (cfg->ActiveInterface == StreamingInterface_WiFi);
+    bool wantSd  = (cfg->ActiveInterface == StreamingInterface_SD ||
+                    cfg->ActiveInterface == StreamingInterface_UsbAndSd);
+
+    bool usbDead = false, wifiDead = false, sdDead = false;
+
+    if (wantUsb) {
+        if (UsbCdc_IsConfigured()) {
+            if (gTransportDownSinceUsb != 0) {
+                LOG_I("Streaming: USB transport recovered");
+                gTransportDownSinceUsb = 0;
+            }
+        } else {
+            if (gTransportDownSinceUsb == 0) {
+                // Use 1 as "armed" sentinel to disambiguate from 0=healthy.
+                gTransportDownSinceUsb = (now == 0) ? 1 : now;
+            }
+            usbDead = ((now - gTransportDownSinceUsb) >= graceTicks);
+        }
+    } else {
+        gTransportDownSinceUsb = 0;
+    }
+
+    if (wantWifi) {
+        if (wifi_manager_IsWiFiConnected()) {
+            if (gTransportDownSinceWifi != 0) {
+                LOG_I("Streaming: WiFi transport recovered");
+                gTransportDownSinceWifi = 0;
+            }
+        } else {
+            if (gTransportDownSinceWifi == 0) {
+                gTransportDownSinceWifi = (now == 0) ? 1 : now;
+            }
+            wifiDead = ((now - gTransportDownSinceWifi) >= graceTicks);
+        }
+    } else {
+        gTransportDownSinceWifi = 0;
+    }
+
+    if (wantSd) {
+        if (sd_card_manager_IsWriteReady()) {
+            if (gTransportDownSinceSd != 0) {
+                LOG_I("Streaming: SD transport recovered");
+                gTransportDownSinceSd = 0;
+            }
+        } else {
+            if (gTransportDownSinceSd == 0) {
+                gTransportDownSinceSd = (now == 0) ? 1 : now;
+            }
+            sdDead = ((now - gTransportDownSinceSd) >= graceTicks);
+        }
+    } else {
+        gTransportDownSinceSd = 0;
+    }
+
+    bool anyConfigured = wantUsb || wantWifi || wantSd;
+    if (!anyConfigured) return false;
+
+    bool allDead = true;
+    if (wantUsb)  allDead = allDead && usbDead;
+    if (wantWifi) allDead = allDead && wifiDead;
+    if (wantSd)   allDead = allDead && sdDead;
+    return allDead;
+}
+
+uint32_t Streaming_GetTransportGraceSec(void) {
+    return gTransportGraceSec;
+}
+
+bool Streaming_SetTransportGraceSec(uint32_t sec) {
+    if (sec < TRANSPORT_GRACE_MIN_SEC || sec > TRANSPORT_GRACE_MAX_SEC) {
+        return false;
+    }
+    gTransportGraceSec = sec;
+    return true;
+}
+
+/*!
  * Stops the streaming timer
  */
 static void Streaming_Stop(void) {
@@ -883,9 +993,19 @@ static void Streaming_Stop(void) {
                         gStreamStats.encoderFailures > 0 ||
                         gStreamStats.dioDroppedSamples > 0 ||
                         gStreamStats.eosOverruns > 0;
-        // Clear QUES condition bits so they don't persist after streaming ends.
-        // Stats remain available via SYST:STR:STATS? until next session.
-        gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
+        // Clear runtime overflow / data-loss condition bits — they refer to
+        // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
+        // (#397) because it captures the REASON streaming stopped; clearing
+        // it here would make the auto-stop bit unobservable via SCPI
+        // immediately after the stop.  It's cleared by Streaming_ClearStats
+        // at next session start, so STAT:QUES:COND? between auto-stop and
+        // next start correctly reports "transport down was the cause".
+        // RMW (`&=`) needs taskENTER_CRITICAL per the CLAUDE.md atomicity
+        // rules — gQuesBits is also `|=`'d by the deferred ISR task and
+        // streaming task at the overflow sites.
+        taskENTER_CRITICAL();
+        gQuesBits &= QUES_BIT_TRANSPORT_DOWN;
+        taskEXIT_CRITICAL();
 
         if (hadDrops) {
             uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
@@ -933,6 +1053,14 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gFlowWindowOverride = 0;
     gQuesBits = 0;
     gInTimerHandler = false;
+    /* #397 self-heal: defensive reset of transport-down trackers and the
+     * grace window. These live in retained-RAM along with the other
+     * file-statics; the static initializer values are not guaranteed to
+     * survive MCLR / IPE flash. */
+    gTransportDownSinceUsb = 0;
+    gTransportDownSinceWifi = 0;
+    gTransportDownSinceSd = 0;
+    gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
     /* buffer/bufferSize are file-statics that may also live in
      * retained-RAM. Reset before the `if (buffer == NULL)` guard
      * below so a stale non-NULL pointer doesn't skip the pool fetch. */
@@ -1022,6 +1150,11 @@ void Streaming_ClearStats(void) {
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gQuesBits = 0;
+    // #397 reset per-transport down-since trackers so a new session starts
+    // with every transport considered healthy, regardless of pre-session state.
+    gTransportDownSinceUsb = 0;
+    gTransportDownSinceWifi = 0;
+    gTransportDownSinceSd = 0;
     Logger_ResetSessionOneShots();
     taskEXIT_CRITICAL();
     // NOTE: Pool max-used is NOT reset here — it persists across sessions
@@ -1167,6 +1300,22 @@ void streaming_Task(void) {
         // Don't process data or update QUES bits after streaming stops.
         // A notification may already be pending when Stop clears gQuesBits.
         if (!pRunTimeStreamConf->IsEnabled) {
+            continue;
+        }
+
+        // #397 self-heal check: if every configured transport has been
+        // down for longer than the grace window, auto-stop the stream
+        // and surface the reason via QUES bit 12 + LOG_E.  Individual
+        // overflow bits (USB/WiFi/SD) still fire pre-grace for transient
+        // drops — this only fires when nothing is consuming our data.
+        if (Streaming_AllConfiguredTransportsDead(pRunTimeStreamConf)) {
+            taskENTER_CRITICAL();
+            gQuesBits |= QUES_BIT_TRANSPORT_DOWN;
+            taskEXIT_CRITICAL();
+            LOG_E("Streaming: all configured transports down >%u s — auto-stop",
+                  (unsigned)gTransportGraceSec);
+            pRunTimeStreamConf->IsEnabled = false;
+            Streaming_Stop();
             continue;
         }
 
