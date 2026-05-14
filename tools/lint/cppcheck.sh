@@ -29,11 +29,17 @@ trap 'rm -f "$TMP_OUT"' EXIT
 # Override with CPPCHECK_JOBS env var when bisecting an ordering oddity.
 # Validate: cppcheck rejects non-positive / non-numeric values with a
 # generic argument error; reject early with a clear message instead.
-JOBS="${CPPCHECK_JOBS:-$(nproc 2>/dev/null || echo 1)}"
-if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "::error::CPPCHECK_JOBS must be a positive integer, got: '$JOBS'" >&2
-  exit 2
-fi
+JOBS="${CPPCHECK_JOBS:-$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}"
+case "$JOBS" in
+  ''|*[!0-9]*)
+    echo "::error::CPPCHECK_JOBS must be a positive integer, got: '$JOBS'" >&2
+    exit 2
+    ;;
+  0)
+    echo "::error::CPPCHECK_JOBS must be > 0, got: '$JOBS'" >&2
+    exit 2
+    ;;
+esac
 
 # `if !` so set -e doesn't abort on cppcheck failure; we want to surface
 # cppcheck's own error output (which goes to TMP_OUT via stderr) before
