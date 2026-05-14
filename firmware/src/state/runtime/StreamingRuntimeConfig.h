@@ -40,9 +40,12 @@ extern "C" {
          * volatile so -O3 cannot cache reads across loop iterations
          * or function-call boundaries — per CLAUDE.md PIC32MZ
          * cross-context atomicity rules (32-bit RW atomic but
-         * volatile needed for visibility).
+         * volatile needed for visibility).  Type widened to uint32_t per
+         * the bus-native-width convention used by the other cross-context
+         * shared flags (gQuesBits in streaming.c): single-instruction
+         * load/store on PIC32MZ, no sub-word zero-extend overhead.
          */
-        volatile bool Running;
+        volatile uint32_t Running;
         
         /**
          * The base clock divider
