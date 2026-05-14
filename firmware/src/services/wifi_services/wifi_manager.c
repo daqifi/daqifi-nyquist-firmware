@@ -443,9 +443,28 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             if (NULL != pAcceptMessage) {
                 char s[20];
                 (void)s;  // May be unused when LOG_D is disabled
-                if (gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) // close any open client (only one client supported at one time)
-                {
-                    wifi_tcp_server_CloseClientSocket();
+                // One client per port.  If a client is already
+                // connected, refuse the new connection by shutting
+                // down the just-accept'd socket — NOT the active
+                // client's socket.  The existing client keeps
+                // streaming intact.
+                //
+                // Why not close the active client like we used to:
+                // that path called shutdown() on the streaming socket
+                // from this WDRV_WINC_Tasks callback context while the
+                // streaming task was mid-send() on the same socket.
+                // The synchronous WINC HIF re-entrancy corrupted the
+                // chip state and wedged all TCP I/O until SYST:COMM:
+                // LAN:HRESet (or power-cycle in worse cases).  See
+                // #452.  The just-accept'd socket has no in-flight
+                // state on our side — no buffer, no send queue, no
+                // streaming task references — so a sync shutdown of
+                // it is safe (the WINC sends a RST to the new peer,
+                // no corruption of the active session).
+                if (gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
+                    LOG_I("TCP: refusing 2nd client on listen socket (one-client policy, #452)");
+                    shutdown(pAcceptMessage->sock);
+                    break;
                 }
                 gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
                 LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
