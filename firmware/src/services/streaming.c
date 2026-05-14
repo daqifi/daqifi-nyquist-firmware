@@ -826,6 +826,11 @@ static void Streaming_Start(void) {
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
+        // Harmony's TMRx_Initialize (e.g. plib_tmr4.c:80) sets the IEC bit
+        // as a side effect — disable it here so the InterruptEnable gate
+        // below is authoritative.  Without this defensive disable, the IRQ
+        // is armed at boot even though we gate TimerApi_Start on IsEnabled.
+        TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
 
         // Arm the timer ISR + start the timer + flip Running only when
         // streaming is truly enabled.  Streaming_Start runs at boot via
