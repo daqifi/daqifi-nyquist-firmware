@@ -463,7 +463,14 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // no corruption of the active session).
                 if (gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
                     LOG_I("TCP: refusing 2nd client on listen socket (one-client policy, #452)");
-                    shutdown(pAcceptMessage->sock);
+                    int8_t rc = shutdown(pAcceptMessage->sock);
+                    if (rc != SOCK_ERR_NO_ERROR) {
+                        // WINC shutdown() clears local socket state even on
+                        // HIF send failure (winc/drv/socket/socket.c:1012),
+                        // so we cannot retry — the WINC side may hold the
+                        // refused-client socket resource until next reset.
+                        LOG_E("TCP: shutdown(refused 2nd client sock=%d) failed rc=%d", pAcceptMessage->sock, rc);
+                    }
                     break;
                 }
                 gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
