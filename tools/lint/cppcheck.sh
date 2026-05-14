@@ -23,10 +23,29 @@ OUT="${1:-tools/lint/cppcheck-baseline.txt}"
 TMP_OUT="$(mktemp)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
+# Parallelism: cppcheck emits findings in non-deterministic order under
+# `-j N`, but the LC_ALL=C sort below normalizes ordering — so parallel
+# + sort produces exactly the same baseline as single-threaded + sort.
+# Override with CPPCHECK_JOBS env var when bisecting an ordering oddity.
+# Validate: cppcheck rejects non-positive / non-numeric values with a
+# generic argument error; reject early with a clear message instead.
+JOBS="${CPPCHECK_JOBS:-$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}"
+case "$JOBS" in
+  ''|*[!0-9]*)
+    echo "::error::CPPCHECK_JOBS must be a positive integer, got: '$JOBS'" >&2
+    exit 2
+    ;;
+  0)
+    echo "::error::CPPCHECK_JOBS must be > 0, got: '$JOBS'" >&2
+    exit 2
+    ;;
+esac
+
 # `if !` so set -e doesn't abort on cppcheck failure; we want to surface
 # cppcheck's own error output (which goes to TMP_OUT via stderr) before
 # exiting, otherwise CI just shows "step failed" with no diagnostic.
 if ! LC_ALL=C LANG=C cppcheck \
+  -j "$JOBS" \
   --quiet \
   --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
   --enable=warning,style,performance,portability \
@@ -54,9 +73,6 @@ if ! LC_ALL=C LANG=C cppcheck \
   cat "$TMP_OUT"
   exit 1
 fi
-# Note: no -j flag — parallel cppcheck emits findings in non-deterministic
-# order, which sort below would normalize anyway, but single-threaded is
-# also a belt-and-suspenders against any future ordering oddities.
 
 LC_ALL=C sort "$TMP_OUT" >"$OUT"
 
