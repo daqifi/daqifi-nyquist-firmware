@@ -70,8 +70,9 @@
 #define QUES_WIFI_OVERFLOW  (1 << 9)   // Bit 9: WiFi buffer overflow
 #define QUES_SD_OVERFLOW    (1 << 10)  // Bit 10: SD write failure
 #define QUES_ENCODER_FAIL   (1 << 11)  // Bit 11: Encoder failure
+#define QUES_TRANSPORT_DOWN (1 << 12)  // Bit 12: all configured transports down >grace (#397 auto-stop)
 #define QUES_ALL_BITS       (QUES_DATA_LOSS | QUES_USB_OVERFLOW | QUES_WIFI_OVERFLOW | \
-                             QUES_SD_OVERFLOW | QUES_ENCODER_FAIL)
+                             QUES_SD_OVERFLOW | QUES_ENCODER_FAIL | QUES_TRANSPORT_DOWN)
 
 #define UNUSED(x) (void)(x)
 //
@@ -2259,6 +2260,31 @@ static scpi_result_t SCPI_GetFlowWindow(scpi_t * context) {
 }
 
 /**
+ * #397 SYST:STReam:CONSumer:GRACe <sec> — grace window in seconds for the
+ * self-heal transport check.  Streaming auto-stops only when every
+ * configured transport (USB/WiFi/SD per ActiveInterface) has been
+ * unhealthy for longer than this window.  Range 5..300, default 60.
+ * Runtime-only.
+ */
+static scpi_result_t SCPI_SetTransportGrace(scpi_t * context) {
+    int32_t sec;
+    if (!SCPI_ParamInt32(context, &sec, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (sec < 5 || sec > 300) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    Streaming_SetTransportGraceSec((uint32_t)sec);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetTransportGrace(scpi_t * context) {
+    SCPI_ResultInt32(context, (int32_t)Streaming_GetTransportGraceSec());
+    return SCPI_RES_OK;
+}
+
+/**
  * STATus:QUEStionable:CONDition? wrapper that syncs streaming health
  * bits from the streaming engine before reading the register.
  */
@@ -4314,6 +4340,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:LOSS:THREshold?", .callback = SCPI_GetLossThreshold,},
     {.pattern = "SYSTem:STReam:LOSS:WINDow", .callback = SCPI_SetFlowWindow,},
     {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
+    {.pattern = "SYSTem:STReam:CONSumer:GRACe", .callback = SCPI_SetTransportGrace,},
+    {.pattern = "SYSTem:STReam:CONSumer:GRACe?", .callback = SCPI_GetTransportGrace,},
     {.pattern = "SYSTem:STReam:TEST:PATtern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
     {.pattern = "SYSTem:STReam:TEST:PATtern?", .callback = SCPI_GetTestPattern,},
     {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 0=normal, 1=nocap, 2=pipeline (skip ADC)

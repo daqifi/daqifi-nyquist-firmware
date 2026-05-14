@@ -185,12 +185,22 @@ void Streaming_IncrEosOverruns(uint32_t missed);
 /**
  * Returns current SCPI STATus:QUEStionable condition bits for streaming health.
  * Bit 4 = windowed sample loss >= threshold, Bit 8 = USB overflow,
- * Bit 9 = WiFi overflow, Bit 10 = SD overflow, Bit 11 = encoder failure.
+ * Bit 9 = WiFi overflow, Bit 10 = SD overflow, Bit 11 = encoder failure,
+ * Bit 12 = all-transports-down auto-stop (#397).
  * Definitions match QUES_* constants in SCPIInterface.c.
  * Called by SCPI_SyncQuesBits() in SCPIInterface.c before register queries.
  * Bits are cleared automatically when streaming stops.
  */
 uint32_t Streaming_GetQuesBits(void);
+
+/**
+ * #397 self-heal grace window — seconds an active transport may be
+ * unhealthy before the streaming task counts it as "dead".  Default 60.
+ * Range [5, 300].  Runtime-only (not NVM-persisted, reset on reboot).
+ * Used by Streaming_AllConfiguredTransportsDead() inside streaming_Task.
+ */
+uint32_t Streaming_GetTransportGraceSec(void);
+bool     Streaming_SetTransportGraceSec(uint32_t sec);
 
 /**
  * Compute optimal circular buffer sizes based on currently active interfaces.
