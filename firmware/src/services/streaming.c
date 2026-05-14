@@ -828,10 +828,18 @@ static void Streaming_Start(void) {
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
         TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
 
-        // Enable hardware ADC triggering only when actually streaming.
-        // Streaming_Start runs at boot (via Streaming_UpdateState) before
-        // ADC_Init — must not write ADCTRG/ADCCON1 until ADC is ready.
+        // Actually start the timer + flip Running only when streaming is
+        // truly enabled.  Streaming_Start runs at boot (via Streaming_
+        // UpdateState's unconditional Stop→Start cycle) with IsEnabled
+        // false; previously we set Running=1 anyway, which lied about
+        // the hardware state to every downstream consumer that checked
+        // `Running` alone (e.g. ADC.c:129, SCPIADC.c:64/439).  Now
+        // `Running` invariant: true iff the streaming timer is actually
+        // ticking — see #379.
         if (gpRuntimeConfigStream->IsEnabled) {
+            // Enable hardware ADC triggering only when actually streaming.
+            // Streaming_Start runs at boot before ADC_Init — must not
+            // write ADCTRG/ADCCON1 until ADC is ready.
             // hwShared: enable MODULE7 scan trigger unless onboard diag is
             // disabled (max dedicated throughput mode).
             bool hwShared = gpRuntimeConfigStream->OnboardDiagEnabled &&
@@ -843,10 +851,10 @@ static void Streaming_Start(void) {
             // so disabling EOS would break T1 streaming. OBDiag=0 gating
             // is handled in the task body (skips monitoring reads when
             // Running && !OnboardDiagEnabled).
-        }
 
-        TimerApi_Start(gpStreamingConfig->TimerIndex);
-        gpRuntimeConfigStream->Running = 1;
+            TimerApi_Start(gpStreamingConfig->TimerIndex);
+            gpRuntimeConfigStream->Running = 1;
+        }
     }
 }
 
