@@ -897,10 +897,19 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
             size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
 
-            // Iterate through available samples and use channel ID for identification
+            // Iterate through available samples and use channel ID for identification.
+            // Don't gate on ADC_IsDataValid (Timestamp>0) — monitoring channels
+            // are populated by ADC_Tasks polling (HAL/ADC.c:320), which doesn't
+            // touch BOARDDATA_STREAMING_TIMESTAMP.  Pre-#379, the streaming
+            // timer ran at boot and incidentally updated that timestamp;
+            // post-#379 (which correctly only starts the timer when streaming
+            // is enabled), monitoring samples have Timestamp=0 between boot
+            // and first stream start, falsely failing the validity check.
+            // The data IS valid — ADC values come from real ADC reads via
+            // ADC_HandleAD7609Interrupt / MC12bADC_EosInterruptTask.  See #460.
             for (size_t i = 0; i < sampleCount; i++) {
                 AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
-                if (!sample || !ADC_IsDataValid(sample)) continue;
+                if (!sample) continue;
 
                 // Convert raw ADC value to voltage using ADC layer function
                 double voltage = ADC_ConvertToVoltage(sample);
