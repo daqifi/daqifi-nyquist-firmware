@@ -1394,6 +1394,7 @@ static scpi_result_t SCPI_SetAutoPowerOnUsb(scpi_t * context) {
      * plugged in triggers the auto-promote on the next Power_Tasks
      * call instead of waiting for the next VBUS rising-edge. */
     pPowerData->autoPromotedThisVbusSession = false;
+    BoardData_Set(BOARDDATA_POWER_DATA, 0, pPowerData);
     return SCPI_RES_OK;
 }
 
@@ -1447,6 +1448,7 @@ static scpi_result_t SCPI_LoadAutoPowerOnUsb(scpi_t * context) {
     tPowerData *pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
     pPowerData->autoPowerOnUsb = pSettings->settings.topLevelSettings.autoPowerOnUsb;
     pPowerData->autoPromotedThisVbusSession = false;  // re-arm
+    BoardData_Set(BOARDDATA_POWER_DATA, 0, pPowerData);
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
