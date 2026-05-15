@@ -897,13 +897,25 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
             size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
 
-            // Iterate through available samples and use channel ID for identification
+            // Iterate through available samples.  Use ConvertToVoltageByIndex
+            // (passing the loop index `i` directly) instead of ConvertToVoltage
+            // (which does a linear channel-ID lookup internally) — avoids
+            // O(N²) work in the rail-monitoring path.
+            // We do NOT gate on sample timestamp here: monitoring channels are
+            // populated by ADC_Tasks polling (HAL/ADC.c:320), which doesn't
+            // touch BOARDDATA_STREAMING_TIMESTAMP.  Pre-#379, the streaming
+            // timer ran at boot and incidentally updated that timestamp; post-
+            // #379 (which correctly only starts the timer when streaming is
+            // enabled), monitoring samples have Timestamp=0 between boot and
+            // first stream start.  The sample VALUES are valid regardless —
+            // ADC reads via ADC_HandleAD7609Interrupt / MC12bADC_EosInterrupt
+            // populate Value independently of any timer.  See #460.
             for (size_t i = 0; i < sampleCount; i++) {
                 AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
-                if (!sample || !ADC_IsDataValid(sample)) continue;
+                if (!sample) continue;
 
                 // Convert raw ADC value to voltage using ADC layer function
-                double voltage = ADC_ConvertToVoltage(sample);
+                double voltage = ADC_ConvertToVoltageByIndex(i, sample->Value);
                 uint8_t sampleChannelId = sample->Channel;
 
                 // Store voltage for the appropriate rail
