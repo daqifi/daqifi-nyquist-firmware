@@ -62,12 +62,6 @@ void ADC_Tasks( void );
  */
 size_t ADC_FindChannelIndex(uint8_t channelId);
     
-/*! Indicates whether data is valid for the given channel
- * @param[in] sample The sample to check
- * @return True if the sample is valid, false otherwise
- */
-bool ADC_IsDataValid(const AInSample* sample);
-    
 /*! Converts the given sample to a voltage
  * NOTE: This is NOT safe to call in an ISR
  * @param sample The sample to convert

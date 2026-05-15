@@ -435,10 +435,6 @@ size_t ADC_FindChannelIndex(uint8_t channelId) {
     return (size_t) - 1;
 }
 
-bool ADC_IsDataValid(const AInSample* sample) {
-    return (sample->Timestamp > 0);
-}
-
 double ADC_ConvertToVoltageByIndex(size_t channelIndex, uint32_t rawValue) {
     if (channelIndex >= gpBoardConfig->AInChannels.Size) {
         return 0.0;
