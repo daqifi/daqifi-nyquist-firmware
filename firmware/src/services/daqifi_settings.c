@@ -5,8 +5,6 @@
 #include "state/board/BoardConfig.h"
 #include "state/board/NQ3BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
-#include "state/data/BoardData.h"
-#include "HAL/Power/PowerApi.h"
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -145,12 +143,11 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
                 settings->settings.topLevelSettings.voltagePrecision =
                         pStreamCfg->VoltagePrecision;
             }
-            // #454: capture current autoPowerOnUsb from PowerData runtime
-            tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-            if (pPwr != NULL) {
-                settings->settings.topLevelSettings.autoPowerOnUsb =
-                        pPwr->autoPowerOnUsb;
-            }
+            // #454 autoPowerOnUsb is NOT captured here — the caller is
+            // responsible for setting it explicitly before SaveToNvm.
+            // Auto-capture would clobber the persisted value on every
+            // unrelated save (e.g. CONF:VOLT:SAVE) if PowerData has been
+            // toggled at runtime without an AUTOOn:SAVE.
             address = TOP_LEVEL_SETTINGS_ADDR;
             dataSize = sizeof (TopLevelSettings);
             break;

@@ -1300,6 +1300,10 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     switch (param1) {
         case 0:  // STANDBY
             pPowerData->requestedPowerState = DO_POWER_DOWN;
+            // #454: latch the per-VBUS-session auto-promote suppression
+            // so the Standby handler doesn't immediately re-promote.
+            // The latch already clears when VBUS goes away.
+            pPowerData->autoPromotedThisVbusSession = true;
             break;
         case 1:  // POWERED_UP
             pPowerData->requestedPowerState = DO_POWER_UP;
@@ -1397,30 +1401,50 @@ static scpi_result_t SCPI_GetAutoPowerOnUsb(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
-    DaqifiSettings settings;
-    memset(&settings, 0, sizeof(settings));
-    /* Load existing NVM to preserve other TopLevelSettings fields
-     * (voltagePrecision, calVals, etc.) — SaveToNvm captures the
-     * current runtime autoPowerOnUsb automatically via PowerData. */
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
-        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, &settings);
-    }
-    settings.type = DaqifiSettings_TopLevelSettings;
-    if (!daqifi_settings_SaveToNvm(&settings)) {
+    /* Use shared SCPI response buffer instead of stack-local —
+     * DaqifiSettings is ~500 bytes (union includes WiFi settings),
+     * and WiFi-task stack peak is ~780 words / 3120 bytes already.
+     * Pattern matches the SCPI buffer-discipline rule (#347).
+     */
+    DaqifiSettings *pSettings = (DaqifiSettings *)SCPI_ResponseBuf_Take();
+    if (pSettings == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
-    return SCPI_RES_OK;
+    memset(pSettings, 0, sizeof(*pSettings));
+    /* Load existing NVM to preserve other TopLevelSettings fields.
+     * Set autoPowerOnUsb from PowerData runtime explicitly (don't rely
+     * on SaveToNvm's auto-capture — that path would also affect
+     * unrelated saves like CONF:VOLT:SAVE).
+     */
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, pSettings)) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, pSettings);
+    }
+    pSettings->type = DaqifiSettings_TopLevelSettings;
+    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPwr != NULL) {
+        pSettings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
+    }
+    bool ok = daqifi_settings_SaveToNvm(pSettings);
+    SCPI_ResponseBuf_Give();
+    return ok ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 static scpi_result_t SCPI_LoadAutoPowerOnUsb(scpi_t * context) {
-    DaqifiSettings settings;
-    memset(&settings, 0, sizeof(settings));
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
+    DaqifiSettings *pSettings = (DaqifiSettings *)SCPI_ResponseBuf_Take();
+    if (pSettings == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    memset(pSettings, 0, sizeof(*pSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, pSettings)) {
+        SCPI_ResponseBuf_Give();
         return SCPI_RES_ERR;
     }
     tPowerData *pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-    pPowerData->autoPowerOnUsb = settings.settings.topLevelSettings.autoPowerOnUsb;
+    pPowerData->autoPowerOnUsb = pSettings->settings.topLevelSettings.autoPowerOnUsb;
     pPowerData->autoPromotedThisVbusSession = false;  // re-arm
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 
