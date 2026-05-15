@@ -15,6 +15,7 @@
 #include "Util/Logger.h"
 #include "../../services/wifi_services/wifi_manager.h"
 #include "../../services/UsbCdc/UsbCdc.h"
+#include "../../services/daqifi_settings.h"  // #454: load autoPowerOnUsb from NVM
 #include "../../services/sd_card_services/sd_card_manager.h"
 #include "driver/usb/usbhs/src/plib_usbhs_header.h"
 #include <xc.h>
@@ -131,7 +132,23 @@ void Power_Init(
 
     // Initialize auto external power control (enabled by default)
     pData->autoExtPowerEnabled = true;
-    
+
+    /* #454: seed autoPowerOnUsb from NVM-persisted TopLevelSettings.
+     * Power_Init runs AFTER app_freertos.c's TopLevelSettings load
+     * (line 465), so the latest NVM value is already in NVM and we
+     * just re-fetch it here.  On load failure (uninitialized NVM),
+     * fall back to the safe default (false).  pData->autoPromotedThis
+     * VbusSession was already zeroed by the memset above. */
+    {
+        DaqifiSettings nvm;
+        memset(&nvm, 0, sizeof(nvm));
+        if (daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &nvm)) {
+            pData->autoPowerOnUsb = nvm.settings.topLevelSettings.autoPowerOnUsb;
+        } else {
+            pData->autoPowerOnUsb = false;
+        }
+    }
+
     BQ24297_InitHardware(
             &pConfig->BQ24297Config,
             &pWriteVariables->BQ24297WriteVars,
@@ -455,6 +472,25 @@ static bool Power_HasSufficientPower(void) {
  *   - Update status (faster on USB for button response)
  */
 static void Power_HandleStandbyState(void) {
+    /* #454: Auto-power-up on VBUS-present.  Fires at boot (if USB
+     * plugged at power-on) and on VBUS-rising mid-session (cable
+     * inserted while device is in STANDBY on battery).  Suppressed
+     * after the user explicitly returns to STANDBY in the same VBUS
+     * session — only re-arms when VBUS goes away and comes back.
+     * Skipped on battery-only (pgStat=0).  */
+    if (pData->autoPowerOnUsb && pData->requestedPowerState == NO_CHANGE) {
+        bool vbusPresent = pData->BQ24297Data.status.pgStat;
+        if (!vbusPresent) {
+            /* VBUS gone — re-arm auto-promote for next plug-in */
+            pData->autoPromotedThisVbusSession = false;
+        } else if (!pData->autoPromotedThisVbusSession) {
+            /* VBUS present, haven't auto-promoted in this session yet */
+            LOG_I("Power: auto-power-up on USB (#454)");
+            pData->requestedPowerState = DO_POWER_UP;
+            pData->autoPromotedThisVbusSession = true;
+        }
+    }
+
     /* Priority 1: Handle user power-up requests */
     if (pData->requestedPowerState == DO_POWER_UP ||
         pData->requestedPowerState == DO_POWER_UP_EXT_DOWN) {

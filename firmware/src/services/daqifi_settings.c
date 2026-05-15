@@ -5,6 +5,8 @@
 #include "state/board/BoardConfig.h"
 #include "state/board/NQ3BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
+#include "state/data/BoardData.h"
+#include "HAL/Power/PowerApi.h"
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -62,6 +64,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             const tBoardConfig* pBoardConfig = (const tBoardConfig*)NqBoardConfig_Get();
             pTopLevelSettings->calVals = 0;
             pTopLevelSettings->voltagePrecision = pBoardConfig->DefaultVoltagePrecision;
+            pTopLevelSettings->autoPowerOnUsb = false;  // #454: opt-in
             strcpy(pTopLevelSettings->boardHardwareRev, HARDWARE_REVISION);
             strcpy(pTopLevelSettings->boardFirmwareRev, FIRMWARE_REVISION);
             pTopLevelSettings->boardVariant = pBoardConfig->BoardVariant;
@@ -141,6 +144,12 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
             if (pStreamCfg != NULL) {
                 settings->settings.topLevelSettings.voltagePrecision =
                         pStreamCfg->VoltagePrecision;
+            }
+            // #454: capture current autoPowerOnUsb from PowerData runtime
+            tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+            if (pPwr != NULL) {
+                settings->settings.topLevelSettings.autoPowerOnUsb =
+                        pPwr->autoPowerOnUsb;
             }
             address = TOP_LEVEL_SETTINGS_ADDR;
             dataSize = sizeof (TopLevelSettings);

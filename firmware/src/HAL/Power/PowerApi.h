@@ -107,6 +107,16 @@ typedef struct sPowerData{
     double battVoltage;
     bool pONBattPresent;
     bool autoExtPowerEnabled;  /* Auto-manage external power based on battery level (default: true) */
+    /* #454: Auto-transition STANDBY → POWERED_UP whenever VBUS (USB) is
+     * present.  Default false (opt-in).  Loaded from NVM at boot
+     * (TopLevelSettings.autoPowerOnUsb); persisted via SYST:POW:AUTOOn:SAVE. */
+    bool autoPowerOnUsb;
+    /* #454 tracking: have we already auto-promoted during the current
+     * VBUS session?  Set when we issue the auto DO_POWER_UP request,
+     * cleared when VBUS goes away.  Prevents re-promote after the user
+     * manually returns to STANDBY (POW:STAT 0) while USB stays plugged
+     * in. */
+    bool autoPromotedThisVbusSession;
 
     tBQ24297Data BQ24297Data;
 

@@ -96,6 +96,14 @@ extern "C" {
          */
         uint8_t voltagePrecision;
 
+        /**
+         * #454: when true, auto-transition STANDBY → POWERED_UP whenever
+         * VBUS (USB) is present.  Fires at boot (if USB is plugged in
+         * at power-on) and on VBUS-rising edge mid-session.  Default
+         * false for back-compat.
+         */
+        bool autoPowerOnUsb;
+
     } TopLevelSettings;
 
     
