@@ -446,7 +446,10 @@ scpi_result_t SCPI_Help(scpi_t* context);
 // no heap-allocation failure path.
 _Static_assert(SCPI_RESPONSE_BUF_SIZE >= DaqifiOutMessage_size,
                "SCPI_RESPONSE_BUF_SIZE must hold the largest SCPI response");
-static uint8_t gScpiRespBuf[SCPI_RESPONSE_BUF_SIZE];
+/* Aligned to 8 bytes so callers can safely cast the pointer to any
+ * scratch struct (e.g. DaqifiSettings, which contains uint32_t /
+ * uint64_t fields).  PIC32MZ MIPS32 traps unaligned word accesses. */
+static uint8_t gScpiRespBuf[SCPI_RESPONSE_BUF_SIZE] __attribute__((aligned(8)));
 static StaticSemaphore_t gScpiRespMutexStorage;
 static SemaphoreHandle_t gScpiRespMutex = NULL;
 
