@@ -222,22 +222,27 @@ void TimerApi_InterruptEnable(uint8_t index) {
 }
 
 void TimerApi_InterruptDisable(uint8_t index) {
+    // Also clear the pending IFS flag — Harmony's TMRx_InterruptDisable
+    // only clears IEC (enable bit), so a pending IF could still trigger
+    // a spurious ISR the moment IEC is re-enabled later (#458 Qodo).
+    // For 32-bit pairs T4+T5 and T6+T7 the upper-half timer holds the
+    // interrupt (T5IF / T7IF), so case 4 uses T5IF and case 6 uses T7IF.
     switch (index) {
         case 2:
             TMR2_InterruptDisable();
-            //IFS0CLR = _IFS0_T2IF_MASK;
+            IFS0CLR = _IFS0_T2IF_MASK;
             break;
         case 3:
             TMR3_InterruptDisable();
-            //IFS0CLR = _IFS0_T3IF_MASK;
+            IFS0CLR = _IFS0_T3IF_MASK;
             break;
         case 4:
             TMR4_InterruptDisable();
-            //IFS0CLR = _IFS0_T5IF_MASK;
+            IFS0CLR = _IFS0_T5IF_MASK;
             break;
         case 6:
             TMR6_InterruptDisable();
-            //IFS1CLR=_IFS1_T7IF_MASK;
+            IFS1CLR = _IFS1_T7IF_MASK;
             break;
         default:
             break;

@@ -847,12 +847,28 @@ static void Streaming_Start(void) {
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
-        TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
+        // Harmony's TMRx_Initialize (e.g. plib_tmr4.c:80) sets the IEC bit
+        // as a side effect — disable it here so the InterruptEnable gate
+        // below is authoritative.  Without this defensive disable, the IRQ
+        // is armed at boot even though we gate TimerApi_Start on IsEnabled.
+        TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
 
-        // Enable hardware ADC triggering only when actually streaming.
-        // Streaming_Start runs at boot (via Streaming_UpdateState) before
-        // ADC_Init — must not write ADCTRG/ADCCON1 until ADC is ready.
+        // Arm the timer ISR + start the timer + flip Running only when
+        // streaming is truly enabled.  Streaming_Start runs at boot via
+        // Streaming_UpdateState's unconditional Stop→Start cycle with
+        // IsEnabled=false; pre-fix this set Running=1 unconditionally,
+        // lying about hardware state to every consumer checking `Running`
+        // alone (HAL/ADC.c:129, SCPIInterface.c:1916 "streaming already
+        // active" guard, SCPIADC.c:64/439).  Now the invariant: Running
+        // == true iff the timer is actually ticking — see #379.
+        // InterruptEnable was previously also unconditional; moving it
+        // inside the gate keeps it symmetric with Streaming_Stop's
+        // TimerApi_InterruptDisable (which only fires when Running was
+        // true), so the timer ISR is never armed-without-source.
         if (gpRuntimeConfigStream->IsEnabled) {
+            // Enable hardware ADC triggering only when actually streaming.
+            // Streaming_Start runs at boot before ADC_Init — must not
+            // write ADCTRG/ADCCON1 until ADC is ready.
             // hwShared: enable MODULE7 scan trigger unless onboard diag is
             // disabled (max dedicated throughput mode).
             bool hwShared = gpRuntimeConfigStream->OnboardDiagEnabled &&
@@ -864,10 +880,19 @@ static void Streaming_Start(void) {
             // so disabling EOS would break T1 streaming. OBDiag=0 gating
             // is handled in the task body (skips monitoring reads when
             // Running && !OnboardDiagEnabled).
-        }
 
-        TimerApi_Start(gpStreamingConfig->TimerIndex);
-        gpRuntimeConfigStream->Running = 1;
+            // Order matters: publish Running=1 BEFORE arming the IRQ
+            // and starting the timer.  Streaming_TimerHandler itself
+            // gates on IsEnabled (not Running), so this is NOT about
+            // protecting the ISR — it's about async TASK consumers
+            // (HAL/ADC.c:129 EOS deferred task, SCPI handlers) that
+            // could otherwise observe Running=0 for a few cycles while
+            // the timer is already ticking, producing inconsistent
+            // hardware-state reads.
+            gpRuntimeConfigStream->Running = 1;
+            TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
+            TimerApi_Start(gpStreamingConfig->TimerIndex);
+        }
     }
 }
 
