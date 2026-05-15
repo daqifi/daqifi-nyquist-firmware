@@ -446,7 +446,10 @@ scpi_result_t SCPI_Help(scpi_t* context);
 // no heap-allocation failure path.
 _Static_assert(SCPI_RESPONSE_BUF_SIZE >= DaqifiOutMessage_size,
                "SCPI_RESPONSE_BUF_SIZE must hold the largest SCPI response");
-static uint8_t gScpiRespBuf[SCPI_RESPONSE_BUF_SIZE];
+/* Aligned to 8 bytes so callers can safely cast the pointer to any
+ * scratch struct (e.g. DaqifiSettings, which contains uint32_t /
+ * uint64_t fields).  PIC32MZ MIPS32 traps unaligned word accesses. */
+static uint8_t gScpiRespBuf[SCPI_RESPONSE_BUF_SIZE] __attribute__((aligned(8)));
 static StaticSemaphore_t gScpiRespMutexStorage;
 static SemaphoreHandle_t gScpiRespMutex = NULL;
 
@@ -1300,6 +1303,10 @@ static scpi_result_t SCPI_SetPowerState(scpi_t * context) {
     switch (param1) {
         case 0:  // STANDBY
             pPowerData->requestedPowerState = DO_POWER_DOWN;
+            // #454: latch the per-VBUS-session auto-promote suppression
+            // so the Standby handler doesn't immediately re-promote.
+            // The latch already clears when VBUS goes away.
+            pPowerData->autoPromotedThisVbusSession = true;
             break;
         case 1:  // POWERED_UP
             pPowerData->requestedPowerState = DO_POWER_UP;
@@ -1355,14 +1362,94 @@ static scpi_result_t SCPI_SetAutoExtPower(scpi_t * context) {
     }
     
     pPowerData->autoExtPowerEnabled = (param1 != 0);
-    LOG_D("Auto external power switching %s", 
+    LOG_D("Auto external power switching %s",
           pPowerData->autoExtPowerEnabled ? "enabled" : "disabled");
-    
+
     BoardData_Set(
             BOARDDATA_POWER_DATA,
             0,
             pPowerData);
-    
+
+    return SCPI_RES_OK;
+}
+
+/**
+ * #454 SCPI: SYSTem:POWer:AUTOOn 0|1
+ * When enabled, the device auto-transitions STANDBY → POWERED_UP
+ * whenever VBUS is detected (at boot or on cable insertion mid-session).
+ * Runtime-only; use :SAVE to persist to NVM.
+ */
+static scpi_result_t SCPI_SetAutoPowerOnUsb(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    tPowerData *pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    pPowerData->autoPowerOnUsb = (param1 != 0);
+    /* Re-arm the per-session latch so toggling 0→1 with USB already
+     * plugged in triggers the auto-promote on the next Power_Tasks
+     * call instead of waiting for the next VBUS rising-edge. */
+    pPowerData->autoPromotedThisVbusSession = false;
+    BoardData_Set(BOARDDATA_POWER_DATA, 0, pPowerData);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetAutoPowerOnUsb(scpi_t * context) {
+    tPowerData *pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    SCPI_ResultInt32(context, pPowerData->autoPowerOnUsb ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SaveAutoPowerOnUsb(scpi_t * context) {
+    /* Use shared SCPI response buffer instead of stack-local —
+     * DaqifiSettings is ~500 bytes (union includes WiFi settings),
+     * and WiFi-task stack peak is ~780 words / 3120 bytes already.
+     * Pattern matches the SCPI buffer-discipline rule (#347).
+     */
+    DaqifiSettings *pSettings = (DaqifiSettings *)SCPI_ResponseBuf_Take();
+    if (pSettings == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    memset(pSettings, 0, sizeof(*pSettings));
+    /* Load existing NVM to preserve other TopLevelSettings fields.
+     * Set autoPowerOnUsb from PowerData runtime explicitly (don't rely
+     * on SaveToNvm's auto-capture — that path would also affect
+     * unrelated saves like CONF:VOLT:SAVE).
+     */
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, pSettings)) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings, pSettings);
+    }
+    pSettings->type = DaqifiSettings_TopLevelSettings;
+    tPowerData *pPwr = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPwr != NULL) {
+        pSettings->settings.topLevelSettings.autoPowerOnUsb = pPwr->autoPowerOnUsb;
+    }
+    bool ok = daqifi_settings_SaveToNvm(pSettings);
+    SCPI_ResponseBuf_Give();
+    return ok ? SCPI_RES_OK : SCPI_RES_ERR;
+}
+
+static scpi_result_t SCPI_LoadAutoPowerOnUsb(scpi_t * context) {
+    DaqifiSettings *pSettings = (DaqifiSettings *)SCPI_ResponseBuf_Take();
+    if (pSettings == NULL) {
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    memset(pSettings, 0, sizeof(*pSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, pSettings)) {
+        SCPI_ResponseBuf_Give();
+        return SCPI_RES_ERR;
+    }
+    tPowerData *pPowerData = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    pPowerData->autoPowerOnUsb = pSettings->settings.topLevelSettings.autoPowerOnUsb;
+    pPowerData->autoPromotedThisVbusSession = false;  // re-arm
+    BoardData_Set(BOARDDATA_POWER_DATA, 0, pPowerData);
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 
@@ -4205,6 +4292,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:POWer:STATe", .callback = SCPI_SetPowerState,},
     {.pattern = "SYSTem:POWer:AUTO:EXTernal?", .callback = SCPI_GetAutoExtPower,},
     {.pattern = "SYSTem:POWer:AUTO:EXTernal", .callback = SCPI_SetAutoExtPower,},
+    {.pattern = "SYSTem:POWer:AUTOOn", .callback = SCPI_SetAutoPowerOnUsb,},      // #454
+    {.pattern = "SYSTem:POWer:AUTOOn?", .callback = SCPI_GetAutoPowerOnUsb,},
+    {.pattern = "SYSTem:POWer:AUTOOn:SAVE", .callback = SCPI_SaveAutoPowerOnUsb,},
+    {.pattern = "SYSTem:POWer:AUTOOn:LOAD", .callback = SCPI_LoadAutoPowerOnUsb,},
     {.pattern = "SYSTem:POWer:BQ:REGisters?", .callback = SCPI_GetBQRegisters,},
     {.pattern = "SYSTem:POWer:BQ:ILIM", .callback = SCPI_SetBQILim,},
     {.pattern = "SYSTem:POWer:BQ:DPDM", .callback = SCPI_ForceDPDM,},
