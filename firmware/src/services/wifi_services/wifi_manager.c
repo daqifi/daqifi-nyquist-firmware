@@ -1236,6 +1236,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // isConnected is already false; we ignore the return.
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                         GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                        LOG_I("WiFi: forcing BSS disconnect on STA reconfigure (sta_connected=%u sta_started=%u)",
+                              (unsigned)GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED),
+                              (unsigned)GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED));
                         ArmApplyTeardownDeadline();  // #423
                         (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
@@ -1490,6 +1493,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // isConnected is already false; we ignore the return.
                     if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
                         GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                        LOG_I("WiFi: forcing BSS disconnect on STA reconfigure (sta_connected=%u sta_started=%u)",
+                              (unsigned)GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED),
+                              (unsigned)GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED));
                         ArmApplyTeardownDeadline();  // #423
                         (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
