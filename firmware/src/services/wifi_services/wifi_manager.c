@@ -1198,31 +1198,24 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // returns REQUEST_ERROR — recreating the same wedge the
                 // STA-reconfigure fix is designed to prevent.  Found by
                 // Qodo /agentic_review pass 1.
-                {
-                    // Snapshot flags so the LOG_I and the if-condition see
-                    // identical values, and clear software state BEFORE
-                    // BSSDisconnect so the async DISCONNECTED callback
-                    // (and any other code path that observes flags during
-                    // the chip-disconnect window) sees consistent "torn
-                    // down" state — Qodo /improve pass 2 finding.
-                    const uint8_t staConnected = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-                    const uint8_t staStarted   = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    if (staConnected || staStarted) {
-                        // LOG_I_ONCE: caps log spam if user toggles
-                        // ENA 0/1 repeatedly while WIFI level is INFO.
-                        // Resets on SYST:LOG?/CLEAR so each diagnostic
-                        // session still sees the event (#467 pass 3).
-                        LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_DISABLE,
-                              "WiFi: forcing BSS disconnect on disable (sta_connected=%u sta_started=%u)",
-                              (unsigned)staConnected, (unsigned)staStarted);
-                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                        ArmApplyTeardownDeadline();  // #423: demote the impending async disconnect callback
-                        (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                    } else {
-                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                    }
-                }
+                // Disconnect is unconditional — Qodo /improve pass 4
+                // finding (importance 7): defensive against any state
+                // where our flags are 0 but the driver's pCtrl->isConnected
+                // is stuck true (chip ↔ driver state-flag desync).
+                // BSSDisconnect returns REQUEST_ERROR harmlessly when
+                // isConnected is already false.
+                //
+                // LOG_I_ONCE uses a static string (no format args) because
+                // the ONCE macro's ISR-safe branch can't carry varargs —
+                // pre-existing limitation of Logger.h.  Resets on
+                // SYST:LOG?/CLEAR so each diagnostic session still sees
+                // the event (#467 pass 3).
+                LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_DISABLE,
+                           "WiFi: forcing BSS disconnect on disable");
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                ArmApplyTeardownDeadline();  // #423: demote the impending async disconnect callback
+                (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
 
                 // Close sockets
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
@@ -1265,21 +1258,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // Snapshot flags and clear before disconnect so the
                     // async DISCONNECTED callback sees consistent torn-
                     // down state (Qodo /improve pass 2 finding).
-                    {
-                        const uint8_t staConnected = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-                        const uint8_t staStarted   = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                        if (staConnected || staStarted) {
-                            LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_STA2AP,
-                                  "WiFi: forcing BSS disconnect on STA->AP mode switch (sta_connected=%u sta_started=%u)",
-                                  (unsigned)staConnected, (unsigned)staStarted);
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                            ArmApplyTeardownDeadline();  // #423
-                            (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                        } else {
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                        }
-                    }
+                    // Disconnect unconditionally — see pass 4 note in
+                    // the disable path for the rationale.
+                    LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_STA2AP,
+                               "WiFi: forcing BSS disconnect on STA->AP mode switch");
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    ArmApplyTeardownDeadline();  // #423
+                    (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
 
                     // Don't deinitialize - the driver gets into a bad state after deinit
                     // Instead, just wait for STA to disconnect and then configure for AP mode
@@ -1527,24 +1513,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // recoverable only by SYST:POW:STAT 0/1 (#467).
                     // BSSDisconnect returns REQUEST_ERROR harmlessly when
                     // isConnected is already false; we ignore the return.
-                    // Snapshot flags and clear before disconnect so the
-                    // async DISCONNECTED callback sees consistent torn-
-                    // down state (Qodo /improve pass 2 finding).
-                    {
-                        const uint8_t staConnected = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-                        const uint8_t staStarted   = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                        if (staConnected || staStarted) {
-                            LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_STA2STA,
-                                  "WiFi: forcing BSS disconnect on STA reconfigure (sta_connected=%u sta_started=%u)",
-                                  (unsigned)staConnected, (unsigned)staStarted);
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                            ArmApplyTeardownDeadline();  // #423
-                            (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
-                        } else {
-                            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
-                        }
-                    }
+                    // Disconnect unconditionally — see pass 4 note in
+                    // the disable path for the rationale.
+                    LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_STA2STA,
+                               "WiFi: forcing BSS disconnect on STA reconfigure");
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    ArmApplyTeardownDeadline();  // #423
+                    (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
 
                     // Wait for disconnect
                     vTaskDelay(pdMS_TO_TICKS(500));
