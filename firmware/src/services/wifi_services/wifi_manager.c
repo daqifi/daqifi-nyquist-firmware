@@ -1208,7 +1208,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     const uint8_t staConnected = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     const uint8_t staStarted   = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     if (staConnected || staStarted) {
-                        LOG_I("WiFi: forcing BSS disconnect on disable (sta_connected=%u sta_started=%u)",
+                        // LOG_I_ONCE: caps log spam if user toggles
+                        // ENA 0/1 repeatedly while WIFI level is INFO.
+                        // Resets on SYST:LOG?/CLEAR so each diagnostic
+                        // session still sees the event (#467 pass 3).
+                        LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_DISABLE,
+                              "WiFi: forcing BSS disconnect on disable (sta_connected=%u sta_started=%u)",
                               (unsigned)staConnected, (unsigned)staStarted);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
@@ -1264,7 +1269,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         const uint8_t staConnected = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                         const uint8_t staStarted   = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                         if (staConnected || staStarted) {
-                            LOG_I("WiFi: forcing BSS disconnect on STA->AP mode switch (sta_connected=%u sta_started=%u)",
+                            LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_STA2AP,
+                                  "WiFi: forcing BSS disconnect on STA->AP mode switch (sta_connected=%u sta_started=%u)",
                                   (unsigned)staConnected, (unsigned)staStarted);
                             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
@@ -1528,7 +1534,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         const uint8_t staConnected = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                         const uint8_t staStarted   = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                         if (staConnected || staStarted) {
-                            LOG_I("WiFi: forcing BSS disconnect on STA reconfigure (sta_connected=%u sta_started=%u)",
+                            LOG_I_ONCE(LOG_ONCE_WIFI_DISCONNECT_STA2STA,
+                                  "WiFi: forcing BSS disconnect on STA reconfigure (sta_connected=%u sta_started=%u)",
                                   (unsigned)staConnected, (unsigned)staStarted);
                             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
