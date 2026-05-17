@@ -1215,7 +1215,18 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                 ArmApplyTeardownDeadline();  // #423: demote the impending async disconnect callback
-                (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                {
+                    // Log unexpected return values (Qodo /improve pass 5
+                    // importance 6).  REQUEST_ERROR is the harmless
+                    // "isConnected already false" case; OK is success.
+                    // Anything else (INVALID_ARG, NOT_OPEN, DISCONNECT_FAIL)
+                    // indicates a deeper driver/chip issue worth recording.
+                    const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                    if ((WDRV_WINC_STATUS_OK != discStatus) &&
+                        (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                        LOG_E("WiFi: BSS disconnect failed on disable (status=%d)", (int)discStatus);
+                    }
+                }
 
                 // Close sockets
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
@@ -1265,7 +1276,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     ArmApplyTeardownDeadline();  // #423
-                    (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                    {
+                        const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
+                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                            LOG_E("WiFi: BSS disconnect failed on STA->AP (status=%d)", (int)discStatus);
+                        }
+                    }
 
                     // Don't deinitialize - the driver gets into a bad state after deinit
                     // Instead, just wait for STA to disconnect and then configure for AP mode
@@ -1520,7 +1537,13 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
                     ArmApplyTeardownDeadline();  // #423
-                    (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                    {
+                        const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
+                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                            LOG_E("WiFi: BSS disconnect failed on STA reconfigure (status=%d)", (int)discStatus);
+                        }
+                    }
 
                     // Wait for disconnect
                     vTaskDelay(pdMS_TO_TICKS(500));
