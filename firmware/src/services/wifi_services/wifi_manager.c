@@ -1188,10 +1188,23 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
                 }
                 
-                // Disconnect STA if connected
-                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                // Disconnect STA if connected — or even just started.
+                // Same #467 reasoning as the STA reconfigure paths below:
+                // the WINC driver's pCtrl->isConnected can be stuck true
+                // after a failed prior association (e.g. bad-password
+                // retry).  Without this disconnect on the disable path,
+                // a later re-enable goes through INIT which calls
+                // WDRV_WINC_IPUseDHCPSet, sees isConnected==true, and
+                // returns REQUEST_ERROR — recreating the same wedge the
+                // STA-reconfigure fix is designed to prevent.  Found by
+                // Qodo /agentic_review pass 1.
+                if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
+                    GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
+                    LOG_I("WiFi: forcing BSS disconnect on disable (sta_connected=%u sta_started=%u)",
+                          (unsigned)GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED),
+                          (unsigned)GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED));
                     ArmApplyTeardownDeadline();  // #423: demote the impending async disconnect callback
-                    WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                    (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                 }
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
