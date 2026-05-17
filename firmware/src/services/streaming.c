@@ -446,13 +446,20 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 uint32_t adcMax;
                 // #368: this task is registered as pure-integer (see comment
                 // at top of _Streaming_Deferred_Interrupt_Task — no
-                // portTASK_USES_FLOATING_POINT()).  Reading the double
-                // Resolution field and casting it emits FPU instructions
-                // that pick up register-contamination from FPU-using tasks
-                // during context switches, producing garbage like 0x80000FE6
-                // instead of the integer value.  The Resolution field IS
-                // a fixed compile-time constant per ADC type, so just use
-                // hardcoded integer constants and avoid the FPU entirely.
+                // portTASK_USES_FLOATING_POINT()).  The historical bug:
+                // Resolution used to be `double`, so the cast in
+                // `adcMax = (uint32_t)Resolution - 1;` emitted FPU
+                // instructions that picked up register-contamination
+                // from FPU-using tasks during context switches, producing
+                // garbage like 0x80000FE6 instead of 4095.
+                //
+                // PR #369 fixed it with hardcoded integer constants here,
+                // and a follow-up (see #465) hardened the type system by
+                // changing MC12bModuleConfig.Resolution / AD7609Module-
+                // Config.Resolution to `uint32_t` in AInConfig.h.  Either
+                // defense alone is enough; keeping both means a future
+                // contributor can't accidentally re-introduce the bug
+                // by reverting one of the two.
                 if (pBoardConfig->AInChannels.Data[cfgIdx].Type == AIn_AD7609) {
                     adcMax = 262143u;  // 18-bit AD7609
                 } else {
