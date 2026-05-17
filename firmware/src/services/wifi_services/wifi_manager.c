@@ -1221,10 +1221,23 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // Reset reconnect counter when switching modes
                     pInstance->staReconnectAttempts = 0;
                     
-                    // Disconnect if connected
-                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                    // Disconnect if connected — or even just started.  A
+                    // previous association attempt (e.g. bad-password retry
+                    // cycle) may leave the WINC driver's pCtrl->isConnected
+                    // stuck true even after our STA_CONNECTED flag was
+                    // cleared by the STA_DISCONNECTED handler — observed
+                    // when WINC emits CONNECTED briefly during 4-way
+                    // handshake then auth-fail DISCONNECTED.  Without
+                    // this disconnect the next WDRV_WINC_IPUseDHCPSet
+                    // below returns REQUEST_ERROR and the manager wedges
+                    // into "Error setting DHCP" -> ERROR -> REINIT loop
+                    // recoverable only by SYST:POW:STAT 0/1 (#467).
+                    // BSSDisconnect returns REQUEST_ERROR harmlessly when
+                    // isConnected is already false; we ignore the return.
+                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
+                        GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
                         ArmApplyTeardownDeadline();  // #423
-                        WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
@@ -1462,10 +1475,23 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         break;
                     }
 
-                    // Disconnect if connected
-                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                    // Disconnect if connected — or even just started.  A
+                    // previous association attempt (e.g. bad-password retry
+                    // cycle) may leave the WINC driver's pCtrl->isConnected
+                    // stuck true even after our STA_CONNECTED flag was
+                    // cleared by the STA_DISCONNECTED handler — observed
+                    // when WINC emits CONNECTED briefly during 4-way
+                    // handshake then auth-fail DISCONNECTED.  Without
+                    // this disconnect the next WDRV_WINC_IPUseDHCPSet
+                    // below returns REQUEST_ERROR and the manager wedges
+                    // into "Error setting DHCP" -> ERROR -> REINIT loop
+                    // recoverable only by SYST:POW:STAT 0/1 (#467).
+                    // BSSDisconnect returns REQUEST_ERROR harmlessly when
+                    // isConnected is already false; we ignore the return.
+                    if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) ||
+                        GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
                         ArmApplyTeardownDeadline();  // #423
-                        WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        (void)WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
                     }
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
