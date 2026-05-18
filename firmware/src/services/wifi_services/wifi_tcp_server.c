@@ -355,7 +355,23 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
             addr.sin_family = AF_INET;
             addr.sin_port = _htons(port);
             addr.sin_addr.s_addr = 0;
-            bind(gpServerData->serverSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+            int8_t bindRc = bind(gpServerData->serverSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+            if (bindRc != SOCK_ERR_NO_ERROR) {
+                // bind() is async over HIF — non-zero return means the HIF
+                // command itself failed (e.g. chip busy, command-queue full).
+                // The bind STATUS comes back via SOCKET_MSG_BIND and is
+                // handled there.  #475: surface the sync-side failure.
+                LOG_E("TCP: bind() HIF send failed sock=%d port=%u rc=%d",
+                      gpServerData->serverSocket, port, bindRc);
+            }
+        } else {
+            // #475: socket() returning negative is silent socket-table
+            // exhaustion (WINC max 7 TCP sockets) or HIF send failure.
+            // Caller checks serverSocket < 0 and emits its own error,
+            // but the root-cause distinction (socket vs bind vs listen)
+            // matters for diagnosing the heap-pressure case in #475.
+            LOG_E("TCP: socket(AF_INET,SOCK_STREAM) failed rc=%d",
+                  gpServerData->serverSocket);
         }
     }
 }
