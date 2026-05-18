@@ -609,18 +609,23 @@ client+server harness pieces are internal scaffolding).
   `SYST:COMM:LAN:ENAbled 0 → APPLY → wait 5s → ENAbled 1 → APPLY`. TCP
   comes back on first attempt. Full investigation including suggested
   observability + heap-pressure audit deferred to v3.4.8.
-- **#476 — Single-channel WiFi PB throughput degrades with session
-  history; multi-channel does not.** First honest characterization
-  post-#371 silent-loss-counter fix. WiFi PB 1×T1 sustains 7000 Hz
-  immediately after a fresh `LAN:APPLY`, but drops to ~4000 Hz after
-  one neighboring config run and to ~3000 Hz after a 17-config
-  overnight sweep. WiFi PB 3×T1 holds 8000 Hz across all three
-  measurements — stable. Mechanism is small-PB-payload specific;
-  candidates include WINC SPI staging fragmentation, HIF refcount
-  drift, or asymmetric circular-buffer hysteresis (#475 may be the
-  same underlying state-pressure issue at a different symptom).
-  Reported numbers below are conservative "after typical session
-  activity" values, not fresh-cold-boot peaks.
+- **#476 — Single-channel WiFi PB throughput is stateful; multi-
+  channel is stable.** First honest characterization post-#371 silent-
+  loss-counter fix.  Observed range for WiFi PB 1×T1 across this
+  release validation window: **3000 Hz to 9000 Hz**, depending on
+  prior WiFi activity.  Specifically: 7000 Hz right after a fresh
+  `LAN:APPLY`, ~4000 Hz after one neighboring config sweep, ~3000 Hz
+  17-config deep into a continuous overnight, and **self-recovers to
+  9000 Hz after ~30 minutes of WiFi idle time**.  WiFi PB 3×T1 holds
+  8000 Hz across every measurement in the same window — small-PB-
+  payload-specific behavior confirmed.  Mechanism candidates: TCP
+  congestion-window state, WINC firmware background-housekeeping,
+  WINC SPI staging fragmentation.  #475 may be the same state-
+  pressure issue at a different symptom (#475 doesn't self-heal in
+  30 min, #476 does).  **Published numbers below quote the
+  conservative-after-activity values, not the fresh / recovered
+  peaks** — customers running a steady single-channel WiFi capture
+  should expect 3-5 kHz sustained, not the 7-9 kHz peak.
 
 ### Pre-existing, ongoing
 
