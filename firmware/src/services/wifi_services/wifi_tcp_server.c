@@ -355,7 +355,42 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
             addr.sin_family = AF_INET;
             addr.sin_port = _htons(port);
             addr.sin_addr.s_addr = 0;
-            bind(gpServerData->serverSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+            int8_t bindRc = bind(gpServerData->serverSocket, (struct sockaddr*) &addr, sizeof (struct sockaddr_in));
+            if (bindRc != SOCK_ERR_NO_ERROR) {
+                // bind() is async over HIF — non-zero return means the HIF
+                // command itself failed (e.g. chip busy, command-queue full).
+                // The bind STATUS comes back via SOCKET_MSG_BIND and is
+                // handled there — but on HIF failure that callback never
+                // fires, so we must clean up here or the WINC-side socket
+                // resource leaks until the next reset.  #475: surface the
+                // sync-side failure and release the descriptor.
+                LOG_E("TCP: bind() HIF send failed sock=%d port=%u rc=%d",
+                      gpServerData->serverSocket, (unsigned)port, bindRc);
+                int8_t shutdownRc = shutdown(gpServerData->serverSocket);
+                if (shutdownRc != SOCK_ERR_NO_ERROR) {
+                    // If bind's HIF send failed, the chip is likely still
+                    // mid-failure, so shutdown's HIF send can fail too.  WINC
+                    // shutdown() clears LOCAL socket bookkeeping even on
+                    // HIF send failure (winc/drv/socket/socket.c:1012), so
+                    // we cannot retry — the WINC-side socket resource may
+                    // remain allocated until the next chip reset.  Surface
+                    // the cleanup failure so the leak is at least logged.
+                    LOG_E("TCP: shutdown(failed-bind sock=%d) failed rc=%d",
+                          gpServerData->serverSocket, shutdownRc);
+                }
+                gpServerData->serverSocket = -1;
+            }
+        } else {
+            // #475: socket() returning negative is silent socket-table
+            // exhaustion (WINC max 7 TCP sockets) or HIF send failure.
+            // Caller checks serverSocket < 0 and emits its own error,
+            // but the root-cause distinction (socket vs bind vs listen)
+            // matters for diagnosing the heap-pressure case in #475.
+            LOG_E("TCP: socket(AF_INET,SOCK_STREAM) failed rc=%d",
+                  gpServerData->serverSocket);
+            // Normalize to -1 so callers' `< 0` check is consistent even
+            // if WINC starts returning a different negative sentinel.
+            gpServerData->serverSocket = -1;
         }
     }
 }

@@ -431,7 +431,15 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
             if ((NULL != pListenMessage) && (0 == pListenMessage->status) && (socket == gStateMachineContext.pTcpServerContext->serverSocket)) {
                 accept(gStateMachineContext.pTcpServerContext->serverSocket, NULL, NULL);
             } else {
-                LOG_E("[%s:%d]Error Socket Listen", __FILE__, __LINE__);
+                // #475: include status + socket fd so the listen failure is
+                // diagnosable from SYST:LOG? — previously this said only
+                // "Error Socket Listen" with no detail, so the heap-pressure
+                // hypothesis couldn't be confirmed from the captured logs.
+                LOG_E("TCP: listen() failed sock=%d expected=%d status=%d",
+                      socket,
+                      (gStateMachineContext.pTcpServerContext != NULL)
+                          ? gStateMachineContext.pTcpServerContext->serverSocket : -1,
+                      (pListenMessage != NULL) ? pListenMessage->status : -1);
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;
@@ -478,7 +486,14 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
 
             } else {
-                LOG_E("[%s:%d]Error Socket accept", __FILE__, __LINE__);
+                // #475: accept() arriving with a NULL message indicates a
+                // WINC SDK / HIF state break.  Log the callback-provided
+                // socket arg directly — for SOCKET_MSG_ACCEPT, WINC passes
+                // sListenSock (winc/drv/socket/socket.c:227-254), which is
+                // the authoritative listen-socket fd at the moment the
+                // failure occurred.  pTcpServerContext->serverSocket could
+                // be -1 already if a concurrent error path reset it.
+                LOG_E("TCP: accept() failed listen-sock=%d (NULL msg)", socket);
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;
