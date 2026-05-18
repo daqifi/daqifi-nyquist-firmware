@@ -1290,7 +1290,22 @@ void Streaming_AddProfileSample_DmaCopy(uint32_t cycles) {
     taskEXIT_CRITICAL();
 }
 void Streaming_AddProfileSample_DmaIdle(void) {
-    gStreamStats.usbDmaIdleCount++;  // 32-bit atomic on PIC32MZ
+    // CLAUDE.md: 32-bit RMW (`++`) is NOT atomic — must be critical-
+    // section guarded.  Streaming_ClearStats() zeroes gStreamStats under
+    // taskENTER_CRITICAL, so an unguarded ++ here could lose a count
+    // across the clear boundary.
+    taskENTER_CRITICAL();
+    gStreamStats.usbDmaIdleCount++;
+    taskEXIT_CRITICAL();
+}
+void Streaming_AddProfileSample_DmaPending_FromISR(uint32_t cycles) {
+    // Called from USB_DEVICE_CDC_EVENT_WRITE_COMPLETE handler (ISR
+    // context per UsbCdc.c file header).  taskENTER_CRITICAL is task-
+    // context only — use the FROM_ISR variant to bracket the 64-bit
+    // accumulate.
+    UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
+    gStreamStats.usbDmaPendingCycles += cycles;
+    taskEXIT_CRITICAL_FROM_ISR(saved);
 }
 #endif
 

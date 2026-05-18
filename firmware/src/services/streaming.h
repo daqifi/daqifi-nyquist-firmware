@@ -194,10 +194,14 @@ typedef struct {
                                     // (the encoder → circular-buffer copy)
     uint64_t usbDmaCopyCycles;      // Accumulated time inside CircularBuf_ProcessBytes
                                     // (the circular → DMA buffer copy)
-    uint32_t usbDmaIdleCount;       // Times UsbCdc_BeginWrite skipped because the
-                                    // prior DMA transfer was still pending — the
-                                    // "bus idle window" between completion and
-                                    // next transfer start
+    uint64_t usbDmaPendingCycles;   // Accumulated time per DMA transfer between
+                                    // USB_DEVICE_CDC_Write() success and the
+                                    // WRITE_COMPLETE event — i.e. wire-time per
+                                    // packet from the host stack's perspective
+    uint32_t usbDmaIdleCount;       // State-machine iterations skipped because
+                                    // the prior DMA transfer was still pending —
+                                    // the "bus idle window" between completion
+                                    // and next transfer start
 #endif
 } StreamingStats;
 

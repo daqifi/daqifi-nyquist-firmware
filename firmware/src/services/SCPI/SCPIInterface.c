@@ -2480,6 +2480,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "PbEncodeBytesOut=%llu\r\n", (unsigned long long)s.pbEncodeBytesOut);
     scpi_printf(context, "UsbWriteBufCycles=%llu\r\n", (unsigned long long)s.usbWriteBufCycles);
     scpi_printf(context, "UsbDmaCopyCycles=%llu\r\n", (unsigned long long)s.usbDmaCopyCycles);
+    scpi_printf(context, "UsbDmaPendingCycles=%llu\r\n", (unsigned long long)s.usbDmaPendingCycles);
     scpi_printf(context, "UsbDmaIdleCount=%u\r\n", (unsigned)s.usbDmaIdleCount);
 #endif
 
