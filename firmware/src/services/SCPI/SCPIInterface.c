@@ -2596,27 +2596,6 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // #475 step 4 — heap-floor enforcement.  Refuse the start if the
-    // FreeRTOS heap is below the configured floor.  Rationale: in #475
-    // the symptom (TCP 9760 unreachable) appeared after heap had drifted
-    // down to ~7 KB across hours of streaming.  WINC SDK accept() and
-    // wifi_manager event paths allocate from this heap.  Starting a new
-    // session when heap is already pinched accelerates the slide.  The
-    // floor (15 KB default — about 20% of the 75 KB heap budget) leaves
-    // breathing room for callback/queue allocations during the session.
-    //
-    // Boot-time `HeapFree` after current ports/queues is ~13 KB, so this
-    // floor is just above steady-state idle — it bites only when there's
-    // unrecovered prior pressure.
-    size_t heapFreeAtStart = xPortGetFreeHeapSize();
-    if (heapFreeAtStart < MIN_HEAP_FREE_FOR_STREAM_START_BYTES) {
-        LOG_E("Streaming command rejected: free heap %u < floor %u (#475 — bounce LAN:APPLY or reboot)",
-              (unsigned)heapFreeAtStart,
-              (unsigned)MIN_HEAP_FREE_FOR_STREAM_START_BYTES);
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
-
     volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
 
@@ -2670,6 +2649,31 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             Streaming_UpdateState();
             UsbCdc_FlushWriteBuffer();
             return SCPI_RES_OK;
+        }
+
+        // #475 step 4 — heap-floor enforcement.  Refuse a new session
+        // start (freq > 0) when FreeRTOS heap is below the configured
+        // floor.  Rationale: in #475 the symptom (TCP 9760 unreachable)
+        // appeared after heap had drifted down to ~7 KB across hours of
+        // streaming; WINC SDK accept() + wifi_manager event paths
+        // allocate from this heap, and starting a new session when
+        // already pinched accelerates the slide.
+        //
+        // Floor is 10 KB (see MIN_HEAP_FREE_FOR_STREAM_START_BYTES in
+        // SCPIInterface.h for the choice).  Boot-idle HeapFree is
+        // ~13 KB per CLAUDE.md, so cold-boot first-starts pass; the
+        // guard only bites under accumulated pressure.
+        //
+        // Placed AFTER the freq==0 disable branch — the disable path
+        // is always allowed, even (especially) under heap pressure, so
+        // users can stop streaming as a recovery action.
+        size_t heapFreeAtStart = xPortGetFreeHeapSize();
+        if (heapFreeAtStart < MIN_HEAP_FREE_FOR_STREAM_START_BYTES) {
+            LOG_E("Streaming start rejected: free heap %u < floor %u (#475 — bounce LAN:APPLY or reboot)",
+                  (unsigned)heapFreeAtStart,
+                  (unsigned)MIN_HEAP_FREE_FOR_STREAM_START_BYTES);
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
         }
 
         // NQ3 Smart Frequency Management:
