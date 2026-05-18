@@ -4,8 +4,9 @@
 #define LOG_LVL LOG_LEVEL_USB
 #define LOG_MODULE LOG_MODULE_USB
 #include "UsbCdc.h"
-#include "services/streaming.h"  // for StreamingStats + PB_PROFILE_COUNTERS gate
-                                  // + Streaming_AddProfileSample_* declarations
+#include "services/streaming_profile.h"  // PB_PROFILE_COUNTERS gate +
+                                          // accumulator hook declarations.
+                                          // Avoid pulling in full streaming.h.
 
 #if PB_PROFILE_COUNTERS
 #include <xc.h>  // _CP0_GET_COUNT()
@@ -248,6 +249,14 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             }
+#if PB_PROFILE_COUNTERS
+            // #388: USB layer is tearing down — any in-flight DMA
+            // transfer's WRITE_COMPLETE may fire after this point (or
+            // not at all).  Clear the pending-cycles start timestamp so
+            // a delayed event after the disconnect doesn't accumulate
+            // disconnect-duration into the next session's counter.
+            UsbCdc_Profile_ResetPendingStamp();
+#endif
             break;
         case USB_DEVICE_EVENT_CONFIGURED:
 
@@ -411,6 +420,14 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
         gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
         gRunTimeUsbSttings.writeBufferLength = 0;
         taskEXIT_CRITICAL();
+#if PB_PROFILE_COUNTERS
+        // #388: ensure no stale start cycles linger after a partial
+        // failure (the conditional set above only runs on OK, but if
+        // a prior successful write left a value and was canceled
+        // before WRITE_COMPLETE could fire, this is the path that
+        // would observe it next.)
+        UsbCdc_Profile_ResetPendingStamp();
+#endif
         return -1;
     }
 

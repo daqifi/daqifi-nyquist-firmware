@@ -145,9 +145,11 @@ void Streaming_ResetSdPbMetadata(void);
 // at 16 kHz × 1 ch = 480 kHz of overhead = 0.5 % of a 200 MHz CPU.  Below
 // our worst-case rate-cap headroom; safe to leave on for typical bench
 // runs.  Strip by setting to 0 before shipping a production build.
-#ifndef PB_PROFILE_COUNTERS
-#define PB_PROFILE_COUNTERS 0
-#endif
+//
+// The gate macro + accumulator function declarations live in
+// streaming_profile.h so consumers (UsbCdc.c) can pull in only that
+// header instead of all of streaming.h's transitive includes.
+#include "streaming_profile.h"
 
 // Streaming loss/throughput statistics, accumulated per session.
 // 32-bit fields are atomic on PIC32MZ; 64-bit fields require critical sections.
@@ -209,22 +211,8 @@ typedef struct {
 void Streaming_GetStats(StreamingStats* out);
 void Streaming_ClearStats(void);
 
-#if PB_PROFILE_COUNTERS
-// #388 PB profile counter accumulator hooks.  Called from the USB write
-// hot path (UsbCdc.c) to fold per-call cycle measurements into the
-// shared gStreamStats.  Implementations live in streaming.c.
-//
-// Task-context entry points (callers run on USB task, pri 7):
-void Streaming_AddProfileSample_WriteBuf(uint32_t cycles);
-void Streaming_AddProfileSample_DmaCopy(uint32_t cycles);
-void Streaming_AddProfileSample_DmaIdle(void);
-// ISR-context entry point (caller is USB_DEVICE_CDC_EVENT_WRITE_COMPLETE):
-void Streaming_AddProfileSample_DmaPending_FromISR(uint32_t cycles);
-// Reset hook called by Streaming_ClearStats() so any in-flight transfer's
-// pre-clear interval doesn't leak into the new session's pending-cycles
-// accumulator.  Implementation lives in UsbCdc.c (owner of the timestamp).
-void UsbCdc_Profile_ResetPendingStamp(void);
-#endif
+// #388 profile counter accumulator hooks are declared in
+// streaming_profile.h, included near the top of this file.
 
 // Increment DIO dropped sample counter (called from DIO_StreamingTrigger).
 // 32-bit increment on PIC32MZ — single writer (deferred ISR task, pri 8).
