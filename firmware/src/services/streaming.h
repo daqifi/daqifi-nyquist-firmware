@@ -209,6 +209,19 @@ typedef struct {
 void Streaming_GetStats(StreamingStats* out);
 void Streaming_ClearStats(void);
 
+#if PB_PROFILE_COUNTERS
+// #388 PB profile counter accumulator hooks.  Called from the USB write
+// hot path (UsbCdc.c) to fold per-call cycle measurements into the
+// shared gStreamStats.  Implementations live in streaming.c.
+//
+// Task-context entry points (callers run on USB task, pri 7):
+void Streaming_AddProfileSample_WriteBuf(uint32_t cycles);
+void Streaming_AddProfileSample_DmaCopy(uint32_t cycles);
+void Streaming_AddProfileSample_DmaIdle(void);
+// ISR-context entry point (caller is USB_DEVICE_CDC_EVENT_WRITE_COMPLETE):
+void Streaming_AddProfileSample_DmaPending_FromISR(uint32_t cycles);
+#endif
+
 // Increment DIO dropped sample counter (called from DIO_StreamingTrigger).
 // 32-bit increment on PIC32MZ — single writer (deferred ISR task, pri 8).
 void Streaming_IncrDioDropped(void);

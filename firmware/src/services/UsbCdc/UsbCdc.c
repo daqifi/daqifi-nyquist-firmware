@@ -5,16 +5,10 @@
 #define LOG_MODULE LOG_MODULE_USB
 #include "UsbCdc.h"
 #include "services/streaming.h"  // for StreamingStats + PB_PROFILE_COUNTERS gate
+                                  // + Streaming_AddProfileSample_* declarations
 
 #if PB_PROFILE_COUNTERS
 #include <xc.h>  // _CP0_GET_COUNT()
-// #388 — instrumentation hook: streaming.c owns gStreamStats but exposes
-// access via Streaming_AddProfileSample().  Forward-declared rather than
-// pulling the whole streaming.h dependency tree if it's gated off.
-extern void Streaming_AddProfileSample_WriteBuf(uint32_t cycles);
-extern void Streaming_AddProfileSample_DmaCopy(uint32_t cycles);
-extern void Streaming_AddProfileSample_DmaIdle(void);
-extern void Streaming_AddProfileSample_DmaPending_FromISR(uint32_t cycles);
 // CP0 timestamp captured at USB_DEVICE_CDC_Write() success, consumed at
 // WRITE_COMPLETE.  Single-writer / single-reader pattern: write from the
 // task-context CircularBufferToUsbWrite path, read from the ISR-context
