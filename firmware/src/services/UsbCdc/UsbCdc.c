@@ -4,6 +4,17 @@
 #define LOG_LVL LOG_LEVEL_USB
 #define LOG_MODULE LOG_MODULE_USB
 #include "UsbCdc.h"
+#include "services/streaming.h"  // for StreamingStats + PB_PROFILE_COUNTERS gate
+
+#if PB_PROFILE_COUNTERS
+#include <xc.h>  // _CP0_GET_COUNT()
+// #388 — instrumentation hook: streaming.c owns gStreamStats but exposes
+// access via Streaming_AddProfileSample().  Forward-declared rather than
+// pulling the whole streaming.h dependency tree if it's gated off.
+extern void Streaming_AddProfileSample_WriteBuf(uint32_t cycles);
+extern void Streaming_AddProfileSample_DmaCopy(uint32_t cycles);
+extern void Streaming_AddProfileSample_DmaIdle(void);
+#endif
 
 // libraries
 #include "libraries/microrl/src/microrl.h"
@@ -403,7 +414,13 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
     if (client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
         if (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0) {
+#if PB_PROFILE_COUNTERS
+            uint32_t dcStart = _CP0_GET_COUNT();
             CircularBuf_ProcessBytes(&client->wCirbuf, NULL, client->dmaWriteBufferSize, &writeResult);
+            Streaming_AddProfileSample_DmaCopy(_CP0_GET_COUNT() - dcStart);
+#else
+            CircularBuf_ProcessBytes(&client->wCirbuf, NULL, client->dmaWriteBufferSize, &writeResult);
+#endif
         } else {
             // No data to write, return true (success - nothing to do)
             xSemaphoreGive(client->wMutex);
@@ -439,6 +456,13 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         return true;
     }
 
+#if PB_PROFILE_COUNTERS
+    // #388: writeTransferHandle != INVALID means the prior DMA hasn't
+    // completed yet, so we couldn't queue the next one.  This is the
+    // "bus idle window" the issue body identifies — increment so we can
+    // size how often we hit it relative to total BeginWrite calls.
+    Streaming_AddProfileSample_DmaIdle();
+#endif
     return false;
 }
 
@@ -774,6 +798,9 @@ size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client) {
 }
 
 size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) {
+#if PB_PROFILE_COUNTERS
+    uint32_t wbStart = _CP0_GET_COUNT();
+#endif
     if (client == NULL) {
         client = &gRunTimeUsbSttings;
     }
@@ -799,6 +826,14 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
     xSemaphoreGive(client->wMutex);
 
+#if PB_PROFILE_COUNTERS
+    // #388: only count successful writes (bytesAdded > 0) — failed/empty
+    // writes are short-circuit returns that don't represent encoder→buffer
+    // copy work.
+    if (bytesAdded > 0) {
+        Streaming_AddProfileSample_WriteBuf(_CP0_GET_COUNT() - wbStart);
+    }
+#endif
     return bytesAdded;
 }
 

@@ -134,6 +134,21 @@ void TimestampTimer_Init( void );
  */
 void Streaming_ResetSdPbMetadata(void);
 
+// #388 — Compile-time profiling counters for the PB streaming hot path.
+// When enabled, instruments encoder + USB write paths with _CP0_GET_COUNT()
+// cycle measurements.  Off by default in production: enable here for a
+// characterization build, then `SYST:STR:STATS?` exposes the counters
+// for the bench operator to read post-run.
+//
+// Cost when enabled: ~5 cycles per measurement point (TASK critical-section
+// pair + 64-bit accumulate).  Six measurement points → ~30 cycles per sample
+// at 16 kHz × 1 ch = 480 kHz of overhead = 0.5 % of a 200 MHz CPU.  Below
+// our worst-case rate-cap headroom; safe to leave on for typical bench
+// runs.  Strip by setting to 0 before shipping a production build.
+#ifndef PB_PROFILE_COUNTERS
+#define PB_PROFILE_COUNTERS 0
+#endif
+
 // Streaming loss/throughput statistics, accumulated per session.
 // 32-bit fields are atomic on PIC32MZ; 64-bit fields require critical sections.
 // Use Streaming_GetStats() for an atomic snapshot of all fields.
@@ -168,6 +183,22 @@ typedef struct {
     // #367 diagnostics — populated at Streaming_Stop() to reconcile the
     // accounting gap (TotalBytesStreamed vs WifiTcpBytesSent at saturation).
     uint32_t circularBufferEndBytes; // Bytes still in WiFi circular buffer at Stop
+#if PB_PROFILE_COUNTERS
+    // #388 PB streaming bottleneck instrumentation.  All cycle fields are
+    // raw `_CP0_GET_COUNT()` differences (SYSCLK/2 = 100 MHz on PIC32MZ).
+    // To convert: cycles / 100_000_000 → seconds.
+    uint64_t pbEncodeCycles;        // Accumulated time inside the encoder call
+    uint32_t pbEncodeMaxCycles;     // Worst-case per-call time
+    uint64_t pbEncodeBytesOut;      // Bytes the encoder produced (post-Nanopb)
+    uint64_t usbWriteBufCycles;     // Accumulated time inside UsbCdc_WriteToBuffer
+                                    // (the encoder → circular-buffer copy)
+    uint64_t usbDmaCopyCycles;      // Accumulated time inside CircularBuf_ProcessBytes
+                                    // (the circular → DMA buffer copy)
+    uint32_t usbDmaIdleCount;       // Times UsbCdc_BeginWrite skipped because the
+                                    // prior DMA transfer was still pending — the
+                                    // "bus idle window" between completion and
+                                    // next transfer start
+#endif
 } StreamingStats;
 
 // Copies stats into *out inside a critical section (atomic snapshot)
