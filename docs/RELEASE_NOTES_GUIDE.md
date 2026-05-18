@@ -106,11 +106,15 @@ A PR earns Highlights billing when **all three** of these are true:
    to know about it specifically. Not "we cleaned up volatile usage" —
    that's a means, not an end.
 
-If a change is internal correctness (#410 volatile audit, #347 stack
-overflow fix, #354 ADC stack overflow, #421 set-once pointer audit), it
-goes in `Internal`, NOT `Highlights`, even if it required heroic work.
-Highlights describe what the product does better, not how cleanly the
-code got there.
+**Highlights vs Fixed vs Internal — the distinction that trips writers**:
+internal *correctness* changes that *fixed an observed-in-the-wild bug*
+(e.g. v3.4.7b1's #347/#354 stack-overflow chain — they fixed a real
+WINC wedge customers hit) go in `Fixed`, not `Internal`.  Internal
+correctness changes that *hardened an internal hazard without fixing
+an observed bug* (#410 volatile audit, #421 set-once pointer audit) go
+in `Internal`.  Neither belongs in `Highlights` unless the user-visible
+impact is unambiguous and substantial.  Highlights describe what the
+product does better, not how cleanly the code got there.
 
 ### Added — new features
 
@@ -157,9 +161,11 @@ bulleted list, one line per PR, grouped by theme. Categories:
 - **Documentation and audits** (#321, #338, #357, #431, #433, #442,
   #444)
 - **Test infrastructure** (#308's DIO probes, etc)
-- **Defensive correctness** (#347 stack, #354 stack, #410 volatile —
-  these are the hard ones that *look* like fixes but didn't fix an
-  observed-in-the-wild bug; they hardened an internal hazard)
+- **Defensive correctness** (#410 volatile audit, #421 set-once
+  pointer audit — these are the hard ones that *look* like fixes but
+  didn't fix an observed-in-the-wild bug; they hardened an internal
+  hazard.  Contrast with #347/#354 stack-overflow fixes, which DID
+  fix real-world wedges and belong in `Fixed`.)
 
 ### Tie-break: when in doubt, demote
 
@@ -362,8 +368,8 @@ extrapolate. Quote what was actually measured ("PR #278: +15-18% on
 
 ### Hyping internal correctness as headline news
 
-The temptation is real for things like #354 (ADC stack overflow), #410
-(volatile audit), #421 (set-once pointer audit). They feel important —
+The temptation is real for things like #410 (volatile audit), #421
+(set-once pointer audit). They feel important —
 they took weeks of investigation. But the customer-visible win is "no
 more SCPI-over-WiFi crashes when running diagnostic commands during
 streaming", not "fixed a 5 KB stack-local in ADC_WriteChannelStateAll".

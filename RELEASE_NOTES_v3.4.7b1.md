@@ -418,14 +418,16 @@ counters to eliminate a sub-microsecond race on the wrap boundary
 where a partial RMW could expose a stale length to the consumer.
 NULL-guards added to defensive call sites.
 
-### Defensive zero-init for BSS / kseg0 best-fit (#406/#409/#410/#412)
+### Defensive zero-init for BSS / kseg0 best-fit (#406/#409/#412)
 
 Some BSS regions placed in kseg0 best-fit by the linker were not
 covered by the standard `_bss_start..._bss_end` zero loop on cold
 boot. Added explicit zero-init for the affected regions in `main`
-before `SYS_Initialize`. Mitigates a rare crash class observed in
-post-reset boot loops; the underlying issue is well-bounded but the
-zero-init defense is permanent.
+before `SYS_Initialize`. Fixes the rare crash class observed in
+post-reset boot loops (#406 — auto-power-up + LED-off symptom under
+-O3 + IPE flash).  The underlying issue is well-bounded but the
+zero-init defense is permanent.  #410 (volatile-qualifier audit) is
+related defensive correctness and is listed under `Internal`.
 
 ### Capabilities query — board configuration `Resolution` type (#466)
 
@@ -554,6 +556,15 @@ Makefile caveat added to CLAUDE.md · #433/#444 set-once pointer
 volatile audit conclusions (see `docs/SET_ONCE_POINTER_AUDIT.md` —
 audit found the qualifier is observable in codegen but not load-
 bearing for correctness on this XC32 v4.60 build).
+
+**Defensive correctness (no observed-in-the-wild bug; hardens internal
+hazard):** #410 volatile-qualifier audit on `tPowerData.powerState` /
+`requestedPowerState` (#412) — fields written by app_PowerAndUITask
+(pri 7) and read across loop iterations by app_WifiTask (pri 2) and
+app_SDCardTask (pri 5).  Current consumer loops contain external
+function calls that act as compiler barriers (force re-load at -O3),
+so this is not a current bug — defense-in-depth against future
+inlining / refactor that removes a barrier.
 
 **Test infrastructure:** #408 runtime-flexible DIO probe routing ·
 in-tree iperf2 module (#381/#393/#403, listed under Added; the
