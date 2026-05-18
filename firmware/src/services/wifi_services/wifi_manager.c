@@ -437,7 +437,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // hypothesis couldn't be confirmed from the captured logs.
                 LOG_E("TCP: listen() failed sock=%d expected=%d status=%d",
                       socket,
-                      gStateMachineContext.pTcpServerContext->serverSocket,
+                      (gStateMachineContext.pTcpServerContext != NULL)
+                          ? gStateMachineContext.pTcpServerContext->serverSocket : -1,
                       (pListenMessage != NULL) ? pListenMessage->status : -1);
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
@@ -490,7 +491,8 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // so we can correlate with the prior socket()/bind()/listen()
                 // sequence in the log.
                 LOG_E("TCP: accept() failed sock=%d (NULL msg)",
-                      gStateMachineContext.pTcpServerContext->serverSocket);
+                      (gStateMachineContext.pTcpServerContext != NULL)
+                          ? gStateMachineContext.pTcpServerContext->serverSocket : -1);
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;
