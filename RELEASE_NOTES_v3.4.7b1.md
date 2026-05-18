@@ -1,11 +1,11 @@
-# v3.4.7 - Streaming Ceiling, WiFi Resilience & Long-Run Stability
+# v3.4.7b1 - Streaming Ceiling, WiFi Resilience & Long-Run Stability
 
 ## Highlights
 
 This release is the result of two months of focused work on the three
 subsystems that customers rely on most: the streaming pipeline, the WiFi
 stack, and the boot/init path. Nearly 100 PRs landed against `main`
-between v3.4.6b1 and v3.4.7. The headline outcomes:
+between v3.4.6b1 and v3.4.7b1. The headline outcomes:
 
 **Streaming ceilings raised across every interface.** Hardware ADC trigger
 synchronization (#282), batched Type-1 ISRs (#277), per-task FPU
@@ -59,13 +59,16 @@ TCP and UDP iperf2 module embedded in firmware, exposing wire-rate
 truth on the WINC1500 path independent of MCU encode/decode pipeline:
 
 ```
-IPERF:CLIENT:TCP <host>,<port>,<dur>[,<tx_mode>]
-IPERF:CLIENT:UDP <host>,<port>,<dur>,<rate_kbps>
-IPERF:SERVER:TCP <port>,<dur>
-IPERF:SERVER:UDP <port>,<dur>
-IPERF:STATs?
-IPERF:STOP
-IPERF:DIAG?                   # WINC HIF + send-pipeline diagnostics
+SYST:WIFI:IPERF:TCPClient <ip>[,<port=5001>][,<dur_s=10>]
+SYST:WIFI:IPERF:UDPClient <ip>[,<port=5001>][,<dur_s=10>]
+SYST:WIFI:IPERF:TCPServer [<port=5001>]
+SYST:WIFI:IPERF:UDPServer [<port=5001>]
+SYST:WIFI:IPERF:TXBLast <port>,<duration_s>      # #399 raw-rate workaround
+SYST:WIFI:IPERF:STATs?
+SYST:WIFI:IPERF:STOP
+SYST:WIFI:IPERF:DIAGnostics?                     # WINC HIF + send-pipeline diagnostics
+SYST:WIFI:IPERF:MAXPending [0..4]                # #399 throttle
+SYST:WIFI:IPERF:AUTOReset [0|1]                  # #399 auto-HRESet on stop
 ```
 
 `TXBlast` tx-mode (#403) bypasses the iperf2 framing for maximum-rate
@@ -123,8 +126,10 @@ Measured +15-18% on 16-channel configurations (PR #278 body).
 ### Per-module ADC acquisition-time tuning (#329)
 
 ```
-CONFigure:ADC:SAMC <ticks>       # runtime SAMC override
-CONFigure:ADC:SAMC?
+CONFigure:ADC:SAMC:DEDicated <ticks>     # Type-1 dedicated modules
+CONFigure:ADC:SAMC:DEDicated?
+CONFigure:ADC:SAMC:SHARed <ticks>        # Type-2 shared MODULE7 mux
+CONFigure:ADC:SAMC:SHARed?
 ```
 
 For users who need to trade ADC settling time against sample rate at
@@ -205,19 +210,20 @@ unchanged. See Upgrade notes.
 Compile-time and runtime debug probes for pipeline timing measurements
 via Saleae. Ten standard pipeline probes (ISR entry, encoder enter/
 exit, transport writes, etc) plus six ad-hoc compile-time slots.
-Caps-only SCPI: `SYST:DIOP:MODE`, `SYST:DIOP:ASSIGN`, etc. Probe-to-DIO
-routing is now runtime-flexible (#408). Living measurement record:
+Caps-only SCPI under `SYST:DIOProbe:*` — `MODE`, `ROUTe`, `CLEar`,
+`CLEar:ALL`, `PIPELine`, `LIST?`.  Probe-to-DIO routing is now
+runtime-flexible (#408). Living measurement record:
 `docs/PIPELINE_TIMING.md`.
 
 ### SD card abort + format-status (#211/#212)
 
 ```
 SYSTem:STORage:SD:ABORT
-SYSTem:STORage:SD:FORMat:STATus?
+SYSTem:STORage:SD:FORmat?     # query format state/progress
 ```
 
-Long file transfers can now be cancelled without power-cycling. Format
-progress query lets clients poll long-running format operations.
+Long file transfers can now be cancelled without power-cycling.
+`FORmat?` lets clients poll long-running format operations.
 
 ### SD write metrics in streaming stats (#225)
 
@@ -227,7 +233,7 @@ alongside USB and WiFi counters.
 
 ### iperf2 diagnostics SCPI (#393/#403)
 
-`IPERF:DIAG?` exposes WINC HIF chip-wake/sleep refcounts, send-pipeline
+`SYST:WIFI:IPERF:DIAGnostics?` exposes WINC HIF chip-wake/sleep refcounts, send-pipeline
 in-flight counts, and last-completion timing — instrumentation that
 backed the multi-in-flight Step C work and the auto-HRESet decision.
 
@@ -612,7 +618,7 @@ client+server harness pieces are internal scaffolding).
   batch after each flash.
 - **If you encountered the #467 wedge symptom on v3.4.6b1 in the field**
   (`Error setting DHCP` log floods, requires `SYST:POW:STAT 0/1` to
-  recover), upgrade to v3.4.7 — a single SCPI APPLY now recovers
+  recover), upgrade to v3.4.7b1 — a single SCPI APPLY now recovers
   cleanly without a power cycle.
 - **Schema version 2 capability rollup is a breaking change for clients
   that depended on the removed subset queries** (`CONF:ADC:MAXFreq?`,
@@ -625,4 +631,4 @@ client+server harness pieces are internal scaffolding).
 
 ---
 
-**Full Changelog:** https://github.com/daqifi/daqifi-nyquist-firmware/compare/v3.4.6b1...v3.4.7
+**Full Changelog:** https://github.com/daqifi/daqifi-nyquist-firmware/compare/v3.4.6b1...v3.4.7b1

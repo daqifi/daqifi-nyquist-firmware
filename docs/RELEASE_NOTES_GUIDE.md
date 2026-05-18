@@ -27,8 +27,10 @@ Draft both files in this order:
 
 1. **`RELEASE_NOTES_<version>.md` at repo root** — the actual notes for this
    release. One file per release. The root location keeps it visible and
-   easy for the release tagger to find. Past examples (only at GitHub
-   release time, not committed): `RELEASE_NOTES_v3.4.7.md`.
+   easy for the release tagger to find. Committed alongside the release
+   PR and kept in the repo as a historical record (this convention starts
+   with v3.4.7b1; pre-v3.4.7b1 releases lived only in the GitHub release
+   body and are not in the tree). Example: `RELEASE_NOTES_v3.4.7b1.md`.
 2. **`docs/RELEASE_NOTES_GUIDE.md`** — this guide. Update only when the
    format itself changes, not for each release.
 
