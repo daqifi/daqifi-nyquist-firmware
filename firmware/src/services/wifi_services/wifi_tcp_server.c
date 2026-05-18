@@ -360,9 +360,14 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
                 // bind() is async over HIF — non-zero return means the HIF
                 // command itself failed (e.g. chip busy, command-queue full).
                 // The bind STATUS comes back via SOCKET_MSG_BIND and is
-                // handled there.  #475: surface the sync-side failure.
+                // handled there — but on HIF failure that callback never
+                // fires, so we must clean up here or the WINC-side socket
+                // resource leaks until the next reset.  #475: surface the
+                // sync-side failure and release the descriptor.
                 LOG_E("TCP: bind() HIF send failed sock=%d port=%u rc=%d",
                       gpServerData->serverSocket, port, bindRc);
+                shutdown(gpServerData->serverSocket);
+                gpServerData->serverSocket = -1;
             }
         } else {
             // #475: socket() returning negative is silent socket-table
@@ -372,6 +377,9 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
             // matters for diagnosing the heap-pressure case in #475.
             LOG_E("TCP: socket(AF_INET,SOCK_STREAM) failed rc=%d",
                   gpServerData->serverSocket);
+            // Normalize to -1 so callers' `< 0` check is consistent even
+            // if WINC starts returning a different negative sentinel.
+            gpServerData->serverSocket = -1;
         }
     }
 }
