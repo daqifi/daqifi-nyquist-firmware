@@ -4,6 +4,27 @@
 #define LOG_LVL LOG_LEVEL_USB
 #define LOG_MODULE LOG_MODULE_USB
 #include "UsbCdc.h"
+#include "services/streaming_profile.h"  // PB_PROFILE_COUNTERS gate +
+                                          // accumulator hook declarations.
+                                          // Avoid pulling in full streaming.h.
+
+#if PB_PROFILE_COUNTERS
+#include <xc.h>  // _CP0_GET_COUNT()
+// CP0 timestamp captured at USB_DEVICE_CDC_Write() success, consumed at
+// WRITE_COMPLETE.  Single-writer / single-reader pattern: write from the
+// task-context CircularBufferToUsbWrite path, read from the ISR-context
+// WRITE_COMPLETE callback.  32-bit reads/writes are atomic on PIC32MZ.
+static volatile uint32_t gUsbWriteStartCycles;
+
+// #388: called from Streaming_ClearStats() so a transfer-in-flight at
+// the clear boundary doesn't leak its pre-clear interval into the new
+// session's usbDmaPendingCycles accumulator.  After reset, the next
+// WRITE_COMPLETE will skip the accumulate (startCycles == 0 branch in
+// UsbCdc_FinalizeWrite).
+void UsbCdc_Profile_ResetPendingStamp(void) {
+    gUsbWriteStartCycles = 0;
+}
+#endif
 
 // libraries
 #include "libraries/microrl/src/microrl.h"
@@ -228,6 +249,14 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             }
+#if PB_PROFILE_COUNTERS
+            // #388: USB layer is tearing down — any in-flight DMA
+            // transfer's WRITE_COMPLETE may fire after this point (or
+            // not at all).  Clear the pending-cycles start timestamp so
+            // a delayed event after the disconnect doesn't accumulate
+            // disconnect-duration into the next session's counter.
+            UsbCdc_Profile_ResetPendingStamp();
+#endif
             break;
         case USB_DEVICE_EVENT_CONFIGURED:
 
@@ -371,6 +400,19 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
             len,
             USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
 
+#if PB_PROFILE_COUNTERS
+    // #388: stamp the start time only on successful submission so a
+    // failed Write() doesn't pollute the pending-cycles accumulator.
+    // Race note: WRITE_COMPLETE ISR can fire before this store retires,
+    // but that's OK — the ISR reads writeTransferHandle invalid first
+    // and skips the accumulator unless gUsbWriteStartCycles is nonzero
+    // (the test below).  Single-writer single-reader pattern, no need
+    // for a critical section on a 32-bit value.
+    if (writeResult == USB_DEVICE_CDC_RESULT_OK) {
+        gUsbWriteStartCycles = _CP0_GET_COUNT();
+    }
+#endif
+
     if (writeResult != USB_DEVICE_CDC_RESULT_OK) {
         LOG_E("USB CDC write API failed");
         // Write failed - ensure handle is invalid (atomic update)
@@ -378,6 +420,14 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
         gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
         gRunTimeUsbSttings.writeBufferLength = 0;
         taskEXIT_CRITICAL();
+#if PB_PROFILE_COUNTERS
+        // #388: ensure no stale start cycles linger after a partial
+        // failure (the conditional set above only runs on OK, but if
+        // a prior successful write left a value and was canceled
+        // before WRITE_COMPLETE could fire, this is the path that
+        // would observe it next.)
+        UsbCdc_Profile_ResetPendingStamp();
+#endif
         return -1;
     }
 
@@ -403,7 +453,13 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
     if (client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
         xSemaphoreTake(client->wMutex, portMAX_DELAY);
         if (CircularBuf_NumBytesAvailable(&client->wCirbuf) > 0) {
+#if PB_PROFILE_COUNTERS
+            uint32_t dcStart = _CP0_GET_COUNT();
             CircularBuf_ProcessBytes(&client->wCirbuf, NULL, client->dmaWriteBufferSize, &writeResult);
+            Streaming_AddProfileSample_DmaCopy(_CP0_GET_COUNT() - dcStart);
+#else
+            CircularBuf_ProcessBytes(&client->wCirbuf, NULL, client->dmaWriteBufferSize, &writeResult);
+#endif
         } else {
             // No data to write, return true (success - nothing to do)
             xSemaphoreGive(client->wMutex);
@@ -439,6 +495,10 @@ static bool UsbCdc_BeginWrite(UsbCdcData_t* client) {
         return true;
     }
 
+    // writeTransferHandle != INVALID — prior DMA still in flight.  See
+    // the USB_CDC_STATE_PROCESS caller for the actual idle-count
+    // instrumentation (it gates BeginWrite on the same handle check, so
+    // counting here is unreachable — Qodo finding #3).
     return false;
 }
 
@@ -465,6 +525,18 @@ static bool UsbCdc_WaitForWrite(UsbCdcData_t* client) {
  * Finalizes a write operation by clearing the buffer for additional content 
  */
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client) {
+#if PB_PROFILE_COUNTERS
+    // #388: accumulate wire-time per DMA transfer.  This runs in ISR
+    // context (WRITE_COMPLETE event) — accumulator uses FROM_ISR variant.
+    // Guard against gUsbWriteStartCycles being zero (which means the
+    // start was never captured, e.g. on initial pre-stream FinalizeWrite
+    // calls — produces a single junk reading otherwise).
+    uint32_t startCycles = gUsbWriteStartCycles;
+    if (startCycles != 0) {
+        Streaming_AddProfileSample_DmaPending_FromISR(_CP0_GET_COUNT() - startCycles);
+        gUsbWriteStartCycles = 0;
+    }
+#endif
     client->writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
     client->writeBufferLength = 0;
     return true;
@@ -774,6 +846,9 @@ size_t UsbCdc_WriteBuffFreeSize(UsbCdcData_t* client) {
 }
 
 size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) {
+#if PB_PROFILE_COUNTERS
+    uint32_t wbStart = _CP0_GET_COUNT();
+#endif
     if (client == NULL) {
         client = &gRunTimeUsbSttings;
     }
@@ -799,6 +874,14 @@ size_t UsbCdc_WriteToBuffer(UsbCdcData_t* client, const char* data, size_t len) 
     size_t bytesAdded = CircularBuf_AddBytes(&client->wCirbuf, (uint8_t*) data, len);
     xSemaphoreGive(client->wMutex);
 
+#if PB_PROFILE_COUNTERS
+    // #388: only count successful writes (bytesAdded > 0) — failed/empty
+    // writes are short-circuit returns that don't represent encoder→buffer
+    // copy work.
+    if (bytesAdded > 0) {
+        Streaming_AddProfileSample_WriteBuf(_CP0_GET_COUNT() - wbStart);
+    }
+#endif
     return bytesAdded;
 }
 
@@ -1106,6 +1189,14 @@ void UsbCdc_ProcessState() {
                 }
 
             }
+#if PB_PROFILE_COUNTERS
+            else {
+                // #388: state-machine iteration where the prior DMA
+                // transfer hadn't completed — count these to size how
+                // often the single-in-flight-DMA pattern stalls progress.
+                Streaming_AddProfileSample_DmaIdle();
+            }
+#endif
 
             break;
         case USB_CDC_STATE_BEGIN_CLOSE:

@@ -19,6 +19,10 @@
 
 #include "streaming.h"
 
+#if PB_PROFILE_COUNTERS
+#include <xc.h>  // for _CP0_GET_COUNT() — coprocessor 0 cycle counter
+#endif
+
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
 #include "HAL/DioProbe.h"
@@ -1179,6 +1183,12 @@ void Streaming_ClearStats(void) {
     taskENTER_CRITICAL();
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
+#if PB_PROFILE_COUNTERS
+    // #388: also clear UsbCdc's in-flight DMA timestamp so it doesn't
+    // leak into the new session's usbDmaPendingCycles on the next
+    // WRITE_COMPLETE event.
+    UsbCdc_Profile_ResetPendingStamp();
+#endif
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gQuesBits = 0;
@@ -1267,6 +1277,43 @@ void Streaming_IncrDioDropped(void) {
 void Streaming_IncrEosOverruns(uint32_t missed) {
     gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 8)
 }
+
+#if PB_PROFILE_COUNTERS
+// #388: PB streaming profile sample inputs from UsbCdc.c.  Each writer
+// (USB task, pri 7) is a single producer for its respective counter, but
+// gStreamStats is read via Streaming_GetStats() under taskENTER_CRITICAL,
+// so the 64-bit accumulate must also be critical-section guarded to
+// prevent torn reads on the snapshot side.  Idle-count is 32-bit so the
+// increment is atomic on PIC32MZ and doesn't need the critical section.
+void Streaming_AddProfileSample_WriteBuf(uint32_t cycles) {
+    taskENTER_CRITICAL();
+    gStreamStats.usbWriteBufCycles += cycles;
+    taskEXIT_CRITICAL();
+}
+void Streaming_AddProfileSample_DmaCopy(uint32_t cycles) {
+    taskENTER_CRITICAL();
+    gStreamStats.usbDmaCopyCycles += cycles;
+    taskEXIT_CRITICAL();
+}
+void Streaming_AddProfileSample_DmaIdle(void) {
+    // CLAUDE.md: 32-bit RMW (`++`) is NOT atomic — must be critical-
+    // section guarded.  Streaming_ClearStats() zeroes gStreamStats under
+    // taskENTER_CRITICAL, so an unguarded ++ here could lose a count
+    // across the clear boundary.
+    taskENTER_CRITICAL();
+    gStreamStats.usbDmaIdleCount++;
+    taskEXIT_CRITICAL();
+}
+void Streaming_AddProfileSample_DmaPending_FromISR(uint32_t cycles) {
+    // Called from USB_DEVICE_CDC_EVENT_WRITE_COMPLETE handler (ISR
+    // context per UsbCdc.c file header).  taskENTER_CRITICAL is task-
+    // context only — use the FROM_ISR variant to bracket the 64-bit
+    // accumulate.
+    UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
+    gStreamStats.usbDmaPendingCycles += cycles;
+    taskEXIT_CRITICAL_FROM_ISR(saved);
+}
+#endif
 
 uint32_t Streaming_GetLossThreshold(void) {
     return gLossThresholdPct;
@@ -1494,7 +1541,22 @@ void streaming_Task(void) {
                 DIO_TIMING_TEST_WRITE_STATE(0);
             } else {
                 DIO_TIMING_TEST_WRITE_STATE(1);
+#if PB_PROFILE_COUNTERS
+                uint32_t pbStart = _CP0_GET_COUNT();
                 packetSize = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+                uint32_t pbCycles = _CP0_GET_COUNT() - pbStart;
+                taskENTER_CRITICAL();
+                gStreamStats.pbEncodeCycles += pbCycles;
+                if (pbCycles > gStreamStats.pbEncodeMaxCycles) {
+                    gStreamStats.pbEncodeMaxCycles = pbCycles;
+                }
+                if (packetSize > 0) {
+                    gStreamStats.pbEncodeBytesOut += packetSize;
+                }
+                taskEXIT_CRITICAL();
+#else
+                packetSize = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+#endif
                 DIO_TIMING_TEST_WRITE_STATE(0);
             }
             DioProbe_PulseEnd(8);

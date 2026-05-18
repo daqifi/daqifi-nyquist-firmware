@@ -2469,6 +2469,20 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TimerISRCalls=%llu\r\n", (unsigned long long)s.timerISRCalls);
     // #367 diag: bytes sitting in WiFi circular buffer at session end (Stop)
     scpi_printf(context, "CircularBufferEndBytes=%u\r\n", (unsigned)s.circularBufferEndBytes);
+#if PB_PROFILE_COUNTERS
+    // #388 PB streaming profile counters (compile-time gated).  Raw cycle
+    // counts at SYSCLK/2 = 100 MHz on PIC32MZ — divide by 1e8 for seconds,
+    // or by 100 for microseconds.  Compare ratios across rows to identify
+    // the dominant bottleneck (encoder vs writebuf-copy vs dma-copy vs
+    // dma-idle).
+    scpi_printf(context, "PbEncodeCycles=%llu\r\n", (unsigned long long)s.pbEncodeCycles);
+    scpi_printf(context, "PbEncodeMaxCycles=%u\r\n", (unsigned)s.pbEncodeMaxCycles);
+    scpi_printf(context, "PbEncodeBytesOut=%llu\r\n", (unsigned long long)s.pbEncodeBytesOut);
+    scpi_printf(context, "UsbWriteBufCycles=%llu\r\n", (unsigned long long)s.usbWriteBufCycles);
+    scpi_printf(context, "UsbDmaCopyCycles=%llu\r\n", (unsigned long long)s.usbDmaCopyCycles);
+    scpi_printf(context, "UsbDmaPendingCycles=%llu\r\n", (unsigned long long)s.usbDmaPendingCycles);
+    scpi_printf(context, "UsbDmaIdleCount=%u\r\n", (unsigned)s.usbDmaIdleCount);
+#endif
 
     // Compute sample loss percentage (64-bit intermediate to avoid overflow)
     uint64_t totalSampleAttempts = s.totalSamplesStreamed + s.queueDroppedSamples;
