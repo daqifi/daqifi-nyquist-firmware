@@ -67,8 +67,8 @@ SYST:WIFI:IPERF:TXBLast <port>,<duration_s>      # #399 raw-rate workaround
 SYST:WIFI:IPERF:STATs?
 SYST:WIFI:IPERF:STOP
 SYST:WIFI:IPERF:DIAGnostics?                     # WINC HIF + send-pipeline diagnostics
-SYST:WIFI:IPERF:MAXPending [0..4]                # #399 throttle
-SYST:WIFI:IPERF:AUTOReset [0|1]                  # #399 auto-HRESet on stop
+SYST:WIFI:IPERF:MAXPending <0..4>                # #399 throttle (0=default, required)
+SYST:WIFI:IPERF:AUTOReset <0|1>                  # #399 auto-HRESet on stop (required)
 ```
 
 `TXBlast` tx-mode (#403) bypasses the iperf2 framing for maximum-rate
@@ -233,9 +233,13 @@ alongside USB and WiFi counters.
 
 ### iperf2 diagnostics SCPI (#393/#403)
 
-`SYST:WIFI:IPERF:DIAGnostics?` exposes WINC HIF chip-wake/sleep refcounts, send-pipeline
-in-flight counts, and last-completion timing — instrumentation that
-backed the multi-in-flight Step C work and the auto-HRESet decision.
+`SYST:WIFI:IPERF:DIAGnostics?` exposes the iperf2 state machine and
+WINC send-pipeline state.  Fields: `Mode`, `DataSock`, `ListenSock`,
+`PendingTx`, `AbortPending`, `BytesConfirmed`, `LastSendRc`,
+`SendErrCount`, `WincState`, `FreeTcpSockets`, `FreeUdpSockets`
+(see `SCPI_Iperf2_Diag` for the canonical field list).  This is the
+instrumentation that backed the multi-in-flight Step C work and the
+auto-HRESet decision.
 
 ## Changed
 
