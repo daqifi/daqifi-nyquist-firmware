@@ -36,7 +36,17 @@ extern "C" {
      */
     typedef struct s_MC12bModuleConfig {
         //DRV_ADC_MODULE_ID moduleId;
-        double Resolution; // Per-module resolution
+        // ADC resolution in counts (e.g. 4096 for 12-bit MC12bADC).
+        // MUST be an integer type, not double: reading a double field
+        // from a task that didn't call portTASK_USES_FLOATING_POINT()
+        // emits FPU instructions whose result depends on whatever
+        // FPU register state another task left behind — see #368/PR
+        // #369 for the symptom (streaming deferred task got garbage
+        // adcMax ≈ 0x80000FE6 instead of 4095).  Keeping this as
+        // uint32_t makes that whole class of bug impossible — read
+        // is a plain integer load and value is a compile-time
+        // constant per ADC type.
+        uint32_t Resolution;
     } MC12bModuleConfig;
 
     /**
@@ -70,7 +80,10 @@ extern "C" {
         // Configuration settings
         bool Range10V;
         uint32_t OSMode;
-        double Resolution;
+        // 18-bit ADC: 262144 counts.  Integer type required for the
+        // same reason as MC12bModuleConfig.Resolution above — see
+        // #368/PR #369 for the FPU-on-non-FPU-task class of bug.
+        uint32_t Resolution;
     } AD7609ModuleConfig;
 
 
