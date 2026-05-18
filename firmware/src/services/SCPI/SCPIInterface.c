@@ -2641,41 +2641,57 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (SCPI_ParamInt32(context, &freq, FALSE)) {
-        // Frequency = 0 is valid and means "disable streaming"
-        // (In future may support per-channel frequency where 0 disables that channel)
-        if (freq == 0) {
-            pRunTimeStreamConfig->IsEnabled = false;
-            Streaming_UpdateState();
-            UsbCdc_FlushWriteBuffer();
-            return SCPI_RES_OK;
-        }
+    bool freqProvided = SCPI_ParamInt32(context, &freq, FALSE);
+    if (freqProvided && freq == 0) {
+        // Frequency = 0 is the explicit disable form.  Always allowed,
+        // including under heap pressure (the user may be trying to
+        // stop streaming as a recovery action).
+        pRunTimeStreamConfig->IsEnabled = false;
+        Streaming_UpdateState();
+        UsbCdc_FlushWriteBuffer();
+        return SCPI_RES_OK;
+    }
 
-        // #475 step 4 — heap-floor enforcement.  Refuse a new session
-        // start (freq > 0) when FreeRTOS heap is below the configured
-        // floor.  Rationale: in #475 the symptom (TCP 9760 unreachable)
-        // appeared after heap had drifted down to ~7 KB across hours of
-        // streaming; WINC SDK accept() + wifi_manager event paths
-        // allocate from this heap, and starting a new session when
-        // already pinched accelerates the slide.
-        //
-        // Floor is 10 KB (see MIN_HEAP_FREE_FOR_STREAM_START_BYTES in
-        // SCPIInterface.h for the choice).  Boot-idle HeapFree is
-        // ~13 KB per CLAUDE.md, so cold-boot first-starts pass; the
-        // guard only bites under accumulated pressure.
-        //
-        // Placed AFTER the freq==0 disable branch — the disable path
-        // is always allowed, even (especially) under heap pressure, so
-        // users can stop streaming as a recovery action.
+    // #475 step 4 — heap-floor enforcement applied to every new-start
+    // path (freq > 0 explicit, or no-argument re-start with current
+    // freq).  Rationale: in #475 the symptom (TCP 9760 unreachable)
+    // appeared after heap had drifted down to ~7 KB across hours of
+    // streaming; WINC SDK accept() + wifi_manager event paths allocate
+    // from this heap, and starting a new session when already pinched
+    // accelerates the slide.
+    //
+    // Floor is 10 KB (see MIN_HEAP_FREE_FOR_STREAM_START_BYTES in
+    // SCPIInterface.h for the choice).  Boot-idle HeapFree is ~13 KB
+    // per CLAUDE.md, so cold-boot first-starts pass; the guard only
+    // bites under accumulated pressure.
+    //
+    // Placed AFTER the freq==0 disable branch, but BEFORE the freq-
+    // parameter branch — covers both the explicit-freq and no-argument
+    // start forms.  Disable path remains always-allowed above.
+    //
+    // Scope-gated to WiFi-relevant interfaces: pure USB or SD streams
+    // don't allocate from the FreeRTOS heap during operation (their
+    // DMA + circular buffers live in the static StreamingBufferPool +
+    // CoherentPool, not heap), so the #475 failure mode doesn't apply
+    // to them.  ActiveInterface is checked here; the interface may not
+    // yet be auto-detected at this point in the flow, but if the user
+    // explicitly set WiFi via SYST:STR:INTerface (or it's already the
+    // default from a prior session), we gate.  The auto-detect later
+    // in this function may pick WiFi anyway — false negatives here are
+    // acceptable since the floor is purely defensive.
+    StreamingInterface currentInterfaceAtCheck = pRunTimeStreamConfig->ActiveInterface;
+    if (currentInterfaceAtCheck == StreamingInterface_WiFi) {
         size_t heapFreeAtStart = xPortGetFreeHeapSize();
         if (heapFreeAtStart < MIN_HEAP_FREE_FOR_STREAM_START_BYTES) {
-            LOG_E("Streaming start rejected: free heap %u < floor %u (#475 — bounce LAN:APPLY or reboot)",
+            LOG_E("WiFi streaming start rejected: free heap %u < floor %u (#475 — bounce LAN:APPLY or reboot)",
                   (unsigned)heapFreeAtStart,
                   (unsigned)MIN_HEAP_FREE_FOR_STREAM_START_BYTES);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
+    }
 
+    if (freqProvided) {
         // NQ3 Smart Frequency Management:
         // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
         // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
