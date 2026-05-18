@@ -365,7 +365,7 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
                 // resource leaks until the next reset.  #475: surface the
                 // sync-side failure and release the descriptor.
                 LOG_E("TCP: bind() HIF send failed sock=%d port=%u rc=%d",
-                      gpServerData->serverSocket, port, bindRc);
+                      gpServerData->serverSocket, (unsigned)port, bindRc);
                 shutdown(gpServerData->serverSocket);
                 gpServerData->serverSocket = -1;
             }
