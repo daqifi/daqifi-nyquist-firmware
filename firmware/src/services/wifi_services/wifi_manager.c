@@ -487,12 +487,13 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
 
             } else {
                 // #475: accept() arriving with a NULL message indicates a
-                // WINC SDK / HIF state break.  Surface the listen-side fd
-                // so we can correlate with the prior socket()/bind()/listen()
-                // sequence in the log.
-                LOG_E("TCP: accept() failed sock=%d (NULL msg)",
-                      (gStateMachineContext.pTcpServerContext != NULL)
-                          ? gStateMachineContext.pTcpServerContext->serverSocket : -1);
+                // WINC SDK / HIF state break.  Log the callback-provided
+                // socket arg directly — for SOCKET_MSG_ACCEPT, WINC passes
+                // sListenSock (winc/drv/socket/socket.c:227-254), which is
+                // the authoritative listen-socket fd at the moment the
+                // failure occurred.  pTcpServerContext->serverSocket could
+                // be -1 already if a concurrent error path reset it.
+                LOG_E("TCP: accept() failed listen-sock=%d (NULL msg)", socket);
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;

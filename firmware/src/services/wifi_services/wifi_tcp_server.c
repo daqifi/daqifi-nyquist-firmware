@@ -366,7 +366,18 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
                 // sync-side failure and release the descriptor.
                 LOG_E("TCP: bind() HIF send failed sock=%d port=%u rc=%d",
                       gpServerData->serverSocket, (unsigned)port, bindRc);
-                shutdown(gpServerData->serverSocket);
+                int8_t shutdownRc = shutdown(gpServerData->serverSocket);
+                if (shutdownRc != SOCK_ERR_NO_ERROR) {
+                    // If bind's HIF send failed, the chip is likely still
+                    // mid-failure, so shutdown's HIF send can fail too.  WINC
+                    // shutdown() clears LOCAL socket bookkeeping even on
+                    // HIF send failure (winc/drv/socket/socket.c:1012), so
+                    // we cannot retry — the WINC-side socket resource may
+                    // remain allocated until the next chip reset.  Surface
+                    // the cleanup failure so the leak is at least logged.
+                    LOG_E("TCP: shutdown(failed-bind sock=%d) failed rc=%d",
+                          gpServerData->serverSocket, shutdownRc);
+                }
                 gpServerData->serverSocket = -1;
             }
         } else {
