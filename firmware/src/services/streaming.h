@@ -252,8 +252,9 @@ bool     Streaming_SetTransportGraceSec(uint32_t sec);
 
 // #450 — startup-drop grace window in seconds (0..60, default 3).
 // Drops before this window are counted only in *DroppedBytes totals;
-// drops after also bump the *DroppedBytesSteady fields.  Setting is
-// applied at the next Streaming_Start, not mid-session.
+// drops after also bump the *DroppedBytesSteady fields.  Setter takes
+// effect immediately (matches LOSS:THREshold pattern) — the grace
+// check reads gLossGraceSec live at every drop site.
 uint32_t Streaming_GetLossGraceSec(void);
 bool     Streaming_SetLossGraceSec(uint32_t sec);
 

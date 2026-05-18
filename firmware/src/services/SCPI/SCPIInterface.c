@@ -2388,7 +2388,14 @@ static scpi_result_t SCPI_GetTransportGrace(scpi_t * context) {
  * Sets the startup-drop grace window.  Drops within `sec` seconds of
  * Streaming_Start are counted only in the existing *DroppedBytes totals;
  * drops after also accumulate in the new *DroppedBytesSteady counters.
- * Range 0..60, default 3.  Runtime-only; applies at next Start.
+ * Range 0..60, default 3.  Runtime-only.
+ *
+ * Takes effect IMMEDIATELY: the grace check reads gLossGraceSec at every
+ * drop site, so mid-session changes shift the classification of
+ * subsequent drops.  This matches the LOSS:THREshold pattern, where
+ * tuning the threshold during a live measurement is the intended use
+ * case.  If a snapshot-at-Start contract is wanted, callers should set
+ * GRACe before calling SYST:STR:START.
  */
 static scpi_result_t SCPI_SetLossGrace(scpi_t * context) {
     int32_t sec;

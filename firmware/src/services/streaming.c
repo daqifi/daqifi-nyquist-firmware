@@ -1144,6 +1144,9 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gTransportDownSinceWifi = 0;
     gTransportDownSinceSd = 0;
     gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
+    /* #450 startup-grace bookkeeping — same retained-RAM concern. */
+    gStreamStartTick = 0;
+    gLossGraceSec = LOSS_GRACE_DEFAULT_SEC;
     /* buffer/bufferSize are file-statics that may also live in
      * retained-RAM. Reset before the `if (buffer == NULL)` guard
      * below so a stale non-NULL pointer doesn't skip the pool fetch. */
@@ -1651,11 +1654,16 @@ void streaming_Task(void) {
             if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_USB ||
                 pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
                 if (Streaming_UsbWrite((const char*)buffer, packetSize) != packetSize) {
+                    bool pastGrace = Streaming_PastStartupGrace();
+                    // CLAUDE.md atomicity: 32-bit RMW (+=) is not atomic.
+                    // Single critical section covers both counter bumps so
+                    // a concurrent Streaming_GetStats snapshot sees the
+                    // pair coherently (steady never > total).
+                    taskENTER_CRITICAL();
                     gStreamStats.usbDroppedBytes += packetSize;
-                    if (Streaming_PastStartupGrace()) {
+                    if (pastGrace) {
                         gStreamStats.usbDroppedBytesSteady += packetSize;
                     }
-                    taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
                     LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB buffer overflow detected");
@@ -1681,11 +1689,12 @@ void streaming_Task(void) {
                         (unsigned)packetSize);
                 }
                 if (wifi_manager_WriteToBuffer((const char*)buffer, packetSize) != packetSize) {
+                    bool pastGrace = Streaming_PastStartupGrace();
+                    taskENTER_CRITICAL();
                     gStreamStats.wifiDroppedBytes += packetSize;
-                    if (Streaming_PastStartupGrace()) {
+                    if (pastGrace) {
                         gStreamStats.wifiDroppedBytesSteady += packetSize;
                     }
-                    taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
                     LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi buffer overflow detected");
@@ -1693,11 +1702,12 @@ void streaming_Task(void) {
             }
             if (hasSD && gSdFileWasReady) {
                 if (Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer, buffer, packetSize) == 0) {
+                    bool pastGrace = Streaming_PastStartupGrace();
+                    taskENTER_CRITICAL();
                     gStreamStats.sdDroppedBytes += packetSize;
-                    if (Streaming_PastStartupGrace()) {
+                    if (pastGrace) {
                         gStreamStats.sdDroppedBytesSteady += packetSize;
                     }
-                    taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();
                     LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
@@ -1719,11 +1729,12 @@ void streaming_Task(void) {
                 bool sdWritten = hasSD && gSdFileWasReady;
 
                 if (sdExpected && !sdWritten) {
+                    bool pastGrace = Streaming_PastStartupGrace();
+                    taskENTER_CRITICAL();
                     gStreamStats.sdDroppedBytes += packetSize;
-                    if (Streaming_PastStartupGrace()) {
+                    if (pastGrace) {
                         gStreamStats.sdDroppedBytesSteady += packetSize;
                     }
-                    taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();
                     LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
