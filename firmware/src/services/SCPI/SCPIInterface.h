@@ -58,6 +58,24 @@ extern "C" {
     #define SCPI_RESPONSE_BUF_SIZE 2048U
 
     /**
+     * #475 step 4 — minimum free heap (bytes) required to accept a new
+     * streaming session start.  Refuses SYST:STR:START when
+     * xPortGetFreeHeapSize() is below this threshold.  Designed to keep
+     * the WiFi accept() and event-callback allocation path from
+     * starving when prior pressure left the heap pinched.
+     *
+     * **10 KB chosen carefully:** boot-idle HeapFree settles around
+     * 13 KB per CLAUDE.md "Heap Allocation Map" — going above that
+     * would refuse cold-boot first-starts.  10 KB is ~3 KB above the
+     * observed #475 pinch point (~7 KB) and ~3 KB below typical idle,
+     * so it bites only when accumulated pressure has eaten meaningfully
+     * into post-boot headroom.  Not a hard guarantee that 10 KB is
+     * always enough for the WINC accept() path (we don't have its
+     * allocation profile measured); first defensive cut.
+     */
+    #define MIN_HEAP_FREE_FOR_STREAM_START_BYTES 10000U
+
+    /**
      * Acquire the shared SCPI response scratch buffer.
      * Blocks until the buffer mutex is available (portMAX_DELAY). Caller
      * MUST pair every successful Take with exactly one Give.
