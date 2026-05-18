@@ -1183,6 +1183,12 @@ void Streaming_ClearStats(void) {
     taskENTER_CRITICAL();
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
+#if PB_PROFILE_COUNTERS
+    // #388: also clear UsbCdc's in-flight DMA timestamp so it doesn't
+    // leak into the new session's usbDmaPendingCycles on the next
+    // WRITE_COMPLETE event.
+    UsbCdc_Profile_ResetPendingStamp();
+#endif
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gQuesBits = 0;

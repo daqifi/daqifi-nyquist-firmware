@@ -220,6 +220,10 @@ void Streaming_AddProfileSample_DmaCopy(uint32_t cycles);
 void Streaming_AddProfileSample_DmaIdle(void);
 // ISR-context entry point (caller is USB_DEVICE_CDC_EVENT_WRITE_COMPLETE):
 void Streaming_AddProfileSample_DmaPending_FromISR(uint32_t cycles);
+// Reset hook called by Streaming_ClearStats() so any in-flight transfer's
+// pre-clear interval doesn't leak into the new session's pending-cycles
+// accumulator.  Implementation lives in UsbCdc.c (owner of the timestamp).
+void UsbCdc_Profile_ResetPendingStamp(void);
 #endif
 
 // Increment DIO dropped sample counter (called from DIO_StreamingTrigger).

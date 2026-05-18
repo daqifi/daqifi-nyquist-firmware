@@ -14,6 +14,15 @@
 // task-context CircularBufferToUsbWrite path, read from the ISR-context
 // WRITE_COMPLETE callback.  32-bit reads/writes are atomic on PIC32MZ.
 static volatile uint32_t gUsbWriteStartCycles;
+
+// #388: called from Streaming_ClearStats() so a transfer-in-flight at
+// the clear boundary doesn't leak its pre-clear interval into the new
+// session's usbDmaPendingCycles accumulator.  After reset, the next
+// WRITE_COMPLETE will skip the accumulate (startCycles == 0 branch in
+// UsbCdc_FinalizeWrite).
+void UsbCdc_Profile_ResetPendingStamp(void) {
+    gUsbWriteStartCycles = 0;
+}
 #endif
 
 // libraries
