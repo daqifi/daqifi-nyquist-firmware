@@ -237,9 +237,16 @@ alongside USB and WiFi counters.
 WINC send-pipeline state.  Fields: `Mode`, `DataSock`, `ListenSock`,
 `PendingTx`, `AbortPending`, `BytesConfirmed`, `LastSendRc`,
 `SendErrCount`, `WincState`, `FreeTcpSockets`, `FreeUdpSockets`
-(see `SCPI_Iperf2_Diag` for the canonical field list).  This is the
-instrumentation that backed the multi-in-flight Step C work and the
-auto-HRESet decision.
+(see `SCPI_Iperf2_Diag` for the canonical field list).
+
+**Client-parsing note:** `FreeTcpSockets` and `FreeUdpSockets` emit
+the literal string `skipped` (not an integer) when iperf2 is not
+IDLE — the WINC socket counts are unsafe to read while a session
+is in flight.  Parsers should tolerate `key=skipped` for these two
+fields.
+
+This is the instrumentation that backed the multi-in-flight Step C
+work and the auto-HRESet decision.
 
 ## Changed
 
