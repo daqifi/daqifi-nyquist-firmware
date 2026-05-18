@@ -422,8 +422,10 @@ NULL-guards added to defensive call sites.
 
 Some BSS regions placed in kseg0 best-fit by the linker were not
 covered by the standard `_bss_start..._bss_end` zero loop on cold
-boot. Added explicit zero-init for the affected regions in `main`
-before `SYS_Initialize`. Fixes the rare crash class observed in
+boot. Added explicit zero-init for the affected regions early in
+`APP_FREERTOS_Tasks()` / `app_SystemInit()` — after `SYS_Initialize()`
+but before any FreeRTOS task is created (see `app_freertos.c:547`).
+Fixes the rare crash class observed in
 post-reset boot loops (#406 — auto-power-up + LED-off symptom under
 -O3 + IPE flash).  The underlying issue is well-bounded but the
 zero-init defense is permanent.  #410 (volatile-qualifier audit) is
@@ -603,7 +605,8 @@ client+server harness pieces are internal scaffolding).
   while SCPI reports healthy STA state.** After a 5h+ USB streaming
   session (overnight characterization), the device's TCP listen
   socket stops accepting connections. `SYST:COMM:LAN:ADDR?` continues
-  to report the DHCP-assigned IP and RSSI 100%. Heap-free dropped to
+  to report the DHCP-assigned IP and `SYST:COMM:LAN:SSIDSTR?` continues
+  to report RSSI 100%. Heap-free dropped to
   ~7 KB during the long run, which is the suspected mechanism (silent
   listen-socket allocation failure). **Workaround**: bounce WiFi via
   send `SYST:COMM:LAN:ENAbled 0` → `SYST:COMM:LAN:APPLY` → wait 5s →
