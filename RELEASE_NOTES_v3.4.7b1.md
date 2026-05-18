@@ -606,7 +606,8 @@ client+server harness pieces are internal scaffolding).
   to report the DHCP-assigned IP and RSSI 100%. Heap-free dropped to
   ~7 KB during the long run, which is the suspected mechanism (silent
   listen-socket allocation failure). **Workaround**: bounce WiFi via
-  `SYST:COMM:LAN:ENAbled 0 → APPLY → wait 5s → ENAbled 1 → APPLY`. TCP
+  send `SYST:COMM:LAN:ENAbled 0` → `SYST:COMM:LAN:APPLY` → wait 5s →
+  `SYST:COMM:LAN:ENAbled 1` → `SYST:COMM:LAN:APPLY`. TCP
   comes back on first attempt. Full investigation including suggested
   observability + heap-pressure audit deferred to v3.4.8.
 - **#476 — Single-channel WiFi PB throughput is stateful; multi-
@@ -614,7 +615,8 @@ client+server harness pieces are internal scaffolding).
   loss-counter fix.  Observed range for WiFi PB 1×T1 across this
   release validation window: **3000 Hz to 9000 Hz**, depending on
   prior WiFi activity.  Specifically: 7000 Hz right after a fresh
-  `LAN:APPLY`, ~4000 Hz after one neighboring config sweep, ~3000 Hz
+  `SYST:COMM:LAN:APPLY`, ~4000 Hz after one neighboring config sweep,
+  ~3000 Hz
   17-config deep into a continuous overnight, and **self-recovers to
   9000 Hz after ~30 minutes of WiFi idle time**.  WiFi PB 3×T1 holds
   8000 Hz across every measurement in the same window — small-PB-
