@@ -157,6 +157,35 @@ static volatile TickType_t gTransportDownSinceSd = 0;
 // the value across the streaming task's tight loop.
 static volatile uint32_t gTransportGraceSec = TRANSPORT_GRACE_DEFAULT_SEC;
 
+// #450 — startup-drop grace window.  After each Streaming_Start, drops
+// counted before the grace window expires increment ONLY the existing
+// *DroppedBytes totals.  Drops counted after the grace expires also
+// increment a parallel *DroppedBytesSteady counter, letting callers
+// distinguish startup-transient loss (WINC/encoder/buffer ramp) from
+// real-data-loss events.  Default 3 s — empirically covers the AP-mode
+// association + encoder warmup window observed on the bench.
+//
+// 32-bit volatile reads/writes are atomic on PIC32MZ; gStreamStartTick
+// is written only by streaming_Task at Start and read by the same task
+// at every drop site.  gLossGraceSec can be written by SCPI callbacks
+// from USB (pri 7) or WiFi (pri 2) tasks but only when streaming is
+// not active (SCPI handler rejects mid-stream changes per
+// SCPI_SetTransportGraceSec convention).
+static volatile TickType_t gStreamStartTick = 0;
+#define LOSS_GRACE_DEFAULT_SEC 3
+#define LOSS_GRACE_MIN_SEC     0
+#define LOSS_GRACE_MAX_SEC     60
+static volatile uint32_t gLossGraceSec = LOSS_GRACE_DEFAULT_SEC;
+
+// Returns true once the per-session startup grace has expired.  Cheap
+// helper inlined at every drop site; pdMS_TO_TICKS is compile-time
+// constant only when arg is constant, hence the multiplication form
+// using configTICK_RATE_HZ to avoid runtime division.
+static inline bool Streaming_PastStartupGrace(void) {
+    return (TickType_t)(xTaskGetTickCount() - gStreamStartTick)
+        >= (TickType_t)(gLossGraceSec * configTICK_RATE_HZ);
+}
+
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
     .Size = 6,
@@ -844,6 +873,10 @@ static void Streaming_Start(void) {
             taskENTER_CRITICAL();
             gTestPatternSampleCount = 0;
             taskEXIT_CRITICAL();
+            // #450: anchor the startup-grace window at the start of each
+            // enabled session.  Steady drop counters won't increment
+            // until xTaskGetTickCount() - gStreamStartTick >= grace.
+            gStreamStartTick = xTaskGetTickCount();
         }
 
         // Clear encoding buffer once to prevent stale data artifacts in SD files
@@ -993,6 +1026,20 @@ bool Streaming_SetTransportGraceSec(uint32_t sec) {
         return false;
     }
     gTransportGraceSec = sec;
+    return true;
+}
+
+// #450 — startup-drop grace window getters/setters.  Symmetric with
+// TransportGrace above; same semantics.
+uint32_t Streaming_GetLossGraceSec(void) {
+    return gLossGraceSec;
+}
+
+bool Streaming_SetLossGraceSec(uint32_t sec) {
+    if (sec < LOSS_GRACE_MIN_SEC || sec > LOSS_GRACE_MAX_SEC) {
+        return false;
+    }
+    gLossGraceSec = sec;
     return true;
 }
 
@@ -1605,6 +1652,9 @@ void streaming_Task(void) {
                 pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
                 if (Streaming_UsbWrite((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.usbDroppedBytes += packetSize;
+                    if (Streaming_PastStartupGrace()) {
+                        gStreamStats.usbDroppedBytesSteady += packetSize;
+                    }
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
@@ -1632,6 +1682,9 @@ void streaming_Task(void) {
                 }
                 if (wifi_manager_WriteToBuffer((const char*)buffer, packetSize) != packetSize) {
                     gStreamStats.wifiDroppedBytes += packetSize;
+                    if (Streaming_PastStartupGrace()) {
+                        gStreamStats.wifiDroppedBytesSteady += packetSize;
+                    }
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
@@ -1641,6 +1694,9 @@ void streaming_Task(void) {
             if (hasSD && gSdFileWasReady) {
                 if (Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer, buffer, packetSize) == 0) {
                     gStreamStats.sdDroppedBytes += packetSize;
+                    if (Streaming_PastStartupGrace()) {
+                        gStreamStats.sdDroppedBytesSteady += packetSize;
+                    }
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();
@@ -1664,6 +1720,9 @@ void streaming_Task(void) {
 
                 if (sdExpected && !sdWritten) {
                     gStreamStats.sdDroppedBytes += packetSize;
+                    if (Streaming_PastStartupGrace()) {
+                        gStreamStats.sdDroppedBytesSteady += packetSize;
+                    }
                     taskENTER_CRITICAL();
                     gQuesBits |= QUES_BIT_SD_OVERFLOW;
                     taskEXIT_CRITICAL();

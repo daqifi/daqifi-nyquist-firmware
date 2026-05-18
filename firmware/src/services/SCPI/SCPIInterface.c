@@ -2384,6 +2384,34 @@ static scpi_result_t SCPI_GetTransportGrace(scpi_t * context) {
 }
 
 /**
+ * SYSTem:STReam:LOSS:GRACe <sec> — #450
+ * Sets the startup-drop grace window.  Drops within `sec` seconds of
+ * Streaming_Start are counted only in the existing *DroppedBytes totals;
+ * drops after also accumulate in the new *DroppedBytesSteady counters.
+ * Range 0..60, default 3.  Runtime-only; applies at next Start.
+ */
+static scpi_result_t SCPI_SetLossGrace(scpi_t * context) {
+    int32_t sec;
+    if (!SCPI_ParamInt32(context, &sec, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (sec < 0 || sec > 60) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    if (!Streaming_SetLossGraceSec((uint32_t)sec)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetLossGrace(scpi_t * context) {
+    SCPI_ResultInt32(context, (int32_t)Streaming_GetLossGraceSec());
+    return SCPI_RES_OK;
+}
+
+/**
  * STATus:QUEStionable:CONDition? wrapper that syncs streaming health
  * bits from the streaming engine before reading the register.
  */
@@ -2408,7 +2436,9 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TotalBytesStreamed=%llu\r\n", (unsigned long long)s.totalBytesStreamed);
     scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s.queueDroppedSamples);
     scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
+    scpi_printf(context, "UsbDroppedBytesSteady=%u\r\n", (unsigned)s.usbDroppedBytesSteady);
     scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
+    scpi_printf(context, "WifiDroppedBytesSteady=%u\r\n", (unsigned)s.wifiDroppedBytesSteady);
     {
         uint64_t bytesSent = 0, bytesConfirmed = 0;
         uint32_t sendErrors = 0, partialSends = 0, partialMissing = 0;
@@ -2447,6 +2477,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiCirbufBufSize=%u\r\n", (unsigned)cirbufBufSize);
     }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
+    scpi_printf(context, "SdDroppedBytesSteady=%u\r\n", (unsigned)s.sdDroppedBytesSteady);
     {
         sd_card_write_metrics_t sdm;
         sd_card_manager_GetWriteMetricsSnapshot(&sdm);
@@ -4459,6 +4490,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:LOSS:WINDow?", .callback = SCPI_GetFlowWindow,},
     {.pattern = "SYSTem:STReam:CONSumer:GRACe", .callback = SCPI_SetTransportGrace,},
     {.pattern = "SYSTem:STReam:CONSumer:GRACe?", .callback = SCPI_GetTransportGrace,},
+    {.pattern = "SYSTem:STReam:LOSS:GRACe", .callback = SCPI_SetLossGrace,},  // #450
+    {.pattern = "SYSTem:STReam:LOSS:GRACe?", .callback = SCPI_GetLossGrace,},
     {.pattern = "SYSTem:STReam:TEST:PATtern", .callback = SCPI_SetTestPattern,}, // 0=off, 1=counter, 2=midscale, 3=fullscale, 4=walking, 5=triangle, 6=sine
     {.pattern = "SYSTem:STReam:TEST:PATtern?", .callback = SCPI_GetTestPattern,},
     {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 0=normal, 1=nocap, 2=pipeline (skip ADC)
