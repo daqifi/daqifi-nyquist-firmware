@@ -586,10 +586,33 @@ client+server harness pieces are internal scaffolding).
 
 ## Known limitations
 
-- **#463 — USB streaming ceilings 3-5 kHz below Session 22 baseline on
-  current main.** Hypothesis split between firmware regression and test
-  harness drift; cheap A/B planned. Documented as the only release-
-  blocker candidate in #464.
+### Newly observed during v3.4.7b1 validation
+
+- **#475 — WiFi TCP server (port 9760) silent after long USB streaming
+  while SCPI reports healthy STA state.** After a 5h+ USB streaming
+  session (overnight characterization), the device's TCP listen
+  socket stops accepting connections. `SYST:COMM:LAN:ADDR?` continues
+  to report the DHCP-assigned IP and RSSI 100%. Heap-free dropped to
+  ~7 KB during the long run, which is the suspected mechanism (silent
+  listen-socket allocation failure). **Workaround**: bounce WiFi via
+  `SYST:COMM:LAN:ENAbled 0 → APPLY → wait 5s → ENAbled 1 → APPLY`. TCP
+  comes back on first attempt. Full investigation including suggested
+  observability + heap-pressure audit deferred to v3.4.8.
+- **#476 — Single-channel WiFi PB throughput degrades with session
+  history; multi-channel does not.** First honest characterization
+  post-#371 silent-loss-counter fix. WiFi PB 1×T1 sustains 7000 Hz
+  immediately after a fresh `LAN:APPLY`, but drops to ~4000 Hz after
+  one neighboring config run and to ~3000 Hz after a 17-config
+  overnight sweep. WiFi PB 3×T1 holds 8000 Hz across all three
+  measurements — stable. Mechanism is small-PB-payload specific;
+  candidates include WINC SPI staging fragmentation, HIF refcount
+  drift, or asymmetric circular-buffer hysteresis (#475 may be the
+  same underlying state-pressure issue at a different symptom).
+  Reported numbers below are conservative "after typical session
+  activity" values, not fresh-cold-boot peaks.
+
+### Pre-existing, ongoing
+
 - **#399 / #401 — iperf2 HIF state leaks and WINC1500 wedging.** WINC
   send path can stall after a defined sequence of connection-setup
   failures; auto-HRESet between trials probabilistically clears the
@@ -601,10 +624,24 @@ client+server harness pieces are internal scaffolding).
   #376 (decouple drain into dedicated task — needs DMA SPI to ship a
   net win, not just shift the bottleneck), #378 (related WINC-side
   diagnostics).
-- **SD-focused overnight sweep not run this release cycle.** Last
-  night's overnight (`20260515_2318`) was USB+WiFi only; SD path was
-  validated via characterization Session 22 and the targeted MED-tier
-  tests but no fresh endurance pass exists post-#449.
+- **SD-focused overnight sweep not yet completed for v3.4.7b1.** The
+  v3.4.7b1 overnight run (`overnight_20260518_035928`) was USB+WiFi
+  only — the runner's `--sd` flag was omitted by the wrapper. SD path
+  validated via Session 22 characterization data and targeted
+  MED-tier tests; a fresh endurance pass post-#449 / post-#467 is
+  scheduled but not in this release.
+- **WiFi characterization tables in this release reflect post-#371
+  honest counters** — Session 23 numbers in earlier CLAUDE.md were
+  inflated by the pre-#371 silent-loss accounting bug. Some
+  single-channel numbers appear lower than v3.4.6b1's published
+  figures because the counter is now truthful, not because the
+  pipeline regressed. Multi-channel and 16-channel WiFi throughput
+  shows substantial honest improvements (e.g. WiFi PB 5T1+11T2 from
+  ~85 KB/s in v3.4.6b1 to 164 KB/s on v3.4.7b1).
+- **#463 (USB ceilings vs Session 22 baseline) — resolved during this
+  release cycle.** The apparent regression was test-harness drift,
+  not firmware. Honest ceilings reconfirmed in the v3.4.7b1 overnight
+  (`overnight_20260518_0319`).
 
 ---
 
