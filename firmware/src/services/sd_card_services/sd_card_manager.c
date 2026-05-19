@@ -391,10 +391,13 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
         }
 
         LOG_D("[SD] ListFiles: Found file '%s'\r\n", newPath);
-        int n = snprintf(NULL, 0, "%s\r\n", newPath);  // Calculate length needed
+        // Conservative length estimate for the entry "<path> <size>\r\n":
+        // path + ' ' + up to 10 digits (UINT32 max) + \r\n
+        size_t estLen = strlen(newPath) + 1U + 10U + 2U;
+        int n;
 
         // Check if buffer is getting full - need space for this entry
-        if (n > 0 && (strBuffIndex + n) >= (strBuffSize - 4)) {
+        if ((strBuffIndex + estLen) >= (strBuffSize - 4)) {
             // Send current chunk before adding this entry
             if (sendChunk && strBuffIndex > 0) {
                 pStrBuff[strBuffIndex] = '\0';
