@@ -2482,6 +2482,13 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiCirbufProduced=%u\r\n", (unsigned)cirbufProduced);
         scpi_printf(context, "WifiCirbufConsumed=%u\r\n", (unsigned)cirbufConsumed);
         scpi_printf(context, "WifiCirbufBufSize=%u\r\n", (unsigned)cirbufBufSize);
+        // #475 step 3: how long the TCP listen socket has been continuously
+        // open.  0 = currently closed.  Long values combined with the
+        // silent-failure log lines from #477 give operators a way to spot
+        // stuck listen sockets.  See #475 for the eventual periodic-recycle
+        // watchdog this enables.
+        scpi_printf(context, "WifiListenUptimeSec=%u\r\n",
+                    (unsigned)wifi_manager_GetListenSocketUptimeSec());
     }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
     scpi_printf(context, "SdDroppedBytesSteady=%u\r\n", (unsigned)s.sdDroppedBytesSteady);

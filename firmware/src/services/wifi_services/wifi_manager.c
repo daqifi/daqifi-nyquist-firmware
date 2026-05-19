@@ -104,6 +104,40 @@ static wifi_tcp_server_context_t gTcpServerContext;
 // Volatile flags for on-demand RSSI queries
 static volatile bool gRssiUpdatePending = false;
 
+// #475 step 3 — tracks when the TCP listen socket transitioned to OPEN.
+// Set when WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN is asserted (STA-mode
+// or AP-mode connect path); cleared to 0 at every site that resets the
+// flag.  Exposed via wifi_manager_GetListenSocketUptimeSec() for the
+// SCPI STATS response — gives observers a measurable for "how long has
+// this listen socket been continuously open?", which is the prerequisite
+// for the eventual periodic-recycle policy (#475 step 3 next iteration).
+//
+// 32-bit volatile read/write is atomic on PIC32MZ — no critical section
+// needed.  Single writer (wifi_manager_ProcessState on app_WifiTask pri 2).
+static volatile TickType_t gListenSocketOpenTick = 0;
+
+// #475 step 3 — paired reset of the TCP_SOCKET_OPEN flag + the open-tick
+// tracker.  Wrapping the 5 reset sites in a helper keeps them in sync if
+// future code adds another reset path.
+#define RESET_TCP_SOCKET_OPEN(pInstance)                                    \
+    do {                                                                    \
+        ResetEventFlag(&(pInstance)->eventFlags,                            \
+                       WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);            \
+        gListenSocketOpenTick = 0;                                          \
+    } while (0)
+
+// #475 step 3 — anchor the tick to xTaskGetTickCount(), coercing 0 → 1
+// so the "closed" sentinel doesn't collide on the rare wrap event.
+// At 1 kHz tick rate the 32-bit counter wraps every ~50 days; if a
+// listen socket opens exactly when the tick is 0, returning "closed" is
+// a false negative.  Same coercion pattern used elsewhere in the file
+// for other tick sentinels.
+#define ANCHOR_LISTEN_SOCKET_OPEN_TICK()                                    \
+    do {                                                                    \
+        TickType_t _t = xTaskGetTickCount();                                \
+        gListenSocketOpenTick = (_t == 0) ? 1 : _t;                         \
+    } while (0)
+
 // #353 Option 2: decouple SCPI dispatch from WINC callback context.
 // SOCKET_MSG_RECV fires on WDRV_WINC_Tasks (the WINC driver's task). Prior
 // to this change, the handler ran the whole microrl + libscpi + SCPI handler
@@ -814,6 +848,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             bool wifiFwUpdateRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
             ResetAllEventFlags(&pInstance->eventFlags);
+            // #475 step 3 — bulk-clear includes TCP_SOCKET_OPEN flag, so
+            // pair it with the matching tick clear to keep observable in
+            // sync.
+            gListenSocketOpenTick = 0;
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
@@ -1062,6 +1100,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         LOG_E("Failed to open TCP server socket in AP mode\r\n");
                     } else {
                         SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                        // #475 step 3: anchor open-time for uptime tracking
+                        ANCHOR_LISTEN_SOCKET_OPEN_TICK();
                         LOG_D("TCP server socket opened in AP mode on port %d\r\n", pInstance->pWifiSettings->tcpPort);
                     }
                 }
@@ -1105,6 +1145,12 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
+                // #475 step 3: anchor open-time ONLY when we actually open
+                // the socket.  This event fires both for STA-mode connect
+                // and for AP-mode client station connect (ApEventCallback);
+                // unconditional anchoring outside the if-block would reset
+                // the uptime every time an AP client associated.
+                ANCHOR_LISTEN_SOCKET_OPEN_TICK();
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
@@ -1114,7 +1160,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
             CloseUdpSocket(&pInstance->udpServerSocket);
             wifi_tcp_server_CloseSocket();
-            ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+            RESET_TCP_SOCKET_OPEN(pInstance);
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
             
             // Clear signal strength on disconnect
@@ -1196,7 +1242,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // Close sockets before stopping AP
                     CloseUdpSocket(&pInstance->udpServerSocket);
                     wifi_tcp_server_CloseSocket();
-                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                    RESET_TCP_SOCKET_OPEN(pInstance);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                     
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
@@ -1317,7 +1363,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     // Close sockets before stopping AP
                     CloseUdpSocket(&pInstance->udpServerSocket);
                     wifi_tcp_server_CloseSocket();
-                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                    RESET_TCP_SOCKET_OPEN(pInstance);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                     
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
@@ -1346,7 +1392,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // Close sockets before stopping AP
                 CloseUdpSocket(&pInstance->udpServerSocket);
                 wifi_tcp_server_CloseSocket();
-                ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                RESET_TCP_SOCKET_OPEN(pInstance);
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                 
                 // Stop current AP
@@ -1503,7 +1549,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // earlier speculative wrap was inappropriate.  Also
                         // clear UDP_SOCKET_CONNECTED so it doesn't outlast
                         // UDP_SOCKET_OPEN.
-                        ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
+                        RESET_TCP_SOCKET_OPEN(pInstance);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
@@ -1649,8 +1695,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->nextState = MainState;            
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN))
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
                 wifi_tcp_server_CloseSocket();
+                // #475 step 3 — flag is reset by the downstream MainState
+                // ENTRY path (via ResetAllEventFlags), but clear the tick
+                // here too so the observable doesn't lag behind the actual
+                // close.
+                gListenSocketOpenTick = 0;
+            }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
                 WDRV_WINC_Close(pInstance->wdrvHandle);
                 pInstance->wdrvHandle = DRV_HANDLE_INVALID;
@@ -1817,6 +1869,7 @@ void wifi_manager_BootInit(void) {
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
+    gListenSocketOpenTick = 0;  // #475 step 3 — retained-RAM scrub
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
@@ -2335,6 +2388,16 @@ void wifi_manager_ProcessStateNoTcpRx(void) {
 
 wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext() {
     return gStateMachineContext.pTcpServerContext;
+}
+
+uint32_t wifi_manager_GetListenSocketUptimeSec(void) {
+    // #475 step 3: report seconds the TCP listen socket has been
+    // continuously open.  Returns 0 when not open.  The prerequisite
+    // observable for an eventual periodic-recycle watchdog (next iter).
+    TickType_t openTick = gListenSocketOpenTick;
+    if (openTick == 0) return 0;
+    TickType_t elapsed = xTaskGetTickCount() - openTick;
+    return (uint32_t)(elapsed / configTICK_RATE_HZ);
 }
 
 void wifi_manager_RequestWifiFirmwareUpdate(void) {

@@ -307,6 +307,19 @@ extern "C" {
     wifi_tcp_server_context_t* wifi_manager_GetTcpServerContext();
 
     /**
+     * Returns the number of seconds the TCP listen socket has been
+     * continuously open, or 0 if it is currently closed.  Set when
+     * WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN is asserted; cleared via
+     * the internal RESET_TCP_SOCKET_OPEN helper at every site that
+     * resets the flag.
+     *
+     * Observable prerequisite for the eventual #475 step 3 periodic-
+     * recycle watchdog — lets operators spot a stuck listen socket
+     * even when other SCPI fields report healthy state.
+     */
+    uint32_t wifi_manager_GetListenSocketUptimeSec(void);
+
+    /**
      * @brief Formats a UDP announcement packet with the provided WiFi settings.
      * 
      * This callback function prepares a UDP packet containing relevant network information, such as IP address,
