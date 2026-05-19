@@ -303,7 +303,19 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
 
     sp = 0;
     gListDirStack[sp].handle = rootHandle;
-    snprintf(gListDirStack[sp].path, sizeof(gListDirStack[sp].path), "%s", dirPath);
+    int rootPn = snprintf(gListDirStack[sp].path, sizeof(gListDirStack[sp].path), "%s", dirPath);
+    if (rootPn < 0 || (size_t)rootPn >= sizeof(gListDirStack[sp].path)) {
+        LOG_E("[SD] ListFiles: Root path too long, aborting list");
+        if (SYS_FS_DirClose(rootHandle) == SYS_FS_RES_FAILURE) {
+            LOG_E("[SD] ListFiles: Failed to close directory, error=%d", SYS_FS_Error());
+        }
+        strBuffIndex += snprintf((char *)pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                "\r\n[Error]Directory path too long\r\n");
+        if (sendChunk && strBuffIndex > 0) {
+            sendChunk(pStrBuff, strBuffIndex);
+        }
+        return;
+    }
 
     while (sp >= 0) {
         if (SYS_FS_DirRead(gListDirStack[sp].handle, &stat) == SYS_FS_RES_FAILURE) {
@@ -311,9 +323,9 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             LOG_E("[SD] ListFiles: Failed to read directory '%s', error=%d",
                   gListDirStack[sp].path, err);
             // Pre-flush if the diagnostic won't fit, so it's never silently dropped.
-            int needed = snprintf(NULL, 0, "\r\n[Error:%d]Failed to read directory\r\n", err);
-            if (needed > 0 && sendChunk && strBuffIndex > 0
-                    && (size_t)needed >= strBuffSize - strBuffIndex) {
+            // Worst-case length: constant text + up to 10 digits (err) + CRLF.
+            size_t needed = sizeof("\r\n[Error:]Failed to read directory\r\n") - 1U + 10U + 2U;
+            if (sendChunk && strBuffIndex > 0 && needed >= (strBuffSize - strBuffIndex)) {
                 pStrBuff[strBuffIndex] = '\0';
                 sendChunk(pStrBuff, strBuffIndex);
                 strBuffIndex = 0;
@@ -359,11 +371,10 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                 LOG_E("[SD] ListFiles: max depth %d reached at '%s', listing truncated",
                       SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
                 // Pre-flush if the diagnostic won't fit, so it's never silently dropped.
-                int needed = snprintf(NULL, 0,
-                        "\r\n[Error]Listing truncated: max depth %d reached at [%s]\r\n",
-                        SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
-                if (needed > 0 && sendChunk && strBuffIndex > 0
-                        && (size_t)needed >= strBuffSize - strBuffIndex) {
+                // Worst-case length: constant text + 10 digits (depth) + path + CRLF.
+                size_t needed = sizeof("\r\n[Error]Listing truncated: max depth  reached at []\r\n")
+                              - 1U + 10U + strlen(newPath) + 2U;
+                if (sendChunk && strBuffIndex > 0 && needed >= (strBuffSize - strBuffIndex)) {
                     pStrBuff[strBuffIndex] = '\0';
                     sendChunk(pStrBuff, strBuffIndex);
                     strBuffIndex = 0;
