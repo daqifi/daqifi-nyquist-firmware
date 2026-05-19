@@ -346,8 +346,13 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             continue;
         }
 
-        snprintf(newPath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
-                 gListDirStack[sp].path, stat.fname);
+        int pn = snprintf(newPath, sizeof(newPath), "%s/%s",
+                          gListDirStack[sp].path, stat.fname);
+        if (pn < 0 || (size_t)pn >= sizeof(newPath)) {
+            LOG_E("[SD] ListFiles: Path too long, skipping '%s/%s'",
+                  gListDirStack[sp].path, stat.fname);
+            continue;
+        }
 
         if (stat.fattrib & SYS_FS_ATTR_DIR) {
             if (sp + 1 >= SD_CARD_MANAGER_MAX_LIST_DEPTH) {
