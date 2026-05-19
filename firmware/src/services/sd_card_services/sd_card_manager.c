@@ -323,8 +323,8 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             LOG_E("[SD] ListFiles: Failed to read directory '%s', error=%d",
                   gListDirStack[sp].path, err);
             // Pre-flush if the diagnostic won't fit, so it's never silently dropped.
-            // Worst-case length: constant text + up to 10 digits (err) + CRLF.
-            size_t needed = sizeof("\r\n[Error:]Failed to read directory\r\n") - 1U + 10U + 2U;
+            // Worst-case length: sizeof literal (already includes both CRLFs and NUL) - 1 + 10 digits (err).
+            const size_t needed = sizeof("\r\n[Error:]Failed to read directory\r\n") - 1U + 10U;
             if (sendChunk && strBuffIndex > 0 && needed >= (strBuffSize - strBuffIndex)) {
                 pStrBuff[strBuffIndex] = '\0';
                 sendChunk(pStrBuff, strBuffIndex);
@@ -371,9 +371,9 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                 LOG_E("[SD] ListFiles: max depth %d reached at '%s', listing truncated",
                       SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
                 // Pre-flush if the diagnostic won't fit, so it's never silently dropped.
-                // Worst-case length: constant text + 10 digits (depth) + path + CRLF.
-                size_t needed = sizeof("\r\n[Error]Listing truncated: max depth  reached at []\r\n")
-                              - 1U + 10U + strlen(newPath) + 2U;
+                // Worst-case length: sizeof literal (already includes both CRLFs and NUL) - 1 + 10 digits + path.
+                const size_t needed = sizeof("\r\n[Error]Listing truncated: max depth  reached at []\r\n")
+                                    - 1U + 10U + strlen(newPath);
                 if (sendChunk && strBuffIndex > 0 && needed >= (strBuffSize - strBuffIndex)) {
                     pStrBuff[strBuffIndex] = '\0';
                     sendChunk(pStrBuff, strBuffIndex);
