@@ -1080,14 +1080,18 @@ static void Streaming_Stop(void) {
                 (unsigned)gStreamStats.circularBufferEndBytes);
         }
 
-        // Log session summary if any data was lost
-        bool hadDrops = gStreamStats.queueDroppedSamples > 0 ||
-                        gStreamStats.usbDroppedBytes > 0 ||
-                        gStreamStats.wifiDroppedBytes > 0 ||
-                        gStreamStats.sdDroppedBytes > 0 ||
-                        gStreamStats.encoderFailures > 0 ||
-                        gStreamStats.dioDroppedSamples > 0 ||
-                        gStreamStats.eosOverruns > 0;
+        // Log session summary if any data was lost.
+        // Gate on STEADY counters so startup-window transients (within
+        // gLossGraceSec, default 3 s) don't produce misleading end-of-
+        // session error logs.  Total counters are still available via
+        // SYST:STR:STATS? for forensic diagnostic.
+        bool hadDrops = gStreamStats.queueDroppedSamplesSteady > 0 ||
+                        gStreamStats.usbDroppedBytesSteady > 0 ||
+                        gStreamStats.wifiDroppedBytesSteady > 0 ||
+                        gStreamStats.sdDroppedBytesSteady > 0 ||
+                        gStreamStats.encoderFailuresSteady > 0 ||
+                        gStreamStats.dioDroppedSamplesSteady > 0 ||
+                        gStreamStats.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
         // Clear runtime overflow / data-loss condition bits — they refer to
         // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
         // (#397) because it captures the REASON streaming stopped; clearing
@@ -1107,22 +1111,24 @@ static void Streaming_Stop(void) {
                                      gStreamStats.queueDroppedSamples;
             // EOS coalescing is data staleness (ADC register overwrite),
             // not a dropped sample — exclude from loss total/percentage.
-            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamples +
-                                      gStreamStats.encoderDroppedSamples +
-                                      gStreamStats.dioDroppedSamples;
+            // Steady counters for the loss math: startup-window transients
+            // shouldn't inflate the reported loss percent.
+            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamplesSteady +
+                                      gStreamStats.encoderDroppedSamplesSteady +
+                                      gStreamStats.dioDroppedSamplesSteady;
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
-            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u",
+            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)",
                   (unsigned)totalSampleLoss,
                   (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
-                  (unsigned)gStreamStats.usbDroppedBytes,
-                  (unsigned)gStreamStats.wifiDroppedBytes,
-                  (unsigned)gStreamStats.sdDroppedBytes,
-                  (unsigned)gStreamStats.encoderFailures,
-                  (unsigned)gStreamStats.encoderDroppedSamples,
-                  (unsigned)gStreamStats.dioDroppedSamples,
+                  (unsigned)gStreamStats.usbDroppedBytesSteady,
+                  (unsigned)gStreamStats.wifiDroppedBytesSteady,
+                  (unsigned)gStreamStats.sdDroppedBytesSteady,
+                  (unsigned)gStreamStats.encoderFailuresSteady,
+                  (unsigned)gStreamStats.encoderDroppedSamplesSteady,
+                  (unsigned)gStreamStats.dioDroppedSamplesSteady,
                   (unsigned)gStreamStats.eosOverruns);
         }
     }
