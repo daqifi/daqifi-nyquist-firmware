@@ -126,6 +126,18 @@ static volatile TickType_t gListenSocketOpenTick = 0;
         gListenSocketOpenTick = 0;                                          \
     } while (0)
 
+// #475 step 3 — anchor the tick to xTaskGetTickCount(), coercing 0 → 1
+// so the "closed" sentinel doesn't collide on the rare wrap event.
+// At 1 kHz tick rate the 32-bit counter wraps every ~50 days; if a
+// listen socket opens exactly when the tick is 0, returning "closed" is
+// a false negative.  Same coercion pattern used elsewhere in the file
+// for other tick sentinels.
+#define ANCHOR_LISTEN_SOCKET_OPEN_TICK()                                    \
+    do {                                                                    \
+        TickType_t _t = xTaskGetTickCount();                                \
+        gListenSocketOpenTick = (_t == 0) ? 1 : _t;                         \
+    } while (0)
+
 // #353 Option 2: decouple SCPI dispatch from WINC callback context.
 // SOCKET_MSG_RECV fires on WDRV_WINC_Tasks (the WINC driver's task). Prior
 // to this change, the handler ran the whole microrl + libscpi + SCPI handler
@@ -836,6 +848,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             bool wifiFwUpdateRequested = GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 
             ResetAllEventFlags(&pInstance->eventFlags);
+            // #475 step 3 — bulk-clear includes TCP_SOCKET_OPEN flag, so
+            // pair it with the matching tick clear to keep observable in
+            // sync.
+            gListenSocketOpenTick = 0;
             pInstance->udpServerSocket = -1;
             pInstance->wdrvHandle = DRV_HANDLE_INVALID;
             pInstance->assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
@@ -1085,7 +1101,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     } else {
                         SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
                         // #475 step 3: anchor open-time for uptime tracking
-                        gListenSocketOpenTick = xTaskGetTickCount();
+                        ANCHOR_LISTEN_SOCKET_OPEN_TICK();
                         LOG_D("TCP server socket opened in AP mode on port %d\r\n", pInstance->pWifiSettings->tcpPort);
                     }
                 }
@@ -1129,10 +1145,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
                     break;
                 }
+                // #475 step 3: anchor open-time ONLY when we actually open
+                // the socket.  This event fires both for STA-mode connect
+                // and for AP-mode client station connect (ApEventCallback);
+                // unconditional anchoring outside the if-block would reset
+                // the uptime every time an AP client associated.
+                ANCHOR_LISTEN_SOCKET_OPEN_TICK();
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
-            // #475 step 3: anchor open-time for uptime tracking (STA mode)
-            gListenSocketOpenTick = xTaskGetTickCount();
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
             break;
         case WIFI_MANAGER_EVENT_STA_DISCONNECTED:
@@ -1675,8 +1695,14 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             pInstance->nextState = MainState;            
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
-            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN))
+            if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
                 wifi_tcp_server_CloseSocket();
+                // #475 step 3 — flag is reset by the downstream MainState
+                // ENTRY path (via ResetAllEventFlags), but clear the tick
+                // here too so the observable doesn't lag behind the actual
+                // close.
+                gListenSocketOpenTick = 0;
+            }
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) != SYS_STATUS_UNINITIALIZED) {
                 WDRV_WINC_Close(pInstance->wdrvHandle);
                 pInstance->wdrvHandle = DRV_HANDLE_INVALID;
@@ -1843,6 +1869,7 @@ void wifi_manager_BootInit(void) {
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
+    gListenSocketOpenTick = 0;  // #475 step 3 — retained-RAM scrub
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
