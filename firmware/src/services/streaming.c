@@ -452,7 +452,13 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // No heap check needed - pool uses pre-allocated static memory
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
+                bool pastGrace = Streaming_PastStartupGrace();
+                taskENTER_CRITICAL();
                 gStreamStats.queueDroppedSamples++;
+                if (pastGrace) {
+                    gStreamStats.queueDroppedSamplesSteady++;
+                }
+                taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
                 Streaming_UpdateFlowWindow(true);
                 // Still increment test pattern counter to stay in sync
@@ -556,7 +562,13 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+                bool pastGrace = Streaming_PastStartupGrace();
+                taskENTER_CRITICAL();
                 gStreamStats.queueDroppedSamples++;
+                if (pastGrace) {
+                    gStreamStats.queueDroppedSamplesSteady++;
+                }
+                taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
                 Streaming_UpdateFlowWindow(true);
@@ -1321,7 +1333,13 @@ uint32_t Streaming_GetQuesBits(void) {
 }
 
 void Streaming_IncrDioDropped(void) {
+    bool pastGrace = Streaming_PastStartupGrace();
+    taskENTER_CRITICAL();
     gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 8)
+    if (pastGrace) {
+        gStreamStats.dioDroppedSamplesSteady++;
+    }
+    taskEXIT_CRITICAL();
 }
 
 void Streaming_IncrEosOverruns(uint32_t missed) {
@@ -1612,7 +1630,7 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(8);
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
-            gStreamStats.encoderFailures++;
+            bool pastGrace = Streaming_PastStartupGrace();
             // Each encoder pops exactly 1 sample per call. On failure that
             // sample is freed back to the pool but its data is lost (#297).
             // Counting 1 per failure avoids the race condition where the
@@ -1620,13 +1638,19 @@ void streaming_Task(void) {
             // queue depth reads, making a delta approach inaccurate.
             // Count for both AIN and DIO encoder failures — any sample type
             // consumed by a failed encode is lost.
-            gStreamStats.encoderDroppedSamples++;
-            LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                "Streaming: encoder failure lost 1 sample");
-            // Critical section: gQuesBits is also RMW'd by deferred ISR task
+            // Single critical section covers the counter pair and QUES bit
+            // so a concurrent Streaming_GetStats snapshot sees them coherently.
             taskENTER_CRITICAL();
+            gStreamStats.encoderFailures++;
+            gStreamStats.encoderDroppedSamples++;
+            if (pastGrace) {
+                gStreamStats.encoderFailuresSteady++;
+                gStreamStats.encoderDroppedSamplesSteady++;
+            }
             gQuesBits |= QUES_BIT_ENCODER_FAIL;
             taskEXIT_CRITICAL();
+            LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+                "Streaming: encoder failure lost 1 sample");
             LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
         }
         if (packetSize > 0) {

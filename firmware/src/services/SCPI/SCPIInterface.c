@@ -2442,6 +2442,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TotalSamplesStreamed=%llu\r\n", (unsigned long long)s.totalSamplesStreamed);
     scpi_printf(context, "TotalBytesStreamed=%llu\r\n", (unsigned long long)s.totalBytesStreamed);
     scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s.queueDroppedSamples);
+    scpi_printf(context, "QueueDroppedSamplesSteady=%u\r\n", (unsigned)s.queueDroppedSamplesSteady);
     scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
     scpi_printf(context, "UsbDroppedBytesSteady=%u\r\n", (unsigned)s.usbDroppedBytesSteady);
     scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
@@ -2503,8 +2504,11 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "SdWriteAlignedCopies=%u\r\n", (unsigned)sdm.writeAlignedCopies);
     }
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
+    scpi_printf(context, "EncoderFailuresSteady=%u\r\n", (unsigned)s.encoderFailuresSteady);
     scpi_printf(context, "EncoderDroppedSamples=%u\r\n", (unsigned)s.encoderDroppedSamples);
+    scpi_printf(context, "EncoderDroppedSamplesSteady=%u\r\n", (unsigned)s.encoderDroppedSamplesSteady);
     scpi_printf(context, "DioDroppedSamples=%u\r\n", (unsigned)s.dioDroppedSamples);
+    scpi_printf(context, "DioDroppedSamplesSteady=%u\r\n", (unsigned)s.dioDroppedSamplesSteady);
     scpi_printf(context, "EosOverruns=%u\r\n", (unsigned)s.eosOverruns);
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
