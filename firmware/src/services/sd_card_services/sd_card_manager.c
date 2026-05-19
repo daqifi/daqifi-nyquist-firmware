@@ -310,12 +310,23 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             SYS_FS_ERROR err = SYS_FS_Error();
             LOG_E("[SD] ListFiles: Failed to read directory '%s', error=%d",
                   gListDirStack[sp].path, err);
+            // Pre-flush if the diagnostic won't fit, so it's never silently dropped.
+            int needed = snprintf(NULL, 0, "\r\n[Error:%d]Failed to read directory\r\n", err);
+            if (needed > 0 && sendChunk && strBuffIndex > 0
+                    && (size_t)needed >= strBuffSize - strBuffIndex) {
+                pStrBuff[strBuffIndex] = '\0';
+                sendChunk(pStrBuff, strBuffIndex);
+                strBuffIndex = 0;
+            }
             int errN = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
                     "\r\n[Error:%d]Failed to read directory\r\n", err);
             if (errN > 0 && (size_t)errN < strBuffSize - strBuffIndex) {
                 strBuffIndex += (size_t)errN;
             }
-            SYS_FS_DirClose(gListDirStack[sp].handle);
+            if (SYS_FS_DirClose(gListDirStack[sp].handle) == SYS_FS_RES_FAILURE) {
+                LOG_E("[SD] ListFiles: Failed to close directory '%s', error=%d",
+                      gListDirStack[sp].path, SYS_FS_Error());
+            }
             sp--;
             continue;
         }
@@ -342,6 +353,16 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             if (sp + 1 >= SD_CARD_MANAGER_MAX_LIST_DEPTH) {
                 LOG_E("[SD] ListFiles: max depth %d reached at '%s', listing truncated",
                       SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
+                // Pre-flush if the diagnostic won't fit, so it's never silently dropped.
+                int needed = snprintf(NULL, 0,
+                        "\r\n[Error]Listing truncated: max depth %d reached at [%s]\r\n",
+                        SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
+                if (needed > 0 && sendChunk && strBuffIndex > 0
+                        && (size_t)needed >= strBuffSize - strBuffIndex) {
+                    pStrBuff[strBuffIndex] = '\0';
+                    sendChunk(pStrBuff, strBuffIndex);
+                    strBuffIndex = 0;
+                }
                 int depthN = snprintf((char *) pStrBuff + strBuffIndex,
                         strBuffSize - strBuffIndex,
                         "\r\n[Error]Listing truncated: max depth %d reached at [%s]\r\n",
