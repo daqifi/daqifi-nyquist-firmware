@@ -310,8 +310,11 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             SYS_FS_ERROR err = SYS_FS_Error();
             LOG_E("[SD] ListFiles: Failed to read directory '%s', error=%d",
                   gListDirStack[sp].path, err);
-            strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+            int errN = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
                     "\r\n[Error:%d]Failed to read directory\r\n", err);
+            if (errN > 0 && (size_t)errN < strBuffSize - strBuffIndex) {
+                strBuffIndex += (size_t)errN;
+            }
             SYS_FS_DirClose(gListDirStack[sp].handle);
             sp--;
             continue;
@@ -337,12 +340,15 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
 
         if (stat.fattrib & SYS_FS_ATTR_DIR) {
             if (sp + 1 >= SD_CARD_MANAGER_MAX_LIST_DEPTH) {
-                LOG_E("[SD] ListFiles: max depth %d reached at '%s', skipping subtree",
+                LOG_E("[SD] ListFiles: max depth %d reached at '%s', listing truncated",
                       SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
-                strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex,
+                int depthN = snprintf((char *) pStrBuff + strBuffIndex,
                         strBuffSize - strBuffIndex,
-                        "\r\n[Warn]Max depth %d reached, skipping [%s]\r\n",
+                        "\r\n[Error]Listing truncated: max depth %d reached at [%s]\r\n",
                         SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
+                if (depthN > 0 && (size_t)depthN < strBuffSize - strBuffIndex) {
+                    strBuffIndex += (size_t)depthN;
+                }
                 continue;
             }
             LOG_D("[SD] ListFiles: Descending into '%s'\r\n", newPath);
