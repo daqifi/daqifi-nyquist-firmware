@@ -15,6 +15,10 @@
 // SD_CARD_MANAGER_DISK_DEV_NAME is now in header for external use
 #define SD_CARD_MANAGER_MAX_SPLIT_FILES    9999
 
+// Iterative directory listing — bounded BSS-backed stack instead of recursion.
+// 16 levels covers any realistic FAT32 tree without growing the task stack.
+#define SD_CARD_MANAGER_MAX_LIST_DEPTH     16
+
 // File read transfer constants
 #define SD_READ_MAX_CHUNK_SIZE      16384U  // Maximum read size (16KB) - tested maximum for stability
 #define SD_READ_ALIGNMENT_SIZE      4096U   // Chunk alignment (4KB) - matches USB transfer granularity
@@ -264,17 +268,29 @@ static void sd_listdir_send_chunk(const uint8_t* data, size_t len) {
     }
 }
 
+// Iterative directory listing — explicit stack instead of function recursion.
+// Each frame holds the open directory handle plus the path string used to
+// build child paths during enumeration.  The stack lives in BSS so deep
+// trees don't grow the SD task stack (see #351).
+typedef struct {
+    SYS_FS_HANDLE handle;
+    char path[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
+} ListDirFrame;
+
+static ListDirFrame gListDirStack[SD_CARD_MANAGER_MAX_LIST_DEPTH];
+
 static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize, ListChunkCallback sendChunk) {
     SYS_FS_FSTAT stat;
     size_t strBuffIndex = 0;
-    SYS_FS_HANDLE dirHandle;
     char newPath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
+    int sp = -1;  // Stack pointer: -1 = empty, 0..MAX-1 = current frame
 
     memset(newPath, 0, sizeof (newPath));
     memset(&stat, 0, sizeof (stat));
     LOG_D("[SD] ListFiles: Opening directory '%s'\r\n", dirPath);
-    dirHandle = SYS_FS_DirOpen(dirPath);
-    if (dirHandle == SYS_FS_HANDLE_INVALID) {
+
+    SYS_FS_HANDLE rootHandle = SYS_FS_DirOpen(dirPath);
+    if (rootHandle == SYS_FS_HANDLE_INVALID) {
         SYS_FS_ERROR err = SYS_FS_Error();
         LOG_E("[SD] ListFiles: Failed to open directory '%s', error=%d\r\n", dirPath, err);
         strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
@@ -285,18 +301,29 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
         return;
     }
 
-    while (true) {
-        if (SYS_FS_DirRead(dirHandle, &stat) == SYS_FS_RES_FAILURE) {
+    sp = 0;
+    gListDirStack[sp].handle = rootHandle;
+    snprintf(gListDirStack[sp].path, sizeof(gListDirStack[sp].path), "%s", dirPath);
+
+    while (sp >= 0) {
+        if (SYS_FS_DirRead(gListDirStack[sp].handle, &stat) == SYS_FS_RES_FAILURE) {
             SYS_FS_ERROR err = SYS_FS_Error();
-            LOG_E("[SD] ListFiles: Failed to read directory, error=%d", err);
+            LOG_E("[SD] ListFiles: Failed to read directory '%s', error=%d",
+                  gListDirStack[sp].path, err);
             strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
                     "\r\n[Error:%d]Failed to read directory\r\n", err);
-            break;
+            SYS_FS_DirClose(gListDirStack[sp].handle);
+            sp--;
+            continue;
         }
 
         if (stat.fname[0] == '\0') {
-            LOG_D("[SD] ListFiles: End of directory\r\n");
-            break;
+            LOG_D("[SD] ListFiles: End of directory '%s'\r\n", gListDirStack[sp].path);
+            if (SYS_FS_DirClose(gListDirStack[sp].handle) == SYS_FS_RES_FAILURE) {
+                LOG_E("[SD] ListFiles: Failed to close directory, error=%d", SYS_FS_Error());
+            }
+            sp--;
+            continue;
         }
 
         LOG_D("[SD] ListFiles: Read entry '%s'\r\n", stat.fname);
@@ -305,45 +332,64 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             continue;
         }
 
-        snprintf(newPath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s", dirPath, stat.fname);
+        snprintf(newPath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
+                 gListDirStack[sp].path, stat.fname);
 
         if (stat.fattrib & SYS_FS_ATTR_DIR) {
-            // For subdirectories, recursively list (skip for now to keep simple)
-            LOG_D("[SD] ListFiles: Skipping subdirectory '%s'\r\n", newPath);
-        } else {
-            LOG_D("[SD] ListFiles: Found file '%s'\r\n", newPath);
-            int n = snprintf(NULL, 0, "%s\r\n", newPath);  // Calculate length needed
-
-            // Check if buffer is getting full - need space for this entry
-            if (n > 0 && (strBuffIndex + n) >= (strBuffSize - 4)) {
-                // Send current chunk before adding this entry
-                if (sendChunk && strBuffIndex > 0) {
-                    pStrBuff[strBuffIndex] = '\0';
-                    sendChunk(pStrBuff, strBuffIndex);
-                    strBuffIndex = 0;  // Reset buffer for next chunk
-                }
+            if (sp + 1 >= SD_CARD_MANAGER_MAX_LIST_DEPTH) {
+                LOG_E("[SD] ListFiles: max depth %d reached at '%s', skipping subtree",
+                      SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
+                strBuffIndex += snprintf((char *) pStrBuff + strBuffIndex,
+                        strBuffSize - strBuffIndex,
+                        "\r\n[Warn]Max depth %d reached, skipping [%s]\r\n",
+                        SD_CARD_MANAGER_MAX_LIST_DEPTH, newPath);
+                continue;
             }
+            LOG_D("[SD] ListFiles: Descending into '%s'\r\n", newPath);
+            SYS_FS_HANDLE childHandle = SYS_FS_DirOpen(newPath);
+            if (childHandle == SYS_FS_HANDLE_INVALID) {
+                SYS_FS_ERROR err = SYS_FS_Error();
+                LOG_E("[SD] ListFiles: Failed to open subdir '%s', error=%d", newPath, err);
+                continue;
+            }
+            sp++;
+            gListDirStack[sp].handle = childHandle;
+            snprintf(gListDirStack[sp].path, sizeof(gListDirStack[sp].path), "%s", newPath);
+            continue;
+        }
 
-            // Now add the filename and size to buffer (space-separated)
-            n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
-                    "%s %u\r\n", newPath, (unsigned)stat.fsize);
-            if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
-                strBuffIndex += (size_t)n;
-            } else {
-                // Entry doesn't fit - flush buffer and retry with fresh buffer
-                if (sendChunk && strBuffIndex > 0) {
-                    pStrBuff[strBuffIndex] = '\0';
-                    sendChunk(pStrBuff, strBuffIndex);
-                    strBuffIndex = 0;
+        LOG_D("[SD] ListFiles: Found file '%s'\r\n", newPath);
+        int n = snprintf(NULL, 0, "%s\r\n", newPath);  // Calculate length needed
 
-                    // Retry with fresh buffer
-                    n = snprintf((char *) pStrBuff, strBuffSize,
-                                "%s %u\r\n", newPath, (unsigned)stat.fsize);
-                    if (n > 0 && (size_t)n < strBuffSize) {
-                        strBuffIndex = (size_t)n;
-                    }
-                    // If still doesn't fit, entry is too large for buffer (skip it)
+        // Check if buffer is getting full - need space for this entry
+        if (n > 0 && (strBuffIndex + n) >= (strBuffSize - 4)) {
+            // Send current chunk before adding this entry
+            if (sendChunk && strBuffIndex > 0) {
+                pStrBuff[strBuffIndex] = '\0';
+                sendChunk(pStrBuff, strBuffIndex);
+                strBuffIndex = 0;  // Reset buffer for next chunk
+            }
+        }
+
+        // Now add the filename and size to buffer (space-separated)
+        n = snprintf((char *) pStrBuff + strBuffIndex, strBuffSize - strBuffIndex,
+                "%s %u\r\n", newPath, (unsigned)stat.fsize);
+        if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
+            strBuffIndex += (size_t)n;
+        } else {
+            // Entry doesn't fit - flush buffer and retry with fresh buffer
+            if (sendChunk && strBuffIndex > 0) {
+                pStrBuff[strBuffIndex] = '\0';
+                sendChunk(pStrBuff, strBuffIndex);
+                strBuffIndex = 0;
+
+                // Retry with fresh buffer
+                n = snprintf((char *) pStrBuff, strBuffSize,
+                            "%s %u\r\n", newPath, (unsigned)stat.fsize);
+                if (n > 0 && (size_t)n < strBuffSize) {
+                    strBuffIndex = (size_t)n;
                 }
+                // If still doesn't fit, entry is too large for buffer (skip it)
             }
         }
     }
@@ -358,10 +404,6 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             pStrBuff[strBuffIndex] = '\0';
             sendChunk(pStrBuff, strBuffIndex);
         }
-    }
-
-    if (SYS_FS_DirClose(dirHandle) == SYS_FS_RES_FAILURE) {
-        LOG_E("[SD] ListFiles: Failed to close directory, error=%d", SYS_FS_Error());
     }
 }
 
