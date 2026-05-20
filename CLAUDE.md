@@ -872,8 +872,8 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 | 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
 | 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
 | 2 | `app_WifiTask` | 1500 | 780 | WiFi state machine + TCP + SCPI-over-TCP dispatch (post-#353 Opt 2: microrl + libscpi + handlers all run here instead of on WDRV_WINC_Tasks) |
-| 2 | `lWDRV_WINC_Tasks` | 1024 | 320 | WINC1500 driver only. SCPI dispatch moved to app_WifiTask per #353 Option 2 |
 | 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
+| 1 | `lWDRV_WINC_Tasks` | 1024 | 320 | WINC1500 driver. PR #492 (#489 variant B): dropped 2→1 so `streaming_Task` (pri 6) preempts WINC by 5 levels and OSAL semaphores inside `WDRV_WINC_Tasks` do the yielding (Microchip reference pattern). Eliminated #491 BIMODAL catastrophic WiFi drops. |
 | 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
 | 1 | `F_USB_DEVICE_Tasks` | 144 | 72 | USB device stack |
 | 1 | `F_DRV_USBHS_Tasks` | 144 | 72 | USB hardware driver |
