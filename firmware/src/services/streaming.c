@@ -1621,26 +1621,26 @@ void streaming_Task(void) {
             // operator asked us to stop.  Verified empirically (n=20,
             // 5 s vs 30 s test streams both fire EF at ~50 % regardless
             // of stream duration → fires at Stop, not mid-stream).
-            // Re-check IsEnabled here and skip the failure bookkeeping.
-            if (!pRunTimeStreamConf->IsEnabled) {
-                continue;
+            // Skip the failure bookkeeping ONLY (don't `continue`) so any
+            // post-encoder cleanup or future code below still runs.
+            if (pRunTimeStreamConf->IsEnabled) {
+                // Each encoder pops exactly 1 sample per call. On failure that
+                // sample is freed back to the pool but its data is lost (#297).
+                // Counting 1 per failure avoids the race condition where the
+                // higher-priority deferred ISR task pushes new samples between
+                // queue depth reads, making a delta approach inaccurate.
+                // Count for both AIN and DIO encoder failures — any sample type
+                // consumed by a failed encode is lost.
+                gStreamStats.encoderFailures++;
+                gStreamStats.encoderDroppedSamples++;
+                LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+                    "Streaming: encoder failure lost 1 sample");
+                // Critical section: gQuesBits is also RMW'd by deferred ISR task
+                taskENTER_CRITICAL();
+                gQuesBits |= QUES_BIT_ENCODER_FAIL;
+                taskEXIT_CRITICAL();
+                LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
             }
-            // Each encoder pops exactly 1 sample per call. On failure that
-            // sample is freed back to the pool but its data is lost (#297).
-            // Counting 1 per failure avoids the race condition where the
-            // higher-priority deferred ISR task pushes new samples between
-            // queue depth reads, making a delta approach inaccurate.
-            // Count for both AIN and DIO encoder failures — any sample type
-            // consumed by a failed encode is lost.
-            gStreamStats.encoderFailures++;
-            gStreamStats.encoderDroppedSamples++;
-            LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                "Streaming: encoder failure lost 1 sample");
-            // Critical section: gQuesBits is also RMW'd by deferred ISR task
-            taskENTER_CRITICAL();
-            gQuesBits |= QUES_BIT_ENCODER_FAIL;
-            taskEXIT_CRITICAL();
-            LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
         }
         if (packetSize > 0) {
             taskENTER_CRITICAL();
