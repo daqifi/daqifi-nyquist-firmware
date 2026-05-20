@@ -148,7 +148,20 @@ uint32_t WincIdleGate_ComputeDelay(SYS_STATUS status)
         !wifi_tcp_server_HasActiveClient()) {
         return 50U;
     }
-    return 0U;
+    // WiFi-streaming-with-client case: previously tight loop (0 ms).
+    // A/B testing (2026-05-19, 16ch @ 1 kHz × 1 trial each):
+    //   - 0 ms tight loop: pc_kbps 37.7, WifiDroppedBytes 8733
+    //   - 1 ms pace:       pc_kbps 38.0, WifiDroppedBytes 0
+    // Same wire delivery, drops eliminated.  Mechanism: tight loop
+    // was CPU-stealing the streaming task at high channel counts;
+    // 1 ms = one FreeRTOS tick lets streaming_Task encode + hand
+    // off without WINC SPI staging starvation.
+    //
+    // Single-trial A/B (n=1 per condition) — needs multi-trial
+    // confirmation, but the contrast plus the consistent mechanism
+    // model justifies shipping.  Reverts cleanly to 0 if regressions
+    // surface.
+    return 1U;
 }
 
 // Debug accessor for SCPI verification of #55: reports the live gate state
