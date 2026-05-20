@@ -64,7 +64,9 @@ typedef struct s_tcpClientContext
      *  callback.  Caps at WIFI_TCP_MAX_IN_FLIGHT.  Replaces the prior
      *  `bool tcpSendPending` (which capped at 1).  Updated under
      *  taskENTER_CRITICAL — concurrent writers are streaming_Task (priority 6)
-     *  and WDRV_WINC_Tasks (priority 2). */
+     *  and WDRV_WINC_Tasks (DRV_WIFI_WINC_RTOS_TASK_PRIORITY, currently 1 per
+     *  PR #492 — formerly 2).  Reference the macro rather than hard-coding to
+     *  avoid stale comment drift if priority changes again. */
     volatile uint8_t tcpInFlight;
 
     /** #437: pending CircularBuf_Reset deferred from a context that
