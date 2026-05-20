@@ -98,7 +98,11 @@ data:
       children:
       - children:
         - attributes:
-            value: '2'
+            # #489 variant B (PR #492): 2 -> 1 so streaming_Task (pri 6)
+            # preempts WINC by 5 levels and OSAL semaphores inside
+            # WDRV_WINC_Tasks do the yielding (Microchip reference pattern).
+            # MCC regen must preserve this value.
+            value: '1'
           type: User
         type: Values
       type: Integer
