@@ -178,7 +178,7 @@ extern "C" {
 #define WDRV_WINC_DEBUG_LEVEL               WDRV_WINC_DEBUG_TYPE_ERROR
 /*** WiFi WINC Driver RTOS Configuration ***/
 #define DRV_WIFI_WINC_RTOS_STACK_SIZE           3000
-#define DRV_WIFI_WINC_RTOS_TASK_PRIORITY        2
+#define DRV_WIFI_WINC_RTOS_TASK_PRIORITY        1  // #489 variant B: 2->1 — streaming_Task (pri 6) preempts WINC by 5 levels so OSAL semaphores inside WDRV_WINC_Tasks do the yielding (Microchip pattern).
 
 /* SPI Driver Instance 0 Configuration Options */
 #define DRV_SPI_INDEX_0                       0
