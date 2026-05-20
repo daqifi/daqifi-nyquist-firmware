@@ -1612,7 +1612,19 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(8);
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
-            gStreamStats.encoderFailures++;
+            // #484: shutdown race.  If Streaming_Stop ran between the
+            // IsEnabled check at the top of this loop iteration and the
+            // encoder invocation, the encoder runs against partially
+            // torn-down state (pool freed, sample queue drained,
+            // encoder buffer pointer about to be cleared) and returns
+            // packetSize=0.  That's not a real encoder failure — the
+            // operator asked us to stop.  Verified empirically (n=20,
+            // 5 s vs 30 s test streams both fire EF at ~50 % regardless
+            // of stream duration → fires at Stop, not mid-stream).
+            // Re-check IsEnabled here and skip the failure bookkeeping.
+            if (!pRunTimeStreamConf->IsEnabled) {
+                continue;
+            }
             // Each encoder pops exactly 1 sample per call. On failure that
             // sample is freed back to the pool but its data is lost (#297).
             // Counting 1 per failure avoids the race condition where the
@@ -1620,6 +1632,7 @@ void streaming_Task(void) {
             // queue depth reads, making a delta approach inaccurate.
             // Count for both AIN and DIO encoder failures — any sample type
             // consumed by a failed encode is lost.
+            gStreamStats.encoderFailures++;
             gStreamStats.encoderDroppedSamples++;
             LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
                 "Streaming: encoder failure lost 1 sample");
