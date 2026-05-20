@@ -28,9 +28,17 @@ extern "C" {
     typedef struct sStreamingRuntimeConfig
     {
         /**
-         * Indicates whether the board is streaming
+         * Indicates whether the board is streaming.  Written by SCPI
+         * start/stop paths, read from streaming_Task and the timer ISR.
+         * volatile so -O3 cannot cache the read across loop iterations
+         * or function-call boundaries — the #484 shutdown-race fix
+         * relies on a second read mid-iteration observing a Stop that
+         * landed after the top-of-loop check.  Same rationale as
+         * Running below.  (PIC32MZ note: single-byte bool is byte-
+         * atomic on the bus, no critical section needed for plain
+         * load/store.)
          */
-        bool IsEnabled;
+        volatile bool IsEnabled;
         
         /**
          * Indicates whether the streaming timer is actually ticking.
