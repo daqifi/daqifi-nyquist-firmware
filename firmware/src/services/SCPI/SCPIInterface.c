@@ -3470,9 +3470,15 @@ static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->sdCircularBufSize ? mc->sdCircularBufSize : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: return the ACTIVE partition size from StreamingBufferPool.
+    // Uses the size-only accessor to avoid pointer-arithmetic UB if a
+    // SCPI query overlaps a concurrent SBP_Partition() (PR #495 Qodo
+    // pass 2 bug 1).  Pool is initialized + partitioned at boot in
+    // app_freertos.c:495, so a zero return indicates a partition
+    // failure path, not a "before SYST:STR:START" state — surface it
+    // honestly rather than masking with MemoryConfig defaults (Qodo
+    // pass 2 bug 2).
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_SdCircularSize());
     return SCPI_RES_OK;
 }
 
@@ -3491,9 +3497,8 @@ static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemWifiBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->wifiCircularBufSize ? mc->wifiCircularBufSize : (WIFI_CIRCULAR_BUFF_SIZE);
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_WifiSize());
     return SCPI_RES_OK;
 }
 
@@ -3512,9 +3517,8 @@ static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->usbCircularBufSize ? mc->usbCircularBufSize : USBCDC_CIRCULAR_BUFF_SIZE;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_UsbSize());
     return SCPI_RES_OK;
 }
 
@@ -3554,9 +3558,8 @@ static scpi_result_t SCPI_SetMemEncoderBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemEncoderBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->encoderBufSize ? mc->encoderBufSize : ENCODER_BUFFER_DEFAULT;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_EncoderSize());
     return SCPI_RES_OK;
 }
 
