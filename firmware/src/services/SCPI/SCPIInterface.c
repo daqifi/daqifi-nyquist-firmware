@@ -3477,7 +3477,7 @@ static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
     uint8_t* buf = NULL;
     uint32_t active = 0;
     StreamingBufferPool_GetSdCircular(&buf, &active);
-    if (active == 0) {
+    if (buf == NULL || active == 0) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         active = mc->sdCircularBufSize ? mc->sdCircularBufSize
                                         : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
@@ -3505,7 +3505,7 @@ static scpi_result_t SCPI_GetMemWifiBuf(scpi_t * context) {
     uint8_t* buf = NULL;
     uint32_t active = 0;
     StreamingBufferPool_GetWifi(&buf, &active);
-    if (active == 0) {
+    if (buf == NULL || active == 0) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         active = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
                                           : WIFI_CIRCULAR_BUFF_SIZE;
@@ -3533,7 +3533,7 @@ static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
     uint8_t* buf = NULL;
     uint32_t active = 0;
     StreamingBufferPool_GetUsb(&buf, &active);
-    if (active == 0) {
+    if (buf == NULL || active == 0) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         active = mc->usbCircularBufSize ? mc->usbCircularBufSize
                                          : USBCDC_CIRCULAR_BUFF_SIZE;
@@ -3582,7 +3582,7 @@ static scpi_result_t SCPI_GetMemEncoderBuf(scpi_t * context) {
     uint8_t* buf = NULL;
     uint32_t active = 0;
     StreamingBufferPool_GetEncoder(&buf, &active);
-    if (active == 0) {
+    if (buf == NULL || active == 0) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         active = mc->encoderBufSize ? mc->encoderBufSize
                                      : ENCODER_BUFFER_DEFAULT;
