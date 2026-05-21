@@ -3470,9 +3470,19 @@ static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->sdCircularBufSize ? mc->sdCircularBufSize : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: return the ACTIVE partition size from StreamingBufferPool
+    // (the size really in use right now) rather than the user-config
+    // intent.  Falls back to the config field when no partition has
+    // happened yet (i.e., before any SYST:STR:START).
+    uint8_t* buf = NULL;
+    uint32_t active = 0;
+    StreamingBufferPool_GetSdCircular(&buf, &active);
+    if (active == 0) {
+        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        active = mc->sdCircularBufSize ? mc->sdCircularBufSize
+                                        : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+    }
+    SCPI_ResultInt32(context, (int32_t)active);
     return SCPI_RES_OK;
 }
 
@@ -3491,9 +3501,16 @@ static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemWifiBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->wifiCircularBufSize ? mc->wifiCircularBufSize : (WIFI_CIRCULAR_BUFF_SIZE);
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    uint8_t* buf = NULL;
+    uint32_t active = 0;
+    StreamingBufferPool_GetWifi(&buf, &active);
+    if (active == 0) {
+        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        active = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
+                                          : WIFI_CIRCULAR_BUFF_SIZE;
+    }
+    SCPI_ResultInt32(context, (int32_t)active);
     return SCPI_RES_OK;
 }
 
@@ -3512,9 +3529,16 @@ static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->usbCircularBufSize ? mc->usbCircularBufSize : USBCDC_CIRCULAR_BUFF_SIZE;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    uint8_t* buf = NULL;
+    uint32_t active = 0;
+    StreamingBufferPool_GetUsb(&buf, &active);
+    if (active == 0) {
+        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        active = mc->usbCircularBufSize ? mc->usbCircularBufSize
+                                         : USBCDC_CIRCULAR_BUFF_SIZE;
+    }
+    SCPI_ResultInt32(context, (int32_t)active);
     return SCPI_RES_OK;
 }
 
@@ -3554,9 +3578,16 @@ static scpi_result_t SCPI_SetMemEncoderBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemEncoderBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->encoderBufSize ? mc->encoderBufSize : ENCODER_BUFFER_DEFAULT;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    uint8_t* buf = NULL;
+    uint32_t active = 0;
+    StreamingBufferPool_GetEncoder(&buf, &active);
+    if (active == 0) {
+        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        active = mc->encoderBufSize ? mc->encoderBufSize
+                                     : ENCODER_BUFFER_DEFAULT;
+    }
+    SCPI_ResultInt32(context, (int32_t)active);
     return SCPI_RES_OK;
 }
 
