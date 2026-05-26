@@ -125,6 +125,7 @@ Command options:
 | MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix; with the prefix you get exit 36 / "Unable to locate DFP") |
 | Serial port (USB CDC) | `/dev/ttyACMn` (WSL) / `COM3` (Windows) | usbipd busid `2-4`; reattach via `powershell.exe -Command "usbipd attach --wsl --busid 2-4"` after each reboot/flash. **DO NOT assume `/dev/ttyACM0` — verify by serial number (see below)** |
 | Bench primary device serial | `7E2898F46200E8A7` | The board PICkit `BUR184882598` programs (busid 2-4 / Windows COM3). Verify before issuing SCPI |
+| Bench secondary device serial | `7E28A4206200EAD1` | The board PICkit `BUR202272588` programs (busid 2-3 / Windows COM9). Enumerates as `/dev/ttyACM1` after usbipd attach when board 1 is already on `/dev/ttyACM0` |
 | Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
 | Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
@@ -144,32 +145,29 @@ an unflashed second board on `/dev/ttyACM0`.
    powershell.exe -Command "usbipd list" 2>&1 | grep -E "04d8:f794|ACM"
    ls -la /dev/ttyACM*
    ```
-2. For each `/dev/ttyACMn`, capture the firmware-reported serial via
-   the streaming metadata header (the most reliable identifier):
+2. For each `/dev/ttyACMn`, query the per-unit serial via `*IDN?` —
+   the third field is the per-unit serial:
    ```bash
    for dev in /dev/ttyACM*; do
-     python3 -c "
-   import serial, time
-   s = serial.Serial('$dev', 115200, timeout=1.0)
-   time.sleep(0.5); s.reset_input_buffer()
-   s.write(b'SYST:STR:FOR 2\r'); time.sleep(0.3); s.read_all()
-   s.write(b'SYST:StartStreamData 1\r'); time.sleep(2.0)
-   s.write(b'SYST:StopStreamData\r'); time.sleep(0.3)
-   for line in s.read_all().decode(errors='replace').splitlines():
-     if line.startswith('# Serial'): print('$dev =>', line.strip())
-   s.close()" 2>&1 | grep "Serial"
+     echo -n "$dev => "
+     bash ~/.claude/skills/scpi/scpi.sh "*IDN?" "$dev" 1500 2>&1 | tail -1
    done
+   # Expected:
+   #   /dev/ttyACM0 => DAQiFi,Nq1,7E2898F46200E8A7,01-02   (bench primary)
+   #   /dev/ttyACM1 => DAQiFi,Nq1,7E28A4206200EAD1,01-02   (bench secondary)
    ```
-3. Match the printed serial to the **Bench primary device serial** in
-   the inventory table above (`7E2898F46200E8A7`). Use that `/dev/ttyACMn`
-   path explicitly in your test scripts — DO NOT hardcode `ACM0`.
+3. Match the third field of the `*IDN?` response to the **Bench primary
+   device serial** (`7E2898F46200E8A7`) or **Bench secondary**
+   (`7E28A4206200EAD1`) in the inventory table above.  Use that
+   `/dev/ttyACMn` path explicitly in your test scripts — DO NOT hardcode
+   `ACM0`.
 4. If the wrong board is selected, re-target rather than detaching the
    other board. (Detaching usbipd devices that aren't yours is rude and
    can disrupt other workflows.)
 
-`*IDN?` is **not** sufficient for ID — it returns a generic
-`DAQiFi,Nq1,0,01-02` with no per-unit serial. The streaming CSV metadata
-header is currently the only SCPI-accessible per-unit identifier.
+`*IDN?` returns `DAQiFi,Nq1,<per-unit serial>,01-02` — the streaming CSV
+metadata header echoes the same serial.  Either source is fine for
+disambiguation; `*IDN?` is faster (no stream start/stop overhead).
 
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
