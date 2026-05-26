@@ -44,12 +44,18 @@ extern "C" {
  * else MIN.
  *
  * Sized to claim the ~118 KB of streaming pool that previously sat
- * idle in WiFi-only sessions (sample pool caps at
- * MAX_AIN_SAMPLE_COUNT=1100 ≈ 33 KB; inactive USB/SD reduce to
- * minimums; old fixed 32 KB WiFi circular carved ~76 KB total leaving
- * the rest unused).  Issue #497.  96 KB triples the burst-absorption
- * window before WINC SPI back-pressure cascades to wst, without
- * touching encoder or sample pool. */
+ * unused in WiFi-only sessions (old fixed 32 KB WiFi circular carved
+ * only ~76 KB total with the boot-default sample pool of 1100
+ * elements; the rest was unused).  Issue #497.
+ *
+ * Tradeoff (Qodo PR #501 pass 2): when SamplePoolCount is auto (0),
+ * Partition() sets the pool depth from remaining pool bytes — so
+ * bumping this constant shrinks the auto-sized sample pool and
+ * indirectly shrinks the FreeRTOS heap used by AInSample's queue.
+ * MAX_AIN_SAMPLE_COUNT is 10000 (not 1100 — that's the DEFAULT).
+ * Acceptable because SamplePoolMaxUsed on actual workloads stays
+ * ≤16 (per #497 evidence), so the post-shrink pool still has 100×
+ * headroom. */
 #define STREAMING_WIFI_WIFI_ONLY    (96U * 1024U)
 
 /**
