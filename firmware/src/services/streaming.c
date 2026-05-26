@@ -456,8 +456,18 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 // #499: split counter — this path = pool depth too shallow for
                 // the configured rate. Distinct from the PushBack-fail path
                 // below, which is "queue full / streaming_Task too slow."
+                // #483: Steady = post-startup-grace subset (the aggregate
+                // queueDroppedSamples stays for back-compat; per-sub-counter
+                // Steady variants intentionally not added — the existing
+                // aggregate Steady is sufficient for the session-end gating).
+                bool pastGrace = Streaming_PastStartupGrace();
+                taskENTER_CRITICAL();
                 gStreamStats.queueDroppedSamples++;
                 gStreamStats.poolExhaustedSamples++;
+                if (pastGrace) {
+                    gStreamStats.queueDroppedSamplesSteady++;
+                }
+                taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
                 Streaming_UpdateFlowWindow(true);
                 // Still increment test pattern counter to stay in sync
@@ -564,8 +574,15 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 // #499: split counter — this path = FreeRTOS queue full,
                 // i.e. streaming_Task can't drain fast enough. Distinct from
                 // the AllocateFromPool-NULL path above (pool depth shallow).
+                // #483: Steady = post-startup-grace subset of the aggregate.
+                bool pastGrace = Streaming_PastStartupGrace();
+                taskENTER_CRITICAL();
                 gStreamStats.queueDroppedSamples++;
                 gStreamStats.queueOverflowSamples++;
+                if (pastGrace) {
+                    gStreamStats.queueDroppedSamplesSteady++;
+                }
+                taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
                 Streaming_UpdateFlowWindow(true);
@@ -1123,14 +1140,18 @@ static void Streaming_Stop(void) {
                 (unsigned)gStreamStats.circularBufferEndBytes);
         }
 
-        // Log session summary if any data was lost
-        bool hadDrops = gStreamStats.queueDroppedSamples > 0 ||
-                        gStreamStats.usbDroppedBytes > 0 ||
-                        gStreamStats.wifiDroppedBytes > 0 ||
-                        gStreamStats.sdDroppedBytes > 0 ||
-                        gStreamStats.encoderFailures > 0 ||
-                        gStreamStats.dioDroppedSamples > 0 ||
-                        gStreamStats.eosOverruns > 0;
+        // Log session summary if any data was lost.
+        // Gate on STEADY counters so startup-window transients (within
+        // gLossGraceSec, default 3 s) don't produce misleading end-of-
+        // session error logs.  Total counters are still available via
+        // SYST:STR:STATS? for forensic diagnostic.
+        bool hadDrops = gStreamStats.queueDroppedSamplesSteady > 0 ||
+                        gStreamStats.usbDroppedBytesSteady > 0 ||
+                        gStreamStats.wifiDroppedBytesSteady > 0 ||
+                        gStreamStats.sdDroppedBytesSteady > 0 ||
+                        gStreamStats.encoderFailuresSteady > 0 ||
+                        gStreamStats.dioDroppedSamplesSteady > 0 ||
+                        gStreamStats.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
         // Clear runtime overflow / data-loss condition bits — they refer to
         // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
         // (#397) because it captures the REASON streaming stopped; clearing
@@ -1150,22 +1171,24 @@ static void Streaming_Stop(void) {
                                      gStreamStats.queueDroppedSamples;
             // EOS coalescing is data staleness (ADC register overwrite),
             // not a dropped sample — exclude from loss total/percentage.
-            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamples +
-                                      gStreamStats.encoderDroppedSamples +
-                                      gStreamStats.dioDroppedSamples;
+            // Steady counters for the loss math: startup-window transients
+            // shouldn't inflate the reported loss percent.
+            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamplesSteady +
+                                      gStreamStats.encoderDroppedSamplesSteady +
+                                      gStreamStats.dioDroppedSamplesSteady;
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
-            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u",
+            LOG_E("Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)",
                   (unsigned)totalSampleLoss,
                   (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
-                  (unsigned)gStreamStats.usbDroppedBytes,
-                  (unsigned)gStreamStats.wifiDroppedBytes,
-                  (unsigned)gStreamStats.sdDroppedBytes,
-                  (unsigned)gStreamStats.encoderFailures,
-                  (unsigned)gStreamStats.encoderDroppedSamples,
-                  (unsigned)gStreamStats.dioDroppedSamples,
+                  (unsigned)gStreamStats.usbDroppedBytesSteady,
+                  (unsigned)gStreamStats.wifiDroppedBytesSteady,
+                  (unsigned)gStreamStats.sdDroppedBytesSteady,
+                  (unsigned)gStreamStats.encoderFailuresSteady,
+                  (unsigned)gStreamStats.encoderDroppedSamplesSteady,
+                  (unsigned)gStreamStats.dioDroppedSamplesSteady,
                   (unsigned)gStreamStats.eosOverruns);
         }
     }
@@ -1376,7 +1399,13 @@ uint32_t Streaming_GetQuesBits(void) {
 }
 
 void Streaming_IncrDioDropped(void) {
+    bool pastGrace = Streaming_PastStartupGrace();
+    taskENTER_CRITICAL();
     gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 8)
+    if (pastGrace) {
+        gStreamStats.dioDroppedSamplesSteady++;
+    }
+    taskEXIT_CRITICAL();
 }
 
 void Streaming_IncrEosOverruns(uint32_t missed) {
@@ -1679,6 +1708,7 @@ void streaming_Task(void) {
             // Skip the failure bookkeeping ONLY (don't `continue`) so any
             // post-encoder cleanup or future code below still runs.
             if (pRunTimeStreamConf->IsEnabled) {
+                bool pastGrace = Streaming_PastStartupGrace();
                 // Each encoder pops exactly 1 sample per call. On failure that
                 // sample is freed back to the pool but its data is lost (#297).
                 // Counting 1 per failure avoids the race condition where the
@@ -1686,14 +1716,20 @@ void streaming_Task(void) {
                 // queue depth reads, making a delta approach inaccurate.
                 // Count for both AIN and DIO encoder failures — any sample type
                 // consumed by a failed encode is lost.
+                // #483: also bump Steady subset when past the 3 s startup grace.
+                // Single critical section covers all counters and the QUES bit
+                // so a concurrent Streaming_GetStats snapshot sees them coherently.
+                taskENTER_CRITICAL();
                 gStreamStats.encoderFailures++;
                 gStreamStats.encoderDroppedSamples++;
-                LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                    "Streaming: encoder failure lost 1 sample");
-                // Critical section: gQuesBits is also RMW'd by deferred ISR task
-                taskENTER_CRITICAL();
+                if (pastGrace) {
+                    gStreamStats.encoderFailuresSteady++;
+                    gStreamStats.encoderDroppedSamplesSteady++;
+                }
                 gQuesBits |= QUES_BIT_ENCODER_FAIL;
                 taskEXIT_CRITICAL();
+                LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+                    "Streaming: encoder failure lost 1 sample");
                 LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
             }
         }

@@ -167,17 +167,21 @@ typedef struct {
     uint32_t usbDroppedBytes;       // USB circular buffer full (total — incl. startup transients)
     uint32_t wifiDroppedBytes;      // WiFi circular buffer full (total — incl. startup transients)
     uint32_t sdDroppedBytes;        // SD write timeout/partial (total — incl. startup transients)
-    // #450: post-grace subsets of the above.  Drops that occur within
-    // the first `gLossGraceSec` of a session increment only the Total
-    // above; drops after the grace expires also increment these Steady
-    // counters.  Steady == real-data-loss after the pipeline stabilizes.
-    // Total − Steady == startup-window drops.
+    // #450 + follow-up: post-grace subsets of the above. Drops that
+    // occur within the first `gLossGraceSec` of a session increment
+    // only the Total above; drops after the grace expires also
+    // increment these Steady counters. Steady == real-data-loss after
+    // the pipeline stabilizes. Total − Steady == startup-window drops.
     uint32_t usbDroppedBytesSteady;
     uint32_t wifiDroppedBytesSteady;
     uint32_t sdDroppedBytesSteady;
     uint32_t encoderFailures;       // Encoder returned 0 with data available
+    uint32_t encoderFailuresSteady;
     uint32_t encoderDroppedSamples; // AIn samples consumed by failed encode calls (#297)
+    uint32_t encoderDroppedSamplesSteady;
     uint32_t dioDroppedSamples;     // DIO queue full — PushBack returned false (#296)
+    uint32_t dioDroppedSamplesSteady;
+    uint32_t queueDroppedSamplesSteady;  // post-grace subset of queueDroppedSamples
     uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)

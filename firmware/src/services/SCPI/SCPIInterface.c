@@ -2450,6 +2450,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // #499: split sub-counters — QueueDroppedSamples is their sum (kept for back-compat).
     //   PoolExhaustedSamples = sample pool depth too shallow for the rate.
     //   QueueOverflowSamples = streaming_Task drain too slow (queue full while pool has slots).
+    // #483: Steady = post-grace subset of QueueDroppedSamples (no per-sub-counter Steady).
+    scpi_printf(context, "QueueDroppedSamplesSteady=%u\r\n", (unsigned)s.queueDroppedSamplesSteady);
     scpi_printf(context, "PoolExhaustedSamples=%u\r\n", (unsigned)s.poolExhaustedSamples);
     scpi_printf(context, "QueueOverflowSamples=%u\r\n", (unsigned)s.queueOverflowSamples);
     scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
@@ -2513,8 +2515,11 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "SdWriteAlignedCopies=%u\r\n", (unsigned)sdm.writeAlignedCopies);
     }
     scpi_printf(context, "EncoderFailures=%u\r\n", (unsigned)s.encoderFailures);
+    scpi_printf(context, "EncoderFailuresSteady=%u\r\n", (unsigned)s.encoderFailuresSteady);
     scpi_printf(context, "EncoderDroppedSamples=%u\r\n", (unsigned)s.encoderDroppedSamples);
+    scpi_printf(context, "EncoderDroppedSamplesSteady=%u\r\n", (unsigned)s.encoderDroppedSamplesSteady);
     scpi_printf(context, "DioDroppedSamples=%u\r\n", (unsigned)s.dioDroppedSamples);
+    scpi_printf(context, "DioDroppedSamplesSteady=%u\r\n", (unsigned)s.dioDroppedSamplesSteady);
     scpi_printf(context, "EosOverruns=%u\r\n", (unsigned)s.eosOverruns);
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
