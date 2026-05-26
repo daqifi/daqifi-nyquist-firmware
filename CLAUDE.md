@@ -123,44 +123,59 @@ Command options:
 | Primary PICkit 4 (this board) | `BUR184882598` | Pass `-TSBUR184882598` to ipecmd when multiple PICkits are attached |
 | Secondary PICkit 4 | `BUR202272588` | On other board(s) — ignore unless re-targeting |
 | MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix; with the prefix you get exit 36 / "Unable to locate DFP") |
-| Serial port (USB CDC) | `/dev/ttyACMn` (WSL) / `COM3` (Windows) | usbipd busid `2-4`; reattach via `powershell.exe -Command "usbipd attach --wsl --busid 2-4"` after each reboot/flash. **DO NOT assume `/dev/ttyACM0` — verify by serial number (see below)** |
-| Bench primary device serial | `7E2898F46200E8A7` | The board PICkit `BUR184882598` programs (busid 2-4 / Windows COM3). Verify before issuing SCPI |
-| Bench secondary device serial | `7E28A4206200EAD1` | The board PICkit `BUR202272588` programs (busid 2-3 / Windows COM9). Enumerates as `/dev/ttyACM1` after usbipd attach when board 1 is already on `/dev/ttyACM0` |
+| Serial port (USB CDC) | Windows: `COM3` / `COM9` (stable per board) ; WSL: `/dev/ttyACMn` (**attach-order dependent — NOT stable**) | usbipd busid `2-4` (primary) / `2-3` (secondary); reattach via `powershell.exe -Command "usbipd attach --wsl --busid <BUSID>"` after each reboot/flash. **DO NOT assume `/dev/ttyACM0` maps to any particular board — verify by serial number (see below).** Stable identifiers across reboots are the Windows COM number and the per-unit serial; `/dev/ttyACMn` is assigned by Linux in the order usbipd attaches devices. |
+| Bench primary device serial | `7E2898F46200E8A7` | Programmed by PICkit `BUR184882598`. Windows: **COM3**, busid **2-4**. Verify by `*IDN?` before issuing SCPI — never hardcode `/dev/ttyACM0`. |
+| Bench secondary device serial | `7E28A4206200EAD1` | Programmed by PICkit `BUR202272588`. Windows: **COM9**, busid **2-3**. Verify by `*IDN?` before issuing SCPI — never hardcode `/dev/ttyACM1`. **⚠️ Shared with other agents — may not always be available; if `usbipd list` shows it as "Not shared" or it's attached elsewhere, do not commandeer it.  Fall back to the primary alone.** |
 | Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
 | Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
 #### ⚠️ Device verification protocol — ALWAYS run before SCPI tests
 
-Multiple DAQiFi boards may be attached to WSL simultaneously. `usbipd
-attach` in arbitrary order means `/dev/ttyACM0` is **not guaranteed** to
-be the bench primary — it might be a totally different board you didn't
-flash. This caused a >30-minute false bisect on 2026-05-06: every
-firmware version "looked the same" because the test script was reading
-an unflashed second board on `/dev/ttyACM0`.
+Multiple DAQiFi boards may be attached to WSL simultaneously, and
+**`/dev/ttyACMn` assignment is volatile**: Linux assigns numbers in the
+order `usbipd` attaches devices, not by hardware identity.  Detach +
+re-attach in a different order, and the same physical board moves from
+`ACM0` to `ACM1` (or vice versa) without anything else changing.  The
+**stable** identifiers across attach/detach/reboot cycles are the
+**Windows COM number** (e.g. `COM3` for the primary) and the
+**firmware-reported serial** in the third field of `*IDN?` (e.g.
+`7E2898F46200E8A7`).  Always map back to one of those — never trust
+`/dev/ttyACMn` alone.
+
+This caused a >30-minute false bisect on 2026-05-06: every firmware
+version "looked the same" because the test script was reading an
+unflashed second board on `/dev/ttyACM0`.
 
 **Verification steps before any SCPI work:**
 
-1. Enumerate USB devices and confirm only the expected DAQiFi(s) are attached:
+1. Enumerate USB devices on the Windows side — the COM number is the
+   stable identifier, and `usbipd list` shows which busid maps to
+   which COM:
    ```bash
    powershell.exe -Command "usbipd list" 2>&1 | grep -E "04d8:f794|ACM"
+   # Example output (bench layout):
+   #   2-3   04d8:f794  USB Serial Device (COM9)   Shared/Attached
+   #   2-4   04d8:f794  USB Serial Device (COM3)   Shared/Attached
    ls -la /dev/ttyACM*
    ```
-2. For each `/dev/ttyACMn`, query the per-unit serial via `*IDN?` —
-   the third field is the per-unit serial:
+2. For each `/dev/ttyACMn` currently attached, query the per-unit
+   serial via `*IDN?` — the third field is the per-unit serial:
    ```bash
    for dev in /dev/ttyACM*; do
      echo -n "$dev => "
      bash ~/.claude/skills/scpi/scpi.sh "*IDN?" "$dev" 1500 2>&1 | tail -1
    done
-   # Expected:
-   #   /dev/ttyACM0 => DAQiFi,Nq1,7E2898F46200E8A7,01-02   (bench primary)
-   #   /dev/ttyACM1 => DAQiFi,Nq1,7E28A4206200EAD1,01-02   (bench secondary)
+   # Possible mapping (varies by attach order — DON'T assume!):
+   #   /dev/ttyACM0 => DAQiFi,Nq1,7E2898F46200E8A7,01-02   (COM3 / bench primary)
+   #   /dev/ttyACM1 => DAQiFi,Nq1,7E28A4206200EAD1,01-02   (COM9 / bench secondary)
    ```
-3. Match the third field of the `*IDN?` response to the **Bench primary
-   device serial** (`7E2898F46200E8A7`) or **Bench secondary**
-   (`7E28A4206200EAD1`) in the inventory table above.  Use that
-   `/dev/ttyACMn` path explicitly in your test scripts — DO NOT hardcode
-   `ACM0`.
+3. Match the third field of `*IDN?` to the **Bench primary device
+   serial** (`7E2898F46200E8A7` — COM3) or **Bench secondary**
+   (`7E28A4206200EAD1` — COM9) in the inventory table above.  In
+   the rest of the test session, refer to the board by serial or
+   Windows COM, and store the looked-up `/dev/ttyACMn` in a variable
+   (e.g. `DEV_PRIMARY=/dev/ttyACM0`) rather than hardcoding the path
+   — the mapping can change next time you re-attach.
 4. If the wrong board is selected, re-target rather than detaching the
    other board. (Detaching usbipd devices that aren't yours is rude and
    can disrupt other workflows.)
