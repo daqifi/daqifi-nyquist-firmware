@@ -55,6 +55,11 @@ extern "C" {
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
         uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
+        // Pre-start free-space floor (#498).  When > 0, SYST:STR:START
+        // for SD-output sessions runs a SYS_FS_DriveSectorGet() check
+        // and rejects with SCPI -200 if the card has fewer than this
+        // many bytes free.  0 = no pre-start check (legacy behavior).
+        uint64_t minFreeBytes;
     } sd_card_manager_settings_t;
 
 
