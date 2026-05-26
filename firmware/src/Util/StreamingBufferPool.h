@@ -36,20 +36,20 @@ extern "C" {
 
 /** Active-interface defaults used by Streaming_ComputeAutoBuffers */
 #define STREAMING_USB_DEFAULT       (64U * 1024U)  /* USB circular when active */
-/* WiFi circular when active.  PR #364 bumped this 32→64 KB and was originally
- * reported as +5x ceiling — but #371 retrospective A/B (with truthful drop
- * counter) showed the 64KB had ZERO effect on wire rate vs 32KB at any
- * tested rate.  The original "win" was a measurement artifact of the
- * silent-loss bug.  Reverting to 32 KB to free 32 KB of streaming pool
- * memory for the sample pool / encoder.  See #373. */
-#define STREAMING_WIFI_DEFAULT      (32U * 1024U)
-/* WiFi circular when WiFi is the SOLE active interface.  In WiFi-only
- * mode auto-balance previously left ~118 KB of the 194 KB streaming
- * pool idle (sample pool caps at MAX_AIN_SAMPLE_COUNT=1100 ≈ 33 KB,
- * inactive USB/SD reduce to minimums).  Issue #497 documented the
- * waste and proposed reallocating to the WiFi circular — the layer
- * that overflows on WINC SPI back-pressure.  96 KB triples the burst-
- * absorption window without touching encoder or sample pool. */
+/* WiFi circular when WiFi is the active interface.  WiFi is always
+ * single-interface — the StreamingInterface enum has no USB+WiFi or
+ * WiFi+SD value, and the SCPIInterface.c runtime guard refuses WiFi
+ * while SD logging is active due to the SPI bus conflict.  So
+ * auto-balance has nothing to choose between: hasWifi -> WIFI_ONLY
+ * else MIN.
+ *
+ * Sized to claim the ~118 KB of streaming pool that previously sat
+ * idle in WiFi-only sessions (sample pool caps at
+ * MAX_AIN_SAMPLE_COUNT=1100 ≈ 33 KB; inactive USB/SD reduce to
+ * minimums; old fixed 32 KB WiFi circular carved ~76 KB total leaving
+ * the rest unused).  Issue #497.  96 KB triples the burst-absorption
+ * window before WINC SPI back-pressure cascades to wst, without
+ * touching encoder or sample pool. */
 #define STREAMING_WIFI_WIFI_ONLY    (96U * 1024U)
 
 /**

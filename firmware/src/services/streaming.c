@@ -838,27 +838,20 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
 
     // Circular buffers: larger buffers reduce retry frequency for
     // all-or-nothing writes, but must leave enough pool for samples.
-    // WiFi at 32 KB absorbs ~600 ms of encoder lead at 5×T1 @ 3 kHz
-    // (52 KB/s) before WINC's per-packet callback-paced drain catches
-    // up.  Sample-pool floor with USB+WiFi active is ~520 samples
-    // (well above MIN_AIN_SAMPLE_COUNT=100).
     //
-    // #497: in WiFi-only mode the previous fixed 32 KB left ~118 KB of
-    // the 194 KB pool idle (sample-pool cap of MAX_AIN_SAMPLE_COUNT +
-    // inactive USB/SD at minimums = 76 KB total carved).  Bump to
-    // STREAMING_WIFI_WIFI_ONLY (96 KB) when WiFi is the sole active
-    // interface — triples the burst-absorption window before WINC SPI
-    // back-pressure cascades to wst.  USB+WiFi sessions keep the 32 KB
-    // default to preserve sample-pool headroom for the dual-interface
-    // case where it actually matters.
-    if (hasWifi && !hasUsb && !hasSd) {
-        *outWifiSize = STREAMING_WIFI_WIFI_ONLY;
-    } else if (hasWifi) {
-        *outWifiSize = STREAMING_WIFI_DEFAULT;
-    } else {
-        *outWifiSize = STREAMING_WIFI_MIN;
-    }
-    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT  : STREAMING_USB_MIN;
+    // #497: the StreamingInterface enum has no USB+WiFi or WiFi+SD
+    // combination — WiFi is always single-interface (see
+    // StreamingRuntimeConfig.h:17-22 and the runtime guard at
+    // SCPIInterface.c:2823 that refuses WiFi while SD is logging due
+    // to the SPI bus conflict).  So `hasWifi` always means "WiFi is
+    // the SOLE active interface", which makes the previous fixed
+    // 32 KB partition leave ~118 KB of the 194 KB pool idle
+    // (sample-pool capped at MAX_AIN_SAMPLE_COUNT, inactive USB/SD
+    // at minimums = ~76 KB total carved).  Bump to
+    // STREAMING_WIFI_WIFI_ONLY (96 KB) to triple the burst-
+    // absorption window before WINC SPI back-pressure cascades to wst.
+    *outWifiSize = hasWifi ? STREAMING_WIFI_WIFI_ONLY : STREAMING_WIFI_MIN;
+    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT    : STREAMING_USB_MIN;
 }
 
 /*!
