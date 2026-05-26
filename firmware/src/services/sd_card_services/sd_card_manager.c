@@ -117,6 +117,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK,
     SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
     SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE,
+    SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL,  /* #503: consolidated WRITE pre-check */
     SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY,
     SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE,
@@ -178,6 +179,12 @@ typedef struct {
     uint64_t spaceResultFreeBytes;
     uint64_t spaceResultTotalBytes;
     bool spaceResultValid;
+    // #503: set true when the WRITE init pre-check found free space
+    // below settings.minFreeBytes.  Cleared on every WRITE entry.
+    // SCPI side reads this via sd_card_manager_StartupDiskFull() to
+    // produce a friendly "out of space" message instead of generic
+    // "WRITE timed out."
+    bool startupDiskFull;
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -801,10 +808,58 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE) {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE;
+            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE &&
+                       gpSDCardSettings->minFreeBytes > 0) {
+                /* #503: consolidate disk-full check into WRITE init so a
+                 * single UpdateSettings(WRITE) does one mount+check+open
+                 * cycle instead of two (GET_SPACE then WRITE).  Only run
+                 * the check when WRITE is requested AND the operator
+                 * configured a non-zero floor — otherwise go straight to
+                 * CREATE_DIRECTORY as before. */
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL;
             } else {
-                /* Open a file for reading. */
+                /* Default WRITE/READ/LIST/DELETE path: skip the floor
+                 * check and proceed to file open. */
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
             }
+            break;
+
+        case SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL:
+        {
+            /* #503: in-line disk-full check that replaces the prior
+             * SCPI-side GET_SPACE preflight.  Same SYS_FS API as the
+             * GET_SPACE state — only invoked when minFreeBytes > 0. */
+            uint32_t totalSectors = 0;
+            uint32_t freeSectors = 0;
+            gSDCardData.startupDiskFull = false;
+            if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME, &totalSectors, &freeSectors) != SYS_FS_RES_SUCCESS) {
+                LOG_E("[SD] STR:START disk-full preflight: SYS_FS_DriveSectorGet failed; continuing without check");
+                /* Query failed — fall through to normal open path so the
+                 * caller still sees a real WRITE attempt (not a silent
+                 * disk-full rejection on a transient mount glitch). */
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
+                break;
+            }
+            uint64_t freeBytes = (uint64_t)freeSectors * SD_SECTOR_SIZE_BYTES;
+            /* Cache result for diagnostic queries before deciding whether
+             * to reject — populated whether or not we're about to refuse,
+             * so the SCPI side's friendly "disk full" log reads the real
+             * value via sd_card_manager_GetSpaceInfo(). */
+            gSDCardData.spaceResultFreeBytes = freeBytes;
+            gSDCardData.spaceResultTotalBytes = (uint64_t)totalSectors * SD_SECTOR_SIZE_BYTES;
+            gSDCardData.spaceResultValid = true;
+            if (freeBytes < gpSDCardSettings->minFreeBytes) {
+                LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
+                      (unsigned long long)freeBytes,
+                      (unsigned long long)gpSDCardSettings->minFreeBytes);
+                gSDCardData.startupDiskFull = true;
+                gSDCardData.lastOperationSuccess = false;
+                gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                break;
+            }
+            gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
+        }
             break;
 
         case SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY:
@@ -1602,6 +1657,16 @@ bool sd_card_manager_GetLastOperationResult(void) {
         return false;
     }
     return gSDCardData.lastOperationSuccess;
+}
+
+bool sd_card_manager_StartupDiskFull(void) {
+    /* #503: true iff the most recent WRITE-mode entry was rejected by
+     * the in-line disk-full pre-check (free space below minFreeBytes).
+     * Cleared on every subsequent WRITE attempt. */
+    if (gpSDCardSettings == NULL) {
+        return false;
+    }
+    return gSDCardData.startupDiskFull;
 }
 
 bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {

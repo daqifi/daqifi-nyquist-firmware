@@ -195,6 +195,19 @@ extern "C" {
     bool sd_card_manager_GetLastOperationResult(void);
 
     /**
+     * @brief Whether the last WRITE-mode entry was rejected by the
+     *        in-line disk-full pre-check (free space below
+     *        settings.minFreeBytes).  Used by SCPI_StartStreaming to
+     *        distinguish "disk full" from a generic open failure when
+     *        IsWriteReady() never succeeds.  Cleared on every
+     *        subsequent WRITE attempt.  See #503.
+     *
+     * @return true if the most recent WRITE attempt failed because of
+     *         the configured minFreeBytes floor; false otherwise.
+     */
+    bool sd_card_manager_StartupDiskFull(void);
+
+    /**
      * @brief Checks if the SD card manager is busy with an active operation.
      *
      * This should be called before starting any new SD operation to prevent

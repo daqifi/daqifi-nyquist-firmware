@@ -2858,49 +2858,25 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
-        // #498: pre-start disk-full gate.  If minFreeBytes > 0, query the
-        // card via SYS_FS_DriveSectorGet (synchronous through the SD task)
-        // and refuse the start if free space is below the floor.  This
-        // catches "customer started a long run on a card with ~10 MB free"
-        // BEFORE 30 minutes of streaming silently fails.
+        // #498 / #503: pre-start disk-full gate consolidated INTO the
+        // SD task's WRITE init.  A single UpdateSettings(WRITE) call now
+        // does the mount + (optional) disk-full check + file open in one
+        // pass.  Previously this site set mode=GET_SPACE, waited, then
+        // set mode=WRITE, which triggered two DEINIT/MOUNT cycles per
+        // STR:START.  Now: one cycle.
         //
-        // Snapshot the 64-bit minFreeBytes under critical section before
-        // the disk-full check — pairs with the CRITICAL guard on the
-        // SCPI setter side (PIC32MZ 32-bit bus tears 64-bit accesses
-        // under preemption).  Reusing the local for the LOG_E +
-        // comparison guarantees a consistent value even if a concurrent
-        // setter mutates the config while this block runs.
-        uint64_t minFreeFloor;
-        taskENTER_CRITICAL();
-        minFreeFloor = pSDCardSettings->minFreeBytes;
-        taskEXIT_CRITICAL();
-        if (minFreeFloor > 0) {
-            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_GET_SPACE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
-            if (!sd_card_manager_WaitForCompletion(5000)) {
-                LOG_E("[SD] STR:START disk-full check timed out");
-                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                sd_card_manager_UpdateSettings(pSDCardSettings);
-                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
-            }
-            uint64_t freeBytes = 0, totalBytes = 0;
-            if (sd_card_manager_GetLastOperationResult() &&
-                sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes) &&
-                freeBytes < minFreeFloor) {
-                LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
-                      (unsigned long long)freeBytes,
-                      (unsigned long long)minFreeFloor);
-                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                sd_card_manager_UpdateSettings(pSDCardSettings);
-                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                return SCPI_RES_ERR;
-            }
-            // If the query itself failed (mount/SDIO error), fall through
-            // and let the existing WRITE-mode path surface the error.
-            // We've already done the user-friendly "you're out of space"
-            // rejection above when the query SUCCEEDED but the floor was hit.
-        }
+        // Behavior contract preserved:
+        //   - If minFreeBytes == 0, the SD task skips the check and
+        //     proceeds straight to file open (same as legacy zero-gate).
+        //   - If minFreeBytes > 0 and free space is below the floor, the
+        //     SD task transitions to ERROR with startupDiskFull=true.
+        //     IsWriteReady never returns true; the loop below times out;
+        //     we then check StartupDiskFull() to surface the friendly
+        //     "out of space" message instead of generic "WRITE timeout."
+        //   - If minFreeBytes > 0 but the free-space query itself fails
+        //     (transient mount glitch), the SD task logs and falls
+        //     through to file open — caller gets the existing
+        //     SCPI_ERROR_EXECUTION_ERROR if the open then fails.
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
 
@@ -2912,7 +2888,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
-            LOG_E("SD file not ready after %d ms", readyWait * 10);
+            // #503: distinguish disk-full rejection from a generic open
+            // failure.  The SD task sets startupDiskFull=true and routes
+            // to ERROR when the free-space pre-check fails the floor;
+            // surface that as the precise log line operators expect.
+            if (sd_card_manager_StartupDiskFull()) {
+                uint64_t freeBytes = 0, totalBytes = 0;
+                sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
+                LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
+                      (unsigned long long)freeBytes,
+                      (unsigned long long)pSDCardSettings->minFreeBytes);
+            } else {
+                LOG_E("SD file not ready after %d ms", readyWait * 10);
+            }
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
