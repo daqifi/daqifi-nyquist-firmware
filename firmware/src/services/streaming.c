@@ -838,12 +838,32 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
 
     // Circular buffers: larger buffers reduce retry frequency for
     // all-or-nothing writes, but must leave enough pool for samples.
-    // WiFi at 64KB absorbs ~44ms of encoder lead at 1kHz×1400B before
-    // WINC's per-packet callback-paced drain catches up. Sample-pool
-    // floor with USB+WiFi active is ~520 samples (well above
-    // MIN_AIN_SAMPLE_COUNT=100).
-    *outWifiSize = hasWifi ? STREAMING_WIFI_DEFAULT : STREAMING_WIFI_MIN;
-    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT  : STREAMING_USB_MIN;
+    //
+    // #497: the StreamingInterface enum has no USB+WiFi or WiFi+SD
+    // combination — WiFi is always single-interface (see
+    // StreamingRuntimeConfig.h:17-22 and the runtime guard at
+    // SCPIInterface.c:2823 that refuses WiFi while SD is logging due
+    // to the SPI bus conflict).  So `hasWifi` always means "WiFi is
+    // the SOLE active interface".  Bump to STREAMING_WIFI_WIFI_ONLY
+    // (96 KB) — triples the burst-absorption window vs the prior
+    // fixed 32 KB before WINC SPI back-pressure cascades to wst.
+    //
+    // Sample-pool tradeoff (Qodo PR #501 pass 2): the pool is NOT
+    // capped here at 1100; that's only the DEFAULT_AIN_SAMPLE_COUNT.
+    // MAX_AIN_SAMPLE_COUNT is 10000, and Partition() in auto mode
+    // (sampleCount == 0) sets sampleCount = remaining_pool_bytes /
+    // per_sample_bytes (capped at MAX).  So bumping WiFi 32→96 KB
+    // shrinks the auto-sized sample pool by ~64 KB / per-sample
+    // (≈ 2000 fewer samples at 5×T1's 30 B/sample stride).  That in
+    // turn shrinks the FreeRTOS heap used by the AInSample queue —
+    // observable as the heap delta in #501 validation (13272 → 4344
+    // during wifi_5xT1 @ 2 kHz).  Acceptable tradeoff because
+    // SamplePoolMaxUsed measurements on actual workloads are tiny
+    // (≤16 across all probed rates per #497 evidence), so even the
+    // post-shrink sample pool has 100× burst-absorption headroom for
+    // streaming use.
+    *outWifiSize = hasWifi ? STREAMING_WIFI_WIFI_ONLY : STREAMING_WIFI_MIN;
+    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT    : STREAMING_USB_MIN;
 }
 
 /*!
