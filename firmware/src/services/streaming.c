@@ -452,7 +452,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // No heap check needed - pool uses pre-allocated static memory
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
+                // #499: split counter — this path = pool depth too shallow for
+                // the configured rate. Distinct from the PushBack-fail path
+                // below, which is "queue full / streaming_Task too slow."
                 gStreamStats.queueDroppedSamples++;
+                gStreamStats.poolExhaustedSamples++;
                 LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
                 Streaming_UpdateFlowWindow(true);
                 // Still increment test pattern counter to stay in sync
@@ -556,7 +560,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+                // #499: split counter — this path = FreeRTOS queue full,
+                // i.e. streaming_Task can't drain fast enough. Distinct from
+                // the AllocateFromPool-NULL path above (pool depth shallow).
                 gStreamStats.queueDroppedSamples++;
+                gStreamStats.queueOverflowSamples++;
                 LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
                 Streaming_UpdateFlowWindow(true);

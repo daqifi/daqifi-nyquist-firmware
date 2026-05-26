@@ -155,7 +155,15 @@ void Streaming_ResetSdPbMetadata(void);
 // 32-bit fields are atomic on PIC32MZ; 64-bit fields require critical sections.
 // Use Streaming_GetStats() for an atomic snapshot of all fields.
 typedef struct {
-    uint32_t queueDroppedSamples;   // Pool exhaustion or queue full (deferred ISR task)
+    uint32_t queueDroppedSamples;   // Aggregate: poolExhaustedSamples + queueOverflowSamples
+    // #499 split — two distinct mechanisms previously combined in queueDroppedSamples:
+    //   poolExhaustedSamples: AInSampleList_AllocateFromPool() returned NULL
+    //                         (no free slot — pool depth too shallow for rate)
+    //   queueOverflowSamples: AInSampleList_PushBack() failed
+    //                         (FreeRTOS queue full — streaming_Task not draining fast enough)
+    // Sum equals queueDroppedSamples (kept for backward compat with existing parsers).
+    uint32_t poolExhaustedSamples;
+    uint32_t queueOverflowSamples;
     uint32_t usbDroppedBytes;       // USB circular buffer full (total — incl. startup transients)
     uint32_t wifiDroppedBytes;      // WiFi circular buffer full (total — incl. startup transients)
     uint32_t sdDroppedBytes;        // SD write timeout/partial (total — incl. startup transients)
