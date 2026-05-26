@@ -2524,6 +2524,13 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TimerISRCalls=%llu\r\n", (unsigned long long)s.timerISRCalls);
     // #367 diag: bytes sitting in WiFi circular buffer at session end (Stop)
     scpi_printf(context, "CircularBufferEndBytes=%u\r\n", (unsigned)s.circularBufferEndBytes);
+    // #499 diag: sample-pool peak utilization this session.  Compare with
+    // SamplePoolCount (MEM:FREE?) — if Used == Count, the pool was saturated
+    // and PoolExhaustedSamples > 0 makes sense.  If Used << Count but
+    // QueueOverflowSamples > 0, the queue is the bottleneck (streaming_Task
+    // drain too slow), not the pool.
+    scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
+                (unsigned)AInSampleList_PoolMaxUsed());
 #if PB_PROFILE_COUNTERS
     // #388 PB streaming profile counters (compile-time gated).  Raw cycle
     // counts at SYSCLK/2 = 100 MHz on PIC32MZ — divide by 1e8 for seconds,
