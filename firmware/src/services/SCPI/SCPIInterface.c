@@ -2088,6 +2088,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     scpi_printf(context, "SamplesPerSec=%u\r\n", (unsigned)samplesPerSec);
     scpi_printf(context, "BytesPerSec=%u\r\n", (unsigned)bytesPerSec);
     scpi_printf(context, "QueueDropped=%u\r\n", (unsigned)s.queueDroppedSamples);
+    // #499: split sub-counters — QueueDropped is their sum (kept for back-compat).
+    //   PoolExhausted = sample pool depth too shallow for the rate.
+    //   QueueOverflow = streaming_Task drain too slow (queue full while pool has slots).
+    scpi_printf(context, "PoolExhausted=%u\r\n", (unsigned)s.poolExhaustedSamples);
+    scpi_printf(context, "QueueOverflow=%u\r\n", (unsigned)s.queueOverflowSamples);
     scpi_printf(context, "UsbDropped=%u\r\n", (unsigned)s.usbDroppedBytes);
     scpi_printf(context, "WifiDropped=%u\r\n", (unsigned)s.wifiDroppedBytes);
     scpi_printf(context, "SdDropped=%u\r\n", (unsigned)s.sdDroppedBytes);
@@ -2442,6 +2447,11 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TotalSamplesStreamed=%llu\r\n", (unsigned long long)s.totalSamplesStreamed);
     scpi_printf(context, "TotalBytesStreamed=%llu\r\n", (unsigned long long)s.totalBytesStreamed);
     scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s.queueDroppedSamples);
+    // #499: split sub-counters — QueueDroppedSamples is their sum (kept for back-compat).
+    //   PoolExhaustedSamples = sample pool depth too shallow for the rate.
+    //   QueueOverflowSamples = streaming_Task drain too slow (queue full while pool has slots).
+    scpi_printf(context, "PoolExhaustedSamples=%u\r\n", (unsigned)s.poolExhaustedSamples);
+    scpi_printf(context, "QueueOverflowSamples=%u\r\n", (unsigned)s.queueOverflowSamples);
     scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
     scpi_printf(context, "UsbDroppedBytesSteady=%u\r\n", (unsigned)s.usbDroppedBytesSteady);
     scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
@@ -2514,6 +2524,13 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TimerISRCalls=%llu\r\n", (unsigned long long)s.timerISRCalls);
     // #367 diag: bytes sitting in WiFi circular buffer at session end (Stop)
     scpi_printf(context, "CircularBufferEndBytes=%u\r\n", (unsigned)s.circularBufferEndBytes);
+    // #499 diag: sample-pool peak utilization this session.  Compare with
+    // SamplePoolCount (MEM:FREE?) — if Used == Count, the pool was saturated
+    // and PoolExhaustedSamples > 0 makes sense.  If Used << Count but
+    // QueueOverflowSamples > 0, the queue is the bottleneck (streaming_Task
+    // drain too slow), not the pool.
+    scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
+                (unsigned)AInSampleList_PoolMaxUsed());
 #if PB_PROFILE_COUNTERS
     // #388 PB streaming profile counters (compile-time gated).  Raw cycle
     // counts at SYSCLK/2 = 100 MHz on PIC32MZ — divide by 1e8 for seconds,

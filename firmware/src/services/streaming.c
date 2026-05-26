@@ -67,7 +67,8 @@ static volatile bool gSdPbMetadataSent = false;
 static volatile bool gSdFileWasReady = false;
 
 // Per-session streaming statistics.
-// Written by: deferred ISR task (queueDroppedSamples, totalSamplesStreamed)
+// Written by: deferred ISR task (queueDroppedSamples, poolExhaustedSamples,
+//             queueOverflowSamples, totalSamplesStreamed)
 //             streaming task (all other fields)
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
@@ -452,7 +453,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // No heap check needed - pool uses pre-allocated static memory
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
+                // #499: split counter — this path = pool depth too shallow for
+                // the configured rate. Distinct from the PushBack-fail path
+                // below, which is "queue full / streaming_Task too slow."
                 gStreamStats.queueDroppedSamples++;
+                gStreamStats.poolExhaustedSamples++;
                 LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
                 Streaming_UpdateFlowWindow(true);
                 // Still increment test pattern counter to stay in sync
@@ -556,7 +561,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+                // #499: split counter — this path = FreeRTOS queue full,
+                // i.e. streaming_Task can't drain fast enough. Distinct from
+                // the AllocateFromPool-NULL path above (pool depth shallow).
                 gStreamStats.queueDroppedSamples++;
+                gStreamStats.queueOverflowSamples++;
                 LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
                 Streaming_UpdateFlowWindow(true);
@@ -1672,7 +1681,9 @@ void streaming_Task(void) {
             DioProbe_PulseStart(9);  /* probe 9: output write duration */
             // All-or-nothing output writes. On timeout (10s), the interface
             // is assumed dead. Backpressure propagates to sample queue —
-            // QueueDroppedSamples is the ONLY data loss mechanism.
+            // PoolExhaustedSamples (deferred task can't allocate) and
+            // QueueOverflowSamples (deferred task can't enqueue) are the only
+            // input-side data loss mechanisms.  Their sum is QueueDroppedSamples.
             // USB/WiFi: all-or-nothing without retry. Full packet written
             // or cleanly dropped (no garbled partial data). No retry because
             // the ISR→encoder feedback loop causes sample queue overflow.
@@ -1749,9 +1760,10 @@ void streaming_Task(void) {
 
             // Track packets discarded due to output buffer backpressure.
             // The streaming task always encodes to drain the sample queue
-            // (preventing queueDroppedSamples), but when an output buffer
-            // is too full (< 128 bytes free), the encoded packet is silently
-            // discarded. Count these drops so SYST:STR:STATS? is accurate.
+            // (preventing queueOverflowSamples from rising further), but
+            // when an output buffer is too full (< 128 bytes free), the
+            // encoded packet is silently discarded.  Count these drops so
+            // SYST:STR:STATS? is accurate.
             {
                 bool sdExpected = hasSD || (
                     pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD ||
