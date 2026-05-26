@@ -159,11 +159,13 @@ unflashed second board on `/dev/ttyACM0`.
    ls -la /dev/ttyACM*
    ```
 2. For each `/dev/ttyACMn` currently attached, query the per-unit
-   serial via `*IDN?` — the third field is the per-unit serial:
+   serial via `*IDN?` — the third field is the per-unit serial.
+   Uses `picocom`, which is the canonical idiom throughout this
+   document (no external helper scripts required):
    ```bash
    for dev in /dev/ttyACM*; do
      echo -n "$dev => "
-     bash ~/.claude/skills/scpi/scpi.sh "*IDN?" "$dev" 1500 2>&1 | tail -1
+     (echo -e "*IDN?\r"; sleep 0.5) | picocom -b 115200 -q -x 1000 "$dev" 2>&1 | tail -1
    done
    # Possible mapping (varies by attach order — DON'T assume!):
    #   /dev/ttyACM0 => DAQiFi,Nq1,7E2898F46200E8A7,01-02   (COM3 / bench primary)
@@ -171,14 +173,22 @@ unflashed second board on `/dev/ttyACM0`.
    ```
 3. Match the third field of `*IDN?` to the **Bench primary device
    serial** (`7E2898F46200E8A7` — COM3) or **Bench secondary**
-   (`7E28A4206200EAD1` — COM9) in the inventory table above.  In
-   the rest of the test session, refer to the board by serial or
-   Windows COM, and store the looked-up `/dev/ttyACMn` in a variable
-   (e.g. `DEV_PRIMARY=/dev/ttyACM0`) rather than hardcoding the path
-   — the mapping can change next time you re-attach.
+   (`7E28A4206200EAD1` — COM9) in the inventory table above.  Store the
+   looked-up path in a variable (e.g. `DEV_PRIMARY=/dev/ttyACM0`) for
+   the rest of the session rather than hardcoding `/dev/ttyACM0` — the
+   mapping can change next time you re-attach.
 4. If the wrong board is selected, re-target rather than detaching the
    other board. (Detaching usbipd devices that aren't yours is rude and
    can disrupt other workflows.)
+
+> **Note about examples later in this file.**  Many of the SCPI /
+> picocom / `usbipd` examples below this section use the literal
+> `/dev/ttyACM0` as a stand-in for "the primary device" — substitute
+> `"$DEV_PRIMARY"` (looked up by serial via step 2) when there's any
+> ambiguity about which board is on which path.  The same applies to
+> GEMINI.md.  Converting every example one-by-one is tracked separately;
+> in the meantime, the verification protocol above is the authoritative
+> way to resolve the mapping.
 
 `*IDN?` returns `DAQiFi,Nq1,<per-unit serial>,01-02` — the streaming CSV
 metadata header echoes the same serial.  Either source is fine for
