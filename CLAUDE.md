@@ -1041,18 +1041,20 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 
 **Auto-Balance Buffer Sizing by Active Interface:**
 
-| Buffer | USB only | WiFi only | SD only | USB+WiFi | USB+SD | WiFi+SD | All |
-|--------|---:|---:|---:|---:|---:|---:|---:|
-| USB circular (stream pool) | 65,536 | 2,048 | 2,048 | 65,536 | 65,536 | 2,048 | 65,536 |
-| WiFi circular (stream pool) | 1,400 | 32,768 | 1,400 | 32,768 | 1,400 | 32,768 | 32,768 |
-| SD circular (stream pool) | 512 | 512 | 32,768 | 512 | 32,768 | 32,768 | 32,768 |
-| Encoder (stream pool) | 8,192 | 8,192 | 16,384 | 8,192 | 16,384 | 16,384 | 16,384 |
-| SD DMA write (coherent) | 512 | 512 | ~124,000 | 512 | ~62,000 | ~63,000 | ~63,000 |
-| USB DMA write (coherent) | ~124,000 | 512 | 512 | ~37,000 | ~37,000 | 512 | ~38,000 |
-| WiFi SPI staging (coherent) | 2,048 | ~125,000 | 2,048 | ~88,000 | 2,048 | ~63,000 | ~25,000 |
-| Sample pool | ~585 | ~738 | ~695 | ~436 | ~393 | ~546 | ~243 |
+The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, and `UsbAndSd`.  USB+WiFi and WiFi+SD are not selectable — WiFi is always solo (SPI bus is shared with SD; USB+WiFi was never wired into the interface enum).  Values below are for 16-channel `AInSampleList_ElementSize` (74 B + 2 B free-list = 76 B/sample).
 
-All DMA buffers (SD write, USB write, WiFi SPI staging) are auto-balanced from the 124KB coherent pool.
+| Buffer | USB only | WiFi only | SD only | USB+SD |
+|--------|---:|---:|---:|---:|
+| USB circular (stream pool) | 65,536 | 2,048 | 2,048 | 65,536 |
+| WiFi circular (stream pool) | 1,400 | 98,304 | 1,400 | 1,400 |
+| SD circular (stream pool) | 512 | 512 | 32,768 | 32,768 |
+| Encoder (stream pool) | 8,192 | 8,192 | 16,384 | 16,384 |
+| SD DMA write (coherent) | 512 | 512 | 124,368 | 77,922 |
+| USB DMA write (coherent) | 124,368 | 512 | 512 | 46,958 |
+| WiFi SPI staging (coherent) | 2,048 | 125,904 | 2,048 | 2,048 |
+| Sample pool (slots @16ch) | ~1,618 | ~1,178 | ~1,921 | ~1,086 |
+
+All DMA buffers (SD write, USB write, WiFi SPI staging) are auto-balanced from the 124KB coherent pool — `Streaming_ComputeAutoBuffers` distributes the remaining pool space across active interfaces using weighted shares (SD=5, USB=3, WiFi=2), so the full pool is allocated regardless of which interfaces are active.  Single-active gets the whole pool; multi-active splits proportionally.
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/Util/CoherentPool.c` (DMA pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct), `firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c` (WiFi SPI staging)
 

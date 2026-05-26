@@ -822,22 +822,47 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
         uint32_t totalMin = sdMin + usbMin + wifiMin + overhead;
         if (pool > totalMin) {
             uint32_t avail = pool - totalMin;
-            uint32_t activeCount = (hasSd ? 1 : 0) + (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0);
 
-            if (activeCount == 1) {
-                // Single active gets all remaining
-                if (hasSd)   *outSdDmaSize   += avail;
-                if (hasUsb)  *outUsbDmaSize  += avail;
-                if (hasWifi) *outWifiDmaSize += avail;
-            } else if (activeCount >= 2) {
-                // Split: SD 50%, USB 30%, WiFi 20%
-                uint32_t sdShare   = hasSd   ? (avail / 2) : 0;
-                uint32_t usbShare  = hasUsb  ? (avail * 3 / 10) : 0;
-                uint32_t wifiShare = hasWifi ? (avail - sdShare - usbShare) : 0;
-                *outSdDmaSize   += sdShare;
-                *outUsbDmaSize  += usbShare;
-                *outWifiDmaSize += wifiShare;
+            // Weighted distribution across active interfaces — weights only
+            // count for interfaces that are actually active, so `avail` is
+            // always fully allocated (no inactive-interface "share" wasted).
+            // Ratios (when multiple active): SD=5, USB=3, WiFi=2.  Single-
+            // active is the degenerate weighted case (all weight on one).
+            //
+            // Prior bug (#502 follow-up audit): the activeCount==2 branch
+            // wrote `wifiShare = hasWifi ? (avail - sdShare - usbShare) : 0`,
+            // which dropped 20% (~24.7 KB) of the coherent pool on the
+            // floor for USB+SD streaming.
+            uint32_t sdW   = hasSd   ? 5u : 0u;
+            uint32_t usbW  = hasUsb  ? 3u : 0u;
+            uint32_t wifiW = hasWifi ? 2u : 0u;
+            uint32_t totW  = sdW + usbW + wifiW;
+            if (totW > 0) {
+                uint32_t sdShare   = (avail * sdW)  / totW;
+                uint32_t usbShare  = (avail * usbW) / totW;
+                // The remainder (integer-division rounding + any unused
+                // weight) goes to the highest-priority active interface so
+                // the full `avail` lands somewhere — SD first, then USB,
+                // then WiFi.
+                uint32_t accounted = sdShare + usbShare;
+                uint32_t wifiShare = (avail > accounted) ? (avail - accounted) : 0;
+                if (hasSd)   *outSdDmaSize   += sdShare;
+                if (hasUsb)  *outUsbDmaSize  += usbShare;
+                if (hasWifi) {
+                    *outWifiDmaSize += wifiShare;
+                } else if (hasSd) {
+                    *outSdDmaSize   += wifiShare;
+                } else if (hasUsb) {
+                    *outUsbDmaSize  += wifiShare;
+                }
+                // If totW > 0 then at least one of hasSd/hasUsb/hasWifi is
+                // true, so the remainder is always absorbed above.
             }
+            // totW == 0 (degenerate: no active interface — possible if
+            // ActiveInterface=SD but sd->enable=false) leaves all three
+            // buffers at minimum.  No streaming consumer exists, so the
+            // unused RAM doesn't actively hurt — partition will be
+            // recomputed when the user re-enables a consumer.
         }
     }
 
