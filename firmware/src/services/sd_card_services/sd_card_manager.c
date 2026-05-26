@@ -808,18 +808,32 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE) {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE;
-            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE &&
-                       gpSDCardSettings->minFreeBytes > 0) {
-                /* #503: consolidate disk-full check into WRITE init so a
-                 * single UpdateSettings(WRITE) does one mount+check+open
-                 * cycle instead of two (GET_SPACE then WRITE).  Only run
-                 * the check when WRITE is requested AND the operator
-                 * configured a non-zero floor — otherwise go straight to
-                 * CREATE_DIRECTORY as before. */
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL;
+            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+                /* #503: always clear startupDiskFull at the start of any
+                 * WRITE attempt — both the check-skipped (floor == 0) and
+                 * check-runs (floor > 0) paths must enter with a clean
+                 * flag, otherwise a stale `true` from a previous
+                 * rejection would mislabel a subsequent generic open
+                 * failure as "disk full" in the SCPI log.  Snapshot
+                 * minFreeBytes under a critical section per CLAUDE.md
+                 * atomicity rules (64-bit read shared with the SCPI
+                 * setter that writes under taskENTER_CRITICAL). */
+                gSDCardData.startupDiskFull = false;
+                uint64_t floor;
+                taskENTER_CRITICAL();
+                floor = gpSDCardSettings->minFreeBytes;
+                taskEXIT_CRITICAL();
+                if (floor > 0) {
+                    /* Consolidate disk-full check into WRITE init so a
+                     * single UpdateSettings(WRITE) does one
+                     * mount+check+open cycle instead of two. */
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL;
+                } else {
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
+                }
             } else {
-                /* Default WRITE/READ/LIST/DELETE path: skip the floor
-                 * check and proceed to file open. */
+                /* READ/LIST/DELETE path: skip the floor check and
+                 * proceed to file open. */
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
             }
             break;
@@ -828,10 +842,11 @@ void sd_card_manager_ProcessState() {
         {
             /* #503: in-line disk-full check that replaces the prior
              * SCPI-side GET_SPACE preflight.  Same SYS_FS API as the
-             * GET_SPACE state — only invoked when minFreeBytes > 0. */
+             * GET_SPACE state — only invoked when minFreeBytes > 0.
+             * startupDiskFull was already cleared in CURRENT_DRIVE on
+             * the WRITE branch (above). */
             uint32_t totalSectors = 0;
             uint32_t freeSectors = 0;
-            gSDCardData.startupDiskFull = false;
             if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME, &totalSectors, &freeSectors) != SYS_FS_RES_SUCCESS) {
                 LOG_E("[SD] STR:START disk-full preflight: SYS_FS_DriveSectorGet failed; continuing without check");
                 /* Query failed — fall through to normal open path so the
@@ -841,6 +856,14 @@ void sd_card_manager_ProcessState() {
                 break;
             }
             uint64_t freeBytes = (uint64_t)freeSectors * SD_SECTOR_SIZE_BYTES;
+            /* Snapshot the 64-bit floor under critical section per
+             * CLAUDE.md atomicity rules.  Use the snapshot for both the
+             * comparison and the LOG_E so a concurrent setter can't
+             * tear-and-mislabel mid-state. */
+            uint64_t floor;
+            taskENTER_CRITICAL();
+            floor = gpSDCardSettings->minFreeBytes;
+            taskEXIT_CRITICAL();
             /* Cache result for diagnostic queries before deciding whether
              * to reject — populated whether or not we're about to refuse,
              * so the SCPI side's friendly "disk full" log reads the real
@@ -848,10 +871,10 @@ void sd_card_manager_ProcessState() {
             gSDCardData.spaceResultFreeBytes = freeBytes;
             gSDCardData.spaceResultTotalBytes = (uint64_t)totalSectors * SD_SECTOR_SIZE_BYTES;
             gSDCardData.spaceResultValid = true;
-            if (freeBytes < gpSDCardSettings->minFreeBytes) {
+            if (freeBytes < floor) {
                 LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
                       (unsigned long long)freeBytes,
-                      (unsigned long long)gpSDCardSettings->minFreeBytes);
+                      (unsigned long long)floor);
                 gSDCardData.startupDiskFull = true;
                 gSDCardData.lastOperationSuccess = false;
                 gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;

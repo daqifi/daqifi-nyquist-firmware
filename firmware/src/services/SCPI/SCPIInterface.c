@@ -2895,9 +2895,16 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             if (sd_card_manager_StartupDiskFull()) {
                 uint64_t freeBytes = 0, totalBytes = 0;
                 sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
+                /* Snapshot the 64-bit floor under critical section per
+                 * CLAUDE.md atomicity rules — pairs with the setter's
+                 * critical-section write in SCPI_StorageSDMinFreeSet. */
+                uint64_t floor;
+                taskENTER_CRITICAL();
+                floor = pSDCardSettings->minFreeBytes;
+                taskEXIT_CRITICAL();
                 LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
                       (unsigned long long)freeBytes,
-                      (unsigned long long)pSDCardSettings->minFreeBytes);
+                      (unsigned long long)floor);
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }
