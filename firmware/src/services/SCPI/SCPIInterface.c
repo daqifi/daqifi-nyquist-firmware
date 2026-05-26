@@ -2836,6 +2836,38 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
+        // #498: pre-start disk-full gate.  If minFreeBytes > 0, query the
+        // card via SYS_FS_DriveSectorGet (synchronous through the SD task)
+        // and refuse the start if free space is below the floor.  This
+        // catches "customer started a long run on a card with ~10 MB free"
+        // BEFORE 30 minutes of streaming silently fails.
+        if (pSDCardSettings->minFreeBytes > 0) {
+            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_GET_SPACE;
+            sd_card_manager_UpdateSettings(pSDCardSettings);
+            if (!sd_card_manager_WaitForCompletion(5000)) {
+                LOG_E("[SD] STR:START disk-full check timed out");
+                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_UpdateSettings(pSDCardSettings);
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
+            uint64_t freeBytes = 0, totalBytes = 0;
+            if (sd_card_manager_GetLastOperationResult() &&
+                sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes) &&
+                freeBytes < pSDCardSettings->minFreeBytes) {
+                LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
+                      (unsigned long long)freeBytes,
+                      (unsigned long long)pSDCardSettings->minFreeBytes);
+                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_UpdateSettings(pSDCardSettings);
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
+            // If the query itself failed (mount/SDIO error), fall through
+            // and let the existing WRITE-mode path surface the error.
+            // We've already done the user-friendly "you're out of space"
+            // rejection above when the query SUCCEEDED but the floor was hit.
+        }
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
 
@@ -4596,6 +4628,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:BENCHmark?", .callback = SCPI_StorageSDBenchmarkQuery},
     {.pattern = "SYSTem:STORage:SD:MAXSize", .callback = SCPI_StorageSDMaxSizeSet},
     {.pattern = "SYSTem:STORage:SD:MAXSize?", .callback = SCPI_StorageSDMaxSizeGet},
+    {.pattern = "SYSTem:STORage:SD:MINFree", .callback = SCPI_StorageSDMinFreeSet},   // #498
+    {.pattern = "SYSTem:STORage:SD:MINFree?", .callback = SCPI_StorageSDMinFreeGet},  // #498
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
     {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},

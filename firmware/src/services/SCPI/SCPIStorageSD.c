@@ -731,6 +731,51 @@ scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
 }
 
 /**
+ * @brief Set minimum free space floor for SYST:STR:START (#498)
+ *
+ * Command: SYST:STOR:SD:MINFree <bytes>
+ *   Default: 0 (no pre-start check; legacy behavior)
+ *   Typical: 52428800 (50 MB) — refuses to start a long log run on a
+ *            card with less than 50 MB headroom.
+ *
+ * When > 0, SYST:STR:START for SD-output sessions runs
+ * SYS_FS_DriveSectorGet() before arming the streaming timer and
+ * returns SCPI -200 if the free space is below this floor.  Catches
+ * the "started a 4-hour log on a near-full card" failure mode that
+ * otherwise drops samples silently after disk-full mid-run.
+ */
+scpi_result_t SCPI_StorageSDMinFreeSet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    int64_t minFreeBytes;
+    if (!SCPI_ParamInt64(context, &minFreeBytes, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    if (minFreeBytes < 0) {
+        LOG_E("SD:MINFree - Invalid floor: %lld (must be >= 0)", (long long)minFreeBytes);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    pSDCardRuntimeConfig->minFreeBytes = (uint64_t)minFreeBytes;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    return SCPI_RES_OK;
+}
+
+/**
+ * @brief Query minimum free space floor
+ *
+ * Command: SYST:STOR:SD:MINFree?
+ * Returns: <bytes> (0 = no pre-start check)
+ */
+scpi_result_t SCPI_StorageSDMinFreeGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    SCPI_ResultUInt64(context, pSDCardRuntimeConfig->minFreeBytes);
+    return SCPI_RES_OK;
+}
+
+/**
  * @brief Query SD card free and total space
  *
  * Command: SYST:STOR:SD:SPACe?
