@@ -117,6 +117,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK,
     SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
     SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE,
+    SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL,  /* #503: consolidated WRITE pre-check */
     SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY,
     SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE,
@@ -178,6 +179,12 @@ typedef struct {
     uint64_t spaceResultFreeBytes;
     uint64_t spaceResultTotalBytes;
     bool spaceResultValid;
+    // #503: set true when the WRITE init pre-check found free space
+    // below settings.minFreeBytes.  Cleared on every WRITE entry.
+    // SCPI side reads this via sd_card_manager_StartupDiskFull() to
+    // produce a friendly "out of space" message instead of generic
+    // "WRITE timed out."
+    bool startupDiskFull;
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -801,10 +808,97 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE) {
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE;
+            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+                /* #503: always clear startupDiskFull at the start of any
+                 * WRITE attempt — both the check-skipped (floor == 0) and
+                 * check-runs (floor > 0) paths must enter with a clean
+                 * flag, otherwise a stale `true` from a previous
+                 * rejection would mislabel a subsequent generic open
+                 * failure as "disk full" in the SCPI log.  Also invalidate
+                 * any cached space-query result from a prior op so
+                 * SYST:STOR:SD:SPACe? doesn't surface a stale free-space
+                 * value when the floor-check is bypassed (floor==0).
+                 * Snapshot minFreeBytes under a critical section per
+                 * CLAUDE.md atomicity rules (64-bit read shared with the
+                 * SCPI setter that writes under taskENTER_CRITICAL). */
+                /* Reset 64-bit cached space fields under a single critical
+                 * section so concurrent SCPI readers (e.g. SYST:STOR:SD:
+                 * SPACe? from USB pri 7) can't observe a torn intermediate
+                 * value while the bool + two uint64 stores happen on a
+                 * 32-bit bus.  Same critical section captures the
+                 * minFreeBytes snapshot — pairs with the SCPI setter's
+                 * critical-section write. */
+                uint64_t floor;
+                taskENTER_CRITICAL();
+                gSDCardData.startupDiskFull = false;
+                gSDCardData.spaceResultValid = false;
+                gSDCardData.spaceResultFreeBytes = 0;
+                gSDCardData.spaceResultTotalBytes = 0;
+                floor = gpSDCardSettings->minFreeBytes;
+                taskEXIT_CRITICAL();
+                if (floor > 0) {
+                    /* Consolidate disk-full check into WRITE init so a
+                     * single UpdateSettings(WRITE) does one
+                     * mount+check+open cycle instead of two. */
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL;
+                } else {
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
+                }
             } else {
-                /* Open a file for reading. */
+                /* READ/LIST/DELETE path: skip the floor check and
+                 * proceed to file open. */
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
             }
+            break;
+
+        case SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL:
+        {
+            /* #503: in-line disk-full check that replaces the prior
+             * SCPI-side GET_SPACE preflight.  Same SYS_FS API as the
+             * GET_SPACE state — only invoked when minFreeBytes > 0.
+             * startupDiskFull was already cleared in CURRENT_DRIVE on
+             * the WRITE branch (above). */
+            uint32_t totalSectors = 0;
+            uint32_t freeSectors = 0;
+            if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME, &totalSectors, &freeSectors) != SYS_FS_RES_SUCCESS) {
+                LOG_E("[SD] STR:START disk-full preflight: SYS_FS_DriveSectorGet failed; continuing without check");
+                /* Query failed — fall through to normal open path so the
+                 * caller still sees a real WRITE attempt (not a silent
+                 * disk-full rejection on a transient mount glitch). */
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
+                break;
+            }
+            uint64_t freeBytes = (uint64_t)freeSectors * SD_SECTOR_SIZE_BYTES;
+            uint64_t totalBytes = (uint64_t)totalSectors * SD_SECTOR_SIZE_BYTES;
+            /* Single critical section covers all the cross-task state
+             * touched here:
+             *   - Snapshot the 64-bit floor (CLAUDE.md atomicity — SCPI
+             *     setter writes under taskENTER_CRITICAL).
+             *   - Publish the 64-bit space cache (free/total/valid) so a
+             *     concurrent reader sees the new triple coherently
+             *     instead of half-published intermediate state.
+             * Cached BEFORE the reject branch so the SCPI side's
+             * friendly "disk full" log reads the real values via
+             * sd_card_manager_GetSpaceInfo() regardless of pass/fail. */
+            uint64_t floor;
+            taskENTER_CRITICAL();
+            floor = gpSDCardSettings->minFreeBytes;
+            gSDCardData.spaceResultFreeBytes = freeBytes;
+            gSDCardData.spaceResultTotalBytes = totalBytes;
+            gSDCardData.spaceResultValid = true;
+            taskEXIT_CRITICAL();
+            if (freeBytes < floor) {
+                LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
+                      (unsigned long long)freeBytes,
+                      (unsigned long long)floor);
+                gSDCardData.startupDiskFull = true;
+                gSDCardData.lastOperationSuccess = false;
+                gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                break;
+            }
+            gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY;
+        }
             break;
 
         case SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY:
@@ -1477,16 +1571,30 @@ void sd_card_manager_ProcessState() {
         {
             uint32_t totalSectors = 0;
             uint32_t freeSectors = 0;
-            gSDCardData.spaceResultValid = false;  // Invalidate before query
+            /* Invalidate cache before query under critical section so a
+             * concurrent reader can't observe stale data labeled valid. */
+            taskENTER_CRITICAL();
+            gSDCardData.spaceResultValid = false;
+            taskEXIT_CRITICAL();
 
             if (SYS_FS_DriveSectorGet(SD_CARD_MANAGER_DISK_MOUNT_NAME, &totalSectors, &freeSectors) == SYS_FS_RES_SUCCESS) {
-                gSDCardData.spaceResultFreeBytes = (uint64_t)freeSectors * SD_SECTOR_SIZE_BYTES;
-                gSDCardData.spaceResultTotalBytes = (uint64_t)totalSectors * SD_SECTOR_SIZE_BYTES;
+                /* Publish the bool + two uint64 triple atomically so a
+                 * concurrent SCPI reader (USB pri 7) doesn't see a torn
+                 * intermediate state on the 32-bit bus.  Same pattern as
+                 * CHECK_DISK_FULL's cache publish (#503). */
+                uint64_t freeBytes = (uint64_t)freeSectors * SD_SECTOR_SIZE_BYTES;
+                uint64_t totalBytes = (uint64_t)totalSectors * SD_SECTOR_SIZE_BYTES;
+                taskENTER_CRITICAL();
+                gSDCardData.spaceResultFreeBytes = freeBytes;
+                gSDCardData.spaceResultTotalBytes = totalBytes;
                 gSDCardData.spaceResultValid = true;
+                taskEXIT_CRITICAL();
                 gSDCardData.lastOperationSuccess = true;
             } else {
                 LOG_E("[SD] Failed to query drive space");
-                gSDCardData.spaceResultValid = false;
+                /* spaceResultValid stays false from the pre-query
+                 * invalidate above — no further critical section needed
+                 * for a single-bool no-op store. */
                 gSDCardData.lastOperationSuccess = false;
             }
 
@@ -1604,16 +1712,45 @@ bool sd_card_manager_GetLastOperationResult(void) {
     return gSDCardData.lastOperationSuccess;
 }
 
+bool sd_card_manager_StartupDiskFull(void) {
+    /* #503: true iff the most recent WRITE-mode entry was rejected by
+     * the in-line disk-full pre-check (free space below minFreeBytes).
+     * Cleared on every subsequent WRITE attempt. */
+    if (gpSDCardSettings == NULL) {
+        return false;
+    }
+    return gSDCardData.startupDiskFull;
+}
+
 bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {
-    if (!gSDCardData.spaceResultValid) {
+    /* Snapshot the bool + two 64-bit fields under a single critical
+     * section so callers can't observe a torn intermediate value when
+     * the SD task is mid-publish in CHECK_DISK_FULL or GET_SPACE.
+     * The SD task writes these three fields atomically (as a triple)
+     * under the same critical section in those states.  Same pattern
+     * as the minFreeBytes snapshot the SD task uses on the other
+     * direction. */
+    uint64_t freeLocal = 0;
+    uint64_t totalLocal = 0;
+    bool valid = false;
+
+    taskENTER_CRITICAL();
+    valid = gSDCardData.spaceResultValid;
+    if (valid) {
+        freeLocal = gSDCardData.spaceResultFreeBytes;
+        totalLocal = gSDCardData.spaceResultTotalBytes;
+    }
+    taskEXIT_CRITICAL();
+
+    if (!valid) {
         LOG_I("SD GetSpaceInfo: result not yet available");
         return false;
     }
     if (freeBytes != NULL) {
-        *freeBytes = gSDCardData.spaceResultFreeBytes;
+        *freeBytes = freeLocal;
     }
     if (totalBytes != NULL) {
-        *totalBytes = gSDCardData.spaceResultTotalBytes;
+        *totalBytes = totalLocal;
     }
     return true;
 }
