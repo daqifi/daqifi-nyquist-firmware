@@ -67,7 +67,8 @@ static volatile bool gSdPbMetadataSent = false;
 static volatile bool gSdFileWasReady = false;
 
 // Per-session streaming statistics.
-// Written by: deferred ISR task (queueDroppedSamples, totalSamplesStreamed)
+// Written by: deferred ISR task (queueDroppedSamples, poolExhaustedSamples,
+//             queueOverflowSamples, totalSamplesStreamed)
 //             streaming task (all other fields)
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
@@ -1660,7 +1661,9 @@ void streaming_Task(void) {
             DioProbe_PulseStart(9);  /* probe 9: output write duration */
             // All-or-nothing output writes. On timeout (10s), the interface
             // is assumed dead. Backpressure propagates to sample queue —
-            // QueueDroppedSamples is the ONLY data loss mechanism.
+            // PoolExhaustedSamples (deferred task can't allocate) and
+            // QueueOverflowSamples (deferred task can't enqueue) are the only
+            // input-side data loss mechanisms.  Their sum is QueueDroppedSamples.
             // USB/WiFi: all-or-nothing without retry. Full packet written
             // or cleanly dropped (no garbled partial data). No retry because
             // the ISR→encoder feedback loop causes sample queue overflow.
@@ -1737,9 +1740,10 @@ void streaming_Task(void) {
 
             // Track packets discarded due to output buffer backpressure.
             // The streaming task always encodes to drain the sample queue
-            // (preventing queueDroppedSamples), but when an output buffer
-            // is too full (< 128 bytes free), the encoded packet is silently
-            // discarded. Count these drops so SYST:STR:STATS? is accurate.
+            // (preventing queueOverflowSamples from rising further), but
+            // when an output buffer is too full (< 128 bytes free), the
+            // encoded packet is silently discarded.  Count these drops so
+            // SYST:STR:STATS? is accurate.
             {
                 bool sdExpected = hasSD || (
                     pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD ||
