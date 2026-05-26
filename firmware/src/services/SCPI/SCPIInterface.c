@@ -2841,7 +2841,17 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // and refuse the start if free space is below the floor.  This
         // catches "customer started a long run on a card with ~10 MB free"
         // BEFORE 30 minutes of streaming silently fails.
-        if (pSDCardSettings->minFreeBytes > 0) {
+        //
+        // Qodo PR #502 pass 1 bug 1: snapshot the 64-bit minFreeBytes
+        // under critical section once at function entry — matches the
+        // CRITICAL guard on the SCPI setter side.  Reusing the local
+        // for the LOG_E + comparison also guarantees consistent value
+        // even if a concurrent setter mutates the config mid-function.
+        uint64_t minFreeFloor;
+        taskENTER_CRITICAL();
+        minFreeFloor = pSDCardSettings->minFreeBytes;
+        taskEXIT_CRITICAL();
+        if (minFreeFloor > 0) {
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_GET_SPACE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
             if (!sd_card_manager_WaitForCompletion(5000)) {
@@ -2854,10 +2864,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             uint64_t freeBytes = 0, totalBytes = 0;
             if (sd_card_manager_GetLastOperationResult() &&
                 sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes) &&
-                freeBytes < pSDCardSettings->minFreeBytes) {
+                freeBytes < minFreeFloor) {
                 LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
                       (unsigned long long)freeBytes,
-                      (unsigned long long)pSDCardSettings->minFreeBytes);
+                      (unsigned long long)minFreeFloor);
                 pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                 sd_card_manager_UpdateSettings(pSDCardSettings);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
