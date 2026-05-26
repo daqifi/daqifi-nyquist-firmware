@@ -2842,12 +2842,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // catches "customer started a long run on a card with ~10 MB free"
         // BEFORE 30 minutes of streaming silently fails.
         //
-        // Snapshot the 64-bit minFreeBytes under critical section once
-        // at function entry — pairs with the CRITICAL guard on the
+        // Snapshot the 64-bit minFreeBytes under critical section before
+        // the disk-full check — pairs with the CRITICAL guard on the
         // SCPI setter side (PIC32MZ 32-bit bus tears 64-bit accesses
         // under preemption).  Reusing the local for the LOG_E +
         // comparison guarantees a consistent value even if a concurrent
-        // setter mutates the config mid-function.
+        // setter mutates the config while this block runs.
         uint64_t minFreeFloor;
         taskENTER_CRITICAL();
         minFreeFloor = pSDCardSettings->minFreeBytes;
