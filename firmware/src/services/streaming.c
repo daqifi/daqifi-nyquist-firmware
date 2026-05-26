@@ -838,25 +838,26 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
             uint32_t wifiW = hasWifi ? 2u : 0u;
             uint32_t totW  = sdW + usbW + wifiW;
             if (totW > 0) {
-                uint32_t sdShare   = (avail * sdW)  / totW;
-                uint32_t usbShare  = (avail * usbW) / totW;
-                // The remainder (integer-division rounding + any unused
-                // weight) goes to the highest-priority active interface so
-                // the full `avail` lands somewhere — SD first, then USB,
-                // then WiFi.
-                uint32_t accounted = sdShare + usbShare;
-                uint32_t wifiShare = (avail > accounted) ? (avail - accounted) : 0;
+                uint32_t sdShare   = (avail * sdW)   / totW;
+                uint32_t usbShare  = (avail * usbW)  / totW;
+                uint32_t wifiShare = (avail * wifiW) / totW;
+
+                // Route the integer-division remainder to the highest-
+                // priority active interface (SD > USB > WiFi) so the full
+                // `avail` lands somewhere.  totW > 0 guarantees at least
+                // one of the three is active, so one of the branches will
+                // always absorb the remainder.
+                uint32_t accounted = sdShare + usbShare + wifiShare;
+                uint32_t rem = (avail > accounted) ? (avail - accounted) : 0u;
+                if (rem > 0u) {
+                    if (hasSd)        sdShare   += rem;
+                    else if (hasUsb)  usbShare  += rem;
+                    else              wifiShare += rem;  /* hasWifi true */
+                }
+
                 if (hasSd)   *outSdDmaSize   += sdShare;
                 if (hasUsb)  *outUsbDmaSize  += usbShare;
-                if (hasWifi) {
-                    *outWifiDmaSize += wifiShare;
-                } else if (hasSd) {
-                    *outSdDmaSize   += wifiShare;
-                } else if (hasUsb) {
-                    *outUsbDmaSize  += wifiShare;
-                }
-                // If totW > 0 then at least one of hasSd/hasUsb/hasWifi is
-                // true, so the remainder is always absorbed above.
+                if (hasWifi) *outWifiDmaSize += wifiShare;
             }
             // totW == 0 (degenerate: no active interface — possible if
             // ActiveInterface=SD but sd->enable=false) leaves all three
