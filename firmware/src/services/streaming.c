@@ -838,11 +838,26 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
 
     // Circular buffers: larger buffers reduce retry frequency for
     // all-or-nothing writes, but must leave enough pool for samples.
-    // WiFi at 64KB absorbs ~44ms of encoder lead at 1kHz×1400B before
-    // WINC's per-packet callback-paced drain catches up. Sample-pool
-    // floor with USB+WiFi active is ~520 samples (well above
-    // MIN_AIN_SAMPLE_COUNT=100).
-    *outWifiSize = hasWifi ? STREAMING_WIFI_DEFAULT : STREAMING_WIFI_MIN;
+    // WiFi at 32 KB absorbs ~600 ms of encoder lead at 5×T1 @ 3 kHz
+    // (52 KB/s) before WINC's per-packet callback-paced drain catches
+    // up.  Sample-pool floor with USB+WiFi active is ~520 samples
+    // (well above MIN_AIN_SAMPLE_COUNT=100).
+    //
+    // #497: in WiFi-only mode the previous fixed 32 KB left ~118 KB of
+    // the 194 KB pool idle (sample-pool cap of MAX_AIN_SAMPLE_COUNT +
+    // inactive USB/SD at minimums = 76 KB total carved).  Bump to
+    // STREAMING_WIFI_WIFI_ONLY (96 KB) when WiFi is the sole active
+    // interface — triples the burst-absorption window before WINC SPI
+    // back-pressure cascades to wst.  USB+WiFi sessions keep the 32 KB
+    // default to preserve sample-pool headroom for the dual-interface
+    // case where it actually matters.
+    if (hasWifi && !hasUsb && !hasSd) {
+        *outWifiSize = STREAMING_WIFI_WIFI_ONLY;
+    } else if (hasWifi) {
+        *outWifiSize = STREAMING_WIFI_DEFAULT;
+    } else {
+        *outWifiSize = STREAMING_WIFI_MIN;
+    }
     *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT  : STREAMING_USB_MIN;
 }
 

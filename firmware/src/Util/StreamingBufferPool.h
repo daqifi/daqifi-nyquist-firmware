@@ -43,6 +43,14 @@ extern "C" {
  * silent-loss bug.  Reverting to 32 KB to free 32 KB of streaming pool
  * memory for the sample pool / encoder.  See #373. */
 #define STREAMING_WIFI_DEFAULT      (32U * 1024U)
+/* WiFi circular when WiFi is the SOLE active interface.  In WiFi-only
+ * mode auto-balance previously left ~118 KB of the 194 KB streaming
+ * pool idle (sample pool caps at MAX_AIN_SAMPLE_COUNT=1100 ≈ 33 KB,
+ * inactive USB/SD reduce to minimums).  Issue #497 documented the
+ * waste and proposed reallocating to the WiFi circular — the layer
+ * that overflows on WINC SPI back-pressure.  96 KB triples the burst-
+ * absorption window without touching encoder or sample pool. */
+#define STREAMING_WIFI_WIFI_ONLY    (96U * 1024U)
 
 /**
  * Initialize the pool and set default partition.
