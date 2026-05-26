@@ -2894,7 +2894,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             // surface that as the precise log line operators expect.
             if (sd_card_manager_StartupDiskFull()) {
                 uint64_t freeBytes = 0, totalBytes = 0;
-                sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
+                bool haveSpace = sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
                 /* Snapshot the 64-bit floor under critical section per
                  * CLAUDE.md atomicity rules — pairs with the setter's
                  * critical-section write in SCPI_StorageSDMinFreeSet. */
@@ -2902,9 +2902,20 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 taskENTER_CRITICAL();
                 floor = pSDCardSettings->minFreeBytes;
                 taskEXIT_CRITICAL();
-                LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
-                      (unsigned long long)freeBytes,
-                      (unsigned long long)floor);
+                /* CHECK_DISK_FULL caches spaceResult before the
+                 * rejection branch, so haveSpace SHOULD be true in this
+                 * path.  The fallback exists for defense-in-depth: if a
+                 * future code change clears spaceResultValid between
+                 * the SD task's reject and the SCPI read, log "unknown"
+                 * instead of formatting a misleading 0 B value. */
+                if (haveSpace) {
+                    LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
+                          (unsigned long long)freeBytes,
+                          (unsigned long long)floor);
+                } else {
+                    LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
+                          (unsigned long long)floor);
+                }
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }

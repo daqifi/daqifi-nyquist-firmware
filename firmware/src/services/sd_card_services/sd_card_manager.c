@@ -814,11 +814,17 @@ void sd_card_manager_ProcessState() {
                  * check-runs (floor > 0) paths must enter with a clean
                  * flag, otherwise a stale `true` from a previous
                  * rejection would mislabel a subsequent generic open
-                 * failure as "disk full" in the SCPI log.  Snapshot
-                 * minFreeBytes under a critical section per CLAUDE.md
-                 * atomicity rules (64-bit read shared with the SCPI
-                 * setter that writes under taskENTER_CRITICAL). */
+                 * failure as "disk full" in the SCPI log.  Also invalidate
+                 * any cached space-query result from a prior op so
+                 * SYST:STOR:SD:SPACe? doesn't surface a stale free-space
+                 * value when the floor-check is bypassed (floor==0).
+                 * Snapshot minFreeBytes under a critical section per
+                 * CLAUDE.md atomicity rules (64-bit read shared with the
+                 * SCPI setter that writes under taskENTER_CRITICAL). */
                 gSDCardData.startupDiskFull = false;
+                gSDCardData.spaceResultValid = false;
+                gSDCardData.spaceResultFreeBytes = 0;
+                gSDCardData.spaceResultTotalBytes = 0;
                 uint64_t floor;
                 taskENTER_CRITICAL();
                 floor = gpSDCardSettings->minFreeBytes;
