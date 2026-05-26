@@ -731,6 +731,68 @@ scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
 }
 
 /**
+ * @brief Set minimum free space floor for SYST:STR:START (#498)
+ *
+ * Command: SYST:STOR:SD:MINFree <bytes>
+ *   Default: 0 (no pre-start check; legacy behavior)
+ *   Typical: 52428800 (50 MB) — refuses to start a long log run on a
+ *            card with less than 50 MB headroom.
+ *
+ * When > 0, SYST:STR:START for SD-output sessions runs
+ * SYS_FS_DriveSectorGet() before arming the streaming timer and
+ * returns SCPI -200 if the free space is below this floor.  Catches
+ * the "started a 4-hour log on a near-full card" failure mode that
+ * otherwise drops samples silently after disk-full mid-run.
+ */
+scpi_result_t SCPI_StorageSDMinFreeSet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    // Parse as uint64 directly — storage is uint64; SCPI_ParamInt64
+    // would reject values above INT64_MAX.
+    uint64_t minFreeBytes;
+    if (!SCPI_ParamUInt64(context, &minFreeBytes, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    // 64-bit shared write needs critical section per CLAUDE.md
+    // atomicity rules — PIC32MZ's 32-bit data bus tears 64-bit
+    // stores under task preemption.  The runtime config is read
+    // by SCPI_StartStreaming from a different task and by the
+    // SCPI getter from this task; without the critical section,
+    // a concurrent reader could see a torn intermediate value.
+    taskENTER_CRITICAL();
+    pSDCardRuntimeConfig->minFreeBytes = minFreeBytes;
+    taskEXIT_CRITICAL();
+    // Config-only write — do NOT call sd_card_manager_UpdateSettings()
+    // here.  UpdateSettings() unconditionally forces SD state to
+    // DEINIT → UNMOUNT_DISK, which closes any active WRITE file and
+    // on next open truncates with WRITE_PLUS.  MINFree is consulted
+    // only at SYST:STR:START, so a config-only write is correct;
+    // bouncing the SD state machine during an active logging session
+    // would cause silent data loss.
+    return SCPI_RES_OK;
+}
+
+/**
+ * @brief Query minimum free space floor
+ *
+ * Command: SYST:STOR:SD:MINFree?
+ * Returns: <bytes> (0 = no pre-start check)
+ */
+scpi_result_t SCPI_StorageSDMinFreeGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    // 64-bit shared read also under critical section — pairs with the
+    // setter (same field, same PIC32MZ tearing risk under preemption).
+    uint64_t minFreeBytes;
+    taskENTER_CRITICAL();
+    minFreeBytes = pSDCardRuntimeConfig->minFreeBytes;
+    taskEXIT_CRITICAL();
+    SCPI_ResultUInt64(context, minFreeBytes);
+    return SCPI_RES_OK;
+}
+
+/**
  * @brief Query SD card free and total space
  *
  * Command: SYST:STOR:SD:SPACe?

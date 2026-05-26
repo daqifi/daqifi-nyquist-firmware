@@ -2088,6 +2088,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     scpi_printf(context, "SamplesPerSec=%u\r\n", (unsigned)samplesPerSec);
     scpi_printf(context, "BytesPerSec=%u\r\n", (unsigned)bytesPerSec);
     scpi_printf(context, "QueueDropped=%u\r\n", (unsigned)s.queueDroppedSamples);
+    // #499: split sub-counters — QueueDropped is their sum (kept for back-compat).
+    //   PoolExhausted = sample pool depth too shallow for the rate.
+    //   QueueOverflow = streaming_Task drain too slow (queue full while pool has slots).
+    scpi_printf(context, "PoolExhausted=%u\r\n", (unsigned)s.poolExhaustedSamples);
+    scpi_printf(context, "QueueOverflow=%u\r\n", (unsigned)s.queueOverflowSamples);
     scpi_printf(context, "UsbDropped=%u\r\n", (unsigned)s.usbDroppedBytes);
     scpi_printf(context, "WifiDropped=%u\r\n", (unsigned)s.wifiDroppedBytes);
     scpi_printf(context, "SdDropped=%u\r\n", (unsigned)s.sdDroppedBytes);
@@ -2442,7 +2447,13 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TotalSamplesStreamed=%llu\r\n", (unsigned long long)s.totalSamplesStreamed);
     scpi_printf(context, "TotalBytesStreamed=%llu\r\n", (unsigned long long)s.totalBytesStreamed);
     scpi_printf(context, "QueueDroppedSamples=%u\r\n", (unsigned)s.queueDroppedSamples);
+    // #499: split sub-counters — QueueDroppedSamples is their sum (kept for back-compat).
+    //   PoolExhaustedSamples = sample pool depth too shallow for the rate.
+    //   QueueOverflowSamples = streaming_Task drain too slow (queue full while pool has slots).
+    // #483: Steady = post-grace subset of QueueDroppedSamples (no per-sub-counter Steady).
     scpi_printf(context, "QueueDroppedSamplesSteady=%u\r\n", (unsigned)s.queueDroppedSamplesSteady);
+    scpi_printf(context, "PoolExhaustedSamples=%u\r\n", (unsigned)s.poolExhaustedSamples);
+    scpi_printf(context, "QueueOverflowSamples=%u\r\n", (unsigned)s.queueOverflowSamples);
     scpi_printf(context, "UsbDroppedBytes=%u\r\n", (unsigned)s.usbDroppedBytes);
     scpi_printf(context, "UsbDroppedBytesSteady=%u\r\n", (unsigned)s.usbDroppedBytesSteady);
     scpi_printf(context, "WifiDroppedBytes=%u\r\n", (unsigned)s.wifiDroppedBytes);
@@ -2518,6 +2529,13 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "TimerISRCalls=%llu\r\n", (unsigned long long)s.timerISRCalls);
     // #367 diag: bytes sitting in WiFi circular buffer at session end (Stop)
     scpi_printf(context, "CircularBufferEndBytes=%u\r\n", (unsigned)s.circularBufferEndBytes);
+    // #499 diag: sample-pool peak utilization this session.  Compare with
+    // SamplePoolCount (MEM:FREE?) — if Used == Count, the pool was saturated
+    // and PoolExhaustedSamples > 0 makes sense.  If Used << Count but
+    // QueueOverflowSamples > 0, the queue is the bottleneck (streaming_Task
+    // drain too slow), not the pool.
+    scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
+                (unsigned)AInSampleList_PoolMaxUsed());
 #if PB_PROFILE_COUNTERS
     // #388 PB streaming profile counters (compile-time gated).  Raw cycle
     // counts at SYSCLK/2 = 100 MHz on PIC32MZ — divide by 1e8 for seconds,
@@ -2839,6 +2857,49 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             LOG_E("Cannot start SD logging - SD card busy with another operation");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
+        }
+        // #498: pre-start disk-full gate.  If minFreeBytes > 0, query the
+        // card via SYS_FS_DriveSectorGet (synchronous through the SD task)
+        // and refuse the start if free space is below the floor.  This
+        // catches "customer started a long run on a card with ~10 MB free"
+        // BEFORE 30 minutes of streaming silently fails.
+        //
+        // Snapshot the 64-bit minFreeBytes under critical section before
+        // the disk-full check — pairs with the CRITICAL guard on the
+        // SCPI setter side (PIC32MZ 32-bit bus tears 64-bit accesses
+        // under preemption).  Reusing the local for the LOG_E +
+        // comparison guarantees a consistent value even if a concurrent
+        // setter mutates the config while this block runs.
+        uint64_t minFreeFloor;
+        taskENTER_CRITICAL();
+        minFreeFloor = pSDCardSettings->minFreeBytes;
+        taskEXIT_CRITICAL();
+        if (minFreeFloor > 0) {
+            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_GET_SPACE;
+            sd_card_manager_UpdateSettings(pSDCardSettings);
+            if (!sd_card_manager_WaitForCompletion(5000)) {
+                LOG_E("[SD] STR:START disk-full check timed out");
+                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_UpdateSettings(pSDCardSettings);
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
+            uint64_t freeBytes = 0, totalBytes = 0;
+            if (sd_card_manager_GetLastOperationResult() &&
+                sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes) &&
+                freeBytes < minFreeFloor) {
+                LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
+                      (unsigned long long)freeBytes,
+                      (unsigned long long)minFreeFloor);
+                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_UpdateSettings(pSDCardSettings);
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
+            // If the query itself failed (mount/SDIO error), fall through
+            // and let the existing WRITE-mode path surface the error.
+            // We've already done the user-friendly "you're out of space"
+            // rejection above when the query SUCCEEDED but the floor was hit.
         }
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
@@ -3474,9 +3535,15 @@ static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->sdCircularBufSize ? mc->sdCircularBufSize : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: return the ACTIVE partition size from StreamingBufferPool.
+    // Uses the size-only accessor to avoid pointer-arithmetic UB if a
+    // SCPI query overlaps a concurrent SBP_Partition() (PR #495 Qodo
+    // pass 2 bug 1).  Pool is initialized + partitioned at boot in
+    // app_freertos.c:495, so a zero return indicates a partition
+    // failure path, not a "before SYST:STR:START" state — surface it
+    // honestly rather than masking with MemoryConfig defaults (Qodo
+    // pass 2 bug 2).
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_SdCircularSize());
     return SCPI_RES_OK;
 }
 
@@ -3495,9 +3562,8 @@ static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemWifiBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->wifiCircularBufSize ? mc->wifiCircularBufSize : (WIFI_CIRCULAR_BUFF_SIZE);
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_WifiSize());
     return SCPI_RES_OK;
 }
 
@@ -3516,9 +3582,8 @@ static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->usbCircularBufSize ? mc->usbCircularBufSize : USBCDC_CIRCULAR_BUFF_SIZE;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_UsbSize());
     return SCPI_RES_OK;
 }
 
@@ -3558,9 +3623,8 @@ static scpi_result_t SCPI_SetMemEncoderBuf(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_GetMemEncoderBuf(scpi_t * context) {
-    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-    uint32_t effective = mc->encoderBufSize ? mc->encoderBufSize : ENCODER_BUFFER_DEFAULT;
-    SCPI_ResultInt32(context, (int32_t)effective);
+    // #494: see SCPI_GetMemSdBuf.
+    SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_EncoderSize());
     return SCPI_RES_OK;
 }
 
@@ -4597,6 +4661,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:BENCHmark?", .callback = SCPI_StorageSDBenchmarkQuery},
     {.pattern = "SYSTem:STORage:SD:MAXSize", .callback = SCPI_StorageSDMaxSizeSet},
     {.pattern = "SYSTem:STORage:SD:MAXSize?", .callback = SCPI_StorageSDMaxSizeGet},
+    {.pattern = "SYSTem:STORage:SD:MINFree", .callback = SCPI_StorageSDMinFreeSet},   // #498
+    {.pattern = "SYSTem:STORage:SD:MINFree?", .callback = SCPI_StorageSDMinFreeGet},  // #498
     {.pattern = "SYSTem:STORage:SD:SPACe?", .callback = SCPI_StorageSDSpaceGet},
     {.pattern = "SYSTem:STORage:SD:ABORt", .callback = SCPI_StorageSDAbort},
     {.pattern = "SYSTem:STORage:SD:INFO?", .callback = SCPI_StorageSDInfo},

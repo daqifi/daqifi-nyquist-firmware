@@ -36,13 +36,27 @@ extern "C" {
 
 /** Active-interface defaults used by Streaming_ComputeAutoBuffers */
 #define STREAMING_USB_DEFAULT       (64U * 1024U)  /* USB circular when active */
-/* WiFi circular when active.  PR #364 bumped this 32→64 KB and was originally
- * reported as +5x ceiling — but #371 retrospective A/B (with truthful drop
- * counter) showed the 64KB had ZERO effect on wire rate vs 32KB at any
- * tested rate.  The original "win" was a measurement artifact of the
- * silent-loss bug.  Reverting to 32 KB to free 32 KB of streaming pool
- * memory for the sample pool / encoder.  See #373. */
-#define STREAMING_WIFI_DEFAULT      (32U * 1024U)
+/* WiFi circular when WiFi is the active interface.  WiFi is always
+ * single-interface — the StreamingInterface enum has no USB+WiFi or
+ * WiFi+SD value, and the SCPIInterface.c runtime guard refuses WiFi
+ * while SD logging is active due to the SPI bus conflict.  So
+ * auto-balance has nothing to choose between: hasWifi -> WIFI_ONLY
+ * else MIN.
+ *
+ * Sized to claim the ~118 KB of streaming pool that previously sat
+ * unused in WiFi-only sessions (old fixed 32 KB WiFi circular carved
+ * only ~76 KB total with the boot-default sample pool of 1100
+ * elements; the rest was unused).  Issue #497.
+ *
+ * Tradeoff (Qodo PR #501 pass 2): when SamplePoolCount is auto (0),
+ * Partition() sets the pool depth from remaining pool bytes — so
+ * bumping this constant shrinks the auto-sized sample pool and
+ * indirectly shrinks the FreeRTOS heap used by AInSample's queue.
+ * MAX_AIN_SAMPLE_COUNT is 10000 (not 1100 — that's the DEFAULT).
+ * Acceptable because SamplePoolMaxUsed on actual workloads stays
+ * ≤16 (per #497 evidence), so the post-shrink pool still has 100×
+ * headroom. */
+#define STREAMING_WIFI_WIFI_ONLY    (96U * 1024U)
 
 /**
  * Initialize the pool and set default partition.

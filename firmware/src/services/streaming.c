@@ -67,7 +67,8 @@ static volatile bool gSdPbMetadataSent = false;
 static volatile bool gSdFileWasReady = false;
 
 // Per-session streaming statistics.
-// Written by: deferred ISR task (queueDroppedSamples, totalSamplesStreamed)
+// Written by: deferred ISR task (queueDroppedSamples, poolExhaustedSamples,
+//             queueOverflowSamples, totalSamplesStreamed)
 //             streaming task (all other fields)
 // Read by:    SCPI handler via Streaming_GetStats() atomic snapshot
 static StreamingStats gStreamStats = {0};
@@ -452,9 +453,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // No heap check needed - pool uses pre-allocated static memory
             pPublicSampleList = AInSampleList_AllocateFromPool();
             if(pPublicSampleList==NULL) {
+                // #499: split counter — this path = pool depth too shallow for
+                // the configured rate. Distinct from the PushBack-fail path
+                // below, which is "queue full / streaming_Task too slow."
+                // #483: Steady = post-startup-grace subset (the aggregate
+                // queueDroppedSamples stays for back-compat; per-sub-counter
+                // Steady variants intentionally not added — the existing
+                // aggregate Steady is sufficient for the session-end gating).
                 bool pastGrace = Streaming_PastStartupGrace();
                 taskENTER_CRITICAL();
                 gStreamStats.queueDroppedSamples++;
+                gStreamStats.poolExhaustedSamples++;
                 if (pastGrace) {
                     gStreamStats.queueDroppedSamplesSteady++;
                 }
@@ -562,9 +571,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+                // #499: split counter — this path = FreeRTOS queue full,
+                // i.e. streaming_Task can't drain fast enough. Distinct from
+                // the AllocateFromPool-NULL path above (pool depth shallow).
+                // #483: Steady = post-startup-grace subset of the aggregate.
                 bool pastGrace = Streaming_PastStartupGrace();
                 taskENTER_CRITICAL();
                 gStreamStats.queueDroppedSamples++;
+                gStreamStats.queueOverflowSamples++;
                 if (pastGrace) {
                     gStreamStats.queueDroppedSamplesSteady++;
                 }
@@ -825,22 +839,48 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
         uint32_t totalMin = sdMin + usbMin + wifiMin + overhead;
         if (pool > totalMin) {
             uint32_t avail = pool - totalMin;
-            uint32_t activeCount = (hasSd ? 1 : 0) + (hasUsb ? 1 : 0) + (hasWifi ? 1 : 0);
 
-            if (activeCount == 1) {
-                // Single active gets all remaining
-                if (hasSd)   *outSdDmaSize   += avail;
-                if (hasUsb)  *outUsbDmaSize  += avail;
-                if (hasWifi) *outWifiDmaSize += avail;
-            } else if (activeCount >= 2) {
-                // Split: SD 50%, USB 30%, WiFi 20%
-                uint32_t sdShare   = hasSd   ? (avail / 2) : 0;
-                uint32_t usbShare  = hasUsb  ? (avail * 3 / 10) : 0;
-                uint32_t wifiShare = hasWifi ? (avail - sdShare - usbShare) : 0;
-                *outSdDmaSize   += sdShare;
-                *outUsbDmaSize  += usbShare;
-                *outWifiDmaSize += wifiShare;
+            // Weighted distribution across active interfaces — weights only
+            // count for interfaces that are actually active, so `avail` is
+            // always fully allocated (no inactive-interface "share" wasted).
+            // Ratios (when multiple active): SD=5, USB=3, WiFi=2.  Single-
+            // active is the degenerate weighted case (all weight on one).
+            //
+            // Prior bug (#502 follow-up audit): the activeCount==2 branch
+            // wrote `wifiShare = hasWifi ? (avail - sdShare - usbShare) : 0`,
+            // which dropped 20% (~24.7 KB) of the coherent pool on the
+            // floor for USB+SD streaming.
+            uint32_t sdW   = hasSd   ? 5u : 0u;
+            uint32_t usbW  = hasUsb  ? 3u : 0u;
+            uint32_t wifiW = hasWifi ? 2u : 0u;
+            uint32_t totW  = sdW + usbW + wifiW;
+            if (totW > 0) {
+                uint32_t sdShare   = (avail * sdW)   / totW;
+                uint32_t usbShare  = (avail * usbW)  / totW;
+                uint32_t wifiShare = (avail * wifiW) / totW;
+
+                // Route the integer-division remainder to the highest-
+                // priority active interface (SD > USB > WiFi) so the full
+                // `avail` lands somewhere.  totW > 0 guarantees at least
+                // one of the three is active, so one of the branches will
+                // always absorb the remainder.
+                uint32_t accounted = sdShare + usbShare + wifiShare;
+                uint32_t rem = (avail > accounted) ? (avail - accounted) : 0u;
+                if (rem > 0u) {
+                    if (hasSd)        sdShare   += rem;
+                    else if (hasUsb)  usbShare  += rem;
+                    else              wifiShare += rem;  /* hasWifi true */
+                }
+
+                if (hasSd)   *outSdDmaSize   += sdShare;
+                if (hasUsb)  *outUsbDmaSize  += usbShare;
+                if (hasWifi) *outWifiDmaSize += wifiShare;
             }
+            // totW == 0 (degenerate: no active interface — possible if
+            // ActiveInterface=SD but sd->enable=false) leaves all three
+            // buffers at minimum.  No streaming consumer exists, so the
+            // unused RAM doesn't actively hurt — partition will be
+            // recomputed when the user re-enables a consumer.
         }
     }
 
@@ -850,12 +890,32 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
 
     // Circular buffers: larger buffers reduce retry frequency for
     // all-or-nothing writes, but must leave enough pool for samples.
-    // WiFi at 64KB absorbs ~44ms of encoder lead at 1kHz×1400B before
-    // WINC's per-packet callback-paced drain catches up. Sample-pool
-    // floor with USB+WiFi active is ~520 samples (well above
-    // MIN_AIN_SAMPLE_COUNT=100).
-    *outWifiSize = hasWifi ? STREAMING_WIFI_DEFAULT : STREAMING_WIFI_MIN;
-    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT  : STREAMING_USB_MIN;
+    //
+    // #497: the StreamingInterface enum has no USB+WiFi or WiFi+SD
+    // combination — WiFi is always single-interface (see
+    // StreamingRuntimeConfig.h:17-22 and the runtime guard at
+    // SCPIInterface.c:2823 that refuses WiFi while SD is logging due
+    // to the SPI bus conflict).  So `hasWifi` always means "WiFi is
+    // the SOLE active interface".  Bump to STREAMING_WIFI_WIFI_ONLY
+    // (96 KB) — triples the burst-absorption window vs the prior
+    // fixed 32 KB before WINC SPI back-pressure cascades to wst.
+    //
+    // Sample-pool tradeoff (Qodo PR #501 pass 2): the pool is NOT
+    // capped here at 1100; that's only the DEFAULT_AIN_SAMPLE_COUNT.
+    // MAX_AIN_SAMPLE_COUNT is 10000, and Partition() in auto mode
+    // (sampleCount == 0) sets sampleCount = remaining_pool_bytes /
+    // per_sample_bytes (capped at MAX).  So bumping WiFi 32→96 KB
+    // shrinks the auto-sized sample pool by ~64 KB / per-sample
+    // (≈ 2000 fewer samples at 5×T1's 30 B/sample stride).  That in
+    // turn shrinks the FreeRTOS heap used by the AInSample queue —
+    // observable as the heap delta in #501 validation (13272 → 4344
+    // during wifi_5xT1 @ 2 kHz).  Acceptable tradeoff because
+    // SamplePoolMaxUsed measurements on actual workloads are tiny
+    // (≤16 across all probed rates per #497 evidence), so even the
+    // post-shrink sample pool has 100× burst-absorption headroom for
+    // streaming use.
+    *outWifiSize = hasWifi ? STREAMING_WIFI_WIFI_ONLY : STREAMING_WIFI_MIN;
+    *outUsbSize  = hasUsb  ? STREAMING_USB_DEFAULT    : STREAMING_USB_MIN;
 }
 
 /*!
@@ -1636,28 +1696,42 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(8);
         }
         if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
-            bool pastGrace = Streaming_PastStartupGrace();
-            // Each encoder pops exactly 1 sample per call. On failure that
-            // sample is freed back to the pool but its data is lost (#297).
-            // Counting 1 per failure avoids the race condition where the
-            // higher-priority deferred ISR task pushes new samples between
-            // queue depth reads, making a delta approach inaccurate.
-            // Count for both AIN and DIO encoder failures — any sample type
-            // consumed by a failed encode is lost.
-            // Single critical section covers the counter pair and QUES bit
-            // so a concurrent Streaming_GetStats snapshot sees them coherently.
-            taskENTER_CRITICAL();
-            gStreamStats.encoderFailures++;
-            gStreamStats.encoderDroppedSamples++;
-            if (pastGrace) {
-                gStreamStats.encoderFailuresSteady++;
-                gStreamStats.encoderDroppedSamplesSteady++;
+            // #484: shutdown race.  If Streaming_Stop ran between the
+            // IsEnabled check at the top of this loop iteration and the
+            // encoder invocation, the encoder runs against partially
+            // torn-down state (pool freed, sample queue drained,
+            // encoder buffer pointer about to be cleared) and returns
+            // packetSize=0.  That's not a real encoder failure — the
+            // operator asked us to stop.  Verified empirically (n=20,
+            // 5 s vs 30 s test streams both fire EF at ~50 % regardless
+            // of stream duration → fires at Stop, not mid-stream).
+            // Skip the failure bookkeeping ONLY (don't `continue`) so any
+            // post-encoder cleanup or future code below still runs.
+            if (pRunTimeStreamConf->IsEnabled) {
+                bool pastGrace = Streaming_PastStartupGrace();
+                // Each encoder pops exactly 1 sample per call. On failure that
+                // sample is freed back to the pool but its data is lost (#297).
+                // Counting 1 per failure avoids the race condition where the
+                // higher-priority deferred ISR task pushes new samples between
+                // queue depth reads, making a delta approach inaccurate.
+                // Count for both AIN and DIO encoder failures — any sample type
+                // consumed by a failed encode is lost.
+                // #483: also bump Steady subset when past the 3 s startup grace.
+                // Single critical section covers all counters and the QUES bit
+                // so a concurrent Streaming_GetStats snapshot sees them coherently.
+                taskENTER_CRITICAL();
+                gStreamStats.encoderFailures++;
+                gStreamStats.encoderDroppedSamples++;
+                if (pastGrace) {
+                    gStreamStats.encoderFailuresSteady++;
+                    gStreamStats.encoderDroppedSamplesSteady++;
+                }
+                gQuesBits |= QUES_BIT_ENCODER_FAIL;
+                taskEXIT_CRITICAL();
+                LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+                    "Streaming: encoder failure lost 1 sample");
+                LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
             }
-            gQuesBits |= QUES_BIT_ENCODER_FAIL;
-            taskEXIT_CRITICAL();
-            LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                "Streaming: encoder failure lost 1 sample");
-            LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
         }
         if (packetSize > 0) {
             taskENTER_CRITICAL();
@@ -1669,7 +1743,9 @@ void streaming_Task(void) {
             DioProbe_PulseStart(9);  /* probe 9: output write duration */
             // All-or-nothing output writes. On timeout (10s), the interface
             // is assumed dead. Backpressure propagates to sample queue —
-            // QueueDroppedSamples is the ONLY data loss mechanism.
+            // PoolExhaustedSamples (deferred task can't allocate) and
+            // QueueOverflowSamples (deferred task can't enqueue) are the only
+            // input-side data loss mechanisms.  Their sum is QueueDroppedSamples.
             // USB/WiFi: all-or-nothing without retry. Full packet written
             // or cleanly dropped (no garbled partial data). No retry because
             // the ISR→encoder feedback loop causes sample queue overflow.
@@ -1746,9 +1822,10 @@ void streaming_Task(void) {
 
             // Track packets discarded due to output buffer backpressure.
             // The streaming task always encodes to drain the sample queue
-            // (preventing queueDroppedSamples), but when an output buffer
-            // is too full (< 128 bytes free), the encoded packet is silently
-            // discarded. Count these drops so SYST:STR:STATS? is accurate.
+            // (preventing queueOverflowSamples from rising further), but
+            // when an output buffer is too full (< 128 bytes free), the
+            // encoded packet is silently discarded.  Count these drops so
+            // SYST:STR:STATS? is accurate.
             {
                 bool sdExpected = hasSD || (
                     pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD ||
