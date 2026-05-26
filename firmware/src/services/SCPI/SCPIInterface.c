@@ -2882,8 +2882,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
         // Wait for SD file to be open before starting streaming.
         // Without this, early samples are dropped while SD mounts/opens.
+        //
+        // Early-exit when the SD task signals startupDiskFull — without
+        // it, a disk-full rejection costs the caller a full 5 s
+        // (500 × 10 ms) wait before we read the flag below.  The SD
+        // task knows the answer within milliseconds of CHECK_DISK_FULL
+        // running; polling that flag in the loop gets the friendly
+        // -200 back to the operator promptly.  (Qodo follow-up to #503,
+        // "Exit early on disk-full".)
         int readyWait = 0;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+            if (sd_card_manager_StartupDiskFull()) {
+                break;
+            }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
         }
