@@ -252,6 +252,23 @@ static volatile bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
 static TaskHandle_t gStreamingTaskHandle;
 
+/* #486: cross-task quiescence flags.  Set inside each streaming task's
+ * "critical region" — the span where it dereferences resources that
+ * SCPI_StartStreaming re-partitions (encoder buffer, sample queue,
+ * sample pool, output circular buffers, coherent DMA buffers).
+ * SCPI_StartStreaming polls Streaming_TasksAreQuiescent() after
+ * Streaming_Stop and before the re-partition, with a bounded wait
+ * + vTaskDelay(1) so the lower-priority streaming_Task (pri 6) and
+ * higher-priority deferred ISR task (pri 9) can each finish their
+ * iteration and clear the flag.
+ *
+ * uint32_t (not bool) — CLAUDE.md "Atomicity & Concurrency Rules":
+ * 32-bit reads/writes are atomic on the PIC32MZ bus.  volatile keeps
+ * the compiler from caching the value across loop iterations.
+ * No RMW: writes are unconditional 0 or 1, no |= or &=. */
+static volatile uint32_t gStreamingTaskInCritical = 0;
+static volatile uint32_t gDeferredTaskInCritical = 0;
+
 // Sine wave period for test pattern 6: 256 samples per cycle.
 // Integer-only implementation via Q0.16 lookup table —
 // eliminates FPU usage in the deferred task so context switches
@@ -448,6 +465,25 @@ void _Streaming_Deferred_Interrupt_Task(void) {
         DioProbe_Toggle(2);  /* probe 2: deferred task wake rate */
 
         if (pRunTimeStreamConf->IsEnabled) {
+            /* #486 — quiescence flag for cross-task sync against
+             * SCPI_StartStreaming re-partition.  Set BEFORE any deref
+             * of the sample pool / queue resources that re-partition
+             * tears down; the re-check below closes the TOCTOU between
+             * the IsEnabled gate above and the flag set.  Memory
+             * barrier prevents -O3 from hoisting subsequent non-volatile
+             * reads above the volatile flag store.
+             *
+             * Single-exit goto-cleanup pattern (Qodo pass-3 /improve):
+             * all pool-touching exit paths land at `pool_done` which
+             * unconditionally clears the flag.  The ADC trigger code
+             * below the label runs OUTSIDE the critical region — it
+             * only touches board-config statics and ADC peripheral
+             * SFRs, none of which re-partition tears down. */
+            gDeferredTaskInCritical = 1;
+            __asm__ __volatile__ ("" ::: "memory");
+            if (!pRunTimeStreamConf->IsEnabled) {
+                goto pool_done;
+            }
             DioProbe_PulseStart(3);  /* probe 3: alloc + channel loop + queue push */
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
             // No heap check needed - pool uses pre-allocated static memory
@@ -477,6 +513,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     taskEXIT_CRITICAL();
                 }
                 DioProbe_PulseEnd(3);
+                /* Pool exhausted: skip ADC trigger AND xTaskNotifyGive
+                 * by continuing to next loop iteration.  Goto-cleanup
+                 * is NOT used here because the pool_done label lands
+                 * before the ADC trigger code which the pool-exhausted
+                 * path MUST skip (preserves pre-PR behavior; the
+                 * original `continue` skipped both ADC trigger and
+                 * encoder-task notification).  Exit barrier
+                 * (pass-4 Qodo importance-9) pairs with the entry
+                 * barrier — see pool_done label below. */
+                __asm__ __volatile__ ("" ::: "memory");
+                gDeferredTaskInCritical = 0;
                 continue;
             }
 
@@ -593,6 +640,22 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 Streaming_UpdateFlowWindow(false);
             }
             DioProbe_PulseEnd(3);
+pool_done:
+            /* #486 — exit pool-touching region.  ADC trigger code below
+             * does not touch pool / queue / encoder buffer (only board-
+             * config statics + ADC peripheral SFRs), so it's safe
+             * outside the quiescence window.  The IsEnabled-false
+             * re-check `goto`s here to clear the flag without skipping
+             * the ADC trigger — at this point streaming is being
+             * stopped, but the ADC trigger is idempotent.
+             *
+             * Exit barrier (pass-4 Qodo importance-9): pairs with the
+             * entry barrier at line 476.  Without it, the compiler at
+             * -O3 could sink the final non-volatile pool/queue access
+             * past the volatile flag store, defeating the protection
+             * on the exit side. */
+            __asm__ __volatile__ ("" ::: "memory");
+            gDeferredTaskInCritical = 0;
 
             // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
             // Normal/NoCap modes: with hardware triggering (#282), the timer
@@ -754,12 +817,45 @@ static size_t Streaming_UsbWrite(const char* buf, size_t len) {
     return UsbCdc_WriteToBuffer(NULL, buf, len);
 }
 
+/* #486 — distinguish "shutdown-initiated abort" from "true 10 s output
+ * timeout" in the caller.  Pass-3 used `==0` for both and disambiguated
+ * with an IsEnabled re-read at the call site; pass-5 Qodo /improve
+ * tightened this to use distinct sentinel values, so call sites can
+ * branch on the return alone without racing IsEnabled.
+ *
+ *   TIMEOUT = 0      (matches "wrote 0 bytes" — also a real backpressure
+ *                     failure that bumps drop counters)
+ *   STOPPED = SIZE_MAX  (impossible-to-write count — explicit
+ *                     stop-abort, no counter bumps, no log)
+ *
+ * Any positive return < len is treated as a partial write (currently
+ * never produced by writeFn — they're whole-buffer-or-zero — but the
+ * sentinel scheme leaves room).
+ *
+ * SIZE_MAX is from <stdint.h> via streaming.h's transitive includes. */
+#define STREAM_WRITE_RETURN_TIMEOUT   ((size_t)0)
+#define STREAM_WRITE_RETURN_STOPPED   (SIZE_MAX)
+
 static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
                                         const uint8_t* buf, size_t len) {
+    /* Cache the runtime config pointer locally so all phases use a
+     * consistent NULL-checked view (Qodo pass-3 /improve). */
+    StreamingRuntimeConfig *cfg = gpRuntimeConfigStream;
+
     // Phase 1: quick spin — catch in-progress DMA completions
     for (int i = 0; i < 10; i++) {
         if (writeFn((const char*)buf, len) == len) return len;
     }
+
+    /* #486 — abort retries if streaming was stopped.  The caller holds
+     * gStreamingTaskInCritical for the full duration of this function;
+     * if SCPI is waiting in the quiescence gate (100 ms bound),
+     * continuing to retry for up to 10 s would cause STR:START to
+     * spuriously fail with the abort error even though the operation
+     * would succeed safely.  Lost output bytes are correct semantics
+     * here — the user asked to stop, those bytes are stale by the
+     * time the next stream starts. */
+    if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
 
     // Phase 2: short sleeps — let lower-priority output tasks drain.
     // taskYIELD() only reschedules within the same priority; encoder at 6
@@ -768,6 +864,7 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
     for (int i = 0; i < 50; i++) {
         vTaskDelay(1);
         if (writeFn((const char*)buf, len) == len) return len;
+        if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
     // Phase 3: tick-based backoff — 1ms sleeps, up to 10s timeout.
@@ -777,11 +874,12 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
     while (xTaskGetTickCount() < deadline) {
         vTaskDelay(1);
         if (writeFn((const char*)buf, len) == len) return len;
+        if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
     LOG_E("Output write timeout (%u ms, %u bytes) — interface dead",
           STREAM_WRITE_TIMEOUT_MS, (unsigned)len);
-    return 0;
+    return STREAM_WRITE_RETURN_TIMEOUT;
 }
 
 /**
@@ -1113,6 +1211,15 @@ bool Streaming_SetLossGraceSec(uint32_t sec) {
     }
     gLossGraceSec = sec;
     return true;
+}
+
+/* #486: queried by SCPI_StartStreaming before the re-partition window.
+ * Two-flag check is correct without a critical section: each flag is
+ * atomic on PIC32MZ (32-bit r/w), and a transient state where one is 0
+ * and the other is 1 just means the caller will spin one more
+ * vTaskDelay(1) iteration — never observes a torn quiescent state. */
+bool Streaming_TasksAreQuiescent(void) {
+    return (gStreamingTaskInCritical == 0 && gDeferredTaskInCritical == 0);
 }
 
 /*!
@@ -1516,6 +1623,30 @@ void streaming_Task(void) {
             continue;
         }
 
+        /* #486 — quiescence flag for cross-task sync against
+         * SCPI_StartStreaming re-partition.  Set BEFORE any deref of the
+         * encoder buffer pointer, sample queue (AInSampleList_IsEmpty
+         * reads queue head/tail; AInSampleList_InitializeExternal calls
+         * vQueueDelete + xQueueCreate so the queue handle itself is a
+         * use-after-free target), DIO sample list, or output buffer
+         * size accessors.
+         *
+         * The compiler memory barrier prevents -O3 from hoisting any
+         * subsequent non-volatile read above the volatile flag store.
+         * The volatile keyword alone orders the store with respect to
+         * OTHER volatile accesses, not non-volatile reads like the
+         * IsEmpty / WriteBuffFreeSize helpers below.
+         *
+         * Re-check IsEnabled inside the flag window to close the TOCTOU
+         * between the line-1556 check above and this commit point — if
+         * SCPI flipped IsEnabled between those two reads, we clear the
+         * flag and skip this iteration so quiescence is observable. */
+        gStreamingTaskInCritical = 1;
+        __asm__ __volatile__ ("" ::: "memory");
+        if (!pRunTimeStreamConf->IsEnabled) {
+            goto iter_done;
+        }
+
         // #397 self-heal check: if every configured transport has been
         // down for longer than the grace window, auto-stop the stream
         // and surface the reason via QUES bit 12 + LOG_E.  Individual
@@ -1529,21 +1660,21 @@ void streaming_Task(void) {
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();
-            continue;
+            goto iter_done;
         }
 
         // Encoder buffer must be set (from pool) before encoding
         if (buffer == NULL || bufferSize == 0) {
-            continue;
+            goto iter_done;
         }
 
         AINDataAvailable = !AInSampleList_IsEmpty();
         DIODataAvailable = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
 
         if (!AINDataAvailable && !DIODataAvailable) {
-            continue;
+            goto iter_done;
         }
-       
+
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
         // Only check SD buffer size once the file is actually open.
@@ -1807,7 +1938,11 @@ void streaming_Task(void) {
                 }
             }
             if (hasSD && gSdFileWasReady) {
-                if (Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer, buffer, packetSize) == 0) {
+                size_t wr = Streaming_WriteWithRetry(
+                    sd_card_manager_WriteToBuffer, buffer, packetSize);
+                if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
+                    /* True 10 s interface-dead timeout (pass-5 Qodo
+                     * refinement): bump drop counters + QUES bit + log. */
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
                     gStreamStats.sdDroppedBytes += packetSize;
@@ -1818,6 +1953,9 @@ void streaming_Task(void) {
                     taskEXIT_CRITICAL();
                     LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
                 }
+                /* else: wr == packetSize (success) or
+                 *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
+                 *       intentional, no bookkeeping). */
             }
 
             // Track packets discarded due to output buffer backpressure.
@@ -1850,6 +1988,21 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(9);
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
+
+iter_done:
+        /* #486: single-exit flag clear. All early `goto iter_done`
+         * paths above land here; the normal end-of-iteration also
+         * falls through. Guarantees the quiescence flag is cleared
+         * on every loop iteration without scattering per-continue
+         * clears that are easy to miss on future edits.
+         *
+         * Exit barrier (pass-4 Qodo importance-9): pairs with the
+         * entry barrier at line 1594.  Without it, the compiler at
+         * -O3 could sink the final encoder / buffer / output write
+         * past the volatile flag store, defeating the protection
+         * on the exit side. */
+        __asm__ __volatile__ ("" ::: "memory");
+        gStreamingTaskInCritical = 0;
     }
 }
 
