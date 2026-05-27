@@ -519,7 +519,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                  * before the ADC trigger code which the pool-exhausted
                  * path MUST skip (preserves pre-PR behavior; the
                  * original `continue` skipped both ADC trigger and
-                 * encoder-task notification). */
+                 * encoder-task notification).  Exit barrier
+                 * (pass-4 Qodo importance-9) pairs with the entry
+                 * barrier — see pool_done label below. */
+                __asm__ __volatile__ ("" ::: "memory");
                 gDeferredTaskInCritical = 0;
                 continue;
             }
@@ -644,7 +647,14 @@ pool_done:
              * outside the quiescence window.  The IsEnabled-false
              * re-check `goto`s here to clear the flag without skipping
              * the ADC trigger — at this point streaming is being
-             * stopped, but the ADC trigger is idempotent. */
+             * stopped, but the ADC trigger is idempotent.
+             *
+             * Exit barrier (pass-4 Qodo importance-9): pairs with the
+             * entry barrier at line 476.  Without it, the compiler at
+             * -O3 could sink the final non-volatile pool/queue access
+             * past the volatile flag store, defeating the protection
+             * on the exit side. */
+            __asm__ __volatile__ ("" ::: "memory");
             gDeferredTaskInCritical = 0;
 
             // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
@@ -1974,7 +1984,14 @@ iter_done:
          * paths above land here; the normal end-of-iteration also
          * falls through. Guarantees the quiescence flag is cleared
          * on every loop iteration without scattering per-continue
-         * clears that are easy to miss on future edits. */
+         * clears that are easy to miss on future edits.
+         *
+         * Exit barrier (pass-4 Qodo importance-9): pairs with the
+         * entry barrier at line 1594.  Without it, the compiler at
+         * -O3 could sink the final encoder / buffer / output write
+         * past the volatile flag store, defeating the protection
+         * on the exit side. */
+        __asm__ __volatile__ ("" ::: "memory");
         gStreamingTaskInCritical = 0;
     }
 }
