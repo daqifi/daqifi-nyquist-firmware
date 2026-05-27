@@ -1744,14 +1744,15 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * pre-clear here guarantees the early-exit poll observes
      * only the CURRENT request's outcome.
      *
-     * Critical section paired with the SD task's writes (which are
-     * also under taskENTER_CRITICAL in CURRENT_DRIVE / CHECK_DISK_FULL). */
+     * No critical section: `startupDiskFull` is a single `bool`
+     * (1 byte) which is atomic on PIC32MZ — per CLAUDE.md
+     * atomicity rules, "32-bit reads and writes are atomic" and
+     * smaller types are too.  Critical section would add
+     * interrupt latency without any synchronization benefit. */
     if (gpSDCardSettings == NULL) {
         return;
     }
-    taskENTER_CRITICAL();
     gSDCardData.startupDiskFull = false;
-    taskEXIT_CRITICAL();
 }
 
 bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {
