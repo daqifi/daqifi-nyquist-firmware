@@ -3047,8 +3047,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             TickType_t qStart = xTaskGetTickCount();
             while (!Streaming_TasksAreQuiescent()) {
                 if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(100)) {
-                    LOG_E("STR:START: tasks not quiescent after 100 ms — aborting start");
-                    SCPI_ExecutionError(context, "STR:START: tasks not quiescent");
+                    /* SCPI_ExecutionError emits its own LOG_E — don't
+                     * double-log (Qodo pass-2 finding #4). */
+                    SCPI_ExecutionError(context, "STR:START: tasks not quiescent after 100 ms — aborting start");
                     return SCPI_RES_ERR;
                 }
                 vTaskDelay(1);

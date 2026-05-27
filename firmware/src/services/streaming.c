@@ -796,6 +796,16 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
         if (writeFn((const char*)buf, len) == len) return len;
     }
 
+    /* #486 (pass-2 Qodo finding #3): abort retries if streaming was
+     * stopped.  The caller holds gStreamingTaskInCritical for the full
+     * duration of this function; if SCPI is waiting in the quiescence
+     * gate (100 ms bound), continuing to retry for up to 10 s would
+     * cause SCPI_StartStreaming to spuriously fail with the abort
+     * error even though the operation would succeed safely.  Lost
+     * output bytes here are correct semantics — the user asked to
+     * stop, those bytes are stale by the time the next stream starts. */
+    if (gpRuntimeConfigStream && !gpRuntimeConfigStream->IsEnabled) return 0;
+
     // Phase 2: short sleeps — let lower-priority output tasks drain.
     // taskYIELD() only reschedules within the same priority; encoder at 6
     // yielding to SD at 5 is a no-op. vTaskDelay(1) blocks for 1 tick so
@@ -803,6 +813,7 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
     for (int i = 0; i < 50; i++) {
         vTaskDelay(1);
         if (writeFn((const char*)buf, len) == len) return len;
+        if (!gpRuntimeConfigStream->IsEnabled) return 0;
     }
 
     // Phase 3: tick-based backoff — 1ms sleeps, up to 10s timeout.
@@ -812,6 +823,7 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
     while (xTaskGetTickCount() < deadline) {
         vTaskDelay(1);
         if (writeFn((const char*)buf, len) == len) return len;
+        if (!gpRuntimeConfigStream->IsEnabled) return 0;
     }
 
     LOG_E("Output write timeout (%u ms, %u bytes) — interface dead",
@@ -1581,8 +1593,7 @@ void streaming_Task(void) {
         gStreamingTaskInCritical = 1;
         __asm__ __volatile__ ("" ::: "memory");
         if (!pRunTimeStreamConf->IsEnabled) {
-            gStreamingTaskInCritical = 0;
-            continue;
+            goto iter_done;
         }
 
         // #397 self-heal check: if every configured transport has been
@@ -1598,22 +1609,19 @@ void streaming_Task(void) {
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();
-            gStreamingTaskInCritical = 0;  /* #486 exit before continue */
-            continue;
+            goto iter_done;
         }
 
         // Encoder buffer must be set (from pool) before encoding
         if (buffer == NULL || bufferSize == 0) {
-            gStreamingTaskInCritical = 0;  /* #486 exit before continue */
-            continue;
+            goto iter_done;
         }
 
         AINDataAvailable = !AInSampleList_IsEmpty();
         DIODataAvailable = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
 
         if (!AINDataAvailable && !DIODataAvailable) {
-            gStreamingTaskInCritical = 0;  /* #486 exit before continue */
-            continue;
+            goto iter_done;
         }
 
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
@@ -1922,7 +1930,14 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(9);
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
-        gStreamingTaskInCritical = 0;  /* #486 exit resource-touching region */
+
+iter_done:
+        /* #486: single-exit flag clear. All early `goto iter_done`
+         * paths above land here; the normal end-of-iteration also
+         * falls through. Guarantees the quiescence flag is cleared
+         * on every loop iteration without scattering per-continue
+         * clears that are easy to miss on future edits. */
+        gStreamingTaskInCritical = 0;
     }
 }
 
