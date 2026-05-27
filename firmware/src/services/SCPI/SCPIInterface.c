@@ -2877,13 +2877,37 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         //     (transient mount glitch), the SD task logs and falls
         //     through to file open — caller gets the existing
         //     SCPI_ERROR_EXECUTION_ERROR if the open then fails.
+        // Synchronously clear the disk-full flag BEFORE arming the
+        // new WRITE request — otherwise a stale `true` from a previous
+        // disk-full rejection causes the early-exit poll below to bail
+        // instantly before the SD task has had a chance to clear the
+        // flag itself in CURRENT_DRIVE.  Without this pre-clear, every
+        // STR:START after a single disk-full rejection would fail
+        // nondeterministically with a misleading "out of space" message
+        // even when free space is fine on the current attempt.
+        // (Qodo /agentic_review pass-1 finding on PR #508: "Stale
+        // disk-full short-circuits start".)
+        sd_card_manager_ClearStartupDiskFull();
+
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
 
         // Wait for SD file to be open before starting streaming.
         // Without this, early samples are dropped while SD mounts/opens.
+        //
+        // Early-exit when the SD task signals startupDiskFull — without
+        // it, a disk-full rejection costs the caller a full 5 s
+        // (500 × 10 ms) wait before we read the flag below.  The SD
+        // task knows the answer within milliseconds of CHECK_DISK_FULL
+        // running; polling that flag in the loop gets the friendly
+        // -200 back to the operator promptly.  The pre-clear above
+        // guarantees this flag reflects ONLY the current request's
+        // outcome.  (Qodo follow-up to #503, "Exit early on disk-full".)
         int readyWait = 0;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+            if (sd_card_manager_StartupDiskFull()) {
+                break;
+            }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
         }
