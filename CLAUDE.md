@@ -152,7 +152,7 @@ unflashed second board on `/dev/ttyACM0`.
    stable identifier, and `usbipd list` shows which busid maps to
    which COM:
    ```bash
-   powershell.exe -Command "usbipd list" 2>&1 | grep -E "04d8:f794|COM"
+   powershell.exe -Command "usbipd list" | grep "04d8:f794"
    # Example output (bench layout):
    #   2-3   04d8:f794  USB Serial Device (COM9)   Shared/Attached
    #   2-4   04d8:f794  USB Serial Device (COM3)   Shared/Attached
@@ -166,7 +166,7 @@ unflashed second board on `/dev/ttyACM0`.
    for dev in /dev/ttyACM*; do
      echo -n "$dev => "
      (echo -e "*IDN?\r"; sleep 0.5) \
-       | timeout 2s picocom -b 115200 -q -x 1000 "$dev" 2>&1 \
+       | timeout --foreground 2s picocom -b 115200 -q -x 1000 "$dev" \
        | tr -d '\r' \
        | grep -m1 '^DAQiFi,' || echo "<no response>"
    done
