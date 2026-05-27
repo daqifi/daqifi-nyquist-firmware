@@ -469,8 +469,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
              * SCPI_StartStreaming re-partition.  Set BEFORE any deref
              * of the sample pool / queue resources that re-partition
              * tears down; the re-check below closes the TOCTOU between
-             * the IsEnabled gate above and the flag set. */
+             * the IsEnabled gate above and the flag set.  Memory
+             * barrier prevents -O3 from hoisting subsequent non-volatile
+             * reads above the volatile flag store. */
             gDeferredTaskInCritical = 1;
+            __asm__ __volatile__ ("" ::: "memory");
             if (!pRunTimeStreamConf->IsEnabled) {
                 gDeferredTaskInCritical = 0;
                 continue;
@@ -1557,6 +1560,31 @@ void streaming_Task(void) {
             continue;
         }
 
+        /* #486 — quiescence flag for cross-task sync against
+         * SCPI_StartStreaming re-partition.  Set BEFORE any deref of the
+         * encoder buffer pointer, sample queue (AInSampleList_IsEmpty
+         * reads queue head/tail; AInSampleList_InitializeExternal calls
+         * vQueueDelete + xQueueCreate so the queue handle itself is a
+         * use-after-free target), DIO sample list, or output buffer
+         * size accessors.
+         *
+         * The compiler memory barrier prevents -O3 from hoisting any
+         * subsequent non-volatile read above the volatile flag store.
+         * The volatile keyword alone orders the store with respect to
+         * OTHER volatile accesses, not non-volatile reads like the
+         * IsEmpty / WriteBuffFreeSize helpers below.
+         *
+         * Re-check IsEnabled inside the flag window to close the TOCTOU
+         * between the line-1556 check above and this commit point — if
+         * SCPI flipped IsEnabled between those two reads, we clear the
+         * flag and skip this iteration so quiescence is observable. */
+        gStreamingTaskInCritical = 1;
+        __asm__ __volatile__ ("" ::: "memory");
+        if (!pRunTimeStreamConf->IsEnabled) {
+            gStreamingTaskInCritical = 0;
+            continue;
+        }
+
         // #397 self-heal check: if every configured transport has been
         // down for longer than the grace window, auto-stop the stream
         // and surface the reason via QUES bit 12 + LOG_E.  Individual
@@ -1570,11 +1598,13 @@ void streaming_Task(void) {
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();
+            gStreamingTaskInCritical = 0;  /* #486 exit before continue */
             continue;
         }
 
         // Encoder buffer must be set (from pool) before encoding
         if (buffer == NULL || bufferSize == 0) {
+            gStreamingTaskInCritical = 0;  /* #486 exit before continue */
             continue;
         }
 
@@ -1582,18 +1612,7 @@ void streaming_Task(void) {
         DIODataAvailable = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
 
         if (!AINDataAvailable && !DIODataAvailable) {
-            continue;
-        }
-
-        /* #486 — quiescence flag for cross-task sync against
-         * SCPI_StartStreaming re-partition.  Set BEFORE the first deref
-         * of any pool / queue / output-buffer resource that re-partition
-         * tears down.  Re-check IsEnabled inside the flag window to
-         * close the TOCTOU between the line-1556 check above and this
-         * commit point. */
-        gStreamingTaskInCritical = 1;
-        if (!pRunTimeStreamConf->IsEnabled) {
-            gStreamingTaskInCritical = 0;
+            gStreamingTaskInCritical = 0;  /* #486 exit before continue */
             continue;
         }
 

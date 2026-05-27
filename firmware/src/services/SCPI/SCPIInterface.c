@@ -3038,14 +3038,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * vTaskDelay(1) yields long enough for both lower-priority
          * streaming_Task and same-or-higher-priority deferred task to
          * complete their iteration and clear the flag.  Bounded at
-         * 100 ms so a wedged task can't hang the SCPI handler — proceed
-         * with a LOG_E on timeout (preserves prior behavior on wedge). */
+         * 100 ms; on timeout we ABORT the start rather than proceed,
+         * because proceeding with a wedged task in-flight would race
+         * the destructive re-partition below against the very task
+         * we're trying to protect — exactly the bug this guard exists
+         * to prevent. */
         {
             TickType_t qStart = xTaskGetTickCount();
             while (!Streaming_TasksAreQuiescent()) {
                 if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(100)) {
-                    LOG_E("STR:START: tasks not quiescent after 100 ms — proceeding");
-                    break;
+                    LOG_E("STR:START: tasks not quiescent after 100 ms — aborting start");
+                    SCPI_ExecutionError(context, "STR:START: tasks not quiescent");
+                    return SCPI_RES_ERR;
                 }
                 vTaskDelay(1);
             }
