@@ -818,11 +818,23 @@ static size_t Streaming_UsbWrite(const char* buf, size_t len) {
 }
 
 /* #486 — distinguish "shutdown-initiated abort" from "true 10 s output
- * timeout" in the caller.  WriteWithRetry returns 0 on BOTH; callers
- * that bump drop counters / set QUES bits must check IsEnabled before
- * treating 0 as a real failure. */
-#define STREAM_WRITE_RETURN_STOPPED   ((size_t)0)
+ * timeout" in the caller.  Pass-3 used `==0` for both and disambiguated
+ * with an IsEnabled re-read at the call site; pass-5 Qodo /improve
+ * tightened this to use distinct sentinel values, so call sites can
+ * branch on the return alone without racing IsEnabled.
+ *
+ *   TIMEOUT = 0      (matches "wrote 0 bytes" — also a real backpressure
+ *                     failure that bumps drop counters)
+ *   STOPPED = SIZE_MAX  (impossible-to-write count — explicit
+ *                     stop-abort, no counter bumps, no log)
+ *
+ * Any positive return < len is treated as a partial write (currently
+ * never produced by writeFn — they're whole-buffer-or-zero — but the
+ * sentinel scheme leaves room).
+ *
+ * SIZE_MAX is from <stdint.h> via streaming.h's transitive includes. */
 #define STREAM_WRITE_RETURN_TIMEOUT   ((size_t)0)
+#define STREAM_WRITE_RETURN_STOPPED   (SIZE_MAX)
 
 static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
                                         const uint8_t* buf, size_t len) {
@@ -1926,26 +1938,24 @@ void streaming_Task(void) {
                 }
             }
             if (hasSD && gSdFileWasReady) {
-                if (Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer, buffer, packetSize) == 0) {
-                    /* #486 (pass-3 Qodo): distinguish shutdown-initiated
-                     * abort from real 10s SD timeout.  WriteWithRetry
-                     * returns 0 on both, but stop-abort is intentional
-                     * and must not pollute drop counters / QUES bits /
-                     * SD-dead log message.  IsEnabled is the disambiguator:
-                     * if streaming was stopped, the 0 is a stop-abort;
-                     * otherwise it's a true interface-dead timeout. */
-                    if (pRunTimeStreamConf->IsEnabled) {
-                        bool pastGrace = Streaming_PastStartupGrace();
-                        taskENTER_CRITICAL();
-                        gStreamStats.sdDroppedBytes += packetSize;
-                        if (pastGrace) {
-                            gStreamStats.sdDroppedBytesSteady += packetSize;
-                        }
-                        gQuesBits |= QUES_BIT_SD_OVERFLOW;
-                        taskEXIT_CRITICAL();
-                        LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
+                size_t wr = Streaming_WriteWithRetry(
+                    sd_card_manager_WriteToBuffer, buffer, packetSize);
+                if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
+                    /* True 10 s interface-dead timeout (pass-5 Qodo
+                     * refinement): bump drop counters + QUES bit + log. */
+                    bool pastGrace = Streaming_PastStartupGrace();
+                    taskENTER_CRITICAL();
+                    gStreamStats.sdDroppedBytes += packetSize;
+                    if (pastGrace) {
+                        gStreamStats.sdDroppedBytesSteady += packetSize;
                     }
+                    gQuesBits |= QUES_BIT_SD_OVERFLOW;
+                    taskEXIT_CRITICAL();
+                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
                 }
+                /* else: wr == packetSize (success) or
+                 *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
+                 *       intentional, no bookkeeping). */
             }
 
             // Track packets discarded due to output buffer backpressure.
