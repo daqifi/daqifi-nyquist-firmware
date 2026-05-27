@@ -252,6 +252,23 @@ static volatile bool gInTimerHandler = false;
 static TaskHandle_t gStreamingInterruptHandle;
 static TaskHandle_t gStreamingTaskHandle;
 
+/* #486: cross-task quiescence flags.  Set inside each streaming task's
+ * "critical region" — the span where it dereferences resources that
+ * SCPI_StartStreaming re-partitions (encoder buffer, sample queue,
+ * sample pool, output circular buffers, coherent DMA buffers).
+ * SCPI_StartStreaming polls Streaming_TasksAreQuiescent() after
+ * Streaming_Stop and before the re-partition, with a bounded wait
+ * + vTaskDelay(1) so the lower-priority streaming_Task (pri 6) and
+ * higher-priority deferred ISR task (pri 9) can each finish their
+ * iteration and clear the flag.
+ *
+ * uint32_t (not bool) — CLAUDE.md "Atomicity & Concurrency Rules":
+ * 32-bit reads/writes are atomic on the PIC32MZ bus.  volatile keeps
+ * the compiler from caching the value across loop iterations.
+ * No RMW: writes are unconditional 0 or 1, no |= or &=. */
+static volatile uint32_t gStreamingTaskInCritical = 0;
+static volatile uint32_t gDeferredTaskInCritical = 0;
+
 // Sine wave period for test pattern 6: 256 samples per cycle.
 // Integer-only implementation via Q0.16 lookup table —
 // eliminates FPU usage in the deferred task so context switches
@@ -448,6 +465,16 @@ void _Streaming_Deferred_Interrupt_Task(void) {
         DioProbe_Toggle(2);  /* probe 2: deferred task wake rate */
 
         if (pRunTimeStreamConf->IsEnabled) {
+            /* #486 — quiescence flag for cross-task sync against
+             * SCPI_StartStreaming re-partition.  Set BEFORE any deref
+             * of the sample pool / queue resources that re-partition
+             * tears down; the re-check below closes the TOCTOU between
+             * the IsEnabled gate above and the flag set. */
+            gDeferredTaskInCritical = 1;
+            if (!pRunTimeStreamConf->IsEnabled) {
+                gDeferredTaskInCritical = 0;
+                continue;
+            }
             DioProbe_PulseStart(3);  /* probe 3: alloc + channel loop + queue push */
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
             // No heap check needed - pool uses pre-allocated static memory
@@ -477,6 +504,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     taskEXIT_CRITICAL();
                 }
                 DioProbe_PulseEnd(3);
+                gDeferredTaskInCritical = 0;  /* #486 exit pool-touching region */
                 continue;
             }
 
@@ -593,6 +621,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 Streaming_UpdateFlowWindow(false);
             }
             DioProbe_PulseEnd(3);
+            gDeferredTaskInCritical = 0;  /* #486 exit pool-touching region.
+              * ADC trigger code below does not touch pool / queue / encoder
+              * buffer — only board-config statics + ADC peripheral SFRs —
+              * so it's safe outside the quiescence window. */
 
             // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
             // Normal/NoCap modes: with hardware triggering (#282), the timer
@@ -1115,6 +1147,15 @@ bool Streaming_SetLossGraceSec(uint32_t sec) {
     return true;
 }
 
+/* #486: queried by SCPI_StartStreaming before the re-partition window.
+ * Two-flag check is correct without a critical section: each flag is
+ * atomic on PIC32MZ (32-bit r/w), and a transient state where one is 0
+ * and the other is 1 just means the caller will spin one more
+ * vTaskDelay(1) iteration — never observes a torn quiescent state. */
+bool Streaming_TasksAreQuiescent(void) {
+    return (gStreamingTaskInCritical == 0 && gDeferredTaskInCritical == 0);
+}
+
 /*!
  * Stops the streaming timer
  */
@@ -1543,7 +1584,19 @@ void streaming_Task(void) {
         if (!AINDataAvailable && !DIODataAvailable) {
             continue;
         }
-       
+
+        /* #486 — quiescence flag for cross-task sync against
+         * SCPI_StartStreaming re-partition.  Set BEFORE the first deref
+         * of any pool / queue / output-buffer resource that re-partition
+         * tears down.  Re-check IsEnabled inside the flag window to
+         * close the TOCTOU between the line-1556 check above and this
+         * commit point. */
+        gStreamingTaskInCritical = 1;
+        if (!pRunTimeStreamConf->IsEnabled) {
+            gStreamingTaskInCritical = 0;
+            continue;
+        }
+
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
         // Only check SD buffer size once the file is actually open.
@@ -1850,6 +1903,7 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(9);
         }
         DIO_TIMING_TEST_WRITE_STATE(0);
+        gStreamingTaskInCritical = 0;  /* #486 exit resource-touching region */
     }
 }
 

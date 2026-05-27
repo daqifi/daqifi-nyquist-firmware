@@ -3028,6 +3028,29 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
         }
 
+        /* #486 — wait for streaming_Task (pri 6) and deferred ISR task
+         * (pri 9) to exit their resource-touching regions before we
+         * re-partition the unified pool and swap buffer pointers.
+         * Without this wait, the line-2979 Streaming_UpdateState (which
+         * just stops the timer + sets Running=false) can return while
+         * the encoder is still mid-iteration, leading to a torn read of
+         * the swapped encoder buffer / sample queue / pool memory below.
+         * vTaskDelay(1) yields long enough for both lower-priority
+         * streaming_Task and same-or-higher-priority deferred task to
+         * complete their iteration and clear the flag.  Bounded at
+         * 100 ms so a wedged task can't hang the SCPI handler — proceed
+         * with a LOG_E on timeout (preserves prior behavior on wedge). */
+        {
+            TickType_t qStart = xTaskGetTickCount();
+            while (!Streaming_TasksAreQuiescent()) {
+                if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(100)) {
+                    LOG_E("STR:START: tasks not quiescent after 100 ms — proceeding");
+                    break;
+                }
+                vTaskDelay(1);
+            }
+        }
+
         uint32_t poolCount = mc->samplePoolCount;
 
         // Compute compact sample element size based on enabled channel count (#177).

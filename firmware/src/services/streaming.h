@@ -271,6 +271,16 @@ uint32_t Streaming_GetLossGraceSec(void);
 bool     Streaming_SetLossGraceSec(uint32_t sec);
 
 /**
+ * #486 — true when neither streaming task is currently inside the
+ * region that dereferences pool / buffer / queue memory.  Polled by
+ * SCPI_StartStreaming after Streaming_Stop and before the re-partition
+ * of the unified pool, so the destructive operations (pool repartition,
+ * encoder buffer swap, sample queue re-init, coherent pool reset) don't
+ * race with an in-flight encode or sample-pool allocation.
+ */
+bool Streaming_TasksAreQuiescent(void);
+
+/**
  * Compute optimal circular buffer sizes based on currently active interfaces.
  * Used by auto-balance at stream start and by SYST:MEM:AUTO SCPI command.
  *
