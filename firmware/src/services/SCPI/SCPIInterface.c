@@ -3019,11 +3019,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
 
         // Wait for any in-flight USB DMA write before swapping buffers.
+        // #486 (pass-3 Qodo /improve): abort instead of break-on-timeout
+        // — same logic as the task-quiescence gate below.  Proceeding
+        // with the buffer swap while a USB DMA transfer is in flight
+        // would race the SetWriteBuffer pointer against the live DMA.
         {
             TickType_t t = xTaskGetTickCount();
             UsbCdcData_t* pUsb = UsbCdc_GetSettings();
             while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-                if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
+                if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) {
+                    SCPI_ExecutionError(context, "STR:START: USB DMA not quiescent after 1000 ms — aborting start");
+                    return SCPI_RES_ERR;
+                }
                 vTaskDelay(1);
             }
         }

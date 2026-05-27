@@ -471,12 +471,18 @@ void _Streaming_Deferred_Interrupt_Task(void) {
              * tears down; the re-check below closes the TOCTOU between
              * the IsEnabled gate above and the flag set.  Memory
              * barrier prevents -O3 from hoisting subsequent non-volatile
-             * reads above the volatile flag store. */
+             * reads above the volatile flag store.
+             *
+             * Single-exit goto-cleanup pattern (Qodo pass-3 /improve):
+             * all pool-touching exit paths land at `pool_done` which
+             * unconditionally clears the flag.  The ADC trigger code
+             * below the label runs OUTSIDE the critical region — it
+             * only touches board-config statics and ADC peripheral
+             * SFRs, none of which re-partition tears down. */
             gDeferredTaskInCritical = 1;
             __asm__ __volatile__ ("" ::: "memory");
             if (!pRunTimeStreamConf->IsEnabled) {
-                gDeferredTaskInCritical = 0;
-                continue;
+                goto pool_done;
             }
             DioProbe_PulseStart(3);  /* probe 3: alloc + channel loop + queue push */
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
@@ -507,7 +513,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     taskEXIT_CRITICAL();
                 }
                 DioProbe_PulseEnd(3);
-                gDeferredTaskInCritical = 0;  /* #486 exit pool-touching region */
+                /* Pool exhausted: skip ADC trigger AND xTaskNotifyGive
+                 * by continuing to next loop iteration.  Goto-cleanup
+                 * is NOT used here because the pool_done label lands
+                 * before the ADC trigger code which the pool-exhausted
+                 * path MUST skip (preserves pre-PR behavior; the
+                 * original `continue` skipped both ADC trigger and
+                 * encoder-task notification). */
+                gDeferredTaskInCritical = 0;
                 continue;
             }
 
@@ -624,10 +637,15 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 Streaming_UpdateFlowWindow(false);
             }
             DioProbe_PulseEnd(3);
-            gDeferredTaskInCritical = 0;  /* #486 exit pool-touching region.
-              * ADC trigger code below does not touch pool / queue / encoder
-              * buffer — only board-config statics + ADC peripheral SFRs —
-              * so it's safe outside the quiescence window. */
+pool_done:
+            /* #486 — exit pool-touching region.  ADC trigger code below
+             * does not touch pool / queue / encoder buffer (only board-
+             * config statics + ADC peripheral SFRs), so it's safe
+             * outside the quiescence window.  The IsEnabled-false
+             * re-check `goto`s here to clear the flag without skipping
+             * the ADC trigger — at this point streaming is being
+             * stopped, but the ADC trigger is idempotent. */
+            gDeferredTaskInCritical = 0;
 
             // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
             // Normal/NoCap modes: with hardware triggering (#282), the timer
@@ -789,22 +807,33 @@ static size_t Streaming_UsbWrite(const char* buf, size_t len) {
     return UsbCdc_WriteToBuffer(NULL, buf, len);
 }
 
+/* #486 — distinguish "shutdown-initiated abort" from "true 10 s output
+ * timeout" in the caller.  WriteWithRetry returns 0 on BOTH; callers
+ * that bump drop counters / set QUES bits must check IsEnabled before
+ * treating 0 as a real failure. */
+#define STREAM_WRITE_RETURN_STOPPED   ((size_t)0)
+#define STREAM_WRITE_RETURN_TIMEOUT   ((size_t)0)
+
 static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
                                         const uint8_t* buf, size_t len) {
+    /* Cache the runtime config pointer locally so all phases use a
+     * consistent NULL-checked view (Qodo pass-3 /improve). */
+    StreamingRuntimeConfig *cfg = gpRuntimeConfigStream;
+
     // Phase 1: quick spin — catch in-progress DMA completions
     for (int i = 0; i < 10; i++) {
         if (writeFn((const char*)buf, len) == len) return len;
     }
 
-    /* #486 (pass-2 Qodo finding #3): abort retries if streaming was
-     * stopped.  The caller holds gStreamingTaskInCritical for the full
-     * duration of this function; if SCPI is waiting in the quiescence
-     * gate (100 ms bound), continuing to retry for up to 10 s would
-     * cause SCPI_StartStreaming to spuriously fail with the abort
-     * error even though the operation would succeed safely.  Lost
-     * output bytes here are correct semantics — the user asked to
-     * stop, those bytes are stale by the time the next stream starts. */
-    if (gpRuntimeConfigStream && !gpRuntimeConfigStream->IsEnabled) return 0;
+    /* #486 — abort retries if streaming was stopped.  The caller holds
+     * gStreamingTaskInCritical for the full duration of this function;
+     * if SCPI is waiting in the quiescence gate (100 ms bound),
+     * continuing to retry for up to 10 s would cause STR:START to
+     * spuriously fail with the abort error even though the operation
+     * would succeed safely.  Lost output bytes are correct semantics
+     * here — the user asked to stop, those bytes are stale by the
+     * time the next stream starts. */
+    if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
 
     // Phase 2: short sleeps — let lower-priority output tasks drain.
     // taskYIELD() only reschedules within the same priority; encoder at 6
@@ -813,7 +842,7 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
     for (int i = 0; i < 50; i++) {
         vTaskDelay(1);
         if (writeFn((const char*)buf, len) == len) return len;
-        if (!gpRuntimeConfigStream->IsEnabled) return 0;
+        if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
     // Phase 3: tick-based backoff — 1ms sleeps, up to 10s timeout.
@@ -823,12 +852,12 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
     while (xTaskGetTickCount() < deadline) {
         vTaskDelay(1);
         if (writeFn((const char*)buf, len) == len) return len;
-        if (!gpRuntimeConfigStream->IsEnabled) return 0;
+        if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
     LOG_E("Output write timeout (%u ms, %u bytes) — interface dead",
           STREAM_WRITE_TIMEOUT_MS, (unsigned)len);
-    return 0;
+    return STREAM_WRITE_RETURN_TIMEOUT;
 }
 
 /**
@@ -1888,15 +1917,24 @@ void streaming_Task(void) {
             }
             if (hasSD && gSdFileWasReady) {
                 if (Streaming_WriteWithRetry(sd_card_manager_WriteToBuffer, buffer, packetSize) == 0) {
-                    bool pastGrace = Streaming_PastStartupGrace();
-                    taskENTER_CRITICAL();
-                    gStreamStats.sdDroppedBytes += packetSize;
-                    if (pastGrace) {
-                        gStreamStats.sdDroppedBytesSteady += packetSize;
+                    /* #486 (pass-3 Qodo): distinguish shutdown-initiated
+                     * abort from real 10s SD timeout.  WriteWithRetry
+                     * returns 0 on both, but stop-abort is intentional
+                     * and must not pollute drop counters / QUES bits /
+                     * SD-dead log message.  IsEnabled is the disambiguator:
+                     * if streaming was stopped, the 0 is a stop-abort;
+                     * otherwise it's a true interface-dead timeout. */
+                    if (pRunTimeStreamConf->IsEnabled) {
+                        bool pastGrace = Streaming_PastStartupGrace();
+                        taskENTER_CRITICAL();
+                        gStreamStats.sdDroppedBytes += packetSize;
+                        if (pastGrace) {
+                            gStreamStats.sdDroppedBytesSteady += packetSize;
+                        }
+                        gQuesBits |= QUES_BIT_SD_OVERFLOW;
+                        taskEXIT_CRITICAL();
+                        LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
                     }
-                    gQuesBits |= QUES_BIT_SD_OVERFLOW;
-                    taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
                 }
             }
 
