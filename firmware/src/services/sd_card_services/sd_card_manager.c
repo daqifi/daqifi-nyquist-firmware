@@ -1747,18 +1747,16 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * No critical section: `startupDiskFull` is a single bool
      * stored as a single byte.  PIC32MZ MIPS32 `sb` (store-byte)
      * is one instruction with no read-modify-write, so a write
-     * cannot tear across task preemption.  CLAUDE.md explicitly
-     * documents 32-bit atomicity ("32-bit reads and writes are
-     * atomic on the PIC32MZ bus.  A simple x = 0 ... does NOT
-     * need a critical section.") — the same reasoning (single
-     * load/store opcode, no RMW) applies to single-byte
-     * accesses, and the `volatile` qualifier on the field
-     * prevents the compiler from optimising the read away across
-     * cross-task boundaries.  A critical section here would add
-     * interrupt latency without any synchronisation benefit. */
-    if (gpSDCardSettings == NULL) {
-        return;
-    }
+     * cannot tear across task preemption.  The `volatile`
+     * qualifier on the field prevents the compiler from
+     * optimising the read away across cross-task boundaries.
+     *
+     * No NULL guard on gpSDCardSettings: gSDCardData is an
+     * independent file-scope static (zero-initialised in BSS),
+     * always valid memory regardless of init state.  Clearing
+     * the flag pre-init is harmless — and unconditional clear
+     * is correct, since gating on settings init could leave the
+     * flag stuck-true if SCPI ever runs before sd init. */
     gSDCardData.startupDiskFull = false;
 }
 
