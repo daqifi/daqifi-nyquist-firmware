@@ -1744,11 +1744,18 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * pre-clear here guarantees the early-exit poll observes
      * only the CURRENT request's outcome.
      *
-     * No critical section: `startupDiskFull` is a single `bool`
-     * (1 byte) which is atomic on PIC32MZ — per CLAUDE.md
-     * atomicity rules, "32-bit reads and writes are atomic" and
-     * smaller types are too.  Critical section would add
-     * interrupt latency without any synchronization benefit. */
+     * No critical section: `startupDiskFull` is a single bool
+     * stored as a single byte.  PIC32MZ MIPS32 `sb` (store-byte)
+     * is one instruction with no read-modify-write, so a write
+     * cannot tear across task preemption.  CLAUDE.md explicitly
+     * documents 32-bit atomicity ("32-bit reads and writes are
+     * atomic on the PIC32MZ bus.  A simple x = 0 ... does NOT
+     * need a critical section.") — the same reasoning (single
+     * load/store opcode, no RMW) applies to single-byte
+     * accesses, and the `volatile` qualifier on the field
+     * prevents the compiler from optimising the read away across
+     * cross-task boundaries.  A critical section here would add
+     * interrupt latency without any synchronisation benefit. */
     if (gpSDCardSettings == NULL) {
         return;
     }
