@@ -184,7 +184,13 @@ typedef struct {
     // SCPI side reads this via sd_card_manager_StartupDiskFull() to
     // produce a friendly "out of space" message instead of generic
     // "WRITE timed out."
-    bool startupDiskFull;
+    //
+    // volatile: written by the SD task (priority 5) in CURRENT_DRIVE
+    // and CHECK_DISK_FULL states; read by SCPI tasks (USB pri 7, WiFi
+    // pri 2) inside the SCPI_StartStreaming poll loop.  Without
+    // volatile, -O3 can hoist the read out of the loop or cache it
+    // across the vTaskDelay(1), defeating the intended early-exit.
+    volatile bool startupDiskFull;
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -1715,11 +1721,37 @@ bool sd_card_manager_GetLastOperationResult(void) {
 bool sd_card_manager_StartupDiskFull(void) {
     /* #503: true iff the most recent WRITE-mode entry was rejected by
      * the in-line disk-full pre-check (free space below minFreeBytes).
-     * Cleared on every subsequent WRITE attempt. */
+     * Cleared on every subsequent WRITE attempt (synchronously by
+     * sd_card_manager_ClearStartupDiskFull below, OR asynchronously
+     * by the SD task on entering CURRENT_DRIVE's WRITE branch). */
     if (gpSDCardSettings == NULL) {
         return false;
     }
     return gSDCardData.startupDiskFull;
+}
+
+void sd_card_manager_ClearStartupDiskFull(void) {
+    /* #503 follow-up to PR #508: SCPI callers MUST clear this
+     * synchronously before kicking off a new WRITE attempt
+     * (UpdateSettings + IsWriteReady poll).  Without that, the
+     * poll's early-exit branch (introduced in the same PR) reads
+     * a stale `true` from a previous disk-full rejection and
+     * bails out instantly — a stuck-true flag would make every
+     * subsequent STR:START fail with a misleading disk-full error
+     * until the SD task asynchronously reaches CURRENT_DRIVE and
+     * clears the flag itself.  The SD task still clears it on
+     * every WRITE entry (defense-in-depth), but the synchronous
+     * pre-clear here guarantees the early-exit poll observes
+     * only the CURRENT request's outcome.
+     *
+     * Critical section paired with the SD task's writes (which are
+     * also under taskENTER_CRITICAL in CURRENT_DRIVE / CHECK_DISK_FULL). */
+    if (gpSDCardSettings == NULL) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    gSDCardData.startupDiskFull = false;
+    taskEXIT_CRITICAL();
 }
 
 bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {

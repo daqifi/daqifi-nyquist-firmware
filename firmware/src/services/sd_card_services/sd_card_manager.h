@@ -208,6 +208,19 @@ extern "C" {
     bool sd_card_manager_StartupDiskFull(void);
 
     /**
+     * @brief Synchronously clear the disk-full flag before starting a
+     *        new WRITE attempt.  Callers (e.g. SCPI_StartStreaming)
+     *        MUST invoke this before sd_card_manager_UpdateSettings()
+     *        when their post-update polling loop relies on
+     *        StartupDiskFull() to short-circuit — otherwise a stale
+     *        `true` from a prior rejection causes the poll to exit
+     *        instantly before the SD task has had a chance to process
+     *        the new request and clear the flag itself.  See #503,
+     *        the PR #508 follow-up race fix.
+     */
+    void sd_card_manager_ClearStartupDiskFull(void);
+
+    /**
      * @brief Checks if the SD card manager is busy with an active operation.
      *
      * This should be called before starting any new SD operation to prevent
