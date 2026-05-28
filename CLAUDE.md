@@ -1896,7 +1896,7 @@ All **durable regression tests** — firmware regression, MCP integration, clien
 
 **Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway `/tmp/temp.sh` to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Continuous Testing and Automation" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
 
-When you're touching the firmware in a way that needs a regression check, your first move is to find or write a script in `daqifi-python-test-suite` that exercises it. Don't put bench-validation logic in the firmware repo. Don't reproduce harness primitives.
+When you're touching the firmware in a way that needs a regression check, your first move is to find or write a script in `daqifi-python-test-suite` that exercises it. Don't put **regression** bench-validation logic in the firmware repo (the carve-out above is for one-off exploration only, not for tests that should keep running). Don't reproduce harness primitives.
 
 ### DAQiFi Test & API Repositories
 
