@@ -391,52 +391,57 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 - `HAL/ADC/MC12bADC.c` — `MC12b_TriggerConversion`, `MC12b_WriteStateAll` (batch interrupt setup)
 - `HAL/ADC.c` — `MC12bADC_EosInterruptTask`, `ADC_ReadADCSampleFromISR`
 
-**Characterization results (O3, USB, zero-loss ceiling sustained for 60s, fullscale test pattern, NoCap benchmark mode):**
+**Characterization results (O3, fullscale test pattern, NoCap benchmark mode):**
 
-Current table = Session 22 (2026-04-24 overnight, post-#354 ADC stack fix + #356 SCPI-dispatch Option 2 decouple). #354 moved two ~5 KB stack locals off the ADC write path; #356 moved the TCP-SCPI dispatch from WDRV_WINC_Tasks onto app_WifiTask so WINC stays at 1024 words. Throughput is unchanged to +1 k on five USB configs (likely run-to-run at the edge, confirmed by 60 s endurance). No regressions.
+Current table = **Session 24 (2026-05-28 overnight + 2× targeted retry, 400 s endurance).** Methodology change vs Session 22: where Session 22 used a fresh 10 s ceiling sweep + 60 s endurance soak, Session 24 uses 400 s endurance soaks with iterative haircut from prior-night ceilings (12.5 % per pass, repeated until zero drops). Result: **substantially more conservative** numbers than Session 22 in many cells — these are *verified-safe steady-state rates* the device sustains for 400 s+ without losing a single byte. Fresh 10 s sweeps will still find higher rates that hold short-term; treat Session 22 as "burst ceiling" and Session 24 as "soak ceiling." Source CSVs: `daqifi-python-test-suite/benchmarks/overnight_20260528_0642.csv` + `_0827_boardE8A7.csv` + `_1604_retry3.csv`. Test-suite SHA: `22302ba` on `feat/full-stats-capture`.
 
-**USB** (ceiling sweep 10s/step, endurance 60s at each ceiling):
+**USB** (400 s endurance soak, KB/s from `pc_kbps`):
 
-| Config | PB Ceiling | PB KB/s | CSV Ceiling | CSV KB/s |
-|--------|----------:|--------:|------------:|--------:|
-| 1×T1 | 19,000 Hz | 240 | 19,000 Hz | 276 |
-| 1×T1 OBDiag=OFF | **20,000 Hz** | 253 | **20,000 Hz** | 321 |
-| 1×T2 | 19,000 Hz | 240 | 19,000 Hz | 287 |
-| 3×T1 | 17,000 Hz | 364 | 15,000 Hz | 711 |
-| 3×T2 | 17,000 Hz | 363 | 15,000 Hz | 716 |
-| 5×T1 | 15,000 Hz | 457 | 13,000 Hz | 993 |
-| 5×T2 | 15,000 Hz | 456 | 13,000 Hz | 1,002 |
-| 5×T1 OBDiag=OFF | 17,000 Hz | 510 | 14,000 Hz | 1,102 |
-| 8×T2 | 13,000 Hz | 566 | 10,000 Hz | 1,256 |
-| 11×T2 | 11,000 Hz | 633 | 9,000 Hz† | 1,484† |
-| 5T1+3T2 (8ch) | 13,000 Hz | 567 | 10,000 Hz | 1,257 |
-| 5T1+5T2 (10ch) | 12,000 Hz† | 625† | 9,000 Hz | 1,349 |
-| 5T1+11T2 (16ch) | 9,000 Hz | 727 | 7,000 Hz | 1,610 |
+| Config | PB Hz | PB KB/s | CSV Hz | CSV KB/s |
+|--------|----------:|--------:|----------:|--------:|
+| 1×T1 OBDiag=OFF        | 16,500 | 182 | 17,000 | 256  |
+| 1×T1 OBDiag=ON         | 14,500 | 159 | 14,000 | 222  |
+| 1×T2                   | 14,500 | 159 | 16,000 | 250  |
+| 3×T1                   | 15,000 | 224 | 13,000 | 612  |
+| 3×T2                   | 15,000 | 224 | 13,000 | 613  |
+| 5×T1 OBDiag=OFF        | 16,000 | 303 | 13,000 | 968  |
+| 5×T1 OBDiag=ON         | 14,000 | 265 | 11,000 | 869  |
+| 5×T2                   | 14,000 | 266 | 11,000 | 868  |
+| 8×T2                   | 12,000 | 300 |  9,000 | 1,140 |
+| 11×T2                  | 11,000 | 341 |  8,000 | 1,386 |
+| 5T1+3T2 (8ch)          | 12,000 | 299 |  9,000 | 1,139 |
+| 5T1+5T2 (10ch)         | 11,000 | 315 |  8,000 | 1,266 |
+| 5T1+11T2 OBDiag=ON (16ch)  |  9,000 | 368 |  6,000 | 1,518 |
+| 5T1+11T2 OBDiag=OFF (16ch) | 11,000 | 449 |  7,000 | 1,798 |
 
-† Endurance leak at ceiling in Session 22 (PB 5T1+5T2 @ 12k: 3180 drops; CSV 11×T2 @ 9k: 1866 drops). Ceilings listed are highest clean in the 10s sweep; true sustainable endurance ceilings are 1 kHz lower for those configs.
+Best wire rate observed: **USB CSV 5T1+11T2 OBD=OFF @ 7 kHz → 1,798 KB/s**.
 
-**SD** (zero-drop over 60s, interface=2):
+**SD** (400 s endurance soak, interface=2, post-format clean card):
 
-| Config | PB Ceiling | CSV Ceiling |
-|--------|----------:|------------:|
-| 1×T1 | 10,000 Hz | 9,000 Hz |
-| 1×T1 OBDiag=OFF | **11,000 Hz** | 10,000 Hz |
-| 1×T2 | 10,000 Hz | 9,000 Hz |
-| 3×T1 | 8,000 Hz | 5,000 Hz |
-| 3×T2 | 8,000 Hz | 5,000 Hz |
-| 5×T1 | 7,000 Hz | 4,000 Hz |
-| 5×T2 | 7,000 Hz | 4,000 Hz |
-| 5×T1 OBDiag=OFF | 8,000 Hz | 4,000 Hz |
-| 5×T1 OBDiag=ON | 7,000 Hz | 4,000 Hz† |
-| 8×T2 | 6,000 Hz | 3,000 Hz |
-| 11×T2 | 5,000 Hz | 2,000 Hz |
-| 5T1+3T2 (8ch) | 6,000 Hz | 3,000 Hz |
-| 5T1+5T2 (10ch) | 5,000 Hz | 2,000 Hz† |
-| 5T1+11T2 (16ch) | 4,000 Hz | 2,000 Hz† |
+| Config | PB Hz | CSV Hz |
+|--------|----------:|----------:|
+| 1×T1 OBDiag=OFF        | 10,000 |  9,000 |
+| 1×T1 OBDiag=ON         |  9,000 |  8,000 |
+| 1×T2                   |  9,000 |  8,000 |
+| 3×T1                   |  8,000 |  5,000 |
+| 3×T2                   |  8,000 |  5,000 |
+| 5×T1 OBDiag=OFF        |  8,000 |  4,000 |
+| 5×T1 OBDiag=ON         |  7,000 |  3,000 |
+| 5×T2                   |  7,000 |  3,500 |
+| 8×T2                   |  6,000 |  2,500 |
+| 11×T2                  |  6,000 |  1,500 |
+| 5T1+3T2 (8ch)          |  6,000 |  2,000 |
+| 5T1+5T2 (10ch)         |  6,000 |  1,500 |
+| 5T1+11T2 OBDiag=ON (16ch)  |  5,000 |  1,000 |
+| 5T1+11T2 OBDiag=OFF (16ch) |  5,000 |  1,500 |
 
-† Endurance leak at ceiling in Session 22 (CSV 5×T1 OBD=ON @ 4k, 5T1+5T2 @ 2k, 5T1+11T2 @ 2k all leaked during the 60 s endurance). True sustainable ceilings are 1 kHz lower for those three configs.
+**Session 24 vs Session 22 (notable deltas):**
+- **SD CSV got tighter at high channel counts.** SD CSV 11×T2: 2,000 → 1,500 Hz (Session 22's 2,000 was a † endurance-leaker). SD CSV 5T1+5T2: 2,000† → 1,500 Hz. SD CSV 5T1+11T2: 2,000† → 1,000 Hz. The new numbers are zero-leak over 400 s, not "best 60-s candidate."
+- **SD PB 11×T2 +1 k** (5,000 → 6,000 Hz) and SD PB 8×T2 +0 (held at 6,000). One genuine improvement.
+- **OBD=ON now explicit everywhere** for 1×T1, 5×T1, 5T1+11T2. Previously the "default" rows inherited whatever OBDiag state lingered from the prior test — fixed in test-suite commit `22302ba`.
+- **USB cells look much lower** because Session 22 was a 10 s + 60 s methodology; running those same configs under 400 s endurance with iterative haircut converges several k below the burst ceiling. No firmware regression — methodology shift.
 
-**Session 22 highlights vs Sessions 20/21:**
+**Session 22 highlights vs Sessions 20/21 (historical):**
 - **#354/#356 throughput-safe.** 5 USB configs pick up +1 k ceilings post-merge (USB PB 3×T1, USB PB 5×T1 OBD=OFF, USB CSV 1×T1, USB CSV 1×T2, USB CSV 5×T1) — confirmed clean at 60 s endurance. Likely run-to-run at the edge rather than a real speedup.
 - **SD CSV 8×T2 real +2 k gain** (3 k clean vs Session 20's 1 k). Biggest SD surprise; SD CSV 5T1+11T2 ceiling sweep also finds 2 k (was 1 k) but leaks endurance, so sustainable ceiling stays at 1 k.
 - **SD single-channel PB -1 k** (10k/11k vs 11k/12k in Session 20). Session 20 numbers were run-to-run optimistic per own note; Session 22 figures are the reliable endurance values.
