@@ -438,7 +438,7 @@ Best wire rate observed: **USB CSV 5T1+11T2 OBD=OFF @ 7 kHz → 1,798 KB/s**.
 **Session 24 vs Session 22 (notable deltas):**
 - **SD CSV got tighter at high channel counts.** SD CSV 11×T2: 2,000 → 1,500 Hz (Session 22's 2,000 was a † endurance-leaker). SD CSV 5T1+5T2: 2,000† → 1,500 Hz. SD CSV 5T1+11T2: 2,000† → 1,000 Hz. The new numbers are zero-leak over 400 s, not "best 60-s candidate."
 - **SD PB 11×T2 +1 k** (5,000 → 6,000 Hz) and SD PB 8×T2 +0 (held at 6,000). One genuine improvement.
-- **OBD=ON now explicit everywhere** for 1×T1, 5×T1, 5T1+11T2. Previously the "default" rows inherited whatever OBDiag state lingered from the prior test — fixed in test-suite commit `22302ba`.
+- **OBDiag=ON now explicit everywhere** for 1×T1, 5×T1, 5T1+11T2. Previously the "default" rows inherited whatever OBDiag state lingered from the prior test — fixed in test-suite commit `22302ba`.
 - **USB cells look much lower** because Session 22 was a 10 s + 60 s methodology; running those same configs under 400 s endurance with iterative haircut converges several k below the burst ceiling. No firmware regression — methodology shift.
 
 **Session 22 highlights vs Sessions 20/21 (historical):**
@@ -743,7 +743,7 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 >
 > **Do not use these numbers** for capacity planning. Spot-check with truthful counter (post-#371): 1×T1 PB real ceiling is ~3 kHz (not 7), 5×T1 PB is ~2 kHz (not 3), 16ch is ~2.5 kHz (not 1).
 >
-> Retrospective A/B planned in #373 to determine which prior throughput PRs actually moved firmware-path wire rate vs which were measurement artifacts. iperf demo A/B planned in #377 to establish the true wire-rate ceiling. Session 24 numbers will replace this table after both audits.
+> Retrospective A/B planned in #373 to determine which prior throughput PRs actually moved firmware-path wire rate vs which were measurement artifacts. iperf demo A/B planned in #377 to establish the true wire-rate ceiling. A future WiFi characterization session will replace this table after both audits — Session 24 (USB/SD only, 2026-05-28, see line 396 above) does NOT include WiFi.
 
 Single-trial ceiling sweep, no endurance. Best wire rate = **183 KB/s = 1.5 Mbps** (CSV 1×T1 OBD=OFF @ 8 kHz). WINC1500 spec is 5–10 Mbps real TCP — **~25 % of available bandwidth, 3-7× headroom**. WiFi-side bottleneck is `WifiDroppedBytes` in every leak (pipeline up to encoder is clean; WINC SPI staging is the bottleneck).
 
