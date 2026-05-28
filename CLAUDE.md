@@ -743,7 +743,7 @@ SYSTem:STORage:SD:BENCHmark?                      # Query results: bytes,ms,bps
 >
 > **Do not use these numbers** for capacity planning. Spot-check with truthful counter (post-#371): 1×T1 PB real ceiling is ~3 kHz (not 7), 5×T1 PB is ~2 kHz (not 3), 16ch is ~2.5 kHz (not 1).
 >
-> Retrospective A/B planned in #373 to determine which prior throughput PRs actually moved firmware-path wire rate vs which were measurement artifacts. iperf demo A/B planned in #377 to establish the true wire-rate ceiling. A future WiFi characterization session will replace this table after both audits — Session 24 (USB/SD only, 2026-05-28, see line 396 above) does NOT include WiFi.
+> Retrospective A/B planned in #373 to determine which prior throughput PRs actually moved firmware-path wire rate vs which were measurement artifacts. iperf demo A/B planned in #377 to establish the true wire-rate ceiling. A future WiFi characterization session will replace this table after both audits — Session 24 (USB/SD only, 2026-05-28, see the **"Characterization results"** section earlier in this document) does NOT include WiFi.
 
 Single-trial ceiling sweep, no endurance. Best wire rate = **183 KB/s = 1.5 Mbps** (CSV 1×T1 OBD=OFF @ 8 kHz). WINC1500 spec is 5–10 Mbps real TCP — **~25 % of available bandwidth, 3-7× headroom**. WiFi-side bottleneck is `WifiDroppedBytes` in every leak (pipeline up to encoder is clean; WINC SPI staging is the bottleneck).
 
