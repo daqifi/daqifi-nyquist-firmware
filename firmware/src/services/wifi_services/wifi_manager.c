@@ -2599,8 +2599,12 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
             LOG_I("WiFi GetBSSID: timeout");
         }
     } else {
-        // Unexpected driver status — surface it (mirrors GetRSSI's else).
-        LOG_E("WiFi GetBSSID: WINC driver error (%d)", (int) status);
+        // Any other status (e.g. REQUEST_ERROR when the association dropped
+        // between the pre-check and this call) just means "no BSSID right
+        // now" — we already return false. Log at DEBUG only: ERROR here
+        // would be misleading and could spam under SCPI polling during a
+        // transient disconnect.
+        LOG_D("WiFi GetBSSID: assoc info unavailable (status %d)", (int) status);
     }
 
     if (gBssidQueryMutex != NULL) {
