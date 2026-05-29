@@ -1899,6 +1899,12 @@ void wifi_manager_BootInit(void) {
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
     gListenSocketOpenTick = 0;  // #475 step 3 — retained-RAM scrub
+    // BSSID getter state — scrub so a retained non-NULL mutex handle can't
+    // survive a reset and make wifi_manager_Init skip recreating it (#516).
+    memset(&gBssidQueryMutexBuf, 0, sizeof(gBssidQueryMutexBuf));
+    gBssidQueryMutex = NULL;
+    gBssidUpdateComplete = false;
+    memset((void *) gLastBssid, 0, sizeof(gLastBssid));
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
@@ -2534,12 +2540,23 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         return false;
     }
 
+    // Single timestamp bounds the WHOLE call (mutex wait + callback wait)
+    // to timeoutMs, honoring the documented "waits up to timeoutMs".
+    uint32_t startTime = SYS_TIME_CounterGet();
+
     // Serialize concurrent callers (USB + WiFi SCPI tasks) so one can't
-    // clear gBssidUpdateComplete mid-wait for another. Best-effort: the
-    // shared result is the same AP MAC for all callers, so proceeding
-    // without the lock is at worst a spurious timeout, never wrong data.
-    bool locked = (gBssidQueryMutex != NULL &&
-                   xSemaphoreTake(gBssidQueryMutex, pdMS_TO_TICKS(timeoutMs + 200)) == pdTRUE);
+    // clear gBssidUpdateComplete mid-wait for another. If the lock can't
+    // be acquired within the budget, fail rather than proceeding unlocked
+    // (proceeding would defeat the serialization and disturb the in-flight
+    // caller — exactly the contended case). gBssidQueryMutex is non-NULL
+    // here in practice (WiFi is up, so Init ran); the NULL guard only
+    // covers a pathological pre-Init call, where there are no concurrent
+    // WiFi-task callers to serialize against anyway.
+    if (gBssidQueryMutex != NULL) {
+        if (xSemaphoreTake(gBssidQueryMutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+            return false;
+        }
+    }
 
     bool result = false;
 
@@ -2556,16 +2573,15 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         memcpy(pBssid, peerMac.addr, WDRV_WINC_MAC_ADDR_LEN);
         result = true;
     } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
-        // Info requested from the WINC — wait for BssidEventCallback.
-        uint32_t startTime = SYS_TIME_CounterGet();
-        uint32_t elapsed = 0;
+        // Info requested from the WINC — wait for BssidEventCallback, but
+        // only until the overall timeoutMs budget (measured from startTime,
+        // so any time spent acquiring the mutex counts against it).
         bool done = false;
-        while (!done && elapsed < timeoutMs) {
+        while (!done && SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime) < timeoutMs) {
             vTaskDelay(pdMS_TO_TICKS(10));
             taskENTER_CRITICAL();
             done = gBssidUpdateComplete;
             taskEXIT_CRITICAL();
-            elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
         }
         if (done) {
             taskENTER_CRITICAL();
@@ -2577,7 +2593,7 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         }
     }
 
-    if (locked) {
+    if (gBssidQueryMutex != NULL) {
         xSemaphoreGive(gBssidQueryMutex);
     }
     return result;
