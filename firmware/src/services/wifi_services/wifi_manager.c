@@ -2577,8 +2577,15 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         // only until the overall timeoutMs budget (measured from startTime,
         // so any time spent acquiring the mutex counts against it).
         bool done = false;
-        while (!done && SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime) < timeoutMs) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        for (;;) {
+            uint32_t elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
+            if (done || elapsed >= timeoutMs) {
+                break;
+            }
+            // Cap the poll step to the remaining budget so the final sleep
+            // can't overshoot the documented "waits up to timeoutMs".
+            uint32_t remaining = timeoutMs - elapsed;
+            vTaskDelay(pdMS_TO_TICKS(remaining < 10 ? remaining : 10));
             taskENTER_CRITICAL();
             done = gBssidUpdateComplete;
             taskEXIT_CRITICAL();
@@ -2591,6 +2598,9 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         } else {
             LOG_I("WiFi GetBSSID: timeout");
         }
+    } else {
+        // Unexpected driver status — surface it (mirrors GetRSSI's else).
+        LOG_E("WiFi GetBSSID: WINC driver error (%d)", (int) status);
     }
 
     if (gBssidQueryMutex != NULL) {
