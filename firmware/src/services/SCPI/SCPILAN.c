@@ -528,6 +528,21 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
+    uint8_t bssid[6];
+    // 2 s timeout covers the WINC request-and-callback path when the
+    // association info isn't already cached.
+    if (!wifi_manager_GetBSSID(bssid, 2000)) {
+        // Not associated (or timed out) — no AP MAC to report.
+        return SCPI_RES_ERR;
+    }
+    char buf[18]; // "XX:XX:XX:XX:XX:XX\0"
+    snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+    SCPI_ResultMnemonic(context, buf);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     bool saveSettings = false;
     int param1;

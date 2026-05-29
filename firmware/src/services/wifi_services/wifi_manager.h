@@ -361,6 +361,20 @@ extern "C" {
      */
     bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs);
 
+    /**
+     * @brief Retrieves the BSSID (MAC) of the currently associated AP.
+     *
+     * Only valid while connected as a STA. The WINC returns the peer MAC
+     * synchronously when association info is cached; otherwise it requests
+     * it and this call waits up to timeoutMs for the response.
+     *
+     * @param[out] pBssid Buffer of at least 6 bytes to receive the AP MAC.
+     * @param[in] timeoutMs Maximum time to wait for the BSSID in milliseconds.
+     *
+     * @return true if the BSSID was retrieved, false if not associated or timed out.
+     */
+    bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs);
+
 #ifdef	__cplusplus
 }
 #endif

@@ -176,6 +176,12 @@ static SemaphoreHandle_t gProcessStateMutex = NULL;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
+// Associated-AP BSSID retrieval (mirrors the RSSI async pattern). The
+// WINC returns the peer MAC synchronously when association info is
+// cached; otherwise it requests it and signals via BssidEventCallback.
+static volatile bool gBssidUpdateComplete = false;
+static volatile uint8_t gLastBssid[WDRV_WINC_MAC_ADDR_LEN] = {0};
+
 // #382 sub-bug 1 — STA_CONNECTED reconciliation.
 // The flag is event-driven (set by StaEventCallback on CONN_STATE_CHANGED).
 // If the chip silently re-associates (AP rekey, brief deauth handled
@@ -334,6 +340,25 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
     gStaReconcilePending = true;
     taskEXIT_CRITICAL();
     // No logging in ISR/callback context - keep it minimal
+}
+
+// Association-info callback for wifi_manager_GetBSSID. Runs in
+// WDRV_WINC_Tasks context (same priority as app_WifiTask) — keep minimal,
+// no logging. Captures the peer (AP) MAC into gLastBssid.
+static void BssidEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle,
+                               const WDRV_WINC_SSID *const pSSID,
+                               const WDRV_WINC_MAC_ADDR *const pPeerAddress,
+                               WDRV_WINC_AUTH_TYPE authType, int8_t rssi) {
+    taskENTER_CRITICAL();
+    if (assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID ||
+        assocHandle != gStateMachineContext.assocHandle ||
+        pPeerAddress == NULL) {
+        taskEXIT_CRITICAL();
+        return;
+    }
+    memcpy((void *) gLastBssid, pPeerAddress->addr, WDRV_WINC_MAC_ADDR_LEN);
+    gBssidUpdateComplete = true;
+    taskEXIT_CRITICAL();
 }
 
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
@@ -2489,4 +2514,50 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
         LOG_E("WiFi GetRSSI: WINC driver error");
         return false;
     }
+}
+
+bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
+    if (pBssid == NULL) {
+        return false;
+    }
+    // Only meaningful while associated as STA.
+    if (!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED) ||
+        gStateMachineContext.assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    gBssidUpdateComplete = false;
+    taskEXIT_CRITICAL();
+
+    WDRV_WINC_MAC_ADDR peerMac;
+    WDRV_WINC_STATUS status = WDRV_WINC_AssocPeerAddressGet(
+        gStateMachineContext.assocHandle, &peerMac, BssidEventCallback);
+
+    if (status == WDRV_WINC_STATUS_OK) {
+        // Association info was cached — peer MAC filled synchronously.
+        memcpy(pBssid, peerMac.addr, WDRV_WINC_MAC_ADDR_LEN);
+        return true;
+    } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
+        // Info requested from the WINC — wait for BssidEventCallback.
+        uint32_t startTime = SYS_TIME_CounterGet();
+        uint32_t elapsed = 0;
+        bool done = false;
+        while (!done && elapsed < timeoutMs) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            taskENTER_CRITICAL();
+            done = gBssidUpdateComplete;
+            taskEXIT_CRITICAL();
+            elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
+        }
+        if (done) {
+            taskENTER_CRITICAL();
+            memcpy(pBssid, (const void *) gLastBssid, WDRV_WINC_MAC_ADDR_LEN);
+            taskEXIT_CRITICAL();
+            return true;
+        }
+        LOG_I("WiFi GetBSSID: timeout");
+        return false;
+    }
+    return false;
 }
