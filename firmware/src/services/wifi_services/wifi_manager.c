@@ -2615,7 +2615,9 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
             taskEXIT_CRITICAL();
             result = true;
         } else {
-            LOG_I("WiFi GetBSSID: timeout");
+            // DEBUG-level (consistent with the unexpected-status log above):
+            // a timeout under SCPI polling shouldn't spam at INFO.
+            LOG_D("WiFi GetBSSID: timeout");
         }
     }
 
