@@ -2552,10 +2552,12 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
     // here in practice (WiFi is up, so Init ran); the NULL guard only
     // covers a pathological pre-Init call, where there are no concurrent
     // WiFi-task callers to serialize against anyway.
+    bool locked = false;
     if (gBssidQueryMutex != NULL) {
         if (xSemaphoreTake(gBssidQueryMutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
-            return false;
+            return false;  // never acquired — nothing to release
         }
+        locked = true;
     }
 
     bool result = false;
@@ -2572,10 +2574,22 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         // Association info was cached — peer MAC filled synchronously.
         memcpy(pBssid, peerMac.addr, WDRV_WINC_MAC_ADDR_LEN);
         result = true;
-    } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
-        // Info requested from the WINC — wait for BssidEventCallback, but
-        // only until the overall timeoutMs budget (measured from startTime,
-        // so any time spent acquiring the mutex counts against it).
+        goto cleanup;
+    }
+    if (status != WDRV_WINC_STATUS_RETRY_REQUEST) {
+        // Any other status (e.g. REQUEST_ERROR when the association dropped
+        // between the pre-check and this call) just means "no BSSID right
+        // now" — we already return false. Log at DEBUG only: ERROR here
+        // would be misleading and could spam under SCPI polling during a
+        // transient disconnect.
+        LOG_D("WiFi GetBSSID: assoc info unavailable (status %d)", (int) status);
+        goto cleanup;
+    }
+
+    // RETRY_REQUEST: info requested from the WINC — wait for
+    // BssidEventCallback, but only until the overall timeoutMs budget
+    // (measured from startTime, so time spent acquiring the mutex counts).
+    {
         bool done = false;
         for (;;) {
             uint32_t elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
@@ -2583,9 +2597,14 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
                 break;
             }
             // Cap the poll step to the remaining budget so the final sleep
-            // can't overshoot the documented "waits up to timeoutMs".
+            // can't overshoot "waits up to timeoutMs", and clamp to at least
+            // 1 tick so a sub-tick remainder can't busy-spin (vTaskDelay(0)).
             uint32_t remaining = timeoutMs - elapsed;
-            vTaskDelay(pdMS_TO_TICKS(remaining < 10 ? remaining : 10));
+            TickType_t stepTicks = pdMS_TO_TICKS(remaining < 10 ? remaining : 10);
+            if (stepTicks == 0) {
+                stepTicks = 1;
+            }
+            vTaskDelay(stepTicks);
             taskENTER_CRITICAL();
             done = gBssidUpdateComplete;
             taskEXIT_CRITICAL();
@@ -2598,16 +2617,10 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         } else {
             LOG_I("WiFi GetBSSID: timeout");
         }
-    } else {
-        // Any other status (e.g. REQUEST_ERROR when the association dropped
-        // between the pre-check and this call) just means "no BSSID right
-        // now" — we already return false. Log at DEBUG only: ERROR here
-        // would be misleading and could spam under SCPI polling during a
-        // transient disconnect.
-        LOG_D("WiFi GetBSSID: assoc info unavailable (status %d)", (int) status);
     }
 
-    if (gBssidQueryMutex != NULL) {
+cleanup:
+    if (locked) {
         xSemaphoreGive(gBssidQueryMutex);
     }
     return result;
