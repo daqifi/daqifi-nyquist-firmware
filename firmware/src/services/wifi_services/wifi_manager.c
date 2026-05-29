@@ -179,8 +179,12 @@ static volatile uint8_t gLastRssiPercentage = 0;
 // Associated-AP BSSID retrieval (mirrors the RSSI async pattern). The
 // WINC returns the peer MAC synchronously when association info is
 // cached; otherwise it requests it and signals via BssidEventCallback.
+// gBssidQueryMutex serializes concurrent callers (USB + WiFi SCPI tasks)
+// so one caller can't clear the other's completion flag mid-wait.
 static volatile bool gBssidUpdateComplete = false;
 static volatile uint8_t gLastBssid[WDRV_WINC_MAC_ADDR_LEN] = {0};
+static StaticSemaphore_t gBssidQueryMutexBuf;
+static SemaphoreHandle_t gBssidQueryMutex = NULL;
 
 // #382 sub-bug 1 — STA_CONNECTED reconciliation.
 // The flag is event-driven (set by StaEventCallback on CONN_STATE_CHANGED).
@@ -1906,6 +1910,10 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
         gProcessStateMutex = xSemaphoreCreateRecursiveMutexStatic(&gProcessStateMutexBuf);
     }
 
+    if (gBssidQueryMutex == NULL) {
+        gBssidQueryMutex = xSemaphoreCreateMutexStatic(&gBssidQueryMutexBuf);
+    }
+
     if (gEventQH == NULL) {
         gEventQH = xQueueCreate(20, sizeof (wifi_manager_event_t));
         if (gEventQH == NULL) {
@@ -2526,6 +2534,15 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         return false;
     }
 
+    // Serialize concurrent callers (USB + WiFi SCPI tasks) so one can't
+    // clear gBssidUpdateComplete mid-wait for another. Best-effort: the
+    // shared result is the same AP MAC for all callers, so proceeding
+    // without the lock is at worst a spurious timeout, never wrong data.
+    bool locked = (gBssidQueryMutex != NULL &&
+                   xSemaphoreTake(gBssidQueryMutex, pdMS_TO_TICKS(timeoutMs + 200)) == pdTRUE);
+
+    bool result = false;
+
     taskENTER_CRITICAL();
     gBssidUpdateComplete = false;
     taskEXIT_CRITICAL();
@@ -2537,7 +2554,7 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
     if (status == WDRV_WINC_STATUS_OK) {
         // Association info was cached — peer MAC filled synchronously.
         memcpy(pBssid, peerMac.addr, WDRV_WINC_MAC_ADDR_LEN);
-        return true;
+        result = true;
     } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
         // Info requested from the WINC — wait for BssidEventCallback.
         uint32_t startTime = SYS_TIME_CounterGet();
@@ -2554,10 +2571,14 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
             taskENTER_CRITICAL();
             memcpy(pBssid, (const void *) gLastBssid, WDRV_WINC_MAC_ADDR_LEN);
             taskEXIT_CRITICAL();
-            return true;
+            result = true;
+        } else {
+            LOG_I("WiFi GetBSSID: timeout");
         }
-        LOG_I("WiFi GetBSSID: timeout");
-        return false;
     }
-    return false;
+
+    if (locked) {
+        xSemaphoreGive(gBssidQueryMutex);
+    }
+    return result;
 }
