@@ -371,32 +371,39 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
 // cached values survived the radio going down.  Idempotent and safe to call
 // from any task context (USB pri 7 or WifiTask pri 2).
 static void InvalidateStaLinkState(void) {
-    gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
-    // Only zero ipAddr when this is genuinely a STA link teardown: there the
-    // field holds the transient DHCP-assigned address.  In AP mode the SAME
-    // field is the AP's own IP (read at AP start, line ~1069) — zeroing it
-    // would silently drop a user-configured AP IP on the next AP start.
-    //
-    // Guard on BOTH the configured mode AND the running mode:
+    // Act only on a genuine STA-link teardown.  Gate on BOTH the configured
+    // mode AND the running mode:
     //   - networkMode is updated synchronously by UpdateNetworkSettings on
     //     APPLY, but the AP it describes keeps running (AP_STARTED set) until
-    //     the queued REINIT executes.  In that window networkMode is already
-    //     STA while ipAddr still holds the live AP IP.
-    //   - STA_DISCONNECTED also fires for AP-client disconnects (ApEventCallback)
-    //     while AP_STARTED is set — so without the !AP_STARTED gate an AP
-    //     client dropping mid-transition would erase the AP IP (Qodo
-    //     /agentic_review pass 1).
-    if (gStateMachineContext.pWifiSettings != NULL &&
-        gStateMachineContext.pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
-        !GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
-        gStateMachineContext.pWifiSettings->ipAddr.Val = 0;
+    //     the queued REINIT executes — so networkMode can read STA while AP
+    //     is still live.
+    //   - STA_DISCONNECTED also fires for AP-client disconnects
+    //     (ApEventCallback) while AP_STARTED is set.
+    // Without the !AP_STARTED gate, an AP client dropping mid-transition would
+    // zero ipAddr — which in AP mode is the AP's OWN IP (read at AP start,
+    // line ~1069), silently dropping a configured AP IP on the next AP start.
+    // assocHandle/RSSI are STA-only (assocHandle is set solely by
+    // StaEventCallback; GetRSSI gates on it) so clearing them in AP mode is
+    // currently harmless, but gating the whole helper keeps it unambiguous
+    // that it only touches STA link state (Qodo /agentic_review pass 1 +
+    // /improve pass 2).
+    const bool isStaLinkTeardown =
+        (gStateMachineContext.pWifiSettings != NULL) &&
+        (gStateMachineContext.pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) &&
+        !GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
+    if (!isStaLinkTeardown) {
+        return;
     }
-    gRssiUpdatePending = false;
-    // gLastRssiPercentage is paired with gRssiUpdateComplete by the query
-    // path (GetRSSI) under this same critical section — clear them together
-    // so a concurrent reader sees a coherent "no link" snapshot, never a
-    // half-cleared one.
+    // assocHandle == INVALID is the load-bearing fix: both GetRSSI and #516's
+    // GetBSSID gate on it, and it stops a later IPUseDHCPSet from observing a
+    // stale isConnected==true (#467/#425 re-enable wedge class).
+    gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
+    gStateMachineContext.pWifiSettings->ipAddr.Val = 0;
+    // Clear the whole RSSI state tuple (pending + complete + value) as one
+    // coherent snapshot under the same critical section the query path
+    // (GetRSSI) uses, so a concurrent reader never sees a mixed state.
     taskENTER_CRITICAL();
+    gRssiUpdatePending = false;
     gRssiUpdateComplete = false;
     gLastRssiPercentage = 0;
     taskEXIT_CRITICAL();
