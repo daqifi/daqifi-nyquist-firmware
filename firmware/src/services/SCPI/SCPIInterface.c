@@ -2014,6 +2014,29 @@ static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
 // WiFi finder, and SCPI_StartStreaming, which all route through it.
 static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
 
+// #520/Qodo: PrepareStreamingBuffers() quiesces SD by forcing WRITE->NONE so
+// f_write can't be mid-DMA during the coherent-pool reset (see
+// SCPI_QuiesceAndResetCoherentPool).  SCPI_StartStreaming re-enables SD after
+// (it may be streaming TO the card), but the WiFi finder and THR benchmark do
+// NOT target SD — so they must save the user's prior SD mode before the prepare
+// and restore it after, or running either command would silently disable SD
+// logging.  SaveSdMode() returns -1 when SD settings are unavailable (no-op
+// restore).
+static int SaveSdMode(void) {
+    sd_card_manager_settings_t* pSd =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    return (pSd != NULL) ? (int)pSd->mode : -1;
+}
+static void RestoreSdMode(int savedMode) {
+    if (savedMode < 0) return;
+    sd_card_manager_settings_t* pSd =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if (pSd != NULL && pSd->mode != (sd_card_manager_mode_t)savedMode) {
+        pSd->mode = (sd_card_manager_mode_t)savedMode;
+        sd_card_manager_UpdateSettings(pSd);
+    }
+}
+
 static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
@@ -2052,6 +2075,10 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     Streaming_ClearStats();
     AInSampleList_PoolResetMaxUsed();
 
+    // Save SD mode: PrepareStreamingBuffers quiesces SD (WRITE->NONE) and THR
+    // doesn't stream to SD, so restore it on every exit below (Qodo #521).
+    int savedSdMode = SaveSdMode();
+
     // Establish the buffer partition + sample pool that the cfg-poke start
     // below does NOT do on its own (this was a latent bug — THR relied on a
     // prior STR:START having partitioned; standalone it streamed 0 bytes, the
@@ -2068,6 +2095,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
                                      AInSampleList_ElementSize(ec))) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
+            RestoreSdMode(savedSdMode);
             SCPI_ExecutionError(context, "SYST:STR:THR: buffer prepare failed");
             return SCPI_RES_ERR;
         }
@@ -2090,6 +2118,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         pStreamCfg->IsEnabled = false;
         Streaming_SetBenchmarkMode(savedBenchmark);
         Streaming_SetTestPattern(savedPattern);
+        RestoreSdMode(savedSdMode);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -2104,6 +2133,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // Restore previous state
     Streaming_SetBenchmarkMode(savedBenchmark);
     Streaming_SetTestPattern(savedPattern);
+    RestoreSdMode(savedSdMode);
 
     // Collect and report results
     StreamingStats s;
@@ -2174,6 +2204,67 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 #define FIND_INTERSTEP_MS       300u    // settle between rate changes (WINC is touchy)
 #define FIND_BACKOFF_NUM        9u      // recommended = lastGood * 9/10 (-10% margin)
 #define FIND_BACKOFF_DEN        10u
+#define FIND_RESOLUTION_HZ      500u    // binary-refine stops when bracket <= this
+
+// One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
+// observe the WiFi-ring occupancy trend, tear down cleanly, and return whether
+// the link looked SATURATED at this rate.  Outputs the measured wire KB/s.
+// *outStartFailed is set if the stream never went Running (caller aborts).
+// Factored (#520, 2026-05-31) so the coarse AIMD climb and the binary-search
+// refinement share one code path.
+static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
+                            uint32_t wRingCap, uint32_t freq,
+                            uint32_t* outKBps, bool* outStartFailed) {
+    uint32_t periodCycles = (clkFreq + freq - 1) / freq;
+    if (periodCycles < 2) periodCycles = 2;
+
+    Streaming_ClearStats();
+    cfg->ClockPeriod = periodCycles - 1;
+    cfg->Frequency = freq;
+    cfg->IsEnabled = true;
+    Streaming_UpdateState();
+    if (!cfg->Running) { *outStartFailed = true; *outKBps = 0; return true; }
+
+    // Prime, then observe WiFi-ring occupancy across the dwell.
+    vTaskDelay(pdMS_TO_TICKS(FIND_SETTLE_MS));
+    uint32_t occStart = wifi_tcp_server_GetCircularBufferAvailable();
+    for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
+        vTaskDelay(pdMS_TO_TICKS(FIND_DWELL_MS / FIND_OCC_SAMPLES));
+    }
+    uint32_t occEnd = wifi_tcp_server_GetCircularBufferAvailable();
+
+    StreamingStats s;
+    Streaming_GetStats(&s);
+
+    // Clean teardown BEFORE evaluating / changing rate (WINC dislikes mid-
+    // stream transitions — #425/#467/#517).
+    cfg->IsEnabled = false;
+    Streaming_UpdateState();
+
+    // Primary trip: the WiFi ring is backing up (pre-drop).  GROWTH catches a
+    // large ring visibly accumulating (occEnd >> occStart); HIGH-WATERMARK
+    // (>75% of capacity) catches a small ring that saturates by sitting PEGGED
+    // near full (occEnd ≈ occStart, zero growth).  The watermark scales to any
+    // buffer size.
+    bool filling = (occEnd > occStart + FIND_TREND_BYTES) ||
+                   (wRingCap > 0 && occEnd > (wRingCap - (wRingCap >> 2)));
+    // Secondary trip: actual steady-state loss.
+    bool lossy = (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
+
+    uint32_t dwellMs = FIND_SETTLE_MS + FIND_DWELL_MS;
+    *outKBps = (dwellMs > 0)
+        ? (uint32_t)((s.totalBytesStreamed * 1000ULL) / dwellMs / 1024ULL) : 0;
+
+    // #520 tuning instrumentation (SCPI INFO), retrievable via SYST:LOG?.
+    LOG_I("WIFI:FIND %u Hz: samp=%u bytes=%u occ %u->%u/%u wst=%u wlp=%u -> %s",
+          (unsigned)freq, (unsigned)s.totalSamplesStreamed,
+          (unsigned)s.totalBytesStreamed,
+          (unsigned)occStart, (unsigned)occEnd, (unsigned)wRingCap,
+          (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
+          (!filling && !lossy) ? "OK" : (filling ? "FILLING" : "LOSSY"));
+
+    return filling || lossy;
+}
 
 static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     // Optional params: startHz, maxHz (0/absent => defaults).
@@ -2228,6 +2319,10 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
 
+    // Save SD mode: PrepareStreamingBuffers quiesces SD (WRITE->NONE) and the
+    // finder doesn't stream to SD, so restore it on every exit (Qodo #521).
+    int savedSdMode = SaveSdMode();
+
     // #520: establish the WiFi buffer partition + sample-pool ourselves — the
     // cfg-poke start below (like SCPI_RunThroughputBench) does NOT, so without
     // this the pipeline has no buffers and the encoder produces 0 bytes.
@@ -2244,6 +2339,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
                                      AInSampleList_ElementSize(ec))) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
+            RestoreSdMode(savedSdMode);
             SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: buffer prepare failed");
             return SCPI_RES_ERR;
         }
@@ -2263,58 +2359,17 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     uint8_t* wRingBuf = NULL; uint32_t wRingCap = 0;
     StreamingBufferPool_GetWifi(&wRingBuf, &wRingCap);
 
+    // Coarse AIMD climb: geometric step up until a step trips twice in a row.
     while (freq <= hardMax) {
-        uint32_t periodCycles = (clkFreq + freq - 1) / freq;
-        if (periodCycles < 2) periodCycles = 2;
+        uint32_t kbps = 0;
+        bool sf = false;
+        bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, freq, &kbps, &sf);
+        if (sf) { startFailed = true; break; }
 
-        Streaming_ClearStats();
-        cfg->ClockPeriod = periodCycles - 1;
-        cfg->Frequency = freq;
-        cfg->IsEnabled = true;
-        Streaming_UpdateState();
-        if (!cfg->Running) { startFailed = true; break; }
-
-        // Prime, then observe WiFi-ring occupancy across the dwell.
-        vTaskDelay(pdMS_TO_TICKS(FIND_SETTLE_MS));
-        uint32_t occStart = wifi_tcp_server_GetCircularBufferAvailable();
-        for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
-            vTaskDelay(pdMS_TO_TICKS(FIND_DWELL_MS / FIND_OCC_SAMPLES));
-        }
-        uint32_t occEnd = wifi_tcp_server_GetCircularBufferAvailable();
-
-        StreamingStats s;
-        Streaming_GetStats(&s);
-
-        // Clean teardown BEFORE evaluating / changing rate (WINC dislikes
-        // mid-stream transitions — #425/#467/#517).
-        cfg->IsEnabled = false;
-        Streaming_UpdateState();
-
-        // Primary trip: the WiFi ring is backing up (pre-drop).  Two ways it
-        // manifests, depending on ring size:
-        //   - GROWTH: a large ring visibly accumulates (occEnd >> occStart).
-        //   - HIGH-WATERMARK: a small ring saturates by sitting PEGGED near
-        //     full (occEnd ≈ occStart at ~100% — zero growth).  The watermark
-        //     (>75% of capacity) catches that; it scales to any buffer size.
-        bool filling = (occEnd > occStart + FIND_TREND_BYTES) ||
-                       (wRingCap > 0 && occEnd > (wRingCap - (wRingCap >> 2)));
-        // Secondary trip: actual steady-state loss.
-        bool lossy = (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
-
-        // #520 tuning instrumentation (SCPI INFO), retrievable via SYST:LOG?.
-        LOG_I("WIFI:FIND %u Hz: run=%u samp=%u bytes=%u occ %u->%u/%u wst=%u wlp=%u -> %s",
-              (unsigned)freq, (unsigned)cfg->Running,
-              (unsigned)s.totalSamplesStreamed, (unsigned)s.totalBytesStreamed,
-              (unsigned)occStart, (unsigned)occEnd, (unsigned)wRingCap,
-              (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
-              (!filling && !lossy) ? "OK" : (filling ? "FILLING" : "LOSSY"));
-
-        if (!filling && !lossy) {
+        if (!sat) {
             confirmTrip = false;   // clean step clears any pending debounce
             lastGoodHz = freq;
-            uint32_t dwellMs = FIND_SETTLE_MS + FIND_DWELL_MS;
-            lastGoodKBps = (dwellMs > 0)
-                ? (uint32_t)((s.totalBytesStreamed * 1000ULL) / dwellMs / 1024ULL) : 0;
+            lastGoodKBps = kbps;
             // Additive-ish increase: bigger steps low, finer near the top so a
             // single overshoot can't slam the WINC.
             uint32_t stepUp = (freq < hardMax / 2) ? (freq / 4 + 500) : 500;
@@ -2331,18 +2386,46 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
             // freq unchanged → loop re-measures this step
         } else {
             saturated = true;   // tripped twice in a row → real saturation
-            break;
+            break;              // freq holds the confirmed-saturated rate
         }
     }
 
-    // Restore prior streaming config.
+    // Binary-search refinement: the coarse climb's geometric step can skip a
+    // wide band (HW 2026-05-31: 5×T1 jumped 3858 -> 5322, leaving the real
+    // ~5 kHz ceiling unprobed and the recommendation needlessly conservative).
+    // When the climb confirmed saturation, bisect the (lastGoodHz, freq)
+    // bracket — known-clean vs known-saturated — down to FIND_RESOLUTION_HZ to
+    // pin the real ceiling.  A transient false-trip here only narrows toward
+    // lastGoodHz (conservative, safe), so no debounce is needed in this phase.
+    if (saturated && lastGoodHz > 0 && freq > lastGoodHz + FIND_RESOLUTION_HZ) {
+        uint32_t lo = lastGoodHz;   // highest confirmed-clean
+        uint32_t hi = freq;         // confirmed-saturated
+        while (hi - lo > FIND_RESOLUTION_HZ) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            uint32_t kbps = 0;
+            bool sf = false;
+            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, mid, &kbps, &sf);
+            if (sf) break;          // unexpected start failure — keep coarse lastGood
+            if (sat) {
+                hi = mid;
+            } else {
+                lo = mid;
+                lastGoodHz = mid;
+                lastGoodKBps = kbps;
+            }
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+        }
+    }
+
+    // Restore prior streaming config + SD mode.
     Streaming_SetBenchmarkMode(savedBenchmark);
     Streaming_SetTestPattern(savedPattern);
+    RestoreSdMode(savedSdMode);
 
     const char* reason;
     if (startFailed)            reason = "START_FAIL";
+    else if (lastGoodHz == 0)   reason = "NO_LINK";       // nothing sustainable, even the start freq
     else if (saturated)         reason = "LINK_SATURATED";
-    else if (lastGoodHz == 0)   reason = "NO_LINK";       // even start was unsustainable
     else if (lastGoodHz >= adcCap) reason = "HIT_ADC_CAP";
     else                        reason = "HIT_MAX";
 
