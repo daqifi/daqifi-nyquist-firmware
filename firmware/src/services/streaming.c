@@ -1575,6 +1575,18 @@ void Streaming_SetFlowWindowOverride(uint32_t size) {
     gFlowWindowOverride = size;
 }
 
+// Stop then (re)start the streaming timer + task to apply the current
+// runtime config (frequency, IsEnabled, interface).
+//
+// IMPORTANT — this does NOT partition/allocate the streaming buffer pool.
+// Buffer partitioning (USB/WiFi/SD/encoder circular buffers + sample pool)
+// is the CALLER's responsibility and lives in SCPI_StartStreaming's inline
+// setup (and the shared PrepareStreamingBuffers helper).  Code that pokes
+// pStreamCfg->IsEnabled and calls Streaming_UpdateState() WITHOUT first
+// partitioning (e.g. an ad-hoc benchmark) will run the encoder against
+// stale/unsized buffers and produce 0 bytes — see #520.  If you reach for
+// this to start a stream, make sure the pool has been partitioned for the
+// active interface first.
 void Streaming_UpdateState(void) {
     Streaming_Stop();
     Streaming_Start();

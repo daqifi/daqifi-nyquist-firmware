@@ -3950,8 +3950,31 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
 static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     uint32_t usbSize, wifiSize, sdCircSize;
     uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
-    Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
-                                 &sdDmaSize, &usbDmaSize, &wifiDmaSize, &encSize);
+
+    // Mirror SCPI_StartStreaming's auto-vs-explicit decision so the finder
+    // measures with the SAME buffer layout the user's real stream will use:
+    // if any MemoryConfig field is set (SYST:MEM:* static config), honor those
+    // sizes; only auto-balance when fully in auto mode.  (SCPI_MemAutoBalance
+    // forces auto by zeroing mc first — this helper does not, so it respects
+    // a user's static buffers.)
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    bool isAutoMode = (mc->sdCircularBufSize == 0 &&
+                       mc->wifiCircularBufSize == 0 &&
+                       mc->usbCircularBufSize == 0 &&
+                       mc->encoderBufSize == 0 &&
+                       mc->samplePoolCount == 0);
+    if (isAutoMode) {
+        Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
+                                     &sdDmaSize, &usbDmaSize, &wifiDmaSize, &encSize);
+    } else {
+        usbSize   = mc->usbCircularBufSize ? mc->usbCircularBufSize : USBCDC_CIRCULAR_BUFF_SIZE;
+        wifiSize  = mc->wifiCircularBufSize ? mc->wifiCircularBufSize : WIFI_CIRCULAR_BUFF_SIZE;
+        sdCircSize = mc->sdCircularBufSize ? mc->sdCircularBufSize : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+        sdDmaSize  = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
+        usbDmaSize = USBCDC_DMA_WBUFFER_MAX;
+        wifiDmaSize = WIFI_DMA_MAX;
+        encSize    = mc->encoderBufSize ? mc->encoderBufSize : ENCODER_BUFFER_DEFAULT;
+    }
 
     UsbCdcData_t* pUsb = UsbCdc_GetSettings();
     TickType_t t = xTaskGetTickCount();
