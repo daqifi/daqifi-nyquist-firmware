@@ -389,14 +389,26 @@ static void InvalidateStaLinkState(void) {
     //     networkMode to AP synchronously while STA is still tearing down; a
     //     networkMode-only gate would skip and leak the stale STA assocHandle.
     // (Qodo /agentic_review pass 1 + /improve passes 2-3.)
-    if (gStateMachineContext.pWifiSettings == NULL ||
-        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+    if (gStateMachineContext.pWifiSettings == NULL) {
+        return;
+    }
+    // Take a SINGLE coherent snapshot of the state flags and mode, then make
+    // all gate decisions against the snapshot.  This helper can run on the USB
+    // task (Deinit/HardReset) while the WifiTask mutates eventFlags, so reading
+    // gStateMachineContext.eventFlags separately for each of the three checks
+    // below could straddle a concurrent flag flip and observe an inconsistent
+    // AP/STA combination.  One atomic load each is sufficient on PIC32MZ — a
+    // critical section isn't needed for a single ≤32-bit read (Qodo
+    // /agentic_review pass 4 / "single flags snapshot").
+    const wifi_manager_stateFlag_t flags = gStateMachineContext.eventFlags;
+    const wifi_manager_networkMode_t mode = gStateMachineContext.pWifiSettings->networkMode;
+    if (GetEventFlagStatus(flags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
         return;
     }
     const bool staContext =
-        (gStateMachineContext.pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) ||
-        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED) ||
-        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+        (mode == WIFI_MANAGER_NETWORK_MODE_STA) ||
+        GetEventFlagStatus(flags, WIFI_MANAGER_STATE_FLAG_STA_STARTED) ||
+        GetEventFlagStatus(flags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
     if (!staContext) {
         return;
     }
