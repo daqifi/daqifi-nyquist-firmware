@@ -2178,40 +2178,52 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 // SYSTem:STReam:WIFI:FINd? [startHz][,maxHz]
 //   -> <recommendedHz>,<measuredKBps>,<reason>
 //
-// Climbs the streaming rate from a conservative start, watching the WiFi
-// circular-buffer OCCUPANCY TREND as the primary saturation signal: it rises
-// (backlog builds) before any byte is dropped.  Secondary trip is actual loss
-// (wifiDroppedBytesSteady / windowLossPercent).  On the first unsustainable
-// step it stops climbing and reports the last sustainable rate minus a safety
-// margin.
+// Climbs the streaming rate from a conservative start and locks the ceiling
+// only when the buffer that actually fills is essentially FULL (high-water mark
+// >= FIND_BUF_FULL_PCT of capacity), giving the buffer full room to absorb WiFi
+// jitter before calling a ceiling.
 //
-// Reacting to the occupancy trend rather than to drops is deliberate (#520):
-// by the time WifiDroppedBytes ticks the link is already saturated, and
-// sustained over-drive of the WINC send path is what risks a wedge
-// (#383/#385/#491).  Backing off on the pre-drop fill trend keeps the WINC out
-// of that zone.  Structure mirrors SCPI_RunThroughputBench.
+// WHICH buffer fills (EMPIRICAL, #520 HW 2026-05-31): originally we hypothesized
+// the SAMPLE POOL (last buffer to fill if backpressure propagates upstream).
+// Hardware first refuted that — the pool sat at ~1% while the WiFi ring pegged
+// full and dropped 1.17 MB — because the encoder used an all-or-nothing
+// no-retry write that DROPPED at the ring instead of back-pressuring upstream,
+// wasting the pool's absorption capacity.  That was fixed (#520 backpressure):
+// solo WiFi/USB now route through Streaming_WriteWithRetry, so the encoder HOLDS
+// samples while the ring is full and the pool fills as designed — the SINGLE
+// drop point is now pool exhaustion (verified: at over-rate SamplePoolMaxUsed
+// hit capacity, drops = PoolExhausted, WifiDropped ~0).  So the pool hypothesis
+// is now CORRECT and we gauge the sample-pool high-water mark.  Note the WiFi
+// ring level is NOT a ceiling signal post-fix: it sits near-full at the link
+// rate (the encoder keeps it full, the WINC drains it) — that's normal, not
+// saturation.  A jitter swell the ring + lower pool absorb never drives the
+// pool high-water near full.  Actual loss (QueueDropped / WiFi / window) is a
+// hard secondary trip.
 //
-// NOTE: the FIND_* constants below are INITIAL, NOT yet hardware-tuned (the
-// bench was running an overnight endurance sweep when this landed).  Expect to
-// adjust dwell / trend band / step schedule after a tuning session on the
-// device.
+// Reported rate = highest rate whose pool stayed below full, minus a margin
+// (FIND_BACKOFF).  Structure mirrors SCPI_RunThroughputBench.
 #define FIND_DEFAULT_START_HZ   1000u   // conservative baseline
 #define FIND_DEFAULT_MAX_HZ     20000u  // backstop; further clamped to the ADC cap
-#define FIND_SETTLE_MS          400u    // prime buffers before sampling occupancy
-#define FIND_DWELL_MS           1200u   // observation window per step
-#define FIND_OCC_SAMPLES        6u      // occupancy sample count across the dwell
-#define FIND_TREND_BYTES        2048u   // net occupancy growth over dwell => "filling"
+#define FIND_SETTLE_MS          500u    // prime + let the pipeline reach steady state
+#define FIND_DWELL_MS           3000u   // observation window — long enough for the
+                                        // buffer to actually fill at a near-ceiling
+                                        // rate (slow fill needs room to reveal itself)
+#define FIND_OCC_SAMPLES        6u      // ring-occupancy samples across the dwell
+                                        // (high-water = max over these)
+#define FIND_BUF_FULL_PCT       95u     // buffer high-water >= this % of capacity
+                                        // => buffer full => ceiling (user 2026-05-31)
 #define FIND_INTERSTEP_MS       300u    // settle between rate changes (WINC is touchy)
 #define FIND_BACKOFF_NUM        9u      // recommended = lastGood * 9/10 (-10% margin)
 #define FIND_BACKOFF_DEN        10u
 #define FIND_RESOLUTION_HZ      500u    // binary-refine stops when bracket <= this
 
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
-// observe the WiFi-ring occupancy trend, tear down cleanly, and return whether
-// the link looked SATURATED at this rate.  Outputs the measured wire KB/s.
-// *outStartFailed is set if the stream never went Running (caller aborts).
-// Factored (#520, 2026-05-31) so the coarse AIMD climb and the binary-search
-// refinement share one code path.
+// observe the sample-pool high-water mark (the last-to-fill buffer — see header),
+// tear down cleanly, and return whether the buffers SATURATED at this rate.
+// Outputs the measured wire KB/s.  *outStartFailed is set if the stream never
+// went Running (caller aborts).  Factored (#520, 2026-05-31) so the coarse AIMD
+// climb and the binary-search refinement share one code path.  wRingCap is used
+// only for the diagnostic log line.
 static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq,
                             uint32_t* outKBps, bool* outStartFailed) {
@@ -2225,13 +2237,19 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     Streaming_UpdateState();
     if (!cfg->Running) { *outStartFailed = true; *outKBps = 0; return true; }
 
-    // Prime, then observe WiFi-ring occupancy across the dwell.
+    // Prime to steady state, THEN zero the pool high-water mark so the dwell's
+    // peak reflects this rate (not the priming transient).  Observe across the
+    // dwell; the pool's running-max captures the peak whenever it occurs.
     vTaskDelay(pdMS_TO_TICKS(FIND_SETTLE_MS));
-    uint32_t occStart = wifi_tcp_server_GetCircularBufferAvailable();
+    AInSampleList_PoolResetMaxUsed();
+    uint32_t occMax = 0;   // WiFi-ring high-water mark across the dwell
     for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
         vTaskDelay(pdMS_TO_TICKS(FIND_DWELL_MS / FIND_OCC_SAMPLES));
+        uint32_t occ = wifi_tcp_server_GetCircularBufferAvailable();
+        if (occ > occMax) occMax = occ;
     }
-    uint32_t occEnd = wifi_tcp_server_GetCircularBufferAvailable();
+    uint32_t poolPeak = AInSampleList_PoolMaxUsed();
+    uint32_t poolCap = (uint32_t)AInSampleList_PoolCapacity();
 
     StreamingStats s;
     Streaming_GetStats(&s);
@@ -2241,29 +2259,40 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     cfg->IsEnabled = false;
     Streaming_UpdateState();
 
-    // Primary trip: the WiFi ring is backing up (pre-drop).  GROWTH catches a
-    // large ring visibly accumulating (occEnd >> occStart); HIGH-WATERMARK
-    // (>75% of capacity) catches a small ring that saturates by sitting PEGGED
-    // near full (occEnd ≈ occStart, zero growth).  The watermark scales to any
-    // buffer size.
-    bool filling = (occEnd > occStart + FIND_TREND_BYTES) ||
-                   (wRingCap > 0 && occEnd > (wRingCap - (wRingCap >> 2)));
-    // Secondary trip: actual steady-state loss.
-    bool lossy = (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
+    // Primary trip: the SAMPLE POOL high-water reached ~full (>= FIND_BUF_FULL_PCT
+    // of capacity).  After the #520 backpressure fix (streaming.c, solo WiFi/USB
+    // now route through Streaming_WriteWithRetry) the encoder HOLDS samples while
+    // the WiFi ring is full, so the ring sits near-full at the link rate as
+    // normal operation — NOT a ceiling — and the POOL is the buffer that backs
+    // up only when inflow exceeds drain.  So the pool high-water is the true
+    // "can't keep up" signal; ring level is no longer a ceiling indicator (it's
+    // full whenever the encoder is backpressuring).  A jitter swell the ring +
+    // lower pool absorb never drives the pool high-water near full.
+    bool poolFull = (poolCap > 0) &&
+                    ((uint64_t)poolPeak * 100ULL >= (uint64_t)poolCap * FIND_BUF_FULL_PCT);
+    // Hard secondary: actual loss — the pool overflowed (PoolExhausted /
+    // QueueOverflow = QueueDropped, the single drop point post-fix) or a
+    // transport dropped.  Unambiguously over the ceiling.
+    bool lossy = (s.queueDroppedSamples > 0) ||
+                 (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
+    bool tripped = poolFull || lossy;
 
     uint32_t dwellMs = FIND_SETTLE_MS + FIND_DWELL_MS;
     *outKBps = (dwellMs > 0)
         ? (uint32_t)((s.totalBytesStreamed * 1000ULL) / dwellMs / 1024ULL) : 0;
 
     // #520 tuning instrumentation (SCPI INFO), retrievable via SYST:LOG?.
-    LOG_I("WIFI:FIND %u Hz: samp=%u bytes=%u occ %u->%u/%u wst=%u wlp=%u -> %s",
+    // ringHW=peak/cap is the trip gauge; pool is logged to confirm it stays low.
+    LOG_I("WIFI:FIND %u Hz: samp=%u bytes=%u ringHW=%u/%u pool=%u/%u qd=%u wst=%u wlp=%u -> %s",
           (unsigned)freq, (unsigned)s.totalSamplesStreamed,
           (unsigned)s.totalBytesStreamed,
-          (unsigned)occStart, (unsigned)occEnd, (unsigned)wRingCap,
+          (unsigned)occMax, (unsigned)wRingCap,
+          (unsigned)poolPeak, (unsigned)poolCap,
+          (unsigned)s.queueDroppedSamples,
           (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
-          (!filling && !lossy) ? "OK" : (filling ? "FILLING" : "LOSSY"));
+          (!tripped ? "OK" : (lossy ? "LOSSY" : "BUF_FULL")));
 
-    return filling || lossy;
+    return tripped;
 }
 
 static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
@@ -2351,11 +2380,9 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     bool saturated = false;
     bool confirmTrip = false;   // debounce: require 2 consecutive trips to lock
 
-    // WiFi ring capacity for the high-watermark trip (fixed after the partition
-    // above).  Needed because the growth-only signal is blind to a ring that
-    // sits PEGGED at full — a small ring saturates by pegging (occEnd≈occStart
-    // near capacity, zero growth) rather than visibly accumulating like a large
-    // one.  Watermarking against capacity catches both (#520 HW 2026-05-31).
+    // WiFi ring capacity — informational only (logged alongside the pool gauge).
+    // The trip is on the sample-pool high-water mark (see FindMeasureStep header),
+    // not the ring, so the ring size doesn't gate the result.
     uint8_t* wRingBuf = NULL; uint32_t wRingCap = 0;
     StreamingBufferPool_GetWifi(&wRingBuf, &wRingCap);
 
@@ -3019,10 +3046,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // from this heap, and starting a new session when already pinched
     // accelerates the slide.
     //
-    // Floor is 10 KB (see MIN_HEAP_FREE_FOR_STREAM_START_BYTES in
-    // SCPIInterface.h for the choice).  Boot-idle HeapFree is ~13 KB
-    // per CLAUDE.md, so cold-boot first-starts pass; the guard only
-    // bites under accumulated pressure.
+    // Floor is 2500 B (lowered from 10 KB 2026-05-31 — see
+    // MIN_HEAP_FREE_FOR_STREAM_START_BYTES in SCPIInterface.h for the
+    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per CLAUDE.md,
+    // so the guard now only bites under severe accumulated pressure (the
+    // #490 per-session leak), not on ordinary post-boot starts.
     //
     // Placed AFTER the freq==0 disable branch, but BEFORE the freq-
     // parameter branch — covers both the explicit-freq and no-argument
