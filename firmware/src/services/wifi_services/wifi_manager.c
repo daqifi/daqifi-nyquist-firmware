@@ -372,13 +372,23 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
 // from any task context (USB pri 7 or WifiTask pri 2).
 static void InvalidateStaLinkState(void) {
     gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
-    // Only zero ipAddr in STA mode: there it holds the transient DHCP-assigned
-    // address.  In AP mode this SAME field is the AP's own IP (read at AP
-    // start, line ~1069) — zeroing it would silently drop a user-configured
-    // AP IP on the next AP start.  The STA_DISCONNECTED event also fires for
-    // AP-client disconnects, so this guard is load-bearing, not cosmetic.
+    // Only zero ipAddr when this is genuinely a STA link teardown: there the
+    // field holds the transient DHCP-assigned address.  In AP mode the SAME
+    // field is the AP's own IP (read at AP start, line ~1069) — zeroing it
+    // would silently drop a user-configured AP IP on the next AP start.
+    //
+    // Guard on BOTH the configured mode AND the running mode:
+    //   - networkMode is updated synchronously by UpdateNetworkSettings on
+    //     APPLY, but the AP it describes keeps running (AP_STARTED set) until
+    //     the queued REINIT executes.  In that window networkMode is already
+    //     STA while ipAddr still holds the live AP IP.
+    //   - STA_DISCONNECTED also fires for AP-client disconnects (ApEventCallback)
+    //     while AP_STARTED is set — so without the !AP_STARTED gate an AP
+    //     client dropping mid-transition would erase the AP IP (Qodo
+    //     /agentic_review pass 1).
     if (gStateMachineContext.pWifiSettings != NULL &&
-        gStateMachineContext.pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+        gStateMachineContext.pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA &&
+        !GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
         gStateMachineContext.pWifiSettings->ipAddr.Val = 0;
     }
     gRssiUpdatePending = false;
