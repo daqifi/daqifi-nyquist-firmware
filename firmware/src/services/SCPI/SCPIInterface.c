@@ -815,7 +815,9 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     // BQ24297 status - get fresh data
     tBQ24297Data * pBQ24297Data = &pBoardData->PowerData.BQ24297Data;
     if (pBQ24297Data->initComplete) {
-        BQ24297_UpdateStatus();
+        // UpdateBatteryStatus (not bare UpdateStatus) so batPresent is
+        // recomputed live, not the boot-time value (stale-global audit).
+        BQ24297_UpdateBatteryStatus();
         
         // Battery detection and charging
         const char* chgStatStr[] = {"Not Charging", "Pre-charge", "Fast Charge", "Charge Done"};
@@ -1799,8 +1801,14 @@ static scpi_result_t SCPI_GetBQDiagnostics(scpi_t * context) {
     }
     tBQ24297Data* pBQ = &pPower->BQ24297Data;
 
-    // Refresh cached status from hardware
-    BQ24297_UpdateStatus();
+    // Refresh cached status from hardware. Use UpdateBatteryStatus (not the
+    // bare UpdateStatus) so batPresent/chargeAllowed are recomputed from live
+    // NTC+voltage — they are otherwise only computed once at boot, so this
+    // diagnostic would print a stale battery-presence after a runtime
+    // insert/remove (stale-global audit). The ChargeEnable re-enforce inside
+    // only fires when chargeAllowed actually changes, so steady-state polling
+    // has no side effect.
+    BQ24297_UpdateBatteryStatus();
 
     // --- [Battery] ---
     scpi_printf(context, "[Battery]\r\n");
