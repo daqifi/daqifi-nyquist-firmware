@@ -2009,6 +2009,11 @@ static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
  * Example: SYST:STR:THRoughput 5000,10
  *   → streams at 5kHz for 10s, returns results
  */
+// Shared streaming-buffer setup (partition + DMA pool + sample pool).  Defined
+// near SCPI_MemAutoBalance; forward-declared here for the throughput bench, the
+// WiFi finder, and SCPI_StartStreaming, which all route through it.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
+
 static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
@@ -2046,6 +2051,27 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // Clear stats
     Streaming_ClearStats();
     AInSampleList_PoolResetMaxUsed();
+
+    // Establish the buffer partition + sample pool that the cfg-poke start
+    // below does NOT do on its own (this was a latent bug — THR relied on a
+    // prior STR:START having partitioned; standalone it streamed 0 bytes, the
+    // same #520 failure mode).  Shared helper, same path as StartStreaming.
+    {
+        volatile AInRuntimeArray* pRtAin =
+            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+        const tBoardConfig* pBcfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+        Streaming_BuildChannelMapping(pBcfg, (const AInRuntimeArray*)pRtAin);
+        const AInChannelMapping* chMap = Streaming_GetChannelMapping();
+        uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
+        MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
+                                     AInSampleList_ElementSize(ec))) {
+            Streaming_SetBenchmarkMode(savedBenchmark);
+            Streaming_SetTestPattern(savedPattern);
+            SCPI_ExecutionError(context, "SYST:STR:THR: buffer prepare failed");
+            return SCPI_RES_ERR;
+        }
+    }
 
     // Set frequency and start
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
@@ -2114,9 +2140,6 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 
     return SCPI_RES_OK;
 }
-
-// Defined later (near SCPI_MemAutoBalance) — forward-declared for the finder.
-static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
 
 // =====================================================================
 // #520: device-side WiFi throughput finder (fast AIMD link-rate probe)
@@ -3203,165 +3226,20 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         Streaming_UpdateState();  // Stop timer + streaming task
     }
 
-    // Auto-size and apply circular buffer sizes via streaming pool (issue #229).
-    // The pool is one contiguous allocation — re-partitioning is pointer
-    // arithmetic within the pool, no malloc needed.
+    // Partition the streaming buffer pool (auto or static per MemoryConfig) +
+    // DMA coherent pool + sample pool, via the shared helper — same path used
+    // by SYST:STR:THR, the WiFi finder, and SYST:MEM:AUTO (issue #229).  The
+    // helper internally does the USB-DMA + task-quiescence waits (abort on
+    // timeout, #486) before the destructive re-partition.
     {
-        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-        bool isAutoMode = (mc->sdCircularBufSize == 0 &&
-                           mc->wifiCircularBufSize == 0 &&
-                           mc->usbCircularBufSize == 0 &&
-                           mc->encoderBufSize == 0 &&
-                           mc->samplePoolCount == 0);
-
-        uint32_t usbSize, wifiSize, sdCircSize, sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
-
-        if (isAutoMode) {
-            Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
-                                          &sdDmaSize, &usbDmaSize, &wifiDmaSize,
-                                          &encSize);
-            LOG_I("Auto: USB=%u WiFi=%u sdCirc=%u sdDma=%u usbDma=%u wifiDma=%u enc=%u",
-                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdCircSize,
-                  (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize,
-                  (unsigned)encSize);
-        } else {
-            usbSize = mc->usbCircularBufSize ? mc->usbCircularBufSize
-                                             : USBCDC_CIRCULAR_BUFF_SIZE;
-            wifiSize = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
-                                               : WIFI_CIRCULAR_BUFF_SIZE;
-            sdCircSize = mc->sdCircularBufSize ? mc->sdCircularBufSize
-                                               : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
-            sdDmaSize = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
-            usbDmaSize = USBCDC_DMA_WBUFFER_MAX;
-            wifiDmaSize = WIFI_DMA_MAX;
-            encSize = mc->encoderBufSize ? mc->encoderBufSize
-                                         : ENCODER_BUFFER_DEFAULT;
-            LOG_I("Explicit: USB=%u WiFi=%u sdCirc=%u sdDma=%u usbDma=%u wifiDma=%u enc=%u",
-                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdCircSize,
-                  (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize,
-                  (unsigned)encSize);
-        }
-
-        // Wait for any in-flight USB DMA write before swapping buffers.
-        // #486 (pass-3 Qodo /improve): abort instead of break-on-timeout
-        // — same logic as the task-quiescence gate below.  Proceeding
-        // with the buffer swap while a USB DMA transfer is in flight
-        // would race the SetWriteBuffer pointer against the live DMA.
-        {
-            TickType_t t = xTaskGetTickCount();
-            UsbCdcData_t* pUsb = UsbCdc_GetSettings();
-            while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-                if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) {
-                    SCPI_ExecutionError(context, "STR:START: USB DMA not quiescent after 1000 ms — aborting start");
-                    return SCPI_RES_ERR;
-                }
-                vTaskDelay(1);
-            }
-        }
-
-        /* #486 — wait for streaming_Task (pri 6) and deferred ISR task
-         * (pri 9) to exit their resource-touching regions before we
-         * re-partition the unified pool and swap buffer pointers.
-         * Without this wait, the line-2979 Streaming_UpdateState (which
-         * just stops the timer + sets Running=false) can return while
-         * the encoder is still mid-iteration, leading to a torn read of
-         * the swapped encoder buffer / sample queue / pool memory below.
-         * vTaskDelay(1) yields long enough for both lower-priority
-         * streaming_Task and same-or-higher-priority deferred task to
-         * complete their iteration and clear the flag.  Bounded at
-         * 100 ms; on timeout we ABORT the start rather than proceed,
-         * because proceeding with a wedged task in-flight would race
-         * the destructive re-partition below against the very task
-         * we're trying to protect — exactly the bug this guard exists
-         * to prevent. */
-        {
-            TickType_t qStart = xTaskGetTickCount();
-            while (!Streaming_TasksAreQuiescent()) {
-                if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(100)) {
-                    /* SCPI_ExecutionError emits its own LOG_E — don't
-                     * double-log (Qodo pass-2 finding #4). */
-                    SCPI_ExecutionError(context, "STR:START: tasks not quiescent after 100 ms — aborting start");
-                    return SCPI_RES_ERR;
-                }
-                vTaskDelay(1);
-            }
-        }
-
-        uint32_t poolCount = mc->samplePoolCount;
-
-        // Compute compact sample element size based on enabled channel count (#177).
         const AInChannelMapping* chMapping = Streaming_GetChannelMapping();
-        uint8_t enabledChannels = chMapping->count;
-        if (enabledChannels == 0) enabledChannels = 1;  // Minimum 1 slot
-        size_t sampleElemSize = AInSampleList_ElementSize(enabledChannels);
-
-        // Re-partition the unified pool and swap all buffer pointers.
-        StreamingBufferPool_Partition(usbSize, wifiSize, encSize, sdCircSize,
-                                      poolCount, sampleElemSize);
-
-        uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
-        uint32_t usbLen, wifiLen, encLen, sdCircLen;
-        StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
-        StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
-        StreamingBufferPool_GetEncoder(&encBuf, &encLen);
-        StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
-
-        if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
-            LOG_E("Pool partition failed: USB=%u WiFi=%u enc=%u sdCirc=%u",
-                  (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen,
-                  (unsigned)sdCircLen);
-            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        uint8_t enabledChannels = (chMapping->count > 0) ? chMapping->count : 1;
+        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        if (!PrepareStreamingBuffers(mc->samplePoolCount,
+                                     AInSampleList_ElementSize(enabledChannels))) {
+            SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             return SCPI_RES_ERR;
         }
-
-        UsbCdc_SetWriteBuffer(usbBuf, usbLen);
-        wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
-        Streaming_SetEncoderBuffer(encBuf, encLen);
-        sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
-
-        // Re-partition coherent pool for all DMA write buffers.
-        sdDmaSize &= ~(511U);  // sector-align for FatFS fast path
-        if (sdDmaSize < 512) sdDmaSize = 512;
-        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        wifiDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        uint32_t totalDma = sdDmaSize + usbDmaSize + wifiDmaSize + 3 * COHERENT_POOL_ALIGNMENT;
-        if (totalDma > CoherentPool_TotalSize()) {
-            LOG_I("DMA total %u exceeds pool %u — clamping",
-                  (unsigned)totalDma, (unsigned)CoherentPool_TotalSize());
-            sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
-            usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
-            wifiDmaSize = WIFI_DMA_MIN;
-        }
-        // Quiesce all DMA consumers (SD file close, WiFi SPI idle) and reset pool.
-        // USB writeTransferHandle already waited above.
-        if (!SCPI_QuiesceAndResetCoherentPool()) {
-            SCPI_ExecutionError(context, "SYST:STR:START: coherent pool quiesce failed");
-            return SCPI_RES_ERR;
-        }
-        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        if (sdDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize);
-        } else {
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-        }
-        uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-        if (usbDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: USB_write (%u)", (unsigned)usbDmaSize);
-        } else {
-            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-        }
-        uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-        if (wifiDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: WiFi_SPI (%u)", (unsigned)wifiDmaSize);
-        } else {
-            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
-        }
-
-        // Re-init sample pool with new region from unified pool
-        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSize;
-        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSize);
-        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSize);
 
         // Re-enable SD if it was closed for DMA quiesce
         if (sdLoggingRequested) {
@@ -3988,11 +3866,27 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         encSize    = mc->encoderBufSize ? mc->encoderBufSize : ENCODER_BUFFER_DEFAULT;
     }
 
+    // Wait for any in-flight USB DMA write before swapping buffers; ABORT on
+    // timeout rather than proceeding (#486) — swapping the write buffer while
+    // a DMA transfer is live would race the SetWriteBuffer pointer.
     UsbCdcData_t* pUsb = UsbCdc_GetSettings();
     TickType_t t = xTaskGetTickCount();
     while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-        if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
+        if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) return false;
         vTaskDelay(1);
+    }
+
+    // Wait for streaming_Task (pri 6) + deferred ISR task (pri 9) to exit their
+    // resource-touching regions before re-partitioning, so the buffer-pointer
+    // swap below can't be torn-read by a task mid-iteration (#486).  ABORT on
+    // timeout.  No-op for idle callers (tasks already quiescent); load-bearing
+    // when StartStreaming re-partitions a just-stopped active stream.
+    {
+        TickType_t qStart = xTaskGetTickCount();
+        while (!Streaming_TasksAreQuiescent()) {
+            if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(100)) return false;
+            vTaskDelay(1);
+        }
     }
 
     StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
@@ -4048,94 +3942,17 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
 
-    // Compute optimal buffer sizes into LOCAL variables — do NOT persist
-    // into MemoryConfig. Keeping mc at zero preserves auto mode for
-    // subsequent StartStreamData calls.
-    uint32_t usbSize, wifiSize, sdCircSize;
-    uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
-    Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
-                                 &sdDmaSize, &usbDmaSize, &wifiDmaSize,
-                                 &encSize);
-
-    // Apply: re-partition unified pool, swap all pointers
-    {
-        UsbCdcData_t* pUsb = UsbCdc_GetSettings();
-        TickType_t t = xTaskGetTickCount();
-        while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-            if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
-            vTaskDelay(1);
-        }
-
-        // SYST:MEM:AUTO: use 0 for element size (defaults to max 16ch)
-        // since actual channel count isn't known until StartStreamData.
-        StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
-                                      sdCircSize, 0, 0);
-
-        uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
-        uint32_t usbLen, wifiLen, encLen, sdCircLen;
-        StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
-        StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
-        StreamingBufferPool_GetEncoder(&encBuf, &encLen);
-        StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
-
-        if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
-            LOG_E("Pool partition failed: USB=%u WiFi=%u enc=%u sdCirc=%u",
-                  (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen,
-                  (unsigned)sdCircLen);
-            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
-            return SCPI_RES_ERR;
-        }
-
-        UsbCdc_SetWriteBuffer(usbBuf, usbLen);
-        wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
-        Streaming_SetEncoderBuffer(encBuf, encLen);
-        sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
-
-        // Re-partition coherent pool for all DMA write buffers.
-        sdDmaSize &= ~(511U);  // sector-align for FatFS fast path
-        if (sdDmaSize < 512) sdDmaSize = 512;
-        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        wifiDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        uint32_t totalDma = sdDmaSize + usbDmaSize + wifiDmaSize + 3 * COHERENT_POOL_ALIGNMENT;
-        if (totalDma > CoherentPool_TotalSize()) {
-            sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
-            usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
-            wifiDmaSize = WIFI_DMA_MIN;
-        }
-        if (!SCPI_QuiesceAndResetCoherentPool()) {
-            SCPI_ExecutionError(context, "SYST:MEM:AUTO: coherent pool quiesce failed");
-            return SCPI_RES_ERR;
-        }
-        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        if (sdDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize);
-        } else {
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-        }
-        uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-        if (usbDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: USB_write (%u)", (unsigned)usbDmaSize);
-        } else {
-            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-        }
-        uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-        if (wifiDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: WiFi_SPI (%u)", (unsigned)wifiDmaSize);
-        } else {
-            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
-        }
-
-        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
-        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
-        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
-    }
-
-    // Ensure MemoryConfig stays zeroed — auto mode for next StartStreamData
+    // Force auto mode by zeroing mc BEFORE partitioning, so the shared helper
+    // computes auto sizes regardless of any prior static config — SYST:MEM:AUTO
+    // is the "balance it for me" command — and leaves mc at zero so subsequent
+    // StartStreamData stays in auto mode.  poolCount/elemSize 0/0 = generic
+    // 16ch default (actual channel count isn't known until StartStreamData).
     memset(mc, 0, sizeof(MemoryConfig));
-
-    // SCPI compliance: commands (no ?) don't return data.
-    // Use SYST:MEM:FREE? to query applied sizes.
+    if (!PrepareStreamingBuffers(0, 0)) {
+        SCPI_ExecutionError(context, "SYST:MEM:AUTO: buffer partition failed");
+        return SCPI_RES_ERR;
+    }
+    // SCPI compliance: commands (no ?) don't return data. Use SYST:MEM:FREE?.
     return SCPI_RES_OK;
 }
 
