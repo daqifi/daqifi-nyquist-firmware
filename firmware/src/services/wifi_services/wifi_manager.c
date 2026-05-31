@@ -419,7 +419,14 @@ static void InvalidateStaLinkState(void) {
     // stale isConnected==true (#467/#425 re-enable wedge class).
     gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
     gStateMachineContext.pWifiSettings->ipAddr.Val = 0;
-    // Clear the whole RSSI state tuple (pending + complete + value) as one
+    // Also clear the USER-FACING RSSI cache: SCPI_LANSsidStrengthGet (SSIDSTR?)
+    // returns pWifiSettings->rssi_percent as a fallback when a fresh GetRSSI
+    // fails, so without this a stale RSSI survives a teardown where the
+    // STA_DISCONNECTED handler (which already zeroes rssi_percent) doesn't run
+    // — e.g. Deinit/HardReset/disable.  Matches the STA_DISCONNECTED handler
+    // (Qodo /agentic_review pass 6).
+    gStateMachineContext.pWifiSettings->rssi_percent = 0;
+    // Clear the internal RSSI state tuple (pending + complete + value) as one
     // coherent snapshot under the same critical section the query path
     // (GetRSSI) uses, so a concurrent reader never sees a mixed state.
     taskENTER_CRITICAL();
