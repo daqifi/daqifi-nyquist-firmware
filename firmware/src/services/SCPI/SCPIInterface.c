@@ -2116,6 +2116,165 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 }
 
 // =====================================================================
+// #520: device-side WiFi throughput finder (fast AIMD link-rate probe)
+// =====================================================================
+//
+// SYSTem:STReam:WIFI:FINd? [startHz][,maxHz]
+//   -> <recommendedHz>,<measuredKBps>,<reason>
+//
+// Climbs the streaming rate from a conservative start, watching the WiFi
+// circular-buffer OCCUPANCY TREND as the primary saturation signal: it rises
+// (backlog builds) before any byte is dropped.  Secondary trip is actual loss
+// (wifiDroppedBytesSteady / windowLossPercent).  On the first unsustainable
+// step it stops climbing and reports the last sustainable rate minus a safety
+// margin.
+//
+// Reacting to the occupancy trend rather than to drops is deliberate (#520):
+// by the time WifiDroppedBytes ticks the link is already saturated, and
+// sustained over-drive of the WINC send path is what risks a wedge
+// (#383/#385/#491).  Backing off on the pre-drop fill trend keeps the WINC out
+// of that zone.  Structure mirrors SCPI_RunThroughputBench.
+//
+// NOTE: the FIND_* constants below are INITIAL, NOT yet hardware-tuned (the
+// bench was running an overnight endurance sweep when this landed).  Expect to
+// adjust dwell / trend band / step schedule after a tuning session on the
+// device.
+#define FIND_DEFAULT_START_HZ   1000u   // conservative baseline
+#define FIND_DEFAULT_MAX_HZ     20000u  // backstop; further clamped to the ADC cap
+#define FIND_SETTLE_MS          400u    // prime buffers before sampling occupancy
+#define FIND_DWELL_MS           1200u   // observation window per step
+#define FIND_OCC_SAMPLES        6u      // occupancy sample count across the dwell
+#define FIND_TREND_BYTES        2048u   // net occupancy growth over dwell => "filling"
+#define FIND_INTERSTEP_MS       300u    // settle between rate changes (WINC is touchy)
+#define FIND_BACKOFF_NUM        9u      // recommended = lastGood * 9/10 (-10% margin)
+#define FIND_BACKOFF_DEN        10u
+
+static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
+    // Optional params: startHz, maxHz (0/absent => defaults).
+    int32_t startArg = 0, maxArg = 0;
+    SCPI_ParamInt32(context, &startArg, FALSE);
+    SCPI_ParamInt32(context, &maxArg, FALSE);
+
+    StreamingRuntimeConfig* cfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (cfg->Running) {
+        SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: streaming already active");
+        return SCPI_RES_ERR;
+    }
+
+    const tPowerData* pPower = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPower == NULL ||
+        (pPower->powerState != POWERED_UP && pPower->powerState != POWERED_UP_EXT_DOWN)) {
+        SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: device must be powered up");
+        return SCPI_RES_ERR;
+    }
+
+    if (cfg->ActiveInterface != StreamingInterface_WiFi) {
+        SCPI_ExecutionError(context,
+            "SYST:STR:WIFI:FIND: requires ActiveInterface=WiFi (SYST:STR:INT 1)");
+        return SCPI_RES_ERR;
+    }
+
+    uint16_t type1Count = 0, totalEnabled = 0;
+    bool hasAd7609 = false;
+    Streaming_CountActiveChannels(&type1Count, &totalEnabled, &hasAd7609);
+    if (totalEnabled == 0) {
+        SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: no ADC channels enabled");
+        return SCPI_RES_ERR;
+    }
+
+    // Cap the climb at the ADC-safe rate: the recommendation must be usable in
+    // normal (non-benchmark) mode, where Streaming_ComputeMaxFreq applies.
+    uint32_t adcCap = Streaming_ComputeMaxFreq(type1Count, totalEnabled);
+    uint32_t hardMax = (maxArg > 0) ? (uint32_t)maxArg : FIND_DEFAULT_MAX_HZ;
+    if (hardMax > adcCap) hardMax = adcCap;
+
+    uint32_t freq = (startArg > 0) ? (uint32_t)startArg : FIND_DEFAULT_START_HZ;
+    if (freq < 1) freq = 1;
+    if (freq > hardMax) freq = hardMax;
+
+    // Save state to restore on exit (mirrors SCPI_RunThroughputBench).
+    uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
+    uint32_t savedPattern = Streaming_GetTestPattern();
+    Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);   // bypass cap to probe the link
+    Streaming_SetTestPattern(3);                   // fullscale: worst-case PB size
+
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
+
+    uint32_t lastGoodHz = 0;
+    uint32_t lastGoodKBps = 0;
+    bool startFailed = false;
+    bool saturated = false;
+
+    while (freq <= hardMax) {
+        uint32_t periodCycles = (clkFreq + freq - 1) / freq;
+        if (periodCycles < 2) periodCycles = 2;
+
+        Streaming_ClearStats();
+        cfg->ClockPeriod = periodCycles - 1;
+        cfg->Frequency = freq;
+        cfg->IsEnabled = true;
+        Streaming_UpdateState();
+        if (!cfg->Running) { startFailed = true; break; }
+
+        // Prime, then observe WiFi-ring occupancy across the dwell.
+        vTaskDelay(pdMS_TO_TICKS(FIND_SETTLE_MS));
+        uint32_t occStart = wifi_tcp_server_GetCircularBufferAvailable();
+        for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
+            vTaskDelay(pdMS_TO_TICKS(FIND_DWELL_MS / FIND_OCC_SAMPLES));
+        }
+        uint32_t occEnd = wifi_tcp_server_GetCircularBufferAvailable();
+
+        StreamingStats s;
+        Streaming_GetStats(&s);
+
+        // Clean teardown BEFORE evaluating / changing rate (WINC dislikes
+        // mid-stream transitions — #425/#467/#517).
+        cfg->IsEnabled = false;
+        Streaming_UpdateState();
+
+        // Primary trip: ring occupancy trending up (backlog building, pre-drop).
+        bool filling = (occEnd > occStart + FIND_TREND_BYTES);
+        // Secondary trip: actual steady-state loss.
+        bool lossy = (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
+
+        if (!filling && !lossy) {
+            lastGoodHz = freq;
+            uint32_t dwellMs = FIND_SETTLE_MS + FIND_DWELL_MS;
+            lastGoodKBps = (dwellMs > 0)
+                ? (uint32_t)((s.totalBytesStreamed * 1000ULL) / dwellMs / 1024ULL) : 0;
+            // Additive-ish increase: bigger steps low, finer near the top so a
+            // single overshoot can't slam the WINC.
+            uint32_t stepUp = (freq < hardMax / 2) ? (freq / 4 + 500) : 500;
+            freq += stepUp;
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+        } else {
+            saturated = true;
+            break;
+        }
+    }
+
+    // Restore prior streaming config.
+    Streaming_SetBenchmarkMode(savedBenchmark);
+    Streaming_SetTestPattern(savedPattern);
+
+    const char* reason;
+    if (startFailed)            reason = "START_FAIL";
+    else if (saturated)         reason = "LINK_SATURATED";
+    else if (lastGoodHz == 0)   reason = "NO_LINK";       // even start was unsustainable
+    else if (lastGoodHz >= adcCap) reason = "HIT_ADC_CAP";
+    else                        reason = "HIT_MAX";
+
+    uint32_t recommendedHz = (lastGoodHz > 0)
+        ? (uint32_t)((uint64_t)lastGoodHz * FIND_BACKOFF_NUM / FIND_BACKOFF_DEN) : 0;
+
+    scpi_printf(context, "%u,%u,%s\r\n",
+                (unsigned)recommendedHz, (unsigned)lastGoodKBps, reason);
+    return SCPI_RES_OK;
+}
+
+// =====================================================================
 // #377 iperf2 SCPI handlers
 // =====================================================================
 
@@ -4693,6 +4852,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 0=normal, 1=nocap, 2=pipeline (skip ADC)
     {.pattern = "SYSTem:STReam:BENCHmark?", .callback = SCPI_GetBenchmarkMode,},
     {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
+    {.pattern = "SYSTem:STReam:WIFI:FINd?", .callback = SCPI_WifiFindRate,}, // #520 [startHz][,maxHz] -> recommendedHz,KBps,reason
     // #377 iperf2 wire-rate benchmarks (TCP + UDP).  Refuse if streaming.
     {.pattern = "SYSTem:WIFI:IPERF:TCPServer", .callback = SCPI_Iperf2_TcpServer,}, // [port=5001]
     {.pattern = "SYSTem:WIFI:IPERF:TXBLast", .callback = SCPI_Iperf2_TxBlast,}, // <port>,<duration_s>  #399 workaround
