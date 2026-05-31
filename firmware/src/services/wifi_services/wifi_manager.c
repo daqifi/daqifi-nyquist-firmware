@@ -371,27 +371,33 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
 // cached values survived the radio going down.  Idempotent and safe to call
 // from any task context (USB pri 7 or WifiTask pri 2).
 static void InvalidateStaLinkState(void) {
-    // Act only on a genuine STA-link teardown.  Gate on BOTH the configured
-    // mode AND the running mode:
-    //   - networkMode is updated synchronously by UpdateNetworkSettings on
-    //     APPLY, but the AP it describes keeps running (AP_STARTED set) until
-    //     the queued REINIT executes — so networkMode can read STA while AP
-    //     is still live.
-    //   - STA_DISCONNECTED also fires for AP-client disconnects
-    //     (ApEventCallback) while AP_STARTED is set.
-    // Without the !AP_STARTED gate, an AP client dropping mid-transition would
-    // zero ipAddr — which in AP mode is the AP's OWN IP (read at AP start,
-    // line ~1069), silently dropping a configured AP IP on the next AP start.
-    // assocHandle/RSSI are STA-only (assocHandle is set solely by
-    // StaEventCallback; GetRSSI gates on it) so clearing them in AP mode is
-    // currently harmless, but gating the whole helper keeps it unambiguous
-    // that it only touches STA link state (Qodo /agentic_review pass 1 +
-    // /improve pass 2).
-    const bool isStaLinkTeardown =
-        (gStateMachineContext.pWifiSettings != NULL) &&
-        (gStateMachineContext.pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) &&
-        !GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
-    if (!isStaLinkTeardown) {
+    // Act only on a genuine STA-link teardown — never while an AP is up.
+    //
+    // !AP_STARTED is the hard guard: while an AP is actually running, ipAddr
+    // holds the AP's OWN IP (read at AP start, ~line 1069) and assocHandle is
+    // irrelevant, so we must not touch STA link state.  This matters because
+    // STA_DISCONNECTED also fires for AP-client disconnects (ApEventCallback).
+    //
+    // The STA-context predicate is an OR of the configured mode and the
+    // runtime flags, because each covers a blind spot of the other and BOTH
+    // are needed:
+    //   - networkMode==STA catches the disable path (and Deinit/HardReset from
+    //     STA): those reset STA_STARTED/STA_CONNECTED *before* calling this
+    //     helper (~line 1331), so a runtime-flag-only gate would early-return
+    //     and skip the clear — re-introducing the #467 re-enable wedge.
+    //   - STA_STARTED || STA_CONNECTED catches a STA->AP APPLY, which flips
+    //     networkMode to AP synchronously while STA is still tearing down; a
+    //     networkMode-only gate would skip and leak the stale STA assocHandle.
+    // (Qodo /agentic_review pass 1 + /improve passes 2-3.)
+    if (gStateMachineContext.pWifiSettings == NULL ||
+        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+        return;
+    }
+    const bool staContext =
+        (gStateMachineContext.pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) ||
+        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED) ||
+        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+    if (!staContext) {
         return;
     }
     // assocHandle == INVALID is the load-bearing fix: both GetRSSI and #516's
