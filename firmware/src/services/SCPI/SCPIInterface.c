@@ -2230,6 +2230,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     uint32_t lastGoodKBps = 0;
     bool startFailed = false;
     bool saturated = false;
+    bool confirmTrip = false;   // debounce: require 2 consecutive trips to lock
 
     while (freq <= hardMax) {
         uint32_t periodCycles = (clkFreq + freq - 1) / freq;
@@ -2274,6 +2275,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
               (!filling && !lossy) ? "OK" : (filling ? "FILLING" : "LOSSY"));
 
         if (!filling && !lossy) {
+            confirmTrip = false;   // clean step clears any pending debounce
             lastGoodHz = freq;
             uint32_t dwellMs = FIND_SETTLE_MS + FIND_DWELL_MS;
             lastGoodKBps = (dwellMs > 0)
@@ -2283,8 +2285,17 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
             uint32_t stepUp = (freq < hardMax / 2) ? (freq / 4 + 500) : 500;
             freq += stepUp;
             vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+        } else if (!confirmTrip) {
+            // Debounce: WiFi saturation is bimodal — a single transient ring
+            // spike at a low step shouldn't collapse the result.  Re-test the
+            // SAME freq once; only lock saturation if it trips again (#520 HW
+            // tuning 2026-05-31: 1/5 runs collapsed to 900 Hz on a transient).
+            confirmTrip = true;
+            LOG_I("WIFI:FIND %u Hz: trip — re-testing (debounce)", (unsigned)freq);
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+            // freq unchanged → loop re-measures this step
         } else {
-            saturated = true;
+            saturated = true;   // tripped twice in a row → real saturation
             break;
         }
     }
