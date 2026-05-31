@@ -395,6 +395,23 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
     }
 }
 
+// #517-class fix (stale-global audit): reset the in-flight send-size ring so
+// inflightHead/inflightTail/inflightSizes never survive a client teardown
+// desynced.  Always paired with tcpInFlight=0 in the same wMutex-held region,
+// so the invariant "tcpInFlight==0 ⇒ head==tail" holds across every reverse
+// transition.  Without it, a disconnect mid-send (head advanced, SOCKET_MSG_SEND
+// not yet fired) leaves head!=tail, and the partial-send consumer then reads the
+// wrong inflightSizes[] slot on the next connection — mis-attributing
+// wifiTcpPartialSends / wifiPartialBytesMissing for the rest of the session.
+// Caller must hold client.wMutex.
+static inline void ResetInflightRing(void) {
+    gpServerData->client.inflightHead = 0;
+    gpServerData->client.inflightTail = 0;
+    for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
+        gpServerData->client.inflightSizes[i] = 0;
+    }
+}
+
 void wifi_tcp_server_CloseSocket() {
     // The WINC driver's shutdown() automatically closes the socket
     if (gpServerData->client.clientSocket != -1) {
@@ -417,6 +434,7 @@ void wifi_tcp_server_CloseSocket() {
         xSemaphoreTake(gpServerData->client.wMutex, 0) == pdTRUE) {
         gpServerData->client.writeBufferLength = 0;
         gpServerData->client.tcpInFlight = 0;
+        ResetInflightRing();  // #517-class: keep send-size ring in sync with tcpInFlight on teardown
         CircularBuf_Reset(&gpServerData->client.wCirbuf);
         gpServerData->client.pendingBufferReset = false;
         xSemaphoreGive(gpServerData->client.wMutex);
@@ -444,6 +462,7 @@ void wifi_tcp_server_CloseClientSocket() {
         xSemaphoreTake(gpServerData->client.wMutex, 0) == pdTRUE) {
         gpServerData->client.writeBufferLength = 0;
         gpServerData->client.tcpInFlight = 0;
+        ResetInflightRing();  // #517-class: keep send-size ring in sync with tcpInFlight on teardown
         CircularBuf_Reset(&gpServerData->client.wCirbuf);
         gpServerData->client.pendingBufferReset = false;
         xSemaphoreGive(gpServerData->client.wMutex);
@@ -460,6 +479,7 @@ static inline void DrainPendingBufferReset(void) {
     if (gpServerData->client.pendingBufferReset) {
         gpServerData->client.writeBufferLength = 0;
         gpServerData->client.tcpInFlight = 0;
+        ResetInflightRing();  // #517-class: keep send-size ring in sync with tcpInFlight on teardown
         CircularBuf_Reset(&gpServerData->client.wCirbuf);
         gpServerData->client.pendingBufferReset = false;
     }
