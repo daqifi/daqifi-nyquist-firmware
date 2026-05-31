@@ -2115,6 +2115,9 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// Defined later (near SCPI_MemAutoBalance) — forward-declared for the finder.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
+
 // =====================================================================
 // #520: device-side WiFi throughput finder (fast AIMD link-rate probe)
 // =====================================================================
@@ -2201,6 +2204,27 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
 
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
+
+    // #520: establish the WiFi buffer partition + sample-pool ourselves — the
+    // cfg-poke start below (like SCPI_RunThroughputBench) does NOT, so without
+    // this the pipeline has no buffers and the encoder produces 0 bytes.
+    // Build the channel mapping first (sizes the sample-pool element), then
+    // auto-balance-partition with the actual channel count.
+    {
+        volatile AInRuntimeArray* pRtAin =
+            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+        Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRtAin);
+        const AInChannelMapping* chMap = Streaming_GetChannelMapping();
+        uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
+        MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
+                                     AInSampleList_ElementSize(ec))) {
+            Streaming_SetBenchmarkMode(savedBenchmark);
+            Streaming_SetTestPattern(savedPattern);
+            SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: buffer prepare failed");
+            return SCPI_RES_ERR;
+        }
+    }
 
     uint32_t lastGoodHz = 0;
     uint32_t lastGoodKBps = 0;
@@ -3900,6 +3924,78 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
                 (unsigned)AInSampleList_PoolMaxUsed());
     return SCPI_RES_OK;
+}
+
+// #520: shared streaming-buffer prepare — auto-balance partition of the
+// unified pool + DMA coherent-pool re-alloc + sample-pool init.  Mirrors the
+// setup SCPI_StartStreaming/SCPI_MemAutoBalance do; factored out so the WiFi
+// throughput finder can establish a valid partition standalone.  Without this,
+// the finder's (and SCPI_RunThroughputBench's) cfg-poke start path leaves the
+// pipeline with no WiFi/encoder buffers, so the encoder produces 0 bytes
+// (root cause found on HW 2026-05-31).  poolCount/sampleElemSize: 0/0 = generic
+// 16ch default; or the real values after Streaming_BuildChannelMapping.
+// Returns false on partition/quiesce failure (caller pushes the SCPI error).
+// NOTE: duplicates SCPI_MemAutoBalance's body for now — DRY once verified.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
+    uint32_t usbSize, wifiSize, sdCircSize;
+    uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
+    Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
+                                 &sdDmaSize, &usbDmaSize, &wifiDmaSize, &encSize);
+
+    UsbCdcData_t* pUsb = UsbCdc_GetSettings();
+    TickType_t t = xTaskGetTickCount();
+    while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
+        vTaskDelay(1);
+    }
+
+    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
+                                  sdCircSize, poolCount, sampleElemSize);
+
+    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
+    uint32_t usbLen, wifiLen, encLen, sdCircLen;
+    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
+    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
+    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
+    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
+        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
+              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
+        return false;
+    }
+    UsbCdc_SetWriteBuffer(usbBuf, usbLen);
+    wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+    Streaming_SetEncoderBuffer(encBuf, encLen);
+    sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
+
+    sdDmaSize &= ~(511U);
+    if (sdDmaSize < 512) sdDmaSize = 512;
+    sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+    usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+    wifiDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+    uint32_t totalDma = sdDmaSize + usbDmaSize + wifiDmaSize + 3 * COHERENT_POOL_ALIGNMENT;
+    if (totalDma > CoherentPool_TotalSize()) {
+        sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
+        usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
+        wifiDmaSize = WIFI_DMA_MIN;
+    }
+    if (!SCPI_QuiesceAndResetCoherentPool()) {
+        return false;
+    }
+    uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
+    if (sdDmaBuf == NULL) { LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize); }
+    else { sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize); }
+    uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
+    if (usbDmaBuf == NULL) { LOG_E("CoherentPool alloc failed: USB_write (%u)", (unsigned)usbDmaSize); }
+    else { UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize); }
+    uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
+    if (wifiDmaBuf == NULL) { LOG_E("CoherentPool alloc failed: WiFi_SPI (%u)", (unsigned)wifiDmaSize); }
+    else { WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize); }
+
+    void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
+    StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
+    AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
+    return true;
 }
 
 static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
