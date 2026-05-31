@@ -2239,6 +2239,16 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
         // Secondary trip: actual steady-state loss.
         bool lossy = (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
 
+        // #520 tuning instrumentation (SCPI INFO): per-step occupancy + verdict,
+        // retrievable via SYST:LOG?.  Lets us calibrate FIND_TREND_BYTES/dwell
+        // against the known escalator ceilings without external probes.
+        LOG_I("WIFI:FIND %u Hz: run=%u samp=%u bytes=%u occ %u->%u wst=%u wlp=%u -> %s",
+              (unsigned)freq, (unsigned)cfg->Running,
+              (unsigned)s.totalSamplesStreamed, (unsigned)s.totalBytesStreamed,
+              (unsigned)occStart, (unsigned)occEnd,
+              (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
+              (!filling && !lossy) ? "OK" : (filling ? "FILLING" : "LOSSY"));
+
         if (!filling && !lossy) {
             lastGoodHz = freq;
             uint32_t dwellMs = FIND_SETTLE_MS + FIND_DWELL_MS;
