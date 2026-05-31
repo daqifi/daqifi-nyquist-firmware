@@ -2232,6 +2232,14 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     bool saturated = false;
     bool confirmTrip = false;   // debounce: require 2 consecutive trips to lock
 
+    // WiFi ring capacity for the high-watermark trip (fixed after the partition
+    // above).  Needed because the growth-only signal is blind to a ring that
+    // sits PEGGED at full — a small ring saturates by pegging (occEnd≈occStart
+    // near capacity, zero growth) rather than visibly accumulating like a large
+    // one.  Watermarking against capacity catches both (#520 HW 2026-05-31).
+    uint8_t* wRingBuf = NULL; uint32_t wRingCap = 0;
+    StreamingBufferPool_GetWifi(&wRingBuf, &wRingCap);
+
     while (freq <= hardMax) {
         uint32_t periodCycles = (clkFreq + freq - 1) / freq;
         if (periodCycles < 2) periodCycles = 2;
@@ -2259,18 +2267,22 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
         cfg->IsEnabled = false;
         Streaming_UpdateState();
 
-        // Primary trip: ring occupancy trending up (backlog building, pre-drop).
-        bool filling = (occEnd > occStart + FIND_TREND_BYTES);
+        // Primary trip: the WiFi ring is backing up (pre-drop).  Two ways it
+        // manifests, depending on ring size:
+        //   - GROWTH: a large ring visibly accumulates (occEnd >> occStart).
+        //   - HIGH-WATERMARK: a small ring saturates by sitting PEGGED near
+        //     full (occEnd ≈ occStart at ~100% — zero growth).  The watermark
+        //     (>75% of capacity) catches that; it scales to any buffer size.
+        bool filling = (occEnd > occStart + FIND_TREND_BYTES) ||
+                       (wRingCap > 0 && occEnd > (wRingCap - (wRingCap >> 2)));
         // Secondary trip: actual steady-state loss.
         bool lossy = (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
 
-        // #520 tuning instrumentation (SCPI INFO): per-step occupancy + verdict,
-        // retrievable via SYST:LOG?.  Lets us calibrate FIND_TREND_BYTES/dwell
-        // against the known escalator ceilings without external probes.
-        LOG_I("WIFI:FIND %u Hz: run=%u samp=%u bytes=%u occ %u->%u wst=%u wlp=%u -> %s",
+        // #520 tuning instrumentation (SCPI INFO), retrievable via SYST:LOG?.
+        LOG_I("WIFI:FIND %u Hz: run=%u samp=%u bytes=%u occ %u->%u/%u wst=%u wlp=%u -> %s",
               (unsigned)freq, (unsigned)cfg->Running,
               (unsigned)s.totalSamplesStreamed, (unsigned)s.totalBytesStreamed,
-              (unsigned)occStart, (unsigned)occEnd,
+              (unsigned)occStart, (unsigned)occEnd, (unsigned)wRingCap,
               (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
               (!filling && !lossy) ? "OK" : (filling ? "FILLING" : "LOSSY"));
 
