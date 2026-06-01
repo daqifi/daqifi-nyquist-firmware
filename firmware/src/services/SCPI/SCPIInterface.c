@@ -2036,6 +2036,22 @@ static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
     }
 }
 
+// StreamingRuntimeConfig.Frequency is uint64_t — non-atomic on PIC32MZ, so the
+// benchmark/finder paths read/write it through a critical section per the
+// project atomicity rule (CLAUDE.md / Compliance ID 8).  These run in SCPI task
+// context (one-shot commands, not a hot ISR path) so the latency cost is nil.
+static inline uint64_t StreamFreq_Get(const StreamingRuntimeConfig* c) {
+    taskENTER_CRITICAL();
+    uint64_t f = c->Frequency;
+    taskEXIT_CRITICAL();
+    return f;
+}
+static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
+    taskENTER_CRITICAL();
+    c->Frequency = f;
+    taskEXIT_CRITICAL();
+}
+
 static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
@@ -2069,7 +2085,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // the WiFi finder).
     uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
-    uint64_t savedFrequency = pStreamCfg->Frequency;   // Frequency is uint64_t — no truncation
+    uint64_t savedFrequency = StreamFreq_Get(pStreamCfg);   // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = pStreamCfg->ClockPeriod;
 
     // Enable benchmark mode + test pattern
@@ -2100,7 +2116,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
                                      AInSampleList_ElementSize(ec))) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
-            pStreamCfg->Frequency = savedFrequency;     // no-op here (poke is later), kept for consistency
+            StreamFreq_Set(pStreamCfg, savedFrequency);     // no-op here (poke is later), kept for consistency
             pStreamCfg->ClockPeriod = savedClockPeriod;
             RestoreSdMode(savedSdMode);
             SCPI_ExecutionError(context, "SYST:STR:THR: buffer prepare failed");
@@ -2115,7 +2131,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     uint32_t periodCycles = (clkFreq + freq - 1) / freq;
     if (periodCycles < 2) periodCycles = 2;
     pStreamCfg->ClockPeriod = periodCycles - 1;
-    pStreamCfg->Frequency = freq;
+    StreamFreq_Set(pStreamCfg, freq);
     pStreamCfg->IsEnabled = true;
     Streaming_UpdateState();
 
@@ -2125,7 +2141,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         pStreamCfg->IsEnabled = false;
         Streaming_SetBenchmarkMode(savedBenchmark);
         Streaming_SetTestPattern(savedPattern);
-        pStreamCfg->Frequency = savedFrequency;
+        StreamFreq_Set(pStreamCfg, savedFrequency);
         pStreamCfg->ClockPeriod = savedClockPeriod;
         RestoreSdMode(savedSdMode);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -2142,7 +2158,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // Restore previous state
     Streaming_SetBenchmarkMode(savedBenchmark);
     Streaming_SetTestPattern(savedPattern);
-    pStreamCfg->Frequency = savedFrequency;
+    StreamFreq_Set(pStreamCfg, savedFrequency);
     pStreamCfg->ClockPeriod = savedClockPeriod;
     RestoreSdMode(savedSdMode);
 
@@ -2245,7 +2261,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
 
     Streaming_ClearStats();
     cfg->ClockPeriod = periodCycles - 1;
-    cfg->Frequency = freq;
+    StreamFreq_Set(cfg, freq);
     cfg->IsEnabled = true;
     Streaming_UpdateState();
     if (!cfg->Running) {
@@ -2372,7 +2388,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     // rate as the next stream's rate (Qodo #521 correctness bug).
     uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
-    uint64_t savedFrequency = cfg->Frequency;      // Frequency is uint64_t — no truncation
+    uint64_t savedFrequency = StreamFreq_Get(cfg);      // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = cfg->ClockPeriod;
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);   // bypass cap to probe the link
     Streaming_SetTestPattern(3);                   // fullscale: worst-case PB size
@@ -2482,7 +2498,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     // subsequent no-arg SYST:STR:START (Qodo #521).
     Streaming_SetBenchmarkMode(savedBenchmark);
     Streaming_SetTestPattern(savedPattern);
-    cfg->Frequency = savedFrequency;
+    StreamFreq_Set(cfg, savedFrequency);
     cfg->ClockPeriod = savedClockPeriod;
     RestoreSdMode(savedSdMode);
 
