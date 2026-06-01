@@ -2020,18 +2020,17 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
 // (it may be streaming TO the card), but the WiFi finder and THR benchmark do
 // NOT target SD — so they must save the user's prior SD mode before the prepare
 // and restore it after, or running either command would silently disable SD
-// logging.  SaveSdMode() returns -1 when SD settings are unavailable (no-op
-// restore).
+// logging.  (BoardRunTimeConfig_Get never returns NULL — it indexes a static
+// array; no NULL check per the project invariant.)
 static int SaveSdMode(void) {
     sd_card_manager_settings_t* pSd =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    return (pSd != NULL) ? (int)pSd->mode : -1;
+    return (int)pSd->mode;
 }
 static void RestoreSdMode(int savedMode) {
-    if (savedMode < 0) return;
     sd_card_manager_settings_t* pSd =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    if (pSd != NULL && pSd->mode != (sd_card_manager_mode_t)savedMode) {
+    if (pSd->mode != (sd_card_manager_mode_t)savedMode) {
         pSd->mode = (sd_card_manager_mode_t)savedMode;
         sd_card_manager_UpdateSettings(pSd);
     }
@@ -2063,9 +2062,15 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // Save previous state to restore after benchmark
+    // Save previous state to restore after benchmark.  Frequency/ClockPeriod
+    // are saved too: this command pokes them below and a later no-arg
+    // SYST:STR:START reuses cfg->Frequency, so leaving the bench rate behind
+    // would silently become the next stream's rate (Qodo #521, same class as
+    // the WiFi finder).
     uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
+    uint32_t savedFrequency = pStreamCfg->Frequency;
+    uint32_t savedClockPeriod = pStreamCfg->ClockPeriod;
 
     // Enable benchmark mode + test pattern
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);
@@ -2118,6 +2123,8 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         pStreamCfg->IsEnabled = false;
         Streaming_SetBenchmarkMode(savedBenchmark);
         Streaming_SetTestPattern(savedPattern);
+        pStreamCfg->Frequency = savedFrequency;
+        pStreamCfg->ClockPeriod = savedClockPeriod;
         RestoreSdMode(savedSdMode);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
@@ -2133,6 +2140,8 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // Restore previous state
     Streaming_SetBenchmarkMode(savedBenchmark);
     Streaming_SetTestPattern(savedPattern);
+    pStreamCfg->Frequency = savedFrequency;
+    pStreamCfg->ClockPeriod = savedClockPeriod;
     RestoreSdMode(savedSdMode);
 
     // Collect and report results
@@ -2344,8 +2353,14 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     if (freq > hardMax) freq = hardMax;
 
     // Save state to restore on exit (mirrors SCPI_RunThroughputBench).
+    // ALSO save Frequency/ClockPeriod: FindMeasureStep pokes them every step,
+    // and a later no-argument SYST:STR:START reuses cfg->Frequency — so without
+    // restoring, the finder (a query!) would silently leave the last probed
+    // rate as the next stream's rate (Qodo #521 correctness bug).
     uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
+    uint32_t savedFrequency = cfg->Frequency;
+    uint32_t savedClockPeriod = cfg->ClockPeriod;
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);   // bypass cap to probe the link
     Streaming_SetTestPattern(3);                   // fullscale: worst-case PB size
 
@@ -2448,9 +2463,14 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
         }
     }
 
-    // Restore prior streaming config + SD mode.
+    // Restore prior streaming config + SD mode.  cfg->IsEnabled is already
+    // false here (FindMeasureStep stops streaming each step); Frequency/
+    // ClockPeriod are restored so the finder leaves no side effect on a
+    // subsequent no-arg SYST:STR:START (Qodo #521).
     Streaming_SetBenchmarkMode(savedBenchmark);
     Streaming_SetTestPattern(savedPattern);
+    cfg->Frequency = savedFrequency;
+    cfg->ClockPeriod = savedClockPeriod;
     RestoreSdMode(savedSdMode);
 
     const char* reason;
