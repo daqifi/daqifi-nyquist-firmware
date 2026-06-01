@@ -2069,7 +2069,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // the WiFi finder).
     uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
-    uint32_t savedFrequency = pStreamCfg->Frequency;
+    uint64_t savedFrequency = pStreamCfg->Frequency;   // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = pStreamCfg->ClockPeriod;
 
     // Enable benchmark mode + test pattern
@@ -2100,6 +2100,8 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
                                      AInSampleList_ElementSize(ec))) {
             Streaming_SetBenchmarkMode(savedBenchmark);
             Streaming_SetTestPattern(savedPattern);
+            pStreamCfg->Frequency = savedFrequency;     // no-op here (poke is later), kept for consistency
+            pStreamCfg->ClockPeriod = savedClockPeriod;
             RestoreSdMode(savedSdMode);
             SCPI_ExecutionError(context, "SYST:STR:THR: buffer prepare failed");
             return SCPI_RES_ERR;
@@ -2229,6 +2231,8 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
 // observe the sample-pool high-water mark (the last-to-fill buffer — see header),
 // tear down cleanly, and return whether the buffers SATURATED at this rate.
+// Returns false on start failure (NOT "saturated") — that case is signaled via
+// *outStartFailed, which callers must check first.
 // Outputs the measured wire KB/s.  *outStartFailed is set if the stream never
 // went Running (caller aborts).  Factored (#520, 2026-05-31) so the coarse AIMD
 // climb and the binary-search refinement share one code path.  wRingCap is used
@@ -2250,7 +2254,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
         cfg->IsEnabled = false;
         Streaming_UpdateState();
         *outStartFailed = true; *outKBps = 0;
-        return true;
+        return false;   // not "saturated" — start failure is signaled via *outStartFailed
     }
 
     // Prime to steady state, THEN zero the pool high-water mark so the dwell's
@@ -2288,8 +2292,10 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
                     ((uint64_t)poolPeak * 100ULL >= (uint64_t)poolCap * FIND_BUF_FULL_PCT);
     // Hard secondary: actual loss — the pool overflowed (PoolExhausted /
     // QueueOverflow = QueueDropped, the single drop point post-fix) or a
-    // transport dropped.  Unambiguously over the ceiling.
-    bool lossy = (s.queueDroppedSamples > 0) ||
+    // transport dropped.  Use the grace-gated *Steady* counters so a startup
+    // transient during settle doesn't false-trip a low rate (Qodo #521 — match
+    // the grace semantics already used for wifiDroppedBytesSteady).
+    bool lossy = (s.queueDroppedSamplesSteady > 0) ||
                  (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
     bool tripped = poolFull || lossy;
 
@@ -2366,7 +2372,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     // rate as the next stream's rate (Qodo #521 correctness bug).
     uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
-    uint32_t savedFrequency = cfg->Frequency;
+    uint64_t savedFrequency = cfg->Frequency;      // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = cfg->ClockPeriod;
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);   // bypass cap to probe the link
     Streaming_SetTestPattern(3);                   // fullscale: worst-case PB size
