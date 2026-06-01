@@ -2324,16 +2324,20 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     uint16_t type1Count = 0, totalEnabled = 0;
     bool hasAd7609 = false;
     Streaming_CountActiveChannels(&type1Count, &totalEnabled, &hasAd7609);
+    (void)type1Count; (void)hasAd7609;   // raw finder no longer derives an ADC cap
     if (totalEnabled == 0) {
         SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: no ADC channels enabled");
         return SCPI_RES_ERR;
     }
 
-    // Cap the climb at the ADC-safe rate: the recommendation must be usable in
-    // normal (non-benchmark) mode, where Streaming_ComputeMaxFreq applies.
-    uint32_t adcCap = Streaming_ComputeMaxFreq(type1Count, totalEnabled);
+    // RAW-throughput finder: the climb is bounded only by a sane backstop, NOT
+    // by the ADC-accuracy caps (T2 1000 Hz muxed-scan limit, ISR ceiling, etc.).
+    // Those caps are a separate ADC-sampling-accuracy layer — the finder's job
+    // is to measure what the WiFi transport can actually push for this packet
+    // size.  The usable streaming rate is set downstream from the finder result
+    // + a subsequent soak, not clamped here (a finder constrained by the caps
+    // would just re-measure the caps).
     uint32_t hardMax = (maxArg > 0) ? (uint32_t)maxArg : FIND_DEFAULT_MAX_HZ;
-    if (hardMax > adcCap) hardMax = adcCap;
 
     uint32_t freq = (startArg > 0) ? (uint32_t)startArg : FIND_DEFAULT_START_HZ;
     if (freq < 1) freq = 1;
@@ -2453,8 +2457,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     if (startFailed)            reason = "START_FAIL";
     else if (lastGoodHz == 0)   reason = "NO_LINK";       // nothing sustainable, even the start freq
     else if (saturated)         reason = "LINK_SATURATED";
-    else if (lastGoodHz >= adcCap) reason = "HIT_ADC_CAP";
-    else                        reason = "HIT_MAX";
+    else                        reason = "HIT_MAX";       // climbed to the backstop w/o saturating
 
     uint32_t recommendedHz = (lastGoodHz > 0)
         ? (uint32_t)((uint64_t)lastGoodHz * FIND_BACKOFF_NUM / FIND_BACKOFF_DEN) : 0;
