@@ -2244,7 +2244,14 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     cfg->Frequency = freq;
     cfg->IsEnabled = true;
     Streaming_UpdateState();
-    if (!cfg->Running) { *outStartFailed = true; *outKBps = 0; return true; }
+    if (!cfg->Running) {
+        // Clean teardown so the start-fail path leaves IsEnabled=false like the
+        // normal path (the finder's exit assumes streaming is stopped) (Qodo #521).
+        cfg->IsEnabled = false;
+        Streaming_UpdateState();
+        *outStartFailed = true; *outKBps = 0;
+        return true;
+    }
 
     // Prime to steady state, THEN zero the pool high-water mark so the dwell's
     // peak reflects this rate (not the priming transient).  Observe across the
