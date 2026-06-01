@@ -4066,10 +4066,9 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
               (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
         return false;
     }
-    UsbCdc_SetWriteBuffer(usbBuf, usbLen);
-    wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
-    Streaming_SetEncoderBuffer(encBuf, encLen);
-    sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
+    // NOTE: buffer-pointer Set calls are deferred to the END (after the coherent
+    // DMA allocs also succeed) so a later alloc failure can't leave a partially
+    // applied configuration — all-or-nothing (Qodo #521 transactional setup).
 
     sdDmaSize &= ~(511U);
     if (sdDmaSize < 512) sdDmaSize = 512;
@@ -4102,6 +4101,12 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
               (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize);
         return false;
     }
+    // All allocations succeeded — now apply every buffer pointer together
+    // (circular pool + coherent DMA) so the config is all-or-nothing.
+    UsbCdc_SetWriteBuffer(usbBuf, usbLen);
+    wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+    Streaming_SetEncoderBuffer(encBuf, encLen);
+    sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
     sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
     UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
     WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
