@@ -2022,16 +2022,16 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
 // and restore it after, or running either command would silently disable SD
 // logging.  (BoardRunTimeConfig_Get never returns NULL — it indexes a static
 // array; no NULL check per the project invariant.)
-static int SaveSdMode(void) {
+static sd_card_manager_mode_t SaveSdMode(void) {
     sd_card_manager_settings_t* pSd =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    return (int)pSd->mode;
+    return pSd->mode;
 }
-static void RestoreSdMode(int savedMode) {
+static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
     sd_card_manager_settings_t* pSd =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    if (pSd->mode != (sd_card_manager_mode_t)savedMode) {
-        pSd->mode = (sd_card_manager_mode_t)savedMode;
+    if (pSd->mode != savedMode) {
+        pSd->mode = savedMode;
         sd_card_manager_UpdateSettings(pSd);
     }
 }
@@ -2082,7 +2082,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 
     // Save SD mode: PrepareStreamingBuffers quiesces SD (WRITE->NONE) and THR
     // doesn't stream to SD, so restore it on every exit below (Qodo #521).
-    int savedSdMode = SaveSdMode();
+    sd_card_manager_mode_t savedSdMode = SaveSdMode();
 
     // Establish the buffer partition + sample pool that the cfg-poke start
     // below does NOT do on its own (this was a latent bug — THR relied on a
@@ -2382,7 +2382,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
 
     // Save SD mode: PrepareStreamingBuffers quiesces SD (WRITE->NONE) and the
     // finder doesn't stream to SD, so restore it on every exit (Qodo #521).
-    int savedSdMode = SaveSdMode();
+    sd_card_manager_mode_t savedSdMode = SaveSdMode();
 
     // #520: establish the WiFi buffer partition + sample-pool ourselves — the
     // cfg-poke start below (like SCPI_RunThroughputBench) does NOT, so without
