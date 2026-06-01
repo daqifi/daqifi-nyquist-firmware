@@ -4054,6 +4054,12 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
     usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
     wifiDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+    // Floor each DMA size to its minimum AFTER the alignment mask so a small
+    // computed size can't round down to 0 and produce a zero-length DMA buffer
+    // (Qodo #521 — defensive; current callers never compute sizes this small).
+    if (sdDmaSize   < SD_CARD_MANAGER_MIN_WBUFFER_SIZE) sdDmaSize   = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
+    if (usbDmaSize  < USBCDC_DMA_WBUFFER_MIN)           usbDmaSize  = USBCDC_DMA_WBUFFER_MIN;
+    if (wifiDmaSize < WIFI_DMA_MIN)                     wifiDmaSize = WIFI_DMA_MIN;
     uint32_t totalDma = sdDmaSize + usbDmaSize + wifiDmaSize + 3 * COHERENT_POOL_ALIGNMENT;
     if (totalDma > CoherentPool_TotalSize()) {
         sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
@@ -4063,15 +4069,20 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     if (!SCPI_QuiesceAndResetCoherentPool()) {
         return false;
     }
-    uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-    if (sdDmaBuf == NULL) { LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize); }
-    else { sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize); }
+    // Allocate all three coherent DMA buffers; ABORT if any fails rather than
+    // continuing with a stale/unset buffer pointer (Qodo #521).  Unreachable in
+    // normal operation (sizes are clamped to fit the pool above).
+    uint8_t* sdDmaBuf  = CoherentPool_Alloc("SD_write", sdDmaSize);
     uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-    if (usbDmaBuf == NULL) { LOG_E("CoherentPool alloc failed: USB_write (%u)", (unsigned)usbDmaSize); }
-    else { UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize); }
     uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-    if (wifiDmaBuf == NULL) { LOG_E("CoherentPool alloc failed: WiFi_SPI (%u)", (unsigned)wifiDmaSize); }
-    else { WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize); }
+    if (sdDmaBuf == NULL || usbDmaBuf == NULL || wifiDmaBuf == NULL) {
+        LOG_E("PrepareStreamingBuffers: coherent alloc failed SD=%u USB=%u WIFI=%u",
+              (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize);
+        return false;
+    }
+    sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+    UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
+    WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
 
     void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
     StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
