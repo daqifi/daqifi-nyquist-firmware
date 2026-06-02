@@ -2203,7 +2203,13 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 // =====================================================================
 //
 // SYSTem:STReam:WIFI:FINd? [startHz][,maxHz]
-//   -> <recommendedHz>,<measuredKBps>,<reason>
+//   -> <recommendedHz>,<recommendedKBps>,<reason>,<ceilingHz>,<ceilingKBps>
+//   recommendedHz/KBps = soak-confirmed clean rate, clamped to the bench wire
+//                        ceiling (WIFI_BENCH_CEILING_KBPS) — the rate to stream.
+//   reason             = START_FAIL | NO_LINK | NO_CLEAN_SOAK | BENCH_CAP |
+//                        LINK_SATURATED | HIT_MAX
+//   ceilingHz/KBps     = raw arc/refine ceiling (the pre-soak, pre-clamp
+//                        overestimate) — kept unclamped for diagnostics/testing.
 //
 // Climbs the streaming rate from a conservative start and locks the ceiling
 // only when the buffer that actually fills is essentially FULL (high-water mark
@@ -2243,6 +2249,26 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 #define FIND_BACKOFF_NUM        9u      // recommended = lastGood * 9/10 (-10% margin)
 #define FIND_BACKOFF_DEN        10u
 #define FIND_RESOLUTION_HZ      500u    // binary-refine stops when bracket <= this
+// Soak-confirm stage (#520, 2026-06-01): the 3 s arc dwell OVERESTIMATES — a rate
+// clean for 3 s can drop over a longer window, and the WiFi ceiling is a bimodal
+// CLIFF (a rate is 0% one run, catastrophic the next).  So after the −10% backoff,
+// SOAK 20 s and walk the rate down −2% per lossy soak until a soak is fully clean.
+// This is the acceptance gate that corrects the overestimate.
+#define FIND_SOAK_MS            60000u  // soak-confirm dwell — 60s (20s overestimated:
+                                        // 1481Hz passed a 20s soak but lost 4.8% over 60s,
+                                        // 2026-06-01). Long enough to expose slow/bimodal loss.
+#define FIND_SOAK_START_NUM     8u      // start soak at ceiling × 0.8 (−20%). The SOAK is the
+#define FIND_SOAK_START_DEN     10u     // correctness gate, not this factor — a fixed derate
+                                        // can't cover the link's drift (ceiling swung 1000↔1750
+                                        // this session) anyway; that's runtime AIMD's job. So
+                                        // this is just modest margin + fast soak convergence.
+                                        // 0.7 was needlessly conservative (962 vs a clean 1400).
+#define FIND_SOAK_CLEAN_STREAK  2u      // require N consecutive clean 60s soaks at the SAME rate
+                                        // before locking — one clean soak can be a bimodal fluke.
+#define FIND_SOAK_STEP_NUM      49u     // −2% walk-down per lossy soak (×49/50); resets the streak
+#define FIND_SOAK_STEP_DEN      50u
+#define FIND_SOAK_MAX_ITERS     12u     // bound total soaks (≤12 × 60s) so a flaky link can't spin
+#define FIND_SOAK_MIN_HZ        100u    // absolute floor — below this, report NO_CLEAN_SOAK
 
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
 // observe the sample-pool high-water mark (the last-to-fill buffer — see header),
@@ -2254,7 +2280,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 // climb and the binary-search refinement share one code path.  wRingCap is used
 // only for the diagnostic log line.
 static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
-                            uint32_t wRingCap, uint32_t freq,
+                            uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed) {
     uint32_t periodCycles = (clkFreq + freq - 1) / freq;
     if (periodCycles < 2) periodCycles = 2;
@@ -2280,7 +2306,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     AInSampleList_PoolResetMaxUsed();
     uint32_t occMax = 0;   // WiFi-ring high-water mark across the dwell
     for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
-        vTaskDelay(pdMS_TO_TICKS(FIND_DWELL_MS / FIND_OCC_SAMPLES));
+        vTaskDelay(pdMS_TO_TICKS(obsMs / FIND_OCC_SAMPLES));
         uint32_t occ = wifi_tcp_server_GetCircularBufferAvailable();
         if (occ > occMax) occMax = occ;
     }
@@ -2315,7 +2341,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
                  (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
     bool tripped = poolFull || lossy;
 
-    uint32_t dwellMs = FIND_SETTLE_MS + FIND_DWELL_MS;
+    uint32_t dwellMs = FIND_SETTLE_MS + obsMs;
     *outKBps = (dwellMs > 0)
         ? (uint32_t)((s.totalBytesStreamed * 1000ULL) / dwellMs / 1024ULL) : 0;
 
@@ -2438,7 +2464,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     while (freq <= hardMax) {
         uint32_t kbps = 0;
         bool sf = false;
-        bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, freq, &kbps, &sf);
+        bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
         if (sf) { startFailed = true; break; }
 
         if (!sat) {
@@ -2479,7 +2505,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
             uint32_t mid = lo + (hi - lo) / 2;
             uint32_t kbps = 0;
             bool sf = false;
-            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, mid, &kbps, &sf);
+            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf);
             if (sf) break;          // unexpected start failure — keep coarse lastGood
             if (sat) {
                 hi = mid;
@@ -2487,6 +2513,41 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
                 lo = mid;
                 lastGoodHz = mid;
                 lastGoodKBps = kbps;
+            }
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+        }
+    }
+
+    // ---- Soak-confirm stage (#520, 2026-06-01) ----------------------------
+    // The arc/refine above use a 3 s dwell, which OVERESTIMATES the sustainable
+    // rate (clean-for-3s != clean-for-20s; the WiFi ceiling is a bimodal cliff).
+    // Start at the −10% backoff and SOAK 20 s; on any loss (pool-full or drops)
+    // walk down −2% and re-soak; lock the first rate that soaks fully clean.
+    // Runs on the SAME persistent stream session (never reconnect mid-find).
+    uint32_t recommendedHz = 0;
+    uint32_t recommendedKBps = 0;
+    bool soakClean = false;
+    if (!startFailed && lastGoodHz > 0) {
+        uint32_t cand = (uint32_t)((uint64_t)lastGoodHz * FIND_SOAK_START_NUM / FIND_SOAK_START_DEN);
+        uint32_t streak = 0;   // consecutive clean 60 s soaks at the current cand
+        for (uint32_t it = 0; it < FIND_SOAK_MAX_ITERS && cand >= FIND_SOAK_MIN_HZ; it++) {
+            uint32_t kbps = 0; bool sf = false;
+            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
+            if (sf) { startFailed = true; break; }
+            if (!sat) {                       // a clean 60 s soak
+                streak++;
+                recommendedKBps = kbps;       // track the clean rate's wire rate
+                LOG_I("WIFI:FIND soak %u Hz CLEAN (%u/%u)",
+                      (unsigned)cand, (unsigned)streak, (unsigned)FIND_SOAK_CLEAN_STREAK);
+                if (streak >= FIND_SOAK_CLEAN_STREAK) {   // N in a row → lock
+                    recommendedHz = cand; soakClean = true;
+                    break;
+                }
+                // else re-soak the SAME rate to build the streak
+            } else {                          // any loss → reset streak, walk down −2%
+                streak = 0;
+                LOG_I("WIFI:FIND soak %u Hz LOSSY -> -2%% (streak reset)", (unsigned)cand);
+                cand = (uint32_t)((uint64_t)cand * FIND_SOAK_STEP_NUM / FIND_SOAK_STEP_DEN);
             }
             vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
         }
@@ -2502,17 +2563,43 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     cfg->ClockPeriod = savedClockPeriod;
     RestoreSdMode(savedSdMode);
 
+    // ---- Bench-fitted WiFi cap (#522) -------------------------------------
+    // Clamp the soak-confirmed recommendation to the bench-fitted WiFi cap from
+    // Streaming_ComputeMaxFreqForConfig() (which includes the per-format WiFi
+    // wire-rate term for the currently configured interface/format/channels).
+    // The live soak measures THIS environment; the equation is the empirical
+    // hard ceiling we never recommend above — this also hardens against a
+    // transient-high arc spike (the 2026-06-02 overnight's miss mode).  The raw
+    // arc ceiling (lastGoodHz/KBps) is reported unclamped for testing.
+    bool benchClamped = false;
+    if (soakClean && recommendedHz > 0) {
+        uint32_t capHz = Streaming_ComputeMaxFreqForConfig();
+        if (capHz > 0 && recommendedHz > capHz) {
+            uint32_t newKBps = (recommendedHz > 0)
+                ? (uint32_t)((uint64_t)recommendedKBps * capHz / recommendedHz) : 0;
+            LOG_I("WIFI:FIND bench-cap %u -> %u Hz (equation)",
+                  (unsigned)recommendedHz, (unsigned)capHz);
+            recommendedHz = capHz;
+            recommendedKBps = newKBps;
+            benchClamped = true;
+        }
+    }
+
     const char* reason;
     if (startFailed)            reason = "START_FAIL";
-    else if (lastGoodHz == 0)   reason = "NO_LINK";       // nothing sustainable, even the start freq
-    else if (saturated)         reason = "LINK_SATURATED";
-    else                        reason = "HIT_MAX";       // climbed to the backstop w/o saturating
+    else if (lastGoodHz == 0)   reason = "NO_LINK";        // nothing sustainable, even the start freq
+    else if (!soakClean)        reason = "NO_CLEAN_SOAK";  // walked to floor without a clean 20 s — link unstable
+    else if (benchClamped)      reason = "BENCH_CAP";      // soak clean but clamped to bench wire ceiling
+    else if (saturated)         reason = "LINK_SATURATED"; // confirmed ceiling + clean soak
+    else                        reason = "HIT_MAX";        // climbed to backstop w/o saturating
 
-    uint32_t recommendedHz = (lastGoodHz > 0)
-        ? (uint32_t)((uint64_t)lastGoodHz * FIND_BACKOFF_NUM / FIND_BACKOFF_DEN) : 0;
-
-    scpi_printf(context, "%u,%u,%s\r\n",
-                (unsigned)recommendedHz, (unsigned)lastGoodKBps, reason);
+    // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
+    //   recommendedHz/KBps = soak-confirmed clean rate + its wire rate (0 if none)
+    //   ceilingHz/KBps      = raw arc/refine ceiling (the pre-soak overestimate,
+    //                         kept for diagnostics so the soak correction is visible)
+    scpi_printf(context, "%u,%u,%s,%u,%u\r\n",
+                (unsigned)recommendedHz, (unsigned)recommendedKBps,
+                reason, (unsigned)lastGoodHz, (unsigned)lastGoodKBps);
     return SCPI_RES_OK;
 }
 
@@ -3186,8 +3273,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 }
             }
 
-            uint32_t maxFreq = Streaming_ComputeMaxFreq(
-                activeType1ChannelCount, totalEnabledPublicChannels);
+            // Includes the WiFi wire-rate term when ActiveInterface==WiFi
+            // (#522) on top of the ADC/ISR/tick constraints.
+            uint32_t maxFreq = Streaming_ComputeMaxFreqForConfig();
             if (freq > (int32_t)maxFreq) {
                 LOG_I("Frequency capped: %d Hz -> %u Hz (%u ch, %u type1)",
                       (int)freq, (unsigned)maxFreq,

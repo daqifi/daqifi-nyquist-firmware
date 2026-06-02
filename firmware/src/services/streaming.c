@@ -420,6 +420,26 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
     if (out_hasAD7609   != NULL) *out_hasAD7609   = has7609;
 }
 
+uint32_t Streaming_ComputeMaxFreqForConfig(void) {
+    uint16_t type1 = 0, total = 0;
+    Streaming_CountActiveChannels(&type1, &total, NULL);
+
+    // Mirror Streaming_ComputeMaxFreq's behavior for 0 channels (returns
+    // ISR_MAX, not 0) so the channel-enable recompute path doesn't cap to 0
+    // when the last channel is disabled.
+    uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
+
+    /* Add the WiFi wire-rate term only when the active streaming interface is
+     * WiFi.  BoardRunTimeConfig_Get never returns NULL (CLAUDE.md). */
+    StreamingRuntimeConfig* sc =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (sc->ActiveInterface == StreamingInterface_WiFi) {
+        uint32_t wifiMax = Streaming_WifiMaxFreq((uint32_t)sc->Encoding, total);
+        if (wifiMax < maxFreq) maxFreq = wifiMax;
+    }
+    return maxFreq;
+}
+
 /**
  * @brief Deferred interrupt handler for sample collection.
  *

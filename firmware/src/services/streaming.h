@@ -55,6 +55,29 @@ extern "C" {
 #define STREAMING_TICK_BUDGET       110000
 #define STREAMING_TICK_OVERHEAD     6
 
+// WiFi wire-rate constraint (#522/#520) — a 4th term in the cap model that only
+// binds when the active streaming interface is WiFi.  The WINC1500 firmware path
+// sustains a finite encoded BYTES/s on the air; expressed here in the same
+// per-channel budget form as the tick budget above (Hz falls as channels add
+// bytes/sample).  Each encoding gets its OWN budget AND overhead: PB packs
+// tighter than CSV, so its per-channel byte cost is small and the fixed framing
+// overhead dominates — i.e. a much larger effective OVERHEAD term (12 vs 2).
+// A single shared overhead (or a flat byte-rate) mispredicts SPS at low channel
+// counts, which is exactly the failure mode this per-format form avoids.  For
+// low channel counts the ADC terms above often bind first, making this a no-op.
+//
+// FITTED to the WiFi ceiling sweep (Tesla AP, NQ1, 2026-06-02, n=1, 10–12 s
+// dwells × 1/3/5/8/16 ch × CSV/PB).  Cap = measured raw ceiling × 0.80 (the
+// safe-rate derate); constants chosen so every predicted cap is ≤ the measured
+// safe rate for that config (conservative).  Anchor: 16ch CSV predicts 1000 Hz,
+// matching the independently 60 s-validated safe rate.  Refine with more trials
+// / APs / boards as collected (issue #520).  JSON is treated as CSV (slightly
+// optimistic — JSON is more verbose; refine if JSON-over-WiFi matters).
+#define STREAMING_WIFI_CSV_BUDGET    18000u  // CSV: BUDGET/(OVH+ch); 16ch→1000 Hz
+#define STREAMING_WIFI_CSV_OVERHEAD  2u
+#define STREAMING_WIFI_PB_BUDGET    103000u  // PB: tighter packing → higher ceiling
+#define STREAMING_WIFI_PB_OVERHEAD   12u     // larger fixed-framing fraction
+
 // Type 2 (shared MODULE7 mux) hard cap.  T2 channels are scanned via the
 // analog multiplexer sequentially; the firmware applies
 // ChannelScanFreqDiv = freq/1000 in SCPI_StartStreaming so the muxed scan
@@ -89,6 +112,41 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
     if (maxFreq == 0) maxFreq = 1;
     return maxFreq;
 }
+
+/**
+ * WiFi wire-rate cap (Hz) for a given encoding + channel count.  Pure function
+ * of the fitted per-format budget; only meaningful when the active interface is
+ * WiFi (callers gate on that).  Returns STREAMING_ISR_MAX_HZ for 0 channels
+ * (no WiFi constraint to apply).  See the SEED-value caveat above the budgets.
+ *
+ * @param encoding       StreamingEncoding (Streaming_ProtoBuffer / _Csv / _Json)
+ * @param totalChannels  Total enabled public ADC channels
+ * @return WiFi-limited max frequency in Hz
+ */
+static inline uint32_t Streaming_WifiMaxFreq(uint32_t encoding, uint32_t totalChannels) {
+    if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
+    uint32_t budget, overhead;
+    if (encoding == Streaming_ProtoBuffer) {
+        budget = STREAMING_WIFI_PB_BUDGET;  overhead = STREAMING_WIFI_PB_OVERHEAD;
+    } else {  // CSV (and JSON, treated as CSV — see budget comment)
+        budget = STREAMING_WIFI_CSV_BUDGET; overhead = STREAMING_WIFI_CSV_OVERHEAD;
+    }
+    uint32_t hz = budget / (overhead + totalChannels);
+    return (hz == 0) ? 1u : hz;
+}
+
+/**
+ * Max safe streaming frequency for the CURRENTLY configured interface + format
+ * + enabled channels.  Reads ActiveInterface / Encoding from the streaming
+ * runtime config and the enabled-channel counts, then returns
+ * min(Streaming_ComputeMaxFreq(...), WiFi term when ActiveInterface==WiFi).
+ * This is the single "what rate can this config stream?" entry point for the
+ * START cap, the channel-enable recompute, and the WiFi finder.
+ *
+ * @return Max safe frequency in Hz (STREAMING_ISR_MAX_HZ when no channels are
+ *         enabled, matching Streaming_ComputeMaxFreq(0,0))
+ */
+uint32_t Streaming_ComputeMaxFreqForConfig(void);
 
 /**
  * Count enabled public ADC channels from current board + runtime config.
