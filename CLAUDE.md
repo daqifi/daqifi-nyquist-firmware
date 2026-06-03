@@ -1818,6 +1818,42 @@ voltage, NTC status, and power-up readiness.
 
 ### Real-Time Testing Guidelines
 
+0. **Background Python: always `-u`, never wrap a long run in a tight `timeout`.**
+   When launching a test-suite probe / bench script in the background and
+   monitoring it from outside, **two failure modes bite repeatedly**:
+   - **Buffering:** plain `python3 script.py > log 2>&1 &` is block-buffered
+     when stdout isn't a TTY, so the log looks *empty* while the run is
+     actually progressing — and if the process is killed (SIGTERM/timeout),
+     the buffered output is **lost entirely**. Always run `python3 -u` (or
+     set `PYTHONUNBUFFERED=1`) so lines stream live and survive a kill.
+   - **Aggressive `timeout`:** wrapping a multi-trial/overnight run in
+     `timeout 200 ...` kills it mid-run (bench runs are slower than you
+     estimate — per-trial SCPI overhead alone is ~15-20s), and combined
+     with buffering you get *nothing* back. Don't cap a real run with a
+     short `timeout`. Instead launch with **no timeout** and watch via a
+     PID-exit waiter (`while kill -0 $PID; do sleep N; done`) or by polling
+     the live `-u` log / the CSV. Reserve `timeout` for genuinely-bounded
+     one-shot probes, and even then size it generously.
+   - The CSV/JSONL the probe fsyncs per row is the reliable progress
+     signal; the stdout log is secondary. (Lesson logged after repeatedly
+     tripping on buffering+timeout, 2026-06-02.)
+
+0b. **Sustained high-rate USB streaming: prefer Windows-native Python
+   over WSL.** The `ISR=-1` / unreadable-`STATS?` "wedge" seen under
+   sustained high-rate USB streaming is a **WSL/usbipd passthrough
+   artifact, not a device problem** (a single 12 kHz trial streams +
+   reads cleanly; the wedge is cumulative across many back-to-back
+   high-rate trials). Running `python.exe` (Windows) + pyserial against
+   the device's **COM port (COM3 = bench primary)** bypasses usbipd
+   entirely and avoids the wedge — no attach/detach, no recovery dance.
+   For multi-hour / high-rate runs (the #524 matrix, endurance), prefer
+   the Windows host; WSL `/dev/ttyACMn` is fine for low-rate /
+   control-plane SCPI. The test-suite framework is mostly portable
+   (pyserial; `fcntl`/SIOCINQ guarded; TcpDrain cross-platform) — pass
+   `--port COM3`; the repo must be on `C:\...` for Windows python to run
+   it. Distinct from the WSL-launched-python UDP-drop issue (that's UDP;
+   serial/TCP on native Windows is fine). (User guidance 2026-06-03.)
+
 1. **Avoid Echo Output to Windows**:
    - Don't echo test results - Claude should observe and report internally
    - Reduces prompting issues and improves test speed
