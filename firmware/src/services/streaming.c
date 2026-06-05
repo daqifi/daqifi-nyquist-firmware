@@ -429,14 +429,14 @@ uint32_t Streaming_ComputeMaxFreqForConfig(void) {
     // when the last channel is disabled.
     uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
 
-    /* Add the WiFi wire-rate term only when the active streaming interface is
-     * WiFi.  BoardRunTimeConfig_Get never returns NULL (CLAUDE.md). */
+    /* Apply the per-interface, per-format TRANSPORT cap (#524), generalizing the
+     * former WiFi-only term to USB / SD / USB+SD.  min() with the ADC cap above.
+     * BoardRunTimeConfig_Get never returns NULL (CLAUDE.md). */
     StreamingRuntimeConfig* sc =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (sc->ActiveInterface == StreamingInterface_WiFi) {
-        uint32_t wifiMax = Streaming_WifiMaxFreq((uint32_t)sc->Encoding, total);
-        if (wifiMax < maxFreq) maxFreq = wifiMax;
-    }
+    uint32_t transportMax = Streaming_TransportMaxFreq((uint32_t)sc->ActiveInterface,
+                                                       (uint32_t)sc->Encoding, total);
+    if (transportMax < maxFreq) maxFreq = transportMax;
     return maxFreq;
 }
 

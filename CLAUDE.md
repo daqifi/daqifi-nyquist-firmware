@@ -572,25 +572,27 @@ SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
 
 #### Streaming Frequency Capping
 
-The firmware automatically caps the requested streaming frequency based on a three-constraint model validated against hardware benchmarks. The cap is applied silently — no SCPI error is returned, but a `LOG_I` message is written to the log buffer (retrievable via `SYST:LOG?`).
+The firmware automatically caps the requested streaming frequency. The cap is applied silently — no SCPI error is returned, but a `LOG_I` message is written to the log buffer (retrievable via `SYST:LOG?`). It is the `min()` of an **ADC/ISR** model and a **per-interface, per-format TRANSPORT** model.
 
-**Constraints (fitted to characterization data 2026-04-13):**
+**ADC/ISR constraints** (`Streaming_ComputeMaxFreq`, streaming.h):
 | Constraint | Limit | Formula |
 |-----------|-------|---------|
-| ISR ceiling | 13 kHz | Hard per-invocation overhead limit |
+| ISR ceiling | 16 kHz | Hard per-invocation overhead limit (raised 13→16k in #524 so single-channel isn't capped below the transport ceiling) |
 | Type 1 aggregate | 55 kHz total | `55000 / type1ChannelCount` (batched ISR) |
 | Per-tick budget | Scales with channels | `110000 / (6 + totalEnabledChannels)` |
 
-**Effective limit:** `min(ISR_MAX, TYPE1_AGG / type1Count, BUDGET / (OVERHEAD + totalEnabled))`
+**Transport constraint** (`Streaming_TransportMaxFreq`, streaming.h — #524): per-(interface, format) wire/storage ceiling, fitted to the 3-run real-ADC zero-loss characterization (matrix_524, conservative). Form is **single-channel special-cased + `A/(B+n)` for n≥2** ("F3"), because 1-channel (esp. CSV) sits far above the multi-channel curve. Every cap is ≤ the measured zero-loss ceiling (safe; tightness 86–100%). This generalized the former WiFi-only term (#520) to USB/SD/USB+SD and **closed a format-blind hole** where high-channel CSV was capped *above* its true ceiling (silent loss). JSON treated as CSV.
 
-**Example caps vs measured ceilings:**
-| Config | Cap | Measured | Utilization |
-|--------|----:|--------:|-----------:|
-| 1×T1 | 13,000 Hz | 13,800 Hz | 94% |
-| 5×T1 | 10,000 Hz | 11,000 Hz | 91% |
-| 1×T2 | 13,000 Hz | 16,200 Hz | 80% |
-| 5T1+4T2 (9ch) | 7,333 Hz | 10,000 Hz | 73% |
-| 16ch | 5,000 Hz | 6,400 Hz | 78% |
+| interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
+|-----------|----:|----:|----:|
+| USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
+| WiFi   | 11250 / 9000  | 210000/(30+n) | 21000/(1+n) |
+| SD     | 9000 / 7500   | 150000/(15+n) | 42000/(12+n) |
+| USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
+
+**Effective limit:** `min(ISR_MAX, TYPE1_AGG/type1Count, TICK_BUDGET/(OVERHEAD+totalEnabled), TransportMax(interface, encoding, totalEnabled))`
+
+**Verified caps (hardware, 1 channel, #524):** USB 15000 · WiFi PB 11250 / CSV 9000 · SD PB 9000 / CSV 7500 · USB+SD 8000 — all match the equation and `current_max_rate_hz` (capabilities query reflects the full cap as of #524).
 
 **Where capping is applied:**
 - `SYSTem:STReam:START <freq>` — caps frequency before starting the timer

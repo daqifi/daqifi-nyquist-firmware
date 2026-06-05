@@ -4727,9 +4727,10 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   client that always picks this rate is never surprised.
      *
      * - current_max_rate_hz: device's authoritative cap for the
-     *   channel set enabled right now. Today only reflects channel
-     *   count/type; future work (#344 Phase 3) extends it to apply
-     *   interface / encoder / DIO caps too.
+     *   channel set enabled right now. Reflects channel count/type
+     *   AND the per-interface, per-format transport cap (#524), i.e.
+     *   it now matches the rate StartStreamData actually applies.
+     *   (DIO / OBDiag caps still not folded in — future work.)
      *
      * - rate_model: client-side formula for optimistic previews
      *   across hypothetical channel groupings. Channel-count only —

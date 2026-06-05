@@ -117,7 +117,12 @@ void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
     /* 0 public channels → no valid streaming rate. Reporting the
      * ISR ceiling in that state would advertise rates that
      * StartStreamData would reject. */
-    out->maxFreqHz = (total > 0) ? Streaming_ComputeMaxFreq(type1, total) : 0;
+    /* Use ComputeMaxFreqForConfig (#524) so current_max_rate_hz matches the rate
+     * StartStreamData actually applies — it now includes the per-interface,
+     * per-format TRANSPORT cap, not just the channel-count/ADC terms. Without
+     * this the capability query would advertise a higher rate than the device
+     * delivers (clients pre-validate against current_max_rate_hz). */
+    out->maxFreqHz = (total > 0) ? Streaming_ComputeMaxFreqForConfig() : 0;
     out->isrMaxHz      = STREAMING_ISR_MAX_HZ;
     out->type1AggMaxHz = STREAMING_TYPE1_AGG_MAX_HZ;
     out->tickBudget    = STREAMING_TICK_BUDGET;
