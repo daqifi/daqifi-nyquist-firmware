@@ -2579,7 +2579,10 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     // arc ceiling (lastGoodHz/KBps) is reported unclamped for testing.
     bool benchClamped = false;
     if (soakClean && recommendedHz > 0) {
-        uint32_t capHz = Streaming_ComputeMaxFreqForConfig();
+        // WIFI:FIND probes the WiFi path, so clamp to the WiFi transport cap
+        // explicitly rather than the global ActiveInterface (which may still be
+        // USB if the interface hasn't been switched) — Qodo /improve pass-6.
+        uint32_t capHz = Streaming_ComputeMaxFreqForConfigIface(StreamingInterface_WiFi);
         if (capHz > 0 && recommendedHz > capHz) {
             uint32_t newKBps = (recommendedHz > 0)
                 ? (uint32_t)((uint64_t)recommendedKBps * capHz / recommendedHz) : 0;
@@ -3243,7 +3246,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // the cap entirely and could start an over-cap stream after interface/format/
     // channel changes, contradicting the hard-limit behavior.
     if (!freqProvided) {
+        // 64-bit read needs a critical section on the 32-bit PIC32MZ bus to avoid
+        // a torn read if another SCPI task writes Frequency concurrently
+        // (CLAUDE.md atomicity rules; Qodo /agentic_review pass-6).
+        taskENTER_CRITICAL();
         uint64_t stored = pRunTimeStreamConfig->Frequency;
+        taskEXIT_CRITICAL();
         if (stored > (uint64_t)INT32_MAX) stored = (uint64_t)INT32_MAX;  // clamp before narrowing (Qodo)
         freq = (int32_t)stored;
     }

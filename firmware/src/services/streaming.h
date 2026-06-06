@@ -116,13 +116,14 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
  * @param totalChannels  Total enabled public ADC channels
  * @return transport-limited max frequency in Hz
  */
-static inline uint32_t Streaming_TransportMaxFreq(uint32_t interface, uint32_t encoding,
+static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
+                                                  StreamingEncoding encoding,
                                                   uint32_t totalChannels) {
     if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
     /* Explicit encoding handling (Qodo): unknown encodings cap at 1 Hz so a
      * future/garbage value can never over-cap. */
     uint32_t pb, json = 0u;
-    switch ((StreamingEncoding)encoding) {
+    switch (encoding) {
         case Streaming_ProtoBuffer: pb = 1u; break;
         case Streaming_Csv:         pb = 0u; break;
         case Streaming_Json:        pb = 0u; json = 1u; break;  /* CSV coefficients, derated below */

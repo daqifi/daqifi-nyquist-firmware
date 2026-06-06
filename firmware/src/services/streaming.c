@@ -437,8 +437,7 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
      * returns NULL (CLAUDE.md). */
     StreamingRuntimeConfig* sc =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    uint32_t transportMax = Streaming_TransportMaxFreq((uint32_t)iface,
-                                                       (uint32_t)sc->Encoding, total);
+    uint32_t transportMax = Streaming_TransportMaxFreq(iface, sc->Encoding, total);
     if (transportMax < maxFreq) maxFreq = transportMax;
     return maxFreq;
 }
