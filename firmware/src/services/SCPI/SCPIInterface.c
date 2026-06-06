@@ -4619,21 +4619,21 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     Capabilities_GetAinSummary(&ai);
     Capabilities_GetAoutSummary(&ao);
     Capabilities_GetDioSummary(&di);
-    /* current_max_rate_hz reflects the cap for ActiveInterface; if that's still the
-     * default USB (client hasn't streamed yet), temporarily adopt the detected
-     * connection interface so the advertised cap matches what START will enforce
-     * for THIS client (#524 Qodo — query-side of the interface-detect fix). Restored
-     * immediately; the SCPI query runs single-threaded on the connection's task. */
-    {
+    Capabilities_GetStreamingSummary(&st);
+    /* current_max_rate_hz must reflect the cap for the interface the client will
+     * actually stream on. When ActiveInterface is still the default USB (or already
+     * matches the detected connection), START will auto-detect this connection — so
+     * advertise the cap for the DETECTED interface, computed WITHOUT mutating the
+     * shared runtime config (#524 Qodo). Skip when no channels are enabled
+     * (st.maxFreqHz == 0). */
+    if (st.maxFreqHz > 0) {
         StreamingRuntimeConfig* scq =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-        StreamingInterface savedIf = scq->ActiveInterface;
         StreamingInterface detIf = SCPI_GetInterface(context);
-        if (savedIf == detIf || savedIf == StreamingInterface_USB) {
-            scq->ActiveInterface = detIf;
-        }
-        Capabilities_GetStreamingSummary(&st);
-        scq->ActiveInterface = savedIf;
+        StreamingInterface effIf =
+            (scq->ActiveInterface == detIf || scq->ActiveInterface == StreamingInterface_USB)
+                ? detIf : scq->ActiveInterface;
+        st.maxFreqHz = Streaming_ComputeMaxFreqForConfigIface(effIf);
     }
     Capabilities_GetStorageSummary(&stor);
     Capabilities_GetPowerSummary(&pw);

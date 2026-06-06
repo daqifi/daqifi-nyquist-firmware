@@ -420,7 +420,7 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
     if (out_hasAD7609   != NULL) *out_hasAD7609   = has7609;
 }
 
-uint32_t Streaming_ComputeMaxFreqForConfig(void) {
+uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
     uint16_t type1 = 0, total = 0;
     Streaming_CountActiveChannels(&type1, &total, NULL);
 
@@ -431,13 +431,22 @@ uint32_t Streaming_ComputeMaxFreqForConfig(void) {
 
     /* Apply the per-interface, per-format TRANSPORT cap (#524), generalizing the
      * former WiFi-only term to USB / SD / USB+SD.  min() with the ADC cap above.
-     * BoardRunTimeConfig_Get never returns NULL (CLAUDE.md). */
+     * The interface is a PARAMETER (not read from the global) so callers such as
+     * the capabilities query can compute for the client's detected interface
+     * without mutating shared state (#524 Qodo). BoardRunTimeConfig_Get never
+     * returns NULL (CLAUDE.md). */
     StreamingRuntimeConfig* sc =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    uint32_t transportMax = Streaming_TransportMaxFreq((uint32_t)sc->ActiveInterface,
+    uint32_t transportMax = Streaming_TransportMaxFreq((uint32_t)iface,
                                                        (uint32_t)sc->Encoding, total);
     if (transportMax < maxFreq) maxFreq = transportMax;
     return maxFreq;
+}
+
+uint32_t Streaming_ComputeMaxFreqForConfig(void) {
+    StreamingRuntimeConfig* sc =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    return Streaming_ComputeMaxFreqForConfigIface(sc->ActiveInterface);
 }
 
 /**

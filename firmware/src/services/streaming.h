@@ -172,6 +172,14 @@ static inline uint32_t Streaming_TransportMaxFreq(uint32_t interface, uint32_t e
 uint32_t Streaming_ComputeMaxFreqForConfig(void);
 
 /**
+ * Same as Streaming_ComputeMaxFreqForConfig() but for an explicitly-supplied
+ * interface instead of the live ActiveInterface — lets the capabilities query
+ * advertise the cap for a client's detected interface without mutating the
+ * shared runtime config (#524). Encoding + channel counts still come from config.
+ */
+uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface);
+
+/**
  * Count enabled public ADC channels from current board + runtime config.
  * Used by SCPI_StartStreaming, the ADC channel-enable path, and the
  * capability rollup so they all agree on what counts toward the cap.
