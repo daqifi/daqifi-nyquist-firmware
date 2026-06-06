@@ -228,10 +228,10 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     uint64_t freq = pRunTimeStreamConfig->Frequency;
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
 
-    // Three-constraint frequency capping (see streaming.h)
+    // Frequency capping (see streaming.h) — includes the WiFi wire-rate term
+    // when ActiveInterface==WiFi on top of the ADC/ISR/tick constraints (#522).
     {
-        uint32_t maxFreq = Streaming_ComputeMaxFreq(
-            activeType1ChannelCount, totalEnabledPublicChannels);
+        uint32_t maxFreq = Streaming_ComputeMaxFreqForConfig();
         if (freq > maxFreq) {
             LOG_I("Frequency capped: %u Hz -> %u Hz (%u ch, %u type1)",
                   (unsigned)freq, (unsigned)maxFreq,

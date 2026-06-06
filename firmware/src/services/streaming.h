@@ -50,10 +50,18 @@ extern "C" {
 
 // Frequency cap constants — fitted to characterization data (2026-04-13).
 // ISR batching (#277) reduced Type 1 overhead; refit with updated ceilings.
-#define STREAMING_ISR_MAX_HZ        13000
+// ISR_MAX raised 13000->16000 (#524): the per-interface TRANSPORT caps
+// (Streaming_TransportMaxFreq) now govern the real ceilings; ISR_MAX is the
+// ADC/ISR safety ceiling and must sit above the highest single-channel transport
+// cap (USB PB 1ch = 15000) so it does not override it.
+#define STREAMING_ISR_MAX_HZ        16000
 #define STREAMING_TYPE1_AGG_MAX_HZ  55000
 #define STREAMING_TICK_BUDGET       110000
 #define STREAMING_TICK_OVERHEAD     6
+
+// Per-interface, per-format wire/storage transport caps live in
+// Streaming_TransportMaxFreq below (#524), which superseded the earlier
+// WiFi-only budget term (#520/#522) and generalized it to all interfaces.
 
 // Type 2 (shared MODULE7 mux) hard cap.  T2 channels are scanned via the
 // analog multiplexer sequentially; the firmware applies
@@ -89,6 +97,96 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
     if (maxFreq == 0) maxFreq = 1;
     return maxFreq;
 }
+
+/**
+ * Per-interface, per-format TRANSPORT wire-rate cap (Hz) — generalizes the
+ * WiFi-only term (#520) to USB / SD / USB+SD (#524).  Fitted to the 3-run
+ * real-ADC zero-loss characterization (matrix_524 run-1/2/3 + WiFi-v2,
+ * conservative min across runs).  Form: single-channel special-cased + A/(B+n)
+ * for n>=2 (the "F3" fit) — 1-channel (esp. CSV) sits far above the
+ * multi-channel curve, which a single A/(B+n) cannot hug.  Every predicted cap
+ * is <= the measured zero-loss ceiling at the tested channel counts (safe by
+ * construction; tightness 86-100%).  This closes the prior format-blind hole
+ * where high-channel CSV was capped well ABOVE its true ceiling (silent loss).
+ * JSON is treated as CSV (text; slightly optimistic — refine if it matters).
+ * Only meaningful for the ACTIVE interface; ComputeMaxFreqForConfig gates on it.
+ *
+ * @param interface      StreamingInterface (USB / WiFi / SD / UsbAndSd)
+ * @param encoding       StreamingEncoding (PB vs CSV/JSON)
+ * @param totalChannels  Total enabled public ADC channels
+ * @return transport-limited max frequency in Hz
+ */
+static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
+                                                  StreamingEncoding encoding,
+                                                  uint32_t totalChannels) {
+    if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
+    /* Explicit encoding handling (Qodo): unknown encodings cap at 1 Hz so a
+     * future/garbage value can never over-cap. */
+    uint32_t pb = 0u, json = 0u;  /* init pb defensively (Qodo pass-7); every
+                                   * non-default case still assigns it explicitly */
+    switch (encoding) {
+        case Streaming_ProtoBuffer: pb = 1u; break;
+        case Streaming_Csv:         pb = 0u; break;
+        case Streaming_Json:        pb = 0u; json = 1u; break;  /* CSV coefficients, derated below */
+        default:                    return 1u;
+    }
+    uint32_t single, A, B;
+    switch (interface) {
+        case StreamingInterface_USB:
+            if (pb) { single = 15000u; A = 180000u; B = 10u; }
+            else    { single = 15000u; A =  34000u; B =  1u; }
+            break;
+        case StreamingInterface_WiFi:
+            if (pb) { single = 11250u; A = 210000u; B = 30u; }
+            else    { single =  9000u; A =  21000u; B =  1u; }
+            break;
+        case StreamingInterface_SD:
+            if (pb) { single =  9000u; A = 150000u; B = 15u; }
+            else    { single =  7500u; A =  42000u; B = 12u; }
+            break;
+        case StreamingInterface_UsbAndSd:
+            if (pb) { single =  8000u; A =  66000u; B =  6u; }
+            else    { single =  8000u; A =  15000u; B =  0u; }
+            break;
+        default:
+            return 1u;  /* unknown/corrupted interface -> fail-safe floor, never over-cap (Qodo) */
+    }
+    /* Widen the divide to 64-bit so a corrupted/huge channel count can never wrap
+     * the denominator (Qodo pass-8 hardening). denom is always >= 2 in this branch
+     * (totalChannels >= 2, B >= 0), so no div-by-zero guard is needed. */
+    uint32_t hz = single;
+    if (totalChannels != 1u) {
+        uint64_t denom = (uint64_t)B + (uint64_t)totalChannels;
+        hz = (uint32_t)((uint64_t)A / denom);
+    }
+    /* JSON emits ~2-3x CSV bytes/sample (object braces + per-sample field names),
+     * so its true ceiling is below CSV's and it was not separately characterized.
+     * Derate the CSV-based cap by half to stay conservative (never over-cap JSON)
+     * until JSON is measured (#524 follow-up). */
+    if (json) hz /= 2u;
+    return (hz == 0u) ? 1u : hz;
+}
+
+/**
+ * Max safe streaming frequency for the CURRENTLY configured interface + format
+ * + enabled channels.  Reads ActiveInterface / Encoding from the streaming
+ * runtime config and the enabled-channel counts, then returns
+ * min(Streaming_ComputeMaxFreq(...), WiFi term when ActiveInterface==WiFi).
+ * This is the single "what rate can this config stream?" entry point for the
+ * START cap, the channel-enable recompute, and the WiFi finder.
+ *
+ * @return Max safe frequency in Hz (STREAMING_ISR_MAX_HZ when no channels are
+ *         enabled, matching Streaming_ComputeMaxFreq(0,0))
+ */
+uint32_t Streaming_ComputeMaxFreqForConfig(void);
+
+/**
+ * Same as Streaming_ComputeMaxFreqForConfig() but for an explicitly-supplied
+ * interface instead of the live ActiveInterface — lets the capabilities query
+ * advertise the cap for a client's detected interface without mutating the
+ * shared runtime config (#524). Encoding + channel counts still come from config.
+ */
+uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface);
 
 /**
  * Count enabled public ADC channels from current board + runtime config.
