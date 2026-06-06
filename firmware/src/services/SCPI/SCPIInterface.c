@@ -3220,7 +3220,27 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
-    if (freqProvided) {
+    // Auto-detect the streaming interface BEFORE the frequency cap (#524 Qodo
+    // fix): the per-interface/per-format transport cap depends on ActiveInterface,
+    // so it must be resolved first or the cap is computed for the wrong interface.
+    // If the current setting matches the detected interface (or is the default
+    // USB), adopt auto-detection; otherwise keep the user's explicit choice
+    // (e.g. SD or USB+SD).
+    {
+        StreamingInterface detectedInterface = SCPI_GetInterface(context);
+        StreamingInterface currentInterface = pRunTimeStreamConfig->ActiveInterface;
+        if (currentInterface == detectedInterface || currentInterface == StreamingInterface_USB) {
+            pRunTimeStreamConfig->ActiveInterface = detectedInterface;
+        }
+    }
+
+    // #524 (Qodo): a no-argument START reuses the stored frequency — resolve it
+    // here so the muxed + transport-cap validation below covers BOTH the
+    // explicit-freq and no-arg restart paths. The no-arg path previously skipped
+    // the cap entirely and could start an over-cap stream after interface/format/
+    // channel changes, contradicting the hard-limit behavior.
+    if (!freqProvided) freq = (int32_t)pRunTimeStreamConfig->Frequency;
+    {
         // NQ3 Smart Frequency Management:
         // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
         // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
@@ -3325,22 +3345,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         } else {
             return SCPI_RES_ERR;
         }
-    } else {
-        //No freq given just stream with the current value
     }
-
-    // Auto-detect interface only if user hasn't explicitly set it via SYSTem:STReam:INTerface
-    // If current interface matches what auto-detection would choose, allow override
-    // If different, user explicitly set it (e.g., SD or All) so preserve their choice
-    StreamingInterface detectedInterface = SCPI_GetInterface(context);
-    StreamingInterface currentInterface = pRunTimeStreamConfig->ActiveInterface;
-
-    // Only auto-detect if current setting matches the detected interface
-    // (meaning user hasn't changed it, or wants auto-detection)
-    if (currentInterface == detectedInterface || currentInterface == StreamingInterface_USB) {
-        pRunTimeStreamConfig->ActiveInterface = detectedInterface;
-    }
-    // Otherwise keep user's explicit setting (e.g., SD or All)
 
     /* Interface_All is USB+SD (WiFi excluded by SPI bus conflict). Any
      * interface other than WiFi-only can drive SD logging when the SD

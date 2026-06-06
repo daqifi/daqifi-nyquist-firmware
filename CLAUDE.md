@@ -581,7 +581,7 @@ The firmware computes a maximum safe streaming frequency — the `min()` of an *
 | Type 1 aggregate | 55 kHz total | `55000 / type1ChannelCount` (batched ISR) |
 | Per-tick budget | Scales with channels | `110000 / (6 + totalEnabledChannels)` |
 
-**Transport constraint** (`Streaming_TransportMaxFreq`, streaming.h — #524): per-(interface, format) wire/storage ceiling, fitted to the 3-run real-ADC zero-loss characterization (matrix_524, conservative). Form is **single-channel special-cased + `A/(B+n)` for n≥2** ("F3"), because 1-channel (esp. CSV) sits far above the multi-channel curve. Every cap is ≤ the measured zero-loss ceiling (safe; tightness 86–100%). This generalized the former WiFi-only term (#520) to USB/SD/USB+SD and **closed a format-blind hole** where high-channel CSV was capped *above* its true ceiling (silent loss). JSON treated as CSV.
+**Transport constraint** (`Streaming_TransportMaxFreq`, streaming.h — #524): per-(interface, format) wire/storage ceiling, fitted to the 3-run real-ADC zero-loss characterization (matrix_524, conservative). Form is **single-channel special-cased + `A/(B+n)` for n≥2** ("F3"), because 1-channel (esp. CSV) sits far above the multi-channel curve. Every cap is ≤ the measured zero-loss ceiling (safe; tightness 86–100%). This generalized the former WiFi-only term (#520) to USB/SD/USB+SD and **closed a format-blind hole** where high-channel CSV was capped *above* its true ceiling (silent loss). JSON uses the CSV coefficients **derated ×0.5** (uncharacterized; conservative so it never over-caps — JSON emits ~2-3× CSV bytes/sample; #524 follow-up to measure it).
 
 | interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
 |-----------|----:|----:|----:|
@@ -593,6 +593,23 @@ The firmware computes a maximum safe streaming frequency — the `min()` of an *
 **Effective limit:** `min(ISR_MAX, TYPE1_AGG/type1Count, TICK_BUDGET/(OVERHEAD+totalEnabled), TransportMax(interface, encoding, totalEnabled))`
 
 **Verified caps (hardware, 1 channel, #524):** USB 15000 · WiFi PB 11250 / CSV 9000 · SD PB 9000 / CSV 7500 · USB+SD 8000 — all match the equation and `current_max_rate_hz` (capabilities query reflects the full cap as of #524).
+
+**Fit basis — measured zero-loss ceilings (real ADC / PAT0) the F3 coefficients are fitted at-or-below (Hz):**
+
+| interface/fmt | 1ch | 5ch | 10ch | 16ch |
+|---|--:|--:|--:|--:|
+| USB PB | 15000 | 12000 | 9000 | 7000 |
+| USB CSV | 15000 | 6000 | 6000 | 2000 |
+| WiFi PB | 11250 | 6000 | 6000 | 5000 |
+| WiFi CSV | 9000 | 3500 | 2000 | 1250 |
+| SD PB | 9000 | 7500 | 6000 | 5000 |
+| SD CSV | 7500 | 2500 | 3000 | 1500 |
+| USB+SD PB | 8000 | 6000 | 5250 | 3000 |
+| USB+SD CSV | 8000 | 3000 | 1500 | 1000 |
+
+**ADC cost (synth PAT3 − real PAT0), representative:** USB PB 1ch 25000→15000 (−40%); USB PB 16ch 10000→7000 (−30%); WiFi PB 1ch 12500→11250 (−10%); SD PB 1ch 12000→9000 (−25%). Below each transport's wire ceiling the ADC is ~free; above it, ADC ISR/EOS load competes with the encoder.
+
+**Full data + traceability:** the complete matrix (USB/WiFi/SD/USB+SD × PB/CSV × {1,5,10,16}ch × synth PAT3 / real PAT0, run-1/2/3 corroboration + the F3 fit script) lives in `daqifi-python-test-suite` `benchmarks/524_streaming_characterization/` — the authoritative record the coefficients above derive from (USB-CSV 3/8/11ch fill in `matrix_524_usbfill.csv`).
 
 **Where capping is applied:**
 - `SYSTem:STReam:START <freq>` — caps frequency before starting the timer

@@ -120,12 +120,12 @@ static inline uint32_t Streaming_TransportMaxFreq(uint32_t interface, uint32_t e
                                                   uint32_t totalChannels) {
     if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
     /* Explicit encoding handling (Qodo): unknown encodings cap at 1 Hz so a
-     * future/garbage value can never over-cap. PB vs CSV; JSON treated as CSV. */
-    uint32_t pb;
+     * future/garbage value can never over-cap. */
+    uint32_t pb, json = 0u;
     switch ((StreamingEncoding)encoding) {
         case Streaming_ProtoBuffer: pb = 1u; break;
-        case Streaming_Csv:
-        case Streaming_Json:        pb = 0u; break;
+        case Streaming_Csv:         pb = 0u; break;
+        case Streaming_Json:        pb = 0u; json = 1u; break;  /* CSV coefficients, derated below */
         default:                    return 1u;
     }
     uint32_t single, A, B;
@@ -149,8 +149,12 @@ static inline uint32_t Streaming_TransportMaxFreq(uint32_t interface, uint32_t e
         default:
             return STREAMING_ISR_MAX_HZ;  /* unknown interface -> no transport constraint */
     }
-    if (totalChannels == 1u) return single;
-    uint32_t hz = A / (B + totalChannels);
+    uint32_t hz = (totalChannels == 1u) ? single : A / (B + totalChannels);
+    /* JSON emits ~2-3x CSV bytes/sample (object braces + per-sample field names),
+     * so its true ceiling is below CSV's and it was not separately characterized.
+     * Derate the CSV-based cap by half to stay conservative (never over-cap JSON)
+     * until JSON is measured (#524 follow-up). */
+    if (json) hz /= 2u;
     return (hz == 0u) ? 1u : hz;
 }
 
