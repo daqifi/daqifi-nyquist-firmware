@@ -3277,11 +3277,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             // (#522) on top of the ADC/ISR/tick constraints.
             uint32_t maxFreq = Streaming_ComputeMaxFreqForConfig();
             if (freq > (int32_t)maxFreq) {
-                LOG_I("Frequency capped: %d Hz -> %u Hz (%u ch, %u type1)",
+                /* #524: HARD cap — reject the over-ask with a SCPI error instead
+                 * of silently lowering the rate. Silent capping left the client
+                 * streaming at a different rate than it requested, unaware. The
+                 * achievable max is in the LOG_E (SYST:LOG?); clients should
+                 * pre-validate against current_max_rate_hz (CONF:CAP:JSON?).
+                 * Benchmark mode (SYST:STR:BENCHmark) bypasses the cap entirely. */
+                LOG_E("Streaming rejected: %d Hz exceeds max %u Hz for this config "
+                      "(%u ch, %u type1) - request <= %u Hz or use SYST:STR:BENCHmark",
                       (int)freq, (unsigned)maxFreq,
                       (unsigned)totalEnabledPublicChannels,
-                      (unsigned)activeType1ChannelCount);
-                freq = (int32_t)maxFreq;
+                      (unsigned)activeType1ChannelCount, (unsigned)maxFreq);
+                SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+                return SCPI_RES_ERR;
             }
         } else {
             // Benchmark: no frequency cap. Timer hardware limit is
@@ -4741,10 +4749,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   do not factor (DIO is amortized in per_tick_overhead; AOut
      *   is not streamed).
      *
-     * rate_validation documents over-ask handling. Today: silent_cap
-     * (firmware lowers to current_max_rate_hz, logs LOG_I). Clients
-     * needing explicit feedback MUST pre-validate against
-     * current_max_rate_hz before SYSTem:StartStreamData. */
+     * rate_validation documents over-ask handling. As of #524: "error" —
+     * StartStreamData REJECTS freq > current_max_rate_hz with SCPI error
+     * -222 (+ LOG_E detail) and does NOT start; no silent rate change.
+     * Clients MUST pre-validate against current_max_rate_hz, or handle the
+     * error, before SYSTem:StartStreamData. (Benchmark mode bypasses.) */
     scpi_printf(context,
         "],\"sample_rate_range_hz\":{\"min\":1,\"max\":%u},"
         "\"conservative_envelope_hz\":%u,"
@@ -4767,7 +4776,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         (unsigned)st.tickBudget,
         (unsigned)st.tickOverhead);
 
-    scpi_printf(context, "\"rate_validation\":\"silent_cap\",");
+    scpi_printf(context, "\"rate_validation\":\"error\",");
 
     scpi_printf(context,
         "\"buffer_ranges_bytes\":{"

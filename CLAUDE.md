@@ -572,7 +572,7 @@ SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
 
 #### Streaming Frequency Capping
 
-The firmware automatically caps the requested streaming frequency. The cap is applied silently — no SCPI error is returned, but a `LOG_I` message is written to the log buffer (retrievable via `SYST:LOG?`). It is the `min()` of an **ADC/ISR** model and a **per-interface, per-format TRANSPORT** model.
+The firmware computes a maximum safe streaming frequency — the `min()` of an **ADC/ISR** model and a **per-interface, per-format TRANSPORT** model. As of #524 the cap is a **HARD limit**: `SYSTem:STReam:START <freq>` with `freq` above the cap is **rejected** with SCPI error `-222` (Data out of range) plus a `LOG_E` detail line (`SYST:LOG?`) stating the achievable max — streaming does **not** start, and the rate is never silently changed. (Earlier firmware silently capped + `LOG_I`'d; that was changed because a client would stream at a different rate than it requested, unaware.) Clients should pre-validate against `current_max_rate_hz` (`CONF:CAP:JSON?`, which now equals this cap) or handle the error. **Benchmark mode (`SYST:STR:BENCHmark`) bypasses the cap.** (The mid-stream `CONFigure:ADC:CHANnel` recompute still silently re-caps for now — making it error too needs a channel-state snapshot/restore so runtime config and hardware don't desync; tracked separately.)
 
 **ADC/ISR constraints** (`Streaming_ComputeMaxFreq`, streaming.h):
 | Constraint | Limit | Formula |
