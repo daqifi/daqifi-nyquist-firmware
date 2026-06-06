@@ -2282,6 +2282,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed) {
+    if (freq == 0u) { *outStartFailed = true; *outKBps = 0; return false; }  // guard div-by-zero (Qodo)
     uint32_t periodCycles = (clkFreq + freq - 1) / freq;
     if (periodCycles < 2) periodCycles = 2;
 
@@ -2305,8 +2306,10 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     vTaskDelay(pdMS_TO_TICKS(FIND_SETTLE_MS));
     AInSampleList_PoolResetMaxUsed();
     uint32_t occMax = 0;   // WiFi-ring high-water mark across the dwell
+    TickType_t stepTicks = pdMS_TO_TICKS(obsMs / FIND_OCC_SAMPLES);
+    if (stepTicks == 0) stepTicks = 1;   // never busy-spin on a zero-tick delay (Qodo)
     for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
-        vTaskDelay(pdMS_TO_TICKS(obsMs / FIND_OCC_SAMPLES));
+        vTaskDelay(stepTicks);
         uint32_t occ = wifi_tcp_server_GetCircularBufferAvailable();
         if (occ > occMax) occMax = occ;
     }

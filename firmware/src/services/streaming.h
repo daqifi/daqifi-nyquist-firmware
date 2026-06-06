@@ -119,7 +119,15 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
 static inline uint32_t Streaming_TransportMaxFreq(uint32_t interface, uint32_t encoding,
                                                   uint32_t totalChannels) {
     if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
-    uint32_t pb = (encoding == Streaming_ProtoBuffer);
+    /* Explicit encoding handling (Qodo): unknown encodings cap at 1 Hz so a
+     * future/garbage value can never over-cap. PB vs CSV; JSON treated as CSV. */
+    uint32_t pb;
+    switch ((StreamingEncoding)encoding) {
+        case Streaming_ProtoBuffer: pb = 1u; break;
+        case Streaming_Csv:
+        case Streaming_Json:        pb = 0u; break;
+        default:                    return 1u;
+    }
     uint32_t single, A, B;
     switch (interface) {
         case StreamingInterface_USB:
