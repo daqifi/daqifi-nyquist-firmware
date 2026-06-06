@@ -2306,7 +2306,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     vTaskDelay(pdMS_TO_TICKS(FIND_SETTLE_MS));
     AInSampleList_PoolResetMaxUsed();
     uint32_t occMax = 0;   // WiFi-ring high-water mark across the dwell
-    TickType_t stepTicks = pdMS_TO_TICKS(obsMs / FIND_OCC_SAMPLES);
+    TickType_t stepTicks = pdMS_TO_TICKS(obsMs) / FIND_OCC_SAMPLES;  // convert then divide — less truncation (Qodo)
     if (stepTicks == 0) stepTicks = 1;   // never busy-spin on a zero-tick delay (Qodo)
     for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
         vTaskDelay(stepTicks);
@@ -2344,7 +2344,10 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
                  (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
     bool tripped = poolFull || lossy;
 
-    uint32_t dwellMs = FIND_SETTLE_MS + obsMs;
+    // Use the ACTUAL observed dwell (stepTicks may round up vs obsMs/N) so the
+    // KB/s denominator matches the real sleep time (Qodo).
+    uint32_t obsActualMs = (uint32_t)(FIND_OCC_SAMPLES * stepTicks * portTICK_PERIOD_MS);
+    uint32_t dwellMs = FIND_SETTLE_MS + obsActualMs;
     *outKBps = (dwellMs > 0)
         ? (uint32_t)((s.totalBytesStreamed * 1000ULL) / dwellMs / 1024ULL) : 0;
 
@@ -3239,7 +3242,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // explicit-freq and no-arg restart paths. The no-arg path previously skipped
     // the cap entirely and could start an over-cap stream after interface/format/
     // channel changes, contradicting the hard-limit behavior.
-    if (!freqProvided) freq = (int32_t)pRunTimeStreamConfig->Frequency;
+    if (!freqProvided) {
+        uint64_t stored = pRunTimeStreamConfig->Frequency;
+        if (stored > (uint64_t)INT32_MAX) stored = (uint64_t)INT32_MAX;  // clamp before narrowing (Qodo)
+        freq = (int32_t)stored;
+    }
     {
         // NQ3 Smart Frequency Management:
         // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,

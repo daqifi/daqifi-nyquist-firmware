@@ -147,7 +147,7 @@ static inline uint32_t Streaming_TransportMaxFreq(uint32_t interface, uint32_t e
             else    { single =  8000u; A =  15000u; B =  0u; }
             break;
         default:
-            return STREAMING_ISR_MAX_HZ;  /* unknown interface -> no transport constraint */
+            return 1u;  /* unknown/corrupted interface -> fail-safe floor, never over-cap (Qodo) */
     }
     uint32_t hz = (totalChannels == 1u) ? single : A / (B + totalChannels);
     /* JSON emits ~2-3x CSV bytes/sample (object braces + per-sample field names),
