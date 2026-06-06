@@ -572,25 +572,44 @@ SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
 
 #### Streaming Frequency Capping
 
-The firmware automatically caps the requested streaming frequency based on a three-constraint model validated against hardware benchmarks. The cap is applied silently — no SCPI error is returned, but a `LOG_I` message is written to the log buffer (retrievable via `SYST:LOG?`).
+The firmware computes a maximum safe streaming frequency — the `min()` of an **ADC/ISR** model and a **per-interface, per-format TRANSPORT** model. As of #524 the cap is a **HARD limit**: `SYSTem:STReam:START <freq>` with `freq` above the cap is **rejected** with SCPI error `-222` (Data out of range) plus a `LOG_E` detail line (`SYST:LOG?`) stating the achievable max — streaming does **not** start, and the rate is never silently changed. (Earlier firmware silently capped + `LOG_I`'d; that was changed because a client would stream at a different rate than it requested, unaware.) Clients should pre-validate against `current_max_rate_hz` (`CONF:CAP:JSON?`, which now equals this cap) or handle the error. **Benchmark mode (`SYST:STR:BENCHmark`) bypasses the cap.** (The mid-stream `CONFigure:ADC:CHANnel` recompute still silently re-caps for now — making it error too needs a channel-state snapshot/restore so runtime config and hardware don't desync; tracked separately.)
 
-**Constraints (fitted to characterization data 2026-04-13):**
+**ADC/ISR constraints** (`Streaming_ComputeMaxFreq`, streaming.h):
 | Constraint | Limit | Formula |
 |-----------|-------|---------|
-| ISR ceiling | 13 kHz | Hard per-invocation overhead limit |
+| ISR ceiling | 16 kHz | Hard per-invocation overhead limit (raised 13→16k in #524 so single-channel isn't capped below the transport ceiling) |
 | Type 1 aggregate | 55 kHz total | `55000 / type1ChannelCount` (batched ISR) |
 | Per-tick budget | Scales with channels | `110000 / (6 + totalEnabledChannels)` |
 
-**Effective limit:** `min(ISR_MAX, TYPE1_AGG / type1Count, BUDGET / (OVERHEAD + totalEnabled))`
+**Transport constraint** (`Streaming_TransportMaxFreq`, streaming.h — #524): per-(interface, format) wire/storage ceiling, fitted to the 3-run real-ADC zero-loss characterization (matrix_524, conservative). Form is **single-channel special-cased + `A/(B+n)` for n≥2** ("F3"), because 1-channel (esp. CSV) sits far above the multi-channel curve. Every cap is ≤ the measured zero-loss ceiling (safe; tightness 86–100%). This generalized the former WiFi-only term (#520) to USB/SD/USB+SD and **closed a format-blind hole** where high-channel CSV was capped *above* its true ceiling (silent loss). JSON uses the CSV coefficients **derated ×0.5** (uncharacterized; conservative so it never over-caps — JSON emits ~2-3× CSV bytes/sample; #524 follow-up to measure it).
 
-**Example caps vs measured ceilings:**
-| Config | Cap | Measured | Utilization |
-|--------|----:|--------:|-----------:|
-| 1×T1 | 13,000 Hz | 13,800 Hz | 94% |
-| 5×T1 | 10,000 Hz | 11,000 Hz | 91% |
-| 1×T2 | 13,000 Hz | 16,200 Hz | 80% |
-| 5T1+4T2 (9ch) | 7,333 Hz | 10,000 Hz | 73% |
-| 16ch | 5,000 Hz | 6,400 Hz | 78% |
+| interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
+|-----------|----:|----:|----:|
+| USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
+| WiFi   | 11250 / 9000  | 210000/(30+n) | 21000/(1+n) |
+| SD     | 9000 / 7500   | 150000/(15+n) | 42000/(12+n) |
+| USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
+
+**Effective limit:** `min(ISR_MAX, TYPE1_AGG/type1Count, TICK_BUDGET/(OVERHEAD+totalEnabled), TransportMax(interface, encoding, totalEnabled))`
+
+**Verified caps (hardware, 1 channel, #524):** USB 15000 · WiFi PB 11250 / CSV 9000 · SD PB 9000 / CSV 7500 · USB+SD 8000 — all match the equation and `current_max_rate_hz` (capabilities query reflects the full cap as of #524).
+
+**Fit basis — measured zero-loss ceilings (real ADC / PAT0) the F3 coefficients are fitted at-or-below (Hz):**
+
+| interface/fmt | 1ch | 5ch | 10ch | 16ch |
+|---|--:|--:|--:|--:|
+| USB PB | 15000 | 12000 | 9000 | 7000 |
+| USB CSV | 15000 | 6000 | 6000 | 2000 |
+| WiFi PB | 11250 | 6000 | 6000 | 5000 |
+| WiFi CSV | 9000 | 3500 | 2000 | 1250 |
+| SD PB | 9000 | 7500 | 6000 | 5000 |
+| SD CSV | 7500 | 2500 | 3000 | 1500 |
+| USB+SD PB | 8000 | 6000 | 5250 | 3000 |
+| USB+SD CSV | 8000 | 3000 | 1500 | 1000 |
+
+**ADC cost (synth PAT3 − real PAT0), representative:** USB PB 1ch 25000→15000 (−40%); USB PB 16ch 10000→7000 (−30%); WiFi PB 1ch 12500→11250 (−10%); SD PB 1ch 12000→9000 (−25%). Below each transport's wire ceiling the ADC is ~free; above it, ADC ISR/EOS load competes with the encoder.
+
+**Full data + traceability:** the complete matrix (USB/WiFi/SD/USB+SD × PB/CSV × {1,5,10,16}ch × synth PAT3 / real PAT0, run-1/2/3 corroboration + the F3 fit script) lives in `daqifi-python-test-suite` `benchmarks/524_streaming_characterization/` — the authoritative record the coefficients above derive from (USB-CSV 3/8/11ch fill in `matrix_524_usbfill.csv`).
 
 **Where capping is applied:**
 - `SYSTem:STReam:START <freq>` — caps frequency before starting the timer
@@ -1817,6 +1836,42 @@ voltage, NTC status, and power-up readiness.
    ```
 
 ### Real-Time Testing Guidelines
+
+0. **Background Python: always `-u`, never wrap a long run in a tight `timeout`.**
+   When launching a test-suite probe / bench script in the background and
+   monitoring it from outside, **two failure modes bite repeatedly**:
+   - **Buffering:** plain `python3 script.py > log 2>&1 &` is block-buffered
+     when stdout isn't a TTY, so the log looks *empty* while the run is
+     actually progressing — and if the process is killed (SIGTERM/timeout),
+     the buffered output is **lost entirely**. Always run `python3 -u` (or
+     set `PYTHONUNBUFFERED=1`) so lines stream live and survive a kill.
+   - **Aggressive `timeout`:** wrapping a multi-trial/overnight run in
+     `timeout 200 ...` kills it mid-run (bench runs are slower than you
+     estimate — per-trial SCPI overhead alone is ~15-20s), and combined
+     with buffering you get *nothing* back. Don't cap a real run with a
+     short `timeout`. Instead launch with **no timeout** and watch via a
+     PID-exit waiter (`while kill -0 $PID; do sleep N; done`) or by polling
+     the live `-u` log / the CSV. Reserve `timeout` for genuinely-bounded
+     one-shot probes, and even then size it generously.
+   - The CSV/JSONL the probe fsyncs per row is the reliable progress
+     signal; the stdout log is secondary. (Lesson logged after repeatedly
+     tripping on buffering+timeout, 2026-06-02.)
+
+0b. **Sustained high-rate USB streaming: prefer Windows-native Python
+   over WSL.** The `ISR=-1` / unreadable-`STATS?` "wedge" seen under
+   sustained high-rate USB streaming is a **WSL/usbipd passthrough
+   artifact, not a device problem** (a single 12 kHz trial streams +
+   reads cleanly; the wedge is cumulative across many back-to-back
+   high-rate trials). Running `python.exe` (Windows) + pyserial against
+   the device's **COM port (COM3 = bench primary)** bypasses usbipd
+   entirely and avoids the wedge — no attach/detach, no recovery dance.
+   For multi-hour / high-rate runs (the #524 matrix, endurance), prefer
+   the Windows host; WSL `/dev/ttyACMn` is fine for low-rate /
+   control-plane SCPI. The test-suite framework is mostly portable
+   (pyserial; `fcntl`/SIOCINQ guarded; TcpDrain cross-platform) — pass
+   `--port COM3`; the repo must be on `C:\...` for Windows python to run
+   it. Distinct from the WSL-launched-python UDP-drop issue (that's UDP;
+   serial/TCP on native Windows is fine). (User guidance 2026-06-03.)
 
 1. **Avoid Echo Output to Windows**:
    - Don't echo test results - Claude should observe and report internally

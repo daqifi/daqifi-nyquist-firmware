@@ -2009,6 +2009,49 @@ static scpi_result_t SCPI_GetBenchmarkMode(scpi_t * context) {
  * Example: SYST:STR:THRoughput 5000,10
  *   → streams at 5kHz for 10s, returns results
  */
+// Shared streaming-buffer setup (partition + DMA pool + sample pool).  Defined
+// near SCPI_MemAutoBalance; forward-declared here for the throughput bench, the
+// WiFi finder, and SCPI_StartStreaming, which all route through it.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize);
+
+// #520/Qodo: PrepareStreamingBuffers() quiesces SD by forcing WRITE->NONE so
+// f_write can't be mid-DMA during the coherent-pool reset (see
+// SCPI_QuiesceAndResetCoherentPool).  SCPI_StartStreaming re-enables SD after
+// (it may be streaming TO the card), but the WiFi finder and THR benchmark do
+// NOT target SD — so they must save the user's prior SD mode before the prepare
+// and restore it after, or running either command would silently disable SD
+// logging.  (BoardRunTimeConfig_Get never returns NULL — it indexes a static
+// array; no NULL check per the project invariant.)
+static sd_card_manager_mode_t SaveSdMode(void) {
+    sd_card_manager_settings_t* pSd =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    return pSd->mode;
+}
+static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
+    sd_card_manager_settings_t* pSd =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    if (pSd->mode != savedMode) {
+        pSd->mode = savedMode;
+        sd_card_manager_UpdateSettings(pSd);
+    }
+}
+
+// StreamingRuntimeConfig.Frequency is uint64_t — non-atomic on PIC32MZ, so the
+// benchmark/finder paths read/write it through a critical section per the
+// project atomicity rule (CLAUDE.md / Compliance ID 8).  These run in SCPI task
+// context (one-shot commands, not a hot ISR path) so the latency cost is nil.
+static inline uint64_t StreamFreq_Get(const StreamingRuntimeConfig* c) {
+    taskENTER_CRITICAL();
+    uint64_t f = c->Frequency;
+    taskEXIT_CRITICAL();
+    return f;
+}
+static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
+    taskENTER_CRITICAL();
+    c->Frequency = f;
+    taskEXIT_CRITICAL();
+}
+
 static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
@@ -2035,9 +2078,15 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // Save previous state to restore after benchmark
+    // Save previous state to restore after benchmark.  Frequency/ClockPeriod
+    // are saved too: this command pokes them below and a later no-arg
+    // SYST:STR:START reuses cfg->Frequency, so leaving the bench rate behind
+    // would silently become the next stream's rate (Qodo #521, same class as
+    // the WiFi finder).
     uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
     uint32_t savedPattern = Streaming_GetTestPattern();
+    uint64_t savedFrequency = StreamFreq_Get(pStreamCfg);   // Frequency is uint64_t — no truncation
+    uint32_t savedClockPeriod = pStreamCfg->ClockPeriod;
 
     // Enable benchmark mode + test pattern
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);
@@ -2047,6 +2096,34 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     Streaming_ClearStats();
     AInSampleList_PoolResetMaxUsed();
 
+    // Save SD mode: PrepareStreamingBuffers quiesces SD (WRITE->NONE) and THR
+    // doesn't stream to SD, so restore it on every exit below (Qodo #521).
+    sd_card_manager_mode_t savedSdMode = SaveSdMode();
+
+    // Establish the buffer partition + sample pool that the cfg-poke start
+    // below does NOT do on its own (this was a latent bug — THR relied on a
+    // prior STR:START having partitioned; standalone it streamed 0 bytes, the
+    // same #520 failure mode).  Shared helper, same path as StartStreaming.
+    {
+        volatile AInRuntimeArray* pRtAin =
+            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+        const tBoardConfig* pBcfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+        Streaming_BuildChannelMapping(pBcfg, (const AInRuntimeArray*)pRtAin);
+        const AInChannelMapping* chMap = Streaming_GetChannelMapping();
+        uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
+        MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
+                                     AInSampleList_ElementSize(ec))) {
+            Streaming_SetBenchmarkMode(savedBenchmark);
+            Streaming_SetTestPattern(savedPattern);
+            StreamFreq_Set(pStreamCfg, savedFrequency);     // no-op here (poke is later), kept for consistency
+            pStreamCfg->ClockPeriod = savedClockPeriod;
+            RestoreSdMode(savedSdMode);
+            SCPI_ExecutionError(context, "SYST:STR:THR: buffer prepare failed");
+            return SCPI_RES_ERR;
+        }
+    }
+
     // Set frequency and start
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
@@ -2054,7 +2131,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     uint32_t periodCycles = (clkFreq + freq - 1) / freq;
     if (periodCycles < 2) periodCycles = 2;
     pStreamCfg->ClockPeriod = periodCycles - 1;
-    pStreamCfg->Frequency = freq;
+    StreamFreq_Set(pStreamCfg, freq);
     pStreamCfg->IsEnabled = true;
     Streaming_UpdateState();
 
@@ -2064,6 +2141,9 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         pStreamCfg->IsEnabled = false;
         Streaming_SetBenchmarkMode(savedBenchmark);
         Streaming_SetTestPattern(savedPattern);
+        StreamFreq_Set(pStreamCfg, savedFrequency);
+        pStreamCfg->ClockPeriod = savedClockPeriod;
+        RestoreSdMode(savedSdMode);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -2078,6 +2158,9 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // Restore previous state
     Streaming_SetBenchmarkMode(savedBenchmark);
     Streaming_SetTestPattern(savedPattern);
+    StreamFreq_Set(pStreamCfg, savedFrequency);
+    pStreamCfg->ClockPeriod = savedClockPeriod;
+    RestoreSdMode(savedSdMode);
 
     // Collect and report results
     StreamingStats s;
@@ -2112,6 +2195,422 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     scpi_printf(context, "LossPercent=%u\r\n", (unsigned)lossPct);
     scpi_printf(context, "PoolMaxUsed=%u\r\n", (unsigned)AInSampleList_PoolMaxUsed());
 
+    return SCPI_RES_OK;
+}
+
+// =====================================================================
+// #520: device-side WiFi throughput finder (fast AIMD link-rate probe)
+// =====================================================================
+//
+// SYSTem:STReam:WIFI:FINd? [startHz][,maxHz]
+//   -> <recommendedHz>,<recommendedKBps>,<reason>,<ceilingHz>,<ceilingKBps>
+//   recommendedHz/KBps = soak-confirmed clean rate, clamped to the bench wire
+//                        ceiling (WIFI_BENCH_CEILING_KBPS) — the rate to stream.
+//   reason             = START_FAIL | NO_LINK | NO_CLEAN_SOAK | BENCH_CAP |
+//                        LINK_SATURATED | HIT_MAX
+//   ceilingHz/KBps     = raw arc/refine ceiling (the pre-soak, pre-clamp
+//                        overestimate) — kept unclamped for diagnostics/testing.
+//
+// Climbs the streaming rate from a conservative start and locks the ceiling
+// only when the buffer that actually fills is essentially FULL (high-water mark
+// >= FIND_BUF_FULL_PCT of capacity), giving the buffer full room to absorb WiFi
+// jitter before calling a ceiling.
+//
+// WHICH buffer fills (EMPIRICAL, #520 HW 2026-05-31): originally we hypothesized
+// the SAMPLE POOL (last buffer to fill if backpressure propagates upstream).
+// Hardware first refuted that — the pool sat at ~1% while the WiFi ring pegged
+// full and dropped 1.17 MB — because the encoder used an all-or-nothing
+// no-retry write that DROPPED at the ring instead of back-pressuring upstream,
+// wasting the pool's absorption capacity.  That was fixed (#520 backpressure):
+// solo WiFi/USB now route through Streaming_WriteWithRetry, so the encoder HOLDS
+// samples while the ring is full and the pool fills as designed — the SINGLE
+// drop point is now pool exhaustion (verified: at over-rate SamplePoolMaxUsed
+// hit capacity, drops = PoolExhausted, WifiDropped ~0).  So the pool hypothesis
+// is now CORRECT and we gauge the sample-pool high-water mark.  Note the WiFi
+// ring level is NOT a ceiling signal post-fix: it sits near-full at the link
+// rate (the encoder keeps it full, the WINC drains it) — that's normal, not
+// saturation.  A jitter swell the ring + lower pool absorb never drives the
+// pool high-water near full.  Actual loss (QueueDropped / WiFi / window) is a
+// hard secondary trip.
+//
+// Reported rate = highest rate whose pool stayed below full, minus a margin
+// (FIND_BACKOFF).  Structure mirrors SCPI_RunThroughputBench.
+#define FIND_DEFAULT_START_HZ   1000u   // conservative baseline
+#define FIND_DEFAULT_MAX_HZ     20000u  // backstop; further clamped to the ADC cap
+#define FIND_SETTLE_MS          500u    // prime + let the pipeline reach steady state
+#define FIND_DWELL_MS           3000u   // observation window — long enough for the
+                                        // buffer to actually fill at a near-ceiling
+                                        // rate (slow fill needs room to reveal itself)
+#define FIND_OCC_SAMPLES        6u      // ring-occupancy samples across the dwell
+                                        // (high-water = max over these)
+#define FIND_BUF_FULL_PCT       95u     // buffer high-water >= this % of capacity
+                                        // => buffer full => ceiling (user 2026-05-31)
+#define FIND_INTERSTEP_MS       300u    // settle between rate changes (WINC is touchy)
+#define FIND_BACKOFF_NUM        9u      // recommended = lastGood * 9/10 (-10% margin)
+#define FIND_BACKOFF_DEN        10u
+#define FIND_RESOLUTION_HZ      500u    // binary-refine stops when bracket <= this
+// Soak-confirm stage (#520, 2026-06-01): the 3 s arc dwell OVERESTIMATES — a rate
+// clean for 3 s can drop over a longer window, and the WiFi ceiling is a bimodal
+// CLIFF (a rate is 0% one run, catastrophic the next).  So after the −10% backoff,
+// SOAK 20 s and walk the rate down −2% per lossy soak until a soak is fully clean.
+// This is the acceptance gate that corrects the overestimate.
+#define FIND_SOAK_MS            60000u  // soak-confirm dwell — 60s (20s overestimated:
+                                        // 1481Hz passed a 20s soak but lost 4.8% over 60s,
+                                        // 2026-06-01). Long enough to expose slow/bimodal loss.
+#define FIND_SOAK_START_NUM     8u      // start soak at ceiling × 0.8 (−20%). The SOAK is the
+#define FIND_SOAK_START_DEN     10u     // correctness gate, not this factor — a fixed derate
+                                        // can't cover the link's drift (ceiling swung 1000↔1750
+                                        // this session) anyway; that's runtime AIMD's job. So
+                                        // this is just modest margin + fast soak convergence.
+                                        // 0.7 was needlessly conservative (962 vs a clean 1400).
+#define FIND_SOAK_CLEAN_STREAK  2u      // require N consecutive clean 60s soaks at the SAME rate
+                                        // before locking — one clean soak can be a bimodal fluke.
+#define FIND_SOAK_STEP_NUM      49u     // −2% walk-down per lossy soak (×49/50); resets the streak
+#define FIND_SOAK_STEP_DEN      50u
+#define FIND_SOAK_MAX_ITERS     12u     // bound total soaks (≤12 × 60s) so a flaky link can't spin
+#define FIND_SOAK_MIN_HZ        100u    // absolute floor — below this, report NO_CLEAN_SOAK
+
+// One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
+// observe the sample-pool high-water mark (the last-to-fill buffer — see header),
+// tear down cleanly, and return whether the buffers SATURATED at this rate.
+// Returns false on start failure (NOT "saturated") — that case is signaled via
+// *outStartFailed, which callers must check first.
+// Outputs the measured wire KB/s.  *outStartFailed is set if the stream never
+// went Running (caller aborts).  Factored (#520, 2026-05-31) so the coarse AIMD
+// climb and the binary-search refinement share one code path.  wRingCap is used
+// only for the diagnostic log line.
+static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
+                            uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
+                            uint32_t* outKBps, bool* outStartFailed) {
+    if (freq == 0u) { *outStartFailed = true; *outKBps = 0; return false; }  // guard div-by-zero (Qodo)
+    // 64-bit intermediate so clkFreq + freq - 1 can't wrap uint32_t (Qodo pass-8
+    // hardening; the real values — ~100 MHz clk + <=100 kHz freq — never overflow).
+    uint32_t periodCycles = (uint32_t)(((uint64_t)clkFreq + freq - 1u) / freq);
+    if (periodCycles < 2) periodCycles = 2;
+
+    Streaming_ClearStats();
+    cfg->ClockPeriod = periodCycles - 1;
+    StreamFreq_Set(cfg, freq);
+    cfg->IsEnabled = true;
+    Streaming_UpdateState();
+    if (!cfg->Running) {
+        // Clean teardown so the start-fail path leaves IsEnabled=false like the
+        // normal path (the finder's exit assumes streaming is stopped) (Qodo #521).
+        cfg->IsEnabled = false;
+        Streaming_UpdateState();
+        *outStartFailed = true; *outKBps = 0;
+        return false;   // not "saturated" — start failure is signaled via *outStartFailed
+    }
+
+    // Prime to steady state, THEN zero the pool high-water mark so the dwell's
+    // peak reflects this rate (not the priming transient).  Observe across the
+    // dwell; the pool's running-max captures the peak whenever it occurs.
+    vTaskDelay(pdMS_TO_TICKS(FIND_SETTLE_MS));
+    AInSampleList_PoolResetMaxUsed();
+    uint32_t occMax = 0;   // WiFi-ring high-water mark across the dwell
+    TickType_t stepTicks = pdMS_TO_TICKS(obsMs) / FIND_OCC_SAMPLES;  // convert then divide — less truncation (Qodo)
+    if (stepTicks == 0) stepTicks = 1;   // never busy-spin on a zero-tick delay (Qodo)
+    for (uint32_t i = 0; i < FIND_OCC_SAMPLES; i++) {
+        vTaskDelay(stepTicks);
+        uint32_t occ = wifi_tcp_server_GetCircularBufferAvailable();
+        if (occ > occMax) occMax = occ;
+    }
+    uint32_t poolPeak = AInSampleList_PoolMaxUsed();
+    uint32_t poolCap = (uint32_t)AInSampleList_PoolCapacity();
+
+    StreamingStats s;
+    Streaming_GetStats(&s);
+
+    // Clean teardown BEFORE evaluating / changing rate (WINC dislikes mid-
+    // stream transitions — #425/#467/#517).
+    cfg->IsEnabled = false;
+    Streaming_UpdateState();
+
+    // Primary trip: the SAMPLE POOL high-water reached ~full (>= FIND_BUF_FULL_PCT
+    // of capacity).  After the #520 backpressure fix (streaming.c, solo WiFi/USB
+    // now route through Streaming_WriteWithRetry) the encoder HOLDS samples while
+    // the WiFi ring is full, so the ring sits near-full at the link rate as
+    // normal operation — NOT a ceiling — and the POOL is the buffer that backs
+    // up only when inflow exceeds drain.  So the pool high-water is the true
+    // "can't keep up" signal; ring level is no longer a ceiling indicator (it's
+    // full whenever the encoder is backpressuring).  A jitter swell the ring +
+    // lower pool absorb never drives the pool high-water near full.
+    bool poolFull = (poolCap > 0) &&
+                    ((uint64_t)poolPeak * 100ULL >= (uint64_t)poolCap * FIND_BUF_FULL_PCT);
+    // Hard secondary: actual loss — the pool overflowed (PoolExhausted /
+    // QueueOverflow = QueueDropped, the single drop point post-fix) or a
+    // transport dropped.  Use the grace-gated *Steady* counters so a startup
+    // transient during settle doesn't false-trip a low rate (Qodo #521 — match
+    // the grace semantics already used for wifiDroppedBytesSteady).
+    bool lossy = (s.queueDroppedSamplesSteady > 0) ||
+                 (s.wifiDroppedBytesSteady > 0) || (s.windowLossPercent > 0);
+    bool tripped = poolFull || lossy;
+
+    // Use the ACTUAL observed dwell (stepTicks may round up vs obsMs/N) so the
+    // KB/s denominator matches the real sleep time (Qodo).
+    uint32_t obsActualMs = (uint32_t)(FIND_OCC_SAMPLES * stepTicks * portTICK_PERIOD_MS);
+    uint32_t dwellMs = FIND_SETTLE_MS + obsActualMs;
+    *outKBps = (dwellMs > 0)
+        ? (uint32_t)((s.totalBytesStreamed * 1000ULL) / dwellMs / 1024ULL) : 0;
+
+    // #520 tuning instrumentation (SCPI INFO), retrievable via SYST:LOG?.
+    // ringHW=peak/cap is the trip gauge; pool is logged to confirm it stays low.
+    LOG_I("WIFI:FIND %u Hz: samp=%u bytes=%u ringHW=%u/%u pool=%u/%u qd=%u wst=%u wlp=%u -> %s",
+          (unsigned)freq, (unsigned)s.totalSamplesStreamed,
+          (unsigned)s.totalBytesStreamed,
+          (unsigned)occMax, (unsigned)wRingCap,
+          (unsigned)poolPeak, (unsigned)poolCap,
+          (unsigned)s.queueDroppedSamples,
+          (unsigned)s.wifiDroppedBytesSteady, (unsigned)s.windowLossPercent,
+          (!tripped ? "OK" : (lossy ? "LOSSY" : "BUF_FULL")));
+
+    return tripped;
+}
+
+static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
+    // Optional params: startHz, maxHz (0/absent => defaults).
+    int32_t startArg = 0, maxArg = 0;
+    SCPI_ParamInt32(context, &startArg, FALSE);
+    SCPI_ParamInt32(context, &maxArg, FALSE);
+
+    StreamingRuntimeConfig* cfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (cfg->Running) {
+        SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: streaming already active");
+        return SCPI_RES_ERR;
+    }
+
+    const tPowerData* pPower = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPower == NULL ||
+        (pPower->powerState != POWERED_UP && pPower->powerState != POWERED_UP_EXT_DOWN)) {
+        SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: device must be powered up");
+        return SCPI_RES_ERR;
+    }
+
+    if (cfg->ActiveInterface != StreamingInterface_WiFi) {
+        SCPI_ExecutionError(context,
+            "SYST:STR:WIFI:FIND: requires ActiveInterface=WiFi (SYST:STR:INT 1)");
+        return SCPI_RES_ERR;
+    }
+
+    uint16_t type1Count = 0, totalEnabled = 0;
+    bool hasAd7609 = false;
+    Streaming_CountActiveChannels(&type1Count, &totalEnabled, &hasAd7609);
+    (void)type1Count; (void)hasAd7609;   // raw finder no longer derives an ADC cap
+    if (totalEnabled == 0) {
+        SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: no ADC channels enabled");
+        return SCPI_RES_ERR;
+    }
+
+    // RAW-throughput finder: the climb is bounded only by a sane backstop, NOT
+    // by the ADC-accuracy caps (T2 1000 Hz muxed-scan limit, ISR ceiling, etc.).
+    // Those caps are a separate ADC-sampling-accuracy layer — the finder's job
+    // is to measure what the WiFi transport can actually push for this packet
+    // size.  The usable streaming rate is set downstream from the finder result
+    // + a subsequent soak, not clamped here (a finder constrained by the caps
+    // would just re-measure the caps).
+    uint32_t hardMax = (maxArg > 0) ? (uint32_t)maxArg : FIND_DEFAULT_MAX_HZ;
+
+    uint32_t freq = (startArg > 0) ? (uint32_t)startArg : FIND_DEFAULT_START_HZ;
+    if (freq < 1) freq = 1;
+    if (freq > hardMax) freq = hardMax;
+
+    // Save state to restore on exit (mirrors SCPI_RunThroughputBench).
+    // ALSO save Frequency/ClockPeriod: FindMeasureStep pokes them every step,
+    // and a later no-argument SYST:STR:START reuses cfg->Frequency — so without
+    // restoring, the finder (a query!) would silently leave the last probed
+    // rate as the next stream's rate (Qodo #521 correctness bug).
+    uint32_t savedBenchmark = Streaming_GetBenchmarkMode();
+    uint32_t savedPattern = Streaming_GetTestPattern();
+    uint64_t savedFrequency = StreamFreq_Get(cfg);      // Frequency is uint64_t — no truncation
+    uint32_t savedClockPeriod = cfg->ClockPeriod;
+    Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);   // bypass cap to probe the link
+    Streaming_SetTestPattern(3);                   // fullscale: worst-case PB size
+
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
+
+    // Save SD mode: PrepareStreamingBuffers quiesces SD (WRITE->NONE) and the
+    // finder doesn't stream to SD, so restore it on every exit (Qodo #521).
+    sd_card_manager_mode_t savedSdMode = SaveSdMode();
+
+    // #520: establish the WiFi buffer partition + sample-pool ourselves — the
+    // cfg-poke start below (like SCPI_RunThroughputBench) does NOT, so without
+    // this the pipeline has no buffers and the encoder produces 0 bytes.
+    // Build the channel mapping first (sizes the sample-pool element), then
+    // auto-balance-partition with the actual channel count.
+    {
+        volatile AInRuntimeArray* pRtAin =
+            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+        Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRtAin);
+        const AInChannelMapping* chMap = Streaming_GetChannelMapping();
+        uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
+        MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        if (!PrepareStreamingBuffers(mcfg->samplePoolCount,
+                                     AInSampleList_ElementSize(ec))) {
+            Streaming_SetBenchmarkMode(savedBenchmark);
+            Streaming_SetTestPattern(savedPattern);
+            RestoreSdMode(savedSdMode);
+            SCPI_ExecutionError(context, "SYST:STR:WIFI:FIND: buffer prepare failed");
+            return SCPI_RES_ERR;
+        }
+    }
+
+    uint32_t lastGoodHz = 0;
+    uint32_t lastGoodKBps = 0;
+    bool startFailed = false;
+    bool saturated = false;
+    bool confirmTrip = false;   // debounce: require 2 consecutive trips to lock
+
+    // WiFi ring capacity — informational only (logged alongside the pool gauge).
+    // The trip is on the sample-pool high-water mark (see FindMeasureStep header),
+    // not the ring, so the ring size doesn't gate the result.
+    uint8_t* wRingBuf = NULL; uint32_t wRingCap = 0;
+    StreamingBufferPool_GetWifi(&wRingBuf, &wRingCap);
+
+    // Coarse AIMD climb: geometric step up until a step trips twice in a row.
+    while (freq <= hardMax) {
+        uint32_t kbps = 0;
+        bool sf = false;
+        bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
+        if (sf) { startFailed = true; break; }
+
+        if (!sat) {
+            confirmTrip = false;   // clean step clears any pending debounce
+            lastGoodHz = freq;
+            lastGoodKBps = kbps;
+            // Additive-ish increase: bigger steps low, finer near the top so a
+            // single overshoot can't slam the WINC.
+            uint32_t stepUp = (freq < hardMax / 2) ? (freq / 4 + 500) : 500;
+            freq += stepUp;
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+        } else if (!confirmTrip) {
+            // Debounce: WiFi saturation is bimodal — a single transient ring
+            // spike at a low step shouldn't collapse the result.  Re-test the
+            // SAME freq once; only lock saturation if it trips again (#520 HW
+            // tuning 2026-05-31: 1/5 runs collapsed to 900 Hz on a transient).
+            confirmTrip = true;
+            LOG_I("WIFI:FIND %u Hz: trip — re-testing (debounce)", (unsigned)freq);
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+            // freq unchanged → loop re-measures this step
+        } else {
+            saturated = true;   // tripped twice in a row → real saturation
+            break;              // freq holds the confirmed-saturated rate
+        }
+    }
+
+    // Binary-search refinement: the coarse climb's geometric step can skip a
+    // wide band (HW 2026-05-31: 5×T1 jumped 3858 -> 5322, leaving the real
+    // ~5 kHz ceiling unprobed and the recommendation needlessly conservative).
+    // When the climb confirmed saturation, bisect the (lastGoodHz, freq)
+    // bracket — known-clean vs known-saturated — down to FIND_RESOLUTION_HZ to
+    // pin the real ceiling.  A transient false-trip here only narrows toward
+    // lastGoodHz (conservative, safe), so no debounce is needed in this phase.
+    if (saturated && lastGoodHz > 0 && freq > lastGoodHz + FIND_RESOLUTION_HZ) {
+        uint32_t lo = lastGoodHz;   // highest confirmed-clean
+        uint32_t hi = freq;         // confirmed-saturated
+        while (hi - lo > FIND_RESOLUTION_HZ) {
+            uint32_t mid = lo + (hi - lo) / 2;
+            uint32_t kbps = 0;
+            bool sf = false;
+            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf);
+            if (sf) break;          // unexpected start failure — keep coarse lastGood
+            if (sat) {
+                hi = mid;
+            } else {
+                lo = mid;
+                lastGoodHz = mid;
+                lastGoodKBps = kbps;
+            }
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+        }
+    }
+
+    // ---- Soak-confirm stage (#520, 2026-06-01) ----------------------------
+    // The arc/refine above use a 3 s dwell, which OVERESTIMATES the sustainable
+    // rate (clean-for-3s != clean-for-20s; the WiFi ceiling is a bimodal cliff).
+    // Start at the −10% backoff and SOAK 20 s; on any loss (pool-full or drops)
+    // walk down −2% and re-soak; lock the first rate that soaks fully clean.
+    // Runs on the SAME persistent stream session (never reconnect mid-find).
+    uint32_t recommendedHz = 0;
+    uint32_t recommendedKBps = 0;
+    bool soakClean = false;
+    if (!startFailed && lastGoodHz > 0) {
+        uint32_t cand = (uint32_t)((uint64_t)lastGoodHz * FIND_SOAK_START_NUM / FIND_SOAK_START_DEN);
+        uint32_t streak = 0;   // consecutive clean 60 s soaks at the current cand
+        for (uint32_t it = 0; it < FIND_SOAK_MAX_ITERS && cand >= FIND_SOAK_MIN_HZ; it++) {
+            uint32_t kbps = 0; bool sf = false;
+            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
+            if (sf) { startFailed = true; break; }
+            if (!sat) {                       // a clean 60 s soak
+                streak++;
+                recommendedKBps = kbps;       // track the clean rate's wire rate
+                LOG_I("WIFI:FIND soak %u Hz CLEAN (%u/%u)",
+                      (unsigned)cand, (unsigned)streak, (unsigned)FIND_SOAK_CLEAN_STREAK);
+                if (streak >= FIND_SOAK_CLEAN_STREAK) {   // N in a row → lock
+                    recommendedHz = cand; soakClean = true;
+                    break;
+                }
+                // else re-soak the SAME rate to build the streak
+            } else {                          // any loss → reset streak, walk down −2%
+                streak = 0;
+                LOG_I("WIFI:FIND soak %u Hz LOSSY -> -2%% (streak reset)", (unsigned)cand);
+                cand = (uint32_t)((uint64_t)cand * FIND_SOAK_STEP_NUM / FIND_SOAK_STEP_DEN);
+            }
+            vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
+        }
+    }
+
+    // Restore prior streaming config + SD mode.  cfg->IsEnabled is already
+    // false here (FindMeasureStep stops streaming each step); Frequency/
+    // ClockPeriod are restored so the finder leaves no side effect on a
+    // subsequent no-arg SYST:STR:START (Qodo #521).
+    Streaming_SetBenchmarkMode(savedBenchmark);
+    Streaming_SetTestPattern(savedPattern);
+    StreamFreq_Set(cfg, savedFrequency);
+    cfg->ClockPeriod = savedClockPeriod;
+    RestoreSdMode(savedSdMode);
+
+    // ---- Bench-fitted WiFi cap (#522) -------------------------------------
+    // Clamp the soak-confirmed recommendation to the bench-fitted WiFi cap from
+    // Streaming_ComputeMaxFreqForConfig() (which includes the per-format WiFi
+    // wire-rate term for the currently configured interface/format/channels).
+    // The live soak measures THIS environment; the equation is the empirical
+    // hard ceiling we never recommend above — this also hardens against a
+    // transient-high arc spike (the 2026-06-02 overnight's miss mode).  The raw
+    // arc ceiling (lastGoodHz/KBps) is reported unclamped for testing.
+    bool benchClamped = false;
+    if (soakClean && recommendedHz > 0) {
+        // WIFI:FIND probes the WiFi path, so clamp to the WiFi transport cap
+        // explicitly rather than the global ActiveInterface (which may still be
+        // USB if the interface hasn't been switched) — Qodo /improve pass-6.
+        uint32_t capHz = Streaming_ComputeMaxFreqForConfigIface(StreamingInterface_WiFi);
+        if (capHz > 0 && recommendedHz > capHz) {
+            uint32_t newKBps = (recommendedHz > 0)
+                ? (uint32_t)((uint64_t)recommendedKBps * capHz / recommendedHz) : 0;
+            LOG_I("WIFI:FIND bench-cap %u -> %u Hz (equation)",
+                  (unsigned)recommendedHz, (unsigned)capHz);
+            recommendedHz = capHz;
+            recommendedKBps = newKBps;
+            benchClamped = true;
+        }
+    }
+
+    const char* reason;
+    if (startFailed)            reason = "START_FAIL";
+    else if (lastGoodHz == 0)   reason = "NO_LINK";        // nothing sustainable, even the start freq
+    else if (!soakClean)        reason = "NO_CLEAN_SOAK";  // walked to floor without a clean 20 s — link unstable
+    else if (benchClamped)      reason = "BENCH_CAP";      // soak clean but clamped to bench wire ceiling
+    else if (saturated)         reason = "LINK_SATURATED"; // confirmed ceiling + clean soak
+    else                        reason = "HIT_MAX";        // climbed to backstop w/o saturating
+
+    // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
+    //   recommendedHz/KBps = soak-confirmed clean rate + its wire rate (0 if none)
+    //   ceilingHz/KBps      = raw arc/refine ceiling (the pre-soak overestimate,
+    //                         kept for diagnostics so the soak correction is visible)
+    scpi_printf(context, "%u,%u,%s,%u,%u\r\n",
+                (unsigned)recommendedHz, (unsigned)recommendedKBps,
+                reason, (unsigned)lastGoodHz, (unsigned)lastGoodKBps);
     return SCPI_RES_OK;
 }
 
@@ -2697,10 +3196,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // from this heap, and starting a new session when already pinched
     // accelerates the slide.
     //
-    // Floor is 10 KB (see MIN_HEAP_FREE_FOR_STREAM_START_BYTES in
-    // SCPIInterface.h for the choice).  Boot-idle HeapFree is ~13 KB
-    // per CLAUDE.md, so cold-boot first-starts pass; the guard only
-    // bites under accumulated pressure.
+    // Floor is 2500 B (lowered from 10 KB 2026-05-31 — see
+    // MIN_HEAP_FREE_FOR_STREAM_START_BYTES in SCPIInterface.h for the
+    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per CLAUDE.md,
+    // so the guard now only bites under severe accumulated pressure (the
+    // #490 per-session leak), not on ordinary post-boot starts.
     //
     // Placed AFTER the freq==0 disable branch, but BEFORE the freq-
     // parameter branch — covers both the explicit-freq and no-argument
@@ -2728,7 +3228,41 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
-    if (freqProvided) {
+    // Auto-detect the streaming interface BEFORE the frequency cap (#524 Qodo
+    // fix): the per-interface/per-format transport cap depends on ActiveInterface,
+    // so it must be resolved first or the cap is computed for the wrong interface.
+    // If the current setting matches the detected interface (or is the default
+    // USB), adopt auto-detection; otherwise keep the user's explicit choice
+    // (e.g. SD or USB+SD).
+    {
+        StreamingInterface detectedInterface = SCPI_GetInterface(context);
+        StreamingInterface currentInterface = pRunTimeStreamConfig->ActiveInterface;
+        if (currentInterface == detectedInterface || currentInterface == StreamingInterface_USB) {
+            pRunTimeStreamConfig->ActiveInterface = detectedInterface;
+        }
+    }
+
+    // #524 (Qodo): a no-argument START reuses the stored frequency — resolve it
+    // here so the muxed + transport-cap validation below covers BOTH the
+    // explicit-freq and no-arg restart paths. The no-arg path previously skipped
+    // the cap entirely and could start an over-cap stream after interface/format/
+    // channel changes, contradicting the hard-limit behavior.
+    if (!freqProvided) {
+        // 64-bit read needs a critical section on the 32-bit PIC32MZ bus to avoid
+        // a torn read if another SCPI task writes Frequency concurrently
+        // (CLAUDE.md atomicity rules; Qodo /agentic_review pass-6).
+        taskENTER_CRITICAL();
+        uint64_t stored = pRunTimeStreamConfig->Frequency;
+        taskEXIT_CRITICAL();
+        if (stored > (uint64_t)INT32_MAX) stored = (uint64_t)INT32_MAX;  // clamp before narrowing (Qodo)
+        freq = (int32_t)stored;
+    }
+    if (freq < 1) {  // reject zero/negative rate (e.g. no-arg with stored 0) before the period division (Qodo)
+        LOG_E("Streaming rejected: invalid frequency %d Hz (must be >= 1)", (int)freq);
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    {
         // NQ3 Smart Frequency Management:
         // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
         // force internal monitoring to 1Hz (since only monitoring channels would be streaming)
@@ -2784,14 +3318,23 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 }
             }
 
-            uint32_t maxFreq = Streaming_ComputeMaxFreq(
-                activeType1ChannelCount, totalEnabledPublicChannels);
+            // Includes the WiFi wire-rate term when ActiveInterface==WiFi
+            // (#522) on top of the ADC/ISR/tick constraints.
+            uint32_t maxFreq = Streaming_ComputeMaxFreqForConfig();
             if (freq > (int32_t)maxFreq) {
-                LOG_I("Frequency capped: %d Hz -> %u Hz (%u ch, %u type1)",
+                /* #524: HARD cap — reject the over-ask with a SCPI error instead
+                 * of silently lowering the rate. Silent capping left the client
+                 * streaming at a different rate than it requested, unaware. The
+                 * achievable max is in the LOG_E (SYST:LOG?); clients should
+                 * pre-validate against current_max_rate_hz (CONF:CAP:JSON?).
+                 * Benchmark mode (SYST:STR:BENCHmark) bypasses the cap entirely. */
+                LOG_E("Streaming rejected: %d Hz exceeds max %u Hz for this config "
+                      "(%u ch, %u type1) - request <= %u Hz or use SYST:STR:BENCHmark",
                       (int)freq, (unsigned)maxFreq,
                       (unsigned)totalEnabledPublicChannels,
-                      (unsigned)activeType1ChannelCount);
-                freq = (int32_t)maxFreq;
+                      (unsigned)activeType1ChannelCount, (unsigned)maxFreq);
+                SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+                return SCPI_RES_ERR;
             }
         } else {
             // Benchmark: no frequency cap. Timer hardware limit is
@@ -2824,22 +3367,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         } else {
             return SCPI_RES_ERR;
         }
-    } else {
-        //No freq given just stream with the current value
     }
-
-    // Auto-detect interface only if user hasn't explicitly set it via SYSTem:STReam:INTerface
-    // If current interface matches what auto-detection would choose, allow override
-    // If different, user explicitly set it (e.g., SD or All) so preserve their choice
-    StreamingInterface detectedInterface = SCPI_GetInterface(context);
-    StreamingInterface currentInterface = pRunTimeStreamConfig->ActiveInterface;
-
-    // Only auto-detect if current setting matches the detected interface
-    // (meaning user hasn't changed it, or wants auto-detection)
-    if (currentInterface == detectedInterface || currentInterface == StreamingInterface_USB) {
-        pRunTimeStreamConfig->ActiveInterface = detectedInterface;
-    }
-    // Otherwise keep user's explicit setting (e.g., SD or All)
 
     /* Interface_All is USB+SD (WiFi excluded by SPI bus conflict). Any
      * interface other than WiFi-only can drive SD logging when the SD
@@ -2987,165 +3515,20 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         Streaming_UpdateState();  // Stop timer + streaming task
     }
 
-    // Auto-size and apply circular buffer sizes via streaming pool (issue #229).
-    // The pool is one contiguous allocation — re-partitioning is pointer
-    // arithmetic within the pool, no malloc needed.
+    // Partition the streaming buffer pool (auto or static per MemoryConfig) +
+    // DMA coherent pool + sample pool, via the shared helper — same path used
+    // by SYST:STR:THR, the WiFi finder, and SYST:MEM:AUTO (issue #229).  The
+    // helper internally does the USB-DMA + task-quiescence waits (abort on
+    // timeout, #486) before the destructive re-partition.
     {
-        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
-        bool isAutoMode = (mc->sdCircularBufSize == 0 &&
-                           mc->wifiCircularBufSize == 0 &&
-                           mc->usbCircularBufSize == 0 &&
-                           mc->encoderBufSize == 0 &&
-                           mc->samplePoolCount == 0);
-
-        uint32_t usbSize, wifiSize, sdCircSize, sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
-
-        if (isAutoMode) {
-            Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
-                                          &sdDmaSize, &usbDmaSize, &wifiDmaSize,
-                                          &encSize);
-            LOG_I("Auto: USB=%u WiFi=%u sdCirc=%u sdDma=%u usbDma=%u wifiDma=%u enc=%u",
-                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdCircSize,
-                  (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize,
-                  (unsigned)encSize);
-        } else {
-            usbSize = mc->usbCircularBufSize ? mc->usbCircularBufSize
-                                             : USBCDC_CIRCULAR_BUFF_SIZE;
-            wifiSize = mc->wifiCircularBufSize ? mc->wifiCircularBufSize
-                                               : WIFI_CIRCULAR_BUFF_SIZE;
-            sdCircSize = mc->sdCircularBufSize ? mc->sdCircularBufSize
-                                               : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
-            sdDmaSize = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
-            usbDmaSize = USBCDC_DMA_WBUFFER_MAX;
-            wifiDmaSize = WIFI_DMA_MAX;
-            encSize = mc->encoderBufSize ? mc->encoderBufSize
-                                         : ENCODER_BUFFER_DEFAULT;
-            LOG_I("Explicit: USB=%u WiFi=%u sdCirc=%u sdDma=%u usbDma=%u wifiDma=%u enc=%u",
-                  (unsigned)usbSize, (unsigned)wifiSize, (unsigned)sdCircSize,
-                  (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize,
-                  (unsigned)encSize);
-        }
-
-        // Wait for any in-flight USB DMA write before swapping buffers.
-        // #486 (pass-3 Qodo /improve): abort instead of break-on-timeout
-        // — same logic as the task-quiescence gate below.  Proceeding
-        // with the buffer swap while a USB DMA transfer is in flight
-        // would race the SetWriteBuffer pointer against the live DMA.
-        {
-            TickType_t t = xTaskGetTickCount();
-            UsbCdcData_t* pUsb = UsbCdc_GetSettings();
-            while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-                if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) {
-                    SCPI_ExecutionError(context, "STR:START: USB DMA not quiescent after 1000 ms — aborting start");
-                    return SCPI_RES_ERR;
-                }
-                vTaskDelay(1);
-            }
-        }
-
-        /* #486 — wait for streaming_Task (pri 6) and deferred ISR task
-         * (pri 9) to exit their resource-touching regions before we
-         * re-partition the unified pool and swap buffer pointers.
-         * Without this wait, the line-2979 Streaming_UpdateState (which
-         * just stops the timer + sets Running=false) can return while
-         * the encoder is still mid-iteration, leading to a torn read of
-         * the swapped encoder buffer / sample queue / pool memory below.
-         * vTaskDelay(1) yields long enough for both lower-priority
-         * streaming_Task and same-or-higher-priority deferred task to
-         * complete their iteration and clear the flag.  Bounded at
-         * 100 ms; on timeout we ABORT the start rather than proceed,
-         * because proceeding with a wedged task in-flight would race
-         * the destructive re-partition below against the very task
-         * we're trying to protect — exactly the bug this guard exists
-         * to prevent. */
-        {
-            TickType_t qStart = xTaskGetTickCount();
-            while (!Streaming_TasksAreQuiescent()) {
-                if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(100)) {
-                    /* SCPI_ExecutionError emits its own LOG_E — don't
-                     * double-log (Qodo pass-2 finding #4). */
-                    SCPI_ExecutionError(context, "STR:START: tasks not quiescent after 100 ms — aborting start");
-                    return SCPI_RES_ERR;
-                }
-                vTaskDelay(1);
-            }
-        }
-
-        uint32_t poolCount = mc->samplePoolCount;
-
-        // Compute compact sample element size based on enabled channel count (#177).
         const AInChannelMapping* chMapping = Streaming_GetChannelMapping();
-        uint8_t enabledChannels = chMapping->count;
-        if (enabledChannels == 0) enabledChannels = 1;  // Minimum 1 slot
-        size_t sampleElemSize = AInSampleList_ElementSize(enabledChannels);
-
-        // Re-partition the unified pool and swap all buffer pointers.
-        StreamingBufferPool_Partition(usbSize, wifiSize, encSize, sdCircSize,
-                                      poolCount, sampleElemSize);
-
-        uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
-        uint32_t usbLen, wifiLen, encLen, sdCircLen;
-        StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
-        StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
-        StreamingBufferPool_GetEncoder(&encBuf, &encLen);
-        StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
-
-        if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
-            LOG_E("Pool partition failed: USB=%u WiFi=%u enc=%u sdCirc=%u",
-                  (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen,
-                  (unsigned)sdCircLen);
-            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        uint8_t enabledChannels = (chMapping->count > 0) ? chMapping->count : 1;
+        MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+        if (!PrepareStreamingBuffers(mc->samplePoolCount,
+                                     AInSampleList_ElementSize(enabledChannels))) {
+            SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             return SCPI_RES_ERR;
         }
-
-        UsbCdc_SetWriteBuffer(usbBuf, usbLen);
-        wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
-        Streaming_SetEncoderBuffer(encBuf, encLen);
-        sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
-
-        // Re-partition coherent pool for all DMA write buffers.
-        sdDmaSize &= ~(511U);  // sector-align for FatFS fast path
-        if (sdDmaSize < 512) sdDmaSize = 512;
-        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        wifiDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        uint32_t totalDma = sdDmaSize + usbDmaSize + wifiDmaSize + 3 * COHERENT_POOL_ALIGNMENT;
-        if (totalDma > CoherentPool_TotalSize()) {
-            LOG_I("DMA total %u exceeds pool %u — clamping",
-                  (unsigned)totalDma, (unsigned)CoherentPool_TotalSize());
-            sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
-            usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
-            wifiDmaSize = WIFI_DMA_MIN;
-        }
-        // Quiesce all DMA consumers (SD file close, WiFi SPI idle) and reset pool.
-        // USB writeTransferHandle already waited above.
-        if (!SCPI_QuiesceAndResetCoherentPool()) {
-            SCPI_ExecutionError(context, "SYST:STR:START: coherent pool quiesce failed");
-            return SCPI_RES_ERR;
-        }
-        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        if (sdDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize);
-        } else {
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-        }
-        uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-        if (usbDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: USB_write (%u)", (unsigned)usbDmaSize);
-        } else {
-            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-        }
-        uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-        if (wifiDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: WiFi_SPI (%u)", (unsigned)wifiDmaSize);
-        } else {
-            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
-        }
-
-        // Re-init sample pool with new region from unified pool
-        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSize;
-        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSize);
-        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSize);
 
         // Re-enable SD if it was closed for DMA quiesce
         if (sdLoggingRequested) {
@@ -3733,98 +4116,148 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// #520: shared streaming-buffer prepare — auto-balance partition of the
+// unified pool + DMA coherent-pool re-alloc + sample-pool init.  Mirrors the
+// setup SCPI_StartStreaming/SCPI_MemAutoBalance do; factored out so the WiFi
+// throughput finder can establish a valid partition standalone.  Without this,
+// the finder's (and SCPI_RunThroughputBench's) cfg-poke start path leaves the
+// pipeline with no WiFi/encoder buffers, so the encoder produces 0 bytes
+// (root cause found on HW 2026-05-31).  poolCount/sampleElemSize: 0/0 = generic
+// 16ch default; or the real values after Streaming_BuildChannelMapping.
+// Returns false on partition/quiesce failure (caller pushes the SCPI error).
+// NOTE: duplicates SCPI_MemAutoBalance's body for now — DRY once verified.
+static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
+    uint32_t usbSize, wifiSize, sdCircSize;
+    uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
+
+    // Mirror SCPI_StartStreaming's auto-vs-explicit decision so the finder
+    // measures with the SAME buffer layout the user's real stream will use:
+    // if any MemoryConfig field is set (SYST:MEM:* static config), honor those
+    // sizes; only auto-balance when fully in auto mode.  (SCPI_MemAutoBalance
+    // forces auto by zeroing mc first — this helper does not, so it respects
+    // a user's static buffers.)
+    MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
+    bool isAutoMode = (mc->sdCircularBufSize == 0 &&
+                       mc->wifiCircularBufSize == 0 &&
+                       mc->usbCircularBufSize == 0 &&
+                       mc->encoderBufSize == 0 &&
+                       mc->samplePoolCount == 0);
+    if (isAutoMode) {
+        Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
+                                     &sdDmaSize, &usbDmaSize, &wifiDmaSize, &encSize);
+    } else {
+        usbSize   = mc->usbCircularBufSize ? mc->usbCircularBufSize : USBCDC_CIRCULAR_BUFF_SIZE;
+        wifiSize  = mc->wifiCircularBufSize ? mc->wifiCircularBufSize : WIFI_CIRCULAR_BUFF_SIZE;
+        sdCircSize = mc->sdCircularBufSize ? mc->sdCircularBufSize : SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE;
+        sdDmaSize  = SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
+        usbDmaSize = USBCDC_DMA_WBUFFER_MAX;
+        wifiDmaSize = WIFI_DMA_MAX;
+        encSize    = mc->encoderBufSize ? mc->encoderBufSize : ENCODER_BUFFER_DEFAULT;
+    }
+
+    // Wait for any in-flight USB DMA write before swapping buffers; ABORT on
+    // timeout rather than proceeding (#486) — swapping the write buffer while
+    // a DMA transfer is live would race the SetWriteBuffer pointer.
+    UsbCdcData_t* pUsb = UsbCdc_GetSettings();
+    TickType_t t = xTaskGetTickCount();
+    while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) return false;
+        vTaskDelay(1);
+    }
+
+    // Wait for streaming_Task (pri 6) + deferred ISR task (pri 9) to exit their
+    // resource-touching regions before re-partitioning, so the buffer-pointer
+    // swap below can't be torn-read by a task mid-iteration (#486).  ABORT on
+    // timeout.  No-op for idle callers (tasks already quiescent); load-bearing
+    // when StartStreaming re-partitions a just-stopped active stream.
+    {
+        TickType_t qStart = xTaskGetTickCount();
+        while (!Streaming_TasksAreQuiescent()) {
+            if ((xTaskGetTickCount() - qStart) > pdMS_TO_TICKS(100)) return false;
+            vTaskDelay(1);
+        }
+    }
+
+    StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
+                                  sdCircSize, poolCount, sampleElemSize);
+
+    uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
+    uint32_t usbLen, wifiLen, encLen, sdCircLen;
+    StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
+    StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
+    StreamingBufferPool_GetEncoder(&encBuf, &encLen);
+    StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
+    if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
+        LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
+              (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
+        return false;
+    }
+    // NOTE: buffer-pointer Set calls are deferred to the END (after the coherent
+    // DMA allocs also succeed) so a later alloc failure can't leave a partially
+    // applied configuration — all-or-nothing (Qodo #521 transactional setup).
+
+    sdDmaSize &= ~(511U);
+    if (sdDmaSize < 512) sdDmaSize = 512;
+    sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+    usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+    wifiDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
+    // Floor each DMA size to its minimum AFTER the alignment mask so a small
+    // computed size can't round down to 0 and produce a zero-length DMA buffer
+    // (Qodo #521 — defensive; current callers never compute sizes this small).
+    if (sdDmaSize   < SD_CARD_MANAGER_MIN_WBUFFER_SIZE) sdDmaSize   = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
+    if (usbDmaSize  < USBCDC_DMA_WBUFFER_MIN)           usbDmaSize  = USBCDC_DMA_WBUFFER_MIN;
+    if (wifiDmaSize < WIFI_DMA_MIN)                     wifiDmaSize = WIFI_DMA_MIN;
+    uint32_t totalDma = sdDmaSize + usbDmaSize + wifiDmaSize + 3 * COHERENT_POOL_ALIGNMENT;
+    if (totalDma > CoherentPool_TotalSize()) {
+        sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
+        usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
+        wifiDmaSize = WIFI_DMA_MIN;
+    }
+    if (!SCPI_QuiesceAndResetCoherentPool()) {
+        return false;
+    }
+    // Allocate all three coherent DMA buffers; ABORT if any fails rather than
+    // continuing with a stale/unset buffer pointer (Qodo #521).  Unreachable in
+    // normal operation (sizes are clamped to fit the pool above).
+    uint8_t* sdDmaBuf  = CoherentPool_Alloc("SD_write", sdDmaSize);
+    uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
+    uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
+    if (sdDmaBuf == NULL || usbDmaBuf == NULL || wifiDmaBuf == NULL) {
+        LOG_E("PrepareStreamingBuffers: coherent alloc failed SD=%u USB=%u WIFI=%u",
+              (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize);
+        return false;
+    }
+    // All allocations succeeded — now apply every buffer pointer together
+    // (circular pool + coherent DMA) so the config is all-or-nothing.
+    UsbCdc_SetWriteBuffer(usbBuf, usbLen);
+    wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
+    Streaming_SetEncoderBuffer(encBuf, encLen);
+    sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
+    sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
+    UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
+    WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
+
+    void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
+    StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
+    AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
+    return true;
+}
+
 static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
 
-    // Compute optimal buffer sizes into LOCAL variables — do NOT persist
-    // into MemoryConfig. Keeping mc at zero preserves auto mode for
-    // subsequent StartStreamData calls.
-    uint32_t usbSize, wifiSize, sdCircSize;
-    uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
-    Streaming_ComputeAutoBuffers(&usbSize, &wifiSize, &sdCircSize,
-                                 &sdDmaSize, &usbDmaSize, &wifiDmaSize,
-                                 &encSize);
-
-    // Apply: re-partition unified pool, swap all pointers
-    {
-        UsbCdcData_t* pUsb = UsbCdc_GetSettings();
-        TickType_t t = xTaskGetTickCount();
-        while (pUsb->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-            if ((xTaskGetTickCount() - t) > pdMS_TO_TICKS(1000)) break;
-            vTaskDelay(1);
-        }
-
-        // SYST:MEM:AUTO: use 0 for element size (defaults to max 16ch)
-        // since actual channel count isn't known until StartStreamData.
-        StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
-                                      sdCircSize, 0, 0);
-
-        uint8_t *usbBuf, *wifiBuf, *encBuf, *sdCircBuf;
-        uint32_t usbLen, wifiLen, encLen, sdCircLen;
-        StreamingBufferPool_GetUsb(&usbBuf, &usbLen);
-        StreamingBufferPool_GetWifi(&wifiBuf, &wifiLen);
-        StreamingBufferPool_GetEncoder(&encBuf, &encLen);
-        StreamingBufferPool_GetSdCircular(&sdCircBuf, &sdCircLen);
-
-        if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
-            LOG_E("Pool partition failed: USB=%u WiFi=%u enc=%u sdCirc=%u",
-                  (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen,
-                  (unsigned)sdCircLen);
-            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
-            return SCPI_RES_ERR;
-        }
-
-        UsbCdc_SetWriteBuffer(usbBuf, usbLen);
-        wifi_tcp_server_SetWriteBuffer(wifiBuf, wifiLen);
-        Streaming_SetEncoderBuffer(encBuf, encLen);
-        sd_card_manager_SetCircularBuffer(sdCircBuf, sdCircLen);
-
-        // Re-partition coherent pool for all DMA write buffers.
-        sdDmaSize &= ~(511U);  // sector-align for FatFS fast path
-        if (sdDmaSize < 512) sdDmaSize = 512;
-        sdDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        usbDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        wifiDmaSize &= ~(COHERENT_POOL_ALIGNMENT - 1);
-        uint32_t totalDma = sdDmaSize + usbDmaSize + wifiDmaSize + 3 * COHERENT_POOL_ALIGNMENT;
-        if (totalDma > CoherentPool_TotalSize()) {
-            sdDmaSize = SD_CARD_MANAGER_MIN_WBUFFER_SIZE;
-            usbDmaSize = USBCDC_DMA_WBUFFER_MIN;
-            wifiDmaSize = WIFI_DMA_MIN;
-        }
-        if (!SCPI_QuiesceAndResetCoherentPool()) {
-            SCPI_ExecutionError(context, "SYST:MEM:AUTO: coherent pool quiesce failed");
-            return SCPI_RES_ERR;
-        }
-        uint8_t* sdDmaBuf = CoherentPool_Alloc("SD_write", sdDmaSize);
-        if (sdDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: SD_write (%u)", (unsigned)sdDmaSize);
-        } else {
-            sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
-        }
-        uint8_t* usbDmaBuf = CoherentPool_Alloc("USB_write", usbDmaSize);
-        if (usbDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: USB_write (%u)", (unsigned)usbDmaSize);
-        } else {
-            UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
-        }
-        uint8_t* wifiDmaBuf = CoherentPool_Alloc("WiFi_SPI", wifiDmaSize);
-        if (wifiDmaBuf == NULL) {
-            LOG_E("CoherentPool alloc failed: WiFi_SPI (%u)", (unsigned)wifiDmaSize);
-        } else {
-            WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
-        }
-
-        void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
-        StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
-        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
-    }
-
-    // Ensure MemoryConfig stays zeroed — auto mode for next StartStreamData
+    // Force auto mode by zeroing mc BEFORE partitioning, so the shared helper
+    // computes auto sizes regardless of any prior static config — SYST:MEM:AUTO
+    // is the "balance it for me" command — and leaves mc at zero so subsequent
+    // StartStreamData stays in auto mode.  poolCount/elemSize 0/0 = generic
+    // 16ch default (actual channel count isn't known until StartStreamData).
     memset(mc, 0, sizeof(MemoryConfig));
-
-    // SCPI compliance: commands (no ?) don't return data.
-    // Use SYST:MEM:FREE? to query applied sizes.
+    if (!PrepareStreamingBuffers(0, 0)) {
+        SCPI_ExecutionError(context, "SYST:MEM:AUTO: buffer partition failed");
+        return SCPI_RES_ERR;
+    }
+    // SCPI compliance: commands (no ?) don't return data. Use SYST:MEM:FREE?.
     return SCPI_RES_OK;
 }
 
@@ -4197,6 +4630,21 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     Capabilities_GetAoutSummary(&ao);
     Capabilities_GetDioSummary(&di);
     Capabilities_GetStreamingSummary(&st);
+    /* current_max_rate_hz must reflect the cap for the interface the client will
+     * actually stream on. When ActiveInterface is still the default USB (or already
+     * matches the detected connection), START will auto-detect this connection — so
+     * advertise the cap for the DETECTED interface, computed WITHOUT mutating the
+     * shared runtime config (#524 Qodo). Skip when no channels are enabled
+     * (st.maxFreqHz == 0). */
+    if (st.maxFreqHz > 0) {
+        StreamingRuntimeConfig* scq =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+        StreamingInterface detIf = SCPI_GetInterface(context);
+        StreamingInterface effIf =
+            (scq->ActiveInterface == detIf || scq->ActiveInterface == StreamingInterface_USB)
+                ? detIf : scq->ActiveInterface;
+        st.maxFreqHz = Streaming_ComputeMaxFreqForConfigIface(effIf);
+    }
     Capabilities_GetStorageSummary(&stor);
     Capabilities_GetPowerSummary(&pw);
     Capabilities_GetTransportsSummary(&tr);
@@ -4332,9 +4780,10 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   client that always picks this rate is never surprised.
      *
      * - current_max_rate_hz: device's authoritative cap for the
-     *   channel set enabled right now. Today only reflects channel
-     *   count/type; future work (#344 Phase 3) extends it to apply
-     *   interface / encoder / DIO caps too.
+     *   channel set enabled right now. Reflects channel count/type
+     *   AND the per-interface, per-format transport cap (#524), i.e.
+     *   it now matches the rate StartStreamData actually applies.
+     *   (DIO / OBDiag caps still not folded in — future work.)
      *
      * - rate_model: client-side formula for optimistic previews
      *   across hypothetical channel groupings. Channel-count only —
@@ -4345,10 +4794,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   do not factor (DIO is amortized in per_tick_overhead; AOut
      *   is not streamed).
      *
-     * rate_validation documents over-ask handling. Today: silent_cap
-     * (firmware lowers to current_max_rate_hz, logs LOG_I). Clients
-     * needing explicit feedback MUST pre-validate against
-     * current_max_rate_hz before SYSTem:StartStreamData. */
+     * rate_validation documents over-ask handling. As of #524: "error" —
+     * StartStreamData REJECTS freq > current_max_rate_hz with SCPI error
+     * -222 (+ LOG_E detail) and does NOT start; no silent rate change.
+     * Clients MUST pre-validate against current_max_rate_hz, or handle the
+     * error, before SYSTem:StartStreamData. (Benchmark mode bypasses.) */
     scpi_printf(context,
         "],\"sample_rate_range_hz\":{\"min\":1,\"max\":%u},"
         "\"conservative_envelope_hz\":%u,"
@@ -4371,7 +4821,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         (unsigned)st.tickBudget,
         (unsigned)st.tickOverhead);
 
-    scpi_printf(context, "\"rate_validation\":\"silent_cap\",");
+    scpi_printf(context, "\"rate_validation\":\"error\",");
 
     scpi_printf(context,
         "\"buffer_ranges_bytes\":{"
@@ -4693,6 +5143,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STReam:BENCHmark", .callback = SCPI_SetBenchmarkMode,}, // 0=normal, 1=nocap, 2=pipeline (skip ADC)
     {.pattern = "SYSTem:STReam:BENCHmark?", .callback = SCPI_GetBenchmarkMode,},
     {.pattern = "SYSTem:STReam:THRoughput", .callback = SCPI_RunThroughputBench,}, // <freq>,<duration_sec> — self-contained benchmark
+    {.pattern = "SYSTem:STReam:WIFI:FINd?", .callback = SCPI_WifiFindRate,}, // #520 [startHz][,maxHz] -> recommendedHz,KBps,reason
     // #377 iperf2 wire-rate benchmarks (TCP + UDP).  Refuse if streaming.
     {.pattern = "SYSTem:WIFI:IPERF:TCPServer", .callback = SCPI_Iperf2_TcpServer,}, // [port=5001]
     {.pattern = "SYSTem:WIFI:IPERF:TXBLast", .callback = SCPI_Iperf2_TxBlast,}, // <port>,<duration_s>  #399 workaround
