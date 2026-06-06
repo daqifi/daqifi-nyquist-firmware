@@ -121,6 +121,21 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
             BOARDCONFIG_AIN_CHANNELS,
             0);
 
+    // #116: reject channel enable/disable while streaming is active. The sample
+    // pool element stride is fixed at StartStreamData for the then-current channel
+    // count (AInSampleList_InitializeExternal is only called at stream start, never
+    // mid-stream), so changing the channel set live would desync the pool layout
+    // from the ISR write width. The old behavior here silently re-capped the
+    // frequency (LOG_I only) without re-partitioning the pool — unsound and
+    // invisible to the client. Mirror SCPI_MemRejectIfStreaming: stop streaming,
+    // reconfigure, restart. Rejecting BEFORE ADC_WriteChannelStateAll() leaves both
+    // runtime config and ADC hardware untouched (no snapshot/rollback needed).
+    if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
+        LOG_E("Channel enable rejected: streaming is active (stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
