@@ -130,7 +130,15 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     // invisible to the client. Mirror SCPI_MemRejectIfStreaming: stop streaming,
     // reconfigure, restart. Rejecting BEFORE ADC_WriteChannelStateAll() leaves both
     // runtime config and ADC hardware untouched (no snapshot/rollback needed).
-    if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
+    //
+    // Use IsEnabled || Running (not &&): the two flags are set/cleared in separate
+    // steps at stream start/stop (StartStreaming arms IsEnabled, then
+    // Streaming_UpdateState flips Running; stop clears them in turn). An && guard
+    // would leave a transition window — IsEnabled set but Running not yet, or vice
+    // versa — through which a concurrent SCPI session (USB pri 7 vs WiFi pri 2)
+    // could slip a channel change after the pool/mapping was sized. Reject unless
+    // streaming is FULLY idle (both flags clear).
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
         LOG_E("Channel enable rejected: streaming is active (stop streaming first)");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
