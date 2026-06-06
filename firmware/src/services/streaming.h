@@ -122,7 +122,8 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
     if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
     /* Explicit encoding handling (Qodo): unknown encodings cap at 1 Hz so a
      * future/garbage value can never over-cap. */
-    uint32_t pb, json = 0u;
+    uint32_t pb = 0u, json = 0u;  /* init pb defensively (Qodo pass-7); every
+                                   * non-default case still assigns it explicitly */
     switch (encoding) {
         case Streaming_ProtoBuffer: pb = 1u; break;
         case Streaming_Csv:         pb = 0u; break;
