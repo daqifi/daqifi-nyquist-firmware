@@ -2283,7 +2283,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed) {
     if (freq == 0u) { *outStartFailed = true; *outKBps = 0; return false; }  // guard div-by-zero (Qodo)
-    uint32_t periodCycles = (clkFreq + freq - 1) / freq;
+    // 64-bit intermediate so clkFreq + freq - 1 can't wrap uint32_t (Qodo pass-8
+    // hardening; the real values — ~100 MHz clk + <=100 kHz freq — never overflow).
+    uint32_t periodCycles = (uint32_t)(((uint64_t)clkFreq + freq - 1u) / freq);
     if (periodCycles < 2) periodCycles = 2;
 
     Streaming_ClearStats();

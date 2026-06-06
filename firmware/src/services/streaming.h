@@ -151,7 +151,14 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
         default:
             return 1u;  /* unknown/corrupted interface -> fail-safe floor, never over-cap (Qodo) */
     }
-    uint32_t hz = (totalChannels == 1u) ? single : A / (B + totalChannels);
+    /* Widen the divide to 64-bit so a corrupted/huge channel count can never wrap
+     * the denominator (Qodo pass-8 hardening). denom is always >= 2 in this branch
+     * (totalChannels >= 2, B >= 0), so no div-by-zero guard is needed. */
+    uint32_t hz = single;
+    if (totalChannels != 1u) {
+        uint64_t denom = (uint64_t)B + (uint64_t)totalChannels;
+        hz = (uint32_t)((uint64_t)A / denom);
+    }
     /* JSON emits ~2-3x CSV bytes/sample (object braces + per-sample field names),
      * so its true ceiling is below CSV's and it was not separately characterized.
      * Derate the CSV-based cap by half to stay conservative (never over-cap JSON)
