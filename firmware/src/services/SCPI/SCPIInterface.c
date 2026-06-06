@@ -3247,6 +3247,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (stored > (uint64_t)INT32_MAX) stored = (uint64_t)INT32_MAX;  // clamp before narrowing (Qodo)
         freq = (int32_t)stored;
     }
+    if (freq < 1) {  // reject zero/negative rate (e.g. no-arg with stored 0) before the period division (Qodo)
+        LOG_E("Streaming rejected: invalid frequency %d Hz (must be >= 1)", (int)freq);
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
     {
         // NQ3 Smart Frequency Management:
         // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
@@ -4614,7 +4619,22 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     Capabilities_GetAinSummary(&ai);
     Capabilities_GetAoutSummary(&ao);
     Capabilities_GetDioSummary(&di);
-    Capabilities_GetStreamingSummary(&st);
+    /* current_max_rate_hz reflects the cap for ActiveInterface; if that's still the
+     * default USB (client hasn't streamed yet), temporarily adopt the detected
+     * connection interface so the advertised cap matches what START will enforce
+     * for THIS client (#524 Qodo — query-side of the interface-detect fix). Restored
+     * immediately; the SCPI query runs single-threaded on the connection's task. */
+    {
+        StreamingRuntimeConfig* scq =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+        StreamingInterface savedIf = scq->ActiveInterface;
+        StreamingInterface detIf = SCPI_GetInterface(context);
+        if (savedIf == detIf || savedIf == StreamingInterface_USB) {
+            scq->ActiveInterface = detIf;
+        }
+        Capabilities_GetStreamingSummary(&st);
+        scq->ActiveInterface = savedIf;
+    }
     Capabilities_GetStorageSummary(&stor);
     Capabilities_GetPowerSummary(&pw);
     Capabilities_GetTransportsSummary(&tr);
