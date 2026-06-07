@@ -420,6 +420,34 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
     if (out_hasAD7609   != NULL) *out_hasAD7609   = has7609;
 }
 
+uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
+    uint16_t type1 = 0, total = 0;
+    Streaming_CountActiveChannels(&type1, &total, NULL);
+
+    // Mirror Streaming_ComputeMaxFreq's behavior for 0 channels (returns
+    // ISR_MAX, not 0) so the channel-enable recompute path doesn't cap to 0
+    // when the last channel is disabled.
+    uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
+
+    /* Apply the per-interface, per-format TRANSPORT cap (#524), generalizing the
+     * former WiFi-only term to USB / SD / USB+SD.  min() with the ADC cap above.
+     * The interface is a PARAMETER (not read from the global) so callers such as
+     * the capabilities query can compute for the client's detected interface
+     * without mutating shared state (#524 Qodo). BoardRunTimeConfig_Get never
+     * returns NULL (CLAUDE.md). */
+    StreamingRuntimeConfig* sc =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    uint32_t transportMax = Streaming_TransportMaxFreq(iface, sc->Encoding, total);
+    if (transportMax < maxFreq) maxFreq = transportMax;
+    return maxFreq;
+}
+
+uint32_t Streaming_ComputeMaxFreqForConfig(void) {
+    StreamingRuntimeConfig* sc =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    return Streaming_ComputeMaxFreqForConfigIface(sc->ActiveInterface);
+}
+
 /**
  * @brief Deferred interrupt handler for sample collection.
  *
@@ -1575,6 +1603,18 @@ void Streaming_SetFlowWindowOverride(uint32_t size) {
     gFlowWindowOverride = size;
 }
 
+// Stop then (re)start the streaming timer + task to apply the current
+// runtime config (frequency, IsEnabled, interface).
+//
+// IMPORTANT — this does NOT partition/allocate the streaming buffer pool.
+// Buffer partitioning (USB/WiFi/SD/encoder circular buffers + sample pool)
+// is the CALLER's responsibility and lives in SCPI_StartStreaming's inline
+// setup (and the shared PrepareStreamingBuffers helper).  Code that pokes
+// pStreamCfg->IsEnabled and calls Streaming_UpdateState() WITHOUT first
+// partitioning (e.g. an ad-hoc benchmark) will run the encoder against
+// stale/unsized buffers and produce 0 bytes — see #520.  If you reach for
+// this to start a stream, make sure the pool has been partitioned for the
+// active interface first.
 void Streaming_UpdateState(void) {
     Streaming_Stop();
     Streaming_Start();
@@ -1888,8 +1928,31 @@ void streaming_Task(void) {
             // Now we call UsbCdc_WriteToBuffer unconditionally when USB is in
             // the active set; its own pre-check returns 0 on no-space, and
             // we count that as a drop.
-            if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_USB ||
-                pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
+            if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_USB) {
+                // #520 backpressure (solo USB): block the encoder on a full USB
+                // ring so the sample pool absorbs the burst (single drop point =
+                // pool exhaustion), bounded by WriteWithRetry's 10 s
+                // dead-interface timeout.  Same fix as the solo-WiFi path above.
+                // UsbAndSd is intentionally left on the per-output no-retry drop
+                // (below) — multi-output backpressure pacing is a separate
+                // ticket (SD would pace USB).
+                size_t usbWr = Streaming_WriteWithRetry(
+                    Streaming_UsbWrite, buffer, packetSize);
+                if (usbWr == STREAM_WRITE_RETURN_TIMEOUT) {
+                    bool pastGrace = Streaming_PastStartupGrace();
+                    taskENTER_CRITICAL();
+                    gStreamStats.usbDroppedBytes += packetSize;
+                    if (pastGrace) {
+                        gStreamStats.usbDroppedBytesSteady += packetSize;
+                    }
+                    gQuesBits |= QUES_BIT_USB_OVERFLOW;
+                    taskEXIT_CRITICAL();
+                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB interface dead (10s timeout)");
+                }
+                // else: usbWr == packetSize (success) or STOPPED (stop-abort).
+            } else if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
+                // Multi-output: keep per-output all-or-nothing drop (unchanged —
+                // SD path below already backpressures via WriteWithRetry).
                 if (Streaming_UsbWrite((const char*)buffer, packetSize) != packetSize) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     // CLAUDE.md atomicity: 32-bit RMW (+=) is not atomic.
@@ -1925,7 +1988,22 @@ void streaming_Task(void) {
                         "diag367: encoder packetSize=%u (<4 bytes)",
                         (unsigned)packetSize);
                 }
-                if (wifi_manager_WriteToBuffer((const char*)buffer, packetSize) != packetSize) {
+                // #520 backpressure (solo WiFi): BLOCK the encoder while the
+                // WiFi ring is full (bounded retry) so the sample pool absorbs
+                // the burst and the SINGLE drop point becomes pool exhaustion
+                // (PoolExhausted/QueueOverflow in the deferred ISR task) — NOT a
+                // ring drop with the pool sitting empty.  The old all-or-nothing
+                // no-retry path dropped at the ring while the pool's ~3000-slot
+                // absorption capacity sat idle (HW-confirmed 2026-05-31: pool 1%
+                // while ring pegged + dropping 1.17 MB over 60 s).  Bounded by
+                // WriteWithRetry's 10 s dead-interface timeout so a stuck WINC
+                // (#383/#385/#491) drops at the ring rather than wedging the
+                // stream forever.  WriteWithRetry also aborts (STOPPED) if
+                // streaming was stopped mid-retry, so STR:START quiescence isn't
+                // blocked.
+                size_t wifiWr = Streaming_WriteWithRetry(
+                    wifi_manager_WriteToBuffer, buffer, packetSize);
+                if (wifiWr == STREAM_WRITE_RETURN_TIMEOUT) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
                     gStreamStats.wifiDroppedBytes += packetSize;
@@ -1934,8 +2012,10 @@ void streaming_Task(void) {
                     }
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi buffer overflow detected");
+                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi interface dead (10s timeout)");
                 }
+                // else: wifiWr == packetSize (success) or
+                //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
             }
             if (hasSD && gSdFileWasReady) {
                 size_t wr = Streaming_WriteWithRetry(

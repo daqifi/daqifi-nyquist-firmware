@@ -384,6 +384,87 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     }
 }
 
+// Invalidate every STA link-derived cached value (#517).  Called from each
+// teardown path — disconnect, disable, Deinit (POW:STAT 0 / reboot), and
+// hard reset — so:
+//   1. SYST:COMM:LAN:RSSI / ADDRess? (and BSSID? once #516 lands) can't
+//      report a link that no longer exists.  assocHandle == INVALID is the
+//      first gate both wifi_manager_GetRSSI and #516's _GetBSSID check, so
+//      clearing it here is the load-bearing fix that makes those queries
+//      fail cleanly; ipAddr separately feeds ADDRess?.
+//   2. A stale assocHandle can't make a later WDRV_WINC_IPUseDHCPSet observe
+//      isConnected==true and return REQUEST_ERROR (the #467/#425 re-enable
+//      wedge class).
+// Previously assocHandle was cleared ONLY by the async StaEventCallback on a
+// WINC-reported disconnect — never on Deinit/power-down/disable, so the
+// cached values survived the radio going down.  Idempotent and safe to call
+// from any task context (USB pri 7 or WifiTask pri 2).
+static void InvalidateStaLinkState(void) {
+    // Act only on a genuine STA-link teardown — never while an AP is up.
+    //
+    // !AP_STARTED is the hard guard: while an AP is actually running, ipAddr
+    // holds the AP's OWN IP (read at AP start, ~line 1069) and assocHandle is
+    // irrelevant, so we must not touch STA link state.  This matters because
+    // STA_DISCONNECTED also fires for AP-client disconnects (ApEventCallback).
+    //
+    // The STA-context predicate is an OR of the configured mode and the
+    // runtime flags, because each covers a blind spot of the other and BOTH
+    // are needed:
+    //   - networkMode==STA catches the disable path (and Deinit/HardReset from
+    //     STA): those reset STA_STARTED/STA_CONNECTED *before* calling this
+    //     helper (~line 1331), so a runtime-flag-only gate would early-return
+    //     and skip the clear — re-introducing the #467 re-enable wedge.
+    //   - STA_STARTED || STA_CONNECTED catches a STA->AP APPLY, which flips
+    //     networkMode to AP synchronously while STA is still tearing down; a
+    //     networkMode-only gate would skip and leak the stale STA assocHandle.
+    // (Qodo /agentic_review pass 1 + /improve passes 2-3.)
+    if (gStateMachineContext.pWifiSettings == NULL) {
+        return;
+    }
+    // Take a SINGLE coherent snapshot of the state-flag bitmask and mode, then
+    // make all gate decisions against the snapshot.  This helper can run on the
+    // USB task (Deinit/HardReset) while the WifiTask mutates the flags, so
+    // reading them separately for each of the three checks below could straddle
+    // a concurrent flip and observe an inconsistent AP/STA combination.
+    // Snapshot the uint16_t .value field specifically — that is the atomic unit
+    // (wifi_manager_stateFlag_t is a struct, so copying the whole struct would
+    // be a multi-word, non-atomic copy).  A single 16-bit load is atomic on
+    // PIC32MZ; no critical section needed (Qodo /agentic_review pass 4 +
+    // /improve pass 5).
+    const uint16_t flags = gStateMachineContext.eventFlags.value;
+    const wifi_manager_networkMode_t mode = gStateMachineContext.pWifiSettings->networkMode;
+    if (flags & WIFI_MANAGER_STATE_FLAG_AP_STARTED) {
+        return;
+    }
+    const bool staContext =
+        (mode == WIFI_MANAGER_NETWORK_MODE_STA) ||
+        (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_STARTED)) ||
+        (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED));
+    if (!staContext) {
+        return;
+    }
+    // assocHandle == INVALID is the load-bearing fix: both GetRSSI and #516's
+    // GetBSSID gate on it, and it stops a later IPUseDHCPSet from observing a
+    // stale isConnected==true (#467/#425 re-enable wedge class).
+    gStateMachineContext.assocHandle = WDRV_WINC_ASSOC_HANDLE_INVALID;
+    gStateMachineContext.pWifiSettings->ipAddr.Val = 0;
+    // Also clear the USER-FACING RSSI cache: SCPI_LANSsidStrengthGet (SSIDSTR?)
+    // returns pWifiSettings->rssi_percent as a fallback when a fresh GetRSSI
+    // fails, so without this a stale RSSI survives a teardown where the
+    // STA_DISCONNECTED handler (which already zeroes rssi_percent) doesn't run
+    // — e.g. Deinit/HardReset/disable.  Matches the STA_DISCONNECTED handler
+    // (Qodo /agentic_review pass 6).
+    gStateMachineContext.pWifiSettings->rssi_percent = 0;
+    // Clear the internal RSSI state tuple (pending + complete + value) as one
+    // coherent snapshot under the same critical section the query path
+    // (GetRSSI) uses, so a concurrent reader never sees a mixed state.
+    taskENTER_CRITICAL();
+    gRssiUpdatePending = false;
+    gRssiUpdateComplete = false;
+    gLastRssiPercentage = 0;
+    taskEXIT_CRITICAL();
+}
+
 static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle, WDRV_WINC_CONN_STATE currentState, WDRV_WINC_CONN_ERROR errorCode) {
     // Validate this callback is for a valid association and we're in AP mode
     if (assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
@@ -1187,6 +1268,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
         case WIFI_MANAGER_EVENT_STA_DISCONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+            InvalidateStaLinkState();  // #517: clear cached RSSI/IP/assocHandle
             CloseUdpSocket(&pInstance->udpServerSocket);
             wifi_tcp_server_CloseSocket();
             RESET_TCP_SOCKET_OPEN(pInstance);
@@ -1317,6 +1399,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         LOG_E("WiFi: BSS disconnect failed on disable (status=%d)", (int)discStatus);
                     }
                 }
+                // #517: invalidate synchronously here, not just via the async
+                // StaEventCallback — BSSDisconnect's disconnect callback can
+                // no-op when isConnected is stuck (#467), leaving the cached
+                // link state alive after the user disabled WiFi.
+                InvalidateStaLinkState();
 
                 // Close sockets
                 if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
@@ -2057,6 +2144,12 @@ bool wifi_manager_Deinit() {
     gApplyInProgressDeadlineTick = 0;
     gApplyInProgress = false;
     taskEXIT_CRITICAL();
+    // #517: clear cached link state immediately.  The DEINIT event's
+    // ResetAllEventFlags can be deferred (BUSY re-queue, or app_WifiTask not
+    // scheduled while the board powers down), so relying on it to clear
+    // STA_STARTED/assocHandle leaves BSSID?/RSSI/ADDR? reporting the dead
+    // link.  Doing it here makes the query gates trip the moment Deinit runs.
+    InvalidateStaLinkState();
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
@@ -2091,6 +2184,7 @@ bool wifi_manager_HardReset(void) {
     gApplyInProgressDeadlineTick = 0;
     gApplyInProgress = false;
     taskEXIT_CRITICAL();
+    InvalidateStaLinkState();  // #517: same rationale as wifi_manager_Deinit
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
 }
 
