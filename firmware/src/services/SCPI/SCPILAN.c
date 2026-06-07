@@ -539,7 +539,12 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
     char buf[18]; // "XX:XX:XX:XX:XX:XX\0"
     snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
              bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
-    SCPI_ResultMnemonic(context, buf);
+    // A MAC (colon-separated hex) is arbitrary string data, not a SCPI keyword
+    // mnemonic — return it as a quoted SCPI string (Qodo). BSSID? is new in this
+    // PR so quoting it correctly costs no client compatibility. (ADDR? above keeps
+    // SCPI_ResultMnemonic intentionally — it ships, and changing its wire format
+    // would break existing clients that parse the bare value.)
+    SCPI_ResultText(context, buf);
     return SCPI_RES_OK;
 }
 
