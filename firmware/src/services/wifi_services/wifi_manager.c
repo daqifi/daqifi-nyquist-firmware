@@ -2651,13 +2651,14 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid) {
         return false;
     }
 
-    // Pure cache read — strictly non-blocking, no WINC call, no lock. gLastBssid
-    // is primed by the STA_CONNECTED prefetch (the sole WDRV_WINC_AssocPeerAddressGet
-    // caller, serialized in the ProcessState task context) and cleared on
-    // disconnect, so this query never re-enters the WINC HIF, never blocks, and is
-    // safe to call on app_WifiTask via TCP-SCPI. If the prefetch hasn't published a
-    // value yet, return false and let the client retry. The single critical section
-    // gives a coherent snapshot against BssidEventCallback's write.
+    // Pure cache read: no WINC driver call and no semaphore — just a brief
+    // critical section for a coherent snapshot against BssidEventCallback's write.
+    // gLastBssid is primed by the STA_CONNECTED prefetch (the sole
+    // WDRV_WINC_AssocPeerAddressGet caller, serialized in the ProcessState task
+    // context) and cleared on disconnect, so this query never re-enters the WINC
+    // HIF and never blocks on a lock — safe to call on app_WifiTask via TCP-SCPI.
+    // If the prefetch hasn't published a value yet, return false and let the client
+    // retry.
     bool result;
     taskENTER_CRITICAL();
     result = gBssidUpdateComplete;
