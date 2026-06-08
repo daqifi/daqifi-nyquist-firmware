@@ -529,6 +529,10 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
+    // Gate on WiFi-ready FIRST, same as ADDRess?/SSIDStr? — without this, BSSID?
+    // would return a stale cached MAC after the link is disabled/torn down (the
+    // wifi_manager precheck alone wasn't cleared on the ENA 0 + APPLY path).
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
     uint8_t bssid[6];
     // Strictly non-blocking (safe on app_WifiTask via TCP-SCPI). The cache is
     // primed at association, so this returns the AP MAC immediately; it returns

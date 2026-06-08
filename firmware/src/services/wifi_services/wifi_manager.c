@@ -177,14 +177,14 @@ static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
 // Associated-AP BSSID retrieval (mirrors the RSSI async pattern). The
-// WINC returns the peer MAC synchronously when association info is
-// cached; otherwise it requests it and signals via BssidEventCallback.
-// gBssidQueryMutex serializes concurrent callers (USB + WiFi SCPI tasks)
-// so one caller can't clear the other's completion flag mid-wait.
+// gLastBssid is the cached AP MAC, published by BssidEventCallback under a
+// critical section. It is primed by the STA_CONNECTED prefetch (the sole caller
+// of WDRV_WINC_AssocPeerAddressGet, which runs in the ProcessState-serialized
+// task context) and cleared on disconnect. wifi_manager_GetBSSID is a pure,
+// non-blocking critical-section read of this cache — no WINC call, no lock — so
+// it is safe to call on app_WifiTask (TCP-SCPI) without stalling the state machine.
 static volatile bool gBssidUpdateComplete = false;
 static volatile uint8_t gLastBssid[WDRV_WINC_MAC_ADDR_LEN] = {0};
-static StaticSemaphore_t gBssidQueryMutexBuf;
-static SemaphoreHandle_t gBssidQueryMutex = NULL;
 
 // #382 sub-bug 1 — STA_CONNECTED reconciliation.
 // The flag is event-driven (set by StaEventCallback on CONN_STATE_CHANGED).
@@ -2010,10 +2010,7 @@ void wifi_manager_BootInit(void) {
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
     gListenSocketOpenTick = 0;  // #475 step 3 — retained-RAM scrub
-    // BSSID getter state — scrub so a retained non-NULL mutex handle can't
-    // survive a reset and make wifi_manager_Init skip recreating it (#516).
-    memset(&gBssidQueryMutexBuf, 0, sizeof(gBssidQueryMutexBuf));
-    gBssidQueryMutex = NULL;
+    // BSSID cache — scrub retained RAM (#516).
     gBssidUpdateComplete = false;
     memset((void *) gLastBssid, 0, sizeof(gLastBssid));
 }
@@ -2025,10 +2022,6 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     // were already initialized — bail.
     if (gProcessStateMutex == NULL) {
         gProcessStateMutex = xSemaphoreCreateRecursiveMutexStatic(&gProcessStateMutexBuf);
-    }
-
-    if (gBssidQueryMutex == NULL) {
-        gBssidQueryMutex = xSemaphoreCreateMutexStatic(&gBssidQueryMutexBuf);
     }
 
     if (gEventQH == NULL) {
@@ -2658,63 +2651,19 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid) {
         return false;
     }
 
-    // Serialize concurrent callers (USB + WiFi SCPI tasks) so two queries can't
-    // race on the WINC AssocPeerAddressGet request/callback. The work below is
-    // non-blocking (no poll), so the lock is held only briefly. Acquire with a
-    // 0-tick (strictly non-blocking) timeout: this can run on app_WifiTask via
-    // TCP-SCPI, so it must never wait on the lock — if another caller holds it,
-    // return "busy" and let the client retry (the cache is unaffected).
-    // gBssidQueryMutex is non-NULL here in practice (WiFi is up, so Init ran); the
-    // NULL guard only covers a pathological pre-Init call.
-    bool locked = false;
-    if (gBssidQueryMutex != NULL) {
-        if (xSemaphoreTake(gBssidQueryMutex, 0) != pdTRUE) {
-            return false;  // busy — never acquired, nothing to release
-        }
-        locked = true;
+    // Pure cache read — strictly non-blocking, no WINC call, no lock. gLastBssid
+    // is primed by the STA_CONNECTED prefetch (the sole WDRV_WINC_AssocPeerAddressGet
+    // caller, serialized in the ProcessState task context) and cleared on
+    // disconnect, so this query never re-enters the WINC HIF, never blocks, and is
+    // safe to call on app_WifiTask via TCP-SCPI. If the prefetch hasn't published a
+    // value yet, return false and let the client retry. The single critical section
+    // gives a coherent snapshot against BssidEventCallback's write.
+    bool result;
+    taskENTER_CRITICAL();
+    result = gBssidUpdateComplete;
+    if (result) {
+        memcpy(pBssid, (const void *) gLastBssid, WDRV_WINC_MAC_ADDR_LEN);
     }
-
-    bool result = false;
-
-    WDRV_WINC_MAC_ADDR peerMac;
-    WDRV_WINC_STATUS status = WDRV_WINC_AssocPeerAddressGet(
-        gStateMachineContext.assocHandle, &peerMac, BssidEventCallback);
-
-    if (status == WDRV_WINC_STATUS_OK) {
-        // Association info already cached in the WINC — peer MAC filled
-        // synchronously. This is the common case once associated.
-        memcpy(pBssid, peerMac.addr, WDRV_WINC_MAC_ADDR_LEN);
-        result = true;
-    } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
-        // Not cached yet — the request was just issued and BssidEventCallback
-        // populates gLastBssid asynchronously. Do NOT block waiting for it
-        // (#516 follow-up): over TCP-SCPI this runs on app_WifiTask while the
-        // ProcessState recursive mutex is held, so a vTaskDelay poll would stall
-        // the WiFi state machine — and the callback is serviced on that same task
-        // path post-#356, so the wait might never complete. Return the last
-        // callback-populated BSSID if we have one (gBssidUpdateComplete is reset
-        // on teardown, and BssidEventCallback only writes for the current
-        // assocHandle, so a cached value belongs to the current association);
-        // otherwise report not-ready and let the client retry — the WINC returns
-        // STATUS_OK synchronously on the next call once it has cached the info.
-        taskENTER_CRITICAL();
-        result = gBssidUpdateComplete;
-        if (result) {
-            memcpy(pBssid, (const void *) gLastBssid, WDRV_WINC_MAC_ADDR_LEN);
-        }
-        taskEXIT_CRITICAL();
-        if (!result) {
-            LOG_D("WiFi GetBSSID: not cached yet (requested; client should retry)");
-        }
-    } else {
-        // Any other status (e.g. REQUEST_ERROR if the association dropped between
-        // the pre-check and this call) — no BSSID right now. DEBUG only: ERROR
-        // would spam under SCPI polling during a transient disconnect.
-        LOG_D("WiFi GetBSSID: assoc info unavailable (status %d)", (int) status);
-    }
-
-    if (locked) {
-        xSemaphoreGive(gBssidQueryMutex);
-    }
+    taskEXIT_CRITICAL();
     return result;
 }
