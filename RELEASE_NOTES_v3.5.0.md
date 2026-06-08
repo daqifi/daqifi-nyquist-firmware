@@ -1,11 +1,21 @@
-# v3.4.7b1 - Streaming Ceiling, WiFi Resilience & Long-Run Stability
+# v3.5.0 - Streaming Ceiling, WiFi Resilience & Long-Run Stability
+
+> **Version note:** promoted from the `3.4.7b1` beta to **`3.5.0`** to mark
+> the substantial scope — **126 PR-merged commits** since v3.4.6b1
+> (44 feat / 40 fix / 6 refactor / 15 perf / 21 docs-chore-build). The
+> 3.4.7b1 beta covered the first ~95; a further **31 PRs** landed after the
+> beta cut — most significantly the per-interface/format **hard** streaming
+> cap (#524, a behavioral change — see "New in 3.5.0" below and Upgrade
+> Notes). The body below is the full 3.4.7b1 content; the
+> **"New in 3.5.0 (since 3.4.7b1)"** section documents everything added
+> after the beta.
 
 ## Highlights
 
-This release is the result of two months of focused work on the three
+This release is the result of three months of focused work on the three
 subsystems that customers rely on most: the streaming pipeline, the WiFi
-stack, and the boot/init path. Nearly 100 PRs landed against `main`
-between v3.4.6b1 and v3.4.7b1. The headline outcomes:
+stack, and the boot/init path. **126 PRs** landed against `main`
+between v3.4.6b1 and v3.5.0. The headline outcomes:
 
 **Streaming ceilings raised across every interface.** Hardware ADC trigger
 synchronization (#282), batched Type-1 ISRs (#277), per-task FPU
@@ -35,9 +45,93 @@ drift away from its counters. NVM auto-power-up (#454/#462) eliminates
 the manual `SYST:POW:STAT 1` step for field-deployed loggers that
 reboot under USB power.
 
-## Added
+## New in 3.5.0 (since 3.4.7b1)
 
-### NVM auto-power-up on USB connect (#454/#462)
+The 31 PRs below landed after the 3.4.7b1 beta. All hardware-touching items
+in this set were validated on an NQ1 release candidate (see "Release-
+candidate verification" at the end).
+
+### Per-interface/format streaming cap — now a HARD limit (#524/#521) ⚠️ behavioral change
+
+The maximum safe streaming frequency is now the `min()` of an ADC/ISR model
+and a **per-(interface, format) transport** model fitted to real-ADC
+zero-loss characterization (USB/WiFi/SD/USB+SD × PB/CSV/JSON). As of #524
+the cap is **enforced**: `SYST:STR:START <freq>` above the cap is **rejected**
+with SCPI error **`-222` (Data out of range)** plus a `SYST:LOG?` detail line
+stating the achievable max — streaming does **not** start, and the rate is
+never silently changed.
+
+- **Previously** (≤3.4.7b1) the firmware silently capped + logged `LOG_I`;
+  a client could end up streaming at a different rate than it requested,
+  unaware. **Now** the client gets an explicit error and must pre-validate
+  against `current_max_rate_hz` (`CONF:CAP:JSON?`, which equals the cap) or
+  handle `-222`.
+- The ISR ceiling was raised 13→16 kHz so single-channel configs aren't
+  capped below the transport ceiling.
+- **Benchmark mode (`SYST:STR:BENCHmark`) bypasses the cap** for
+  characterization.
+- New **WiFi throughput finder (#520)** — device-side AIMD link-rate probe
+  built on the throughput-bench path.
+
+### Type-2 (muxed MODULE7) 1 kHz cap removed (#528/#107)
+
+Type-2 shared-ADC channels previously throttled the mux scan to 1 kHz
+(`STREAMING_MUXED_CAP_HZ`, #232). An 18-pass overnight real-ADC matrix
+(2477 points, 0 errors) showed the mux scan never overruns up to ≥40 kHz
+(`EosOverruns=0`) at any channel count — the 1 kHz cap was ~40× too
+conservative. Type-2 now scans every tick (real full-rate data) and obeys
+the same #524 transport cap as Type-1. The up-front T2-over-1 kHz reject is
+removed.
+
+### WiFi association/link-state correctness (#516/#517/#518/#519)
+
+- **`SYST:COMM:LAN:BSSID?`** (#516) — reports the associated AP's MAC, or a
+  clean SCPI error when not associated (non-blocking cached read; does not
+  stall the WiFi task).
+- **Stale-state invalidation** (#517/#518/#519) — STA link state (BSSID,
+  RSSI association handle) is invalidated on teardown and on reverse state
+  transitions, so post-disconnect queries no longer return stale cached
+  values.
+
+### Channel enable/disable rejected while streaming (#527/#116)
+
+`ENA:VOLT:DC <ch>,<0|1>` during an active stream now returns an execution
+error and logs the reason, instead of mutating channel state under a live
+ADC scan. Consistent with the #524 START cap behavior.
+
+### WiFi scheduling — bimodal-drop fix (#492)
+
+`WDRV_WINC_Tasks` priority dropped 2→1 so the encoder (`streaming_Task`,
+pri 6) preempts WINC and the OSAL semaphores inside the WINC driver do the
+yielding (Microchip reference pattern). Eliminates the bimodal catastrophic
+WiFi-drop mode (#491).
+
+### SD disk-full handling + iterative listing (#502/#507/#508/#482/#351)
+
+- Pre-start disk-full gate `SYST:STOR:SD:MINFree <bytes>` (#502) and a
+  consolidated in-`WRITE` disk-full check (#503/#507/#508) that exits the
+  `IsWriteReady` poll early when the card is full.
+- SD directory listing is now iterative with a bounded depth
+  (`SD_CARD_MANAGER_MAX_LIST_DEPTH = 16`, #351/#482) — O(1) task-stack usage
+  regardless of FAT32 tree depth.
+
+### Streaming observability + pool/quiescence hardening
+
+- **Split drop counters** into total + steady-state (#450/#479/#483) and
+  `QueueDroppedSamples` into pool-exhausted vs queue-overflow (#499/#504).
+- **3 s startup grace** extended to all drop counters (#483) so transient
+  start-of-stream drops don't trip loss flags.
+- **SCPI re-partition synchronized against task quiescence** (#486/#510) —
+  buffer re-partition waits for the streaming/SD/WiFi tasks to be idle.
+- Coherent + streaming pool now distribute 100 % of free space across
+  active interfaces (#501/#505); WiFi-only mode claims the unused 64 KB
+  (#501). `MEM:*:BUFfer?` reports the active partition (#494/#495).
+- TCP listen-socket uptime observable (#481); silent socket/bind/listen/
+  accept failures now logged (#475/#477); encoder-failure-during-shutdown
+  race no longer miscounted (#484/#485); heap-floor enforced at session
+  start (#480); PB hot-path profiling counters (#388/#478).
+
+
 
 New opt-in SCPI surface; default off so existing behavior is preserved:
 
@@ -698,6 +792,33 @@ client+server harness pieces are internal scaffolding).
   identified boards by streaming-metadata-header `# Serial` line can
   continue to do so, but `*IDN?` is now sufficient on its own.
 
+- **Streaming over-rate is now a hard error (#524).** A `SYST:STR:START`
+  above the per-(interface, format, channel-count) cap returns `-222` and
+  does **not** start streaming (≤3.4.7b1 silently capped). Pre-validate
+  against `current_max_rate_hz` in `CONF:CAP:JSON?`, or handle `-222`.
+  Benchmark mode (`SYST:STR:BENCHmark 1|2`) bypasses the cap.
+
+## Release-candidate verification (NQ1, 2026-06-08)
+
+Targeted RC smoke on bench primary (`7E2898F46200E8A7`), firmware `3.5.0`
+flashed via PICkit 4, built `-O3 -Werror` clean:
+
+| Area | Result |
+|---|---|
+| Boot + `*IDN?` + `SYST:INFo?` | FW `3.5.0`, real silicon SN in `*IDN?` (#436) |
+| `CONF:CAP:JSON?` schema v2 | `current_max_rate_hz`=15000 @ 1×T1 USB (= #524 cap), `rate_validation:"error"`, max 16000 Hz |
+| USB PB 1×T1 @5 kHz ×6 s | zero-loss, `TimerISRCalls==TotalSamples`, QueueDropped=0, EosOverruns=0 |
+| Cap enforcement `START 99000` | `-222 Data out of range` — stream rejected (#524) |
+| Mid-stream channel enable | `-200` execution-error reject (#527) |
+| Type-2 ch0 @3 kHz ×5 s | EosOverruns=0, QueueDropped=0, full-rate (#107/#528) |
+| SD write 1×T1 @2 kHz ×5 s | 140 KB written, SdWriteErrors=0, SdDropped=0 |
+| WiFi AP bring-up + `BSSID?` gate | default AP `DAQiFi-95A7`, BSSID? returns clean error when unassociated (#516) |
+| SCPI surface | log levels (#240), voltage precision (#210), legacy stream aliases (#324) all respond |
+
+HIGH-risk streaming/ADC/WiFi paths were additionally validated by the
+Session 24 endurance characterization (400 s soaks), the #524 cap
+characterization, and the #107 18-pass Type-2 matrix.
+
 ---
 
-**Full Changelog:** https://github.com/daqifi/daqifi-nyquist-firmware/compare/v3.4.6b1...v3.4.7b1
+**Full Changelog:** https://github.com/daqifi/daqifi-nyquist-firmware/compare/v3.4.6b1...v3.5.0
