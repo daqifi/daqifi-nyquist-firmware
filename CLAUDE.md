@@ -1948,6 +1948,20 @@ voltage, NTC status, and power-up readiness.
      test_feature && echo "PASS" || echo "FAIL"
      ```
 
+### How we test (policy)
+
+All **durable regression tests** — firmware regression, MCP integration, client SDK validation, throughput characterization — live in **`daqifi-python-test-suite`**. The full policy is in [`docs/HOW_WE_TEST.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/HOW_WE_TEST.md) in that repo (private, see `docs/README.md` for access); the short version:
+
+1. **Anything you'd run again** — regression checks, ceiling sweeps, endurance soaks, integration validation — lives in `daqifi-python-test-suite`. Firmware-internal unit tests (boot self-tests, cppcheck, `mdb`-driven device tests) stay in the firmware repo.
+2. **Build tests from modular pieces** in `test_harness.py` (`StreamingMeasurement`, `ReliableSCPI`, `FastReader`, `build_result_row`, `format_sd_card`, `derive_targets_from_csv`, etc.). New utilities go in the harness, not your script. New scripts that re-implement existing primitives get flagged in review.
+3. **A test run = a recipe.** Either YAML (`comprehensive_test.py` pattern) or Python script with CLI flags (`test_overnight_characterization.py` pattern). Both are valid.
+4. **Every run logs its complete recipe + version triplet** to a sidecar `<script>_<timestamp>.meta.json`: firmware `*IDN?` + firmware version + test-suite git SHA (`test_harness.collect_run_metadata`). Two runs with the same triplet should produce comparable CSVs; that's the **repeatability key**.
+5. **Every benchmark emits the canonical CSV shape** documented in [`docs/CSV_SCHEMA.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/CSV_SCHEMA.md). New `SYST:STR:STATS?` firmware fields flow through automatically — no script changes needed.
+
+**Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway `/tmp/temp.sh` to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Continuous Testing and Automation" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
+
+When you're touching the firmware in a way that needs a regression check, your first move is to find or write a script in `daqifi-python-test-suite` that exercises it. Don't put **regression** bench-validation logic in the firmware repo (the carve-out above is for one-off exploration only, not for tests that should keep running). Don't reproduce harness primitives.
+
 ### DAQiFi Test & API Repositories
 
 The DAQiFi GitHub organization (https://github.com/daqifi) hosts companion libraries and test suites useful for firmware validation and regression testing:
