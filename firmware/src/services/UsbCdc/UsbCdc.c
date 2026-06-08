@@ -246,6 +246,12 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
         case USB_DEVICE_EVENT_DECONFIGURED:
         case USB_DEVICE_EVENT_RESET:
             gRunTimeUsbSttings.isConfigured = false;
+            // Cable unplug / re-enumeration produces DECONFIGURED/RESET but NOT
+            // a DTR-deassert SET_CONTROL_LINE_STATE, so the host-connected flag
+            // would otherwise stay set after the host is gone — and
+            // NanoPB_Encoder reads it directly for the streaming device_status
+            // "USB connected" bit. Clear it on real teardown (stale-global audit).
+            gRunTimeUsbSttings.isCdcHostConnected = 0;
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             }
@@ -329,6 +335,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             /* VBUS truly removed */
             gRunTimeUsbSttings.isVbusDetected = false;
             gRunTimeUsbSttings.isConfigured = false;
+            gRunTimeUsbSttings.isCdcHostConnected = 0;  // host gone (stale-global audit)
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 USB_DEVICE_Detach(gRunTimeUsbSttings.deviceHandle);
             }
@@ -350,6 +357,7 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             // Some errors may be non-fatal (transient bus errors, CRC errors)
             // but conservative approach is to reset the interface
             gRunTimeUsbSttings.isConfigured = false;
+            gRunTimeUsbSttings.isCdcHostConnected = 0;  // host link reset (stale-global audit)
             gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             break;
         default:
