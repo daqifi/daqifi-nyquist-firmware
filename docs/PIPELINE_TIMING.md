@@ -167,7 +167,7 @@ BUDGET=110000/(6+1)=15714)`.
 
 **Probe 1 (EOS ISR) is at ~1 kHz, not 13 kHz.** Expected post-PR #290 —
 Type 1 dedicated-module conversions no longer fire EOS (the residual
-1 kHz rate is the divided-rate shared/OBDiag scan path).
+1 kHz rate WAS the divided-rate shared/OBDiag scan path — pre-#107; now full-rate, see note below).
 
 > **⚠️ Superseded by #107 (2026-06-08).** This session predates #107, which
 > removed the `ChannelScanFreqDiv = freq/1000` shared-scan throttle — it is now
@@ -593,11 +593,11 @@ to the 2.87 µs/ch observed at 1 ch). P8 per-channel is much larger —
 PB encoding appends per-channel fields (timestamp delta + varint
 value) per sample.
 
-#### P1 confirms divided shared-scan rate
+#### P1 confirms divided shared-scan rate (pre-#107 — see superseded note below)
 
 P1 (EOS ISR) fmean = 500 Hz (→ 1000 Hz ISR) regardless of T2
-enablement. `ChannelScanFreqDiv` effectively fixes shared-scan
-cadence at 1 kHz for 13 kHz ticks (ratio 1:13). So even when T2 is
+enablement. `ChannelScanFreqDiv` effectively *fixed* shared-scan
+cadence at 1 kHz for 13 kHz ticks (pre-#107) (ratio 1:13). So even when T2 is
 enabled, the scan only completes ~77× per second, not per tick.
 
 > **⚠️ Superseded by #107 (2026-06-08):** `ChannelScanFreqDiv` is now always 1,
