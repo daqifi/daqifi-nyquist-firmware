@@ -136,6 +136,13 @@ scpi_result_t SCPI_LANPasskeySet(scpi_t * context);
 scpi_result_t SCPI_LANPasskeyGet(scpi_t * context);
 
 /**
+ * SCPI Callback: Returns the BSSID (MAC) of the associated AP as
+ * "XX:XX:XX:XX:XX:XX". Errors if not connected as a STA.
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANBssidGet(scpi_t * context);
+
+/**
  * SCPI Callback: Applies wifi settings of the device (optionally saving them)
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */

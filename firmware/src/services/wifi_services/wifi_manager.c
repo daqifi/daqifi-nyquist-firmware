@@ -176,6 +176,16 @@ static SemaphoreHandle_t gProcessStateMutex = NULL;
 static volatile bool gRssiUpdateComplete = false;
 static volatile uint8_t gLastRssiPercentage = 0;
 
+// Associated-AP BSSID retrieval (mirrors the RSSI async pattern). The
+// gLastBssid is the cached AP MAC, published by BssidEventCallback under a
+// critical section. It is primed by the STA_CONNECTED prefetch (the sole caller
+// of WDRV_WINC_AssocPeerAddressGet, which runs in the ProcessState-serialized
+// task context) and cleared on disconnect. wifi_manager_GetBSSID is a pure,
+// non-blocking critical-section read of this cache — no WINC call, no lock — so
+// it is safe to call on app_WifiTask (TCP-SCPI) without stalling the state machine.
+static volatile bool gBssidUpdateComplete = false;
+static volatile uint8_t gLastBssid[WDRV_WINC_MAC_ADDR_LEN] = {0};
+
 // #382 sub-bug 1 — STA_CONNECTED reconciliation.
 // The flag is event-driven (set by StaEventCallback on CONN_STATE_CHANGED).
 // If the chip silently re-associates (AP rekey, brief deauth handled
@@ -336,6 +346,25 @@ static void RssiEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHan
     // No logging in ISR/callback context - keep it minimal
 }
 
+// Association-info callback for wifi_manager_GetBSSID. Runs in
+// WDRV_WINC_Tasks context (same priority as app_WifiTask) — keep minimal,
+// no logging. Captures the peer (AP) MAC into gLastBssid.
+static void BssidEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandle,
+                               const WDRV_WINC_SSID *const pSSID,
+                               const WDRV_WINC_MAC_ADDR *const pPeerAddress,
+                               WDRV_WINC_AUTH_TYPE authType, int8_t rssi) {
+    taskENTER_CRITICAL();
+    if (assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID ||
+        assocHandle != gStateMachineContext.assocHandle ||
+        pPeerAddress == NULL) {
+        taskEXIT_CRITICAL();
+        return;
+    }
+    memcpy((void *) gLastBssid, pPeerAddress->addr, WDRV_WINC_MAC_ADDR_LEN);
+    gBssidUpdateComplete = true;
+    taskEXIT_CRITICAL();
+}
+
 static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     char s[INET_ADDRSTRLEN] = {0};
     UNUSED(s);
@@ -433,6 +462,12 @@ static void InvalidateStaLinkState(void) {
     gRssiUpdatePending = false;
     gRssiUpdateComplete = false;
     gLastRssiPercentage = 0;
+    // Clear the BSSID cache too (#516). GetBSSID gates on assocHandle (cleared
+    // above), but on re-association the handle goes valid again before the new
+    // STA_CONNECTED prefetch completes — without this, a stale prior-AP BSSID
+    // could be returned in that window. Mirrors the RSSI clear.
+    gBssidUpdateComplete = false;
+    memset((void *) gLastBssid, 0, sizeof(gLastBssid));
     taskEXIT_CRITICAL();
 }
 
@@ -1211,7 +1246,25 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 // else if status == WDRV_WINC_STATUS_RETRY_REQUEST, callback will be called later
             }
-            
+
+            // Prime the BSSID cache here (task context) so the first BSSID? query
+            // returns the AP MAC without the non-blocking getter having to issue
+            // the request itself (#516). Mirrors the RSSI prefetch above:
+            // BssidEventCallback populates gLastBssid — synchronously if the WINC
+            // already has the association info, otherwise via the async callback.
+            if (pInstance->assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
+                WDRV_WINC_MAC_ADDR peerMac;
+                WDRV_WINC_STATUS bstatus = WDRV_WINC_AssocPeerAddressGet(
+                    pInstance->assocHandle, &peerMac, BssidEventCallback);
+                if (bstatus == WDRV_WINC_STATUS_OK) {
+                    // authType/rssi are ignored by BssidEventCallback (it reads
+                    // only pPeerAddress) — pass any valid enum value.
+                    BssidEventCallback(pInstance->wdrvHandle, pInstance->assocHandle,
+                                       NULL, &peerMac, WDRV_WINC_AUTH_TYPE_OPEN, 0);
+                }
+                // else RETRY_REQUEST: BssidEventCallback fires later with the MAC.
+            }
+
             if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                 if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -1957,6 +2010,9 @@ void wifi_manager_BootInit(void) {
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
     gListenSocketOpenTick = 0;  // #475 step 3 — retained-RAM scrub
+    // BSSID cache — scrub retained RAM (#516).
+    gBssidUpdateComplete = false;
+    memset((void *) gLastBssid, 0, sizeof(gLastBssid));
 }
 
 bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
@@ -2583,4 +2639,32 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
         LOG_E("WiFi GetRSSI: WINC driver error");
         return false;
     }
+}
+
+bool wifi_manager_GetBSSID(uint8_t *pBssid) {
+    if (pBssid == NULL) {
+        return false;
+    }
+    // Only meaningful while associated as STA.
+    if (!GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED) ||
+        gStateMachineContext.assocHandle == WDRV_WINC_ASSOC_HANDLE_INVALID) {
+        return false;
+    }
+
+    // Pure cache read: no WINC driver call and no semaphore — just a brief
+    // critical section for a coherent snapshot against BssidEventCallback's write.
+    // gLastBssid is primed by the STA_CONNECTED prefetch (the sole
+    // WDRV_WINC_AssocPeerAddressGet caller, serialized in the ProcessState task
+    // context) and cleared on disconnect, so this query never re-enters the WINC
+    // HIF and never blocks on a lock — safe to call on app_WifiTask via TCP-SCPI.
+    // If the prefetch hasn't published a value yet, return false and let the client
+    // retry.
+    bool result;
+    taskENTER_CRITICAL();
+    result = gBssidUpdateComplete;
+    if (result) {
+        memcpy(pBssid, (const void *) gLastBssid, WDRV_WINC_MAC_ADDR_LEN);
+    }
+    taskEXIT_CRITICAL();
+    return result;
 }
