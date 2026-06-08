@@ -373,12 +373,11 @@ extern "C" {
      * machine.
      *
      * @param[out] pBssid Buffer of at least 6 bytes to receive the AP MAC.
-     * @param[in] timeoutMs Upper bound on the internal serialization-mutex wait
-     *            only (held briefly — there is no callback poll). Not a blocking wait.
      *
-     * @return true if a BSSID was returned, false if not associated or not yet cached.
+     * @return true if a BSSID was returned, false if not associated, not yet
+     *         cached, or the serialization lock was momentarily busy (retry).
      */
-    bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs);
+    bool wifi_manager_GetBSSID(uint8_t *pBssid);
 
 #ifdef	__cplusplus
 }

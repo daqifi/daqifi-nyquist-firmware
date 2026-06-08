@@ -462,6 +462,12 @@ static void InvalidateStaLinkState(void) {
     gRssiUpdatePending = false;
     gRssiUpdateComplete = false;
     gLastRssiPercentage = 0;
+    // Clear the BSSID cache too (#516). GetBSSID gates on assocHandle (cleared
+    // above), but on re-association the handle goes valid again before the new
+    // STA_CONNECTED prefetch completes — without this, a stale prior-AP BSSID
+    // could be returned in that window. Mirrors the RSSI clear.
+    gBssidUpdateComplete = false;
+    memset((void *) gLastBssid, 0, sizeof(gLastBssid));
     taskEXIT_CRITICAL();
 }
 
@@ -2642,7 +2648,7 @@ bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {
     }
 }
 
-bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
+bool wifi_manager_GetBSSID(uint8_t *pBssid) {
     if (pBssid == NULL) {
         return false;
     }
@@ -2654,14 +2660,16 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
 
     // Serialize concurrent callers (USB + WiFi SCPI tasks) so two queries can't
     // race on the WINC AssocPeerAddressGet request/callback. The work below is
-    // non-blocking (no poll), so the lock is held only briefly; the timeoutMs
-    // bound on acquisition is just a safety cap that contention never actually
-    // approaches. gBssidQueryMutex is non-NULL here in practice (WiFi is up, so
-    // Init ran); the NULL guard only covers a pathological pre-Init call.
+    // non-blocking (no poll), so the lock is held only briefly. Acquire with a
+    // 0-tick (strictly non-blocking) timeout: this can run on app_WifiTask via
+    // TCP-SCPI, so it must never wait on the lock — if another caller holds it,
+    // return "busy" and let the client retry (the cache is unaffected).
+    // gBssidQueryMutex is non-NULL here in practice (WiFi is up, so Init ran); the
+    // NULL guard only covers a pathological pre-Init call.
     bool locked = false;
     if (gBssidQueryMutex != NULL) {
-        if (xSemaphoreTake(gBssidQueryMutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
-            return false;  // never acquired — nothing to release
+        if (xSemaphoreTake(gBssidQueryMutex, 0) != pdTRUE) {
+            return false;  // busy — never acquired, nothing to release
         }
         locked = true;
     }

@@ -530,12 +530,12 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context) {
 
 scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
     uint8_t bssid[6];
-    // Non-blocking (does not stall app_WifiTask on TCP-SCPI). Returns the cached
-    // AP MAC when available; if the WINC hasn't cached the association info yet it
-    // returns false and the client retries (next query serves it synchronously).
-    // The 2000 ms only bounds the brief internal serialization mutex, not a wait.
-    if (!wifi_manager_GetBSSID(bssid, 2000)) {
-        // Not associated, or BSSID not cached yet — no AP MAC to report.
+    // Strictly non-blocking (safe on app_WifiTask via TCP-SCPI). The cache is
+    // primed at association, so this returns the AP MAC immediately; it returns
+    // false only when not associated, not yet primed, or the lock was momentarily
+    // busy. SCPI_RES_ERR already surfaces -200 to the client (no explicit push).
+    if (!wifi_manager_GetBSSID(bssid)) {
+        // Not associated, or BSSID not available yet — no AP MAC to report.
         return SCPI_RES_ERR;
     }
     char buf[18]; // "XX:XX:XX:XX:XX:XX\0"
