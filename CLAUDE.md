@@ -395,6 +395,8 @@ The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR st
 
 Current table = **Session 24 (2026-05-28 overnight + 2× targeted retry, 400 s endurance).** Methodology change vs Session 22: where Session 22 used a fresh 10 s ceiling sweep + 60 s endurance soak, Session 24 uses 400 s endurance soaks with iterative haircut from prior-night ceilings (12.5 % per pass, repeated until zero drops). Result: **substantially more conservative** numbers than Session 22 in many cells — these are *verified-safe steady-state rates* the device sustains for 400 s+ without losing a single byte. Fresh 10 s sweeps will still find higher rates that hold short-term; treat Session 22 as "burst ceiling" and Session 24 as "soak ceiling." Source CSVs: `daqifi-python-test-suite/benchmarks/overnight_20260528_0642.csv` + `_0827_boardE8A7.csv` + `_1604_retry3.csv`. Test-suite SHA: `22302ba` on `feat/full-stats-capture`.
 
+> **This is descriptive endurance characterization, not the firmware cap.** These soak ceilings are an empirical record of what the device sustains across many configs (incl. OBDiag variants, OBDiag here = on-board diagnostics monitoring); the rate the firmware actually *enforces* is fitted separately — see **"Streaming Frequency Capping"** below, whose **"Fit basis — measured zero-loss ceilings"** table is the canonical 1/5/10/16-ch subset the `Streaming_TransportMaxFreq` coefficients derive from. The two use different methods (soak-with-haircut vs zero-loss sweep escalator) and so report different numbers by design. Authoritative dataset for both: `daqifi-python-test-suite/benchmarks/`.
+
 **USB** (400 s endurance soak, KB/s from `pc_kbps`):
 
 | Config | PB Hz | PB KB/s | CSV Hz | CSV KB/s |
@@ -600,6 +602,8 @@ The firmware computes a maximum safe streaming frequency — the `min()` of an *
 **Verified caps (hardware, 1 channel, #524):** USB 15000 · WiFi PB 11250 / CSV 9000 · SD PB 9000 / CSV 7500 · USB+SD 8000 — all match the equation and `current_max_rate_hz` (capabilities query reflects the full cap as of #524).
 
 **Fit basis — measured zero-loss ceilings (real ADC / PAT0) the F3 coefficients are fitted at-or-below (Hz):**
+
+> This is the **normative** basis for the enforced cap — the zero-loss sweep-escalator subset (1/5/10/16 ch, all four interfaces). It is distinct from the **Session 24 soak ceilings** in "Characterization results" above (ADC Architecture section), which are a broader *descriptive* endurance record across more configs and a different method (400 s soak + haircut). Different methods → different numbers by design; this table is what the firmware actually enforces.
 
 | interface/fmt | 1ch | 5ch | 10ch | 16ch |
 |---|--:|--:|--:|--:|
