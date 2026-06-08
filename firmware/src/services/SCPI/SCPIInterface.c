@@ -3274,49 +3274,16 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // See https://github.com/daqifi/daqifi-nyquist-firmware/issues/215
         // Bypass cap in benchmark mode to measure pure interface throughput.
         if (Streaming_GetBenchmarkMode() == BENCHMARK_OFF) {
-            // #232: reject up-front when any Type 2 (muxed) MC12b channel is
-            // enabled and the requested freq would silently cap the muxed
-            // scan rate.  The firmware always sets
-            //   ChannelScanFreqDiv = freq / 1000 (when freq > 1000)
-            // so T2 channels sample at most 1 kHz regardless of timer rate.
-            // Pre-#232 we silently throttled — user saw "5 kHz streaming"
-            // but T2 data was 1 kHz.  Now we surface that as a SCPI error
-            // so the client can either reduce freq, disable T2 channels,
-            // or opt-in via SYST:STR:BENCHmark (which bypasses the check
-            // since benchmarks intentionally measure timer-rate throughput).
-            if (freq > (int32_t)STREAMING_MUXED_CAP_HZ) {
-                bool hasMuxed = false;
-                volatile AInRuntimeArray* rt = (volatile AInRuntimeArray*)pRuntimeAInChannels;
-                volatile AInArray* cfg = (volatile AInArray*)pBoardConfigADC;
-                size_t cnt = (cfg->Size < rt->Size) ? cfg->Size : rt->Size;
-                for (size_t i = 0; i < cnt; i++) {
-                    if (rt->Data[i].IsEnabled != 1) continue;
-                    if (cfg->Data[i].Type != AIn_MC12bADC) continue;
-                    if (!cfg->Data[i].Config.MC12b.IsPublic) continue;
-                    if (cfg->Data[i].Config.MC12b.ChannelType == MC12B_CHANNEL_TYPE_MUXED) {
-                        hasMuxed = true;
-                        break;
-                    }
-                }
-                if (hasMuxed) {
-                    LOG_I("Streaming rejected: T2 channels max %u Hz (requested %d Hz)",
-                          (unsigned)STREAMING_MUXED_CAP_HZ, (int)freq);
-                    /* Stringify STREAMING_MUXED_CAP_HZ into the user-facing
-                     * error so the message stays in sync if the constant
-                     * ever changes (#449 Qodo r2 finding). */
-                    #define MUXED_CAP_STR_HELPER(x) #x
-                    #define MUXED_CAP_STR(x) MUXED_CAP_STR_HELPER(x)
-                    static const char muxedErrMsg[] =
-                        "T2 (muxed) channels cap at " MUXED_CAP_STR(STREAMING_MUXED_CAP_HZ)
-                        " Hz; reduce freq, disable T2 channels, or use "
-                        "SYST:STR:BENCHmark to bypass";
-                    #undef MUXED_CAP_STR
-                    #undef MUXED_CAP_STR_HELPER
-                    SCPI_ErrorPushEx(context, SCPI_ERROR_SETTINGS_CONFLICT,
-                                     (char *)muxedErrMsg, sizeof(muxedErrMsg) - 1);
-                    return SCPI_RES_ERR;
-                }
-            }
+            // #107: Type-2 (muxed MODULE7) channels now scan at the full timer
+            // rate (ChannelScanFreqDiv=1, set below) — real per-tick conversions,
+            // not 1 kHz held values — so the old fixed 1 kHz T2 reject (#232) is
+            // removed. T2 is now bounded by the SAME per-interface/format transport
+            // cap as T1 (#524), computed below. Real-ADC evidence: an 18-pass
+            // overnight matrix ({1,3,5,8,11} T2 ch × OBDiag × 1–40 kHz, 2477 pts)
+            // showed the mux scan never overran (EosOverruns=0) up to ≥40 kHz at any
+            // channel count — the scan is never the bottleneck; the encoder/pool
+            // pipeline (already modeled by #524) is. See daqifi-python-test-suite
+            // benchmarks/107_t2_scan_characterization/.
 
             // Includes the WiFi wire-rate term when ActiveInterface==WiFi
             // (#522) on top of the ADC/ISR/tick constraints.
@@ -3359,11 +3326,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             pRunTimeStreamConfig->ClockPeriod = periodCycles - 1;
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
-            if (freq > 1000) {
-                pRunTimeStreamConfig->ChannelScanFreqDiv = freq / 1000;
-            } else {
-                pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
-            }
+            // #107: scan the shared MODULE7 (Type-2) mux on EVERY tick so T2 yields
+            // real full-rate conversions (not 1 kHz held values). The mux scan keeps
+            // up to >=40 kHz (HW-characterized); the streaming rate is bounded by the
+            // #524 transport cap above, well within the scan's capability.
+            pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
         } else {
             return SCPI_RES_ERR;
         }

@@ -63,13 +63,13 @@ extern "C" {
 // Streaming_TransportMaxFreq below (#524), which superseded the earlier
 // WiFi-only budget term (#520/#522) and generalized it to all interfaces.
 
-// Type 2 (shared MODULE7 mux) hard cap.  T2 channels are scanned via the
-// analog multiplexer sequentially; the firmware applies
-// ChannelScanFreqDiv = freq/1000 in SCPI_StartStreaming so the muxed scan
-// rate stays at 1 kHz regardless of timer rate.  When BENCHMARK_OFF, any
-// freq > this constant with T2 channels enabled is rejected up-front
-// instead of being silently throttled (#232).
-#define STREAMING_MUXED_CAP_HZ      1000
+// Type 2 (shared MODULE7 mux) channels are scanned sequentially via the analog
+// multiplexer. The former fixed 1 kHz throttle (ChannelScanFreqDiv = freq/1000)
+// and its up-front reject (#232) were REMOVED in #107: real-ADC characterization
+// (18-pass overnight matrix, daqifi-python-test-suite benchmarks/107_*) showed the
+// mux scan never overruns up to >=40 kHz at any channel count. ChannelScanFreqDiv
+// is now always 1 (T2 scans every tick = real full-rate data), and T2 is bounded
+// by the same per-interface/format transport cap as T1 (Streaming_TransportMaxFreq).
 
 /**
  * Compute maximum safe streaming frequency for a given channel configuration.

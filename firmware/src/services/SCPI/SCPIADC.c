@@ -296,11 +296,9 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     }
     pRunTimeStreamConfig->Frequency = freq;
     pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
-    if (freq > 1000) {
-        pRunTimeStreamConfig->ChannelScanFreqDiv = freq / 1000;
-    } else {
-        pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
-    }
+    // #107: Type-2 (muxed) channels scan every tick at the full rate (not the old
+    // freq/1000 throttle that pinned them to 1 kHz). Mirrors SCPI_StartStreaming.
+    pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
 
     return SCPI_RES_OK;
 }
