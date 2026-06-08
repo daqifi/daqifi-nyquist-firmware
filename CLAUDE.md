@@ -601,6 +601,8 @@ The firmware computes a maximum safe streaming frequency — the `min()` of an *
 
 **Verified caps (hardware, 1 channel, #524):** USB 15000 · WiFi PB 11250 / CSV 9000 · SD PB 9000 / CSV 7500 · USB+SD 8000 — all match the equation and `current_max_rate_hz` (capabilities query reflects the full cap as of #524).
 
+**Type-2 (muxed MODULE7) channels obey this same cap (#107).** Earlier firmware throttled the shared-ADC mux scan to 1 kHz (`ChannelScanFreqDiv = freq/1000`) and rejected any T2 stream above 1 kHz up-front (the old `STREAMING_MUXED_CAP_HZ` / #232). Real-ADC characterization (18-pass overnight matrix, `daqifi-python-test-suite` `benchmarks/107_t2_scan_characterization/`) showed the mux scan **never overruns up to ≥40 kHz** at any channel count (EosOverruns=0) — it is never the bottleneck. So #107 set `ChannelScanFreqDiv = 1` (T2 scans every tick = real full-rate data) and removed the 1 kHz reject; T2 streaming is now bounded by the per-interface/format transport cap above, exactly like Type-1. HW-verified: 11×T2 PB streams clean to the #524 cap (EosOverruns=0, QueueDropped=0, ch0 accurate), over-cap → `-222`, OBDiag on/off both bounded.
+
 **Fit basis — measured zero-loss ceilings (real ADC / PAT0) the F3 coefficients are fitted at-or-below (Hz):**
 
 > This is the **normative** basis for the enforced cap — the zero-loss sweep-escalator subset (1/5/10/16 ch, all four interfaces). It is distinct from the **Session 24 soak ceilings** in "Characterization results" above (ADC Architecture section), which are a broader *descriptive* endurance record across more configs and a different method (400 s soak + haircut). Different methods → different numbers by design; this table is what the firmware actually enforces.
