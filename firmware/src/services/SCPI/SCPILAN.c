@@ -528,6 +528,38 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
+    // Gate on WiFi-ready FIRST, same as ADDRess?/SSIDStr? — without this, BSSID?
+    // would return a stale cached MAC after the link is disabled/torn down (the
+    // wifi_manager precheck alone wasn't cleared on the ENA 0 + APPLY path).
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
+    uint8_t bssid[6];
+    // Strictly non-blocking (safe on app_WifiTask via TCP-SCPI). The cache is
+    // primed at association, so this returns the AP MAC immediately.
+    if (!wifi_manager_GetBSSID(bssid)) {
+        // GetBSSID returns false for two distinct reasons — report each accurately
+        // so the client knows whether retrying helps:
+        //   - not connected as STA (AP mode / not associated) → retry won't help
+        //   - connected but the STA_CONNECTED prefetch hasn't published yet → retry
+        if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
+            SCPI_ExecutionError(context, "SYST:COMM:LAN:BSSID?: not connected as STA");
+        } else {
+            SCPI_ExecutionError(context, "SYST:COMM:LAN:BSSID?: BSSID not available yet (retry)");
+        }
+        return SCPI_RES_ERR;
+    }
+    char buf[18]; // "XX:XX:XX:XX:XX:XX\0"
+    snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+    // A MAC (colon-separated hex) is arbitrary string data, not a SCPI keyword
+    // mnemonic — return it as a quoted SCPI string (Qodo). BSSID? is new in this
+    // PR so quoting it correctly costs no client compatibility. (ADDR? above keeps
+    // SCPI_ResultMnemonic intentionally — it ships, and changing its wire format
+    // would break existing clients that parse the bare value.)
+    SCPI_ResultText(context, buf);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     bool saveSettings = false;
     int param1;
