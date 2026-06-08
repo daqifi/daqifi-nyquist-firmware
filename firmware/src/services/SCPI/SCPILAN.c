@@ -535,14 +535,17 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
     if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
     uint8_t bssid[6];
     // Strictly non-blocking (safe on app_WifiTask via TCP-SCPI). The cache is
-    // primed at association, so this returns the AP MAC immediately; it returns
-    // false only when not associated, not yet primed, or the lock was momentarily
-    // busy. SCPI_RES_ERR already surfaces -200 to the client (no explicit push).
+    // primed at association, so this returns the AP MAC immediately.
     if (!wifi_manager_GetBSSID(bssid)) {
-        // Associated but the AP MAC isn't cached yet (the STA_CONNECTED prefetch
-        // hasn't published it) — give the client a specific reason. Matches the
-        // SCPI_ExecutionError idiom used by SCPI_LANRequireWiFiReady above.
-        SCPI_ExecutionError(context, "SYST:COMM:LAN:BSSID?: BSSID not available yet (retry)");
+        // GetBSSID returns false for two distinct reasons — report each accurately
+        // so the client knows whether retrying helps:
+        //   - not connected as STA (AP mode / not associated) → retry won't help
+        //   - connected but the STA_CONNECTED prefetch hasn't published yet → retry
+        if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
+            SCPI_ExecutionError(context, "SYST:COMM:LAN:BSSID?: not connected as STA");
+        } else {
+            SCPI_ExecutionError(context, "SYST:COMM:LAN:BSSID?: BSSID not available yet (retry)");
+        }
         return SCPI_RES_ERR;
     }
     char buf[18]; // "XX:XX:XX:XX:XX:XX\0"
