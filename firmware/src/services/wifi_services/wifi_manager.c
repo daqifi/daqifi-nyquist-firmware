@@ -1240,7 +1240,25 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 // else if status == WDRV_WINC_STATUS_RETRY_REQUEST, callback will be called later
             }
-            
+
+            // Prime the BSSID cache here (task context) so the first BSSID? query
+            // returns the AP MAC without the non-blocking getter having to issue
+            // the request itself (#516). Mirrors the RSSI prefetch above:
+            // BssidEventCallback populates gLastBssid — synchronously if the WINC
+            // already has the association info, otherwise via the async callback.
+            if (pInstance->assocHandle != WDRV_WINC_ASSOC_HANDLE_INVALID) {
+                WDRV_WINC_MAC_ADDR peerMac;
+                WDRV_WINC_STATUS bstatus = WDRV_WINC_AssocPeerAddressGet(
+                    pInstance->assocHandle, &peerMac, BssidEventCallback);
+                if (bstatus == WDRV_WINC_STATUS_OK) {
+                    // authType/rssi are ignored by BssidEventCallback (it reads
+                    // only pPeerAddress) — pass any valid enum value.
+                    BssidEventCallback(pInstance->wdrvHandle, pInstance->assocHandle,
+                                       NULL, &peerMac, WDRV_WINC_AUTH_TYPE_OPEN, 0);
+                }
+                // else RETRY_REQUEST: BssidEventCallback fires later with the MAC.
+            }
+
             if (!GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                 if (!OpenUdpSocket(&pInstance->udpServerSocket)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -2634,18 +2652,12 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
         return false;
     }
 
-    // Single timestamp bounds the WHOLE call (mutex wait + callback wait)
-    // to timeoutMs, honoring the documented "waits up to timeoutMs".
-    uint32_t startTime = SYS_TIME_CounterGet();
-
-    // Serialize concurrent callers (USB + WiFi SCPI tasks) so one can't
-    // clear gBssidUpdateComplete mid-wait for another. If the lock can't
-    // be acquired within the budget, fail rather than proceeding unlocked
-    // (proceeding would defeat the serialization and disturb the in-flight
-    // caller — exactly the contended case). gBssidQueryMutex is non-NULL
-    // here in practice (WiFi is up, so Init ran); the NULL guard only
-    // covers a pathological pre-Init call, where there are no concurrent
-    // WiFi-task callers to serialize against anyway.
+    // Serialize concurrent callers (USB + WiFi SCPI tasks) so two queries can't
+    // race on the WINC AssocPeerAddressGet request/callback. The work below is
+    // non-blocking (no poll), so the lock is held only briefly; the timeoutMs
+    // bound on acquisition is just a safety cap that contention never actually
+    // approaches. gBssidQueryMutex is non-NULL here in practice (WiFi is up, so
+    // Init ran); the NULL guard only covers a pathological pre-Init call.
     bool locked = false;
     if (gBssidQueryMutex != NULL) {
         if (xSemaphoreTake(gBssidQueryMutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
@@ -2656,66 +2668,43 @@ bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs) {
 
     bool result = false;
 
-    taskENTER_CRITICAL();
-    gBssidUpdateComplete = false;
-    taskEXIT_CRITICAL();
-
     WDRV_WINC_MAC_ADDR peerMac;
     WDRV_WINC_STATUS status = WDRV_WINC_AssocPeerAddressGet(
         gStateMachineContext.assocHandle, &peerMac, BssidEventCallback);
 
     if (status == WDRV_WINC_STATUS_OK) {
-        // Association info was cached — peer MAC filled synchronously.
+        // Association info already cached in the WINC — peer MAC filled
+        // synchronously. This is the common case once associated.
         memcpy(pBssid, peerMac.addr, WDRV_WINC_MAC_ADDR_LEN);
         result = true;
-        goto cleanup;
-    }
-    if (status != WDRV_WINC_STATUS_RETRY_REQUEST) {
-        // Any other status (e.g. REQUEST_ERROR when the association dropped
-        // between the pre-check and this call) just means "no BSSID right
-        // now" — we already return false. Log at DEBUG only: ERROR here
-        // would be misleading and could spam under SCPI polling during a
-        // transient disconnect.
-        LOG_D("WiFi GetBSSID: assoc info unavailable (status %d)", (int) status);
-        goto cleanup;
-    }
-
-    // RETRY_REQUEST: info requested from the WINC — wait for
-    // BssidEventCallback, but only until the overall timeoutMs budget
-    // (measured from startTime, so time spent acquiring the mutex counts).
-    {
-        bool done = false;
-        for (;;) {
-            uint32_t elapsed = SYS_TIME_CountToMS(SYS_TIME_CounterGet() - startTime);
-            if (done || elapsed >= timeoutMs) {
-                break;
-            }
-            // Cap the poll step to the remaining budget so the final sleep
-            // can't overshoot "waits up to timeoutMs", and clamp to at least
-            // 1 tick so a sub-tick remainder can't busy-spin (vTaskDelay(0)).
-            uint32_t remaining = timeoutMs - elapsed;
-            TickType_t stepTicks = pdMS_TO_TICKS(remaining < 10 ? remaining : 10);
-            if (stepTicks == 0) {
-                stepTicks = 1;
-            }
-            vTaskDelay(stepTicks);
-            taskENTER_CRITICAL();
-            done = gBssidUpdateComplete;
-            taskEXIT_CRITICAL();
-        }
-        if (done) {
-            taskENTER_CRITICAL();
+    } else if (status == WDRV_WINC_STATUS_RETRY_REQUEST) {
+        // Not cached yet — the request was just issued and BssidEventCallback
+        // populates gLastBssid asynchronously. Do NOT block waiting for it
+        // (#516 follow-up): over TCP-SCPI this runs on app_WifiTask while the
+        // ProcessState recursive mutex is held, so a vTaskDelay poll would stall
+        // the WiFi state machine — and the callback is serviced on that same task
+        // path post-#356, so the wait might never complete. Return the last
+        // callback-populated BSSID if we have one (gBssidUpdateComplete is reset
+        // on teardown, and BssidEventCallback only writes for the current
+        // assocHandle, so a cached value belongs to the current association);
+        // otherwise report not-ready and let the client retry — the WINC returns
+        // STATUS_OK synchronously on the next call once it has cached the info.
+        taskENTER_CRITICAL();
+        result = gBssidUpdateComplete;
+        if (result) {
             memcpy(pBssid, (const void *) gLastBssid, WDRV_WINC_MAC_ADDR_LEN);
-            taskEXIT_CRITICAL();
-            result = true;
-        } else {
-            // DEBUG-level (consistent with the unexpected-status log above):
-            // a timeout under SCPI polling shouldn't spam at INFO.
-            LOG_D("WiFi GetBSSID: timeout");
         }
+        taskEXIT_CRITICAL();
+        if (!result) {
+            LOG_D("WiFi GetBSSID: not cached yet (requested; client should retry)");
+        }
+    } else {
+        // Any other status (e.g. REQUEST_ERROR if the association dropped between
+        // the pre-check and this call) — no BSSID right now. DEBUG only: ERROR
+        // would spam under SCPI polling during a transient disconnect.
+        LOG_D("WiFi GetBSSID: assoc info unavailable (status %d)", (int) status);
     }
 
-cleanup:
     if (locked) {
         xSemaphoreGive(gBssidQueryMutex);
     }

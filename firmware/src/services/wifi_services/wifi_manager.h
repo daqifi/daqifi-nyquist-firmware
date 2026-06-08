@@ -364,14 +364,19 @@ extern "C" {
     /**
      * @brief Retrieves the BSSID (MAC) of the currently associated AP.
      *
-     * Only valid while connected as a STA. The WINC returns the peer MAC
-     * synchronously when association info is cached; otherwise it requests
-     * it and this call waits up to timeoutMs for the response.
+     * Only valid while connected as a STA. NON-BLOCKING: the WINC returns the
+     * peer MAC synchronously when association info is cached (the common case);
+     * otherwise it issues an async request and this call returns the last
+     * callback-populated BSSID if available, else false (the caller should retry
+     * — the WINC serves it synchronously once cached). It never blocks, so it is
+     * safe to call on app_WifiTask (TCP-SCPI) without stalling the WiFi state
+     * machine.
      *
      * @param[out] pBssid Buffer of at least 6 bytes to receive the AP MAC.
-     * @param[in] timeoutMs Maximum time to wait for the BSSID in milliseconds.
+     * @param[in] timeoutMs Upper bound on the internal serialization-mutex wait
+     *            only (held briefly — there is no callback poll). Not a blocking wait.
      *
-     * @return true if the BSSID was retrieved, false if not associated or timed out.
+     * @return true if a BSSID was returned, false if not associated or not yet cached.
      */
     bool wifi_manager_GetBSSID(uint8_t *pBssid, uint32_t timeoutMs);
 
