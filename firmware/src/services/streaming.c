@@ -621,10 +621,22 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         uint32_t val = pAiSample->Value;
                         taskEXIT_CRITICAL();
 
-                        pPublicSampleList->Values[j] = val;
-                        pPublicSampleList->validMask |= (1U << j);
-                        if (pPublicSampleList->Timestamp == 0) {
-                            pPublicSampleList->Timestamp = ts;
+                        // #533: Timestamp==0 marks the LATEST slot invalid —
+                        // Streaming_Start zeroes it so the previous session's
+                        // final conversion (parked in this one-deep cache
+                        // across the stop gap) can't be re-emitted as the
+                        // new session's first sample.  Skipping leaves the
+                        // validMask bit 0; the slot revalidates when this
+                        // session's first conversion lands (next tick).
+                        // (A genuine ts==0 from the free-running counter
+                        // hitting exactly 0 skips one channel-sample once
+                        // per 2^32 ticks — negligible.)
+                        if (ts != 0) {
+                            pPublicSampleList->Values[j] = val;
+                            pPublicSampleList->validMask |= (1U << j);
+                            if (pPublicSampleList->Timestamp == 0) {
+                                pPublicSampleList->Timestamp = ts;
+                            }
                         }
                     }
                     // else: bit stays 0 in validMask (invalid)
@@ -1060,6 +1072,49 @@ static void Streaming_Start(void) {
                 AInSampleList_FreeToPool(pStale);
             }
         }
+        // #533: same for the DIO sample list — it isn't covered by the
+        // start-path pool re-init (AInSampleList_InitializeExternal drains
+        // only the AIN queue) and a stale entry would ride out as the next
+        // session's first message with a stale StreamTrigStamp.  This is
+        // the symmetric backstop to the drain in Streaming_Stop, catching
+        // a sample pushed by an in-flight deferred-task tick after stop.
+        {
+            tBoardData* pBd = BoardData_Get(BOARDDATA_ALL_DATA, 0);
+            if (pBd != NULL) {
+                DIOSample staleDio;
+                while (DIOSampleList_PopFront(&pBd->DIOSamples, &staleDio)) {
+                    // discard — belongs to the previous session
+                }
+            }
+        }
+
+        // #533 ROOT CAUSE: invalidate the per-channel BOARDDATA_AIN_LATEST
+        // snapshots.  LATEST is a one-conversion-deep cache: the deferred
+        // ISR task reads it at tick N to emit the sample for tick N-1's
+        // conversion.  The PREVIOUS session's final conversion therefore
+        // sits in LATEST across the stop gap (it is never invalidated),
+        // and the first tick of the NEXT session would re-read it —
+        // emitting one frame carrying the prior session's timestamp,
+        // exactly one sample period past that session's last frame (the
+        // desktop-observed leftover; HW-reproduced 6/6 on a factory-state
+        // device, where no background ADC polling masks the stale stamp).
+        // Timestamp=0 marks a slot invalid: the deferred task skips such
+        // channels (real-ADC mode) or falls back to the fresh streaming
+        // trigger stamp (test-pattern modes).  Plain 32-bit stores are
+        // atomic on PIC32MZ (no critical section needed); a concurrent
+        // background-poll ISR write is last-writer-wins per field, both
+        // outcomes valid.
+        {
+            const AInArray* pAinCfg = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+            if (pAinCfg != NULL) {
+                for (size_t ch = 0; ch < pAinCfg->Size; ch++) {
+                    AInSample* pLatest = BoardData_Get(BOARDDATA_AIN_LATEST, ch);
+                    if (pLatest != NULL) {
+                        pLatest->Timestamp = 0;
+                    }
+                }
+            }
+        }
 
         // Only clear stats when starting a new enabled session.
         // Streaming_UpdateState() calls Stop→Start even on disable,
@@ -1262,6 +1317,32 @@ static void Streaming_Stop(void) {
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
         gpRuntimeConfigStream->Running = false;
+
+        // #533: drain BOTH sample queues at stop so nothing captured by
+        // this session's final ticks can be encoded into the NEXT session.
+        // The AIN queue was previously cleared only at start; the DIO list
+        // was never cleared at all — a DIO sample pushed by the final tick
+        // sat latched across stop (surviving port close/reopen and repeated
+        // stops) and, encoded as the next session's first DIO-carrying
+        // message, stamped it with this session's StreamTrigStamp — the
+        // desktop-observed leftover frame exactly one sample period past
+        // the prior session's last frame.  A late deferred-task push after
+        // this drain is caught by the symmetric drain in Streaming_Start.
+        {
+            AInPublicSampleList_t* pStaleAin;
+            while (AInSampleList_PopFront(&pStaleAin)) {
+                if (pStaleAin != NULL) {
+                    AInSampleList_FreeToPool(pStaleAin);
+                }
+            }
+            tBoardData* pBd = BoardData_Get(BOARDDATA_ALL_DATA, 0);
+            if (pBd != NULL) {
+                DIOSample staleDio;
+                while (DIOSampleList_PopFront(&pBd->DIOSamples, &staleDio)) {
+                    // discard — session is over
+                }
+            }
+        }
 
         // #367 diagnostics: snapshot bytes still sitting in the WiFi TCP
         // circular buffer at session end.  If TotalBytesStreamed -
