@@ -1059,34 +1059,20 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
 /*!
  * Starts the streaming timer
  */
+static void Streaming_DrainSessionSampleQueues(void);
+
 static void Streaming_Start(void) {
     if (!gpRuntimeConfigStream->Running) {
         // Buffer and sample pool resize is handled in SCPI_StartStreaming
         // (USB task context) via StreamingBufferPool_Partition before
         // IsEnabled is set.
 
-        // Clear any stale samples from previous streaming session
-        AInPublicSampleList_t* pStale;
-        while (AInSampleList_PopFront(&pStale)) {
-            if (pStale != NULL) {
-                AInSampleList_FreeToPool(pStale);
-            }
-        }
-        // #533: same for the DIO sample list — it isn't covered by the
-        // start-path pool re-init (AInSampleList_InitializeExternal drains
-        // only the AIN queue) and a stale entry would ride out as the next
-        // session's first message with a stale StreamTrigStamp.  This is
-        // the symmetric backstop to the drain in Streaming_Stop, catching
-        // a sample pushed by an in-flight deferred-task tick after stop.
-        {
-            tBoardData* pBd = BoardData_Get(BOARDDATA_ALL_DATA, 0);
-            if (pBd != NULL) {
-                DIOSample staleDio;
-                while (DIOSampleList_PopFront(&pBd->DIOSamples, &staleDio)) {
-                    // discard — belongs to the previous session
-                }
-            }
-        }
+        // Clear any stale samples from the previous streaming session —
+        // AIN queue and (#533) the DIO sample list, which isn't covered by
+        // the start-path pool re-init.  Symmetric backstop to the drain in
+        // Streaming_Stop, catching a sample pushed by an in-flight
+        // deferred-task tick after stop.
+        Streaming_DrainSessionSampleQueues();
 
         // #533 ROOT CAUSE: invalidate the per-channel BOARDDATA_AIN_LATEST
         // snapshots.  LATEST is a one-conversion-deep cache: the deferred
@@ -1308,6 +1294,30 @@ bool Streaming_TasksAreQuiescent(void) {
 /*!
  * Stops the streaming timer
  */
+/**
+ * #533: drain both per-session sample queues (AIN + DIO) so no sample
+ * captured by one session can be encoded into the next.  Called from
+ * Streaming_Stop (the session is over — discard) and Streaming_Start
+ * (symmetric backstop for a sample pushed by an in-flight deferred-task
+ * tick between the stop-side drain and the next start).  Both pops are
+ * 0-tick non-blocking (AINSAMPLE_/DIOSAMPLE_QUEUE_TICKS_TO_WAIT == 0).
+ */
+static void Streaming_DrainSessionSampleQueues(void) {
+    AInPublicSampleList_t* pStaleAin;
+    while (AInSampleList_PopFront(&pStaleAin)) {
+        if (pStaleAin != NULL) {
+            AInSampleList_FreeToPool(pStaleAin);
+        }
+    }
+    tBoardData* pBd = BoardData_Get(BOARDDATA_ALL_DATA, 0);
+    if (pBd != NULL) {
+        DIOSample staleDio;
+        while (DIOSampleList_PopFront(&pBd->DIOSamples, &staleDio)) {
+            // discard — belongs to the previous session
+        }
+    }
+}
+
 static void Streaming_Stop(void) {
     if (gpRuntimeConfigStream->Running) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
@@ -1328,21 +1338,7 @@ static void Streaming_Stop(void) {
         // desktop-observed leftover frame exactly one sample period past
         // the prior session's last frame.  A late deferred-task push after
         // this drain is caught by the symmetric drain in Streaming_Start.
-        {
-            AInPublicSampleList_t* pStaleAin;
-            while (AInSampleList_PopFront(&pStaleAin)) {
-                if (pStaleAin != NULL) {
-                    AInSampleList_FreeToPool(pStaleAin);
-                }
-            }
-            tBoardData* pBd = BoardData_Get(BOARDDATA_ALL_DATA, 0);
-            if (pBd != NULL) {
-                DIOSample staleDio;
-                while (DIOSampleList_PopFront(&pBd->DIOSamples, &staleDio)) {
-                    // discard — session is over
-                }
-            }
-        }
+        Streaming_DrainSessionSampleQueues();
 
         // #367 diagnostics: snapshot bytes still sitting in the WiFi TCP
         // circular buffer at session end.  If TotalBytesStreamed -
