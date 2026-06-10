@@ -645,13 +645,21 @@ The firmware computes a maximum safe streaming frequency — the `min()` of an *
 | interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
 |-----------|----:|----:|----:|
 | USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
-| WiFi   | 11250 / 9000  | 210000/(30+n) | 21000/(1+n) |
+| WiFi   | 6774 / 8000   | 210000/(30+n) | 20000/(2+n) |
 | SD     | 9000 / 7500   | 150000/(15+n) | 42000/(12+n) |
 | USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
 
+**WiFi soak derate (2026-06-10).** The original sweep-fitted WiFi terms (PB single 11250, CSV single 9000, CSV 21000/(1+n)) were *burst*-fitted; the at-cap endurance runs (1200 s real-ADC soaks, `benchmarks/atcap_20260610_*.csv` in the test suite) showed they leak 13–31,000 `QueueDroppedSamples` per soak — with `WifiDroppedBytes = 0` everywhere (pool exhaustion at sustained tick rate, not transport loss). Soak-driven refit:
+- **PB 1-ch = the multi-channel curve value `210000/31 = 6774`** (soak-clean both variants): the 11250 special case was a burst-fit outlier (60 s trials ranged 6000–12500 run-to-run in `wifi_v2_matrix`); a −11% trim to 10000 still leaked 15–31k per soak; every PB cell ≤6363 ticks/s holds zero-loss for 20 min.
+- **CSV single 9000→8000** (soak-clean both variants).
+- **CSV multi 21000/(1+n)→20000/(2+n)**, anchored on the soak-clean cells (8ch 2111, 10ch 1909, 11ch 1750, 16ch 1117): T2-heavy 3/5-ch variants leaked at the old curve (3×T2 @5250 and @4750, 5×T2 @3500 and @3166) — the extra pri-9 EOS deferred-task wakeup per tick (vs T1 variants, which were clean at the same rates) competes with the pri-6 encoder. New 3ch=4000 / 5ch=2857 sit 10–16% under the dirty points.
+- PB `A/(B+n)` multi-channel held clean at every soak cell and is unchanged.
+
+The static derate is the interim fix; runtime AIMD (#523) remains the long-term answer to transient ceiling variation.
+
 **Effective limit:** `min(ISR_MAX, TYPE1_AGG/type1Count, TICK_BUDGET/(OVERHEAD+totalEnabled), TransportMax(interface, encoding, totalEnabled))`
 
-**Verified caps (hardware, 1 channel, #524):** USB 15000 · WiFi PB 11250 / CSV 9000 · SD PB 9000 / CSV 7500 · USB+SD 8000 — all match the equation and `current_max_rate_hz` (capabilities query reflects the full cap as of #524).
+**Verified caps (hardware, 1 channel, #524; WiFi figures pre-derate):** USB 15000 · WiFi PB 11250 / CSV 9000 (now derated to 10000/8000, see above) · SD PB 9000 / CSV 7500 · USB+SD 8000 — all match the equation and `current_max_rate_hz` (capabilities query reflects the full cap as of #524).
 
 **Type-2 (muxed MODULE7) channels obey this same cap (#107).** Earlier firmware throttled the shared-ADC mux scan to 1 kHz (`ChannelScanFreqDiv = freq/1000`) and rejected any T2 stream above 1 kHz up-front (the old `STREAMING_MUXED_CAP_HZ` / #232). Real-ADC characterization (18-pass overnight matrix, `daqifi-python-test-suite` `benchmarks/107_t2_scan_characterization/`) showed the mux scan **never overruns up to ≥40 kHz** at any channel count (EosOverruns=0) — it is never the bottleneck. So #107 set `ChannelScanFreqDiv = 1` (T2 scans every tick = real full-rate data) and removed the 1 kHz reject; T2 streaming is now bounded by the per-interface/format transport cap above, exactly like Type-1. HW-verified: 11×T2 PB streams clean to the #524 cap (EosOverruns=0, QueueDropped=0, ch0 accurate), over-cap → `-222`, OBDiag on/off both bounded.
 

@@ -137,8 +137,30 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
             else    { single = 15000u; A =  34000u; B =  1u; }
             break;
         case StreamingInterface_WiFi:
-            if (pb) { single = 11250u; A = 210000u; B = 30u; }
-            else    { single =  9000u; A =  21000u; B =  1u; }
+            /* Derated from the sweep-fitted 11250/9000/21000 after the
+             * 2026-06-10 at-cap endurance runs (1200 s real-ADC soaks,
+             * atcap_20260610_002733/092839.csv): at the old caps, 1-ch PB
+             * and <=5-ch + 16-ch CSV leaked 13..31000 QueueDroppedSamples
+             * per soak (WifiDroppedBytes = 0 everywhere — pool exhaustion
+             * at sustained tick rate, not transport loss).
+             *
+             * PB 1-ch uses the multi-channel curve value A/(B+1) = 6774:
+             * the old 11250 special case was a burst-fit outlier (60 s
+             * trials ranged 6000..12500 run-to-run in wifi_v2_matrix);
+             * soaks leak at 10000-11250 but every cell <=6363 ticks/s
+             * holds zero-loss for 20 min. PB A/(B+n) multi-channel is
+             * unchanged (clean at every soak cell).
+             *
+             * CSV multi-channel refit 21000/(1+n) -> 20000/(2+n), anchored
+             * on the soak-CLEAN cells (8ch 2111, 10ch 1909, 11ch 1750,
+             * 16ch 1117): T2-heavy 3/5-ch variants leak at the old curve
+             * (3xT2 @5250/4750, 5xT2 @3500/3166 — the extra pri-9 EOS
+             * deferred-task wakeup per tick vs T1 variants competes with
+             * the pri-6 encoder). New 3ch=4000 / 5ch=2857 sit 10-16%
+             * under the dirty points. CSV single 8000 soak-clean both
+             * variants. */
+            if (pb) { single =  6774u; A = 210000u; B = 30u; }
+            else    { single =  8000u; A =  20000u; B =  2u; }
             break;
         case StreamingInterface_SD:
             if (pb) { single =  9000u; A = 150000u; B = 15u; }
