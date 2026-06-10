@@ -628,9 +628,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         // new session's first sample.  Skipping leaves the
                         // validMask bit 0; the slot revalidates when this
                         // session's first conversion lands (next tick).
-                        // (A genuine ts==0 from the free-running counter
-                        // hitting exactly 0 skips one channel-sample once
-                        // per 2^32 ticks — negligible.)
+                        // A genuine counter reading of 0 can never alias the
+                        // sentinel: Streaming_TimerHandler clamps 0 -> 1 at
+                        // the single capture point all stamps derive from.
                         if (ts != 0) {
                             pPublicSampleList->Values[j] = val;
                             pPublicSampleList->validMask |= (1U << j);
@@ -782,6 +782,13 @@ static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
 static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     DioProbe_Toggle(0);  /* probe 0: true timer ISR rate */
     uint32_t valueTMR = TimerApi_CounterGet(gpStreamingConfig->TSTimerIndex);
+    // #533: Timestamp==0 is reserved as the "LATEST slot invalid" sentinel
+    // (Streaming_Start zeroes the per-channel snapshots so a prior session's
+    // final conversion can't be re-emitted).  Clamp a genuine counter
+    // reading of 0 to 1 so a phase-aligned 2^32 wrap can never alias the
+    // sentinel and silently drop a real tick — a one-timer-tick bias
+    // (nanoseconds) once per wrap, vs a lost sample.
+    if (valueTMR == 0u) valueTMR = 1u;
     BoardData_Set(BOARDDATA_STREAMING_TIMESTAMP, 0, (const void*) &valueTMR);
 
     // Defensive re-entry guard. PIC32MZ same-source ISRs cannot preempt
