@@ -1302,6 +1302,23 @@ bool Streaming_TasksAreQuiescent(void) {
  * Stops the streaming timer
  */
 /**
+ * Shared SD drop bookkeeping (#534 DRY): counter pair + QUES bit under one
+ * critical section so a concurrent SYST:STR:STATS? snapshot sees them
+ * coherently (steady never > total).  Callers log their own context-
+ * specific LOG_E_SESSION line.
+ */
+static void Streaming_CountSdDrop(size_t packetSize) {
+    bool pastGrace = Streaming_PastStartupGrace();
+    taskENTER_CRITICAL();
+    gStreamStats.sdDroppedBytes += packetSize;
+    if (pastGrace) {
+        gStreamStats.sdDroppedBytesSteady += packetSize;
+    }
+    gQuesBits |= QUES_BIT_SD_OVERFLOW;
+    taskEXIT_CRITICAL();
+}
+
+/**
  * #533: drain both per-session sample queues (AIN + DIO) so no sample
  * captured by one session can be encoded into the next.  Called from
  * Streaming_Stop (the session is over — discard) and Streaming_Start
@@ -2123,16 +2140,16 @@ void streaming_Task(void) {
                      * (#520: pool absorbs the burst; single drop point). */
                     if (sd_card_manager_WriteToBuffer((const char*)buffer,
                                                       packetSize) != packetSize) {
-                        bool pastGrace = Streaming_PastStartupGrace();
-                        taskENTER_CRITICAL();
-                        gStreamStats.sdDroppedBytes += packetSize;
-                        if (pastGrace) {
-                            gStreamStats.sdDroppedBytesSteady += packetSize;
+                        /* Skip the bookkeeping when streaming was stopped
+                         * mid-iteration — mirrors WriteWithRetry's STOPPED
+                         * path: a non-write during the stop transition (file
+                         * closing, buffers being torn down) is not an SD
+                         * fault and must not pollute the session stats. */
+                        if (pRunTimeStreamConf->IsEnabled) {
+                            Streaming_CountSdDrop(packetSize);
+                            LOG_E_SESSION(LOG_SESSION_SD_DROP,
+                                "Streaming: SD buffer overflow (multi-output no-retry)");
                         }
-                        gQuesBits |= QUES_BIT_SD_OVERFLOW;
-                        taskEXIT_CRITICAL();
-                        LOG_E_SESSION(LOG_SESSION_SD_DROP,
-                            "Streaming: SD buffer overflow (multi-output no-retry)");
                     }
                 } else {
                     size_t wr = Streaming_WriteWithRetry(
@@ -2140,14 +2157,7 @@ void streaming_Task(void) {
                     if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
                         /* True 10 s interface-dead timeout (pass-5 Qodo
                          * refinement): bump drop counters + QUES bit + log. */
-                        bool pastGrace = Streaming_PastStartupGrace();
-                        taskENTER_CRITICAL();
-                        gStreamStats.sdDroppedBytes += packetSize;
-                        if (pastGrace) {
-                            gStreamStats.sdDroppedBytesSteady += packetSize;
-                        }
-                        gQuesBits |= QUES_BIT_SD_OVERFLOW;
-                        taskEXIT_CRITICAL();
+                        Streaming_CountSdDrop(packetSize);
                         LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
                     }
                     /* else: wr == packetSize (success) or
@@ -2172,14 +2182,7 @@ void streaming_Task(void) {
                 bool sdWritten = hasSD && gSdFileWasReady;
 
                 if (sdExpected && !sdWritten) {
-                    bool pastGrace = Streaming_PastStartupGrace();
-                    taskENTER_CRITICAL();
-                    gStreamStats.sdDroppedBytes += packetSize;
-                    if (pastGrace) {
-                        gStreamStats.sdDroppedBytesSteady += packetSize;
-                    }
-                    gQuesBits |= QUES_BIT_SD_OVERFLOW;
-                    taskEXIT_CRITICAL();
+                    Streaming_CountSdDrop(packetSize);
                     LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
                 }
             }

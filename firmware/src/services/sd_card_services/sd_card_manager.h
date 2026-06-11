@@ -124,12 +124,16 @@ extern "C" {
      * @brief Writes data to the SD card manager's write buffer.
      *
      * This function adds data to the internal circular buffer for writing to the SD card.
-     * If the buffer does not have enough space, the function will block until space becomes available.
+     * NON-BLOCKING and all-or-nothing: if the buffer does not have enough space for the
+     * full packet, it returns 0 immediately (no partial write, no wait). Retry policy
+     * belongs to the caller: solo-SD streaming wraps this in Streaming_WriteWithRetry
+     * (#520 backpressure); multi-output streaming intentionally does not retry (#534 —
+     * drop+count so a stalled SD cannot block the USB path).
      *
      * @param[in] pData Pointer to the data to be written.
      * @param[in] len   Length of the data in bytes.
      *
-     * @return The number of bytes successfully added to the buffer.
+     * @return len on success, 0 if the full packet did not fit (or SD not in write mode).
      *
      * @note This function is thread-safe and can be called from multiple contexts.
      *       Ensure that the SD card manager is initialized and in write mode before calling.
