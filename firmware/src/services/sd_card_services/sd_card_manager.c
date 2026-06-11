@@ -1655,9 +1655,15 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
         return 0;
     }
 
-    // All-or-nothing: only write if full packet fits. Prevents convoy effect
-    // where tiny partial writes burn CPU on mutex cycles. Callers retry via
-    // Streaming_WriteWithRetry — no data loss.
+    // All-or-nothing, NON-BLOCKING: returns 0 immediately when the full
+    // packet doesn't fit (prevents the convoy effect of tiny partial
+    // writes burning CPU on mutex cycles).  Retry policy is the CALLER's:
+    // solo-SD streaming wraps this in Streaming_WriteWithRetry (#520
+    // backpressure); multi-output streaming intentionally does NOT retry
+    // (#534 — drop+count so a stalled SD can't block the USB path).  The
+    // wMutex hold here is microseconds (free-space check + memcpy); the
+    // SD task's slow f_write runs OUTSIDE the mutex, so a hung card makes
+    // this return 0, never block.
     SD_TakeMutexDebug(gSDCardData.wMutex, "write_buffer_add");
     if (CircularBuf_NumBytesFree(&gSDCardData.wCirbuf) < len) {
         xSemaphoreGive(gSDCardData.wMutex);

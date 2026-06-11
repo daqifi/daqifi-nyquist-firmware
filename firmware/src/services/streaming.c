@@ -2102,9 +2102,14 @@ void streaming_Task(void) {
                 //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
             }
             if (hasSD && gSdFileWasReady) {
-                if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
+                if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_SD) {
                     /* #534: multi-output — a stalled SD must never block the
                      * (healthy) USB path through this shared encoder loop.
+                     * Gate is "not solo-SD" rather than "== UsbAndSd" because
+                     * the SD-logging override above (SD enabled while
+                     * ActiveInterface == USB) also produces concurrent
+                     * USB+SD writes without the UsbAndSd enum value (Qodo
+                     * pass-1 catch on PR #536).
                      * Saturation is already shed by the per-iteration
                      * hasSD = (sdSize >= 128) gate above (HW-verified: USB
                      * holds 100% of target at 2x SD over-rate while SD
