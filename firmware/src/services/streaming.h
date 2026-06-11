@@ -193,7 +193,10 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
     /* JSON emits ~2-3x CSV bytes/sample (object braces + per-sample field names),
      * so its true ceiling is below CSV's and it was not separately characterized.
      * Derate the CSV-based cap by half to stay conservative (never over-cap JSON)
-     * until JSON is measured (#524 follow-up). */
+     * until JSON is measured (#524 follow-up).  Intentionally applied AFTER the
+     * WiFi low-n clamp above: JSON derives from CSV's EFFECTIVE (measured-safe)
+     * cap — halving the unclamped curve would put low-n JSON above what the CSV
+     * soak data supports. */
     if (json) hz /= 2u;
     return (hz == 0u) ? 1u : hz;
 }

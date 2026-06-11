@@ -1191,12 +1191,29 @@ static void Streaming_Start(void) {
             // values pre-#535; 100% encoder failures after the #535 validity
             // gate landed).
             {
-                uint16_t t1 = 0, total = 0;
-                Streaming_CountActiveChannels(&t1, &total, NULL);
-                // Any enabled public channel needs the scan: T2 channels for
-                // their conversions, T1 channels because their results are
-                // read in the EOS task and EOS only fires at end-of-scan.
-                gNeedSharedScan = (total > 0);
+                // Any enabled public MC12b channel needs the scan: T2
+                // channels for their conversions, T1 channels because their
+                // results are read in the EOS task and EOS only fires at
+                // end-of-scan.  Count MC12b specifically rather than
+                // CountActiveChannels' total so an AD7609-only NQ3 session
+                // doesn't arm the MC12b scan + EOS task for nothing
+                // (Qodo #540).  Same volatile-pointer/min-size idiom as
+                // Streaming_CountActiveChannels.
+                uint16_t mc12bPublic = 0;
+                volatile AInRuntimeArray* rtCh =
+                    BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+                volatile AInArray* cfgCh =
+                    BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+                size_t chCnt = (cfgCh->Size < rtCh->Size) ? cfgCh->Size
+                                                          : rtCh->Size;
+                for (size_t ci = 0; ci < chCnt; ci++) {
+                    if (rtCh->Data[ci].IsEnabled == 1 &&
+                        cfgCh->Data[ci].Type == AIn_MC12bADC &&
+                        cfgCh->Data[ci].Config.MC12b.IsPublic) {
+                        mc12bPublic++;
+                    }
+                }
+                gNeedSharedScan = (mc12bPublic > 0);
             }
             bool hwShared = (gpRuntimeConfigStream->OnboardDiagEnabled ||
                              gNeedSharedScan) &&
