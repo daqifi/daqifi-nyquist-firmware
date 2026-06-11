@@ -2182,8 +2182,15 @@ void streaming_Task(void) {
                 bool sdWritten = hasSD && gSdFileWasReady;
 
                 if (sdExpected && !sdWritten) {
-                    Streaming_CountSdDrop(packetSize);
-                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
+                    // Gate on IsEnabled, mirroring the #484 encoder-failure
+                    // guard: if Streaming_Stop ran between this iteration's
+                    // top-of-loop check and here, the SD file is mid-close
+                    // and the failed write is teardown, not data loss the
+                    // operator should see counted (Qodo #536).
+                    if (pRunTimeStreamConf->IsEnabled) {
+                        Streaming_CountSdDrop(packetSize);
+                        LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
+                    }
                 }
             }
             DioProbe_PulseEnd(9);
