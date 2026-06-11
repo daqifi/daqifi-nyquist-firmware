@@ -645,7 +645,7 @@ The firmware computes a maximum safe streaming frequency — the `min()` of an *
 | interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
 |-----------|----:|----:|----:|
 | USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
-| WiFi   | 6774 / 8000   | 210000/(30+n) | 20000/(2+n) |
+| WiFi   | 5175 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
 | SD     | 9000 / 7500   | 150000/(15+n) | 42000/(12+n) |
 | USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
 
@@ -655,7 +655,16 @@ The firmware computes a maximum safe streaming frequency — the `min()` of an *
 - **CSV multi 21000/(1+n)→20000/(2+n)**, anchored on the soak-clean cells (8ch 2111, 10ch 1909, 11ch 1750, 16ch 1117): T2-heavy 3/5-ch variants leaked at the old curve (3×T2 @5250 and @4750, 5×T2 @3500 and @3166) — the extra pri-9 EOS deferred-task wakeup per tick (vs T1 variants, which were clean at the same rates) competes with the pri-6 encoder. New 3ch=4000 / 5ch=2857 sit 10–16% under the dirty points.
 - PB `A/(B+n)` multi-channel held clean at every soak cell and is unchanged.
 
-The static derate is the interim fix; runtime AIMD (#523) remains the long-term answer to transient ceiling variation.
+**WiFi honest-scan refit (2026-06-11).** The 2026-06-10 basis above — and every earlier WiFi OBDiag=off characterization — was measured on firmware with the #537 bug: OBDiag=0 silently skipped the MODULE7 scan, so T2 streams carried frozen values while the device did materially less work per tick (no scan, no EOS, no pri-9 EOS-task wakeups) and sustained ~1.5× the honest rate. Take-5 (2026-06-11, `benchmarks/atcap_20260611_045901.csv`, walk-down soaks with the #537 fix in) is the first honest OBDiag=off endurance basis:
+
+| | 1ch | 3ch | 5ch | 8ch | 11ch |
+|---|--:|--:|--:|--:|--:|
+| PB measured ceiling | 5175 | 4225 | 4000 | 3675 | 3400 |
+| CSV measured ceiling | 4675 | 3050 | 2857 (at cap) | 2000 (at cap) | 1538 (at cap) |
+
+Refit (all caps ≤ measured, within 1%): **PB single 6774→5175, PB multi 210000→139000/(30+n)** (~0.66×); **CSV single 8000→4675**; CSV multi keeps `20000/(2+n)` (validated AT CAP for n≥5 same-night) **clamped to 3050 for n=2..4** (the hyperbola over-caps low-n, where higher tick rates cost more per-tick overhead). HW-verified post-flash via `CONF:CAP:JSON?` (6/6 configs exact). T1/mixed WiFi cells were not re-characterized — blocked on #539 (T1 validity collapses above ~5.2 kHz; the T1-relevant rates sit in the dead zone).
+
+The static derate is the interim fix; runtime AIMD (#523) remains the long-term answer to transient ceiling variation — underscored by the 06-10 vs 06-11 spread: the same soak methodology on the same AP produced caps 1.5× apart once the workload was honest.
 
 **Effective limit:** `min(ISR_MAX, TYPE1_AGG/type1Count, TICK_BUDGET/(OVERHEAD+totalEnabled), TransportMax(interface, encoding, totalEnabled))`
 
