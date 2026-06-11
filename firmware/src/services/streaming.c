@@ -52,15 +52,20 @@ static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on
 // Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
 static volatile uint32_t gBenchmarkMode = BENCHMARK_OFF;
 
-// #537: any Type-2 (shared MODULE7) USER channel enabled for this session.
-// Computed in Streaming_Start (before the timer is armed) from the enabled-
-// channel counts; read by the deferred ISR task's trigger logic and by
-// Streaming_Start's hardware-trigger setup so the shared scan runs whenever
-// T2 user data is needed, independent of OnboardDiagEnabled.  volatile:
-// written in SCPI-task context, read in the priority-9 deferred task.
-// (Counts AD7609 channels as "T2 user" on NQ3 — conservative: the extra
-// MODULE7 scan is harmless there.)
-static volatile bool gAnyT2UserEnabled = false;
+// #537: the shared (MODULE7) scan must run for ANY MC12b streaming session,
+// independent of OnboardDiagEnabled.  Two consumers depend on it:
+//   1. Type-2 USER channels — their conversions ARE the scan.
+//   2. Type-1 result reads — since #292 these happen in
+//      MC12bADC_EosInterruptTask, and EOS only fires at end-of-scan, so a
+//      T1-only session with no scan never reads its results either.
+// Pre-#535 builds streamed frozen LATEST values silently in both cases; the
+// #535 validity gate turned them into 100% encoder failures (the 2026-06-11
+// overnight caught T2 on its first cell, then the T1 variant on the next).
+// Computed in Streaming_Start before any trigger is armed (true when any
+// public channel is enabled); read by the deferred ISR task's trigger logic.
+// volatile: written in SCPI-task context, read in the priority-9 deferred
+// task.
+static volatile bool gNeedSharedScan = false;
 
 // Task priority constant (benchmark no longer changes priority)
 #define STREAMING_ISR_TASK_PRIORITY     8
@@ -725,7 +730,7 @@ pool_done:
                 // task already skips monitoring-channel READS when OBDiag=0,
                 // so monitoring stays dormant as intended.
                 bool skipShared = !pRunTimeStreamConf->OnboardDiagEnabled &&
-                                  !gAnyT2UserEnabled;
+                                  !gNeedSharedScan;
 
                 if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                     for (i = 0; i < pRunTimeAInModules->Size; ++i) {
@@ -1188,10 +1193,13 @@ static void Streaming_Start(void) {
             {
                 uint16_t t1 = 0, total = 0;
                 Streaming_CountActiveChannels(&t1, &total, NULL);
-                gAnyT2UserEnabled = (total > t1);
+                // Any enabled public channel needs the scan: T2 channels for
+                // their conversions, T1 channels because their results are
+                // read in the EOS task and EOS only fires at end-of-scan.
+                gNeedSharedScan = (total > 0);
             }
             bool hwShared = (gpRuntimeConfigStream->OnboardDiagEnabled ||
-                             gAnyT2UserEnabled) &&
+                             gNeedSharedScan) &&
                             (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
             MC12b_ConfigureHardwareTrigger(true, hwShared);
 
