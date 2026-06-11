@@ -52,6 +52,16 @@ static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on
 // Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
 static volatile uint32_t gBenchmarkMode = BENCHMARK_OFF;
 
+// #537: any Type-2 (shared MODULE7) USER channel enabled for this session.
+// Computed in Streaming_Start (before the timer is armed) from the enabled-
+// channel counts; read by the deferred ISR task's trigger logic and by
+// Streaming_Start's hardware-trigger setup so the shared scan runs whenever
+// T2 user data is needed, independent of OnboardDiagEnabled.  volatile:
+// written in SCPI-task context, read in the priority-9 deferred task.
+// (Counts AD7609 channels as "T2 user" on NQ3 — conservative: the extra
+// MODULE7 scan is harmless there.)
+static volatile bool gAnyT2UserEnabled = false;
+
 // Task priority constant (benchmark no longer changes priority)
 #define STREAMING_ISR_TASK_PRIORITY     8
 
@@ -706,7 +716,16 @@ pool_done:
                 DioProbe_PulseStart(4);  /* probe 4: ADC trigger duration */
                 bool hwDed = MC12b_IsHwTriggerDedicated();
                 bool hwShd = MC12b_IsHwTriggerShared();
-                bool skipShared = !pRunTimeStreamConf->OnboardDiagEnabled;
+                // #537: the shared (MODULE7) scan carries BOTH the OBDiag
+                // monitoring channels AND every Type-2 USER channel, so it
+                // must run whenever either consumer needs it.  Gating it on
+                // OnboardDiagEnabled alone froze T2 user data in OBDiag=0
+                // streams (silently on pre-#535 builds; 100% encoder
+                // failures once the #535 validity gate landed).  The EOS
+                // task already skips monitoring-channel READS when OBDiag=0,
+                // so monitoring stays dormant as intended.
+                bool skipShared = !pRunTimeStreamConf->OnboardDiagEnabled &&
+                                  !gAnyT2UserEnabled;
 
                 if (pRunTimeStreamConf->ChannelScanFreqDiv == 1) {
                     for (i = 0; i < pRunTimeAInModules->Size; ++i) {
@@ -1159,9 +1178,20 @@ static void Streaming_Start(void) {
             // Enable hardware ADC triggering only when actually streaming.
             // Streaming_Start runs at boot before ADC_Init — must not
             // write ADCTRG/ADCCON1 until ADC is ready.
-            // hwShared: enable MODULE7 scan trigger unless onboard diag is
-            // disabled (max dedicated throughput mode).
-            bool hwShared = gpRuntimeConfigStream->OnboardDiagEnabled &&
+            // #537: compute the session's T2-user flag BEFORE arming any
+            // trigger: the shared (MODULE7) scan carries both the OBDiag
+            // monitoring channels AND every Type-2 user channel, so it must
+            // run when either consumer needs it.  The old OnboardDiagEnabled-
+            // only gate froze T2 user data in OBDiag=0 streams (silent stale
+            // values pre-#535; 100% encoder failures after the #535 validity
+            // gate landed).
+            {
+                uint16_t t1 = 0, total = 0;
+                Streaming_CountActiveChannels(&t1, &total, NULL);
+                gAnyT2UserEnabled = (total > t1);
+            }
+            bool hwShared = (gpRuntimeConfigStream->OnboardDiagEnabled ||
+                             gAnyT2UserEnabled) &&
                             (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
             MC12b_ConfigureHardwareTrigger(true, hwShared);
 
