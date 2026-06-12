@@ -137,8 +137,31 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
             else    { single = 15000u; A =  34000u; B =  1u; }
             break;
         case StreamingInterface_WiFi:
-            if (pb) { single = 11250u; A = 210000u; B = 30u; }
-            else    { single =  9000u; A =  21000u; B =  1u; }
+            /* Refit 2026-06-11 (take-5 walk-down soaks, T2-only,
+             * atcap_20260611_045901.csv) — the first endurance basis with
+             * the #537 fix in.  All earlier WiFi OBDiag=off soak bases
+             * (2026-06-02 sweep, 2026-06-10 atcap) were measured with the
+             * MODULE7 scan silently skipped (#537): frozen T2 data and no
+             * EOS-task load, so the device sustained ~1.5x the honest
+             * rate.  With the scan actually running, walk-down ceilings:
+             *
+             *   PB : 1ch 5175 · 3ch 4225 · 5ch 4000 · 8ch 3675 · 11ch 3400
+             *        -> single 5175; A/(B+n) refit 210000->139000 (B=30):
+             *        139000/(30+n) = 4212/3971/3658/3390 — under every
+             *        measured cell within 1%.
+             *   CSV: 1ch 4675 · 3ch 3050 · 5ch 2857 / 8ch 2000 / 11ch 1538
+             *        AT CAP (zero-drop at the existing 20000/(2+n) curve).
+             *        Keep the curve (validated at cap for n>=5 same-night);
+             *        single 8000->4675; clamp low-n multi to the measured
+             *        3-ch ceiling 3050 (the curve over-caps n=2..4, where
+             *        higher Hz costs more per-tick overhead than the
+             *        hyperbola predicts).
+             *
+             * Night-to-night link variation remains (the 06-10 basis held
+             * its caps clean; tonight needed 0.66x) — static caps are
+             * worst-observed-safe, runtime AIMD (#523) is the real fix. */
+            if (pb) { single =  5175u; A = 139000u; B = 30u; }
+            else    { single =  4675u; A =  20000u; B =  2u; }
             break;
         case StreamingInterface_SD:
             if (pb) { single =  9000u; A = 150000u; B = 15u; }
@@ -158,11 +181,27 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
     if (totalChannels != 1u) {
         uint64_t denom = (uint64_t)B + (uint64_t)totalChannels;
         hz = (uint32_t)((uint64_t)A / denom);
+        /* WiFi CSV low-n clamp (2026-06-11 take-5): 20000/(2+n) is
+         * validated AT CAP for n>=5 but over-caps n=2..4 — the measured
+         * 3-ch soak ceiling is 3050 while the curve gives 4000.  Clamp
+         * multi-channel WiFi CSV to that measured ceiling; transparent
+         * for n>=5 where the curve is already below it. */
+        if (interface == StreamingInterface_WiFi && !pb && hz > 3050u) {
+            hz = 3050u;
+        }
     }
     /* JSON emits ~2-3x CSV bytes/sample (object braces + per-sample field names),
      * so its true ceiling is below CSV's and it was not separately characterized.
      * Derate the CSV-based cap by half to stay conservative (never over-cap JSON)
-     * until JSON is measured (#524 follow-up). */
+     * until JSON is measured (#524 follow-up).  Intentionally applied AFTER the
+     * WiFi low-n clamp above.  Rationale is BYTE-rate equivalence: the clamp
+     * encodes the measured low-n WiFi byte ceiling (CSV 3ch zero-loss at
+     * 3050 Hz).  JSON at the same Hz pushes 2-3x the bytes, so its Hz cap must
+     * derive from the EFFECTIVE (clamped) CSV cap: clamp-then-halve gives
+     * 3ch 1525 Hz ~= 3812 CSV-equivalent bytes/s — near the measured ceiling —
+     * while halve-without-clamp gives 2000 Hz ~= 5000 CSV-equivalent, well
+     * above it.  (An earlier comment argued this in Hz terms, which was
+     * arithmetically wrong — Qodo #540 pass-2 catch.) */
     if (json) hz /= 2u;
     return (hz == 0u) ? 1u : hz;
 }

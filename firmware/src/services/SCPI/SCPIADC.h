@@ -150,10 +150,16 @@ extern "C" {
     scpi_result_t SCPI_ADCUseCalGet(scpi_t * context);
 
     /**
-     * Enable/disable onboard diagnostic channel scanning during streaming.
+     * Enable/disable onboard diagnostic (monitoring) channel READS during
+     * streaming.
      *   CONFigure:ADC:OBDiag <0|1>
-     *     0 = skip shared/MODULE7 scanning entirely during streaming
-     *     1 = allow shared/MODULE7 scanning as configured by ChannelScanFreqDiv (default)
+     *     0 = EOS task skips monitoring-channel reads during streaming
+     *         (SYST:INFo? rail values go stale with an age banner)
+     *     1 = monitoring channels refresh every scan (default)
+     * NOTE (#537): the shared/MODULE7 scan itself runs whenever ANY public
+     * MC12b channel is enabled regardless of this setting — T2 user channels
+     * need it for their conversions and T1 results are read at EOS (#292).
+     * OBDiag=0 only gates the monitoring-channel reads, not the scan.
      * Rejected while streaming is active (returns EXECUTION_ERROR).
      */
     scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context);
