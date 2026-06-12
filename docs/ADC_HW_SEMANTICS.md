@@ -38,7 +38,7 @@ undefined-behavior territory per D4 below) is not a documented contract.
 
 > This bit is cleared when ADCCON2<31:24> are read in software.
 
-**V (firmware, `config/default/peripheral/adchs/plib_adchs.c:300-310`):** the
+**V (firmware, `firmware/src/config/default/peripheral/adchs/plib_adchs.c:300-310`):** the
 Harmony `ADC_EOS_InterruptHandler` performs `uint32_t status = ADCCON2;`
 (a full 32-bit read covering <31:24>, clearing EOSRDY) **before** `IFS6CLR`,
 then dispatches the callback. The clear therefore happens in ISR context with
@@ -123,9 +123,12 @@ items. (The CLAUDE.md errata table lists only #39 VREF for ADC.)
 2. **The shared scan must never be retriggered while in progress** (D4).
    The scan trigger rate must be bounded to ≤ 1/T_scan_worst (a function of
    the CSS list length and shared SAMC — both runtime-known, so the bound is
-   computable in firmware), with the divider concept (#107's removed
-   `ChannelScanFreqDiv`) or trigger gating reinstated in some
-   documented-correct form.
+   computable in firmware). Note the `ChannelScanFreqDiv` MECHANISM still
+   exists in the code (the deferred task retains the divided-rate software
+   scan-trigger branch); #107 removed only the POLICY by pinning the divisor
+   to 1. Re-engaging it with a computed divisor is a candidate Phase-2
+   implementation, provided the hardware-trigger path (STRGSRC=TMR5) is also
+   gated — the divider only governs the software-trigger branch today.
 3. **T2 full-rate-data-above-cliff is not achievable in-spec** with the
    current single-shared-scan architecture: above 1/T_scan, T2 channels
    cannot legally convert once per tick via the scan. Honest T2 caps must
