@@ -25,7 +25,8 @@ If a previous build failed, `rm -rf build dist` first.
 
 **⚠️ Makefiles are gitignored** (`nbproject/Makefile-*.mk` are generated from `configurations.xml`). After checking out a commit that adds/removes source files, the stale on-disk makefiles fail with `No rule to make target '../src/.../<file>.c'`. Regenerate from Windows (the Linux-side `prjMakefilesGenerator` often fails with "Device pack missing"):
 ```bash
-powershell.exe -Command 'cd "C:\Users\User\Documents\GitHub\daqifi-nyquist-firmware\firmware\daqifi.X"; & "C:\Program Files\Microchip\MPLABX\v6.30\mplab_platform\bin\prjMakefilesGenerator.bat" -v .'
+# from the repo root (wslpath derives the Windows path wherever the repo lives)
+powershell.exe -Command "cd '$(wslpath -w firmware/daqifi.X)'; & 'C:\Program Files\Microchip\MPLABX\v6.30\mplab_platform\bin\prjMakefilesGenerator.bat' -v ."
 ```
 This is critical when bisecting — every checkout needs fresh makefiles.
 
@@ -95,7 +96,7 @@ Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--
 ```bash
 "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
   -TPPK4 -P32MZ2048EFM144 -M \
-  -F"C:\\Users\\<User>\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\\dist\\default\\production\\daqifi.X.production.hex" -OL
+  -F"$(wslpath -w firmware/daqifi.X/dist/default/production/daqifi.X.production.hex)" -OL
 ```
 Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific PICkit when several are attached; **every flash wipes NVM** (WiFi/calibration settings — restore via the scpi skill's `batch.sh` + the station-local `sta_setup.batch` recipe); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
 
@@ -125,6 +126,7 @@ Before any SCPI work:
 2. Query each port's serial and match it to the inventory table above:
    ```bash
    for dev in /dev/ttyACM*; do
+     [ -e "$dev" ] || { echo "No /dev/ttyACM* ports found."; break; }
      echo -n "$dev => "
      (echo -e "*IDN?\r"; sleep 0.5) | timeout --foreground 2s picocom -b 115200 -q -x 1000 "$dev" \
        | tr -d '\r' | grep -m1 '^DAQiFi,' || echo "<no response>"
