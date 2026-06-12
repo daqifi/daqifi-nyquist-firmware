@@ -162,9 +162,9 @@ bool MC12b_SetAcquisitionSamc(int32_t samcDedicated, int32_t samcShared);
 /** Read current SAMC values. out* may be NULL. */
 void MC12b_GetAcquisitionSamc(uint16_t* outSamcDedicated, uint16_t* outSamcShared);
 
-/** Boot-default SAMC values (from MCC-generated ADCHS init). */
-#define MC12B_SAMC_DEDICATED_DEFAULT  100
-#define MC12B_SAMC_SHARED_DEFAULT     1
+// Boot-default SAMC is 100 for BOTH dedicated and shared modules
+// (ADCxTIME / ADCCON2=0x00642001 -> SAMC=0x64; the former
+// MC12B_SAMC_SHARED_DEFAULT=1 constant here was an unused misdecode).
 #define MC12B_SAMC_MAX                1023
 
 #ifdef	__cplusplus

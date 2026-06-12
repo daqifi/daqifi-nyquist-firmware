@@ -225,26 +225,20 @@ bool MC12b_WriteStateSingle(
 bool MC12b_TriggerConversion(AInRuntimeArray* pRunTimeChannlConfig, AInArray* pAIConfigArr, MC12b_adcType_t type) {
     int aiChannelSize = min(pRunTimeChannlConfig->Size, pAIConfigArr->Size);
     if (type == MC12B_ADC_TYPE_DEDICATED || type==MC12B_ADC_TYPE_ALL) {
-        bool anyType1Triggered = false;
-        bool triggerChTriggered = false;
         for (int i = 0; i < aiChannelSize; i++) {
             if (pRunTimeChannlConfig->Data[i].IsEnabled &&
                 pAIConfigArr->Data[i].Type == AIn_MC12bADC &&
                 pAIConfigArr->Data[i].Config.MC12b.ChannelType == 1) {
                 ADCHS_ChannelConversionStart(pAIConfigArr->Data[i].Config.MC12b.ChannelId);
-                anyType1Triggered = true;
-                if (pAIConfigArr->Data[i].Config.MC12b.ChannelId == ADCHS_CH3) {
-                    triggerChTriggered = true;
-                }
             }
         }
-        // Always trigger CH3 (batch trigger) so its data-ready ISR fires
-        // and reads all Type 1 results. If ch14 (CH3) is disabled, MODULE3
-        // converts but the result is harmlessly discarded by the ISR
-        // (no matching enabled channel in ADC_ReadADCSampleFromISR).
-        if (anyType1Triggered && !triggerChTriggered) {
-            ADCHS_ChannelConversionStart(ADCHS_CH3);
-        }
+        // The former unconditional CH3 "batch trigger" (fire MODULE3 even
+        // with ch14 disabled so its data-ready ISR could read all Type 1
+        // results) was removed with #541: its consumer, the CH3 batch ISR,
+        // was deleted in #292, and results are now read by ARDY-gated
+        // direct reads (streaming) or the EOS task (idle) — both of which
+        // only touch enabled channels. Triggering a disabled module was
+        // pure wasted conversion.
     }
     if(type==MC12B_ADC_TYPE_SHARED || type==MC12B_ADC_TYPE_ALL)
         ADCHS_GlobalEdgeConversionStart();
@@ -517,10 +511,13 @@ bool MC12b_IsHwTriggerShared(void) {
 }
 
 // --- ADC acquisition-time (SAMC) runtime control — #328 phase 1 ----------
-// ADCxTIMEbits.SAMC  = dedicated module sample time (0..4). 10-bit, max 1023.
-// ADCCON2bits.SAMC   = shared MODULE7 sample time.         10-bit, max 1023.
-// Actual acquisition = (SAMC + 2) ADC clocks. With ADCDIV=1, ADC_clk=50 MHz so
-// one clock = 20 ns.
+// ADCxTIMEbits.SAMC  = dedicated module sample time (modules 0..4). 10-bit, max 1023.
+// ADCCON2bits.SAMC   = shared MODULE7 sample time.                  10-bit, max 1023.
+// Actual acquisition = (SAMC + 2) TAD.  At the boot clock config TAD7 = 100 ns:
+// TCLK = 10 ns (ADCSEL=00 -> PBCLK3 = 100 MHz), TQ = (CONCLKDIV+1) x TCLK =
+// 5 x 10 ns, TAD = 2 x ADCDIV x TQ = 2 x 50 ns (DS60001320H Reg 28-2/28-3;
+// silicon-verified within 2% — docs/ADC_HW_SEMANTICS.md.  An earlier comment
+// here claimed 50 MHz / 20 ns, a 5x misdecode of the divider chain).
 // Writing these requires ADCCON1.ON = 0. We toggle it around the update so
 // the change applies cleanly to all modules.
 

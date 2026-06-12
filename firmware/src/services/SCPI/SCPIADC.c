@@ -742,7 +742,10 @@ static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
     }
     StreamingRuntimeConfig *pStreamCfg =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg->IsEnabled) {
+    // IsEnabled || Running (matches #116 / OBDiag): SAMC feeds the live
+    // scan-rate bound (#541 D-C reads ADCCON2.SAMC), so a mid-stream change
+    // would invalidate the cap the session was admitted under.
+    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
         SCPI_ExecutionError(context, "CONF:ADC:SAMC: cannot change while streaming");
         return SCPI_RES_ERR;
     }
@@ -752,9 +755,12 @@ static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
         SCPI_ExecutionError(context, "CONF:ADC:SAMC: set failed");
         return SCPI_RES_ERR;
     }
-    LOG_I("ADC SAMC %s = %ld (%ld ns acquisition @ 50 MHz clk)",
+    // Acquisition = (SAMC+2) x TAD, TAD = 100 ns at the boot clock config
+    // (TCLK 10 ns x (CONCLKDIV+1)=5 x 2xADCDIV=2 — DS60001320H Reg 28-2/3;
+    // the old "50 MHz / 20 ns" figure here was a 5x divider misdecode).
+    LOG_I("ADC SAMC %s = %ld (%ld ns acquisition @ TAD=100 ns)",
           isDedicated ? "dedicated" : "shared",
-          (long)val, (long)((val + 2) * 20));
+          (long)val, (long)((val + 2) * 100));
     return SCPI_RES_OK;
 }
 
