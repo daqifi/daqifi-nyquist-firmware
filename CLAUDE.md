@@ -582,7 +582,7 @@ The firmware computes a maximum safe streaming frequency as the `min()` of **ADC
 
 **Full data + traceability:** `daqifi-python-test-suite` `benchmarks/524_streaming_characterization/` (F3 fit + 3-run matrix), `benchmarks/atcap_*.csv` (soak validations), `benchmarks/541_adc_read_path/` (scan-bound silicon anchors).
 
-**Implementation:** `firmware/src/services/streaming.h` (`Streaming_ComputeMaxFreq`, `Streaming_TransportMaxFreq`), `firmware/src/services/streaming.c` (`Streaming_ComputeMaxFreqForConfig*`), `firmware/src/HAL/ADC/MC12bADC.c` (`MC12b_ScanMaxFreq`), `firmware/src/services/SCPI/SCPIInterface.c` / `SCPIADC.c` (enforcement).
+**Implementation:** `firmware/src/services/streaming.h` (`Streaming_ComputeMaxFreq`, `Streaming_TransportMaxFreq`), `firmware/src/services/streaming.c` (`Streaming_ComputeMaxFreqForConfig*`), `firmware/src/HAL/ADC/MC12bADC.c` (`MC12b_ScanMaxFreq`), `firmware/src/services/SCPI/SCPIInterface.c` / `firmware/src/services/SCPI/SCPIADC.c` (enforcement).
 
 #### Test Pattern Streaming Mode
 
