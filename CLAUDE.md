@@ -94,7 +94,8 @@ FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
 Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--build]` (user-local helper, not repo-tracked) — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). Without the wrapper, use the direct invocation, which works anywhere:
 ```bash
 "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
-  -TPPK4 -P32MZ2048EFM144 -M -F"C:\\...\\daqifi.X.production.hex" -OL
+  -TPPK4 -P32MZ2048EFM144 -M \
+  -F"C:\\Users\\<User>\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\\dist\\default\\production\\daqifi.X.production.hex" -OL
 ```
 Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific PICkit when several are attached; **every flash wipes NVM** (WiFi/calibration settings — restore via the scpi skill's `batch.sh` + the station-local `sta_setup.batch` recipe); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
 
