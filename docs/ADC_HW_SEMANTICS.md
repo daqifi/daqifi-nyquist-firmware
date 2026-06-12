@@ -229,6 +229,71 @@ items. (The CLAUDE.md errata table lists only #39 VREF for ADC.)
 
 ---
 
+## Worked example — registers → timing, verified against silicon
+
+The complete arithmetic chain for the NQ1 boot configuration, every input
+cited. Use this as the template for the Phase-2/3 computed scan bound and
+for re-deriving timing after any clock or CSS change.
+
+### Inputs (V)
+
+| Quantity | Value | Source |
+|---|---|---|
+| PBCLK3 | 100 MHz (TCLK = 10 ns) | CLAUDE.md clock tree; DS60001320H Reg 28-3: `ADCSEL=00` → PBCLK3 |
+| `ADCCON3` | `0x04002000` → CONCLKDIV = 4 | `plib_adchs.c:79` (boot; no runtime writes) |
+| `ADCCON2` | `0x00642001` → ADCDIV = 1, SAMC = 100 | `plib_adchs.c:78`; SAMC SCPI-verified at runtime (`CONF:ADC:SAMC:SHARed?` → 100) |
+| CONCLKDIV semantics | TQ = (N+1) × TCLK | DS60001320H Reg 28-3 (**EF deviation** — FRM DS60001344E says 2N; the datasheet revision history flags the change) |
+| ADCDIV semantics | TAD7 = 2 × ADCDIV × TQ | DS60001320H Reg 28-2 (`0000001 = 2 * TQ = TAD7`) |
+| Sample time | (SAMC + 2) × TAD7 | DS60001320H / FRM (SAMC `0000000000 = 2 TAD`) |
+| 12-bit conversion | 13 TAD7 | FRM §22 conversion time; empirically 13–14 incl. scan handoff |
+| N (scan length) | 19 inputs | `ADCCSS1=0xEF0809E0` (13 bits) + `ADCCSS2=0x16C1` (6 bits); bit-set == board map exactly (11 T2 public + 8 monitoring, `NQ1BoardConfig.c` + `CommonMonitoringChannels.h`) |
+
+### Derivation
+
+```
+TCLK  = 1 / 100 MHz                    = 10 ns          (PBCLK3)
+TQ    = (CONCLKDIV + 1) × TCLK = 5 × 10 ns = 50 ns
+TAD7  = 2 × ADCDIV × TQ        = 2 × 50 ns = 100 ns
+
+per-input  = (SAMC + 2) × TAD7  +  ~13 TAD7 conversion
+           = (100 + 2 + 13) × 100 ns
+           = 11.5 µs
+
+T_scan     = N × per-input = 19 × 11.5 µs = 218.5 µs
+f_scan_max = 1 / T_scan                  ≈ 4.58 kHz
+```
+
+### Verified against silicon (E — Saleae, probes 0/1, timer→EOS median)
+
+| Quantity | Datasheet calc | Measured | Δ |
+|---|---:|---:|---:|
+| T_scan @ SAMC=100 | 218.5 µs | 216.2 µs | −1.1% |
+| T_scan @ SAMC=50  | 123.5 µs | 124.1 µs | +0.5% |
+| T_scan @ SAMC=10  | 47.5 µs  | 48.3 µs  | +1.7% |
+| Slope (∂T_scan/∂SAMC) | 19 × TAD7 = 1.900 µs | 1.865 µs | −1.8% |
+| Empirical law | — | T_scan = 1.865 µs × SAMC + 30.1 µs | — |
+| EOS rate @ 4500 Hz stream | 1:1 with timer | 4499.6 /s vs 4499.6 /s | exact |
+| EOS rate @ 5000 Hz (period 200 µs < T_scan) | degraded (out-of-spec) | 1521.7 /s (30%) | — |
+| EOS rate @ 5500 / 9000 Hz | undefined (out-of-spec) | **0 /s** | — |
+
+Residuals (≤2%) are the conversion constant (13 vs ~14 TAD7, i.e. ~1 TAD7
+of scan handoff per input) plus slope-fit noise — all within the documented
+model. **The published values and the silicon agree.**
+
+### Generalized bound for firmware (Phase-2 requirement 3)
+
+```
+f_scan_max = 1 / ( N_active × (SAMC + 2 + 14) × TAD7 )
+```
+
+with N_active = enabled-T2 + (OBDiag ? monitoring_count : 0) once dynamic
+CSS lands (today N_active is pinned at 19), TAD7 = 100 ns from the clock
+registers, and 14 the measured conversion+handoff constant (covers the
+13-TAD datasheet figure plus handoff; conservative). All terms are
+runtime-known.
+
+---
+
 ## Static CSS finding (E+V, 2026-06-11) — the scan list never changes
 
 `ADCCSS1/2` are written once by the Harmony boot init and **never modified at
