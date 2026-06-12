@@ -188,10 +188,10 @@ unflashed second board on `/dev/ttyACM0`.
 > picocom / `usbipd` examples below this section use the literal
 > `/dev/ttyACM0` as a stand-in for "the primary device" — substitute
 > `"$DEV_PRIMARY"` (looked up by serial via step 2) when there's any
-> ambiguity about which board is on which path.  The same applies to
-> GEMINI.md.  Converting every example one-by-one is tracked separately;
-> in the meantime, the verification protocol above is the authoritative
-> way to resolve the mapping.
+> ambiguity about which board is on which path.  Converting every
+> example one-by-one is tracked separately; in the meantime, the
+> verification protocol above is the authoritative way to resolve the
+> mapping.
 
 `*IDN?` returns `DAQiFi,Nq1,<per-unit serial>,01-02` — the streaming CSV
 metadata header echoes the same serial.  Either source is fine for
@@ -1323,30 +1323,6 @@ SYST:POW:BQ:DIAGnostics?   # Comprehensive diagnostics dump (battery, registers,
 - **SCPI commands**: `services/SCPI/SCPIInterface.c`
 - **I2C mutex**: `BQ24297_Read_I2C()` and `BQ24297_Write_I2C()` are protected by a FreeRTOS mutex to synchronize access between PowerAndUITask and USBDeviceTask (both priority 7)
 
-## Firmware Analysis Report
-
-A comprehensive technical analysis of the firmware has been completed and is available in `FIRMWARE_ANALYSIS_REPORT.md`. This report provides:
-
-### Critical Findings
-- **Performance Bottleneck**: 700-byte buffer limitation constraining all communication channels
-- **Safety Risk**: Shared SPI bus between WiFi and SD card without mutex protection
-- **Architecture Issues**: Flat task priority structure causing scheduling inefficiencies
-- **Memory Management**: Dynamic allocation in real-time streaming paths
-
-### Key Recommendations
-1. **IMMEDIATE**: Implement SPI bus mutex protection
-2. **IMMEDIATE**: Replace shared buffer with per-channel buffers
-3. **HIGH**: Restructure FreeRTOS task priorities for real-time performance
-4. **HIGH**: Implement UDP streaming for high-throughput applications
-5. **MEDIUM**: Optimize memory management and eliminate dynamic allocation from streaming
-
-### Performance Projections
-- **Current WiFi**: ~5-10 Mbps → **Optimized**: 50-80 Mbps
-- **Current SD**: ~2-5 MB/s → **Optimized**: 15-25 MB/s
-- **Current ADC**: ~1 kHz → **Optimized**: 10+ kHz sample rates
-
-The report includes detailed technical analysis, code examples, and a prioritized roadmap for optimization. Reference this document before making performance-critical modifications to understand current limitations and optimization opportunities.
-
 ### SD Card File Splitting
 
 **Feature:** Automatic file splitting prevents FAT32 4GB file size limit issues during long logging sessions.
@@ -2125,6 +2101,7 @@ python test_sd_card.py
 - pic32 tris convention is 1=input and 0=output
 - when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
 - always verify scpi command syntax - don't guess.
+- when writing about timing/cadence, use concrete units with a source reference (e.g. "called every ~100 ms from `Power_Tasks()`"), avoid bare "every tick" unless the RTOS tick is truly meant, and distinguish "function is called" from "function performs I2C/SPI/network work". (Folded from the retired codex.md.)
 - we don't need to generate analysis docs or the like unless asked
 - all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
  error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
