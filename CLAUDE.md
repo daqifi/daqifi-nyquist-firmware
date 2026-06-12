@@ -548,7 +548,7 @@ SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
 
 #### Streaming Frequency Capping
 
-The firmware computes a maximum safe streaming frequency as the `min()` of **ADC/ISR**, **per-interface/per-format TRANSPORT**, and (when a shared scan is armed) the three **scan bounds** documented in the ADC Architecture section above (#541: scan-busy, EOS-rate ≤ 10,400, aggregate-event ≤ 60k/(nUserT2+1)). Since #524 the cap is a **HARD limit**: `SYSTem:STReam:START <freq>` above the cap is **rejected** with SCPI `-222` plus a `LOG_E` detail line stating the achievable max — the rate is never silently changed. Clients pre-validate against `current_max_rate_hz` (`CONF:CAP:JSON?` — equals this cap) or handle the error. Mid-stream `CONF:ADC:CHANnel` / `OBDiag` / `SAMC` are likewise **rejected** (#116/#541). `SYST:STR:BENCHmark 1/2` bypasses the cap — bench use only; the scan bounds protect against documented-undefined / USB-fatal ADC operation (#544).
+The firmware computes a maximum safe streaming frequency as the `min()` of **ADC/ISR**, **per-interface/per-format TRANSPORT**, and (when a shared scan is armed) the three **scan bounds** documented in the ADC Architecture section above (#541: scan-busy, EOS-rate ≤ 10,400 Hz, aggregate-event ≤ 60,000 events/s ÷ (nUserT2+1)). Since #524 the cap is a **HARD limit**: `SYST:STR:START <freq>` above the cap is **rejected** with SCPI `-222` plus a `LOG_E` detail line stating the achievable max — the rate is never silently changed. Clients pre-validate against `current_max_rate_hz` (`CONF:CAP:JSON?` — equals this cap) or handle the error. Mid-stream `CONF:ADC:CHANnel` / `OBDiag` / `SAMC` are likewise **rejected** (#116/#541). `SYST:STR:BENCHmark 1/2` bypasses the cap — bench use only; the scan bounds protect against documented-undefined / USB-fatal ADC operation (#544).
 
 **Effective limit:** `min(ISR_MAX 16000, 55000/type1Count, 110000/(6+totalEnabled), TransportMax(interface, encoding, n), ScanBounds(scan list, SAMC))`
 
@@ -582,7 +582,7 @@ The firmware computes a maximum safe streaming frequency as the `min()` of **ADC
 
 **Full data + traceability:** `daqifi-python-test-suite` `benchmarks/524_streaming_characterization/` (F3 fit + 3-run matrix), `benchmarks/atcap_*.csv` (soak validations), `benchmarks/541_adc_read_path/` (scan-bound silicon anchors).
 
-**Implementation:** `firmware/src/services/streaming.h` (`Streaming_ComputeMaxFreq`, `Streaming_TransportMaxFreq`), `streaming.c` (`Streaming_ComputeMaxFreqForConfig*`), `HAL/ADC/MC12bADC.c` (`MC12b_ScanMaxFreq`), `SCPIInterface.c` / `SCPIADC.c` (enforcement).
+**Implementation:** `firmware/src/services/streaming.h` (`Streaming_ComputeMaxFreq`, `Streaming_TransportMaxFreq`), `firmware/src/services/streaming.c` (`Streaming_ComputeMaxFreqForConfig*`), `firmware/src/HAL/ADC/MC12bADC.c` (`MC12b_ScanMaxFreq`), `firmware/src/services/SCPI/SCPIInterface.c` / `SCPIADC.c` (enforcement).
 
 #### Test Pattern Streaming Mode
 
@@ -1161,7 +1161,7 @@ SYST:LOG?              # Retrieve all log messages (clears buffer after dump)
 SYST:LOG:CLEAR         # Clear log buffer without reading
 SYST:LOG:TEST          # Add test messages (for verification)
 SYST:LOG:LEVel <module>,<level>   # e.g. SYST:LOG:LEV STREAM,2
-SYST:LOG:LEVel? [module]          # Query level+ceiling (omit module for all)
+SYST:LOG:LEVel? [module]          # With module: level only; no arg: all modules with level+ceiling
 SYST:LOG:LEVel:ALL <level>        # Set all modules at once
 ```
 
