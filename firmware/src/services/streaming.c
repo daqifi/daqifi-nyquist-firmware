@@ -384,8 +384,18 @@ uint8_t Streaming_BuildChannelMapping(const tBoardConfig* pBoardConfig,
     for (size_t i = 0; i < count && packed < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (pRuntimeChannels->Data[i].IsEnabled &&
             AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
-            gChannelMapping.channelIds[packed] = pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+            const AInChannel* ch = &pBoardConfig->AInChannels.Data[i];
+            gChannelMapping.channelIds[packed] = ch->DaqifiAdcChannelId;
             gChannelMapping.configIndices[packed] = (uint8_t)i;
+            // #541 D-A: T1 (dedicated-module) channels are read directly
+            // from their ADC result registers in the deferred task, gated
+            // on per-input ARDY.  Record the hardware channel number here
+            // so the hot loop doesn't have to chase board-config pointers.
+            if (ch->Type == AIn_MC12bADC && ch->Config.MC12b.ChannelType == 1) {
+                gChannelMapping.t1DirectMask |= (uint16_t)(1U << packed);
+                gChannelMapping.hwChannelIds[packed] =
+                        (uint8_t)ch->Config.MC12b.ChannelId;
+            }
             packed++;
         }
     }
@@ -578,6 +588,19 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             pPublicSampleList->validMask = 0;
             pPublicSampleList->Timestamp = 0;
 
+            // Streaming trigger timestamp for this tick, captured by
+            // Streaming_TimerHandler at the single point all sample stamps
+            // derive from (clamps 0 -> 1, so 0 can never alias the #533
+            // invalid sentinel).  Hoisted out of the channel loop: the #541
+            // T1 direct-read path stamps every T1 sample with it, and the
+            // post-loop fallback uses it too.
+            uint32_t trigStamp = 0;
+            {
+                uint32_t* pTrigStamp =
+                        BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+                if (pTrigStamp != NULL) trigStamp = *pTrigStamp;
+            }
+
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
@@ -627,6 +650,45 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                             mapping->channelIds[j],
                             gTestPatternSampleCount, adcMax);
                     pPublicSampleList->validMask |= (1U << j);
+                } else if (mapping->t1DirectMask & (1U << j)) {
+                    // #541 D-A: T1 (dedicated-module) result read directly
+                    // from the ADC result register, gated on the per-input
+                    // ARDY flag (sets at conversion end, clears on ADCDATAx
+                    // read — FRM DS60001344E Fig 22-7 / p.22-88).  Replaces
+                    // the EOS-task -> LATEST-cache hop, whose freshness
+                    // collapsed above ~4.6 kHz because EOSRDY only sets on
+                    // full-scan completion and the scan was being
+                    // retriggered out-of-spec (#539).  Timing: the T1
+                    // conversion completes ~1.3 us after the TMR5 trigger;
+                    // this task wakes several us later (ISR->task latency +
+                    // pool work above), so ARDY is essentially always set.
+                    // Miss policy: NO spin — leave the validMask bit 0 for
+                    // this tick (#535 semantics) and count it.
+                    uint32_t val;
+                    if (MC12b_ReadResult(
+                            (ADCHS_CHANNEL_NUM)mapping->hwChannelIds[j],
+                            &val)) {
+                        pPublicSampleList->Values[j] = val;
+                        pPublicSampleList->validMask |= (1U << j);
+                        if (pPublicSampleList->Timestamp == 0) {
+                            pPublicSampleList->Timestamp = trigStamp;
+                        }
+                        // Refresh the LATEST cache so non-streaming readers
+                        // (MEAS:VOLT:DC?) stay live during a session.  Same
+                        // per-tick work the EOS task used to do at the same
+                        // priority — relocated, not added.
+                        AInSample wb;
+                        wb.Timestamp = trigStamp;
+                        wb.Channel = mapping->channelIds[j];
+                        wb.Value = val;
+                        BoardData_Set(BOARDDATA_AIN_LATEST, cfgIdx, &wb);
+                    } else {
+                        // Single-writer 32-bit increment — no critical
+                        // section needed (deferred task is the only writer).
+                        gStreamStats.t1ArdyMisses++;
+                        LOG_E_SESSION(LOG_SESSION_T1_ARDY_MISS,
+                                "Streaming: T1 ARDY miss (result not ready at read)");
+                    }
                 } else {
                     // Normal: read real ADC data from BoardData
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, cfgIdx);
@@ -667,10 +729,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // wire output remains consistent across modes. Required because
             // the PB encoder omits the msg_time_stamp field when timestamp==0.
             if (pPublicSampleList->Timestamp == 0) {
-                uint32_t* pTrigStamp = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-                if (pTrigStamp != NULL) {
-                    pPublicSampleList->Timestamp = *pTrigStamp;
-                }
+                pPublicSampleList->Timestamp = trigStamp;
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
                 // #499: split counter — this path = FreeRTOS queue full,
@@ -1208,6 +1267,11 @@ static void Streaming_Start(void) {
                 Streaming_CountActiveChannels(&t1, &total, NULL);
                 gNeedSharedScan = (total > 0);
             }
+            // #541 D-A: clear any Type 1 result parked since the last idle
+            // poll — ARDY would still be set and the direct-read path would
+            // emit the stale conversion as this session's first T1 sample
+            // (same class as the #533 LATEST invalidation above).
+            MC12b_DrainType1Results();
             bool hwShared = (gpRuntimeConfigStream->OnboardDiagEnabled ||
                              gNeedSharedScan) &&
                             (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);

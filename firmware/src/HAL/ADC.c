@@ -93,15 +93,23 @@ void ADC_HandleAD7609Interrupt(void) {
     }
 }
 
-// ADC EOS deferred task: reads T1 user channels + monitoring channels.
+// ADC EOS deferred task: reads monitoring channels, plus T1 user channels
+// when NOT streaming.
 //
-// #292: T1 (dedicated) result reads moved here from ADC_DATA3_Handler,
-// eliminating ~5μs ISR entry/exit overhead per streaming tick. T2 (shared)
-// user channels stay on their priority-1 ADC_DATAx ISRs — adding them
-// here would double-write AInLatest and regress T2 ceilings (confirmed
-// empirically). Monitoring gating: when streaming with OBDiag=0,
-// MODULE7 monitoring results are stale — skip those reads so
-// gLastDiagScanTick goes stale for SYST:INFo? reporting.
+// #292 moved T1 (dedicated) result reads here from ADC_DATA3_Handler,
+// eliminating ~5μs ISR entry/exit overhead per streaming tick — but tied
+// T1 freshness to the end-of-scan interrupt, which only fires on FULL-scan
+// completion and stops firing entirely when the scan is retriggered while
+// in progress (#539, out-of-spec per FRM DS60001344E §22.3.2).  #541 D-A
+// therefore moved STREAMING T1 reads into the deferred streaming task
+// (direct ADCDATAx read gated on per-input ARDY — fresh per tick, no EOS
+// dependency).  This task keeps the IDLE T1 reads so MEAS:VOLT:DC? and the
+// LATEST cache stay live between sessions.  T2 (shared) user channels stay
+// on their priority-1 ADC_DATAx ISRs — adding them here would double-write
+// AInLatest and regress T2 ceilings (confirmed empirically, #292).
+// Monitoring gating: when streaming with OBDiag=0, MODULE7 monitoring
+// results are stale — skip those reads so gLastDiagScanTick goes stale for
+// SYST:INFo? reporting.
 void MC12bADC_EosInterruptTask(void) {
     const TickType_t xBlockTime = portMAX_DELAY;
 
@@ -140,6 +148,11 @@ void MC12bADC_EosInterruptTask(void) {
 
             if (isMonitoring && !diagScanning) continue;
             if (!isMonitoring && !isType1User) continue; // T2 user → pri-1 ISRs
+            // #541 D-A/D-E: while streaming, T1 user results are read
+            // directly by the deferred streaming task via per-input ARDY.
+            // Reading them here too would clear ARDY before that task gets
+            // to it (ADCDATAx read clears the flag) — idle-only.
+            if (isType1User && streamingActive) continue;
 
             if (!MC12b_ReadResult(cfg->Config.MC12b.ChannelId, &adcval)) continue;
 

@@ -86,6 +86,13 @@ double MC12b_ConvertToVoltage(
 bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);
 
 /**
+ * #541 D-A: read-and-discard any pending Type 1 (dedicated-module) results
+ * so a stale conversion can't satisfy the first ARDY-gated direct read of a
+ * new streaming session. Call from Streaming_Start before arming the timer.
+ */
+void MC12b_DrainType1Results(void);
+
+/**
  * Returns bitmask of enabled Type 1 ADCHS channels (bits 0-4).
  */
 uint32_t MC12b_GetType1EnabledMask(void);

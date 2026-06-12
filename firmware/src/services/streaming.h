@@ -320,6 +320,12 @@ typedef struct {
     uint32_t dioDroppedSamplesSteady;
     uint32_t queueDroppedSamplesSteady;  // post-grace subset of queueDroppedSamples
     uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
+    // #541 D-A diagnostic: ticks where a T1 (dedicated-module) channel's
+    // ARDY flag was not set when the deferred task went to read its result
+    // register.  Expected ~0 (T1 conversion completes ~1.3 us after trigger;
+    // the task wakes several us later).  Non-zero values mean T1 samples
+    // were emitted with their validMask bit clear for those ticks.
+    uint32_t t1ArdyMisses;
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
     uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)

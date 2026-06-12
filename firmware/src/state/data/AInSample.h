@@ -59,6 +59,18 @@ extern "C" {
         uint8_t count;                                    /**< Number of enabled public channels */
         uint8_t channelIds[MAX_AIN_PUBLIC_CHANNELS];      /**< Packed index -> DaqifiAdcChannelId */
         uint8_t configIndices[MAX_AIN_PUBLIC_CHANNELS];   /**< Packed index -> board config array index */
+        /**
+         * #541: packed-index bitmask of MC12bADC Type 1 (dedicated-module)
+         * channels.  These are read directly from the ADC result register
+         * (per-input ARDY gate) by the deferred streaming task instead of
+         * through the BOARDDATA_AIN_LATEST cache — fresh-per-tick by
+         * construction, independent of the shared-scan EOS interrupt.
+         * uint16_t is sufficient: MAX_AIN_PUBLIC_CHANNELS == 16.
+         */
+        uint16_t t1DirectMask;
+        /** Packed index -> ADCHS hardware channel number; valid only where
+         *  the corresponding t1DirectMask bit is set. */
+        uint8_t hwChannelIds[MAX_AIN_PUBLIC_CHANNELS];
     } AInChannelMapping;
 
     /**

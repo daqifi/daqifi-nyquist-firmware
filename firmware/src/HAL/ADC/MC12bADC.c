@@ -267,6 +267,24 @@ bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal) {
     return false;
 }
 
+void MC12b_DrainType1Results(void) {
+    // #541 D-A: read-and-discard any pending Type 1 results so a stale
+    // conversion parked since the last idle poll can't be emitted as the
+    // first sample of a new session (ARDY would otherwise still be set,
+    // and the direct-read path trusts ARDY for freshness).  Reading
+    // ADCDATAx clears ARDY (FRM Fig 22-7).  Called from Streaming_Start
+    // before the streaming timer is armed.
+    const tBoardConfig* pCfg =
+            (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    for (size_t i = 0; i < pCfg->AInChannels.Size; i++) {
+        const AInChannel* ch = &pCfg->AInChannels.Data[i];
+        if (ch->Type != AIn_MC12bADC) continue;
+        if (ch->Config.MC12b.ChannelType != 1) continue;
+        uint32_t discard;
+        (void)MC12b_ReadResult(ch->Config.MC12b.ChannelId, &discard);
+    }
+}
+
 /**
  * Set a single channel's trigger source in ADCTRGx.
  * @param trg   Working copy of ADCTRG[3] array (modified in-place)
