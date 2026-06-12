@@ -116,11 +116,17 @@ void MC12b_ApplyScanList(uint32_t css1, uint32_t css2);
 void MC12b_RestoreIdleScanList(void);
 
 /**
- * #541 D-C: max in-spec scan trigger rate (Hz) for an nActive-input scan,
- * computed from live SAMC / clock-divider registers.  Returns UINT32_MAX
- * when nActive == 0 (no scan armed — no bound).
+ * #541 D-C: max safe scan trigger rate (Hz) — min of the scan-busy bound
+ * (nActive-input scan time from live SAMC / clock-divider registers), the
+ * EOS-rate ceiling, and the aggregate ADC-event-rate ceiling
+ * (rate x (nUserT2 ARDY ISRs + 1 EOS) <= proven-safe events/s).
+ * Returns UINT32_MAX when nActive == 0 (no scan armed — no bound).
+ *
+ * @param nActive  session scan-list length (enabled T2 + monitoring-if-OBDiag)
+ * @param nUserT2  enabled T2 USER channels (each fires a per-conversion
+ *                 data-ready ISR; monitoring channels do not)
  */
-uint32_t MC12b_ScanMaxFreq(uint32_t nActive);
+uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2);
 
 /**
  * Returns bitmask of enabled Type 1 ADCHS channels (bits 0-4).

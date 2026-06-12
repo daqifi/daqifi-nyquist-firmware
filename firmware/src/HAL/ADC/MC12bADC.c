@@ -367,7 +367,7 @@ void MC12b_RestoreIdleScanList(void) {
     MC12b_ApplyScanList(css1, css2);
 }
 
-uint32_t MC12b_ScanMaxFreq(uint32_t nActive) {
+uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {
     // #541 D-C: max safe shared-scan trigger rate.  Retriggering the scan
     // while in progress is documented-undefined (FRM §22.3.2) — the #539
     // mechanism — so the streaming tick period must exceed the scan's
@@ -421,6 +421,22 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive) {
     // proven EOS rate.  Storm-vs-starvation mechanism unconfirmed: #545.
     #define ADC_EOS_RATE_MAX_HZ 10400u
     if (hz > ADC_EOS_RATE_MAX_HZ) hz = ADC_EOS_RATE_MAX_HZ;
+    // AGGREGATE ADC-event-rate limit (v4, 2026-06-12): a third independent
+    // fatal threshold.  Each enabled T2 USER channel fires a per-conversion
+    // data-ready ISR in addition to the per-scan EOS, and the combined
+    // event rate  f x (nUserT2 + 1)  is USB-FATAL around ~66-72k events/s:
+    // 11xT2 OBDiag=0 wedges at 6,000 Hz on the plain ADMITTED path
+    // (12 events/tick = 72k/s) and at 6,750 NOCAP (81k/s), clean at
+    // 5,500 x 60 s (66k/s); the 16-channel cell is endurance-proven at
+    // 5,000 x 120 s (60k/s).  Neither the EOS-rate nor the scan-busy
+    // bound catches this (EOS here is only 6 kHz; scan 10% under busy).
+    // Bound at the 120 s-proven 60k events/s.  Monitoring channels have
+    // no data-ready ISRs and do not count.  Mechanism: #545.
+    #define ADC_EVENT_RATE_MAX_PER_S 60000u
+    if (nUserT2 > 0u) {
+        uint32_t aggMax = ADC_EVENT_RATE_MAX_PER_S / (nUserT2 + 1u);
+        if (hz > aggMax) hz = aggMax;
+    }
     return (hz == 0u) ? 1u : hz;
 }
 

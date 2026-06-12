@@ -478,7 +478,11 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
     uint32_t scanCount = MC12b_ComputeScanList(
             true, sc->OnboardDiagEnabled, NULL, NULL);
     if (scanCount > 0) {
-        uint32_t scanMax = MC12b_ScanMaxFreq(scanCount);
+        /* User-T2 count (monitoring excluded): each enabled T2 channel
+         * fires a per-conversion data-ready ISR, which feeds the
+         * aggregate ADC-event-rate bound inside ScanMaxFreq (v4). */
+        uint32_t userT2 = MC12b_ComputeScanList(true, false, NULL, NULL);
+        uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
         if (scanMax < maxFreq) maxFreq = scanMax;
     }
     return maxFreq;
