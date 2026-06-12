@@ -710,7 +710,11 @@ scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
     }
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg->IsEnabled) {
+    // IsEnabled || Running (matches the #116 channel-enable gate): the two
+    // flags transition in separate steps at start/stop, and a change slipped
+    // through the window would desync the session scan list (#541 D-B builds
+    // ADCCSS from OnboardDiagEnabled at stream start).
+    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
         SCPI_ExecutionError(context, "CONF:ADC:OBDiag: cannot change while streaming");
         return SCPI_RES_ERR;
     }

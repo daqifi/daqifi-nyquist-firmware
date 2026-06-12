@@ -9,6 +9,7 @@
 #include "definitions.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/Logger.h"
 
 //#define UNUSED(x) (void)(x)
@@ -93,6 +94,11 @@ bool MC12b_InitHardware(MC12bModuleConfig* pModuleConfigInit,
     ADC3CFG = DEVADC3;
     ADC4CFG = DEVADC4;
     ADC7CFG = DEVADC7;
+
+    // #541 D-B: replace the Harmony boot scan list with the idle list —
+    // identical except the dead temp sensor (AN44, erratum 18) is dropped,
+    // which the boot CSS wasted a full scan slot on.
+    MC12b_RestoreIdleScanList();
     return true;
 }
 
@@ -265,6 +271,128 @@ bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal) {
     }
     *pVal = 0;
     return false;
+}
+
+// --- #541 D-B: dynamic shared-scan list (ADCCSS) management ---------------
+//
+// The Harmony boot init writes a STATIC scan list (all public T2 inputs +
+// all monitoring inputs, 19 total) and the firmware never changed it: every
+// scan trigger walked all 19 inputs (~216 us at SAMC=100) regardless of
+// which channels were actually enabled.  That fixed T_scan is what made the
+// #539 EOS collapse channel-count-independent.  These functions rebuild the
+// scan list per streaming session from the channels that actually need
+// scanning, so T_scan scales with the session (1xT2 OBDiag=0 -> 1 input ->
+// ~11.5 us) and the computed scan-rate bound (MC12b_ScanMaxFreq) is honest.
+//
+// Safe because mid-stream channel-set changes are REJECTED (#116:
+// CONF:ADC:CHANnel; CONF:ADC:OBDiag likewise) — the session's scan list
+// cannot go stale while streaming.
+//
+// Direct SFR access (ADCCSS1/2, ADCCON3 TRGSUSP/UPDRDY): no Harmony PLIB
+// API exists for online CSS updates; the TRGSUSP -> UPDRDY -> write ->
+// resume sequence is the FRM-documented safe-update path ("ADC SFRs are
+// ready to be (and can be safely) updated with new values" — DS60001344E
+// ADCCON3 bits 12/10 + Update Ready Event, p.22-108).
+
+// Erratum 18 (DS80000663R): the internal temperature sensor (AN44) is
+// nonfunctional on all silicon revs, no workaround.  It is never included
+// in any scan list — the boot CSS wasted a full SAMC+conversion slot per
+// scan reading dead silicon.
+#define ADC_AN_TEMP_SENSOR  44u
+
+uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
+                               uint32_t *pCss1, uint32_t *pCss2) {
+    const tBoardConfig* pCfg =
+            (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    const AInRuntimeArray* pRt =
+            (const AInRuntimeArray*)BoardRunTimeConfig_Get(
+                    BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    uint32_t css1 = 0, css2 = 0, count = 0;
+    size_t n = (pCfg->AInChannels.Size < pRt->Size)
+             ? pCfg->AInChannels.Size : pRt->Size;
+    for (size_t i = 0; i < n; i++) {
+        const AInChannel* ch = &pCfg->AInChannels.Data[i];
+        if (ch->Type != AIn_MC12bADC) continue;
+        if (ch->Config.MC12b.ChannelType == 1) continue;  // dedicated, never scanned
+        uint32_t an = ch->Config.MC12b.ChannelId;          // CSS bit == AN number
+        if (an == ADC_AN_TEMP_SENSOR) continue;            // erratum 18
+        bool isMonitoring = (ch->Config.MC12b.IsPublic != 1);
+        if (isMonitoring) {
+            if (!includeMonitoring) continue;
+            // Monitoring channels are not user-controllable; IsEnabled is
+            // the boot default (true except the dead temp sensor).
+            if (pRt->Data[i].IsEnabled != 1) continue;
+        } else if (enabledOnly && pRt->Data[i].IsEnabled != 1) {
+            continue;
+        }
+        if (an < 32u) css1 |= (1U << an);
+        else          css2 |= (1U << (an - 32u));
+        count++;
+    }
+    if (pCss1 != NULL) *pCss1 = css1;
+    if (pCss2 != NULL) *pCss2 = css2;
+    return count;
+}
+
+void MC12b_ApplyScanList(uint32_t css1, uint32_t css2) {
+    if (ADCCSS1 == css1 && ADCCSS2 == css2) return;
+    if (ADCCON1bits.ON) {
+        // FRM-documented online update: suspend triggers, wait until no
+        // conversion is in flight (UPDRDY), write, resume.  Worst case a
+        // full in-progress scan must drain first (~216 us at the boot
+        // config); the spin bound is ms-scale — far above any legal scan.
+        ADCCON3bits.TRGSUSP = 1;
+        uint32_t spin = 500000u;
+        while ((ADCCON3bits.UPDRDY == 0) && (--spin != 0u)) { }
+        if (spin == 0u) {
+            LOG_E("ADC CSS update: UPDRDY timeout — scan list unchanged");
+            ADCCON3bits.TRGSUSP = 0;
+            return;
+        }
+        ADCCSS1 = css1;
+        ADCCSS2 = css2;
+        ADCCON3bits.TRGSUSP = 0;
+    } else {
+        // ADC off — registers update directly.
+        ADCCSS1 = css1;
+        ADCCSS2 = css2;
+    }
+}
+
+void MC12b_RestoreIdleScanList(void) {
+    // Idle list = ALL public T2 inputs (regardless of enable state, so
+    // MEAS:VOLT:DC? works immediately after an idle channel enable without
+    // a rebuild hook) + enabled monitoring inputs.  Equals the Harmony boot
+    // CSS minus the dead temp sensor (verified bit-for-bit against the
+    // board map, docs/ADC_HW_SEMANTICS.md).
+    uint32_t css1, css2;
+    (void)MC12b_ComputeScanList(false, true, &css1, &css2);
+    MC12b_ApplyScanList(css1, css2);
+}
+
+uint32_t MC12b_ScanMaxFreq(uint32_t nActive) {
+    // #541 D-C: max in-spec shared-scan trigger rate.  Retriggering the
+    // scan while in progress is documented-undefined (FRM §22.3.2) — the
+    // #539 mechanism — so the streaming tick rate must satisfy
+    //   f <= 1 / ( N_active x (SAMC + 2 + 14) x TAD7 )
+    // 2 = sample-time offset (acquisition = SAMC+2 TAD), 14 = measured
+    // conversion+handoff constant (13 TAD datasheet conversion + ~1 TAD
+    // scan handoff; silicon-verified within 2%, docs/ADC_HW_SEMANTICS.md).
+    // All terms read live so SAMC/divider changes are honored:
+    //   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK  (DS60001320H
+    //   Reg 28-2/28-3 — note the EF datasheet deviates from the FRM on
+    //   CONCLKDIV semantics; the datasheet matches silicon).  TCLK = 10 ns
+    //   (ADCSEL=00 -> PBCLK3 = 100 MHz, fixed clock tree).
+    if (nActive == 0u) return 0xFFFFFFFFu;  // no scan armed — no bound
+    uint32_t conclkdiv = (ADCCON3 >> 24) & 0x3Fu;
+    uint32_t adcdiv    = ADCCON2 & 0x7Fu;
+    if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
+    uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
+    uint32_t tadNs     = 2u * adcdiv * (conclkdiv + 1u) * 10u;
+    uint64_t scanNs    = (uint64_t)nActive * (samc + 16u) * tadNs;
+    if (scanNs == 0u) return 0xFFFFFFFFu;
+    uint32_t hz = (uint32_t)(1000000000ULL / scanNs);
+    return (hz == 0u) ? 1u : hz;
 }
 
 void MC12b_DrainType1Results(void) {

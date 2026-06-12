@@ -93,6 +93,36 @@ bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);
 void MC12b_DrainType1Results(void);
 
 /**
+ * #541 D-B: compute a shared-scan (ADCCSS) list from the board + runtime
+ * config.  Scanned inputs = Type 2 / monitoring MC12bADC channels; the dead
+ * temp sensor (AN44, erratum 18) is always excluded.
+ *
+ * @param enabledOnly        true = only IsEnabled public T2 channels
+ *                           (session list); false = all public T2 (idle list)
+ * @param includeMonitoring  include enabled monitoring channels
+ * @param pCss1/pCss2        [out, may be NULL] ADCCSS1/2 register values
+ * @return number of inputs in the list
+ */
+uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
+                               uint32_t *pCss1, uint32_t *pCss2);
+
+/**
+ * #541 D-B: write ADCCSS1/2 via the FRM-documented online-update sequence
+ * (TRGSUSP -> UPDRDY poll -> write -> resume). No-op if values are current.
+ */
+void MC12b_ApplyScanList(uint32_t css1, uint32_t css2);
+
+/** #541 D-B: restore the idle scan list (all public T2 + enabled monitoring). */
+void MC12b_RestoreIdleScanList(void);
+
+/**
+ * #541 D-C: max in-spec scan trigger rate (Hz) for an nActive-input scan,
+ * computed from live SAMC / clock-divider registers.  Returns UINT32_MAX
+ * when nActive == 0 (no scan armed — no bound).
+ */
+uint32_t MC12b_ScanMaxFreq(uint32_t nActive);
+
+/**
  * Returns bitmask of enabled Type 1 ADCHS channels (bits 0-4).
  */
 uint32_t MC12b_GetType1EnabledMask(void);

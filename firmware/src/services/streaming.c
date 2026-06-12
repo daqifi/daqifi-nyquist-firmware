@@ -464,6 +464,23 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
     uint32_t transportMax = Streaming_TransportMaxFreq(iface, sc->Encoding, total);
     if (transportMax < maxFreq) maxFreq = transportMax;
+
+    /* #541 D-C: shared-scan rate bound.  Retriggering the MODULE7 scan
+     * while a scan is in progress is documented-undefined behavior (FRM
+     * DS60001344E §22.3.2) — the #539 mechanism: above ~1/T_scan the EOS
+     * interrupt degrades then stops, and scanned data goes stale.  The
+     * streaming tick IS the scan trigger (STRGSRC=TMR5), so the tick rate
+     * must not exceed 1/T_scan for the session's scan list (built by D-B:
+     * enabled T2 + monitoring when OBDiag=1).  N_active == 0 (e.g. T1-only
+     * OBDiag=0) arms no scan — no bound.  This term gates the HARDWARE
+     * trigger path, which the legacy ChannelScanFreqDiv software divider
+     * never covered. */
+    uint32_t scanCount = MC12b_ComputeScanList(
+            true, sc->OnboardDiagEnabled, NULL, NULL);
+    if (scanCount > 0) {
+        uint32_t scanMax = MC12b_ScanMaxFreq(scanCount);
+        if (scanMax < maxFreq) maxFreq = scanMax;
+    }
     return maxFreq;
 }
 
@@ -1242,30 +1259,30 @@ static void Streaming_Start(void) {
             // Enable hardware ADC triggering only when actually streaming.
             // Streaming_Start runs at boot before ADC_Init — must not
             // write ADCTRG/ADCCON1 until ADC is ready.
-            // #537: compute the session's T2-user flag BEFORE arming any
-            // trigger: the shared (MODULE7) scan carries both the OBDiag
-            // monitoring channels AND every Type-2 user channel, so it must
-            // run when either consumer needs it.  The old OnboardDiagEnabled-
-            // only gate froze T2 user data in OBDiag=0 streams (silent stale
-            // values pre-#535; 100% encoder failures after the #535 validity
-            // gate landed).
+            // #541 D-B: rebuild the shared (MODULE7) scan list for this
+            // session — enabled T2 user channels, plus monitoring channels
+            // when OBDiag=1 (the dead temp sensor is always excluded,
+            // erratum 18).  The Harmony boot CSS scanned all 19 inputs
+            // regardless of configuration, fixing T_scan at ~216 us and
+            // making the #539 EOS collapse channel-count-independent;
+            // scanning only what the session uses lets T_scan (and the
+            // scan-rate bound) scale with the actual config.
+            //
+            // The scan is armed iff the session scan list is non-empty.
+            // This supersedes the #537 total-based gate: T1 results no
+            // longer ride the EOS task while streaming (#541 D-A reads
+            // them directly via ARDY), so a T1-only OBDiag=0 session
+            // genuinely needs no scan.  The mid-stream-enable edge that
+            // forced #537's conservative gate is closed — CONF:ADC:CHANnel
+            // and CONF:ADC:OBDiag are both REJECTED while streaming
+            // (#116), so the session's scan list cannot go stale.
             {
-                // Any enabled public channel arms the scan: T2 channels for
-                // their conversions, T1 channels because their results are
-                // read in the EOS task and EOS only fires at end-of-scan.
-                // DELIBERATELY total-based, not MC12b-specific: a Qodo
-                // pass-1 suggestion narrowed this to MC12b-only (so an
-                // AD7609-only NQ3 session wouldn't arm the scan), but
-                // pass-2 correctly flagged the edge it created — a
-                // mid-stream MC12b channel enable after an AD7609-only
-                // start would find the scan unarmed (frozen data, #537
-                // class) unless a mid-stream trigger re-arm path were
-                // added.  The scan is idle-cheap (#107: no overruns to
-                // >=40 kHz), so arming it for any public channel is the
-                // safe, simple invariant.
-                uint16_t t1 = 0, total = 0;
-                Streaming_CountActiveChannels(&t1, &total, NULL);
-                gNeedSharedScan = (total > 0);
+                uint32_t css1, css2;
+                uint32_t scanCount = MC12b_ComputeScanList(
+                        true, gpRuntimeConfigStream->OnboardDiagEnabled,
+                        &css1, &css2);
+                MC12b_ApplyScanList(css1, css2);
+                gNeedSharedScan = (scanCount > 0);
             }
             // #541 D-A: clear any Type 1 result parked since the last idle
             // poll — ARDY would still be set and the direct-read path would
@@ -1462,6 +1479,10 @@ static void Streaming_Stop(void) {
         // Revert ADC to software triggering so non-streaming reads
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
+        // #541 D-B: restore the idle scan list (all public T2 + enabled
+        // monitoring) so idle-time MEAS:VOLT:DC? and SYST:INFo monitoring
+        // cover the full channel set again, not just last session's subset.
+        MC12b_RestoreIdleScanList();
         gpRuntimeConfigStream->Running = false;
 
         // #533: drain BOTH sample queues at stop so nothing captured by
