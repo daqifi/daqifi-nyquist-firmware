@@ -43,6 +43,38 @@ COMPLETE** (Saleae, below). D5/D6 pending.
 
 Raw captures: C:\temp\541_cap{4500,5000,5500,9000}/digital.csv.
 
+### T_scan vs the documented timing model (SAMC sweep)
+
+Three-point SAMC sweep (1×T1 OBDiag=1 @ 4000 Hz, timer→EOS median):
+
+| SAMC (shared) | T_scan measured | Linear fit |
+|---:|---:|---:|
+| 10 | 48.3 µs | 48.7 µs |
+| 50 | 124.1 µs | 123.3 µs |
+| 100 | 216.2 µs | 216.6 µs |
+
+**Empirical law: T_scan(SAMC) = 1.865 µs × SAMC + 30.1 µs** (this boot CSS
+list; linear to <0.5%).
+
+- **Structural match with the FRM model is exact**: per-input time =
+  (SAMC+2)·TAD sample + conversion, and the fit's intercept/slope ratio
+  gives **conversion + handoff ≈ 14 TAD** — the documented 13-TAD 12-bit
+  conversion plus ~1 TAD (E confirming V).
+- **Absolute-scale ambiguity (open, D5/D6)**: measured slope = N_inputs ×
+  TAD = 1.865 µs. CSS bit count N=19 ⇒ TAD ≈ 98 ns, which matches neither
+  clock decode (TAD = 16·TCLK = 80 ns @ TCLK=SYSCLK or 160 ns @ PBCLK3);
+  N=23 with TAD = 80 ns fits identically. Either the effective scan covers
+  4 slots beyond the CSS count or ADCSEL=0's device-specific source differs
+  from assumption — resolve from the DS60001320 ADCSEL table. The two
+  parameterizations are observationally equivalent and the firmware bound
+  computes from the calibrated product either way.
+- **SAMC is a major design lever (E)**: at SAMC=10 the scan completes in
+  48 µs ⇒ in-spec scan ceiling ≈ **20.7 kHz** (vs ≈4.6 kHz at the current
+  SAMC=100), and EOS ran 1:1 at 4000 Hz. Phase-2 option: shorter shared
+  SAMC (accuracy trade-off to characterize) lifts the in-spec scan rate
+  above every transport cap — potentially complementing or simplifying
+  candidates A/B.
+
 Every claim below is tagged per the debugging-discipline rules (CLAUDE.md):
 **V** = verified against the cited document/page; **E** = empirical bench result;
 **I** = inference.
