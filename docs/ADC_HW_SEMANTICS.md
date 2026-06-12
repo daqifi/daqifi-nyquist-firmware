@@ -2,8 +2,46 @@
 
 **Tracking issue:** #541 (re-engineering ticket) / #539 (bug report)
 **Primary source:** PIC32 FRM Section 22, 12-bit High-Speed SAR ADC, **DS60001344E**
-**Status:** D1–D4 resolved from documentation (this file). D5/D6 + on-silicon
-confirmation (Phase 1 Saleae/mdb) pending.
+**Status:** D1–D4 resolved from documentation; **Phase 1 silicon confirmation
+COMPLETE** (Saleae, below). D5/D6 pending.
+
+---
+
+## Phase 1 — On-silicon confirmation (E; Saleae Logic 8, 2026-06-11, main @ e9302a51)
+
+1×T1 (ch4), OBDiag=1, USB PB, 4 s captures at 25 MS/s on DIO probes
+0 (timer ISR), 1 (EOS ISR entry), 2 (deferred wake), 5 (EOS task wake):
+
+| Stream rate | Timer ISR /s | EOS ISR /s | EOS task /s |
+|---|---:|---:|---:|
+| 4500 | 4499.6 | 4499.6 (1:1) | 4499.6 |
+| 5000 | 4999.9 | **1521.7 (30%)** | 1521.7 |
+| 5500 | 5499.4 | **0** | 0 |
+| 9000 | 8999.3 | **0** | 0 |
+
+- **T_scan measured = 216 µs** (timer-ISR → next EOS-ISR median at 4500 Hz;
+  p10 215.0 / p90 216.6 µs) ⇒ in-spec scan ceiling **≈ 4630 Hz** for the
+  current boot CSS list + shared SAMC. Matches the D4 model: degradation
+  begins exactly when the tick period drops below T_scan (5000 Hz = 200 µs),
+  and EOS is fully dead by 5500.
+- **The EOS *interrupt itself* stops firing** (probe 1 = ISR entry = 0 edges
+  in 4 s) — not task starvation, not read failure. Discriminates the #539
+  candidate mechanisms conclusively.
+- **The encFail cliff at 5500 (not 4630/5000) is a cache artifact**: at
+  5000 the sporadic 1521/s EOS writes keep the one-deep LATEST slots
+  *valid* (stale by a few ticks); the #535 validity gate only trips when
+  EOS reaches zero. Value FRESHNESS already degrades from ~4630 Hz.
+- **The earlier "partial recovery" at 7.5–11 kHz is session-phase
+  bimodality**: this 9000 Hz session showed EOS fully dead, while the prior
+  encFail run at 9000 measured 46% valid — consistent with
+  undefined-behavior phase alignment locking per session start (also seen
+  at 12222: 60% vs 0.1% across two starts).
+- Open observation (non-blocking): probe 4 (deferred-task trigger-block
+  pulse) showed 0 edges at 4500, 179/s at 5000, full tick rate at 5500+ —
+  pulse-width vs 40 ns sampling resolution and/or trigger-path state worth a
+  look during Phase 3, not load-bearing for the mechanism.
+
+Raw captures: C:\temp\541_cap{4500,5000,5500,9000}/digital.csv.
 
 Every claim below is tagged per the debugging-discipline rules (CLAUDE.md):
 **V** = verified against the cited document/page; **E** = empirical bench result;
