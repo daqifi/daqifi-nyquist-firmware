@@ -96,14 +96,14 @@ Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--
 "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
   -TPPK4 -P32MZ2048EFM144 -M -F"C:\\...\\daqifi.X.production.hex" -OL
 ```
-Watch for "Program Succeeded". Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific PICkit when several are attached; **every flash wipes NVM** (WiFi/calibration settings — restore via `batch.sh` + `sta_setup.batch`); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
+Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific PICkit when several are attached; **every flash wipes NVM** (WiFi/calibration settings — restore via the scpi skill's `batch.sh` + the station-local `sta_setup.batch` recipe); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
 
 ### Bench tool inventory (this dev station)
 | Item | Identifier | Notes |
 |------|-----------|-------|
 | Primary PICkit 4 (this board) | `BUR184882598` | Pass `-TSBUR184882598` to ipecmd when multiple PICkits are attached |
 | Secondary PICkit 4 | `BUR202272588` | On other board(s) — ignore unless re-targeting |
-| MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix; with the prefix you get exit 36 / "Unable to locate DFP") |
+| MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix — see ipecmd gotchas above) |
 | Serial port (USB CDC) | Windows: `COM3` / `COM9` (stable per board) ; WSL: `/dev/ttyACMn` (**attach-order dependent — NOT stable**) | usbipd busid `2-4` (primary) / `2-3` (secondary); reattach via `powershell.exe -Command "usbipd attach --wsl --busid <BUSID>"` after each reboot/flash. **DO NOT assume `/dev/ttyACM0` maps to any particular board — verify by serial number (see below).** Stable identifiers across reboots are the Windows COM number and the per-unit serial; `/dev/ttyACMn` is assigned by Linux in the order usbipd attaches devices. |
 | Bench primary device serial | `7E2898F46200E8A7` | Programmed by PICkit `BUR184882598`. Windows: **COM3**, busid **2-4**. Verify by `*IDN?` before issuing SCPI — never hardcode `/dev/ttyACM0`. |
 | Bench secondary device serial | `7E28A4206200EAD1` | Programmed by PICkit `BUR202272588`. Windows: **COM9**, busid **2-3**. Verify by `*IDN?` before issuing SCPI — never hardcode `/dev/ttyACM1`. **⚠️ Shared with other agents — may not always be available; if `usbipd list` shows it as "Not shared" or it's attached elsewhere, do not commandeer it.  Fall back to the primary alone.** |
@@ -246,6 +246,15 @@ Services Layer
      - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
      - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
 
+2. **USB CDC** - Virtual COM port communication
+   - Implementation: `services/UsbCdc/UsbCdc.c`
+   - Handles command processing and data streaming
+
+3. **WiFi** - Network communication
+   - Manager: `services/wifi_services/wifi_manager.c`
+   - TCP server for remote control
+   - UDP announcements for device discovery
+
 #### Quiescence Rule — No SCPI queries during a benchmarked test
 
 Send no SCPI to the device while a streaming or iperf2 run is in
@@ -328,15 +337,6 @@ The SCPI command reference is in `01-SCPI-Interface.md`. Update the relevant tab
 
 Commit and push wiki changes after updating.
 
-2. **USB CDC** - Virtual COM port communication
-   - Implementation: `services/UsbCdc/UsbCdc.c`
-   - Handles command processing and data streaming
-
-3. **WiFi** - Network communication
-   - Manager: `services/wifi_services/wifi_manager.c`
-   - TCP server for remote control
-   - UDP announcements for device discovery
-
 ### Data Flow
 
 1. **Acquisition Path**:
@@ -382,7 +382,7 @@ The PIC32MZ ADCHS peripheral has two classes of ADC channels with different read
 
 Current table = **Session 24 (2026-05-28 overnight + 2× targeted retry, 400 s endurance).** Methodology change vs Session 22: where Session 22 used a fresh 10 s ceiling sweep + 60 s endurance soak, Session 24 uses 400 s endurance soaks with iterative haircut from prior-night ceilings (12.5 % per pass, repeated until zero drops). Result: **substantially more conservative** numbers than Session 22 in many cells — these are *verified-safe steady-state rates* the device sustains for 400 s+ without losing a single byte. Fresh 10 s sweeps will still find higher rates that hold short-term; treat Session 22 as "burst ceiling" and Session 24 as "soak ceiling." Source CSVs: `daqifi-python-test-suite/benchmarks/overnight_20260528_0642.csv` + `_0827_boardE8A7.csv` + `_1604_retry3.csv`. Test-suite SHA: `22302ba` on `feat/full-stats-capture`.
 
-> **This is descriptive endurance characterization, not the firmware cap.** These soak ceilings are an empirical record of what the device sustains across many configs (incl. OBDiag variants, OBDiag here = on-board diagnostics monitoring); the rate the firmware actually *enforces* is fitted separately — see **"Streaming Frequency Capping"** below, whose **"Fit basis — measured zero-loss ceilings"** table is the canonical 1/5/10/16-ch subset the `Streaming_TransportMaxFreq` coefficients derive from. The two use different methods (soak-with-haircut vs zero-loss sweep escalator) and so report different numbers by design. Authoritative dataset for both: `daqifi-python-test-suite/benchmarks/`.
+> **This is descriptive endurance characterization, not the firmware cap.** These soak ceilings are an empirical record of what the device sustains across many configs (incl. OBDiag variants, OBDiag here = on-board diagnostics monitoring); the rate the firmware actually *enforces* is fitted separately — see **"Streaming Frequency Capping"** below, whose **"Fit basis (normative — the zero-loss sweep subset…)"** table is the canonical 1/5/10/16-ch subset the `Streaming_TransportMaxFreq` coefficients derive from. The two use different methods (soak-with-haircut vs zero-loss sweep escalator) and so report different numbers by design. Authoritative dataset for both: `daqifi-python-test-suite/benchmarks/`.
 
 **USB** (400 s endurance soak, KB/s from `pc_kbps`):
 
@@ -468,7 +468,7 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 |-------|------|-------------|
 | `TotalSamplesStreamed` | uint64 | Samples successfully queued from ISR |
 | `TotalBytesStreamed` | uint64 | Total bytes encoded (offered to outputs) |
-| `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool=700) |
+| `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool defaults 1100, re-partitioned per session) |
 | `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
 | `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries) |
@@ -478,13 +478,13 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
 | `WindowLossPercent` | uint32 | Sliding-window sample loss % (0-100), updated every N samples |
 
-**Distinguishing failure modes** with the new ISR counter:
+**Distinguishing failure modes** with the ISR counter (#265):
 - `TimerISRCalls < freq × duration` → timer is rate-limited (PIC32MZ ~90 kHz hardware ceiling)
 - `TimerISRCalls == TotalSamples + QueueDropped` → every ISR is accounted for; nothing lost between ISR and deferred task (should always hold)
 - `QueueDroppedSamples > 0` → sample pool exhausted (encoder/output too slow for the rate the timer is firing)
 - `UsbDroppedBytes / SdDroppedBytes > 0` → encoder is fine but transport can't keep up
 
-**Thread safety:** `TotalSamplesStreamed`, `TotalBytesStreamed`, and `TimerISRCalls` are 64-bit counters (safe for million-year sessions). The first two are protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ). `TimerISRCalls` lives in a separate `static volatile uint64_t gTimerISRCalls` global, incremented in true ISR context (TIMER_3, priority 1) by a single writer (no critical section needed because same-source can't preempt itself); the snapshot read uses `taskENTER_CRITICAL` which raises the syscall priority above the kernel-managed ISR threshold and blocks the timer, making the non-atomic 64-bit read coherent.
+**Thread safety:** `TotalSamplesStreamed`, `TotalBytesStreamed`, and `TimerISRCalls` are 64-bit counters (safe for million-year sessions). The first two are protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ). `TimerISRCalls` lives in a separate `static volatile uint64_t gTimerISRCalls` global, incremented in true ISR context (TIMER_5 — the 32-bit TMR4/5 streaming-timer pair's vector, priority 3, ≤ max-syscall 4) by a single writer (no critical section needed because same-source can't preempt itself); the snapshot read uses `taskENTER_CRITICAL` which raises the syscall priority above the kernel-managed ISR threshold and blocks the timer, making the non-atomic 64-bit read coherent.
 
 **Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
 
@@ -552,7 +552,7 @@ The firmware computes a maximum safe streaming frequency as the `min()` of **ADC
 
 **Effective limit:** `min(ISR_MAX 16000, 55000/type1Count, 110000/(6+totalEnabled), TransportMax(interface, encoding, n), ScanBounds(scan list, SAMC))`
 
-**Transport term** (`Streaming_TransportMaxFreq`, streaming.h — #524): single-channel special-cased + `A/(B+n)` for n≥2 ("F3"), fitted ≤ the measured zero-loss ceilings (tightness 86–100%). JSON uses the CSV coefficients ×0.5 (uncharacterized — conservative; emits 2–3× CSV bytes/sample).
+**Transport term** (`Streaming_TransportMaxFreq`, streaming.h — #524): single-channel special-cased + `A/(B+n)` for n≥2 ("F3"), fitted ≤ the measured zero-loss ceilings (tightness 86–100%). JSON uses the CSV coefficients ×0.5 (uncharacterized — conservative; emits 2–3× CSV bytes/sample; measuring it is a tracked #524 follow-up).
 
 | interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
 |-----------|----:|----:|----:|
@@ -576,11 +576,11 @@ The firmware computes a maximum safe streaming frequency as the `min()` of **ADC
 
 ¹ WiFi basis = the 2026-06-11 honest-scan walk-down soaks (#540), **not** the original #524 sweep — every earlier WiFi basis was inflated ~1.5× by the #537 scan-skip bug (device did less work per tick) and, before #371, by silent uncounted drops. WiFi caps are worst-night-observed by policy (link varies ~1.5× night-to-night); AIMD (#523, parked) is the long-term answer. All WiFi/USB caps re-validated 120 s at-cap on the v3.6.0 read path (46/46 cells, zero loss), and ceiling probes (2026-06-12) measured the remaining transport-fit headroom: USB T1-only +13–29%, WiFi +25–35% (good-night), SD +6–20% — see `benchmarks/541_adc_read_path/SILICON_ANCHORS.md`.
 
-**ADC cost (synthetic pattern vs real ADC), representative:** USB PB 1ch −40%, 16ch −30%; SD PB 1ch −25%. Below the transport ceiling the ADC is ~free; above it, ADC ISR/EOS load competes with the encoder.
+**ADC cost (synthetic PAT3 fullscale vs real PAT0), representative:** USB PB 1ch 25000→15000 (−40%), 16ch 10000→7000 (−30%); SD PB 1ch 12000→9000 (−25%). Below the transport ceiling the ADC is ~free; above it, ADC ISR/EOS load (pri-9 EOS-task wakeups preempting the pri-6 encoder) competes with the encoder.
 
 **History in one line each:** #520 introduced the WiFi-only budget term; #524 generalized it to all interfaces and closed a format-blind hole (high-channel CSV capped above its true ceiling = silent loss); #107 removed the legacy 1 kHz T2 mux throttle (scan never overruns to ≥40 kHz — though #541 later bounded scan *interrupt* rates, which is a different limit); #540 derated WiFi to the honest-scan soak basis; #541/#543 added the three scan bounds.
 
-**Full data + traceability:** `daqifi-python-test-suite` `benchmarks/524_streaming_characterization/` (F3 fit + 3-run matrix), `benchmarks/atcap_*.csv` (soak validations), `benchmarks/541_adc_read_path/` (scan-bound silicon anchors).
+**Full data + traceability:** `daqifi-python-test-suite` `benchmarks/524_streaming_characterization/` (F3 fit + 3-run matrix), `benchmarks/107_t2_scan_characterization/` (18-pass T2 scan matrix), `benchmarks/atcap_*.csv` (soak validations), `benchmarks/541_adc_read_path/` (scan-bound silicon anchors).
 
 **Implementation:** `firmware/src/services/streaming.h` (`Streaming_ComputeMaxFreq`, `Streaming_TransportMaxFreq`), `firmware/src/services/streaming.c` (`Streaming_ComputeMaxFreqForConfig*`), `firmware/src/HAL/ADC/MC12bADC.c` (`MC12b_ScanMaxFreq`), `firmware/src/services/SCPI/SCPIInterface.c` / `firmware/src/services/SCPI/SCPIADC.c` (enforcement).
 
@@ -615,7 +615,7 @@ SYSTem:STReam:TEST:PATtern?            # Query current pattern (0=disabled)
 
 Two benchmark tools for measuring streaming pipeline throughput:
 
-**1. Benchmark Mode** (`SYST:STR:BENCHmark`): Three levels, each isolating a different stage of the pipeline so you can locate the actual bottleneck. **Read this carefully — the right level depends on what you are trying to measure.**
+**1. Benchmark Mode** (`SYST:STR:BENCHmark`): Three levels, each isolating a different stage of the pipeline so you can locate the actual bottleneck.
 
 ```bash
 SYSTem:STReam:BENCHmark <0|1|2>   # 0=OFF, 1=NOCAP, 2=PIPELINE
@@ -626,7 +626,7 @@ SYSTem:STReam:BENCHmark?           # Query current mode
 |---|---|---|---|---|---|
 | **0** | OFF (normal) | Active (per-channel safe rate) | Yes (real conversions) | Yes | Production / data integrity testing |
 | **1** | NOCAP | Bypassed (any rate up to 100 kHz) | Yes (real conversions) | Yes | Measuring **end-to-end** throughput including ADC overhead |
-| **2** | PIPELINE | Bypassed | **NO — ADC entirely skipped** | Yes (synthetic data only) | Measuring **WiFi/USB/SD pipeline ceiling** with ADC overhead removed |
+| **2** | PIPELINE | Bypassed | **NO — ADC entirely skipped** (bypasses `BoardData_Get(BOARDDATA_AIN_LATEST)`; encoder fed synthetic values directly) | Yes (synthetic data only) | Measuring **WiFi/USB/SD pipeline ceiling** with ADC overhead removed |
 
 Use **NOCAP** for "what does the system actually deliver?" (the level documented ceilings are compared against) and **PIPELINE** to isolate encoder+transport cost from ADC cost (if PIPELINE ≫ NOCAP at the same Hz, the ADC path is contributing). PIPELINE requires a non-zero `SYST:STR:TEST:PATtern` (rejected otherwise — there's no ADC data to encode). A/B the two at the same rate with `SYST:STR:STATS:CLE` between runs; restore `BENCH 0` afterward.
 
@@ -643,11 +643,11 @@ Use **NOCAP** for "what does the system actually deliver?" (the level documented
 | **8 kHz** | **194 KB/s** | **70 KB/s** | **–64 %** |
 | **12 kHz** | **33 KB/s** | **1 KB/s** + `qd=1793` | **–97 %** |
 
-**Below the Tesla wire ceiling (~5 kHz × 1 ch ≈ 230 KB/s), ADC is invisible** — encoder + WiFi keep up without contention. **Above wire ceiling, ADC pipeline (ISRs, EOS task, BoardData mutex) takes enough CPU that the encoder/output stalls.** NOCAP saturates earlier than PIPELINE because of this. The "ADC cost" reported by simple side-by-side numbers depends entirely on whether you tested at saturation or below — if anyone reports ADC as "free" without specifying rate, treat it skeptically.
+**Below the Tesla wire ceiling (~5 kHz × 1 ch ≈ 210–230 KB/s), ADC is invisible** — encoder + WiFi keep up without contention. **Above wire ceiling, ADC pipeline (ISRs, EOS task, BoardData mutex) takes enough CPU that the encoder/output stalls.** NOCAP saturates earlier than PIPELINE because of this. The "ADC cost" reported by simple side-by-side numbers depends entirely on whether you tested at saturation or below — if anyone reports ADC as "free" without specifying rate, treat it skeptically.
 
 **Throughput-claim discipline:** when reporting wire-rate measurements, always state the benchmark level and the test pattern. A "5 kHz / 230 KB/s" number is meaningless without "(NOCAP)" or "(PIPELINE)" — they measure different things. PIPELINE numbers represent the **upper bound** for streaming work that doesn't read the ADC; NOCAP numbers represent the **realistic** ceiling for actual data acquisition.
 
-**Frequency-cap interaction:** in NOCAP and PIPELINE modes the freq cap is bypassed and `SYST:StartStreamData` accepts up to 100 kHz. The PIC32MZ timer can fire that fast but everything downstream usually can't keep up — expect `QueueDroppedSamples > 0` (encoder/queue saturation) at very high rates.
+**Frequency-cap interaction:** in NOCAP and PIPELINE modes the freq cap is bypassed and `SYST:StartStreamData` accepts up to 100 kHz (the timer ISR itself tops out ~90 kHz — see the `TimerISRCalls` failure modes above). Everything downstream saturates far earlier — expect `QueueDroppedSamples > 0` (encoder/queue saturation) at very high rates.
 
 **2. Self-Contained Throughput Test** (`SYST:STR:THRoughput`): Runs a complete benchmark internally — enables benchmark mode + test pattern, streams for the specified duration, stops, and returns all stats in one response.
 
@@ -725,7 +725,7 @@ The firmware supports building for different board variants using MPLAB X config
 **Flash**: 2MB | **RAM**: 512KB | **L1 Cache**: 16KB I-cache + 4KB D-cache
 **Package**: 144-pin LQFP
 **Datasheet**: [DS60001320](https://www.microchip.com/en-us/product/PIC32MZ2048EFM144)
-**Errata**: [DS80000663](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU32/ProductDocuments/Errata/PIC32MZ-Embedded-Connectivity-with-Floating-Point-Unit-Family-Silicon-Errata-DS80000663.pdf) (Rev R, silicon A1/A3/B2)
+**Errata**: [DS80000663](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU32/ProductDocuments/Errata/PIC32MZ-Embedded-Connectivity-with-Floating-Point-Unit-Family-Silicon-Errata-DS80000663.pdf) (Rev R, silicon A1/A3/B2/B3)
 
 #### Atomicity & Concurrency Rules
 
@@ -733,7 +733,7 @@ The firmware supports building for different board variants using MPLAB X config
 - **Read-modify-write** (`x |= bit`, `x &= ~bit`, `x++`, `x += n`) is NOT atomic — use `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
 - **64-bit operations** (`uint64_t` increment, struct copy) always need a critical section.
 - **`volatile`** is needed when a variable is written by one task/ISR and read by another — it prevents the compiler from caching the value in a register. `volatile` alone does NOT make RMW atomic; you still need critical sections for `+=`, `|=`, etc.
-- **Set-once-then-shared pointers** (`static T *gp` set in `Init()`, dereferenced from tasks and ISRs): qualifier forms differ — `volatile T *p` (data-volatile) is the strictly-correct fix when `p->field` is RMW'd or read across task↔ISR boundaries, but cascades through every API taking a derived `T *`; `T * volatile p` (pointer-volatile) only forces pointer reloads and is **not** a concurrency guarantee. Rules: (1) cross-context RMW'd data → data-volatile (or volatile on the specific field); (2) `volatile` never makes RMW atomic — critical sections still required; (3) **don't add qualifiers speculatively** — Microchip's guidance (DS90003269A) prescribes critical sections/mutexes, not volatile, for shared data. The empirical audit (`docs/SET_ONCE_POINTER_AUDIT.md`, 2026-05-10) found the qualifier observable in codegen but redundant in this codebase: every consumer path crosses opaque call boundaries (FreeRTOS/PLIB/BoardData) that already force reloads at -O3 with no LTO on XC32 v4.60; volatile/no-volatile A/B'd to identical failure baselines. Re-audit if LTO, `always_inline` in hot loops, or a compiler change lands. Methodology lesson from that audit: **never conclude load-bearing-ness from n=1 bench trials** — multi-trial both branches first.
+- **Set-once-then-shared pointers** (`static T *gp` set in `Init()`, dereferenced from tasks and ISRs): qualifier forms differ — `volatile T *p` (data-volatile) is the strictly-correct fix when `p->field` is RMW'd or read across task↔ISR boundaries, but cascades through every API taking a derived `T *`; `T * volatile p` (pointer-volatile) only forces pointer reloads and is **not** a concurrency guarantee. Rules: (1) cross-context RMW'd data → data-volatile (or volatile on the specific field); (2) `volatile` never makes RMW atomic — critical sections still required; (3) **don't add qualifiers speculatively** — Microchip's guidance (DS90003269A) prescribes critical sections/mutexes, not volatile, for shared data. The empirical audit (`docs/SET_ONCE_POINTER_AUDIT.md`, 2026-05-10) found the qualifier observable in codegen but redundant in this codebase: every consumer path crosses opaque call boundaries (FreeRTOS/PLIB/BoardData) that already force reloads at -O3 with no LTO on XC32 v4.60; volatile/no-volatile A/B'd to identical failure baselines. Re-audit if LTO, `always_inline` in hot loops, or a compiler change lands. Methodology lesson from that audit: **never conclude load-bearing-ness from n=1 bench trials** — multi-trial both branches first. (Related history: the #354 ch15 regression that motivated the #421 volatile speculation was actually fixed by a hardware TRGSRC register configuration, `96e7c840` — not by qualifiers.)
 - Do not add unnecessary critical sections around plain 32-bit stores/loads — it adds interrupt latency for no benefit.
 - **ISR context vs task context**: `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()` is for **task context only**. Inside an ISR, use `taskENTER_CRITICAL_FROM_ISR()`/`taskEXIT_CRITICAL_FROM_ISR()`. In our firmware, hardware ISRs (streaming timer, ADC EOS) immediately defer to FreeRTOS tasks via `xTaskNotifyGive()`/`ulTaskNotifyTake()`, so all sample processing and critical section usage runs in task context — never directly in ISR handlers.
 - **FPU in RTOS tasks**: Any task that uses floating-point (`float` or `double`) **must** call `portTASK_USES_FLOATING_POINT()` at the start of its task function, before any FP operations. This tells FreeRTOS to save/restore the 32×64-bit FPU registers on context switches. Without this call, FPU register state will be corrupted when switching between tasks. Currently registered: `app_USBDeviceTask`, `app_WifiTask`, `app_PowerAndUITask`, `streaming_Task`. **Pure-integer (no FPU):** `_Streaming_Deferred_Interrupt_Task` (intentional — saves 32 × 64-bit register save/restore per context switch), `app_SDCardTask`, `lWDRV_WINC_Tasks` (WINC driver — also runs the UDP announce / discovery callback). **Code that runs in a pure-integer task MUST NOT read or cast `double`/`float` fields** — that compiles to FPU instructions which pick up garbage from whichever FPU-using task last preempted. PR #369 fixed one instance of this (`adcMax = (uint32_t)Resolution - 1` in the streaming deferred task, producing 0x80000FE6 instead of 4095). Defense: store config values that pure-int tasks need to read as integer types (`uint32_t`, etc), not `double` — see `MC12bModuleConfig.Resolution` / `AD7609ModuleConfig.Resolution` in `AInConfig.h` for the canonical pattern.
@@ -765,7 +765,7 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 
 - **Compiler**: targeting `PIC32MZ2048EFM144` implicitly sets `__mips_hard_float = 1`
 - **FreeRTOS**: `configUSE_TASK_FPU_SUPPORT = 1` in `FreeRTOSConfig.h`; saves/restores 32×64-bit FPU registers on context switches for tasks that call `portTASK_USES_FLOATING_POINT()`
-- **Registered tasks**: `app_USBDeviceTask`, `app_WifiTask`, `app_PowerAndUITask`, `streaming_Task`.  `_Streaming_Deferred_Interrupt_Task`, `app_SDCardTask`, and `lWDRV_WINC_Tasks` are intentionally pure-integer — see the FPU bullet in "Atomicity & Concurrency Rules" above.
+- **Registered / pure-integer task lists**: see the FPU bullet in "Atomicity & Concurrency Rules" above.
 - **ADC voltage conversion**: `ADC_ConvertToVoltage()` uses native `mul.d`, `div.d`, `add.d` instructions
 
 #### FreeRTOS Configuration
@@ -773,7 +773,7 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 - **Tick rate**: 1000 Hz (1ms tick)
 - **Preemptive** with time-slicing (equal-priority tasks round-robin)
 - **Max priorities**: 10 (0=lowest, 9=highest)
-- **Heap**: heap_4, 284KB (`configTOTAL_HEAP_SIZE`)
+- **Heap**: heap_4, 75KB (`configTOTAL_HEAP_SIZE`)
 - **ISR stack**: 8192 bytes
 - **Kernel interrupt priority**: 1 (lowest)
 - **Max syscall interrupt priority**: 4 (ISRs at priority 5+ are never disabled by FreeRTOS)
@@ -800,11 +800,11 @@ Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TC
 
 **Note**: SD directory listing uses iterative traversal with a bounded BSS-backed stack (`SD_CARD_MANAGER_MAX_LIST_DEPTH = 16`, ~4.3 KB total). Task stack usage is O(1) regardless of FAT32 tree depth. Trees deeper than 16 levels emit a diagnostic and skip the subtree.
 
-**SCPI shared response buffer**: Any SCPI callback needing ≥256 B of scratch MUST use `SCPI_ResponseBuf_Take()` / `SCPI_ResponseBuf_Give()` rather than a stack local. The shared buffer is a single 2048-byte static in BSS guarded by a statically-allocated mutex (`configSUPPORT_STATIC_ALLOCATION=1`). Rationale: WifiTask's stack is only 1024 words; the TCP → microrl → libscpi path consumes ~808 words before the callback runs, so a large stack-local buffer inside a SCPI callback can overflow (issue #347). Callers that use the shared pattern keep SCPI stack depth below the measured 372-word WifiTask peak. Current users: `SCPI_SysInfoGet`, `SCPI_SysInfoTextGet`, `SCPI_GetCommandHistory`, `SCPI_Help`, `SCPI_StorageSDBenchmark`.
+**SCPI shared response buffer**: Any SCPI callback needing ≥256 B of scratch MUST use `SCPI_ResponseBuf_Take()` / `SCPI_ResponseBuf_Give()` rather than a stack local. The shared buffer is a single 2048-byte static in BSS guarded by a statically-allocated mutex (`configSUPPORT_STATIC_ALLOCATION=1`). Rationale: the TCP → microrl → libscpi path consumes ~800 words of WifiTask stack before the callback runs, so a large stack-local buffer inside a SCPI callback can overflow — issue #347 hit exactly this when WifiTask was 1024 words (it's 1500 now, peak 780; the headroom assumes callbacks stay off large stack locals). Current users: `SCPI_SysInfoGet`, `SCPI_SysInfoTextGet`, `SCPI_GetCommandHistory`, `SCPI_Help`, `SCPI_StorageSDBenchmark`.
 
 **Scheduling implications**: Capture tasks at priority 9 preempt everything to guarantee deterministic sample timing. The encoder at priority 6 preempts WiFi/WINC/background (priority 2) and SD (priority 5), but stays below USB (7) so SCPI commands remain responsive during streaming. SD task at priority 5 sits above background transports but below encoder — prevents encoder from starving SD writes when USB+SD both active. Encoder's `Streaming_WriteWithRetry` uses `vTaskDelay(1)` (not `taskYIELD()`) in its retry loop so lower-priority SD actually gets CPU to drain circular buffer (#312). See `docs/PIPELINE_TIMING.md` for measurements (PR #308, Sessions 7-17).
 
-#### Known Silicon Errata (DS80000663R, verified against PDF pages 6-15)
+#### Known Silicon Errata (DS80000663 Rev R, silicon revs A1/A3/B2/B3; verified against PDF pages 6-15)
 
 All items verified against the actual errata document. Only issues affecting features we use are listed, with exact workaround text from Microchip.
 
@@ -875,7 +875,7 @@ The firmware uses four distinct memory regions, each with different properties:
 
 | Consumer | Bytes | Source |
 |----------|------:|--------|
-| Task stacks (14 tasks) | ~37,500 | `xTaskCreate` (profiled, see Task Priority Map) |
+| Task stacks (per Task Priority Map + idle/timer daemon) | ~37,500 | `xTaskCreate` (profiled) |
 | FreeRTOS TCBs, mutexes, kernel | ~5,000 | Kernel internals |
 | Sample FreeRTOS queue | ~4,500 | `xQueueCreate` in `AInSample.c` |
 | DIO sample queue | ~3,200 | `xQueueCreate` in `DIOSample.c` |
@@ -928,7 +928,7 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 | `WIFI:BUFfer` | 1400 | 65536 | Min = SOCKET_BUFFER_MAX_LENGTH |
 | `USB:BUFfer` | 2048 | 65536 | Min = STREAMING_USB_MIN |
 | `ENCoder:BUFfer` | 1024 | 65536 | Encoder staging buffer. 8KB optimal for USB, 16KB helps SD throughput. |
-| `SAMPle:POOL` | 0 or 100 | 2000 | 0 = maximize with remaining pool space |
+| `SAMPle:POOL` | 0 or 100 | 10000 (`MAX_AIN_SAMPLE_COUNT`) | 0 = maximize with remaining pool space. `CONF:CAP` JSON still advertises max 2000 — stale firmware-side constant, the setter accepts 10000. |
 
 **`SYST:MEM:FREE?` Response Fields:**
 
@@ -946,7 +946,7 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 | `SampleNextFreeBytes` | Free-list array memory (count × 2) |
 | `SampleQueueBytes` | FreeRTOS queue overhead estimate |
 
-**Auto-balance** (`Streaming_ComputeAutoBuffers()`): active interfaces get compile-time circular-buffer defaults (USB=64KB, WiFi=32KB, SD=32KB), inactive get minimums; encoder is 16KB when SD is active (larger writes reduce SPI overhead), 8KB otherwise; the three coherent-pool DMA buffers (SD write, USB write, WiFi SPI staging) split the 124KB coherent pool by weighted shares (SD=5, USB=3, WiFi=2 — single-active gets everything); the sample pool gets whatever stream-pool space remains. When all `MemoryConfig` fields are zero (boot default), this runs automatically at each `StartStreamData`; setting any field non-zero disables auto mode for all fields. The `SYST:MEM:AUTO` response reports the computed `SdDma=`, `UsbDma=`, `WifiDma=`, `Encoder=` sizes.
+**Auto-balance** (`Streaming_ComputeAutoBuffers()`): active interfaces get compile-time circular-buffer defaults (USB=64KB, WiFi=96KB — `STREAMING_WIFI_WIFI_ONLY`, #497 — SD=32KB), inactive get minimums; encoder is 16KB when SD is active (larger writes reduce SPI overhead), 8KB otherwise; the three coherent-pool DMA buffers (SD write, USB write, WiFi SPI staging) split the 124KB coherent pool by weighted shares (SD=5, USB=3, WiFi=2 — single-active gets everything); the sample pool gets whatever stream-pool space remains. When all `MemoryConfig` fields are zero (boot default), this runs automatically at each `StartStreamData`; setting any field non-zero disables auto mode for all fields. The `SYST:MEM:AUTO` response reports the computed `SdDma=`, `UsbDma=`, `WifiDma=`, `Encoder=` sizes.
 
 **Auto-Balance Buffer Sizing by Active Interface:**
 
@@ -963,7 +963,6 @@ The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, an
 | WiFi SPI staging (coherent) | 2,048 | 125,904 | 2,048 | 2,048 |
 | Sample pool (slots @16ch) | ~1,618 | ~1,178 | ~1,921 | ~1,086 |
 
-All DMA buffers (SD write, USB write, WiFi SPI staging) are auto-balanced from the 124KB coherent pool — `Streaming_ComputeAutoBuffers` distributes the remaining pool space across active interfaces using weighted shares (SD=5, USB=3, WiFi=2), so the full pool is allocated regardless of which interfaces are active.  Single-active gets the whole pool; multi-active splits proportionally.
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/Util/CoherentPool.c` (DMA pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct), `firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c` (WiFi SPI staging)
 
@@ -1018,7 +1017,7 @@ Hardware debugging produces confident-sounding writeups that don't survive a "ho
 
 If the user pushes back with "is this verified?" the honest answer is to enumerate which parts are V/E/I/X/N — not to defend the conclusion as a whole.
 
-See user-memory `feedback_debugging_discipline.md` for the originating incident and the personal version of this rule.
+See user-memory `feedback_debugging_discipline.md` (station-local, not in this repo) for the originating incident and the personal version of this rule.
 
 ### DAC7718 Integration (NQ3 Board)
 
@@ -1135,6 +1134,7 @@ SYST:STOR:SD:MAXSize?               # Query current setting
 - Unconditional filesystem flush before file close
 
 **Python Tools:**
+(in `daqifi-python-test-suite`)
 - `download_sd_files.py` - Auto-detects and groups split files
 - `analyze_split_files.py` - Validates integrity, merges parts
 
@@ -1228,23 +1228,23 @@ For ad-hoc multi-command bench scripts, write to **`/tmp/temp.sh`** (the filenam
 
 **Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. it's `SSIDSTR?`, `NETTYPE?`, `ADDR?` — not `SSID:STR`/`MODE`/`IP`).
 
-**WiFi config sequence:** `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLy` → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID, needs POWERED_UP.
+**WiFi config sequence:** `ENAbled 0` → set `NETType`/`SECurity`/`SSID`/`PASs` → `ENAbled 1` → `APPLy` → wait ~20 s → verify `ADDR?` → `SAVE` (persists to NVM — without it a reboot reverts; **every flash wipes NVM regardless**). The WiFi module itself takes ~2–3 s to initialize after power-up. AP-mode defaults: open AP `DAQiFi-XXXX` (MAC suffix auto-applied to the bare default name; user names preserved), hostname = SSID (used for DHCP Option 12 network discovery), needs POWERED_UP.
 
 ### USB CDC behavior every test must respect
 
 - **Host must read fast.** ≥1 ms read cadence = zero loss; a 500 ms poller dropped 1 MB in the same 16ch@3kHz A/B that a 1 ms reader survived clean. The firmware pipeline is leak-free — host-side reading is almost always the culprit in "USB drop" reports. Use `FastReader` (background drain) for anything streaming.
 - **Delivery is bursty by design** (ZLP boundaries + one DMA transfer in flight + circular→DMA copy): `in_waiting` can read 0 while data sits in the usbipd pipeline; don't tight-poll it; allow 3+ s settle between sessions in naive scripts. Any SCPI command mid-stream "flushes" a short packet.
-- **Rate measurements:** ONLY via `StreamingMeasurement` (`test_harness.py`) — PC-controlled window opened at first data byte, closed before STOP; wall-clock around SCPI start/stop adds ~10 % error. `is_csv=True` counts rows; WiFi/SD pass `wait_for_serial=False`. Reference points: USB CSV 16ch@3kHz = 795 KB/s, 0 drops.
+- **Rate measurements:** ONLY via `StreamingMeasurement` (`test_harness.py`) — PC-controlled window opened at first data byte, closed before STOP; wall-clock around SCPI start/stop adds ~10 % error, and the older first-byte-time SPS calculation caused ~10–15 % run-to-run variance (fixed by blocking FastReader + sleep-duration denominator — variance now near zero). `is_csv=True` counts rows; WiFi/SD pass `wait_for_serial=False`. Reference points: USB CSV 16ch@3kHz = 795 KB/s, 0 drops.
 
 ### Long-running bench runs
 
-- **Always `python3 -u`** (or `PYTHONUNBUFFERED=1`) for background runs — block-buffered stdout looks empty and is lost on kill. Never wrap a real run in a tight `timeout`; watch the PID or the per-row-fsynced CSV instead (the CSV is the reliable progress signal).
+- **Always `python3 -u`** (or `PYTHONUNBUFFERED=1`) for background runs — block-buffered stdout looks empty and is lost on kill. Never wrap a real run in a tight `timeout` — per-trial SCPI overhead alone is ~15–20 s, so runs outlast naive estimates; reserve `timeout` for genuinely-bounded one-shot probes and size it generously. Watch the PID or the per-row-fsynced CSV instead (the CSV is the reliable progress signal).
 - **Sustained high-rate USB → run Windows-native** (`python.exe` against COM3, repo cloned under `C:\`): the cumulative ISR=-1/unreadable-STATS wedge under back-to-back high-rate trials is a WSL/usbipd artifact. WSL `/dev/ttyACMn` is fine for low-rate/control-plane SCPI. (Separately: WSL-launched python silently drops inbound UDP — use PowerShell-native tooling for UDP tests.)
 - Don't echo test results to the console for their own sake — observe, then report a summary.
 
 ### Git Configuration
 - Ignore line ending changes when reviewing diffs (Windows/Linux compatibility)
-- ALWAYS test changes on hardware before committing
+- ALWAYS test changes that affect device behavior on hardware before committing (docs/CI/lint-only changes are exempt)
 - Use descriptive commit messages that explain the problem and solution
 
 ### Commit Message Format
@@ -1293,7 +1293,7 @@ Companion repos at https://github.com/daqifi:
 | Streaming throughput ceilings | `test_overnight_characterization.py` (`--at-cap --walk-down` for soak validation) | hours |
 | Quick ceiling check | `test_interface_ceilings.py` | ~30 min |
 | Data loss counters | `test_silent_loss_observability.py` | ~3 min |
-| Test pattern integrity | `verify_test_patterns.py --run-all` | ~10 min |
+| Test pattern integrity | `verify_test_patterns.py --run-all` (`--download` = deterministic SD-card verification, immune to USB burstiness) | ~10 min |
 | A/B branch comparison | `test_ab_comparison.py` | ~20 min |
 | Full device validation | `comprehensive_test.py` | ~5 min |
 
@@ -1323,12 +1323,13 @@ Companion repos at https://github.com/daqifi:
    # Then regenerate Makefiles and remove references to deleted wolf files
    # (dilithium, kyber, xmss, lms, sphincs, sm2/3/4, hpke)
    ```
-- pic32 tris convention is 1=input and 0=output
-- when implementing new code/features remember that we have multiple configurations so we need to ensure we are keeping all the structs consistant as well as the handling functions, etc.
-- always verify scpi command syntax - don't guess.
-- when writing about timing/cadence, use concrete units with a source reference (e.g. "called every ~100 ms from `Power_Tasks()`"), avoid bare "every tick" unless the RTOS tick is truly meant, and distinguish "function is called" from "function performs I2C/SPI/network work". (Folded from the retired codex.md.)
-- we don't need to generate analysis docs or the like unless asked
-- all errors should go through the error logging function and doesn't need to be sent out in the stream at all. if there is an
- error, the SCPI command should return the error through its own handling. then the user calls SYSTem:LOG? to know what the
-error was.
+
+### Standing Rules
+
+- PIC32 TRIS convention is 1=input and 0=output
+- When implementing new code/features remember we have multiple configurations (NQ1/NQ3) — keep all the structs consistent as well as the handling functions, etc.
+- Always verify SCPI command syntax — don't guess (see the verification protocol above).
+- When writing about timing/cadence, use concrete units with a source reference (e.g. "called every ~100 ms from `Power_Tasks()`"), avoid bare "every tick" unless the RTOS tick is truly meant, and distinguish "function is called" from "function performs I2C/SPI/network work".
+- Don't generate analysis docs or the like unless asked.
+- All errors go through the error logging function and are never sent out in the stream. On error, the SCPI command returns the error through its own handling; the user calls `SYSTem:LOG?` to learn what the error was.
 - SCPI data visibility principle: prevent users from operating with improper settings (return SCPI errors for config problems like reading disabled channels), but maximize visibility into device health. When data is stale (e.g., monitoring channels frozen during OBDiag=0 streaming), show last-known values with age indicators rather than hiding them. Error on config problems, inform on stale data.
