@@ -3028,6 +3028,10 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "DioDroppedSamples=%u\r\n", (unsigned)s.dioDroppedSamples);
     scpi_printf(context, "DioDroppedSamplesSteady=%u\r\n", (unsigned)s.dioDroppedSamplesSteady);
     scpi_printf(context, "EosOverruns=%u\r\n", (unsigned)s.eosOverruns);
+    // #541 D-A diag: ticks where a T1 result was not ready (ARDY clear) at
+    // the deferred task's direct read.  Expected 0; non-zero ticks emitted
+    // that channel with its validMask bit clear.
+    scpi_printf(context, "T1ArdyMisses=%u\r\n", (unsigned)s.t1ArdyMisses);
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
     // + QueueDroppedSamples) to verify every timer event is accounted for,

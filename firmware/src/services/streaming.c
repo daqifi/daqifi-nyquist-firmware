@@ -384,8 +384,18 @@ uint8_t Streaming_BuildChannelMapping(const tBoardConfig* pBoardConfig,
     for (size_t i = 0; i < count && packed < MAX_AIN_PUBLIC_CHANNELS; i++) {
         if (pRuntimeChannels->Data[i].IsEnabled &&
             AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
-            gChannelMapping.channelIds[packed] = pBoardConfig->AInChannels.Data[i].DaqifiAdcChannelId;
+            const AInChannel* ch = &pBoardConfig->AInChannels.Data[i];
+            gChannelMapping.channelIds[packed] = ch->DaqifiAdcChannelId;
             gChannelMapping.configIndices[packed] = (uint8_t)i;
+            // #541 D-A: T1 (dedicated-module) channels are read directly
+            // from their ADC result registers in the deferred task, gated
+            // on per-input ARDY.  Record the hardware channel number here
+            // so the hot loop doesn't have to chase board-config pointers.
+            if (ch->Type == AIn_MC12bADC && ch->Config.MC12b.ChannelType == 1) {
+                gChannelMapping.t1DirectMask |= (uint16_t)(1U << packed);
+                gChannelMapping.hwChannelIds[packed] =
+                        (uint8_t)ch->Config.MC12b.ChannelId;
+            }
             packed++;
         }
     }
@@ -454,6 +464,27 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
     uint32_t transportMax = Streaming_TransportMaxFreq(iface, sc->Encoding, total);
     if (transportMax < maxFreq) maxFreq = transportMax;
+
+    /* #541 D-C: shared-scan rate bound.  Retriggering the MODULE7 scan
+     * while a scan is in progress is documented-undefined behavior (FRM
+     * DS60001344E §22.3.2) — the #539 mechanism: above ~1/T_scan the EOS
+     * interrupt degrades then stops, and scanned data goes stale.  The
+     * streaming tick IS the scan trigger (STRGSRC=TMR5), so the tick rate
+     * must not exceed 1/T_scan for the session's scan list (built by D-B:
+     * enabled T2 + monitoring when OBDiag=1).  N_active == 0 (e.g. T1-only
+     * OBDiag=0) arms no scan — no bound.  This term gates the HARDWARE
+     * trigger path, which the legacy ChannelScanFreqDiv software divider
+     * never covered. */
+    uint32_t scanCount = MC12b_ComputeScanList(
+            true, sc->OnboardDiagEnabled, NULL, NULL);
+    if (scanCount > 0) {
+        /* User-T2 count (monitoring excluded): each enabled T2 channel
+         * fires a per-conversion data-ready ISR, which feeds the
+         * aggregate ADC-event-rate bound inside ScanMaxFreq (v4). */
+        uint32_t userT2 = MC12b_ComputeScanList(true, false, NULL, NULL);
+        uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
+        if (scanMax < maxFreq) maxFreq = scanMax;
+    }
     return maxFreq;
 }
 
@@ -578,6 +609,19 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             pPublicSampleList->validMask = 0;
             pPublicSampleList->Timestamp = 0;
 
+            // Streaming trigger timestamp for this tick, captured by
+            // Streaming_TimerHandler at the single point all sample stamps
+            // derive from (clamps 0 -> 1, so 0 can never alias the #533
+            // invalid sentinel).  Hoisted out of the channel loop: the #541
+            // T1 direct-read path stamps every T1 sample with it, and the
+            // post-loop fallback uses it too.
+            uint32_t trigStamp = 0;
+            {
+                uint32_t* pTrigStamp =
+                        BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+                if (pTrigStamp != NULL) trigStamp = *pTrigStamp;
+            }
+
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
@@ -627,6 +671,45 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                             mapping->channelIds[j],
                             gTestPatternSampleCount, adcMax);
                     pPublicSampleList->validMask |= (1U << j);
+                } else if (mapping->t1DirectMask & (1U << j)) {
+                    // #541 D-A: T1 (dedicated-module) result read directly
+                    // from the ADC result register, gated on the per-input
+                    // ARDY flag (sets at conversion end, clears on ADCDATAx
+                    // read — FRM DS60001344E Fig 22-7 / p.22-88).  Replaces
+                    // the EOS-task -> LATEST-cache hop, whose freshness
+                    // collapsed above ~4.6 kHz because EOSRDY only sets on
+                    // full-scan completion and the scan was being
+                    // retriggered out-of-spec (#539).  Timing: the T1
+                    // conversion completes ~1.3 us after the TMR5 trigger;
+                    // this task wakes several us later (ISR->task latency +
+                    // pool work above), so ARDY is essentially always set.
+                    // Miss policy: NO spin — leave the validMask bit 0 for
+                    // this tick (#535 semantics) and count it.
+                    uint32_t val;
+                    if (MC12b_ReadResult(
+                            (ADCHS_CHANNEL_NUM)mapping->hwChannelIds[j],
+                            &val)) {
+                        pPublicSampleList->Values[j] = val;
+                        pPublicSampleList->validMask |= (1U << j);
+                        if (pPublicSampleList->Timestamp == 0) {
+                            pPublicSampleList->Timestamp = trigStamp;
+                        }
+                        // Refresh the LATEST cache so non-streaming readers
+                        // (MEAS:VOLT:DC?) stay live during a session.  Same
+                        // per-tick work the EOS task used to do at the same
+                        // priority — relocated, not added.
+                        AInSample wb;
+                        wb.Timestamp = trigStamp;
+                        wb.Channel = mapping->channelIds[j];
+                        wb.Value = val;
+                        BoardData_Set(BOARDDATA_AIN_LATEST, cfgIdx, &wb);
+                    } else {
+                        // Single-writer 32-bit increment — no critical
+                        // section needed (deferred task is the only writer).
+                        gStreamStats.t1ArdyMisses++;
+                        LOG_E_SESSION(LOG_SESSION_T1_ARDY_MISS,
+                                "Streaming: T1 ARDY miss (result not ready at read)");
+                    }
                 } else {
                     // Normal: read real ADC data from BoardData
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, cfgIdx);
@@ -667,10 +750,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // wire output remains consistent across modes. Required because
             // the PB encoder omits the msg_time_stamp field when timestamp==0.
             if (pPublicSampleList->Timestamp == 0) {
-                uint32_t* pTrigStamp = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-                if (pTrigStamp != NULL) {
-                    pPublicSampleList->Timestamp = *pTrigStamp;
-                }
+                pPublicSampleList->Timestamp = trigStamp;
             }
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
                 // #499: split counter — this path = FreeRTOS queue full,
@@ -1183,31 +1263,36 @@ static void Streaming_Start(void) {
             // Enable hardware ADC triggering only when actually streaming.
             // Streaming_Start runs at boot before ADC_Init — must not
             // write ADCTRG/ADCCON1 until ADC is ready.
-            // #537: compute the session's T2-user flag BEFORE arming any
-            // trigger: the shared (MODULE7) scan carries both the OBDiag
-            // monitoring channels AND every Type-2 user channel, so it must
-            // run when either consumer needs it.  The old OnboardDiagEnabled-
-            // only gate froze T2 user data in OBDiag=0 streams (silent stale
-            // values pre-#535; 100% encoder failures after the #535 validity
-            // gate landed).
+            // #541 D-B: rebuild the shared (MODULE7) scan list for this
+            // session — enabled T2 user channels, plus monitoring channels
+            // when OBDiag=1 (the dead temp sensor is always excluded,
+            // erratum 18).  The Harmony boot CSS scanned all 19 inputs
+            // regardless of configuration, fixing T_scan at ~216 us and
+            // making the #539 EOS collapse channel-count-independent;
+            // scanning only what the session uses lets T_scan (and the
+            // scan-rate bound) scale with the actual config.
+            //
+            // The scan is armed iff the session scan list is non-empty.
+            // This supersedes the #537 total-based gate: T1 results no
+            // longer ride the EOS task while streaming (#541 D-A reads
+            // them directly via ARDY), so a T1-only OBDiag=0 session
+            // genuinely needs no scan.  The mid-stream-enable edge that
+            // forced #537's conservative gate is closed — CONF:ADC:CHANnel
+            // and CONF:ADC:OBDiag are both REJECTED while streaming
+            // (#116), so the session's scan list cannot go stale.
             {
-                // Any enabled public channel arms the scan: T2 channels for
-                // their conversions, T1 channels because their results are
-                // read in the EOS task and EOS only fires at end-of-scan.
-                // DELIBERATELY total-based, not MC12b-specific: a Qodo
-                // pass-1 suggestion narrowed this to MC12b-only (so an
-                // AD7609-only NQ3 session wouldn't arm the scan), but
-                // pass-2 correctly flagged the edge it created — a
-                // mid-stream MC12b channel enable after an AD7609-only
-                // start would find the scan unarmed (frozen data, #537
-                // class) unless a mid-stream trigger re-arm path were
-                // added.  The scan is idle-cheap (#107: no overruns to
-                // >=40 kHz), so arming it for any public channel is the
-                // safe, simple invariant.
-                uint16_t t1 = 0, total = 0;
-                Streaming_CountActiveChannels(&t1, &total, NULL);
-                gNeedSharedScan = (total > 0);
+                uint32_t css1, css2;
+                uint32_t scanCount = MC12b_ComputeScanList(
+                        true, gpRuntimeConfigStream->OnboardDiagEnabled,
+                        &css1, &css2);
+                MC12b_ApplyScanList(css1, css2);
+                gNeedSharedScan = (scanCount > 0);
             }
+            // #541 D-A: clear any Type 1 result parked since the last idle
+            // poll — ARDY would still be set and the direct-read path would
+            // emit the stale conversion as this session's first T1 sample
+            // (same class as the #533 LATEST invalidation above).
+            MC12b_DrainType1Results();
             bool hwShared = (gpRuntimeConfigStream->OnboardDiagEnabled ||
                              gNeedSharedScan) &&
                             (gpRuntimeConfigStream->ChannelScanFreqDiv <= 1);
@@ -1398,6 +1483,10 @@ static void Streaming_Stop(void) {
         // Revert ADC to software triggering so non-streaming reads
         // (ADC_Tasks polling) still work.
         MC12b_ConfigureHardwareTrigger(false, false);
+        // #541 D-B: restore the idle scan list (all public T2 + enabled
+        // monitoring) so idle-time MEAS:VOLT:DC? and SYST:INFo monitoring
+        // cover the full channel set again, not just last session's subset.
+        MC12b_RestoreIdleScanList();
         gpRuntimeConfigStream->Running = false;
 
         // #533: drain BOTH sample queues at stop so nothing captured by

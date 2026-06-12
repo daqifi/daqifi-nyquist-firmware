@@ -86,6 +86,49 @@ double MC12b_ConvertToVoltage(
 bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal);
 
 /**
+ * #541 D-A: read-and-discard any pending Type 1 (dedicated-module) results
+ * so a stale conversion can't satisfy the first ARDY-gated direct read of a
+ * new streaming session. Call from Streaming_Start before arming the timer.
+ */
+void MC12b_DrainType1Results(void);
+
+/**
+ * #541 D-B: compute a shared-scan (ADCCSS) list from the board + runtime
+ * config.  Scanned inputs = Type 2 / monitoring MC12bADC channels; the dead
+ * temp sensor (AN44, erratum 18) is always excluded.
+ *
+ * @param enabledOnly        true = only IsEnabled public T2 channels
+ *                           (session list); false = all public T2 (idle list)
+ * @param includeMonitoring  include enabled monitoring channels
+ * @param pCss1/pCss2        [out, may be NULL] ADCCSS1/2 register values
+ * @return number of inputs in the list
+ */
+uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
+                               uint32_t *pCss1, uint32_t *pCss2);
+
+/**
+ * #541 D-B: write ADCCSS1/2 via the FRM-documented online-update sequence
+ * (TRGSUSP -> UPDRDY poll -> write -> resume). No-op if values are current.
+ */
+void MC12b_ApplyScanList(uint32_t css1, uint32_t css2);
+
+/** #541 D-B: restore the idle scan list (all public T2 + enabled monitoring). */
+void MC12b_RestoreIdleScanList(void);
+
+/**
+ * #541 D-C: max safe scan trigger rate (Hz) — min of the scan-busy bound
+ * (nActive-input scan time from live SAMC / clock-divider registers), the
+ * EOS-rate ceiling, and the aggregate ADC-event-rate ceiling
+ * (rate x (nUserT2 ARDY ISRs + 1 EOS) <= proven-safe events/s).
+ * Returns UINT32_MAX when nActive == 0 (no scan armed — no bound).
+ *
+ * @param nActive  session scan-list length (enabled T2 + monitoring-if-OBDiag)
+ * @param nUserT2  enabled T2 USER channels (each fires a per-conversion
+ *                 data-ready ISR; monitoring channels do not)
+ */
+uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2);
+
+/**
  * Returns bitmask of enabled Type 1 ADCHS channels (bits 0-4).
  */
 uint32_t MC12b_GetType1EnabledMask(void);
@@ -125,9 +168,9 @@ bool MC12b_SetAcquisitionSamc(int32_t samcDedicated, int32_t samcShared);
 /** Read current SAMC values. out* may be NULL. */
 void MC12b_GetAcquisitionSamc(uint16_t* outSamcDedicated, uint16_t* outSamcShared);
 
-/** Boot-default SAMC values (from MCC-generated ADCHS init). */
-#define MC12B_SAMC_DEDICATED_DEFAULT  100
-#define MC12B_SAMC_SHARED_DEFAULT     1
+// Boot-default SAMC is 100 for BOTH dedicated and shared modules
+// (ADCxTIME / ADCCON2=0x00642001 -> SAMC=0x64; the former
+// MC12B_SAMC_SHARED_DEFAULT=1 constant here was an unused misdecode).
 #define MC12B_SAMC_MAX                1023
 
 #ifdef	__cplusplus

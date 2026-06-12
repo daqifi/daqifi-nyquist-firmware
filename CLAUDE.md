@@ -416,32 +416,32 @@ Commit and push wiki changes after updating.
 
 #### ADC Architecture & ISR Design
 
-The PIC32MZ ADCHS peripheral has two types of ADC channels with different ISR strategies:
+The PIC32MZ ADCHS peripheral has two classes of ADC channels with different read strategies. (This section reflects the post-#541 architecture; #292's "T1 reads in the EOS task" topology and the older "CH3 batch ISR" topology described in earlier revisions are both gone. Full hardware-semantics record with FRM/datasheet citations: `docs/ADC_HW_SEMANTICS.md`.)
 
 **Type 1 — Dedicated modules (simultaneous conversion):**
 - NQ1 channels: ch4 (MODULE4), ch8 (MODULE0), ch10 (MODULE1), ch12 (MODULE2), ch14 (MODULE3)
-- Each channel has its own SAR ADC module — all convert simultaneously on trigger
-- **Batched ISR**: A single data-ready interrupt (CH3/MODULE3) reads all Type 1 results. CH3 is always triggered when any Type 1 channel is active, even if ch14 itself is disabled. This eliminates N-1 redundant ISR entries per sample. See Issue #277.
-- Trigger: `ADCHS_ChannelConversionStart()` per enabled channel in `MC12b_TriggerConversion()`
+- Each channel has its own SAR ADC module — all convert simultaneously on the streaming-timer hardware trigger (TMR5 match, #282); conversion completes ~1.3 µs later
+- **Streaming reads (#541 D-A)**: the deferred streaming task reads `ADCDATAx` directly, gated on the per-input `ARDY` flag (sets at conversion end, clears on read — fresh-per-tick by construction, no interrupt dependency). A not-ready miss leaves that channel's validMask bit 0 for the tick and bumps the `T1ArdyMisses` stat (expected ~0; <0.1% under pool saturation)
+- **Idle reads**: `MC12bADC_EosInterruptTask` still reads T1 into `BOARDDATA_AIN_LATEST` between sessions so `MEAS:VOLT:DC?` works; while streaming the deferred task refreshes LATEST itself
+- The per-channel `ADC_DATA0-4` ISR handlers are stubs (#292 removed the batch ISR; ~5 µs entry/exit per tick was the T1 bottleneck)
 
 **Type 2 — Shared MODULE7 (sequential mux scan):**
-- NQ1 channels: ch0, ch1, ch2, ch3, ch5, ch6, ch7, ch9, ch11, ch13, ch15
-- All share MODULE7 — channels scanned sequentially via analog multiplexer
-- **Single EOS ISR**: `ADC_EOS_Handler` fires once after the entire scan completes
-- Results read by `MC12bADC_EosInterruptTask` (deferred task, priority 9)
-- Trigger: `ADCHS_GlobalEdgeConversionStart()` in `MC12b_TriggerConversion()`
+- NQ1 channels: ch0, ch1, ch2, ch3, ch5, ch6, ch7, ch9, ch11, ch13, ch15 (+8 internal monitoring channels; the dead temp sensor AN44 is never scanned — erratum 18)
+- **Dynamic scan list (#541 D-B)**: `ADCCSS1/2` is rebuilt at every stream start = enabled T2 user channels ∪ (monitoring channels if OBDiag=1), applied via the FRM-documented `TRGSUSP`→`UPDRDY` online-update sequence; the idle list (all public T2 + monitoring) is restored at stream stop. Mid-stream `CONF:ADC:CHANnel` / `CONF:ADC:OBDiag` / `CONF:ADC:SAMC` are **rejected** so the session list can't go stale (#116)
+- **Results**: per-channel data-ready ISRs (priority 1) read T2 user values into LATEST; the end-of-scan (EOS) interrupt fires once per completed full scan and wakes `MC12bADC_EosInterruptTask` (priority 9), which during streaming reads **monitoring channels only**
+- **Scan-rate bound (#541 D-C)**: three distinct hardware limits gate the scan, all folded into the cap. (1) **Scan-busy bound**: retriggering the scan while in progress is documented-undefined (FRM §22.3.2) — this was #539, where EOS stopped firing above ~4.6 kHz and scanned data froze; the cap bounds the tick period to `1.1 × (N_active × (SAMC+2+14) × TAD7 + 6 µs)` (n=19 silicon anchor: timer→EOS 216 µs + 4,500 Hz clean; TAD7 = 100 ns, all terms read live). (2) **EOS-rate ceiling** (`ADC_EOS_RATE_MAX_HZ` = 10,400): independent of scan length, driving the end-of-scan interrupt/task machinery sustained above ~11.5–12 kHz **kills the USB peripheral outright** (enumerated-but-CDC-dead or off the bus; hardware reset required). Silicon anchors: an n=1 scan — in-spec for retrigger, T_busy 17 µs ≪ 83 µs period — wedges at 12,000 Hz on the plain *admitted* path, clean 10,000 × 60 s; n=7 clean at 11,500, wedge at 11,750; 10,400 soak-proven 120 s+. Pre-#541 firmware could never hit this: the static 19-input scan put EOS to sleep (#539) above 4.6 kHz, keeping its rate out of the fatal zone — dynamic CSS exposed it. (3) **Aggregate ADC-event-rate ceiling** (`ADC_EVENT_RATE_MAX_PER_S` = 60,000): each enabled T2 *user* channel fires a per-conversion data-ready ISR on top of the per-scan EOS; the combined event rate `f × (nUserT2 + 1)` is USB-fatal around ~66–72k events/s (11×T2 OBDiag=0 wedged at 6,000 Hz *admitted* = 72k/s, clean 5,500 × 60 s; 60k is 120 s-proven). Monitoring channels have no data-ready ISRs and don't count. Mechanism root-cause for both fatal limits: #545. Effective examples: 1×T2 OBDiag=0 → 10,400 (EOS-bound; was transport 15,000); 1×T1 OBDiag=1 → 10,400; 11×T2 OBDiag=0 → 5,000 (event-bound; was tick-budget 6,470); 16ch OBDiag=1 → ~4.2 kHz (busy-bound). OBDiag=1 visibly lowers `CONF:CAP` — honest physics, monitoring rides the same scan. T1-only OBDiag=0 arms no scan and is bound by none of the three (verified clean to 18 kHz NOCAP)
 
-**ISR flow per streaming timer tick:**
-1. Streaming timer ISR (`Streaming_Defer_Interrupt`) fires → notifies deferred task
-2. Deferred task calls `MC12b_TriggerConversion(MC12B_ADC_TYPE_ALL)`
-3. Type 1: individual `ChannelConversionStart` + CH3 phantom trigger → single `ADC_DATA3_Handler` reads all
-4. Type 2: `GlobalEdgeConversionStart` → MODULE7 scans → `ADC_EOS_Handler` → `MC12bADC_EosInterruptTask` reads all
-5. Results stored via `ADC_ReadADCSampleFromISR()` → `BoardData_Set(BOARDDATA_AIN_LATEST)`
+**Flow per streaming timer tick:**
+1. TMR5 match hardware-triggers Type 1 conversions + the MODULE7 scan (when armed); the timer ISR (`Streaming_Defer_Interrupt`) notifies the deferred task
+2. Deferred task builds the sample: T1 via ARDY-gated direct `ADCDATAx` reads; T2 from `BOARDDATA_AIN_LATEST` (written by the T2 data-ready ISRs)
+3. EOS fires at full-scan completion → `MC12bADC_EosInterruptTask` reads monitoring channels (OBDiag=1 sessions and idle)
+4. Software-trigger path (`MC12b_TriggerConversion`) remains for idle polling and non-HW-trigger modes
 
 **Key files:**
-- `config/default/interrupts.c` — `ADC_DATA3_Handler` (Type 1 batch), `ADC_EOS_Handler` (Type 2)
-- `HAL/ADC/MC12bADC.c` — `MC12b_TriggerConversion`, `MC12b_WriteStateAll` (batch interrupt setup)
-- `HAL/ADC.c` — `MC12bADC_EosInterruptTask`, `ADC_ReadADCSampleFromISR`
+- `services/streaming.c` — deferred task T1 direct read, session CSS rebuild, scan-bound cap term
+- `HAL/ADC/MC12bADC.c` — `MC12b_ComputeScanList` / `MC12b_ApplyScanList` / `MC12b_ScanMaxFreq` / `MC12b_DrainType1Results`, `MC12b_TriggerConversion`, hardware-trigger config
+- `HAL/ADC.c` — `MC12bADC_EosInterruptTask` (monitoring + idle T1 reads)
+- `config/default/interrupts.c` — T2 per-channel data-ready handlers, `ADC_EOS_Handler`
 
 **Characterization results (O3, fullscale test pattern, NoCap benchmark mode):**
 

@@ -156,10 +156,13 @@ extern "C" {
      *     0 = EOS task skips monitoring-channel reads during streaming
      *         (SYST:INFo? rail values go stale with an age banner)
      *     1 = monitoring channels refresh every scan (default)
-     * NOTE (#537): the shared/MODULE7 scan itself runs whenever ANY public
-     * MC12b channel is enabled regardless of this setting — T2 user channels
-     * need it for their conversions and T1 results are read at EOS (#292).
-     * OBDiag=0 only gates the monitoring-channel reads, not the scan.
+     * NOTE (#541 D-B): this setting also determines whether the monitoring
+     * channels are INCLUDED in the session's shared-scan list (dynamic
+     * ADCCSS, built at stream start) — OBDiag=1 adds 7 scan slots, which
+     * lowers the in-spec scan-rate bound and therefore the advertised
+     * frequency cap (visible in CONF:CAP). T1 results no longer depend on
+     * the scan at all (read directly via ARDY in the deferred task); a
+     * T1-only OBDiag=0 session arms no scan.
      * Rejected while streaming is active (returns EXECUTION_ERROR).
      */
     scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context);
@@ -171,8 +174,11 @@ extern "C" {
      *   CONFigure:ADC:SAMC:DEDicated?          — current value
      *   CONFigure:ADC:SAMC:SHARed <0-1023>     — sample time for MODULE7
      *   CONFigure:ADC:SAMC:SHARed?             — current value
-     * Actual acquisition time = (SAMC+2) ADC clocks. ADC clock = SYSCLK / (2*(ADCDIV+1))
-     * which with ADCDIV=1 gives 50 MHz, so each clock is 20 ns.
+     * Actual acquisition time = (SAMC+2) TAD. At the boot clock config the
+     * shared-module TAD7 is 100 ns: TCLK = 10 ns (PBCLK3 100 MHz), TQ =
+     * (CONCLKDIV+1)*TCLK = 50 ns, TAD = 2*ADCDIV*TQ (DS60001320H Reg
+     * 28-2/28-3; silicon-verified — docs/ADC_HW_SEMANTICS.md). Boot SAMC is
+     * 100 for BOTH dedicated and shared (ADCCON2 = 0x00642001 -> SAMC=0x64).
      * Rejected while streaming is active (returns EXECUTION_ERROR).
      */
     scpi_result_t SCPI_ADCSamcDedicatedSet(scpi_t * context);
