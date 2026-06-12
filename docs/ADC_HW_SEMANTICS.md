@@ -311,15 +311,57 @@ model. **The published values and the silicon agree.**
 
 ### Generalized bound for firmware (Phase-2 requirement 3)
 
+> **SUPERSEDED in Phase 3 — the per-input-only form below is NOT safe.**
+> Phase-3 hardware validation (PR #543, 2026-06-12) showed it omits a
+> per-scan **fixed** overhead and places admitted rates exactly at the
+> boundary; see the corrected bound that follows.
+
+The Phase-2 proposal was:
+
 ```
-f_scan_max = 1 / ( N_active × (SAMC + 2 + 14) × TAD7 )
+f_scan_max = 1 / ( N_active × (SAMC + 2 + 14) × TAD7 )        [v1 — fatal]
 ```
 
-with N_active = enabled-T2 + (OBDiag ? monitoring_count : 0) once dynamic
-CSS lands (today N_active is pinned at 19), TAD7 = 100 ns from the clock
-registers, and 14 the measured conversion+handoff constant (covers the
-13-TAD datasheet figure plus handoff; conservative). All terms are
-runtime-known.
+**Phase-3 finding (E, 2026-06-12):** streaming 1×T1 OBDiag=1 at this
+formula's n=7 cap (12,315 Hz, monitoring-only scan) reproducibly **killed
+the USB peripheral within ~1 s** — device off the bus until PICkit reset,
+reproduced both WSL-side and Windows-native (rules out the usbipd
+artifact). Sustained mid-scan retriggering of a small dynamic scan list is
+catastrophically worse than the silent EOS death the 19-input boot scan
+exhibited in #539. Threshold bisect (3 s legs, NOCAP): clean ≤ 11,500 Hz
+(87.0 µs period), wedge at 11,750 Hz (85.1 µs) ⇒ T_busy(7) ∈ (85.1, 87.0] µs.
+
+Jointly solving that window with the Phase-1 n=19 anchors (timer→EOS =
+216 µs; 4,500 Hz = 222.2 µs period verified clean ⇒ T_busy(19) ∈
+[216, 222.2] µs) gives a consistent two-term model (both windows satisfied
+within 0.2 µs):
+
+```
+T_busy     = N_active × (SAMC + 2 + 14) × TAD7  +  ~5.5 µs (fixed, per scan)
+```
+
+(Corollary: the Phase-1 "4,500 Hz clean" data point sat ~0.1 µs from the
+true boundary — luck, not margin.)
+
+**Corrected bound as shipped (`MC12b_ScanMaxFreq`, PR #543):**
+
+```
+f_scan_max = 1 / ( 1.1 × ( N_active × (SAMC + 2 + 14) × TAD7 + 6 µs ) )
+```
+
+6 µs is the fixed term rounded conservatively; the 10% period margin keeps
+every admitted rate off the boundary. A purely multiplicative derate cannot
+substitute for the additive term — at n=1 it would still admit rates past
+the true ~58 kHz boundary. At SAMC=100: n=1 → 51,652 Hz (never binds);
+n=7 → 10,425; n=8 → 9,201; n=18 → 4,232. At-cap silicon verification:
+n=7 @ 10,425 Hz ran 66,694 ticks with 66,694 samples and zero
+drops/misses/EOS-overruns; Saleae shows EOS 1:1 with timer→EOS = 82.2 µs
+(n=7) and 208.6 µs vs 208.8 µs model (n=18, 0.1%). Anchors recorded in
+`daqifi-python-test-suite` `benchmarks/541_adc_read_path/SILICON_ANCHORS.md`.
+
+Open hazard: NOCAP/benchmark modes bypass this cap by design and can still
+drive a small scan list into the USB-fatal zone; the failure mechanism
+(interrupt storm vs hard fault) is unconfirmed pending an mdb post-mortem.
 
 ---
 
