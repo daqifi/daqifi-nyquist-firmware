@@ -365,13 +365,29 @@ void MC12b_RestoreIdleScanList(void) {
 }
 
 uint32_t MC12b_ScanMaxFreq(uint32_t nActive) {
-    // #541 D-C: max in-spec shared-scan trigger rate.  Retriggering the
-    // scan while in progress is documented-undefined (FRM §22.3.2) — the
-    // #539 mechanism — so the streaming tick rate must satisfy
-    //   f <= 1 / ( N_active x (SAMC + 2 + 14) x TAD7 )
+    // #541 D-C: max safe shared-scan trigger rate.  Retriggering the scan
+    // while in progress is documented-undefined (FRM §22.3.2) — the #539
+    // mechanism — so the streaming tick period must exceed the scan's
+    // true busy time with margin:
+    //
+    //   T_busy = N_active x (SAMC + 2 + 14) x TAD7  +  T_fixed(~5.5 us)
+    //   cap    = 1 / (T_busy x 1.1)
+    //
     // 2 = sample-time offset (acquisition = SAMC+2 TAD), 14 = measured
-    // conversion+handoff constant (13 TAD datasheet conversion + ~1 TAD
-    // scan handoff; silicon-verified within 2%, docs/ADC_HW_SEMANTICS.md).
+    // per-input conversion+handoff (13 TAD datasheet conversion + ~1 TAD
+    // scan handoff).  T_fixed is a PER-SCAN constant the per-input model
+    // misses; both terms are pinned by two silicon anchors (2026-06-12,
+    // SAMC=100): n=7 scan wedges the device at 11750 Hz (85.1 us period)
+    // and is clean at 11500 (87.0 us) -> T_busy(7) in (85.1, 87.0]; n=19
+    // boot scan measured timer->EOS = 216 us and verified clean at
+    // 4500 Hz (222.2 us) -> T_busy(19) in [216, 222.2].  Solving both:
+    // per-input ~= (SAMC+16) TAD, T_fixed ~= 5.5 us.  We use 6 us + a
+    // 10% period margin so no admitted rate sits at the boundary —
+    // OPERATING AT THE BOUNDARY IS NOT A SOFT FAILURE: sustained mid-scan
+    // retriggering at n=7 killed the USB peripheral outright (device off
+    // the bus until PICkit reset), unlike the silent EOS death #539 saw
+    // with the 19-input scan.
+    //
     // All terms read live so SAMC/divider changes are honored:
     //   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK  (DS60001320H
     //   Reg 28-2/28-3 — note the EF datasheet deviates from the FRM on
@@ -383,9 +399,9 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive) {
     if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
     uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
     uint32_t tadNs     = 2u * adcdiv * (conclkdiv + 1u) * 10u;
-    uint64_t scanNs    = (uint64_t)nActive * (samc + 16u) * tadNs;
-    if (scanNs == 0u) return 0xFFFFFFFFu;
-    uint32_t hz = (uint32_t)(1000000000ULL / scanNs);
+    uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
+    uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
+    uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);
     return (hz == 0u) ? 1u : hz;
 }
 
