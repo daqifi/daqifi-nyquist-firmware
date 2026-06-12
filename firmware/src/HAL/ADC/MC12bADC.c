@@ -405,6 +405,22 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive) {
     uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
     uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
     uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);
+    // EOS-RATE limit (v3, 2026-06-12): independent of scan length, the
+    // end-of-scan interrupt/task machinery is USB-FATAL when driven
+    // sustained above ~11.5-12 kHz.  Silicon anchors: an n=1 scan
+    // (in-spec — T_busy ~17 us << 83 us period, mid-scan retrigger
+    // impossible) wedged the USB peripheral at 12,000 Hz on the plain
+    // ADMITTED path, clean at 10,000 x 60 s; the n=7 scan was clean at
+    // 11,500 x 3 s and wedged at 11,750.  Soak-proven: 10,425 x 120 s
+    // (twice, plus the full at-cap matrix <= 10,425).  This is also why
+    // pre-#541 firmware never hit it: the static 19-input scan went
+    // out-of-spec above ~4.6 kHz and EOS simply DIED (#539), so the EOS
+    // rate could never reach the fatal zone — the dynamic scan list
+    // unlocked in-spec high-rate scans and exposed the limit.  10400 sits
+    // just under 11,500-clean / 1.1 and at-or-below every endurance-
+    // proven EOS rate.  Storm-vs-starvation mechanism unconfirmed: #545.
+    #define ADC_EOS_RATE_MAX_HZ 10400u
+    if (hz > ADC_EOS_RATE_MAX_HZ) hz = ADC_EOS_RATE_MAX_HZ;
     return (hz == 0u) ? 1u : hz;
 }
 
