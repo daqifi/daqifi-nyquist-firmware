@@ -405,3 +405,23 @@ runtime** (verified: no ADCCSS writes outside `plib_adchs.c`). Consequences:
 5. **Comment hygiene** (Phase 3): fix the 50 MHz/20 ns TAD claims listed
    above; update CLAUDE.md's "ADC Architecture & ISR Design" section
    (still documents the pre-#292 topology).
+
+### Phase-3 addendum 2 (E, 2026-06-12) — aggregate ADC-event-rate ceiling (D-C v4)
+
+A third independent fatal limit, found by continuing the ceiling probes
+after the EOS-rate fix: each enabled T2 USER channel fires a per-conversion
+data-ready ISR on top of the per-scan EOS, and the combined event rate
+`f × (nUserT2 + 1)` is USB-fatal around ~66–72k events/s. Anchors: 11×T2
+OBDiag=0 wedged at 6,000 Hz on the plain ADMITTED path (72k events/s; its
+cap was the 6,470 tick-budget value) and at 6,750 NOCAP (81k/s); clean at
+5,500 × 60 s (66k/s); 60k/s is 120 s-endurance-proven (the 16-channel
+at-cap cell). Neither prior bound catches it (EOS only 6 kHz; scan 10%
+under busy). Fixed: `ADC_EVENT_RATE_MAX_PER_S = 60,000` clamp,
+`MC12b_ScanMaxFreq(nActive, nUserT2)` (firmware `582ee9a3`); the new
+5,000 cap validated (reject `-222` at 5,001 + 120 s admitted soak).
+Monitoring channels fire no data-ready ISRs and do not count — which is
+why the n=1/n=7 wedges needed the separate EOS-rate limit.
+
+The cap's scan gate is therefore: `min(busy-bound, 10,400 EOS-rate,
+60,000/(nUserT2+1))`. All three are silicon-anchored; the storm-vs-
+starvation mechanism behind the two fatal limits is #545.
