@@ -191,18 +191,47 @@ during a scan **is** defined — it pre-empts the scan sequence at the next
 input boundary (§22.3.1/Figure 22-8, pages 22-63/64). Only *scan retrigger*
 is undefined.
 
-## D5 — Class 1 (dedicated) retrigger during conversion — PENDING
+## D5 — Class 1 (dedicated) trigger semantics — RESOLVED
 
-§22.3 (page 22-61) defines Class 1 trigger action as "ends sampling and starts
-conversion", with the module reverting to sampling on completion. Behavior of
-a trigger arriving mid-conversion not yet located in the FRM — to be resolved
-before Phase 2 sign-off. (At streaming rates, tick period ≫ dedicated
-conversion time, so exposure is low; still must be cited.)
+**V (FRM §22.3, page 22-61):** "Each Class 1 input has a unique trigger …
+and upon arrival of the trigger, ends sampling and starts conversion. Upon
+completion of conversion, the ADC module reverts back to sampling mode.
+**When a Class 1 input is enabled and is not being converted, it is always
+sampled.**"
 
-## D6 — Errata sweep — PENDING
+- A trigger arriving mid-conversion is not explicitly defined, but the
+  exposure is structurally nil in our envelope: dedicated conversion ≈
+  13 × TAD_ded = 13 × 100 ns ≈ **1.3 µs**, while the minimum tick period at
+  the 16 kHz ISR ceiling is 62.5 µs — a Class-1 retrigger-during-conversion
+  cannot occur during streaming.
+- **Design-relevant corollary (V):** because Class 1 inputs sample
+  continuously between conversions, **T1 settling time = the full
+  inter-trigger gap (≥ 61 µs at max rate), not the SAMC window.** The
+  ~10 kΩ source-impedance constraint therefore binds the *scanned*
+  (T2/monitoring) inputs — whose sampling window is exactly
+  (SAMC+2)·TAD7 — far more than T1.
+- ADCCON1 STRGLVL = 0 (boot): scan trigger is **positive-edge sensitive**
+  ("only a single scan trigger will be generated, which will complete the
+  scan of all selected analog inputs") — consistent with the D4 model.
 
-DS80000663 Rev R to be re-swept specifically for ADC scan/EOS/data-ready
-items. (The CLAUDE.md errata table lists only #39 VREF for ADC.)
+## D6 — Errata sweep (DS80000663R) — RESOLVED
+
+All ADC-module errata, swept against our usage:
+
+| # | Erratum | Revs | Our exposure |
+|---|---|---|---|
+| 11 | Multiple digital filters mis-capture when sources ready simultaneously | A1/A3 | None today (no filters); **constrains #332** (one filter at a time on early revs) |
+| 12 | Level trigger won't burst in Debug mode | A1/A3 | None — edge triggers only (STRGLVL=0, TMR5 edge) |
+| 13 | Differential mode DNL +3 at code 3072 | all | None — single-ended |
+| 14 | VDD < 2.5 V: only one ADC core usable | all | None — 3.3 V rail |
+| 15 | **Turbo mode not functional** | all | **Closes the Turbo-mode option for Phase 2** (combining two dedicated cores for 2× rate is dead silicon) |
+| 18 | **Temperature sensor does not function** (workaround: none) | all | **Our monitoring scan includes AN44 (ADC_CHANNEL_TEMP)** — that slot reads a nonfunctional sensor. Follow-up: stop surfacing temp as a valid reading, and drop AN44 from the scan list when dynamic CSS lands (recovers ~11.5 µs of every scan) |
+| 39 | VREF− current when external ref used | all | Known, tracked in CLAUDE.md errata table |
+
+**Headline for #539/#541: no erratum touches scan retrigger, EOS, or
+per-input ARDY** — the #539 failure is not a silicon bug; it is the
+documented-undefined retrigger territory (D4), and candidate A's ARDY
+mechanism has no errata against it.
 
 ---
 
