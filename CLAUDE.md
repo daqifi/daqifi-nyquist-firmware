@@ -91,7 +91,7 @@ FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
 
 ### Programming with PICkit 4 (ipecmd)
 
-Preferred wrapper: `bash ~/.claude/skills/flash/flash.sh [--build]` — builds (optional), flashes, reattaches usbipd, verifies `/dev/ttyACM0`. Direct invocation:
+Preferred wrapper: `bash ~/.claude/skills/flash/flash.sh [--build]` — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). Direct invocation:
 ```bash
 "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
   -TPPK4 -P32MZ2048EFM144 -M -F"C:\\...\\daqifi.X.production.hex" -OL
