@@ -25,10 +25,9 @@ If a previous build failed, `rm -rf build dist` first.
 
 **⚠️ Makefiles are gitignored** (`nbproject/Makefile-*.mk` are generated from `configurations.xml`), so a fresh clone has none — run the regen below (or open the project once in MPLAB X) before the first `make`. Likewise after checking out a commit that adds/removes source files: the stale on-disk makefiles fail with `No rule to make target '../src/.../<file>.c'`. Regenerate from Windows (the Linux-side `prjMakefilesGenerator` often fails with "Device pack missing"):
 ```bash
-# from the repo root (wslpath derives the Windows path wherever the repo lives)
-powershell.exe -Command "cd '$(wslpath -w firmware/daqifi.X)'; & 'C:\Program Files\Microchip\MPLABX\v6.30\mplab_platform\bin\prjMakefilesGenerator.bat' -v ."
+powershell.exe -Command 'cd "C:\Users\User\Documents\GitHub\daqifi-nyquist-firmware\firmware\daqifi.X"; & "C:\Program Files\Microchip\MPLABX\v6.30\mplab_platform\bin\prjMakefilesGenerator.bat" -v .'
 ```
-This is critical when bisecting — every checkout needs fresh makefiles.
+(The repo path is this station's; the inner command also runs directly in Windows PowerShell. On a different checkout, substitute the path — or from WSL at the repo root, derive it with `cd '$(wslpath -w firmware/daqifi.X)'`.) This is critical when bisecting — every checkout needs fresh makefiles.
 
 ### Compiler Optimization Level
 
@@ -96,8 +95,9 @@ Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--
 ```bash
 "/mnt/c/Program Files/Microchip/MPLABX/v6.30/mplab_platform/mplab_ipe/ipecmd.exe" \
   -TPPK4 -P32MZ2048EFM144 -M \
-  -F"$(wslpath -w firmware/daqifi.X/dist/default/production/daqifi.X.production.hex)" -OL
+  -F"C:\\Users\\User\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\\dist\\default\\production\\daqifi.X.production.hex" -OL
 ```
+(Station path shown — works pasted into Windows PowerShell/CMD too. From WSL on another checkout, derive it: `-F"$(wslpath -w firmware/daqifi.X/dist/default/production/daqifi.X.production.hex)"`.)
 Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific PICkit when several are attached; **every flash wipes NVM** (WiFi/calibration settings — restore via the scpi skill's `batch.sh` + the station-local `sta_setup.batch` recipe); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
 
 ### Bench tool inventory (this dev station)
