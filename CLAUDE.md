@@ -23,7 +23,7 @@ cd firmware/daqifi.X
 ```
 If a previous build failed, `rm -rf build dist` first.
 
-**⚠️ Makefiles are gitignored** (`nbproject/Makefile-*.mk` are generated from `configurations.xml`). After checking out a commit that adds/removes source files, the stale on-disk makefiles fail with `No rule to make target '../src/.../<file>.c'`. Regenerate from Windows (the Linux-side `prjMakefilesGenerator` often fails with "Device pack missing"):
+**⚠️ Makefiles are gitignored** (`nbproject/Makefile-*.mk` are generated from `configurations.xml`), so a fresh clone has none — run the regen below (or open the project once in MPLAB X) before the first `make`. Likewise after checking out a commit that adds/removes source files: the stale on-disk makefiles fail with `No rule to make target '../src/.../<file>.c'`. Regenerate from Windows (the Linux-side `prjMakefilesGenerator` often fails with "Device pack missing"):
 ```bash
 # from the repo root (wslpath derives the Windows path wherever the repo lives)
 powershell.exe -Command "cd '$(wslpath -w firmware/daqifi.X)'; & 'C:\Program Files\Microchip\MPLABX\v6.30\mplab_platform\bin\prjMakefilesGenerator.bat' -v ."
@@ -121,7 +121,7 @@ Before any SCPI work:
 1. Map busid → COM on the Windows side, and list WSL ports:
    ```bash
    powershell.exe -Command "usbipd list" | grep "04d8:f794"   # 2-4=COM3 primary, 2-3=COM9 secondary
-   ls -la /dev/ttyACM*
+   ls -la /dev/ttyACM* 2>/dev/null || echo "no ttyACM nodes — attach may still be in progress"
    ```
 2. Query each port's serial and match it to the inventory table above:
    ```bash
