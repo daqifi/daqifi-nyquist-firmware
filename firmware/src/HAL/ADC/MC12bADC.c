@@ -310,6 +310,9 @@ uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
         if (ch->Config.MC12b.ChannelType == 1) continue;  // dedicated, never scanned
         uint32_t an = ch->Config.MC12b.ChannelId;          // CSS bit == AN number
         if (an == ADC_AN_TEMP_SENSOR) continue;            // erratum 18
+        if (an >= 64u) continue;  // defensive: beyond ADCCSS1/2 bit range
+                                  // (hardware max is AN44; a corrupted config
+                                  // entry must not shift out of range)
         bool isMonitoring = (ch->Config.MC12b.IsPublic != 1);
         if (isMonitoring) {
             if (!includeMonitoring) continue;
