@@ -1302,6 +1302,23 @@ bool Streaming_TasksAreQuiescent(void) {
  * Stops the streaming timer
  */
 /**
+ * Shared SD drop bookkeeping (#534 DRY): counter pair + QUES bit under one
+ * critical section so a concurrent SYST:STR:STATS? snapshot sees them
+ * coherently (steady never > total).  Callers log their own context-
+ * specific LOG_E_SESSION line.
+ */
+static void Streaming_CountSdDrop(size_t packetSize) {
+    bool pastGrace = Streaming_PastStartupGrace();
+    taskENTER_CRITICAL();
+    gStreamStats.sdDroppedBytes += packetSize;
+    if (pastGrace) {
+        gStreamStats.sdDroppedBytesSteady += packetSize;
+    }
+    gQuesBits |= QUES_BIT_SD_OVERFLOW;
+    taskEXIT_CRITICAL();
+}
+
+/**
  * #533: drain both per-session sample queues (AIN + DIO) so no sample
  * captured by one session can be encoded into the next.  Called from
  * Streaming_Stop (the session is over — discard) and Streaming_Start
@@ -2102,24 +2119,51 @@ void streaming_Task(void) {
                 //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
             }
             if (hasSD && gSdFileWasReady) {
-                size_t wr = Streaming_WriteWithRetry(
-                    sd_card_manager_WriteToBuffer, buffer, packetSize);
-                if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
-                    /* True 10 s interface-dead timeout (pass-5 Qodo
-                     * refinement): bump drop counters + QUES bit + log. */
-                    bool pastGrace = Streaming_PastStartupGrace();
-                    taskENTER_CRITICAL();
-                    gStreamStats.sdDroppedBytes += packetSize;
-                    if (pastGrace) {
-                        gStreamStats.sdDroppedBytesSteady += packetSize;
+                if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_SD) {
+                    /* #534: multi-output — a stalled SD must never block the
+                     * (healthy) USB path through this shared encoder loop.
+                     * Gate is "not solo-SD" rather than "== UsbAndSd" because
+                     * the SD-logging override above (SD enabled while
+                     * ActiveInterface == USB) also produces concurrent
+                     * USB+SD writes without the UsbAndSd enum value (Qodo
+                     * pass-1 catch on PR #536).
+                     * Saturation is already shed by the per-iteration
+                     * hasSD = (sdSize >= 128) gate above (HW-verified: USB
+                     * holds 100% of target at 2x SD over-rate while SD
+                     * drops).  The remaining hazard is a HARD-STALLED card
+                     * with the circular buffer stuck at partial fill —
+                     * free space >= 128 but nothing draining — where
+                     * WriteWithRetry would block 10 s PER PACKET and
+                     * throttle USB to ~0.  No-retry write-if-space-else-
+                     * drop+count, mirroring the USB side of this branch.
+                     * Solo-SD keeps the blocking backpressure below
+                     * (#520: pool absorbs the burst; single drop point). */
+                    if (sd_card_manager_WriteToBuffer((const char*)buffer,
+                                                      packetSize) != packetSize) {
+                        /* Skip the bookkeeping when streaming was stopped
+                         * mid-iteration — mirrors WriteWithRetry's STOPPED
+                         * path: a non-write during the stop transition (file
+                         * closing, buffers being torn down) is not an SD
+                         * fault and must not pollute the session stats. */
+                        if (pRunTimeStreamConf->IsEnabled) {
+                            Streaming_CountSdDrop(packetSize);
+                            LOG_E_SESSION(LOG_SESSION_SD_DROP,
+                                "Streaming: SD buffer overflow (multi-output no-retry)");
+                        }
                     }
-                    gQuesBits |= QUES_BIT_SD_OVERFLOW;
-                    taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
+                } else {
+                    size_t wr = Streaming_WriteWithRetry(
+                        sd_card_manager_WriteToBuffer, buffer, packetSize);
+                    if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
+                        /* True 10 s interface-dead timeout (pass-5 Qodo
+                         * refinement): bump drop counters + QUES bit + log. */
+                        Streaming_CountSdDrop(packetSize);
+                        LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
+                    }
+                    /* else: wr == packetSize (success) or
+                     *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
+                     *       intentional, no bookkeeping). */
                 }
-                /* else: wr == packetSize (success) or
-                 *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
-                 *       intentional, no bookkeeping). */
             }
 
             // Track packets discarded due to output buffer backpressure.
@@ -2138,15 +2182,15 @@ void streaming_Task(void) {
                 bool sdWritten = hasSD && gSdFileWasReady;
 
                 if (sdExpected && !sdWritten) {
-                    bool pastGrace = Streaming_PastStartupGrace();
-                    taskENTER_CRITICAL();
-                    gStreamStats.sdDroppedBytes += packetSize;
-                    if (pastGrace) {
-                        gStreamStats.sdDroppedBytesSteady += packetSize;
+                    // Gate on IsEnabled, mirroring the #484 encoder-failure
+                    // guard: if Streaming_Stop ran between this iteration's
+                    // top-of-loop check and here, the SD file is mid-close
+                    // and the failed write is teardown, not data loss the
+                    // operator should see counted (Qodo #536).
+                    if (pRunTimeStreamConf->IsEnabled) {
+                        Streaming_CountSdDrop(packetSize);
+                        LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
                     }
-                    gQuesBits |= QUES_BIT_SD_OVERFLOW;
-                    taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD output skipped (buffer full or file not ready)");
                 }
             }
             DioProbe_PulseEnd(9);
