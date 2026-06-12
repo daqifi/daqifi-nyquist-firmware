@@ -1224,7 +1224,7 @@ Three sanctioned paths, in order of preference:
    ```
    Never for streaming or multi-step tests: its `-x` timeout is idle-based (a stream never goes idle → hangs forever); killing it mid-stream corrupts WSL serial state (recovery: `pkill -9 picocom; fuser -k /dev/ttyACM0; rm -f /var/lock/LCK..ttyACM0`, else physical replug); rapid open/close toggles DTR/RTS and can crash the device's CDC (Windows Code 43 → reprogram). Never use `2>&1` with picocom. Allow long drain time between large-response commands (`LISt?`, `LOG?`, `SD:GET` — `sleep 5+`) or the next query captures stale data.
 
-For ad-hoc multi-command bench scripts, write to **`/tmp/temp.sh`** (the filename is allowlisted in `.claude/settings.local.json`), `chmod +x`, `dos2unix` if needed.
+For ad-hoc multi-command bench scripts, write to **`/tmp/temp.sh`** (the filename is allowlisted in `.claude/settings.local.json` — the untracked per-machine Claude Code override; add the entry there if your station doesn't have it), `chmod +x`, `dos2unix` if needed.
 
 **Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. it's `SSIDSTR?`, `NETTYPE?`, `ADDR?` — not `SSID:STR`/`MODE`/`IP`).
 
