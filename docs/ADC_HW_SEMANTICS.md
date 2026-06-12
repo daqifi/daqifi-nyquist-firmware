@@ -60,14 +60,36 @@ list; linear to <0.5%).
   (SAMC+2)·TAD sample + conversion, and the fit's intercept/slope ratio
   gives **conversion + handoff ≈ 14 TAD** — the documented 13-TAD 12-bit
   conversion plus ~1 TAD (E confirming V).
-- **Absolute-scale ambiguity (open, D5/D6)**: measured slope = N_inputs ×
-  TAD = 1.865 µs. CSS bit count N=19 ⇒ TAD ≈ 98 ns, which matches neither
-  clock decode (TAD = 16·TCLK = 80 ns @ TCLK=SYSCLK or 160 ns @ PBCLK3);
-  N=23 with TAD = 80 ns fits identically. Either the effective scan covers
-  4 slots beyond the CSS count or ADCSEL=0's device-specific source differs
-  from assumption — resolve from the DS60001320 ADCSEL table. The two
-  parameterizations are observationally equivalent and the firmware bound
-  computes from the calibrated product either way.
+- **Absolute-scale ambiguity: RESOLVED (V, DS60001320H).** The EF *device
+  datasheet deviates from the FRM* on the ADC clock bit semantics — its own
+  revision history flags it ("The bit value definitions for the ADCSEL<1:0>
+  and CONCLKDIV<5:0> bits in the ADCCON3 register were updated", Appendix A
+  vs Rev G). Per **Register 28-3**:
+  - `ADCSEL=00` → **TCLK = PBCLK3 = 100 MHz** (not SYSCLK)
+  - `CONCLKDIV`: **TQ = (N+1)·TCLK** (`000010 = 3·TCLK`!) — not the FRM's
+    2N·TCLK. CONCLKDIV=4 ⇒ TQ = 5 × 10 ns = 50 ns
+  - `ADCDIV` (Register 28-2): `0000001 = 2·TQ = TAD7` ⇒ **TAD7 = 100 ns**
+
+  With **N = 19** (CSS bit set verified equal to the board map: 11 T2 user +
+  8 monitoring, no extras — the STRIG-outside-CSS hypothesis is refuted):
+
+  | Quantity | Datasheet prediction | Measured | Δ |
+  |---|---:|---:|---:|
+  | Slope (per SAMC count) | 19 × 100 ns = 1.900 µs | 1.865 µs | −1.8% |
+  | T_scan @ SAMC=100 | 19×(115)×100 ns = 218.5 µs | 216.2 µs | −1.1% |
+  | T_scan @ SAMC=10 | 19×(25)×100 ns = 47.5 µs | 48.3 µs | +1.7% |
+
+  **Reconciled within 2%** — the residual is the conversion-constant
+  (13 vs ~14 TAD) and slope noise. The earlier "98 ns / 23-slot" puzzle was
+  entirely an FRM-vs-datasheet decode error: a live demonstration of why
+  this audit verifies against the DEVICE datasheet, not just the FRM (the
+  FRM's own page 22-2 note says it "may not apply to all PIC32 devices").
+
+  **Stale firmware comments to fix in Phase 3 (N-class corrections):**
+  `MC12bADC.c:376` ("With ADCDIV=1, ADC_clk=50 MHz so one clock = 20 ns" —
+  actual TAD7 = 100 ns), the same claim in `SCPIADC.h`'s SAMC doc and
+  CLAUDE.md's SAMC section, and issue #328's body (which decoded boot
+  shared SAMC as 1; it is 100, SCPI-verified).
 - **SAMC is a major design lever (E)**: at SAMC=10 the scan completes in
   48 µs ⇒ in-spec scan ceiling ≈ **20.7 kHz** (vs ≈4.6 kHz at the current
   SAMC=100), and EOS ran 1:1 at 4000 Hz. Phase-2 option: shorter shared
@@ -204,3 +226,46 @@ items. (The CLAUDE.md errata table lists only #39 VREF for ADC.)
    cannot legally convert once per tick via the scan. Honest T2 caps must
    respect the scan bound, or T2-as-Class-2-individually-triggered
    (defined pre-emption semantics, §22.3.1) must be evaluated in Phase 2.
+
+---
+
+## Static CSS finding (E+V, 2026-06-11) — the scan list never changes
+
+`ADCCSS1/2` are written once by the Harmony boot init and **never modified at
+runtime** (verified: no ADCCSS writes outside `plib_adchs.c`). Consequences:
+
+1. **Scanning one T2 channel scans all 19 inputs.** Channel enable/disable
+   only changes which results the firmware reads; the mux walks the full
+   CSS list every scan trigger.
+2. **OBDiag=0 does not shrink the scan** — monitoring inputs still convert
+   every scan; only their reads are skipped in the EOS task.
+3. This is why the #539 cliff is channel-count-independent (1/3/5×T1
+   identical): T_scan is a constant 216 µs regardless of configuration.
+
+## Phase-2 implementation requirements (established by Phase 0/1)
+
+1. **Decouple T1 result reads from EOS** — per-input ARDY data-ready
+   semantics (D3, documented): candidate A (deferred-task polling) or B
+   (CH3 batch data-ready ISR). T1 must deliver a fresh sample per tick
+   independent of the scan.
+2. **Dynamic CSS**: rebuild the scan list at stream start from
+   (enabled T2 channels) ∪ (monitoring if OBDiag=1), via the documented
+   `ADCCON3.TRGSUSP` → `UPDRDY` SFR-update mechanism (Register 28-x /
+   FRM p.22-15). Scan cost then scales with what is actually used
+   (1×T2 OBDiag=0 ⇒ ~1 input ⇒ T_scan ≈ 11.5 µs ⇒ ~87 kHz in-spec ceiling).
+3. **Computed scan-rate bound** folded into the cap equation:
+   `f_scan_max = 1 / (N_active × (SAMC + 2 + 14) × 100 ns)` — every term
+   runtime-known. The bound must gate the **hardware STRGSRC path**, not
+   just the legacy software-divider branch (`ChannelScanFreqDiv` mechanism
+   still exists but only governs the software trigger).
+4. **SAMC stays at 100 pending analog characterization.** The signal path
+   has ~10 kΩ series source impedance — the S&H cap charges through it, so
+   shortening SAMC trades directly into AC amplitude error (gain error
+   rising with frequency). #328 (runtime SAMC, merged) was motivated by
+   exactly this trade. Any SAMC change in either direction requires
+   measured amplitude-error data first; do NOT bank the "SAMC=10 ⇒ 20 kHz
+   ceiling" lever until that characterization exists. (With dynamic CSS,
+   most configs get their headroom from N_active anyway.)
+5. **Comment hygiene** (Phase 3): fix the 50 MHz/20 ns TAD claims listed
+   above; update CLAUDE.md's "ADC Architecture & ISR Design" section
+   (still documents the pre-#292 topology).
