@@ -24,7 +24,6 @@ The Python API and test suite have been moved to separate repositories:
 
 For firmware-specific documentation, see the main repository files:
 - `CLAUDE.md` - Development guide for working with the firmware
-- `FIRMWARE_ANALYSIS_REPORT.md` - Technical analysis and optimization roadmap
 - `README.md` - Project overview
 
 ## Contributing
