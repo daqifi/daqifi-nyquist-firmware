@@ -175,6 +175,7 @@ extern "C" {
         LOG_ONCE_WIFI_DISCONNECT_DISABLE, /**< wifi_manager.c: forced BSS disconnect on !isEnabled (#467) */
         LOG_ONCE_WIFI_DISCONNECT_STA2AP,  /**< wifi_manager.c: forced BSS disconnect on STA->AP switch (#467) */
         LOG_ONCE_WIFI_DISCONNECT_STA2STA, /**< wifi_manager.c: forced BSS disconnect on STA reconfigure (#467) */
+        LOG_ONCE_USB_WRITE_STUCK,         /**< UsbCdc.c: write DMA stalled (host not reading) — bail without blocking, drop until drained (#525) */
         /* Add new entries above this line */
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;
