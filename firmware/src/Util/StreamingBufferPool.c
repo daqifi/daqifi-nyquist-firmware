@@ -12,6 +12,13 @@
 #define STATIC_POOL_SIZE (194U * 1024U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
+/* The overcommit fallback below carves these four minimums and expects the
+ * remainder to host the sample pool — so the minimums must comfortably fit.
+ * Compile-time guard complements the runtime "too small for minimums" check. */
+_Static_assert(STREAMING_USB_ACTIVE_MIN + STREAMING_WIFI_MIN +
+               ENCODER_BUFFER_MIN + STREAMING_SD_CIRCULAR_MIN < STATIC_POOL_SIZE,
+               "fallback minimum buffers must fit the streaming pool");
+
 static uint8_t* gPool = NULL;
 static uint32_t gPoolSize = 0;
 
@@ -60,10 +67,19 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
     if (encoderSize < ENCODER_BUFFER_MIN) encoderSize = ENCODER_BUFFER_MIN;
     if (sdCircularSize < STREAMING_SD_CIRCULAR_MIN) sdCircularSize = STREAMING_SD_CIRCULAR_MIN;
 
-    /* Ensure buffers fit in pool — fall back to minimums if needed */
+    /* Ensure buffers fit in pool — fall back to minimums if needed.
+     * #549: when USB was requested active (size above its inactive floor),
+     * keep it at STREAMING_USB_ACTIVE_MIN rather than STREAMING_USB_MIN so a
+     * degraded partition never advertises/validates 4096 yet hands back a
+     * 2048-byte active USB ring. This only triggers on a manual buffer
+     * over-config (auto-balance is sized to fit); LOG_E it so the silent
+     * override is diagnosable. */
     uint32_t bufTotal = usbSize + wifiSize + encoderSize + sdCircularSize;
     if (bufTotal > gPoolSize) {
-        usbSize = STREAMING_USB_MIN;
+        LOG_E("Streaming buffers overcommit pool (%u > %u) — falling back to minimums",
+              (unsigned)bufTotal, (unsigned)gPoolSize);
+        usbSize = (usbSize > STREAMING_USB_MIN) ? STREAMING_USB_ACTIVE_MIN
+                                                : STREAMING_USB_MIN;
         wifiSize = STREAMING_WIFI_MIN;
         encoderSize = ENCODER_BUFFER_MIN;
         sdCircularSize = STREAMING_SD_CIRCULAR_MIN;
