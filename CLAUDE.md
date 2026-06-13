@@ -929,9 +929,9 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 |---------|----:|----:|------------|
 | `SD:BUFfer` | 4096 | 65536 | Must be multiple of 512 (sector alignment). SD circular buffer is in streaming pool. |
 | `WIFI:BUFfer` | 1400 | 65536 | Min = SOCKET_BUFFER_MAX_LENGTH |
-| `USB:BUFfer` | 2048 | 65536 | Min = STREAMING_USB_MIN |
-| `ENCoder:BUFfer` | 1024 | 65536 | Encoder staging buffer. 8KB optimal for USB, 16KB helps SD throughput. |
-| `SAMPle:POOL` | 0 or 100 | 10000 (`MAX_AIN_SAMPLE_COUNT`) | 0 = maximize with remaining pool space. `CONF:CAP` JSON still advertises max 2000 — stale firmware-side constant, the setter accepts 10000. |
+| `USB:BUFfer` | 4096 | 65536 | Min = `USBCDC_WBUFFER_SIZE` (the circular buffer must hold one full USB CDC write). Distinct from `STREAMING_USB_MIN` (2048), which is only the partition's inactive-interface floor. |
+| `ENCoder:BUFfer` | 0 or 1024 | 65536 | Encoder staging buffer (0 = auto). 8KB optimal for USB, 16KB helps SD throughput. |
+| `SAMPle:POOL` | 0 or 100 | 10000 (`MAX_AIN_SAMPLE_COUNT`) | 0 = maximize with remaining pool space. Achievable count is partition-limited (channel-count dependent); the setter range is the architectural max. |
 
 **`SYST:MEM:FREE?` Response Fields:**
 

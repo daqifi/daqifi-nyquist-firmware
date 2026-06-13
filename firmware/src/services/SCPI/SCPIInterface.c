@@ -3930,7 +3930,7 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
 //   SD buffer:     4096 - 65536 bytes, must be multiple of 512 (sector alignment)
 //   WiFi buffer:   1400 - 65536 bytes (min = SOCKET_BUFFER_MAX_LENGTH)
 //   USB buffer:    4096 - 65536 bytes (min = USBCDC_WBUFFER_SIZE)
-//   Sample pool:   0 (auto = DEFAULT_AIN_SAMPLE_COUNT), or 100 - 2000
+//   Sample pool:   0 (auto = DEFAULT_AIN_SAMPLE_COUNT), or 100 - MAX_AIN_SAMPLE_COUNT (10000)
 // =============================================================================
 
 /**
@@ -3998,8 +3998,8 @@ static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
     if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
-    // Min = USBCDC_WBUFFER_SIZE (4096), max = 65536
-    if (val < 4096 || val > 65536) {
+    // Min = USBCDC_WBUFFER_SIZE (circular buffer must hold one full USB CDC write), max = 65536
+    if (val < (int32_t)USBCDC_WBUFFER_SIZE || val > 65536) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
@@ -4018,8 +4018,8 @@ static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
     if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
-    // 0 = auto (DEFAULT_AIN_SAMPLE_COUNT), 100-2000 = explicit
-    if (val != 0 && (val < 100 || val > (int32_t)MAX_AIN_SAMPLE_COUNT)) {
+    // 0 = auto (DEFAULT_AIN_SAMPLE_COUNT), MIN..MAX_AIN_SAMPLE_COUNT (100-10000) = explicit
+    if (val != 0 && (val < (int32_t)MIN_AIN_SAMPLE_COUNT || val > (int32_t)MAX_AIN_SAMPLE_COUNT)) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
@@ -4794,15 +4794,26 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
 
     scpi_printf(context, "\"rate_validation\":\"error\",");
 
+    /* Numeric bounds are emitted from the same macros the setters validate
+       against (USBCDC_WBUFFER_SIZE, ENCODER_BUFFER_MIN,
+       MIN/MAX_AIN_SAMPLE_COUNT) so the advertised min/max can't drift from
+       the enforced min/max. (The encoder + sample-pool setters additionally
+       accept 0 as an auto sentinel — outside the emitted min/max by design,
+       documented as a convention in the wiki schema + CLAUDE.md.) wifi/sd
+       mins and the 65536 caps are literals in their setters too — keep them
+       literal here to match. */
     scpi_printf(context,
         "\"buffer_ranges_bytes\":{"
-        "\"usb\":{\"min\":2048,\"max\":65536,\"default\":16384},"
-        "\"wifi\":{\"min\":1400,\"max\":65536,\"default\":14000},");
+        "\"usb\":{\"min\":%u,\"max\":65536,\"default\":16384},"
+        "\"wifi\":{\"min\":1400,\"max\":65536,\"default\":14000},",
+        (unsigned)USBCDC_WBUFFER_SIZE);
 
     scpi_printf(context,
         "\"sd\":{\"min\":4096,\"max\":65536,\"default\":32768},"
-        "\"encoder\":{\"min\":1024,\"max\":65536,\"default\":8192},"
-        "\"sample_pool\":{\"min\":100,\"max\":2000,\"default\":1100}},");
+        "\"encoder\":{\"min\":%u,\"max\":65536,\"default\":8192},"
+        "\"sample_pool\":{\"min\":%u,\"max\":%u,\"default\":1100}},",
+        (unsigned)ENCODER_BUFFER_MIN, (unsigned)MIN_AIN_SAMPLE_COUNT,
+        (unsigned)MAX_AIN_SAMPLE_COUNT);
 
     scpi_printf(context,
         "\"test_patterns\":[0,1,2,3,4,5,6],\"extensions\":{}},");
