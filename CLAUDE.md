@@ -27,7 +27,7 @@ If a previous build failed, `rm -rf build dist` first.
 ```bash
 powershell.exe -Command 'cd "C:\Users\User\Documents\GitHub\daqifi-nyquist-firmware\firmware\daqifi.X"; & "C:\Program Files\Microchip\MPLABX\v6.30\mplab_platform\bin\prjMakefilesGenerator.bat" -v .'
 ```
-(The repo path is this station's; the inner command also runs directly in Windows PowerShell. On a different checkout, substitute the path — or from WSL at the repo root, derive it with `cd '$(wslpath -w firmware/daqifi.X)'`.) This is critical when bisecting — every checkout needs fresh makefiles.
+(The repo path is this station's; the inner command also runs directly in Windows PowerShell. On a different checkout, substitute the path — or from WSL at the repo root, derive it with `cd "$(wslpath -w firmware/daqifi.X)"`.) This is critical when bisecting — every checkout needs fresh makefiles.
 
 ### Compiler Optimization Level
 
