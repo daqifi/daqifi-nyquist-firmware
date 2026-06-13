@@ -3930,7 +3930,7 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
 //   SD buffer:     4096 - 65536 bytes, must be multiple of 512 (sector alignment)
 //   WiFi buffer:   1400 - 65536 bytes (min = SOCKET_BUFFER_MAX_LENGTH)
 //   USB buffer:    4096 - 65536 bytes (min = USBCDC_WBUFFER_SIZE)
-//   Sample pool:   0 (auto = DEFAULT_AIN_SAMPLE_COUNT), or 100 - 2000
+//   Sample pool:   0 (auto = DEFAULT_AIN_SAMPLE_COUNT), or 100 - MAX_AIN_SAMPLE_COUNT (10000)
 // =============================================================================
 
 /**
@@ -4018,7 +4018,7 @@ static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
     if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
-    // 0 = auto (DEFAULT_AIN_SAMPLE_COUNT), 100-2000 = explicit
+    // 0 = auto (DEFAULT_AIN_SAMPLE_COUNT), 100-MAX_AIN_SAMPLE_COUNT (10000) = explicit
     if (val != 0 && (val < 100 || val > (int32_t)MAX_AIN_SAMPLE_COUNT)) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -4796,13 +4796,13 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
 
     scpi_printf(context,
         "\"buffer_ranges_bytes\":{"
-        "\"usb\":{\"min\":2048,\"max\":65536,\"default\":16384},"
+        "\"usb\":{\"min\":4096,\"max\":65536,\"default\":16384},"
         "\"wifi\":{\"min\":1400,\"max\":65536,\"default\":14000},");
 
     scpi_printf(context,
         "\"sd\":{\"min\":4096,\"max\":65536,\"default\":32768},"
         "\"encoder\":{\"min\":1024,\"max\":65536,\"default\":8192},"
-        "\"sample_pool\":{\"min\":100,\"max\":2000,\"default\":1100}},");
+        "\"sample_pool\":{\"min\":100,\"max\":10000,\"default\":1100}},");
 
     scpi_printf(context,
         "\"test_patterns\":[0,1,2,3,4,5,6],\"extensions\":{}},");
