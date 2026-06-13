@@ -29,6 +29,12 @@ extern "C" {
 
 /** Minimum buffer sizes (from module constraints) */
 #define STREAMING_USB_MIN           2048   /* Min for SCPI responses when not streaming */
+/* USB circular floor when USB is the ACTIVE streaming interface — the setter
+ * floor and the CONF:CAP-advertised usb.min. The overcommit fallback uses this
+ * (not STREAMING_USB_MIN) so a degraded partition can't drop active USB below
+ * the advertised minimum (#549). Must equal USBCDC_WBUFFER_SIZE; a
+ * _Static_assert in streaming.c ties the two so they can't drift. */
+#define STREAMING_USB_ACTIVE_MIN    4096
 #define STREAMING_WIFI_MIN          1400   /* SOCKET_BUFFER_MAX_LENGTH (one TCP packet) */
 #define ENCODER_BUFFER_MIN          1024   /* Must fit at least one encoded sample set */
 #define ENCODER_BUFFER_DEFAULT      8192   /* Optimal for USB; SD benefits from 16384 */

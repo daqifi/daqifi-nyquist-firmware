@@ -60,10 +60,19 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
     if (encoderSize < ENCODER_BUFFER_MIN) encoderSize = ENCODER_BUFFER_MIN;
     if (sdCircularSize < STREAMING_SD_CIRCULAR_MIN) sdCircularSize = STREAMING_SD_CIRCULAR_MIN;
 
-    /* Ensure buffers fit in pool — fall back to minimums if needed */
+    /* Ensure buffers fit in pool — fall back to minimums if needed.
+     * #549: when USB was requested active (size above its inactive floor),
+     * keep it at STREAMING_USB_ACTIVE_MIN rather than STREAMING_USB_MIN so a
+     * degraded partition never advertises/validates 4096 yet hands back a
+     * 2048-byte active USB ring. This only triggers on a manual buffer
+     * over-config (auto-balance is sized to fit); LOG_E it so the silent
+     * override is diagnosable. */
     uint32_t bufTotal = usbSize + wifiSize + encoderSize + sdCircularSize;
     if (bufTotal > gPoolSize) {
-        usbSize = STREAMING_USB_MIN;
+        LOG_E("Streaming buffers overcommit pool (%u > %u) — falling back to minimums",
+              (unsigned)bufTotal, (unsigned)gPoolSize);
+        usbSize = (usbSize > STREAMING_USB_MIN) ? STREAMING_USB_ACTIVE_MIN
+                                                : STREAMING_USB_MIN;
         wifiSize = STREAMING_WIFI_MIN;
         encoderSize = ENCODER_BUFFER_MIN;
         sdCircularSize = STREAMING_SD_CIRCULAR_MIN;

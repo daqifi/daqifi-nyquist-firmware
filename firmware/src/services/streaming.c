@@ -329,6 +329,14 @@ static const uint16_t kSineLutQ16[SINE_PERIOD] = {
 _Static_assert((sizeof(kSineLutQ16) / sizeof(kSineLutQ16[0])) == SINE_PERIOD,
                "kSineLutQ16 must have exactly SINE_PERIOD entries");
 
+/* #549: the pool's active-USB overcommit floor must equal one USB CDC DMA
+ * write, so a degraded partition never hands back an active USB ring below
+ * the setter floor / CONF:CAP-advertised usb.min. StreamingBufferPool.c can't
+ * include the heavyweight UsbCdc.h, so the value is mirrored there and tied
+ * here (this TU sees both). */
+_Static_assert(STREAMING_USB_ACTIVE_MIN == USBCDC_WBUFFER_SIZE,
+               "#549: STREAMING_USB_ACTIVE_MIN must track USBCDC_WBUFFER_SIZE");
+
 /**
  * Generate a synthetic ADC value for test pattern streaming.
  * @param pattern    Pattern type (1-6, see switch cases)
