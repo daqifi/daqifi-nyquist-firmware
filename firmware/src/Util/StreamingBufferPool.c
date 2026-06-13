@@ -12,6 +12,13 @@
 #define STATIC_POOL_SIZE (194U * 1024U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
+/* The overcommit fallback below carves these four minimums and expects the
+ * remainder to host the sample pool — so the minimums must comfortably fit.
+ * Compile-time guard complements the runtime "too small for minimums" check. */
+_Static_assert(STREAMING_USB_ACTIVE_MIN + STREAMING_WIFI_MIN +
+               ENCODER_BUFFER_MIN + STREAMING_SD_CIRCULAR_MIN < STATIC_POOL_SIZE,
+               "fallback minimum buffers must fit the streaming pool");
+
 static uint8_t* gPool = NULL;
 static uint32_t gPoolSize = 0;
 
