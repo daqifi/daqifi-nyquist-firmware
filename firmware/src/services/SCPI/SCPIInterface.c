@@ -4794,9 +4794,12 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
 
     scpi_printf(context, "\"rate_validation\":\"error\",");
 
-    /* Bounds are emitted from the same macros the setters validate against
-       (USBCDC_WBUFFER_SIZE, ENCODER_BUFFER_MIN, MIN/MAX_AIN_SAMPLE_COUNT) so
-       the advertised range can never drift from the enforced range. wifi/sd
+    /* Numeric bounds are emitted from the same macros the setters validate
+       against (USBCDC_WBUFFER_SIZE, ENCODER_BUFFER_MIN,
+       MIN/MAX_AIN_SAMPLE_COUNT) so the advertised min/max can't drift from
+       the enforced min/max. (The encoder + sample-pool setters additionally
+       accept 0 as an auto sentinel — outside the emitted min/max by design,
+       documented as a convention in the wiki schema + CLAUDE.md.) wifi/sd
        mins and the 65536 caps are literals in their setters too — keep them
        literal here to match. */
     scpi_printf(context,
