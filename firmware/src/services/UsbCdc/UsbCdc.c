@@ -531,15 +531,16 @@ static bool UsbCdc_WaitForWrite(UsbCdcData_t* client) {
         return false;
     }
 
-    // #525: if a prior wait already detected a host-read stall, don't burn the
-    // full timeout again on every subsequent attempt — bail immediately. The
-    // latch is cleared in UsbCdc_FinalizeWrite once the in-flight transfer
-    // completes (host resumed), at which point writeTransferHandle is INVALID
-    // and we fall through to proceed normally. (If the ISR cleared the latch
-    // between this check and the handle read, the loop below sees INVALID and
-    // returns true — same correct outcome.)
+    // #525: if a prior wait already detected a host-read stall, bail immediately
+    // (drop) instead of burning the full timeout again. We do NOT read
+    // writeTransferHandle here: the stalled in-flight transfer completes on its
+    // own when the host resumes draining, firing the WRITE_COMPLETE ISR →
+    // UsbCdc_FinalizeWrite, which clears this latch — independent of whether we
+    // attempt a write. So the next call after the host resumes sees writeStalled
+    // == false, skips this branch, and proceeds normally. (volatile writeStalled
+    // is the single completion signal; no non-volatile handle poll needed.)
     if (client->writeStalled) {
-        return (client->writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID);
+        return false;
     }
 
     TickType_t start = xTaskGetTickCount();
@@ -962,9 +963,9 @@ bool UsbCdc_FlushWriteBuffer(void) {
     // All waits (both initial DMA and each new write DMA) share the deadline,
     // so the function is fully bounded even if the host disconnects mid-flush.
     // #525: already-latched host stall — don't burn the 500ms flush deadline
-    // again. The latch clears in UsbCdc_FinalizeWrite once the host resumes.
-    if (client->writeStalled &&
-        client->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+    // again. The latch clears in UsbCdc_FinalizeWrite (WRITE_COMPLETE ISR) once
+    // the host resumes, independent of this call — no handle poll needed.
+    if (client->writeStalled) {
         return false;
     }
 
