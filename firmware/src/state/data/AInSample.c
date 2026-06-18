@@ -427,14 +427,19 @@ bool AInSampleList_PeekFront(AInPublicSampleList_t** ppData)
 
 size_t AInSampleList_Size()
 {
+    // #525: read cap, head, and tail in ONE critical section so the three form a
+    // coherent snapshot. Reading head and tail outside the lock (the prior shape)
+    // could tear between the two — the producer ISR advances head, or a pop
+    // advances tail, in the gap — yielding a transiently wrong count. (Qodo
+    // /improve, importance 5.)
     taskENTER_CRITICAL();
     uint32_t cap = ringCapacity;
+    uint32_t head = ringHead;
+    uint32_t tail = ringTail;
     taskEXIT_CRITICAL();
     if (cap == 0u) {
         return 0;
     }
-    uint32_t head = ringHead;
-    uint32_t tail = ringTail;
     return (head >= tail) ? (head - tail) : (head + cap - tail);
 }
 
@@ -536,6 +541,12 @@ void AInSampleList_FreeToPool(AInPublicSampleList_t* pSample) {
  * (the observed vTaskSwitchContext TLBL exception). Readable via mdb. */
 volatile uint32_t gPoolBadHead = 0;
 
+/* #525 diagnostic+guard: counts times the ISR ring producer saw an out-of-range
+ * ringHead (i.e. a clobbered ring index). Mirrors gPoolBadHead — bails instead
+ * of doing the wild ringSlots[head] store that corruption would otherwise turn
+ * into an arbitrary-address write. Expected 0; readable via mdb. */
+volatile uint32_t gRingBadIndex = 0;
+
 AInPublicSampleList_t* AInSampleList_AllocateFromPoolFromISR(void) {
     AInPublicSampleList_t* result = NULL;
     if (poolActive && samplePoolBase != NULL && poolElementStride > 0) {
@@ -600,6 +611,15 @@ bool AInSampleList_PushBackFromISR(const AInPublicSampleList_t* pData) {
         return false;
     }
     uint32_t head = ringHead;              // producer-owned; plain read is fine
+    // #525 defensive guard: head is always maintained in [0, ringCapacity), so
+    // an out-of-range value means ringHead was clobbered by memory corruption
+    // (the #525 failure class). Bail instead of doing a wild ringSlots[head]
+    // store to an arbitrary address. Mirrors the gPoolBadHead guard. (Qodo
+    // /improve, importance 5.)
+    if (head >= ringCapacity) {
+        gRingBadIndex++;
+        return false;
+    }
     uint32_t next = head + 1u;
     if (next >= ringCapacity) next = 0u;
     if (next == ringTail) {                // ring full — consumer can't keep up
