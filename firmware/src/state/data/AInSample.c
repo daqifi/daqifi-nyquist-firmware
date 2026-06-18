@@ -40,12 +40,19 @@
 //   - ringHead is written ONLY by the producer; ringTail ONLY by the consumer.
 //     A 32-bit aligned store/load is atomic on PIC32MZ, so neither index can be
 //     observed torn.
-//   - The producer writes ringSlots[head] BEFORE publishing ringHead; `volatile`
-//     forbids the compiler from reordering those two stores, and an in-order
-//     core retires them in program order.  Producer and consumer are the SAME
-//     core, so the consumer (which gates on the volatile ringHead) always sees a
-//     committed slot before it sees the head advance — no cache/barrier issue.
-//   - Symmetrically the consumer reads ringSlots[tail] before publishing ringTail.
+//   - The producer writes ringSlots[head] BEFORE publishing ringHead. `volatile`
+//     orders volatile-vs-volatile accesses but does NOT order a non-volatile
+//     store (the slot) relative to a volatile one, so a compiler barrier
+//     (__asm__ __volatile__("" ::: "memory")) is placed between them in
+//     PushBackFromISR. With the reorder forbidden, the in-order core retires the
+//     two stores in program order; producer and consumer are the SAME core, so
+//     the consumer (which gates on the volatile ringHead) always sees a committed
+//     slot before it sees the head advance — no cache issue. (The earlier claim
+//     that `volatile` alone sufficed was wrong — Qodo /improve, #525.)
+//   - Symmetrically the consumer reads ringSlots[tail] before publishing ringTail;
+//     PopFront/PeekFront do that read inside the taskENTER_CRITICAL that captures
+//     the base, which both bars a concurrent-Destroy use-after-free and provides
+//     the compiler barrier ordering the slot read before the ringTail publish.
 //   - Capacity convention: the ring holds (ringCapacity - 1) usable entries; it
 //     is FULL when advancing head would collide with tail, EMPTY when head==tail.
 //     ringCapacity is therefore allocated as (usable slot count + 1).
@@ -369,25 +376,31 @@ bool AInSampleList_PopFront( AInPublicSampleList_t** ppData)
     if (ppData == NULL) {
         return false;
     }
-    // Capture the ring base + capacity under a critical section to get a coherent
-    // non-NULL snapshot vs a concurrent Destroy.  The consumer is single (encoder
-    // task) so ringTail is owned here; ringHead is read as a volatile snapshot.
+    // #525: do the entire pop — base/cap snapshot, empty check, slot read, and
+    // ringTail publish — inside ONE critical section. Capturing only the base
+    // and then dereferencing it after releasing the lock (the prior shape) left
+    // a window where a concurrent AInSampleList_Destroy() could vPortFree the
+    // ring array between the capture and the ring[tail] read → use-after-free.
+    // It also gives the compiler barrier that keeps the slot read ordered before
+    // the ringTail publish (volatile alone wouldn't). The consumer is single
+    // (encoder task) so ringTail is owned here; ringHead is a volatile snapshot.
+    // (Qodo /improve, #525.)
+    bool ok = false;
     taskENTER_CRITICAL();
     AInPublicSampleList_t** ring = ringSlots;
     uint32_t cap = ringCapacity;
+    if (ring != NULL && cap != 0u) {
+        uint32_t tail = ringTail;
+        if (tail != ringHead) {            // not empty
+            *ppData = ring[tail];
+            uint32_t next = tail + 1u;
+            if (next >= cap) next = 0u;
+            ringTail = next;               // publish after slot read
+            ok = true;
+        }
+    }
     taskEXIT_CRITICAL();
-    if (ring == NULL || cap == 0u) {
-        return false;
-    }
-    uint32_t tail = ringTail;
-    if (tail == ringHead) {
-        return false;                      // empty
-    }
-    *ppData = ring[tail];
-    uint32_t next = tail + 1u;
-    if (next >= cap) next = 0u;
-    ringTail = next;                        // publish after slot read
-    return true;
+    return ok;
 }
 
 bool AInSampleList_PeekFront(AInPublicSampleList_t** ppData)
@@ -395,18 +408,21 @@ bool AInSampleList_PeekFront(AInPublicSampleList_t** ppData)
     if (ppData == NULL) {
         return false;
     }
+    // #525: same single-critical-section pattern as PopFront — the ring[tail]
+    // read must happen under the lock that captured the base, else a concurrent
+    // Destroy() vPortFree could turn it into a use-after-free.
+    bool ok = false;
     taskENTER_CRITICAL();
     AInPublicSampleList_t** ring = ringSlots;
+    if (ring != NULL) {
+        uint32_t tail = ringTail;
+        if (tail != ringHead) {            // not empty
+            *ppData = ring[tail];          // peek — do NOT advance ringTail
+            ok = true;
+        }
+    }
     taskEXIT_CRITICAL();
-    if (ring == NULL) {
-        return false;
-    }
-    uint32_t tail = ringTail;
-    if (tail == ringHead) {
-        return false;                      // empty
-    }
-    *ppData = ring[tail];                   // peek — do NOT advance ringTail
-    return true;
+    return ok;
 }
 
 size_t AInSampleList_Size()
@@ -590,6 +606,14 @@ bool AInSampleList_PushBackFromISR(const AInPublicSampleList_t* pData) {
         return false;
     }
     ringSlots[head] = (AInPublicSampleList_t*)pData;
+    // #525: compiler barrier — C only orders volatile-vs-volatile accesses, so
+    // without this the compiler is permitted to sink the non-volatile slot store
+    // above PAST the volatile ringHead publish below. A consumer that then
+    // observes the advanced head would read an unwritten (garbage) slot. The
+    // barrier forbids the reorder; the in-order core retires the two stores in
+    // program order, so the consumer never sees head advance before the slot
+    // commits. (volatile alone is NOT sufficient here — Qodo /improve, #525.)
+    __asm__ __volatile__ ("" ::: "memory");
     ringHead = next;                       // publish AFTER the slot store
     return true;
 }
