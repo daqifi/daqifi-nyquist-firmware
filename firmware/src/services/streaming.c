@@ -1880,7 +1880,15 @@ void Streaming_IncrEosOverruns(uint32_t missed) {
     gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 9)
     // #525: defer the log to streaming_Task. Logging from the EOS task here
     // (vsnprintf) overflowed its small stack into the heap encoder TCB → wedge.
+    // This runs in the EOS task (pri 9, IPL 0); the streaming-timer ISR (IPL 3)
+    // also RMWs gIsrLogFlags (|=). Without protection the ISR could preempt this
+    // load/OR/store and have its bit clobbered by our store, silently dropping a
+    // deferred one-shot log. taskENTER_CRITICAL raises IPL to configMAX_SYSCALL
+    // (4) >= 3, masking the timer ISR for the RMW. The ISR-context setters stay
+    // plain |= — that ISR can't preempt itself and isn't preempted by this task.
+    taskENTER_CRITICAL();
     gIsrLogFlags |= ISRLOG_EOS_OVERRUN;
+    taskEXIT_CRITICAL();
 }
 
 #if PB_PROFILE_COUNTERS
