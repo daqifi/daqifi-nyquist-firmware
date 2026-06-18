@@ -282,11 +282,15 @@ void DIO_StreamingTrigger(DIOSample* latest, DIOSampleList* streamingSamples) {
             streamingSample.Mask = 0xFFFF;
             streamingSample.Values = latest->Values;
             streamingSample.Timestamp = latest->Timestamp;
-            if (!DIOSampleList_PushBack(
+            // #525: DIO_StreamingTrigger now runs in the streaming-timer ISR
+            // (sample acquisition moved in-ISR), so use the ISR-safe push.
+            if (!DIOSampleList_PushBackFromISR(
                     streamingSamples,
                     (const DIOSample*) &streamingSample)) {
+                // #525: this runs in the streaming-timer ISR — emit no LOG here
+                // (LOG in ISR routes through xQueueSendFromISR + yield-from-ISR).
+                // Streaming_IncrDioDropped sets a deferred flag the encoder logs.
                 Streaming_IncrDioDropped();
-                LOG_E_SESSION(LOG_SESSION_DIO_DROP, "DIO: sample queue full");
             }
         }
     }

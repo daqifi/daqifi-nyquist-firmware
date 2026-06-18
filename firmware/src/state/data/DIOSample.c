@@ -54,6 +54,26 @@ bool DIOSampleList_PushBack(DIOSampleList* list, const DIOSample* data){
     return ( queueResult == pdTRUE ) ? true : false; 
 }
 
+/* ISR producer (#525): the streaming-timer ISR now captures DIO samples
+ * directly (DIO_StreamingTrigger moved into ISR context). xQueueSendFromISR
+ * is the ISR-safe send; the consumer (encoder) polls DIOQueue with a 0-tick
+ * timeout and is never blocked on it, so this never wakes a task. */
+bool DIOSampleList_PushBackFromISR(DIOSampleList* list, const DIOSample* data){
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    BaseType_t queueResult;
+
+    if( data == NULL ){
+        return false;
+    }
+
+    (void)list;
+
+    queueResult = xQueueSendFromISR( DIOQueue, data, &xHigherPriorityTaskWoken );
+    (void)xHigherPriorityTaskWoken;  /* consumer polls; never blocked on DIOQueue */
+
+    return ( queueResult == pdTRUE ) ? true : false;
+}
+
 bool DIOSampleList_PopFront(DIOSampleList* list, DIOSample* data)
 {
     BaseType_t queueResult;

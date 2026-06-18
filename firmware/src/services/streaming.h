@@ -59,6 +59,32 @@ extern "C" {
 #define STREAMING_TICK_BUDGET       110000
 #define STREAMING_TICK_OVERHEAD     6
 
+// #525 INTERIM wedge-margin cap (2026-06-18). A residual hard wedge remains under
+// a total host-stall at high streaming rates: mdb shows the streaming_Task TCB
+// clobbered by a wild write of stack-region content (0xA5 fill + a stale
+// float-printf frame) -> its ready-list item is destroyed -> scheduler walks the
+// garbage pointer -> ExcCode 2 TLBL -> CDC-dead wedge (reflash required). Observed
+// post-(ring rearchitecture): 8500 Hz host-stall SURVIVED, 10000/12000 WEDGED.
+// #525 RESOLVED: the host-stall wedge was an EOS-task stack overflow.
+// MC12bADC_EosInterruptTask (pri 9, #230-shrunk 160-word stack) called
+// LOG_E_SESSION→vsnprintf on its result-overrun path; under a USB host stall
+// the EOS overruns spiked, vsnprintf's >>160-word frame overflowed into the
+// adjacent heap encoder TCB, NULLing its ready-list link → scheduler TLBL →
+// CDC-dead wedge (stochastic, one-shot LOG gated). Fixed by removing that
+// log call (overrun is now counted and logged from streaming_Task's own
+// stack via gIsrLogFlags) + a 160→256-word EOS stack bump. The interim
+// STREAMING_WEDGE_MARGIN_MAX_HZ 6000 cap is removed — 12 kHz NOCAP host-stall
+// re-validated 5/5 clean on the production fix (2026-06-18).
+
+// #525 NOTE: the former STREAMING_NOTIFY_WEDGE_MAX_HZ 6000 ceiling was removed
+// by the software block-acquisition rearchitecture.  The wedge was the
+// per-tick ISR->task notify-give racing the deferred task's ulTaskNotifyTake
+// reblock window (FreeRTOS_tasks.c:8261).  That path no longer exists: the
+// streaming-timer ISR now reads the ADC and enqueues the sample itself, and
+// the encoder POLLS the queue (no ISR-context task wake on the hot path), so
+// the race is structurally unreachable for T1 and T2 alike.  Streaming rate is
+// bounded again only by ADC/ISR, transport, and scan limits.
+
 // Per-interface, per-format wire/storage transport caps live in
 // Streaming_TransportMaxFreq below (#524), which superseded the earlier
 // WiFi-only budget term (#520/#522) and generalized it to all interfaces.

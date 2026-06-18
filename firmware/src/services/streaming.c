@@ -103,14 +103,45 @@ static StreamingStats gStreamStats = {0};
 // this inside taskENTER_CRITICAL which blocks the timer ISR (priority 1).
 static volatile uint64_t gTimerISRCalls = 0;
 
+/* #525: gStreamBackPressure / gStreamThrottledDrops are gone.  They throttled
+ * the per-tick ISR->deferred-task notify-give during back-pressure to dodge the
+ * notify-give configASSERT wedge.  The software block-acquisition rearchitecture
+ * removed that notify entirely (the timer ISR now reads the ADC + enqueues the
+ * sample itself and the encoder polls), so there is no give to throttle and no
+ * race to dodge.  Back-pressure now propagates naturally: a full output ring
+ * blocks the polling encoder in Streaming_WriteWithRetry, the queue/pool fill
+ * upstream, and the ISR drops at the pool/queue (counted) — the #520 RAM-first
+ * drop policy, with the single drop point at the pool. */
+
+// gChannelScanFreqDivCount: divided-rate shared-scan tick counter.  Was a
+// deferred-task local that persisted across the task's while(1); now that the
+// acquisition runs once-per-call in the ISR it must be file-static to persist
+// across ticks.  Reset to 0 at each Streaming_Start.  Single writer (ISR).
+static uint32_t gChannelScanFreqDivCount = 0;
+
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
 // All reset in Streaming_ClearStats() via Logger_ResetSessionOneShots().
+
+// #525: deferred-from-ISR log flags.  The streaming-timer ISR
+// (Streaming_AcquireSampleISR) must make ZERO FreeRTOS calls — and LOG_E_SESSION
+// in ISR context routes through xQueueSendFromISR + portEND_SWITCHING_ISR (a
+// yield-from-ISR), the last kernel-touching path on the hot ISR.  Instead the
+// ISR just sets a bit here (plain store; the ISR is the sole setter and the
+// encoder snapshots+clears under taskENTER_CRITICAL, which masks this ISR), and
+// the encoder task emits the actual one-shot LOG_E_SESSION from TASK context.
+#define ISRLOG_POOL_EXHAUST   (1u << 0)
+#define ISRLOG_QUEUE_OVERFLOW (1u << 1)
+#define ISRLOG_T1_ARDY_MISS   (1u << 2)
+#define ISRLOG_DIO_DROP       (1u << 3)
+#define ISRLOG_EOS_OVERRUN    (1u << 4)
+static volatile uint32_t gIsrLogFlags = 0;
 
 // --- Windowed data flow health tracking ---
 // Forward declarations (defined after Streaming_ClearStats)
 static void Streaming_InitFlowWindow(uint64_t frequency);
 static void Streaming_UpdateFlowWindow(bool dropped);
+static void Streaming_DrainIsrLogFlags(void);
 // Double-buffer window: tracks sample attempts and drops over a sliding window
 // of N sample periods (where N scales with frequency). Loss percentage is
 // recomputed at each window rotation and drives QUES condition bits.
@@ -202,6 +233,14 @@ static inline bool Streaming_PastStartupGrace(void) {
         >= (TickType_t)(gLossGraceSec * configTICK_RATE_HZ);
 }
 
+// #525 ISR-context twin of the above.  The streaming-timer ISR is the sample
+// producer now, so its drop-accounting must read the tick from ISR context
+// (xTaskGetTickCountFromISR), not the task-context xTaskGetTickCount.
+static inline bool Streaming_PastStartupGraceISR(void) {
+    return (TickType_t)(xTaskGetTickCountFromISR() - gStreamStartTick)
+        >= (TickType_t)(gLossGraceSec * configTICK_RATE_HZ);
+}
+
 // SD protobuf metadata field tags for standalone metadata message
 static const NanopbFlagsArray fields_sd_metadata = {
     .Size = 6,
@@ -264,25 +303,27 @@ static tStreamingConfig *gpStreamingConfig;
 // volatile per #421 — re-entry guard; written and read in timer ISR.
 // Without volatile, -O3 may elide the read or hoist it out of the function.
 static volatile bool gInTimerHandler = false;
-static TaskHandle_t gStreamingInterruptHandle;
 static TaskHandle_t gStreamingTaskHandle;
 
-/* #486: cross-task quiescence flags.  Set inside each streaming task's
- * "critical region" — the span where it dereferences resources that
- * SCPI_StartStreaming re-partitions (encoder buffer, sample queue,
+/* #486 / #525: cross-task quiescence flag.  Set inside the encoder's
+ * "critical region" — the span where streaming_Task dereferences resources
+ * that SCPI_StartStreaming re-partitions (encoder buffer, sample queue,
  * sample pool, output circular buffers, coherent DMA buffers).
- * SCPI_StartStreaming polls Streaming_TasksAreQuiescent() after
- * Streaming_Stop and before the re-partition, with a bounded wait
- * + vTaskDelay(1) so the lower-priority streaming_Task (pri 6) and
- * higher-priority deferred ISR task (pri 9) can each finish their
- * iteration and clear the flag.
+ * SCPI_StartStreaming polls Streaming_TasksAreQuiescent() after Streaming_Stop
+ * and before the re-partition, with a bounded wait + vTaskDelay(1) so the
+ * encoder (pri 6) can finish its iteration and clear the flag.
+ *
+ * The former gDeferredTaskInCritical twin is gone with the deferred task
+ * (#525): the streaming-timer ISR is the only other resource toucher now, and
+ * it is quiescent by construction during re-partition — Streaming_Stop disarms
+ * the timer (TimerApi_Stop) before SCPI re-partitions, and an ISR at IPL 3
+ * cannot be mid-flight while the lower-IPL SCPI task runs the partition.
  *
  * uint32_t (not bool) — CLAUDE.md "Atomicity & Concurrency Rules":
  * 32-bit reads/writes are atomic on the PIC32MZ bus.  volatile keeps
  * the compiler from caching the value across loop iterations.
  * No RMW: writes are unconditional 0 or 1, no |= or &=. */
 static volatile uint32_t gStreamingTaskInCritical = 0;
-static volatile uint32_t gDeferredTaskInCritical = 0;
 
 // Sine wave period for test pattern 6: 256 samples per cycle.
 // Integer-only implementation via Q0.16 lookup table —
@@ -493,6 +534,14 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
         uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
         if (scanMax < maxFreq) maxFreq = scanMax;
     }
+
+    /* #525: the former notify-rate wedge ceiling (6000) is gone — the
+     * software block-acquisition rearchitecture removed the per-tick
+     * ISR->task notify-give that raced the deferred task's ulTaskNotifyTake
+     * reblock (FreeRTOS_tasks.c:8261).  The streaming-timer ISR now reads the
+     * ADC and enqueues the sample itself and the encoder polls, so there is no
+     * task wake on the hot path to race.  Rate is bounded only by ADC/ISR,
+     * transport, and scan limits above. */
     return maxFreq;
 }
 
@@ -514,15 +563,20 @@ uint32_t Streaming_ComputeMaxFreqForConfig(void) {
  * - Uses critical section for atomic sample copy (prevents torn reads)
  * - Triggers next ADC conversion immediately after sample collection
  */
-void _Streaming_Deferred_Interrupt_Task(void) {
-    /* No portTASK_USES_FLOATING_POINT() — this task is pure integer.
-     * sin() in test pattern 6 was replaced with a Q0.16 LUT. Keeping
-     * FPU registration off saves 32x 64-bit register save+restore on
-     * every context switch with another FPU-registered task (notably
-     * streaming_Task when CSV/JSON with VoltagePrecision>0 is active).
-     * Measured in Session 12 — P3 Tstd drops from 14 us back to ~6 us. */
-
-    TickType_t xBlockTime = portMAX_DELAY;
+/* #525: runs in the streaming-timer ISR (TIMER_5, pri 3) once per tick as the
+ * SOLE sample producer — replaces the former pri-9 deferred task whose per-tick
+ * ulTaskNotifyTake reblock was the notify-give configASSERT race site
+ * (FreeRTOS_tasks.c:8261).  The caller (Streaming_TimerHandler) has already
+ * checked IsEnabled and bumped gTimerISRCalls.  Free-list / queue access uses
+ * the *FromISR variants; stat counters are plain increments (this ISR is their
+ * single writer and cannot preempt itself — the snapshot reader masks it via
+ * taskENTER_CRITICAL).  No gDeferredTaskInCritical handshake: re-partition runs
+ * only while the timer is stopped, so this ISR can never see a torn-down pool.
+ *
+ * The two bare blocks below preserve the original nesting depth (was while{ }
+ * + if(IsEnabled){ }) so the body indentation and brace structure are
+ * unchanged — minimizing the diff on this timing-critical path. */
+static void Streaming_AcquireSampleISR(void) {
     uint8_t i = 0;
     tBoardData * pBoardData = BoardData_Get(
             BOARDDATA_ALL_DATA,
@@ -540,73 +594,37 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     AInPublicSampleList_t *pPublicSampleList=NULL;
     AInSample *pAiSample;
 
-    uint64_t ChannelScanFreqDivCount = 0;
-
-    while (1) {
-        ulTaskNotifyTake(pdFALSE, xBlockTime);
-        DioProbe_Toggle(2);  /* probe 2: deferred task wake rate */
-
-        if (pRunTimeStreamConf->IsEnabled) {
-            /* #486 — quiescence flag for cross-task sync against
-             * SCPI_StartStreaming re-partition.  Set BEFORE any deref
-             * of the sample pool / queue resources that re-partition
-             * tears down; the re-check below closes the TOCTOU between
-             * the IsEnabled gate above and the flag set.  Memory
-             * barrier prevents -O3 from hoisting subsequent non-volatile
-             * reads above the volatile flag store.
-             *
-             * Single-exit goto-cleanup pattern (Qodo pass-3 /improve):
-             * all pool-touching exit paths land at `pool_done` which
-             * unconditionally clears the flag.  The ADC trigger code
-             * below the label runs OUTSIDE the critical region — it
-             * only touches board-config statics and ADC peripheral
-             * SFRs, none of which re-partition tears down. */
-            gDeferredTaskInCritical = 1;
-            __asm__ __volatile__ ("" ::: "memory");
-            if (!pRunTimeStreamConf->IsEnabled) {
-                goto pool_done;
-            }
-            DioProbe_PulseStart(3);  /* probe 3: alloc + channel loop + queue push */
-            // Use object pool instead of heap allocation (eliminates vPortFree overhead)
-            // No heap check needed - pool uses pre-allocated static memory
-            pPublicSampleList = AInSampleList_AllocateFromPool();
+    {
+        {
+            DioProbe_PulseStart(3);  /* probe 3: in-ISR acquire + queue push */
+            // Object pool (static BSS) — O(1) free-list pop, ISR variant.
+            pPublicSampleList = AInSampleList_AllocateFromPoolFromISR();
             if(pPublicSampleList==NULL) {
                 // #499: split counter — this path = pool depth too shallow for
                 // the configured rate. Distinct from the PushBack-fail path
                 // below, which is "queue full / streaming_Task too slow."
-                // #483: Steady = post-startup-grace subset (the aggregate
-                // queueDroppedSamples stays for back-compat; per-sub-counter
-                // Steady variants intentionally not added — the existing
-                // aggregate Steady is sufficient for the session-end gating).
-                bool pastGrace = Streaming_PastStartupGrace();
-                taskENTER_CRITICAL();
+                // #525: this ISR is the single writer of these counters, so
+                // plain 32-bit increments are atomic on PIC32MZ (the snapshot
+                // reader masks this ISR via taskENTER_CRITICAL) — no critical
+                // section needed here.
+                // #483: Steady = post-startup-grace subset.
+                bool pastGrace = Streaming_PastStartupGraceISR();
                 gStreamStats.queueDroppedSamples++;
                 gStreamStats.poolExhaustedSamples++;
                 if (pastGrace) {
                     gStreamStats.queueDroppedSamplesSteady++;
                 }
-                taskEXIT_CRITICAL();
-                LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
+                gIsrLogFlags |= ISRLOG_POOL_EXHAUST;  // #525: log from task ctx
                 Streaming_UpdateFlowWindow(true);
-                // Still increment test pattern counter to stay in sync
+                // Still advance the test pattern counter to stay in sync.
                 if (gTestPattern != 0) {
-                    taskENTER_CRITICAL();
                     gTestPatternSampleCount++;
-                    taskEXIT_CRITICAL();
                 }
                 DioProbe_PulseEnd(3);
-                /* Pool exhausted: skip ADC trigger AND xTaskNotifyGive
-                 * by continuing to next loop iteration.  Goto-cleanup
-                 * is NOT used here because the pool_done label lands
-                 * before the ADC trigger code which the pool-exhausted
-                 * path MUST skip (preserves pre-PR behavior; the
-                 * original `continue` skipped both ADC trigger and
-                 * encoder-task notification).  Exit barrier
-                 * (pass-4 Qodo importance-9) pairs with the entry
-                 * barrier — see pool_done label below. */
-                __asm__ __volatile__ ("" ::: "memory");
-                gDeferredTaskInCritical = 0;
-                continue;
+                /* Pool exhausted: skip the ADC trigger + DIO capture this tick
+                 * (preserves the pre-#525 `continue` behavior — under hardware
+                 * triggering the next conversion is armed automatically). */
+                return;
             }
 
             // Fill packed sample using channel mapping (#177).
@@ -634,9 +652,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
                 uint32_t adcMax;
-                // #368: this task is registered as pure-integer (see comment
-                // at top of _Streaming_Deferred_Interrupt_Task — no
-                // portTASK_USES_FLOATING_POINT()).  The historical bug:
+                // #368: this code runs in the streaming-timer ISR (#525), which
+                // must not touch the FPU at all — even more strictly than the
+                // former pure-integer deferred task.  The historical bug:
                 // Resolution used to be `double`, so the cast in
                 // `adcMax = (uint32_t)Resolution - 1;` emitted FPU
                 // instructions that picked up register-contamination
@@ -715,17 +733,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         // Single-writer 32-bit increment — no critical
                         // section needed (deferred task is the only writer).
                         gStreamStats.t1ArdyMisses++;
-                        LOG_E_SESSION(LOG_SESSION_T1_ARDY_MISS,
-                                "Streaming: T1 ARDY miss (result not ready at read)");
+                        gIsrLogFlags |= ISRLOG_T1_ARDY_MISS;  // #525: log from task ctx
                     }
                 } else {
                     // Normal: read real ADC data from BoardData
                     pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, cfgIdx);
                     if (pAiSample != NULL) {
-                        taskENTER_CRITICAL();
+                        // #525: no critical section — this ISR (pri 3) masks
+                        // the pri-1 T2 data-ready ISRs that write LATEST, so
+                        // the two-field read is coherent by interrupt level.
                         uint32_t ts = pAiSample->Timestamp;
                         uint32_t val = pAiSample->Value;
-                        taskEXIT_CRITICAL();
 
                         // #533: Timestamp==0 marks the LATEST slot invalid —
                         // Streaming_Start zeroes it so the previous session's
@@ -760,45 +778,30 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             if (pPublicSampleList->Timestamp == 0) {
                 pPublicSampleList->Timestamp = trigStamp;
             }
-            if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
+            if(!AInSampleList_PushBackFromISR(pPublicSampleList)){//failed pushing to Q
                 // #499: split counter — this path = FreeRTOS queue full,
                 // i.e. streaming_Task can't drain fast enough. Distinct from
                 // the AllocateFromPool-NULL path above (pool depth shallow).
+                // #525: ISR is the single writer of these counters → plain
+                // increments (the snapshot reader masks this ISR via critical).
                 // #483: Steady = post-startup-grace subset of the aggregate.
-                bool pastGrace = Streaming_PastStartupGrace();
-                taskENTER_CRITICAL();
+                bool pastGrace = Streaming_PastStartupGraceISR();
                 gStreamStats.queueDroppedSamples++;
                 gStreamStats.queueOverflowSamples++;
                 if (pastGrace) {
                     gStreamStats.queueDroppedSamplesSteady++;
                 }
-                taskEXIT_CRITICAL();
-                LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
-                AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
+                gIsrLogFlags |= ISRLOG_QUEUE_OVERFLOW;  // #525: log from task ctx
+                AInSampleList_FreeToPoolFromISR(pPublicSampleList);  // Return to pool
                 Streaming_UpdateFlowWindow(true);
             } else {
-                taskENTER_CRITICAL();
-                gStreamStats.totalSamplesStreamed++;
-                taskEXIT_CRITICAL();
+                gStreamStats.totalSamplesStreamed++;  // 64-bit; ISR sole writer
                 Streaming_UpdateFlowWindow(false);
             }
             DioProbe_PulseEnd(3);
-pool_done:
-            /* #486 — exit pool-touching region.  ADC trigger code below
-             * does not touch pool / queue / encoder buffer (only board-
-             * config statics + ADC peripheral SFRs), so it's safe
-             * outside the quiescence window.  The IsEnabled-false
-             * re-check `goto`s here to clear the flag without skipping
-             * the ADC trigger — at this point streaming is being
-             * stopped, but the ADC trigger is idempotent.
-             *
-             * Exit barrier (pass-4 Qodo importance-9): pairs with the
-             * entry barrier at line 476.  Without it, the compiler at
-             * -O3 could sink the final non-volatile pool/queue access
-             * past the volatile flag store, defeating the protection
-             * on the exit side. */
-            __asm__ __volatile__ ("" ::: "memory");
-            gDeferredTaskInCritical = 0;
+
+            // (#525: the former `pool_done:` label + gDeferredTaskInCritical
+            // exit barrier are gone — no deferred-task handshake remains.)
 
             // Pipeline mode skips ADC hardware entirely (no triggers, no waits).
             // Normal/NoCap modes: with hardware triggering (#282), the timer
@@ -850,36 +853,30 @@ pool_done:
                     // Shared at divided rate — skip entirely when hw-triggered
                     // or when onboard diagnostics are disabled.
                     if (!hwShd && !skipShared) {
-                        if (ChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
+                        if (gChannelScanFreqDivCount >= pRunTimeStreamConf->ChannelScanFreqDiv) {
                             for (i = 0; i < pRunTimeAInModules->Size; ++i) {
                                 ADC_TriggerConversion(&pBoardConfig->AInModules.Data[i], MC12B_ADC_TYPE_SHARED);
                             }
-                            ChannelScanFreqDivCount = 0;
+                            gChannelScanFreqDivCount = 0;
                         }
-                        ChannelScanFreqDivCount++;
+                        gChannelScanFreqDivCount++;
                     }
                 }
                 DIO_StreamingTrigger(&pBoardData->DIOLatest, &pBoardData->DIOSamples);
                 DioProbe_PulseEnd(4);
             }
 
-            // Increment test pattern counter once per ISR tick (after all channels)
+            // Advance the test pattern counter once per tick (after all
+            // channels). ISR is the sole writer — no critical section.
             if (gTestPattern != 0) {
-                taskENTER_CRITICAL();
                 gTestPatternSampleCount++;
-                taskEXIT_CRITICAL();
             }
         }
-
-        xTaskNotifyGive(gStreamingTaskHandle);
-
     }
-}
-
-void Streaming_Defer_Interrupt(void) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR(gStreamingInterruptHandle, &xHigherPriorityTaskWoken);
-    portEND_SWITCHING_ISR(xHigherPriorityTaskWoken);
+    /* #525: the encoder is no longer notified per sample — it polls the queue
+     * (see streaming_Task).  No xTaskNotifyGive here, and Streaming_Defer_Interrupt
+     * (the per-tick vTaskNotifyGiveFromISR that raced the deferred task's
+     * reblock) is removed entirely. */
 }
 
 static void TSTimerCB(uintptr_t context, uint32_t alarmCount) {
@@ -931,16 +928,25 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     // task ignores those notifications, but without this gate the counter
     // would still increment on phantom ISR firings between sessions.
     //
-    // Increment AND defer happen INSIDE the IsEnabled check so the invariant
-    // TimerISRCalls == TotalSamples + QueueDropped holds exactly: every
-    // counted ISR call corresponds to exactly one Defer_Interrupt dispatch,
-    // which becomes either a queued sample or a pool-exhaust drop. Gating
-    // Defer_Interrupt on IsEnabled also avoids spurious deferred-task
-    // wakeups during the Stop→Start reconfig window when the timer is
+    // Increment AND acquire happen INSIDE the IsEnabled check so the invariant
+    // TimerISRCalls == TotalSamples + QueueDropped holds exactly: every counted
+    // ISR call performs exactly one acquisition, which becomes either a queued
+    // sample or a pool/queue-full drop. Gating on IsEnabled also avoids
+    // spurious work during the Stop→Start reconfig window when the timer is
     // re-armed but streaming is disabled.
     if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->IsEnabled) {
         gTimerISRCalls++;
-        Streaming_Defer_Interrupt();
+
+        /* #525: do the acquisition IN this ISR (read ADC, build the sample,
+         * enqueue via xQueueSendFromISR).  There is NO per-tick task wake here
+         * anymore — the former Streaming_Defer_Interrupt vTaskNotifyGiveFromISR
+         * to the pri-9 deferred task was exactly what raced that task's
+         * ulTaskNotifyTake reblock window and tripped the notify-give
+         * configASSERT (FreeRTOS_tasks.c:8261).  The encoder polls the queue,
+         * so the wedge is structurally unreachable.  Back-pressure still
+         * propagates: a full output ring blocks the (polling) encoder, the
+         * queue/pool fill, and this ISR drops at the pool/queue (counted). */
+        Streaming_AcquireSampleISR();
     }
 
     gInTimerHandler = false;
@@ -1001,9 +1007,12 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
      * consistent NULL-checked view (Qodo pass-3 /improve). */
     StreamingRuntimeConfig *cfg = gpRuntimeConfigStream;
 
-    // Phase 1: quick spin — catch in-progress DMA completions
+    // Phase 1: quick spin — catch in-progress DMA completions.  No scheduler
+    // suspension here (no vTaskDelay).
     for (int i = 0; i < 10; i++) {
-        if (writeFn((const char*)buf, len) == len) return len;
+        if (writeFn((const char*)buf, len) == len) {
+            return len;
+        }
     }
 
     /* #486 — abort retries if streaming was stopped.  The caller holds
@@ -1016,13 +1025,24 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
      * time the next stream starts. */
     if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
 
+    /* #525: back-pressure now propagates by simply blocking the (polling)
+     * encoder here.  The vTaskDelay loops below let lower-priority output
+     * tasks drain; while the encoder holds, the sample queue/pool fill upstream
+     * and the producer ISR drops at the pool/queue (the #520 RAM-first policy,
+     * single drop point at the pool).  No gStreamBackPressure flag is needed:
+     * the timer ISR no longer wakes any task, so the vTaskDelay suspend windows
+     * here can no longer be raced into the FreeRTOS notify-give configASSERT
+     * that motivated the old ISR-throttle. */
+
     // Phase 2: short sleeps — let lower-priority output tasks drain.
     // taskYIELD() only reschedules within the same priority; encoder at 6
     // yielding to SD at 5 is a no-op. vTaskDelay(1) blocks for 1 tick so
     // lower-priority SD task gets CPU to drain its circular buffer (#312).
     for (int i = 0; i < 50; i++) {
         vTaskDelay(1);
-        if (writeFn((const char*)buf, len) == len) return len;
+        if (writeFn((const char*)buf, len) == len) {
+            return len;
+        }
         if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
@@ -1032,7 +1052,9 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
     TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(STREAM_WRITE_TIMEOUT_MS);
     while (xTaskGetTickCount() < deadline) {
         vTaskDelay(1);
-        if (writeFn((const char*)buf, len) == len) return len;
+        if (writeFn((const char*)buf, len) == len) {
+            return len;
+        }
         if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
@@ -1323,6 +1345,14 @@ static void Streaming_Start(void) {
             gpRuntimeConfigStream->Running = 1;
             TimerApi_InterruptEnable(gpStreamingConfig->TimerIndex);
             TimerApi_Start(gpStreamingConfig->TimerIndex);
+
+            /* #525: the encoder polls while streaming but blocks on a notify
+             * while idle.  Kick it once (task context — safe, unlike the old
+             * per-tick ISR give) so it leaves the idle block and starts
+             * polling this session's queue. */
+            if (gStreamingTaskHandle != NULL) {
+                xTaskNotifyGive(gStreamingTaskHandle);
+            }
         }
     }
 }
@@ -1436,7 +1466,10 @@ bool Streaming_SetLossGraceSec(uint32_t sec) {
  * and the other is 1 just means the caller will spin one more
  * vTaskDelay(1) iteration — never observes a torn quiescent state. */
 bool Streaming_TasksAreQuiescent(void) {
-    return (gStreamingTaskInCritical == 0 && gDeferredTaskInCritical == 0);
+    // #525: only the encoder's flag remains — the deferred task (and its
+    // gDeferredTaskInCritical twin) is gone; the producer ISR is quiescent
+    // during re-partition by construction (timer stopped first).
+    return (gStreamingTaskInCritical == 0);
 }
 
 /*!
@@ -1526,6 +1559,9 @@ static void Streaming_Stop(void) {
         // gLossGraceSec, default 3 s) don't produce misleading end-of-
         // session error logs.  Total counters are still available via
         // SYST:STR:STATS? for forensic diagnostic.
+        // #525: the back-pressure ISR-throttle (gStreamThrottledDrops) is gone
+        // — over-rate ticks now drop at the pool/queue and are already counted
+        // in queueDroppedSamples(Steady) by the in-ISR acquire path.
         bool hadDrops = gStreamStats.queueDroppedSamplesSteady > 0 ||
                         gStreamStats.usbDroppedBytesSteady > 0 ||
                         gStreamStats.wifiDroppedBytesSteady > 0 ||
@@ -1645,6 +1681,10 @@ void Streaming_GetStats(StreamingStats* out) {
     // read forces a fresh load from memory; the critical section blocks the
     // timer ISR (priority 1) so we get a coherent reading.
     out->timerISRCalls = gTimerISRCalls;
+    /* #525: no throttle fold needed.  Every counted timer tick now performs
+     * exactly one in-ISR acquisition that ends in either totalSamplesStreamed++
+     * (queued) or queueDroppedSamples++ (pool/queue full), so the #265 invariant
+     * timerISRCalls == TotalSamplesStreamed + QueueDroppedSamples holds directly. */
     taskEXIT_CRITICAL();
 }
 
@@ -1706,6 +1746,10 @@ void Streaming_ClearStats(void) {
     gTransportDownSinceUsb = 0;
     gTransportDownSinceWifi = 0;
     gTransportDownSinceSd = 0;
+    /* #525: reset the divided-rate shared-scan tick counter (was a deferred-
+     * task local; now a file-static driven by the in-ISR acquire). */
+    gChannelScanFreqDivCount = 0;
+    gIsrLogFlags = 0;  // #525: drop any deferred-from-ISR log flags from prior session
     Logger_ResetSessionOneShots();
     taskEXIT_CRITICAL();
     // NOTE: Pool max-used is NOT reset here — it persists across sessions
@@ -1740,6 +1784,10 @@ static void Streaming_InitFlowWindow(uint64_t frequency) {
  * Updates the windowed flow tracking and recomputes loss percentage.
  * @param dropped true if this sample was dropped (queue full)
  */
+// #525: called only from Streaming_AcquireSampleISR (the streaming-timer ISR),
+// so the gQuesBits RMW + windowLossPercent publish use the FROM_ISR critical
+// primitive.  gFlowWindow[] itself is touched only here (single ISR context),
+// so it needs no extra guard.
 static void Streaming_UpdateFlowWindow(bool dropped) {
     gFlowWindow[1].attempted++;
     if (dropped) {
@@ -1762,17 +1810,52 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
     if (totalAttempted > 0) {
         lossPct = (totalDropped * 100) / totalAttempted;
     }
-    // Critical section: keep windowLossPercent and gQuesBits coherent for
-    // SCPI snapshot reads (also protects RMW on gQuesBits which is modified
-    // by the streaming task at lower priority)
-    taskENTER_CRITICAL();
+    // FROM_ISR critical: keep windowLossPercent and gQuesBits coherent for
+    // SCPI snapshot reads (also protects the RMW on gQuesBits, which is also
+    // modified by the encoder/SCPI at task level — those use the task-context
+    // taskENTER_CRITICAL, which masks this ISR, so the pair is coherent).
+    UBaseType_t uxSaved = taskENTER_CRITICAL_FROM_ISR();
     gStreamStats.windowLossPercent = lossPct;
     if (lossPct >= gLossThresholdPct) {
         gQuesBits |= QUES_BIT_DATA_LOSS;
     } else {
         gQuesBits &= ~QUES_BIT_DATA_LOSS;
     }
+    taskEXIT_CRITICAL_FROM_ISR(uxSaved);
+}
+
+/* #525: drain the deferred-from-ISR log flags from TASK context (encoder).
+ * The streaming-timer ISR sets bits in gIsrLogFlags instead of calling
+ * LOG_E_SESSION directly — LOG in ISR context routes through xQueueSendFromISR
+ * + portEND_SWITCHING_ISR (a yield-from-ISR), which we keep off the timer ISR
+ * entirely so it makes ZERO FreeRTOS calls.  Called once per encoder loop pass.
+ * Snapshot+clear under a critical section (masks the pri-3 ISR setter so no set
+ * is lost); LOG_E_SESSION still gates on gSessionOneShot, so each line is still
+ * emitted at most once per streaming session. */
+static void Streaming_DrainIsrLogFlags(void) {
+    if (gIsrLogFlags == 0u) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    uint32_t flags = gIsrLogFlags;
+    gIsrLogFlags = 0;
     taskEXIT_CRITICAL();
+
+    if (flags & ISRLOG_POOL_EXHAUST) {
+        LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
+    }
+    if (flags & ISRLOG_QUEUE_OVERFLOW) {
+        LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
+    }
+    if (flags & ISRLOG_T1_ARDY_MISS) {
+        LOG_E_SESSION(LOG_SESSION_T1_ARDY_MISS, "Streaming: T1 ARDY miss (result not ready at read)");
+    }
+    if (flags & ISRLOG_DIO_DROP) {
+        LOG_E_SESSION(LOG_SESSION_DIO_DROP, "DIO: sample queue full");
+    }
+    if (flags & ISRLOG_EOS_OVERRUN) {
+        LOG_E_SESSION(LOG_SESSION_EOS_OVERRUN, "ADC: EOS result register overrun");
+    }
 }
 
 uint32_t Streaming_GetQuesBits(void) {
@@ -1780,17 +1863,23 @@ uint32_t Streaming_GetQuesBits(void) {
 }
 
 void Streaming_IncrDioDropped(void) {
-    bool pastGrace = Streaming_PastStartupGrace();
-    taskENTER_CRITICAL();
-    gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 8)
+    // #525: called only from DIO_StreamingTrigger, which now runs in the
+    // streaming-timer ISR. Single writer (this ISR) → plain increments are
+    // atomic on PIC32MZ; the Streaming_GetStats snapshot masks this ISR via
+    // taskENTER_CRITICAL, so no critical section is needed here.
+    bool pastGrace = Streaming_PastStartupGraceISR();
+    gStreamStats.dioDroppedSamples++;
     if (pastGrace) {
         gStreamStats.dioDroppedSamplesSteady++;
     }
-    taskEXIT_CRITICAL();
+    gIsrLogFlags |= ISRLOG_DIO_DROP;  // #525: log from task ctx (encoder drains)
 }
 
 void Streaming_IncrEosOverruns(uint32_t missed) {
-    gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 8)
+    gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 9)
+    // #525: defer the log to streaming_Task. Logging from the EOS task here
+    // (vsnprintf) overflowed its small stack into the heap encoder TCB → wedge.
+    gIsrLogFlags |= ISRLOG_EOS_OVERRUN;
 }
 
 #if PB_PROFILE_COUNTERS
@@ -1900,14 +1989,31 @@ void streaming_Task(void) {
      StreamingRuntimeConfig * pRunTimeStreamConf = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     while(1) {
-        ulTaskNotifyTake(pdFALSE, xBlockTime);
-        DioProbe_Toggle(7);  /* probe 7: encoder task wake */
-
-        // Don't process data or update QUES bits after streaming stops.
-        // A notification may already be pending when Stop clears gQuesBits.
+        /* #525: the encoder POLLS the sample queue — it is no longer notified
+         * per sample.  The streaming-timer ISR is the producer now and must
+         * never wake a task on the hot path (that per-tick vTaskNotifyGiveFromISR
+         * to the deferred task was the wedge).  While idle, block on a
+         * task-context notify that Streaming_Start sends once at session start;
+         * while streaming, drain the queue and yield a tick only when caught up
+         * so lower-priority transports (SD pri5 / WiFi pri2) get CPU.
+         * WriteWithRetry's own vTaskDelay handles output back-pressure. */
         if (!pRunTimeStreamConf->IsEnabled) {
+            // Idle: block until Streaming_Start (task context) wakes us.
+            // Also the post-stop guard: a stale notify may be pending when Stop
+            // clears gQuesBits — we re-check IsEnabled and loop without work.
+            ulTaskNotifyTake(pdFALSE, xBlockTime);
             continue;
         }
+        // #525: emit any one-shot errors the timer ISR flagged (it must not LOG
+        // from ISR context — see Streaming_DrainIsrLogFlags).
+        Streaming_DrainIsrLogFlags();
+        if (AInSampleList_IsEmpty() &&
+            DIOSampleList_IsEmpty(&pBoardData->DIOSamples)) {
+            // Caught up — yield one tick, then re-poll. No busy-spin.
+            vTaskDelay(1);
+            continue;
+        }
+        DioProbe_Toggle(7);  /* probe 7: encoder drain pass */
 
         /* #486 — quiescence flag for cross-task sync against
          * SCPI_StartStreaming re-partition.  Set BEFORE any deref of the
@@ -2178,10 +2284,10 @@ void streaming_Task(void) {
                 // #520 backpressure (solo USB): block the encoder on a full USB
                 // ring so the sample pool absorbs the burst (single drop point =
                 // pool exhaustion), bounded by WriteWithRetry's 10 s
-                // dead-interface timeout.  Same fix as the solo-WiFi path above.
-                // UsbAndSd is intentionally left on the per-output no-retry drop
-                // (below) — multi-output backpressure pacing is a separate
-                // ticket (SD would pace USB).
+                // dead-interface timeout.  #525: this wait is now wedge-free by
+                // construction — the producer is the timer ISR and it never
+                // wakes a task, so the encoder blocking here cannot be raced
+                // into the old notify-give configASSERT.
                 size_t usbWr = Streaming_WriteWithRetry(
                     Streaming_UsbWrite, buffer, packetSize);
                 if (usbWr == STREAM_WRITE_RETURN_TIMEOUT) {
@@ -2368,22 +2474,17 @@ void TimestampTimer_Init(void) {
     if (gStreamingTaskHandle == NULL) {
         BaseType_t result = xTaskCreate((TaskFunction_t) streaming_Task,
                 "Stream task",
-                1392, NULL, 6, &gStreamingTaskHandle);  // Profiled: 692 words peak. 2x margin. (was 4096)
+                1392, NULL, 6, &gStreamingTaskHandle);  // #230 profiled 692 peak.
         if (result != pdPASS) {
             LOG_E("FATAL: Failed to create streaming_Task\r\n");
             while(1);
         }
     }
-    if (gStreamingInterruptHandle == NULL) {
-        BaseType_t result = xTaskCreate((TaskFunction_t) _Streaming_Deferred_Interrupt_Task,
-                "Stream Interrupt",
-                512, NULL, 9, &gStreamingInterruptHandle);  // Profiled: 214 words peak + FPU. 2x margin. (was 4096)
-        if (result != pdPASS) {
-            LOG_E("FATAL: Failed to create _Streaming_Deferred_Interrupt_Task\r\n");
-            while(1);
-        }
-    }
-    
+    /* #525: the pri-9 deferred interrupt task is gone.  Sample acquisition now
+     * runs in the streaming-timer ISR (Streaming_AcquireSampleISR) and the
+     * encoder (streaming_Task) polls the queue — no per-tick task wake, so the
+     * notify-give configASSERT race no longer exists. */
+
     TimerApi_Stop(gpStreamingConfig->TSTimerIndex);
     TimerApi_Initialize(gpStreamingConfig->TSTimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TSTimerIndex);

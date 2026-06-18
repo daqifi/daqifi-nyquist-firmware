@@ -62,6 +62,10 @@ extern "C" {
      */
     bool DIOSampleList_PushBack(DIOSampleList* list, const DIOSample* data);
 
+    /* ISR-context producer (#525) — call only from the streaming-timer ISR.
+     * Uses xQueueSendFromISR; never wakes the polling consumer. */
+    bool DIOSampleList_PushBackFromISR(DIOSampleList* list, const DIOSample* data);
+
     /**
      * Removes and returns the first item in the list
      * @param list The list to modify
