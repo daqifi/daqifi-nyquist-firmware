@@ -81,6 +81,16 @@ extern "C" {
         /** Write transfer handle */
         USB_DEVICE_CDC_TRANSFER_HANDLE writeTransferHandle;
 
+        /** #525: latched true when a write/flush wait times out (host stopped
+         * draining the CDC IN endpoint). While set, WaitForWrite/FlushWriteBuffer
+         * bail immediately instead of each burning the full stall timeout, so a
+         * sustained host stall doesn't delay the OUT endpoint (SCPI) by up to 1s
+         * per attempt. Cleared in UsbCdc_FinalizeWrite (WRITE_COMPLETE ISR) when
+         * the in-flight transfer finishes — i.e. the host has resumed reading.
+         * Written by the USB task (set) and the WRITE_COMPLETE ISR (clear);
+         * volatile + single-writer-per-context plain bool store (no RMW). */
+        volatile bool writeStalled;
+
         /** Break data */
         uint16_t breakData;
 
