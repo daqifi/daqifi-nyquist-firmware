@@ -48,6 +48,15 @@ void UsbCdc_Profile_ResetPendingStamp(void) {
 static UsbCdcData_t gRunTimeUsbSttings __attribute__((coherent));
 static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
 
+/* A write DMA that hasn't completed within this long means the host has
+ * stopped draining the CDC IN endpoint (not a transient hiccup). #525:
+ * bail out of the wait rather than block — the in-flight transfer completes
+ * on its own when the host resumes reading; new stream data is dropped (and
+ * counted as usbDroppedBytes by streaming's WriteWithRetry path) until then.
+ * We deliberately do NOT cancel/close the transfer: cancelling disrupts the
+ * host's open connection (observed as ClearCommError + reconnect). */
+#define USBCDC_WRITE_STALL_MS 1000U
+
 /**
  * Filters input characters to reject potentially dangerous control characters
  * Used only in normal command mode, NOT in transparent mode
@@ -178,6 +187,10 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
             } else {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_PROCESS;
                 gRunTimeUsbSttings.isCdcHostConnected=1;
+                // #525: a freshly connecting host must not inherit a stall
+                // latch from a prior session that disconnected mid-stall
+                // (where FinalizeWrite never ran to clear it).
+                gRunTimeUsbSttings.writeStalled = false;
             }
 
             USB_DEVICE_ControlStatus(pUsbCdcDataObject->deviceHandle, USB_DEVICE_CONTROL_STATUS_OK);
@@ -518,12 +531,37 @@ static bool UsbCdc_WaitForWrite(UsbCdcData_t* client) {
         return false;
     }
 
+    // #525: if a prior wait already detected a host-read stall, bail immediately
+    // (drop) instead of burning the full timeout again. We do NOT read
+    // writeTransferHandle here: the stalled in-flight transfer completes on its
+    // own when the host resumes draining, firing the WRITE_COMPLETE ISR →
+    // UsbCdc_FinalizeWrite, which clears this latch — independent of whether we
+    // attempt a write. So the next call after the host resumes sees writeStalled
+    // == false, skips this branch, and proceeds normally. (volatile writeStalled
+    // is the single completion signal; no non-volatile handle poll needed.)
+    if (client->writeStalled) {
+        return false;
+    }
+
+    TickType_t start = xTaskGetTickCount();
     while (client->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
         if (client->state != USB_CDC_STATE_PROCESS) {
             return false;
         }
-
-        vTaskDelay(100);
+        // #525: this loop was UNBOUNDED — when the host stops draining the CDC
+        // IN endpoint the in-flight DMA never completes, so this blocked
+        // forever, starving the whole USB task (the OUT endpoint too) and
+        // hard-wedging the device. Bound it and bail without cancelling: the
+        // transfer completes on its own once the host resumes reading, the task
+        // stays responsive, and new stream data is dropped+counted meanwhile.
+        // The connection is never disrupted (throttle-and-drop, not close).
+        if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(USBCDC_WRITE_STALL_MS)) {
+            client->writeStalled = true;  // #525: latch — see field doc
+            LOG_E_ONCE(LOG_ONCE_USB_WRITE_STUCK,
+                       "USB write stalled (host not reading) - dropping until drained");
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 
     return true;
@@ -547,6 +585,10 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client) {
 #endif
     client->writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
     client->writeBufferLength = 0;
+    // #525: a completed transfer means the host resumed draining the IN
+    // endpoint — clear the stall latch so the next write proceeds normally
+    // instead of being dropped by the early-bail in WaitForWrite.
+    client->writeStalled = false;
     return true;
 }
 
@@ -920,6 +962,13 @@ bool UsbCdc_FlushWriteBuffer(void) {
     // then start the next write chunk, repeat until nothing left to write.
     // All waits (both initial DMA and each new write DMA) share the deadline,
     // so the function is fully bounded even if the host disconnects mid-flush.
+    // #525: already-latched host stall — don't burn the 500ms flush deadline
+    // again. The latch clears in UsbCdc_FinalizeWrite (WRITE_COMPLETE ISR) once
+    // the host resumes, independent of this call — no handle poll needed.
+    if (client->writeStalled) {
+        return false;
+    }
+
     TickType_t start = xTaskGetTickCount();
 
     while (true) {
@@ -929,7 +978,12 @@ bool UsbCdc_FlushWriteBuffer(void) {
                 return false;
             }
             if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(500)) {
-                LOG_E("USB flush: timeout waiting for DMA");
+                // #525: host stopped draining — bail without blocking/cancel.
+                // The in-flight transfer completes when the host resumes; the
+                // task stays responsive and the connection is preserved.
+                client->writeStalled = true;  // #525: latch — see field doc
+                LOG_E_ONCE(LOG_ONCE_USB_FLUSH_STUCK,
+                           "USB flush: host not reading - deferring");
                 return false;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
