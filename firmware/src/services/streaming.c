@@ -730,8 +730,9 @@ static void Streaming_AcquireSampleISR(void) {
                         wb.Value = val;
                         BoardData_Set(BOARDDATA_AIN_LATEST, cfgIdx, &wb);
                     } else {
-                        // Single-writer 32-bit increment — no critical
-                        // section needed (deferred task is the only writer).
+                        // Single-writer 32-bit increment — no critical section
+                        // needed (#525: the timer ISR is the only writer; the
+                        // snapshot reader masks it via taskENTER_CRITICAL).
                         gStreamStats.t1ArdyMisses++;
                         gIsrLogFlags |= ISRLOG_T1_ARDY_MISS;  // #525: log from task ctx
                     }

@@ -223,9 +223,10 @@ extern "C" {
      * Called only from the streaming-timer ISR (the sole sample producer).
      * The free-list variants take NO critical section — the ISR (IPL 3) and
      * the encoder's taskENTER_CRITICAL consumer (IPL 4) are mutually exclusive
-     * by interrupt-priority level. PushBackFromISR uses xQueueSendFromISR and
-     * never wakes the (polling) consumer, so it cannot trip the FreeRTOS
-     * pending-ready configASSERT that the per-tick task notify used to.
+     * by interrupt-priority level. PushBackFromISR pushes onto the lock-free
+     * SPSC ring and makes ZERO FreeRTOS calls (it never wakes the polling
+     * consumer), so it cannot trip the FreeRTOS pending-ready configASSERT that
+     * the per-tick task notify used to.
      * Do NOT call these from task context — use the non-ISR versions there.
      */
     bool AInSampleList_PushBackFromISR(const AInPublicSampleList_t* pData);
