@@ -281,7 +281,14 @@ void SYS_Tasks ( void )
     BaseType_t ad7609Result = xTaskCreate(
         (TaskFunction_t) AD7609_DeferredInterruptTask,
         "AD7609 BSY",
-        160,   // Profiled: 76 words peak. 2x margin. (was 512)
+        1024,  // #525 follow-up: was 160 (#230 cut from 512). The BSY-stuck
+               // branch calls LOG_E -> vsnprintf, whose float-printf frame is
+               // far bigger than the 76-word non-LOG peak the #230 profiling
+               // measured — same tiny-stack vsnprintf hazard that wedged the
+               // EOS task in #525. 1024 gives a >10x margin over peak that
+               // comfortably accommodates the vsnprintf frame (no plausible
+               // float-printf frame approaches it). NQ3-only, rare-running; the
+               // RAM cost is immaterial. Untested on AD7609 HW (none on bench).
         NULL,
         9,
         (TaskHandle_t*)pAD7609TaskHandle
