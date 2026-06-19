@@ -577,7 +577,14 @@ void LogMessageClear(void) {
 
 static TaskHandle_t  gIsrLogTaskHandle = NULL;
 
-#define LOG_ISR_TASK_STACK  128   /* words (512 bytes — only does queue drain) */
+#define LOG_ISR_TASK_STACK  256   /* words. Drain task only memcpy's a pre-formed
+                                   * message into the ring (LogMessageAdd — NO
+                                   * vsnprintf, so not a #525-class hazard), but
+                                   * at 128 its measured peak (96 w used) left
+                                   * only 32 w free — the thinnest task in the
+                                   * system, below the 2-3x-peak sizing
+                                   * convention. 256 restores margin + headroom
+                                   * for the ICSP-realtime-log UART write path. */
 #define LOG_ISR_TASK_PRIO   1     /* lowest priority, runs when nothing else does */
 
 /**
