@@ -121,9 +121,17 @@ void MC12bADC_EosInterruptTask(void) {
         uint32_t notifCount = ulTaskNotifyTake(pdTRUE, xBlockTime);
         DioProbe_Toggle(5);  /* probe 5: EOS task wake rate */
         if (notifCount > 1) {
+            // #525 ROOT CAUSE: do NOT call LOG_E_SESSION / LogMessage / vsnprintf
+            // here. This is a pri-9 deferred-interrupt task with a small stack;
+            // vsnprintf's float-printf frame needs far more stack than this task
+            // has and OVERFLOWED into the adjacent heap TCB (the encoder's),
+            // NULLing its ready-list link → vTaskSwitchContext TLBL → CDC-dead
+            // wedge under USB host-stall (stochastic, one-shot LOG gated; caught
+            // by a vTaskSwitchContext integrity trap = "MC12bADC EOS", 2026-06-18).
+            // The overrun is still COUNTED here (eosOverruns, queryable via
+            // SYST:STR:STATS?); the per-occurrence log is intentionally dropped on
+            // this tiny-stack path rather than risk the stack frame.
             Streaming_IncrEosOverruns(notifCount - 1);
-            LOG_E_SESSION(LOG_SESSION_EOS_OVERRUN,
-                "EOS: %u result overruns", (unsigned)(notifCount - 1));
         }
 
         DioProbe_PulseStart(6);  /* probe 6: result read loop duration */
@@ -186,7 +194,12 @@ void ADC_Init(
     gpBoardData = (tBoardData *) pBoardDataADCInit;
     BaseType_t result = xTaskCreate((TaskFunction_t) MC12bADC_EosInterruptTask,
             "MC12bADC EOS",
-            160, NULL, 9, &gADCInterruptHandle);  // Profiled: 80 words peak. 2x margin. (was 2048)
+            256, NULL, 9, &gADCInterruptHandle);  // Profiled: 80 words peak. 3x margin.
+            // #525: was 160 (#230 cut from 2048). The notifCount>1 path used to
+            // call LOG_E_SESSION→vsnprintf here, which needs >>160 words and
+            // overflowed into the adjacent heap encoder TCB → scheduler TLBL →
+            // CDC-dead wedge. That call is removed (overrun stays counted in
+            // stats); 256 keeps margin against any future LOG creep on this path.
     if (result != pdPASS) {
         LOG_E("FATAL: Failed to create MC12bADC_EosInterruptTask\r\n");
     }
