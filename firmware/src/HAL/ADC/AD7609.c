@@ -178,7 +178,17 @@ void AD7609_DeferredInterruptTask(void) {
                 // BSY should be idle-high by now (SPI read complete)
                 // If still low, indicates hardware fault - log error but don't block
                 if (!GPIO_PinRead(pModuleConfigAD7609->BSY_Pin)) {
-                    LOG_E("AD7609: BSY pin stuck low after SPI read - possible hardware fault");
+                    // #525 follow-up: LOG_E_ONCE, not LOG_E. This is a pri-9
+                    // deferred-interrupt task; LOG -> vsnprintf has a large
+                    // (float-printf) stack frame. A genuinely stuck BSY pin fires
+                    // this every conversion (kHz), repeatedly re-entering vsnprintf
+                    // and flooding the log — the same tiny-stack vsnprintf hazard
+                    // that wedged the EOS task in #525. One-shot bounds it; the
+                    // task stack is also sized clear of the vsnprintf frame
+                    // (see tasks.c). Untested on AD7609 hardware (none on bench) —
+                    // tracked follow-up to validate on an NQ2/NQ3 board.
+                    LOG_E_ONCE(LOG_ONCE_AD7609_BSY_STUCK,
+                        "AD7609: BSY pin stuck low after SPI read - possible hardware fault");
                 }
                 // Re-enable interrupt for next conversion
                 GPIO_PinIntEnable(pModuleConfigAD7609->BSY_Pin, GPIO_INTERRUPT_ON_FALLING_EDGE);
