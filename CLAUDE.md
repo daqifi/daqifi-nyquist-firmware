@@ -190,7 +190,7 @@ Example: `daqifi-nyquist-firmware-3.5.0.zip`.
 
 ```bash
 gh release create v<VERSION> --repo daqifi/daqifi-nyquist-firmware --target main \
-  --title "..." --notes-file RELEASE_NOTES_v<VERSION>.md --latest \
+  --title "..." --notes-file docs/release-notes/RELEASE_NOTES_v<VERSION>.md --latest \
   "daqifi-nyquist-firmware-<VERSION>.hex" "daqifi-nyquist-firmware-<VERSION>.zip"
 ```
 The updater deterministically picks the `.hex`; the `.zip` stays for archival/manual use.
