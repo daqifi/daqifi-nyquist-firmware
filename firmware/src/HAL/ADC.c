@@ -594,6 +594,11 @@ void ADC_EOSInterruptCB(uintptr_t context) {
     (void)context; // Unused
     DioProbe_Toggle(1);  /* probe 1: EOS ISR entry rate */
 
+    // #557: mark the shared scan as completed this interval. The streaming
+    // timer ISR checks this at the next scan trigger; if it's still clear, the
+    // scan didn't complete (scan-busy) and that tick is counted as a drop.
+    Streaming_NoteEosFired();
+
     // Guard against NULL task handle (if task creation failed during init)
     if (gADCInterruptHandle != NULL) {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;

@@ -3028,6 +3028,10 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "DioDroppedSamples=%u\r\n", (unsigned)s.dioDroppedSamples);
     scpi_printf(context, "DioDroppedSamplesSteady=%u\r\n", (unsigned)s.dioDroppedSamplesSteady);
     scpi_printf(context, "EosOverruns=%u\r\n", (unsigned)s.eosOverruns);
+    // #557: scan armed but EOS not fired by the next trigger (scan-busy/stale)
+    // — counted as a dropped sample (included in SampleLossPercent). ~0 with the
+    // scan cap in place; non-zero flags over-rate / NOCAP scan-busy operation.
+    scpi_printf(context, "ScanStaleDropped=%u\r\n", (unsigned)s.scanStaleDropped);
     // #541 D-A diag: ticks where a T1 result was not ready (ARDY clear) at
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.

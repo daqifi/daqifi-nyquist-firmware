@@ -320,6 +320,8 @@ typedef struct {
     uint32_t dioDroppedSamplesSteady;
     uint32_t queueDroppedSamplesSteady;  // post-grace subset of queueDroppedSamples
     uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
+    uint32_t scanStaleDropped; // #557: scan armed but EOS not fired by next trigger
+                               // (scan-busy/stale) — counted as a dropped sample
     // #541 D-A diagnostic: ticks where a T1 (dedicated-module) channel's
     // ARDY flag was not set when the deferred task went to read its result
     // register.  Expected ~0 (T1 conversion completes ~1.3 us after trigger;
@@ -384,6 +386,11 @@ void Streaming_IncrDioDropped(void);
 // Increment EOS coalesce counter (called from MC12bADC_EosInterruptTask).
 // @param missed Number of coalesced notifications (notifCount - 1).
 void Streaming_IncrEosOverruns(uint32_t missed);
+
+// #557: set the scan-completed flag from the ADC EOS ISR. ISR-safe (one
+// volatile write). The streaming timer ISR consumes it to detect a scan that
+// didn't complete before the next trigger (scan-stale -> counted as a drop).
+void Streaming_NoteEosFired(void);
 
 /**
  * Returns current SCPI STATus:QUEStionable condition bits for streaming health.
