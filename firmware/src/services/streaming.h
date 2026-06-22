@@ -99,6 +99,39 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
 }
 
 /**
+ * #557: NQ1 freeze-aware additive ADC/scan cap (Hz).
+ *
+ * period_ns = base + arm*(scan armed) + cT1*nT1 + cT2*nT2_user + cMon*nMon
+ *
+ * Fitted to the 2026-06-22 freeze-aware ceiling sweep — the first sweep whose
+ * leak detector counts ScanStaleDropped (scan didn't complete -> frozen data)
+ * as a drop. The prior drop-blind sweeps counted frozen data as "clean" and so
+ * INFLATED the T2/scanned ceilings; this model replaces the over-conservative-
+ * yet-wrong tick-budget / type1Agg / MC12b_ScanMaxFreq terms FOR NQ1 only.
+ *   - PB fits to +-13% -> margin 0.88 makes it a safe never-over envelope.
+ *   - CSV is byte/transport-bound (noisier) -> margin 0.80 here, AND the
+ *     per-format transport term is still min()'d downstream (binds CSV lower).
+ * NQ2/NQ3 (AD7609 — no MODULE7 scan, different timing) keep the legacy formula.
+ * Margins verified per-config by the #557 at-cap revalidation. nMon = monitoring
+ * channels in the scan (8 when OBDiag on, else 0); arm = any scanned channel.
+ */
+static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2user,
+                                                    uint32_t nMon, uint32_t isProtoBuf) {
+    uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
+    uint64_t period_ns, num;
+    if (isProtoBuf) {
+        period_ns = 55300ULL + 20000ULL*armed + 2160ULL*nT1 + 13470ULL*nT2user + 2260ULL*nMon;
+        num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
+    } else {
+        period_ns = 71000ULL + 21300ULL*armed + 4550ULL*nT1 + 15190ULL*nT2user + 2680ULL*nMon;
+        num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
+    }
+    uint32_t hz = (uint32_t)(num / period_ns);   /* period_ns always >= base, no div-by-0 */
+    if (hz > STREAMING_ISR_MAX_HZ) hz = STREAMING_ISR_MAX_HZ;
+    return (hz == 0u) ? 1u : hz;
+}
+
+/**
  * Per-interface, per-format TRANSPORT wire-rate cap (Hz) — generalizes the
  * WiFi-only term (#520) to USB / SD / USB+SD (#524).  Fitted to the 3-run
  * real-ADC zero-loss characterization (matrix_524 run-1/2/3 + WiFi-v2,

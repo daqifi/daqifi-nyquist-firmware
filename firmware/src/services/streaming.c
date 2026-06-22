@@ -473,42 +473,44 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
     uint16_t type1 = 0, total = 0;
     Streaming_CountActiveChannels(&type1, &total, NULL);
 
-    // Mirror Streaming_ComputeMaxFreq's behavior for 0 channels (returns
-    // ISR_MAX, not 0) so the channel-enable recompute path doesn't cap to 0
-    // when the last channel is disabled.
-    uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
-
-    /* Apply the per-interface, per-format TRANSPORT cap (#524), generalizing the
-     * former WiFi-only term to USB / SD / USB+SD.  min() with the ADC cap above.
-     * The interface is a PARAMETER (not read from the global) so callers such as
-     * the capabilities query can compute for the client's detected interface
-     * without mutating shared state (#524 Qodo). BoardRunTimeConfig_Get never
-     * returns NULL (CLAUDE.md). */
+    /* BoardRunTimeConfig_Get / BoardConfig_Get never return NULL (CLAUDE.md). */
     StreamingRuntimeConfig* sc =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    tBoardConfig* bc = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+
+    /* Session scan list: enabled user-T2 (+ monitoring when OBDiag on). */
+    uint32_t scanCount = MC12b_ComputeScanList(true, sc->OnboardDiagEnabled, NULL, NULL);
+    uint32_t userT2    = MC12b_ComputeScanList(true, false, NULL, NULL);
+
+    uint32_t maxFreq;
+    if (bc != NULL && bc->BoardVariant == 1u && total > 0u) {
+        /* NQ1 (#557): freeze-aware additive ADC/scan cap replaces the
+         * tick-budget / type1Agg / MC12b_ScanMaxFreq terms below. The prior
+         * sweeps were drop-blind and counted frozen scanned data as clean, so
+         * those terms were both over-conservative (T1) AND wrong (inflated T2).
+         * monitoring channels in the scan = scanCount - userT2 (8 when OBDiag). */
+        uint32_t nMon = (scanCount > userT2) ? (scanCount - userT2) : 0u;
+        maxFreq = Streaming_AdcAdditiveCap_NQ1(
+                type1, userT2, nMon, (sc->Encoding == Streaming_ProtoBuffer) ? 1u : 0u);
+    } else {
+        /* NQ2/NQ3 (AD7609 — no MODULE7 scan) and the 0-channel case: legacy
+         * conservative formula (#541). Mirror ComputeMaxFreq's ISR_MAX-for-0
+         * behavior so disabling the last channel doesn't cap to 0. */
+        maxFreq = Streaming_ComputeMaxFreq(type1, total);
+        /* #541 D-C shared-scan rate bound (documented-undefined retrigger,
+         * FRM §22.3.2 / #539). N_active==0 arms no scan -> no bound. */
+        if (scanCount > 0) {
+            uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
+            if (scanMax < maxFreq) maxFreq = scanMax;
+        }
+    }
+
+    /* Per-interface, per-format TRANSPORT cap (#524) applies to ALL variants;
+     * binds CSV (byte-bound) below the ADC cap. Interface is a PARAMETER so the
+     * capabilities query can compute for the detected interface w/o mutating
+     * shared state (#524 Qodo). */
     uint32_t transportMax = Streaming_TransportMaxFreq(iface, sc->Encoding, total);
     if (transportMax < maxFreq) maxFreq = transportMax;
-
-    /* #541 D-C: shared-scan rate bound.  Retriggering the MODULE7 scan
-     * while a scan is in progress is documented-undefined behavior (FRM
-     * DS60001344E §22.3.2) — the #539 mechanism: above ~1/T_scan the EOS
-     * interrupt degrades then stops, and scanned data goes stale.  The
-     * streaming tick IS the scan trigger (STRGSRC=TMR5), so the tick rate
-     * must not exceed 1/T_scan for the session's scan list (built by D-B:
-     * enabled T2 + monitoring when OBDiag=1).  N_active == 0 (e.g. T1-only
-     * OBDiag=0) arms no scan — no bound.  This term gates the HARDWARE
-     * trigger path, which the legacy ChannelScanFreqDiv software divider
-     * never covered. */
-    uint32_t scanCount = MC12b_ComputeScanList(
-            true, sc->OnboardDiagEnabled, NULL, NULL);
-    if (scanCount > 0) {
-        /* User-T2 count (monitoring excluded): each enabled T2 channel
-         * fires a per-conversion data-ready ISR, which feeds the
-         * aggregate ADC-event-rate bound inside ScanMaxFreq (v4). */
-        uint32_t userT2 = MC12b_ComputeScanList(true, false, NULL, NULL);
-        uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
-        if (scanMax < maxFreq) maxFreq = scanMax;
-    }
     return maxFreq;
 }
 
