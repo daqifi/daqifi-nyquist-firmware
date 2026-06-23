@@ -423,8 +423,11 @@ static void Power_UpdateStatusFromGPIO(void) {
      * 3.97V battery looked dead → Power_HasSufficientPower() refused battery-only
      * power-up (USB masked it via pgStat). The BQ correctly reports the real
      * battery. Mutex-protected, cheap; on a read failure keep the last value
-     * rather than clobbering with bad data. */
-    {
+     * rather than clobbering with bad data. #564: gate on initComplete — before
+     * the BQ driver is configured the read just fails (+ spams the I2C error log)
+     * every ~100ms; the memset-0 vsysStat default is the safe "not-low" value
+     * until then. */
+    if (pData->BQ24297Data.initComplete) {
         uint8_t reg08;
         if (BQ24297_Read_I2C(0x08, &reg08)) {
             pData->BQ24297Data.status.vsysStat = (bool)(reg08 & 0x01);
@@ -748,12 +751,19 @@ static void Power_UpdateChgPct(void) {
     if (NULL != pAnalogSample) {
         float newVoltage = ADC_ConvertToVoltage(pAnalogSample);
         /* Validate reading (ignore noise near 0V).  A reading <=0.1V means the
-         * VBATT ADC isn't powered/sampled yet (cold boot) — don't trust it, and
-         * don't mark the measurement valid.  #564. */
+         * VBATT ADC isn't powered/sampled yet (cold boot) — don't trust it.
+         * #564: track validity per-reading — clear it when the reading is
+         * invalid/missing so a stale value can't be trusted later (e.g. battery
+         * removed). chargePct then reads UNKNOWN, and the critical decision
+         * falls back to the BQ vsysStat (authoritative). */
         if (newVoltage > 0.1) {
             pData->battVoltage = newVoltage;
             pData->battVoltageValid = true;
+        } else {
+            pData->battVoltageValid = false;
         }
+    } else {
+        pData->battVoltageValid = false;
     }
 
     /* Convert voltage to percentage using linear approximation
