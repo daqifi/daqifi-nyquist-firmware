@@ -67,11 +67,11 @@
  */
 #define BATT_EXT_DOWN_TH 15.0  /* External power disabled below this */
 #define BATT_LOW_TH 5.0        /* Critical shutdown threshold */
-#define BATT_CHARGE_UNKNOWN (-1)  /* #564: chargePct sentinel — no valid ADC reading yet */
-/* #564: true only when chargePct holds a real 0..100 (not the UNKNOWN sentinel).
- * Guards every "low/critical" comparison so a stale UNKNOWN never reads as dead. */
-static inline bool Power_ChargeKnown(int16_t cp) { return cp >= 0; }
-#define BATT_HYST 10.0         /* Must charge 10% above threshold to re-enable */ 
+/* #564: chargePct sentinel — no valid ADC reading yet. The low/critical
+ * comparisons guard on battVoltageValid (chargePct holds UNKNOWN exactly when
+ * !battVoltageValid), so a stale UNKNOWN never reads as a dead battery. */
+#define BATT_CHARGE_UNKNOWN (-1)
+#define BATT_HYST 10.0         /* Must charge 10% above threshold to re-enable */
 
 //! Pointer to a data structure for storing the configuration data
 static tPowerConfig *pConfig;

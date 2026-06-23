@@ -93,8 +93,11 @@ typedef struct sPowerData{
     /* #564: tri-state. BATT_CHARGE_UNKNOWN (-1) until the VBATT ADC produces a
      * valid reading (it reads a stale 0 at cold boot); 0..100 once known. Signed
      * so UNKNOWN is distinguishable from a real 0% — naked `chargePct < THRESH`
-     * comparisons must check known-first (chargePct >= 0). */
-    int16_t chargePct;
+     * comparisons must check known-first (chargePct >= 0). volatile: written by
+     * app_PowerAndUITask, read cross-task (SCPI battery query, protobuf
+     * batt_status) — same treatment as powerState (#410). 16-bit read is atomic
+     * on PIC32MZ. */
+    volatile int16_t chargePct;
     /* volatile: written by app_PowerAndUITask (pri 7), read across loop
      * iterations by app_WifiTask (pri 2) and app_SDCardTask (pri 5).
      * Function-call compiler-barriers in those loops currently force
