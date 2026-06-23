@@ -105,19 +105,22 @@ static volatile uint64_t gTimerISRCalls = 0;
 
 // #557 scan-stale safety net. The scan RATE CAP prevents retriggering the
 // MODULE7 scan before it completes; this is the belt-and-suspenders runtime
-// detector behind it. gScanEosFired is set by the ADC EOS ISR each time the
-// shared scan completes, and cleared by the streaming timer ISR at each new
-// scan trigger. If a scan is armed but EOS had NOT fired by the next trigger,
-// the prior scan didn't complete (the #539 scan-busy / frozen-data condition)
-// — that tick's data is stale, so it is counted as a DROPPED sample (unlike
-// eosOverruns, which is task-behind-but-data-fresh and excluded from loss).
-// Reads ~0 with the cap in place; fires under NOCAP / cap miscalibration /
-// edge cases, turning otherwise-silent frozen data into visible, accounted loss.
-// Separate volatile globals (not in non-volatile gStreamStats) so the timer/EOS
-// ISRs can write them safely; folded into the snapshot under taskENTER_CRITICAL,
-// exactly like gTimerISRCalls.
-static volatile uint32_t gScanEosFired = 1u;     // primed: 1 = "fresh" (no stale)
-static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but EOS not fired
+// detector behind it. The ADC EOS ISR bumps gScanEosSeq each time the shared
+// scan completes; the streaming timer ISR records the value it last observed
+// (gScanEosSeqSeen) at each new scan trigger. If the seq has NOT advanced since
+// the last trigger, the prior scan didn't complete (the #539 scan-busy /
+// frozen-data condition) — that tick's data is stale, so it is counted as a
+// DROPPED sample (unlike eosOverruns, which is task-behind-but-data-fresh and
+// excluded from loss). A monotonic seq (vs the old boolean) is edge-safe — it
+// can't lose a completion if two EOS land between ticks (#563). Reads ~0 with
+// the cap in place; fires under NOCAP / cap miscalibration / edge cases,
+// turning otherwise-silent frozen data into visible, accounted loss. Separate
+// volatile globals (not in non-volatile gStreamStats) so the timer/EOS ISRs can
+// write them safely (single writer each); folded into the snapshot under
+// taskENTER_CRITICAL, exactly like gTimerISRCalls.
+static volatile uint32_t gScanEosSeq      = 1u;  // bumped per completed scan (EOS ISR); primed 1 ahead of "seen"
+static volatile uint32_t gScanEosSeqSeen  = 0u;  // last seq the timer ISR observed
+static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new EOS
 
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
@@ -975,8 +978,9 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
         // (pri 1) / EOS ISRs; a benign read-vs-set race can at most miscount by
         // one on a transition — fine for a safety-net counter.
         if (gNeedSharedScan) {
-            if (!gScanEosFired) gScanStaleDropped++;
-            gScanEosFired = 0u;
+            uint32_t eosSeq = gScanEosSeq;                       // 32-bit atomic load
+            if (eosSeq == gScanEosSeqSeen) gScanStaleDropped++;  // no new EOS since last tick -> stale
+            gScanEosSeqSeen = eosSeq;
         }
         Streaming_Defer_Interrupt();
     }
@@ -1632,7 +1636,8 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
-    gScanEosFired = 1u;   // #557: prime "fresh" so the first tick (no scan completed yet) isn't mis-counted
+    gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
+    gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gFlowWindowSize = FLOW_WINDOW_MIN;
@@ -1738,7 +1743,8 @@ void Streaming_ClearStats(void) {
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
-    gScanEosFired = 1u;   // #557: prime "fresh" so the first tick (no scan completed yet) isn't mis-counted
+    gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
+    gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
 #if PB_PROFILE_COUNTERS
     // #388: also clear UsbCdc's in-flight DMA timestamp so it doesn't
     // leak into the new session's usbDmaPendingCycles on the next
@@ -1843,7 +1849,7 @@ void Streaming_IncrEosOverruns(uint32_t missed) {
 // #557: called from the ADC EOS ISR (ADC_EOSInterruptCB) each time the shared
 // MODULE7 scan completes. Single volatile write — ISR-safe, no critical section.
 void Streaming_NoteEosFired(void) {
-    gScanEosFired = 1u;
+    gScanEosSeq++;   /* bump per completed scan; the EOS ISR is the only writer (RMW safe) */
 }
 
 #if PB_PROFILE_COUNTERS
