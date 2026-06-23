@@ -99,6 +99,39 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
 }
 
 /**
+ * #557: NQ1 freeze-aware additive ADC/scan cap (Hz).
+ *
+ * period_ns = base + arm*(scan armed) + cT1*nT1 + cT2*nT2_user + cMon*nMon
+ *
+ * Fitted to the 2026-06-22 freeze-aware ceiling sweep — the first sweep whose
+ * leak detector counts ScanStaleDropped (scan didn't complete -> frozen data)
+ * as a drop. The prior drop-blind sweeps counted frozen data as "clean" and so
+ * INFLATED the T2/scanned ceilings; this model replaces the over-conservative-
+ * yet-wrong tick-budget / type1Agg / MC12b_ScanMaxFreq terms FOR NQ1 only.
+ *   - PB fits to +-13% -> margin 0.88 makes it a safe never-over envelope.
+ *   - CSV is byte/transport-bound (noisier) -> margin 0.80 here, AND the
+ *     per-format transport term is still min()'d downstream (binds CSV lower).
+ * NQ2/NQ3 (AD7609 — no MODULE7 scan, different timing) keep the legacy formula.
+ * Margins verified per-config by the #557 at-cap revalidation. nMon = monitoring
+ * channels in the scan (8 when OBDiag on, else 0); arm = any scanned channel.
+ */
+static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2user,
+                                                    uint32_t nMon, uint32_t isProtoBuf) {
+    uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
+    uint64_t period_ns, num;
+    if (isProtoBuf) {
+        period_ns = 55300ULL + 20000ULL*armed + 2160ULL*nT1 + 13470ULL*nT2user + 2260ULL*nMon;
+        num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
+    } else {
+        period_ns = 71000ULL + 21300ULL*armed + 4550ULL*nT1 + 15190ULL*nT2user + 2680ULL*nMon;
+        num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
+    }
+    uint32_t hz = (uint32_t)(num / period_ns);   /* period_ns always >= base, no div-by-0 */
+    if (hz > STREAMING_ISR_MAX_HZ) hz = STREAMING_ISR_MAX_HZ;
+    return (hz == 0u) ? 1u : hz;
+}
+
+/**
  * Per-interface, per-format TRANSPORT wire-rate cap (Hz) — generalizes the
  * WiFi-only term (#520) to USB / SD / USB+SD (#524).  Fitted to the 3-run
  * real-ADC zero-loss characterization (matrix_524 run-1/2/3 + WiFi-v2,
@@ -320,6 +353,8 @@ typedef struct {
     uint32_t dioDroppedSamplesSteady;
     uint32_t queueDroppedSamplesSteady;  // post-grace subset of queueDroppedSamples
     uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
+    uint32_t scanStaleDropped; // #557: scan armed but EOS not fired by next trigger
+                               // (scan-busy/stale) — counted as a dropped sample
     // #541 D-A diagnostic: ticks where a T1 (dedicated-module) channel's
     // ARDY flag was not set when the deferred task went to read its result
     // register.  Expected ~0 (T1 conversion completes ~1.3 us after trigger;
@@ -384,6 +419,11 @@ void Streaming_IncrDioDropped(void);
 // Increment EOS coalesce counter (called from MC12bADC_EosInterruptTask).
 // @param missed Number of coalesced notifications (notifCount - 1).
 void Streaming_IncrEosOverruns(uint32_t missed);
+
+// #557: set the scan-completed flag from the ADC EOS ISR. ISR-safe (one
+// volatile write). The streaming timer ISR consumes it to detect a scan that
+// didn't complete before the next trigger (scan-stale -> counted as a drop).
+void Streaming_NoteEosFired(void);
 
 /**
  * Returns current SCPI STATus:QUEStionable condition bits for streaming health.

@@ -128,6 +128,12 @@ void MC12b_RestoreIdleScanList(void);
  */
 uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2);
 
+/*! #563: the SAMC/divider-dependent hardware scan-busy limit only (no EOS/event
+ *  caps) — for the NQ1 freeze-aware additive cap to min() with, so a non-default
+ *  SAMC can't push the cap above the real scan-retrigger limit (#539).
+ *  Returns UINT32_MAX when nActive == 0. */
+uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive);
+
 /**
  * Returns bitmask of enabled Type 1 ADCHS channels (bits 0-4).
  */

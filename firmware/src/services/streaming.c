@@ -103,6 +103,26 @@ static StreamingStats gStreamStats = {0};
 // this inside taskENTER_CRITICAL which blocks the timer ISR (priority 1).
 static volatile uint64_t gTimerISRCalls = 0;
 
+// #557 scan-stale safety net. The scan RATE CAP prevents retriggering the
+// MODULE7 scan before it completes; this is the belt-and-suspenders runtime
+// detector behind it. The ADC EOS ISR bumps gScanEosSeq each time the shared
+// scan completes; the streaming timer ISR records the value it last observed
+// (gScanEosSeqSeen) at each new scan trigger. If the seq has NOT advanced since
+// the last trigger, the prior scan didn't complete (the #539 scan-busy /
+// frozen-data condition) — that tick's data is stale. Surfaced as its OWN stat
+// (SYST:STR:STATS? ScanStaleDropped); NOT folded into SampleLossPercent — like
+// eosOverruns, the sample was still streamed, just with frozen data (#563). A
+// monotonic seq (vs the old boolean) is edge-safe — it can't lose a completion
+// if two EOS land between ticks (#563). Reads ~0 with the cap in place; fires
+// under NOCAP / cap miscalibration / edge cases, turning otherwise-silent
+// frozen data into a visible, accounted staleness metric. Separate
+// volatile globals (not in non-volatile gStreamStats) so the timer/EOS ISRs can
+// write them safely (single writer each); folded into the snapshot under
+// taskENTER_CRITICAL, exactly like gTimerISRCalls.
+static volatile uint32_t gScanEosSeq      = 1u;  // bumped per completed scan (EOS ISR); primed 1 ahead of "seen"
+static volatile uint32_t gScanEosSeqSeen  = 0u;  // last seq the timer ISR observed
+static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new EOS
+
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
 // All reset in Streaming_ClearStats() via Logger_ResetSessionOneShots().
@@ -457,42 +477,53 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
     uint16_t type1 = 0, total = 0;
     Streaming_CountActiveChannels(&type1, &total, NULL);
 
-    // Mirror Streaming_ComputeMaxFreq's behavior for 0 channels (returns
-    // ISR_MAX, not 0) so the channel-enable recompute path doesn't cap to 0
-    // when the last channel is disabled.
-    uint32_t maxFreq = Streaming_ComputeMaxFreq(type1, total);
-
-    /* Apply the per-interface, per-format TRANSPORT cap (#524), generalizing the
-     * former WiFi-only term to USB / SD / USB+SD.  min() with the ADC cap above.
-     * The interface is a PARAMETER (not read from the global) so callers such as
-     * the capabilities query can compute for the client's detected interface
-     * without mutating shared state (#524 Qodo). BoardRunTimeConfig_Get never
-     * returns NULL (CLAUDE.md). */
+    /* BoardRunTimeConfig_Get / BoardConfig_Get never return NULL (CLAUDE.md). */
     StreamingRuntimeConfig* sc =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    tBoardConfig* bc = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+
+    /* Session scan list: enabled user-T2 (+ monitoring when OBDiag on). */
+    uint32_t scanCount = MC12b_ComputeScanList(true, sc->OnboardDiagEnabled, NULL, NULL);
+    uint32_t userT2    = MC12b_ComputeScanList(true, false, NULL, NULL);
+
+    uint32_t maxFreq;
+    if (bc != NULL && bc->BoardVariant == 1u && total > 0u) {
+        /* NQ1 (#557): freeze-aware additive ADC/scan cap replaces the
+         * tick-budget / type1Agg / MC12b_ScanMaxFreq terms below. The prior
+         * sweeps were drop-blind and counted frozen scanned data as clean, so
+         * those terms were both over-conservative (T1) AND wrong (inflated T2).
+         * monitoring channels in the scan = scanCount - userT2 (8 when OBDiag). */
+        uint32_t nMon = (scanCount > userT2) ? (scanCount - userT2) : 0u;
+        maxFreq = Streaming_AdcAdditiveCap_NQ1(
+                type1, userT2, nMon, (sc->Encoding == Streaming_ProtoBuffer) ? 1u : 0u);
+        /* #563: the additive model was fit at the default SAMC. It replaces the
+         * EOS-rate/event-rate caps, but the SAMC/divider-dependent scan-busy
+         * limit (#539) must still apply so a non-default SAMC can't push the cap
+         * above the real scan-retrigger rate. min() with the hardware term only
+         * (not full ScanMaxFreq, whose EOS/event caps the additive model supersedes). */
+        if (scanCount > 0) {
+            uint32_t hwScanMax = MC12b_HardwareScanMaxFreq(scanCount);
+            if (hwScanMax < maxFreq) maxFreq = hwScanMax;
+        }
+    } else {
+        /* NQ2/NQ3 (AD7609 — no MODULE7 scan) and the 0-channel case: legacy
+         * conservative formula (#541). Mirror ComputeMaxFreq's ISR_MAX-for-0
+         * behavior so disabling the last channel doesn't cap to 0. */
+        maxFreq = Streaming_ComputeMaxFreq(type1, total);
+        /* #541 D-C shared-scan rate bound (documented-undefined retrigger,
+         * FRM §22.3.2 / #539). N_active==0 arms no scan -> no bound. */
+        if (scanCount > 0) {
+            uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
+            if (scanMax < maxFreq) maxFreq = scanMax;
+        }
+    }
+
+    /* Per-interface, per-format TRANSPORT cap (#524) applies to ALL variants;
+     * binds CSV (byte-bound) below the ADC cap. Interface is a PARAMETER so the
+     * capabilities query can compute for the detected interface w/o mutating
+     * shared state (#524 Qodo). */
     uint32_t transportMax = Streaming_TransportMaxFreq(iface, sc->Encoding, total);
     if (transportMax < maxFreq) maxFreq = transportMax;
-
-    /* #541 D-C: shared-scan rate bound.  Retriggering the MODULE7 scan
-     * while a scan is in progress is documented-undefined behavior (FRM
-     * DS60001344E §22.3.2) — the #539 mechanism: above ~1/T_scan the EOS
-     * interrupt degrades then stops, and scanned data goes stale.  The
-     * streaming tick IS the scan trigger (STRGSRC=TMR5), so the tick rate
-     * must not exceed 1/T_scan for the session's scan list (built by D-B:
-     * enabled T2 + monitoring when OBDiag=1).  N_active == 0 (e.g. T1-only
-     * OBDiag=0) arms no scan — no bound.  This term gates the HARDWARE
-     * trigger path, which the legacy ChannelScanFreqDiv software divider
-     * never covered. */
-    uint32_t scanCount = MC12b_ComputeScanList(
-            true, sc->OnboardDiagEnabled, NULL, NULL);
-    if (scanCount > 0) {
-        /* User-T2 count (monitoring excluded): each enabled T2 channel
-         * fires a per-conversion data-ready ISR, which feeds the
-         * aggregate ADC-event-rate bound inside ScanMaxFreq (v4). */
-        uint32_t userT2 = MC12b_ComputeScanList(true, false, NULL, NULL);
-        uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
-        if (scanMax < maxFreq) maxFreq = scanMax;
-    }
     return maxFreq;
 }
 
@@ -940,6 +971,23 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
     // re-armed but streaming is disabled.
     if (gpRuntimeConfigStream != NULL && gpRuntimeConfigStream->IsEnabled) {
         gTimerISRCalls++;
+        // #557 scan-stale detector: this tick is a new shared-scan trigger
+        // (STRGSRC=TMR5). If a scan is armed but its EOS hasn't fired since the
+        // last trigger, the prior scan didn't complete (scan-busy) — its data
+        // is stale, so count the tick as a dropped sample. Then re-arm for the
+        // scan this tick triggers. 32-bit atomic loads/stores across the timer
+        // (pri 1) / EOS ISRs; single writer per global (#563 edge-safe seq).
+        //
+        // #563: only valid when the HW trigger fires the scan on EVERY tick
+        // (STRGSRC=TMR5). In the software divided-trigger path
+        // (ChannelScanFreqDiv > 1) the scan isn't retriggered each tick, so a
+        // missing EOS between triggers is expected — gating on
+        // MC12b_IsHwTriggerShared() avoids overcounting there.
+        if (gNeedSharedScan && MC12b_IsHwTriggerShared()) {
+            uint32_t eosSeq = gScanEosSeq;                       // 32-bit atomic load
+            if (eosSeq == gScanEosSeqSeen) gScanStaleDropped++;  // no new EOS since last tick -> stale
+            gScanEosSeqSeen = eosSeq;
+        }
         Streaming_Defer_Interrupt();
     }
 
@@ -1554,9 +1602,13 @@ static void Streaming_Stop(void) {
             // not a dropped sample — exclude from loss total/percentage.
             // Steady counters for the loss math: startup-window transients
             // shouldn't inflate the reported loss percent.
+            // #557: scan-stale ticks are genuine dropped samples (the prior
+            // scan never completed — its data is stale), so include them in the
+            // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
             uint32_t totalSampleLoss = gStreamStats.queueDroppedSamplesSteady +
                                       gStreamStats.encoderDroppedSamplesSteady +
-                                      gStreamStats.dioDroppedSamplesSteady;
+                                      gStreamStats.dioDroppedSamplesSteady +
+                                      gScanStaleDropped;
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
@@ -1589,6 +1641,9 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gSdFileWasReady = false;
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
+    gScanStaleDropped = 0;
+    gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
+    gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
     gFlowWindowSize = FLOW_WINDOW_MIN;
@@ -1645,6 +1700,7 @@ void Streaming_GetStats(StreamingStats* out) {
     // read forces a fresh load from memory; the critical section blocks the
     // timer ISR (priority 1) so we get a coherent reading.
     out->timerISRCalls = gTimerISRCalls;
+    out->scanStaleDropped = gScanStaleDropped;  // #557 (separate volatile, like timerISRCalls)
     taskEXIT_CRITICAL();
 }
 
@@ -1692,6 +1748,9 @@ void Streaming_ClearStats(void) {
     taskENTER_CRITICAL();
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
+    gScanStaleDropped = 0;
+    gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
+    gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
 #if PB_PROFILE_COUNTERS
     // #388: also clear UsbCdc's in-flight DMA timestamp so it doesn't
     // leak into the new session's usbDmaPendingCycles on the next
@@ -1791,6 +1850,12 @@ void Streaming_IncrDioDropped(void) {
 
 void Streaming_IncrEosOverruns(uint32_t missed) {
     gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 8)
+}
+
+// #557: called from the ADC EOS ISR (ADC_EOSInterruptCB) each time the shared
+// MODULE7 scan completes. Single volatile write — ISR-safe, no critical section.
+void Streaming_NoteEosFired(void) {
+    gScanEosSeq++;   /* bump per completed scan; the EOS ISR is the only writer (RMW safe) */
 }
 
 #if PB_PROFILE_COUNTERS
