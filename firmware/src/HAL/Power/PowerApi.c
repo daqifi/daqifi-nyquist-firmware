@@ -67,7 +67,11 @@
  */
 #define BATT_EXT_DOWN_TH 15.0  /* External power disabled below this */
 #define BATT_LOW_TH 5.0        /* Critical shutdown threshold */
-#define BATT_HYST 10.0         /* Must charge 10% above threshold to re-enable */ 
+/* #564: chargePct sentinel — no valid ADC reading yet. The low/critical
+ * comparisons guard on battVoltageValid (chargePct holds UNKNOWN exactly when
+ * !battVoltageValid), so a stale UNKNOWN never reads as a dead battery. */
+#define BATT_CHARGE_UNKNOWN (-1)
+#define BATT_HYST 10.0         /* Must charge 10% above threshold to re-enable */
 
 //! Pointer to a data structure for storing the configuration data
 static tPowerConfig *pConfig;
@@ -317,8 +321,11 @@ static void Power_Up(bool enableExtPower) {
         if (hasExternalPower) {
             /* External power present - always safe to enable */
             pWriteVariables->EN_5_10V_Val = true;
-        } else if (pData->chargePct >= BATT_EXT_DOWN_TH) {
-            /* Battery has sufficient charge */
+        } else if (!pData->battVoltageValid || pData->chargePct >= BATT_EXT_DOWN_TH) {
+            /* Battery has sufficient charge, OR the VBATT ADC hasn't validated
+             * yet (cold boot) so chargePct is a stale 0% — don't refuse the rail
+             * and demote to EXT_DOWN on phantom data.  Power-up already required
+             * BQ vsysStat to clear, so the battery is above SYS_MIN here. #564. */
             pWriteVariables->EN_5_10V_Val = true;
         } else {
             /* Battery too low - don't enable external power to avoid immediate re-transition */
@@ -409,9 +416,23 @@ static void Power_UpdateStatusFromGPIO(void) {
     bool hasExternalPower = (vbusLevel >= USBHS_VBUS_BELOW_VBUSVALID);
     pData->BQ24297Data.status.pgStat = hasExternalPower;
 
-    /* Update vsysStat equivalent from ADC battery voltage
-     * vsysStat=1 means battery < 3.0V (VSYSMIN threshold) */
-    pData->BQ24297Data.status.vsysStat = (pData->battVoltage < 3.0f);
+    /* vsysStat — the BQ24297's authoritative low-battery signal (REG08 bit0:
+     * 1 = BAT < VSYSMIN 3.0V). #564: read it over I2C; do NOT synthesize it from
+     * the PIC ADC battVoltage. battVoltage reads a stale 0 before the ADC samples
+     * (cold boot / STANDBY), which made this line force vsysStat=1 → a healthy
+     * 3.97V battery looked dead → Power_HasSufficientPower() refused battery-only
+     * power-up (USB masked it via pgStat). The BQ correctly reports the real
+     * battery. Mutex-protected, cheap; on a read failure keep the last value
+     * rather than clobbering with bad data. #564: gate on initComplete — before
+     * the BQ driver is configured the read just fails (+ spams the I2C error log)
+     * every ~100ms; the memset-0 vsysStat default is the safe "not-low" value
+     * until then. */
+    if (pData->BQ24297Data.initComplete) {
+        uint8_t reg08;
+        if (BQ24297_Read_I2C(0x08, &reg08)) {
+            pData->BQ24297Data.status.vsysStat = (bool)(reg08 & 0x01);
+        }
+    }
 
     /* Read charging status from BATT_MAN_STAT GPIO
      * BQ24297 STAT pin: LOW = charging, HIGH = not charging/complete
@@ -570,9 +591,19 @@ static void Power_HandlePoweredUpState(void) {
         /* Refresh power status from GPIO/ADC before threshold decision */
         Power_UpdateStatusFromGPIO();
 
-        if (pData->chargePct < BATT_EXT_DOWN_TH) {
-            LOG_D("Power_UpdateState: Battery at %u%%, transitioning to POWERED_UP_EXT_DOWN to conserve power",
-                  pData->chargePct);
+        /* Demote to conservation mode on either:
+         *   - the BQ's authoritative critical signal (vsysStat = BAT < SYS_MIN),
+         *     REGARDLESS of chargePct validity — so a critically low battery is
+         *     caught even before the VBATT ADC has sampled (EXT_DOWN then shuts
+         *     to STANDBY on the same vsysStat). Without this, the critical path
+         *     was unreachable while chargePct was UNKNOWN (Qodo #564). OR
+         *   - a VALID chargePct below the conservation threshold. #564: only act
+         *     on chargePct once the ADC reading is valid — at cold boot it reads
+         *     a stale 0% that must not force a spurious demote/shutdown. */
+        if (pData->BQ24297Data.status.vsysStat ||
+            (pData->battVoltageValid && pData->chargePct < BATT_EXT_DOWN_TH)) {
+            LOG_D("Power_UpdateState: Battery low (vsysStat=%u, %d%%), transitioning to POWERED_UP_EXT_DOWN",
+                  pData->BQ24297Data.status.vsysStat, pData->chargePct);
             pWriteVariables->EN_5_10V_Val = false;
             Power_Write();
             pData->powerState = POWERED_UP_EXT_DOWN;
@@ -601,7 +632,7 @@ static void Power_HandlePoweredUpExtDownState(void) {
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Auto-recovery - re-enable external power */
-            LOG_D("Auto-recovery: Enabling external power - %s, battery at %u%%",
+            LOG_D("Auto-recovery: Enabling external power - %s, battery at %d%%",
                   hasExternalPower ? "external power present" : "battery recovered", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
@@ -619,22 +650,29 @@ static void Power_HandlePoweredUpExtDownState(void) {
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Manual recovery - re-enable external power */
-            LOG_D("Manual recovery: Enabling external power - %s, battery at %u%%",
+            LOG_D("Manual recovery: Enabling external power - %s, battery at %d%%",
                   hasExternalPower ? "external power present" : "battery sufficient", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
             pData->powerState = POWERED_UP;
         } else {
             /* Cannot enable external power due to low battery */
-            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %u%%, needs %u%%",
+            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %d%%, needs %u%%",
                   pData->chargePct, (unsigned)(BATT_EXT_DOWN_TH + BATT_HYST));
         }
         pData->requestedPowerState = NO_CHANGE;
     }
-    /* Critical battery check - must shut down to prevent damage */
-    else if (!hasExternalPower && pData->chargePct < BATT_LOW_TH) {
-        LOG_D("Power_UpdateState: Battery critically low (%u%%), transitioning to STANDBY",
-              pData->chargePct);
+    /* Critical battery check - must shut down to prevent damage.
+     * #564: rely on the BQ24297 vsysStat (REG08, I2C — valid before the ADC
+     * powers up) as the authoritative critical signal: it asserts when the
+     * battery can no longer hold the system above SYS_MIN (3.0V).  The
+     * chargePct (ADC-derived) path is only consulted once the voltage reading
+     * has validated, so a stale 0% at cold boot can't force a false shutdown. */
+    else if (!hasExternalPower &&
+             (pData->BQ24297Data.status.vsysStat ||
+              (pData->battVoltageValid && pData->chargePct < BATT_LOW_TH))) {
+        LOG_D("Power_UpdateState: Battery critically low (vsysStat=%u, %d%%), transitioning to STANDBY",
+              pData->BQ24297Data.status.vsysStat, pData->chargePct);
 
         /* Explicitly disable all external rails before shutdown */
         pWriteVariables->EN_5_10V_Val = false;
@@ -712,22 +750,38 @@ static void Power_UpdateChgPct(void) {
             index);
     if (NULL != pAnalogSample) {
         float newVoltage = ADC_ConvertToVoltage(pAnalogSample);
-        /* Validate reading (ignore noise near 0V) */
+        /* Validate reading (ignore noise near 0V).  A reading <=0.1V means the
+         * VBATT ADC isn't powered/sampled yet (cold boot) — don't trust it.
+         * #564: track validity per-reading — clear it when the reading is
+         * invalid/missing so a stale value can't be trusted later (e.g. battery
+         * removed). chargePct then reads UNKNOWN, and the critical decision
+         * falls back to the BQ vsysStat (authoritative). */
         if (newVoltage > 0.1) {
             pData->battVoltage = newVoltage;
+            pData->battVoltageValid = true;
+        } else {
+            pData->battVoltageValid = false;
         }
+    } else {
+        pData->battVoltageValid = false;
     }
 
     /* Convert voltage to percentage using linear approximation
      * Valid range: 3.17V (0%) to 3.868V (100%)
      * Formula: percentage = 142.92 * voltage - 452.93
+     *
+     * #564: until the VBATT ADC has produced a real reading, battVoltage is a
+     * stale 0 — report UNKNOWN, NOT 0%, so no consumer treats it as a dead
+     * battery. (The power-up gate uses the BQ's authoritative vsysStat, not this.)
      */
-    if (pData->battVoltage < 3.17) {
+    if (!pData->battVoltageValid) {
+        pData->chargePct = BATT_CHARGE_UNKNOWN;
+    } else if (pData->battVoltage < 3.17) {
         pData->chargePct = 0;
     } else if (pData->battVoltage > 3.868) {
         pData->chargePct = 100;
     } else {
-        pData->chargePct = 142.92 * pData->battVoltage - 452.93;
+        pData->chargePct = (int16_t)(142.92 * pData->battVoltage - 452.93);
     }
 }
 

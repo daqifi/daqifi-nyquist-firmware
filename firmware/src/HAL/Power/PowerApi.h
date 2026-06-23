@@ -90,7 +90,14 @@ typedef struct sPowerConfig{
  */
 typedef struct sPowerData{
 
-    uint8_t chargePct;
+    /* #564: tri-state. BATT_CHARGE_UNKNOWN (-1) until the VBATT ADC produces a
+     * valid reading (it reads a stale 0 at cold boot); 0..100 once known. Signed
+     * so UNKNOWN is distinguishable from a real 0% — naked `chargePct < THRESH`
+     * comparisons must check known-first (chargePct >= 0). volatile: written by
+     * app_PowerAndUITask, read cross-task (SCPI battery query, protobuf
+     * batt_status) — same treatment as powerState (#410). 16-bit read is atomic
+     * on PIC32MZ. */
+    volatile int16_t chargePct;
     /* volatile: written by app_PowerAndUITask (pri 7), read across loop
      * iterations by app_WifiTask (pri 2) and app_SDCardTask (pri 5).
      * Function-call compiler-barriers in those loops currently force
@@ -105,6 +112,13 @@ typedef struct sPowerData{
     bool battLow;
     bool shutdownNotified;  /* Set by UI task after LED warning shown */
     double battVoltage;
+    /* #564: false until the VBATT ADC has produced a real reading (>0.1V).
+     * At cold boot the ADC may not be powered/sampled yet, so battVoltage
+     * (and the chargePct derived from it) read a stale 0 — which must NOT be
+     * treated as a dead battery.  chargePct-based demotions are gated on this;
+     * the BQ24297 vsysStat (I2C, valid before the ADC) is the authoritative
+     * critical-battery signal until the voltage measurement validates. */
+    bool battVoltageValid;
     bool pONBattPresent;
     bool autoExtPowerEnabled;  /* Auto-manage external power based on battery level (default: true) */
     /* #454: Auto-transition STANDBY → POWERED_UP whenever VBUS (USB) is
