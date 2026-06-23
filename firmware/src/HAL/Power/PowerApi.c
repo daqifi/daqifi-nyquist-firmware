@@ -629,7 +629,7 @@ static void Power_HandlePoweredUpExtDownState(void) {
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Auto-recovery - re-enable external power */
-            LOG_D("Auto-recovery: Enabling external power - %s, battery at %u%%",
+            LOG_D("Auto-recovery: Enabling external power - %s, battery at %d%%",
                   hasExternalPower ? "external power present" : "battery recovered", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
@@ -647,14 +647,14 @@ static void Power_HandlePoweredUpExtDownState(void) {
         /* Check recovery conditions (with hysteresis to prevent oscillation) */
         if (hasExternalPower || pData->chargePct >= (BATT_EXT_DOWN_TH + BATT_HYST)) {
             /* Manual recovery - re-enable external power */
-            LOG_D("Manual recovery: Enabling external power - %s, battery at %u%%",
+            LOG_D("Manual recovery: Enabling external power - %s, battery at %d%%",
                   hasExternalPower ? "external power present" : "battery sufficient", pData->chargePct);
             pWriteVariables->EN_5_10V_Val = true;
             Power_Write();
             pData->powerState = POWERED_UP;
         } else {
             /* Cannot enable external power due to low battery */
-            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %u%%, needs %u%%",
+            LOG_D("Power_HandlePoweredUpExtDownState: Cannot enable external power - battery at %d%%, needs %u%%",
                   pData->chargePct, (unsigned)(BATT_EXT_DOWN_TH + BATT_HYST));
         }
         pData->requestedPowerState = NO_CHANGE;
@@ -668,7 +668,7 @@ static void Power_HandlePoweredUpExtDownState(void) {
     else if (!hasExternalPower &&
              (pData->BQ24297Data.status.vsysStat ||
               (pData->battVoltageValid && pData->chargePct < BATT_LOW_TH))) {
-        LOG_D("Power_UpdateState: Battery critically low (vsysStat=%u, %u%%), transitioning to STANDBY",
+        LOG_D("Power_UpdateState: Battery critically low (vsysStat=%u, %d%%), transitioning to STANDBY",
               pData->BQ24297Data.status.vsysStat, pData->chargePct);
 
         /* Explicitly disable all external rails before shutdown */
