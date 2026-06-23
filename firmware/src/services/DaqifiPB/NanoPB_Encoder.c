@@ -507,7 +507,12 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.pwr_status = state->PowerData.powerState;
                 break;
             case DaqifiOutMessage_batt_status_tag:
-                message.batt_status = state->PowerData.chargePct;
+                /* #564: chargePct is now tri-state (-1 = UNKNOWN until the VBATT
+                 * ADC validates). Clamp the sentinel to 0 so it never encodes as
+                 * a bogus large value (streaming implies POWERED_UP, where it's
+                 * known, so this is defensive). */
+                message.batt_status = (state->PowerData.chargePct < 0)
+                                        ? 0 : (uint32_t)state->PowerData.chargePct;
                 break;
             case DaqifiOutMessage_temp_status_tag:
                 break;
