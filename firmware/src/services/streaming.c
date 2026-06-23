@@ -492,6 +492,15 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
         uint32_t nMon = (scanCount > userT2) ? (scanCount - userT2) : 0u;
         maxFreq = Streaming_AdcAdditiveCap_NQ1(
                 type1, userT2, nMon, (sc->Encoding == Streaming_ProtoBuffer) ? 1u : 0u);
+        /* #563: the additive model was fit at the default SAMC. It replaces the
+         * EOS-rate/event-rate caps, but the SAMC/divider-dependent scan-busy
+         * limit (#539) must still apply so a non-default SAMC can't push the cap
+         * above the real scan-retrigger rate. min() with the hardware term only
+         * (not full ScanMaxFreq, whose EOS/event caps the additive model supersedes). */
+        if (scanCount > 0) {
+            uint32_t hwScanMax = MC12b_HardwareScanMaxFreq(scanCount);
+            if (hwScanMax < maxFreq) maxFreq = hwScanMax;
+        }
     } else {
         /* NQ2/NQ3 (AD7609 — no MODULE7 scan) and the 0-channel case: legacy
          * conservative formula (#541). Mirror ComputeMaxFreq's ISR_MAX-for-0

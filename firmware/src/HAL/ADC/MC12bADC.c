@@ -367,6 +367,28 @@ void MC12b_RestoreIdleScanList(void) {
     MC12b_ApplyScanList(css1, css2);
 }
 
+/* #563/#557: the SAMC/divider-dependent hardware scan-busy limit ALONE — the
+ * real #539 bound (retriggering MODULE7 mid-conversion is documented-undefined,
+ * FRM §22.3.2). Extracted from MC12b_ScanMaxFreq so the NQ1 freeze-aware additive
+ * cap can min() with it directly: the additive model intentionally replaces the
+ * EOS-rate/event-rate terms (re-tested non-fatal on v3.6.1, #557) but NOT this
+ * one, which must scale with the live SAMC/TAD config. All terms read live:
+ *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x 10ns (PBCLK3 100MHz).
+ *   T_busy = N x (SAMC + 16) x TAD7 + ~6us;  cap = 1 / (T_busy x 1.1).
+ * Returns 0xFFFFFFFF when no scan is armed (no bound). */
+uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
+    if (nActive == 0u) return 0xFFFFFFFFu;  // no scan armed — no bound
+    uint32_t conclkdiv = (ADCCON3 >> 24) & 0x3Fu;
+    uint32_t adcdiv    = ADCCON2 & 0x7Fu;
+    if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
+    uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
+    uint32_t tadNs     = 2u * adcdiv * (conclkdiv + 1u) * 10u;
+    uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
+    uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
+    uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);
+    return (hz == 0u) ? 1u : hz;
+}
+
 uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {
     // #541 D-C: max safe shared-scan trigger rate.  Retriggering the scan
     // while in progress is documented-undefined (FRM §22.3.2) — the #539
@@ -397,14 +419,9 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {
     //   CONCLKDIV semantics; the datasheet matches silicon).  TCLK = 10 ns
     //   (ADCSEL=00 -> PBCLK3 = 100 MHz, fixed clock tree).
     if (nActive == 0u) return 0xFFFFFFFFu;  // no scan armed — no bound
-    uint32_t conclkdiv = (ADCCON3 >> 24) & 0x3Fu;
-    uint32_t adcdiv    = ADCCON2 & 0x7Fu;
-    if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
-    uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
-    uint32_t tadNs     = 2u * adcdiv * (conclkdiv + 1u) * 10u;
-    uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
-    uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
-    uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);
+    // Scan-busy hardware limit (SAMC/divider-dependent) — extracted to
+    // MC12b_HardwareScanMaxFreq (#563) so the NQ1 additive cap can reuse it.
+    uint32_t hz = MC12b_HardwareScanMaxFreq(nActive);
     // EOS-RATE limit (v3, 2026-06-12): independent of scan length, the
     // end-of-scan interrupt/task machinery is USB-FATAL when driven
     // sustained above ~11.5-12 kHz.  Silicon anchors: an n=1 scan
