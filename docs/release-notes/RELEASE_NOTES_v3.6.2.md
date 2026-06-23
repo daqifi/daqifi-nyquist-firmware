@@ -26,6 +26,7 @@ A new `SYST:STR:STATS? ScanStaleDropped` field counts streaming ticks where the 
 
 ## Validation (hardware, NQ1 `7E2898F46200E8A7`)
 - **#564 on the combined release build:** `vsysStat` read live from the BQ (`REG08 VSYS=0`, healthy); `chargePct` reads `-1` UNKNOWN when the VBATT ADC is unsampled (not a false 0 %); device reaches POWERED_UP cleanly (no power-state-machine regression).
+- **#564 field-confirmed on the shipped v3.6.2 build:** the device now powers on properly from the button on battery alone (no USB) — the original failing symptom, verified fixed.
 - **#563 on the combined release build:** NQ1 additive cap computes `7453 Hz` for 2×T2; streaming runs clean; `ScanStaleDropped ≈ 0` (4 over ~900 k ticks); `EosOverruns=0`; the `TimerISRCalls == TotalSamples + QueueDropped` invariant (#265) holds exactly; error queue clean.
 
 ## Upgrade notes
