@@ -588,14 +588,19 @@ static void Power_HandlePoweredUpState(void) {
         /* Refresh power status from GPIO/ADC before threshold decision */
         Power_UpdateStatusFromGPIO();
 
-        /* #564: only demote on chargePct once the VBATT ADC reading is valid.
-         * At cold boot on battery the ADC isn't sampled yet -> chargePct reads a
-         * stale 0% and would wrongly conserve/shutdown a freshly powered device.
-         * The BQ vsysStat critical path (EXT_DOWN handler) still protects the
-         * cells if the battery is genuinely below SYS_MIN. */
-        if (pData->battVoltageValid && pData->chargePct < BATT_EXT_DOWN_TH) {
-            LOG_D("Power_UpdateState: Battery at %u%%, transitioning to POWERED_UP_EXT_DOWN to conserve power",
-                  pData->chargePct);
+        /* Demote to conservation mode on either:
+         *   - the BQ's authoritative critical signal (vsysStat = BAT < SYS_MIN),
+         *     REGARDLESS of chargePct validity — so a critically low battery is
+         *     caught even before the VBATT ADC has sampled (EXT_DOWN then shuts
+         *     to STANDBY on the same vsysStat). Without this, the critical path
+         *     was unreachable while chargePct was UNKNOWN (Qodo #564). OR
+         *   - a VALID chargePct below the conservation threshold. #564: only act
+         *     on chargePct once the ADC reading is valid — at cold boot it reads
+         *     a stale 0% that must not force a spurious demote/shutdown. */
+        if (pData->BQ24297Data.status.vsysStat ||
+            (pData->battVoltageValid && pData->chargePct < BATT_EXT_DOWN_TH)) {
+            LOG_D("Power_UpdateState: Battery low (vsysStat=%u, %d%%), transitioning to POWERED_UP_EXT_DOWN",
+                  pData->BQ24297Data.status.vsysStat, pData->chargePct);
             pWriteVariables->EN_5_10V_Val = false;
             Power_Write();
             pData->powerState = POWERED_UP_EXT_DOWN;
