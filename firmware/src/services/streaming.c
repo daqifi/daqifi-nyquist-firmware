@@ -109,12 +109,13 @@ static volatile uint64_t gTimerISRCalls = 0;
 // scan completes; the streaming timer ISR records the value it last observed
 // (gScanEosSeqSeen) at each new scan trigger. If the seq has NOT advanced since
 // the last trigger, the prior scan didn't complete (the #539 scan-busy /
-// frozen-data condition) — that tick's data is stale, so it is counted as a
-// DROPPED sample (unlike eosOverruns, which is task-behind-but-data-fresh and
-// excluded from loss). A monotonic seq (vs the old boolean) is edge-safe — it
-// can't lose a completion if two EOS land between ticks (#563). Reads ~0 with
-// the cap in place; fires under NOCAP / cap miscalibration / edge cases,
-// turning otherwise-silent frozen data into visible, accounted loss. Separate
+// frozen-data condition) — that tick's data is stale. Surfaced as its OWN stat
+// (SYST:STR:STATS? ScanStaleDropped); NOT folded into SampleLossPercent — like
+// eosOverruns, the sample was still streamed, just with frozen data (#563). A
+// monotonic seq (vs the old boolean) is edge-safe — it can't lose a completion
+// if two EOS land between ticks (#563). Reads ~0 with the cap in place; fires
+// under NOCAP / cap miscalibration / edge cases, turning otherwise-silent
+// frozen data into a visible, accounted staleness metric. Separate
 // volatile globals (not in non-volatile gStreamStats) so the timer/EOS ISRs can
 // write them safely (single writer each); folded into the snapshot under
 // taskENTER_CRITICAL, exactly like gTimerISRCalls.
@@ -974,10 +975,15 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
         // (STRGSRC=TMR5). If a scan is armed but its EOS hasn't fired since the
         // last trigger, the prior scan didn't complete (scan-busy) — its data
         // is stale, so count the tick as a dropped sample. Then re-arm for the
-        // scan this tick triggers. Single-bit volatile writes across the timer
-        // (pri 1) / EOS ISRs; a benign read-vs-set race can at most miscount by
-        // one on a transition — fine for a safety-net counter.
-        if (gNeedSharedScan) {
+        // scan this tick triggers. 32-bit atomic loads/stores across the timer
+        // (pri 1) / EOS ISRs; single writer per global (#563 edge-safe seq).
+        //
+        // #563: only valid when the HW trigger fires the scan on EVERY tick
+        // (STRGSRC=TMR5). In the software divided-trigger path
+        // (ChannelScanFreqDiv > 1) the scan isn't retriggered each tick, so a
+        // missing EOS between triggers is expected — gating on
+        // MC12b_IsHwTriggerShared() avoids overcounting there.
+        if (gNeedSharedScan && MC12b_IsHwTriggerShared()) {
             uint32_t eosSeq = gScanEosSeq;                       // 32-bit atomic load
             if (eosSeq == gScanEosSeqSeen) gScanStaleDropped++;  // no new EOS since last tick -> stale
             gScanEosSeqSeen = eosSeq;
