@@ -72,8 +72,7 @@ void Bootloader_BufferEventHandler(DATASTREAM_BUFFER_EVENT buffEvent,
                             DATASTREAM_BUFFER_HANDLE hBufferEvent,
                             uint16_t context )
 {
-  
-  static bool Escape = false;
+
   uint16_t crc;
   int i = 0;
   while(i < context)
@@ -87,41 +86,73 @@ void Bootloader_BufferEventHandler(DATASTREAM_BUFFER_EVENT buffEvent,
                 if (BOOTLOADER_GET_COMMAND == bootloaderData.prevState)
                 {
                     // If we were in an Escape sequence, copy the data on and reset the flag.
-                    if (Escape)
+                    if (bootloaderData.rxEscapePending)
                     {
-                        bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
-                        Escape = false;
+                        // Bounds-guard the accumulator (buff2 is BOOTLOADER_BUFFER_SIZE): an over-long
+                        // unframed stream must never write past it. On overflow drop the partial frame;
+                        // the EOT CRC check (the parser's integrity gate) rejects any mis-framed remainder.
+                        if (bootloaderData.cmdBufferLength < BOOTLOADER_BUFFER_SIZE)
+                        {
+                            bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
+                        }
+                        else
+                        {
+                            bootloaderData.cmdBufferLength = 0;
+                        }
+                        bootloaderData.rxEscapePending = false;
                     }
                     else
                     {
                         switch (bootloaderData.data->buffers.buff1[i])
                         {
-                            case SOH:   // Start of header   
+                            case SOH:   // Start of header
                                 bootloaderData.cmdBufferLength = 0;
+                                bootloaderData.rxEscapePending = false;   // start a fresh frame: drop any dangling escape
                                 break;
 
                             case EOT:   // End of transmission
-                                // Calculate CRC and see if this is valid
+                                // Calculate CRC and see if this frame is valid
                                 if (bootloaderData.cmdBufferLength > 2)
                                 {
                                     crc = bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength-2];
                                     crc += ((bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength-1])<<8);
-                                    
-                                    if (APP_CalculateCrc(bootloaderData.data->buffers.buff2, bootloaderData.cmdBufferLength-2) == crc){}
-                                   //{
-                                        // CRC matches so frame is valid.
+
+                                    if (APP_CalculateCrc(bootloaderData.data->buffers.buff2, bootloaderData.cmdBufferLength-2) == crc)
+                                    {
+                                        // CRC matches so the frame is valid; hand it to the processor.
                                         bootloaderData.usrBufferEventComplete = true;
                                         return;
-                                   // }
+                                    }
+                                    // CRC mismatch: drop the corrupt frame so a stray/garbled transfer
+                                    // can never be dispatched as a command (e.g. a bogus ERASE_FLASH on
+                                    // this CRC-checked, self-powered device). Reset the accumulator AND the
+                                    // escape state and keep reading; the host times out and retries. This
+                                    // is the inbound integrity gate that was previously disabled (empty
+                                    // if-body). Clearing rxEscapePending here keeps a corrupt frame that
+                                    // ended mid-escape from desyncing the parser across the retry.
+                                    bootloaderData.cmdBufferLength = 0;
+                                    bootloaderData.rxEscapePending = false;
                                 }
                                 break;
 
                             case DLE:   // Escape sequence
-                                Escape = true;
+                                bootloaderData.rxEscapePending = true;
                                 break;
 
                             default:
-                                bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
+                                // Bounds-guard the accumulator (buff2 is BOOTLOADER_BUFFER_SIZE): an
+                                // over-long/unframed stream must never write past it. On overflow drop the
+                                // partial frame; the EOT CRC check (the parser's integrity gate) rejects any
+                                // mis-framed remainder. (Frames are validated by CRC, not by SOH-gating.)
+                                if (bootloaderData.cmdBufferLength < BOOTLOADER_BUFFER_SIZE)
+                                {
+                                    bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
+                                }
+                                else
+                                {
+                                    bootloaderData.cmdBufferLength = 0;
+                                    bootloaderData.rxEscapePending = false;
+                                }
                                 break;
                         }
                     }

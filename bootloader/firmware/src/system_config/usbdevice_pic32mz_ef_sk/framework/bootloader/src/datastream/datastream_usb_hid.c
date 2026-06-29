@@ -73,9 +73,9 @@ void DATASTREAM_Tasks(void)
 
     if (RX == currDir)
     {
-        
+
         if( DataReceived )
-        {        
+        {
                 DataReceived = false;
                 readRequest = false;
                 currDir = IDLE;
@@ -83,13 +83,12 @@ void DATASTREAM_Tasks(void)
         }
         else if(readRequest == false)
         {
-                  
+
             DataReceived = false;
-            
+
             /* Place a new read request. */
              USB_DEVICE_HID_ReportReceive (USB_DEVICE_HID_INDEX_0,
                 &bootloaderData.hostHandle, &bootloaderData.data->buffers.buff1[0], 64 );
-             
              readRequest = true;
         }
 
@@ -103,7 +102,7 @@ void DATASTREAM_Tasks(void)
              &bootloaderData.hostHandle, &bootloaderData.data->buffers.buff2[_txCurPos], 64 );
              _txCurPos += 64;
             readRequest = true;
-             
+
         }
         else if (DataSent && (_txCurPos >= _txMaxSize)) // All data has been sent or is in the buffer
         {
@@ -229,6 +228,33 @@ void _USBDeviceEventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t 
              * Hence close handles to all function drivers (Only if they are
              * opened previously. */
             bootloaderData.deviceConfigured = false;
+            /* #568 wedge-fix: a RESET/DECONFIGURE strands the datastream RX/TX state.
+             * The stock handler cleared only deviceConfigured, leaving readRequest /
+             * currDir / DataReceived stale, so after the host reconnected the
+             * "else if (readRequest == false)" re-arm guard in DATASTREAM_Tasks never
+             * tripped and the endpoint stayed dark until a power-cycle. Reset the
+             * bookkeeping and kick the state machine back to GET_COMMAND so that as soon
+             * as the device is reconfigured it re-issues a read and responds.
+             *
+             * NOTE (Saleae-confirmed): a reopen-from-suspend produces a bus RESET with
+             * NO follow-up SET_CONFIGURATION, so CONFIGURED never fires and the endpoints
+             * disabled by the device layer here are never re-enabled on this enumeration.
+             * Recovery therefore requires the host to close+reopen (a fresh enumeration
+             * that does send SET_CONFIGURATION); the desktop/Core side performs that
+             * bounded reconnect, and this fix makes the device respond the instant it
+             * reconfigures. */
+            readRequest = false;
+            DataReceived = false;
+            DataSent = false;
+            currDir = IDLE;
+            _txCurPos = 0;            /* clear stale TX progress so a reset mid-send can't resume a partial frame */
+            _txMaxSize = 0;
+            _bufferHandle = 0;
+            bootloaderData.usrBufferEventComplete = false;
+            bootloaderData.cmdBufferLength = 0;
+            bootloaderData.rxEscapePending = false;   /* clear stale DLE-escape parser state across the reset */
+            bootloaderData.currentState = BOOTLOADER_GET_COMMAND;
+            bootloaderData.prevState = BOOTLOADER_GET_COMMAND;   /* keep prev/current consistent after the reset */
             break;
 
         case USB_DEVICE_EVENT_CONFIGURED:
