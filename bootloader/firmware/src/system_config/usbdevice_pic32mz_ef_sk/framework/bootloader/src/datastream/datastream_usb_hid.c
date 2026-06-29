@@ -247,8 +247,12 @@ void _USBDeviceEventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t 
             DataReceived = false;
             DataSent = false;
             currDir = IDLE;
+            _txCurPos = 0;            /* clear stale TX progress so a reset mid-send can't resume a partial frame */
+            _txMaxSize = 0;
+            _bufferHandle = 0;
             bootloaderData.usrBufferEventComplete = false;
             bootloaderData.cmdBufferLength = 0;
+            bootloaderData.rxEscapePending = false;   /* clear stale DLE-escape parser state across the reset */
             bootloaderData.currentState = BOOTLOADER_GET_COMMAND;
             break;
 

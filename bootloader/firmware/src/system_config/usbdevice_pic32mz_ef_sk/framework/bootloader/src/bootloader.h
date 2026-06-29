@@ -305,6 +305,12 @@ typedef struct
     /* Flag to indicate the user message is been processed */
     bool usrBufferEventComplete;
 
+    /* #568: DLE-escape parser state for the RX framing. Held here (not as a
+     * function-static inside Bootloader_BufferEventHandler) so the USB
+     * RESET/DECONFIGURED handler can clear it -- otherwise a bus reset landing
+     * between a DLE and its escaped byte would mis-parse the next frame. */
+    bool rxEscapePending;
+
     /* The application's current state */
       /* USB Host Layer Handle */
     uintptr_t hostHandle;
