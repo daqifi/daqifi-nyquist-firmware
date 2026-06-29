@@ -89,7 +89,8 @@ void Bootloader_BufferEventHandler(DATASTREAM_BUFFER_EVENT buffEvent,
                     if (bootloaderData.rxEscapePending)
                     {
                         // Bounds-guard the accumulator (buff2 is BOOTLOADER_BUFFER_SIZE): an over-long
-                        // unframed stream must never write past it. On overflow drop and resync on SOH.
+                        // unframed stream must never write past it. On overflow drop the partial frame;
+                        // the EOT CRC check (the parser's integrity gate) rejects any mis-framed remainder.
                         if (bootloaderData.cmdBufferLength < BOOTLOADER_BUFFER_SIZE)
                         {
                             bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
@@ -141,7 +142,8 @@ void Bootloader_BufferEventHandler(DATASTREAM_BUFFER_EVENT buffEvent,
                             default:
                                 // Bounds-guard the accumulator (buff2 is BOOTLOADER_BUFFER_SIZE): an
                                 // over-long/unframed stream must never write past it. On overflow drop the
-                                // partial frame and resync on the next SOH.
+                                // partial frame; the EOT CRC check (the parser's integrity gate) rejects any
+                                // mis-framed remainder. (Frames are validated by CRC, not by SOH-gating.)
                                 if (bootloaderData.cmdBufferLength < BOOTLOADER_BUFFER_SIZE)
                                 {
                                     bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
