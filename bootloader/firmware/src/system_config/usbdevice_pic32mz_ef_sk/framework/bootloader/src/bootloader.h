@@ -80,13 +80,21 @@ typedef enum
 }T_COMMANDS;
 // DOM-IGNORE-END
 
-#define MAJOR_VERSION 4    /* Bootloader Major Version Shown From a Read Version on PC */
-#define MINOR_VERSION 1    /* Bootloader Minor Version Shown From a Read Version on PC */
+#define MAJOR_VERSION 2    /* Bootloader Major Version shown from a Read Version on PC (was displayed 1.4) */
+#define MINOR_VERSION 0    /* Bootloader Minor Version shown from a Read Version on PC */
 
+/* The host decodes BootInfo[0] as the major (left) digit and BootInfo[1] as the
+ * minor (right) digit (daqifi-core Pic32BootloaderMessageConsumer.DecodeVersionResponse).
+ * The array was previously ordered {MINOR_VERSION, MAJOR_VERSION} with MAJOR=4/MINOR=1,
+ * so it displayed reversed as "1.4". Ordering it {MAJOR_VERSION, MINOR_VERSION} makes the
+ * #define names match the displayed string. 2.0 marks the bootloader carrying the #568
+ * USB reset/deconfigure datastream state-reset (wedge-fix) and the re-enabled inbound CRC
+ * gate; the host now displays "2.0" (was "1.4"). The proactive re-enumeration backstop is
+ * intentionally NOT in this build (held on branch fix/bootloader-568-hid-wedge-crc-led). */
 static const uint8_t BootInfo[2] =
 {
-    MINOR_VERSION,
-    MAJOR_VERSION
+    MAJOR_VERSION,
+    MINOR_VERSION
 };
 
 #define BOOTLOADER_BUFFER_SIZE 512

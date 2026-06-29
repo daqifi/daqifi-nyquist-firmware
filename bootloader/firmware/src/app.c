@@ -299,7 +299,7 @@ void APP_Initialize ( void )
     // Status LED2
     PLIB_PORTS_PinDirectionOutputSet(0, LED_BLUE_PORT, LED_BLUE_PIN);
     PLIB_PORTS_PinClear(0, LED_BLUE_PORT, LED_BLUE_PIN);
-    
+
     m_TimerCallback = SYS_TMR_HANDLE_INVALID;
        
     /* Delay to allow the power to stabilize */
@@ -328,7 +328,16 @@ void APP_Initialize ( void )
                 DelayMs(BOOTLOADER_BLINK_DURATION);
             }
         }
-        
+
+        // Issue #569: clear LED_BLUE on the way out of the MCLR/force-bootloader
+        // path. The MCLR entry lit it solid (above) and the button-hold blink loop
+        // leaves it at an indeterminate parity on release. Unlike LED_WHITE -- which
+        // APP_TimerCallback self-corrects with an unconditional periodic toggle --
+        // LED_BLUE is only ever driven when bootloaderConnected/Downloading, so it
+        // never clears on its own and would falsely read as the "host connected"
+        // indicator. Force it OFF so it only lights once a host actually connects.
+        PLIB_PORTS_PinClear(0, LED_BLUE_PORT, LED_BLUE_PIN);
+
         // Clear the reset reason status flag
         SYS_RESET_ReasonClear(RESET_REASON_MCLR);
     }

@@ -101,18 +101,24 @@ void Bootloader_BufferEventHandler(DATASTREAM_BUFFER_EVENT buffEvent,
                                 break;
 
                             case EOT:   // End of transmission
-                                // Calculate CRC and see if this is valid
+                                // Calculate CRC and see if this frame is valid
                                 if (bootloaderData.cmdBufferLength > 2)
                                 {
                                     crc = bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength-2];
                                     crc += ((bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength-1])<<8);
-                                    
-                                    if (APP_CalculateCrc(bootloaderData.data->buffers.buff2, bootloaderData.cmdBufferLength-2) == crc){}
-                                   //{
-                                        // CRC matches so frame is valid.
+
+                                    if (APP_CalculateCrc(bootloaderData.data->buffers.buff2, bootloaderData.cmdBufferLength-2) == crc)
+                                    {
+                                        // CRC matches so the frame is valid; hand it to the processor.
                                         bootloaderData.usrBufferEventComplete = true;
                                         return;
-                                   // }
+                                    }
+                                    // CRC mismatch: drop the corrupt frame so a stray/garbled transfer
+                                    // can never be dispatched as a command (e.g. a bogus ERASE_FLASH on
+                                    // this CRC-checked, self-powered device). Reset the accumulator and
+                                    // keep reading; the host times out and retries. This is the inbound
+                                    // integrity gate that was previously disabled (empty if-body).
+                                    bootloaderData.cmdBufferLength = 0;
                                 }
                                 break;
 
