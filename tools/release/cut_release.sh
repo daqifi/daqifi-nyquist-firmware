@@ -138,7 +138,7 @@ grep -qiE 'kseg0_program_mem[[:space:]]+0x0*9d000480' "$MAP" \
 echo "  .map kseg0_program_mem origin = 0x9d000480 OK"
 python3 - "$HEX" <<'PY' || die "hex layout verification failed — DO NOT SHIP"
 import sys
-addrs=[]; base=0; saw_eof=False
+spans=[]; base=0; saw_eof=False   # spans: (start, end_exclusive)
 with open(sys.argv[1]) as f:
     for raw in f:
         line=raw.strip()
@@ -151,21 +151,28 @@ with open(sys.argv[1]) as f:
         elif rt==0x02:    # Extended Segment Address
             base=int(line[9:13],16)<<4
         elif rt==0x00:    # Data
-            addrs.append((base+off, ln))
+            start=base+off; spans.append((start, start+ln))
 ok=True
 def chk(cond,msg):
     global ok
     print(("  OK  " if cond else "  FAIL")+" "+msg); ok=ok and cond
 chk(saw_eof, "EOF record present")
-if not addrs:
+if not spans:
     chk(False, "no data records found in hex"); sys.exit(1)
-addrs.sort()
-lo=addrs[0][0]
-reset_bytes=sum(ln for a,ln in addrs if 0x1D000000<=a<0x1D000480)
-bulk=[a for a,ln in addrs if a>=0x1D000480]
-chk(lo==0x1D000000, f"lowest phys addr 0x{lo:08X} == 0x1D000000")
+spans.sort()
+lo=spans[0][0]
+RESET_LO=0x1D000000; RESET_HI=0x1D000480
+reset_bytes=0; bulk_start=None
+for s,e in spans:
+    # Count only the bytes inside [RESET_LO, RESET_HI) — intersection length,
+    # so a record straddling the 0x1D000480 boundary is counted correctly.
+    isect=min(e,RESET_HI)-max(s,RESET_LO)
+    if isect>0: reset_bytes+=isect
+    # First byte at/after RESET_HI, even if it lands mid-record.
+    if bulk_start is None and e>RESET_HI: bulk_start=max(s,RESET_HI)
+chk(lo==RESET_LO, f"lowest phys addr 0x{lo:08X} == 0x1D000000")
 chk(reset_bytes==408, f"reset vector [0x1D000000,0x1D000480) = {reset_bytes} bytes == 408")
-chk(bool(bulk) and min(bulk)==0x1D000480, f"bulk starts at 0x{(min(bulk) if bulk else 0):08X} == 0x1D000480")
+chk(bulk_start==RESET_HI, f"bulk starts at 0x{(bulk_start if bulk_start is not None else 0):08X} == 0x1D000480")
 sys.exit(0 if ok else 1)
 PY
 
