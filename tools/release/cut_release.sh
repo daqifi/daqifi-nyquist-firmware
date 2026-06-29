@@ -38,7 +38,9 @@ KEEP_BL_MK=0
 WANT_VER=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) WANT_VER="$2"; shift 2 ;;
+    --version)
+      [ $# -ge 2 ] || { echo "FATAL: --version requires an argument (X.Y.Z)" >&2; exit 2; }
+      WANT_VER="$2"; shift 2 ;;
     --keep-bootloader-makefiles) KEEP_BL_MK=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -82,6 +84,7 @@ cp "$CFG" "$BACKUP_CFG"
 # mutation (the sed below) so an early failure can never strand the
 # bootloader-linked config on disk.
 cleanup() {
+  rc=$?   # capture the script's exit status FIRST, before anything resets $?
   say "Restoring configurations.xml (standalone default)"
   # Restore the EXACT pre-run file from our backup (preserves any uncommitted
   # local edits the user had); fall back to git only if the backup is missing.
@@ -99,6 +102,7 @@ cleanup() {
     echo "  --keep-bootloader-makefiles: on-disk makefiles remain bootloader-linked (regen before bench flashing)"
   fi
   rm -f "$BACKUP_CFG"
+  [ "$rc" -eq 0 ] && rm -f "$BUILD_LOG"   # keep the build log only when something failed
 }
 trap cleanup EXIT
 
@@ -162,17 +166,19 @@ if not spans:
 spans.sort()
 lo=spans[0][0]
 RESET_LO=0x1D000000; RESET_HI=0x1D000480
-reset_bytes=0; bulk_start=None
+reset_bytes=0
 for s,e in spans:
     # Count only the bytes inside [RESET_LO, RESET_HI) — intersection length,
     # so a record straddling the 0x1D000480 boundary is counted correctly.
     isect=min(e,RESET_HI)-max(s,RESET_LO)
     if isect>0: reset_bytes+=isect
-    # First byte at/after RESET_HI, even if it lands mid-record.
-    if bulk_start is None and e>RESET_HI: bulk_start=max(s,RESET_HI)
+# Rule 984830: a data record must START exactly at 0x1D000480 (the bulk origin).
+# The lowest record start at/after RESET_HI must BE RESET_HI — a record that
+# merely straddles the boundary (starts before, ends after) does NOT satisfy this.
+bulk_starts=sorted(s for s,e in spans if s>=RESET_HI)
 chk(lo==RESET_LO, f"lowest phys addr 0x{lo:08X} == 0x1D000000")
 chk(reset_bytes==408, f"reset vector [0x1D000000,0x1D000480) = {reset_bytes} bytes == 408")
-chk(bulk_start==RESET_HI, f"bulk starts at 0x{(bulk_start if bulk_start is not None else 0):08X} == 0x1D000480")
+chk(bool(bulk_starts) and bulk_starts[0]==RESET_HI, f"bulk starts at 0x{(bulk_starts[0] if bulk_starts else 0):08X} == 0x1D000480")
 sys.exit(0 if ok else 1)
 PY
 
