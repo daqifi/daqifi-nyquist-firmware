@@ -66,12 +66,14 @@ bool DataReceived;
  * device. Armed ONLY after at least one successful configuration (_everConfigured) so it
  * can never disturb the initial enumeration, which legitimately has several resets before
  * its first SET_CONFIGURATION. */
-static bool _awaitingReconfigure = false;
-static bool _everConfigured = false;
-static bool _vbusPresent = false;        /* tracked from POWER_DETECTED/REMOVED; gates the backstop attach */
-static bool _detachHoldActive = false;   /* non-blocking detach-hold in progress */
-static uint32_t _deconfiguredSince = 0;
-static uint32_t _detachUntil = 0;        /* CP0 deadline for the non-blocking detach hold */
+/* volatile: written from the USB device-event handler and read/written in DATASTREAM_Tasks
+ * (different execution contexts), so the compiler must not cache them. */
+static volatile bool _awaitingReconfigure = false;
+static volatile bool _everConfigured = false;
+static volatile bool _vbusPresent = false;        /* tracked from POWER_DETECTED/REMOVED; gates the backstop attach */
+static volatile bool _detachHoldActive = false;   /* non-blocking detach-hold in progress */
+static volatile uint32_t _deconfiguredSince = 0;
+static volatile uint32_t _detachUntil = 0;        /* CP0 deadline for the non-blocking detach hold */
 /* CP0 increments at SYS_CLK_FREQ/2; ~1.5 s cleanly separates a true wedge (never
  * reconfigures) from ordinary reset->reconfigure latency (a few ms). */
 #define DATASTREAM_RECONFIG_TIMEOUT_TICKS (3U * SYS_CLK_FREQ / 4U)   /* ~1.5 s */
@@ -98,8 +100,12 @@ void DATASTREAM_Tasks(void)
         {
             if ((int32_t)(_CP0_GET_COUNT() - _detachUntil) >= 0)
             {
-                /* Hold elapsed -- re-attach so the host re-runs enumeration + SET_CONFIGURATION. */
-                USB_DEVICE_Attach(bootloaderData.datastreamBufferHandle);
+                /* Hold elapsed -- re-attach so the host re-runs enumeration + SET_CONFIGURATION,
+                 * but only if VBUS is still present (it may have been pulled during the hold). */
+                if (_vbusPresent)
+                {
+                    USB_DEVICE_Attach(bootloaderData.datastreamBufferHandle);
+                }
                 _detachHoldActive = false;
             }
         }
@@ -302,8 +308,11 @@ void _USBDeviceEventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t 
             bootloaderData.currentState = BOOTLOADER_GET_COMMAND;
             bootloaderData.prevState = BOOTLOADER_GET_COMMAND;   /* keep prev/current consistent after the reset */
             /* Arm the re-enumeration backstop, but only once we've configured at least
-             * once -- never during the initial enumeration (see DATASTREAM_Tasks). */
-            if (_everConfigured)
+             * once -- never during the initial enumeration (see DATASTREAM_Tasks). Stamp the
+             * deconfigure time only on the FIRST reset of a wedge: repeated resets must not keep
+             * pushing the grace-period deadline forward, or the backstop would never fire during
+             * the exact repeated-reset wedge it targets. */
+            if (_everConfigured && !_awaitingReconfigure)
             {
                 _awaitingReconfigure = true;
                 _deconfiguredSince = _CP0_GET_COUNT();
