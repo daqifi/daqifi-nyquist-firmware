@@ -1005,7 +1005,26 @@ bool UsbCdc_FlushWriteBuffer(void) {
  * Thin wrapper to match ScpiTransportWriteFn signature.
  */
 static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
-    return UsbCdc_WriteToBuffer(NULL, data, len);
+    size_t n = UsbCdc_WriteToBuffer(NULL, data, len);
+    if (n == 0 && len > 0) {
+        // #572 drain-while-writing. WriteToBuffer returned 0 (the USB write
+        // circular buffer is full, or its mutex is briefly busy). The buffer's
+        // ONLY drainer is UsbCdc_BeginWrite, normally called from
+        // UsbCdc_ProcessState — but SCPI commands are processed INLINE in the
+        // USB task (ProcessState -> FinalizeRead -> SCPI_Input -> scpi_printf
+        // -> here), so while a handler is emitting, ProcessState cannot run and
+        // the buffer never drains. A large response (e.g. CONF:CAP:JSON? ~8KB)
+        // into a streaming-shrunk (~2KB) USB buffer would then livelock
+        // SCPI_WriteWithRetry until its retry budget expires, leaving the CDC
+        // read un-armed = the "enumerated-but-CDC-dead" wedge. Pump the DMA
+        // here so the circular buffer drains to the host before the caller's
+        // (SCPI_WriteWithRetry) next retry, letting the already-chunked
+        // response stream out in DMA-sized pieces. BeginWrite is a safe no-op
+        // when a transfer is already in flight (it completes during the
+        // retry's vTaskDelay) and is serialized on the same wMutex.
+        UsbCdc_BeginWrite(&gRunTimeUsbSttings);
+    }
+    return n;
 }
 
 /**
