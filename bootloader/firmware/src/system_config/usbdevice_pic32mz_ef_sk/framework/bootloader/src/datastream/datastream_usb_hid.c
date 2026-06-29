@@ -254,6 +254,7 @@ void _USBDeviceEventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t 
             bootloaderData.cmdBufferLength = 0;
             bootloaderData.rxEscapePending = false;   /* clear stale DLE-escape parser state across the reset */
             bootloaderData.currentState = BOOTLOADER_GET_COMMAND;
+            bootloaderData.prevState = BOOTLOADER_GET_COMMAND;   /* keep prev/current consistent after the reset */
             break;
 
         case USB_DEVICE_EVENT_CONFIGURED:

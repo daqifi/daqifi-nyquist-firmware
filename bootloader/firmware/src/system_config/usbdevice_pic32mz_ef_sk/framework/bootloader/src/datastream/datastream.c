@@ -88,7 +88,16 @@ void Bootloader_BufferEventHandler(DATASTREAM_BUFFER_EVENT buffEvent,
                     // If we were in an Escape sequence, copy the data on and reset the flag.
                     if (bootloaderData.rxEscapePending)
                     {
-                        bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
+                        // Bounds-guard the accumulator (buff2 is BOOTLOADER_BUFFER_SIZE): an over-long
+                        // unframed stream must never write past it. On overflow drop and resync on SOH.
+                        if (bootloaderData.cmdBufferLength < BOOTLOADER_BUFFER_SIZE)
+                        {
+                            bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
+                        }
+                        else
+                        {
+                            bootloaderData.cmdBufferLength = 0;
+                        }
                         bootloaderData.rxEscapePending = false;
                     }
                     else
@@ -130,7 +139,18 @@ void Bootloader_BufferEventHandler(DATASTREAM_BUFFER_EVENT buffEvent,
                                 break;
 
                             default:
-                                bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
+                                // Bounds-guard the accumulator (buff2 is BOOTLOADER_BUFFER_SIZE): an
+                                // over-long/unframed stream must never write past it. On overflow drop the
+                                // partial frame and resync on the next SOH.
+                                if (bootloaderData.cmdBufferLength < BOOTLOADER_BUFFER_SIZE)
+                                {
+                                    bootloaderData.data->buffers.buff2[bootloaderData.cmdBufferLength++] = bootloaderData.data->buffers.buff1[i];
+                                }
+                                else
+                                {
+                                    bootloaderData.cmdBufferLength = 0;
+                                    bootloaderData.rxEscapePending = false;
+                                }
                                 break;
                         }
                     }
