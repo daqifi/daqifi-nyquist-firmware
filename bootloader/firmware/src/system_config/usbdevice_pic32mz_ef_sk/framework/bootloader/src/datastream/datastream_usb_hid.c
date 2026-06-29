@@ -54,6 +54,29 @@ bool readRequest = false;
 bool DataSent;
 bool DataReceived;
 
+/* #568 re-enumeration backstop. A reopen of a bootloader that the host had let go to
+ * USB selective-suspend produces a bus RESET with NO follow-up SET_CONFIGURATION, so
+ * USB_DEVICE_EVENT_CONFIGURED never fires: the data endpoints the device layer disabled
+ * on the reset are never re-enabled, deviceConfigured stays false, and DATASTREAM_Tasks
+ * early-returns forever -- the dark-endpoint wedge that historically needed a power-cycle.
+ * The datastream state-reset (already on main) re-arms the moment a reconfigure lands, but
+ * a bare host close+reopen only re-triggers SET_CONFIGURATION intermittently. So if we sit
+ * deconfigured past a grace period after a reset, proactively Detach/Attach to force a
+ * clean re-enumeration; the host's reconnect then reliably finds a fresh, reconfigurable
+ * device. Armed ONLY after at least one successful configuration (_everConfigured) so it
+ * can never disturb the initial enumeration, which legitimately has several resets before
+ * its first SET_CONFIGURATION. */
+static bool _awaitingReconfigure = false;
+static bool _everConfigured = false;
+static bool _vbusPresent = false;        /* tracked from POWER_DETECTED/REMOVED; gates the backstop attach */
+static bool _detachHoldActive = false;   /* non-blocking detach-hold in progress */
+static uint32_t _deconfiguredSince = 0;
+static uint32_t _detachUntil = 0;        /* CP0 deadline for the non-blocking detach hold */
+/* CP0 increments at SYS_CLK_FREQ/2; ~1.5 s cleanly separates a true wedge (never
+ * reconfigures) from ordinary reset->reconfigure latency (a few ms). */
+#define DATASTREAM_RECONFIG_TIMEOUT_TICKS (3U * SYS_CLK_FREQ / 4U)   /* ~1.5 s */
+#define DATASTREAM_DETACH_HOLD_TICKS      (SYS_CLK_FREQ / 20U)        /* ~100 ms detach */
+
 USB_DEVICE_HID_EVENT_RESPONSE _USBDeviceHIDEventHandler
 (
     USB_DEVICE_HID_INDEX iHID,
@@ -68,6 +91,29 @@ void DATASTREAM_Tasks(void)
 {
     if (false == bootloaderData.deviceConfigured)
     {
+        /* #568 re-enumeration backstop. Non-blocking: the detach hold is timed across
+         * DATASTREAM_Tasks() calls rather than a spin-wait, so DRV_USBHS_Tasks /
+         * USB_DEVICE_Tasks keep running and actually process the detach during the hold. */
+        if (_detachHoldActive)
+        {
+            if ((int32_t)(_CP0_GET_COUNT() - _detachUntil) >= 0)
+            {
+                /* Hold elapsed -- re-attach so the host re-runs enumeration + SET_CONFIGURATION. */
+                USB_DEVICE_Attach(bootloaderData.datastreamBufferHandle);
+                _detachHoldActive = false;
+            }
+        }
+        else if (_awaitingReconfigure && _vbusPresent &&
+                 ((int32_t)(_CP0_GET_COUNT() - _deconfiguredSince) >= (int32_t)DATASTREAM_RECONFIG_TIMEOUT_TICKS))
+        {
+            /* A bus reset deconfigured us and no SET_CONFIGURATION followed. Force a clean
+             * re-enumeration: detach now, then re-attach after the non-blocking hold above.
+             * Gated on VBUS so we never attach without bus power. */
+            _awaitingReconfigure = false;
+            USB_DEVICE_Detach(bootloaderData.datastreamBufferHandle);
+            _detachUntil = _CP0_GET_COUNT() + DATASTREAM_DETACH_HOLD_TICKS;
+            _detachHoldActive = true;
+        }
         return;
     }
 
@@ -255,11 +301,21 @@ void _USBDeviceEventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t 
             bootloaderData.rxEscapePending = false;   /* clear stale DLE-escape parser state across the reset */
             bootloaderData.currentState = BOOTLOADER_GET_COMMAND;
             bootloaderData.prevState = BOOTLOADER_GET_COMMAND;   /* keep prev/current consistent after the reset */
+            /* Arm the re-enumeration backstop, but only once we've configured at least
+             * once -- never during the initial enumeration (see DATASTREAM_Tasks). */
+            if (_everConfigured)
+            {
+                _awaitingReconfigure = true;
+                _deconfiguredSince = _CP0_GET_COUNT();
+            }
             break;
 
         case USB_DEVICE_EVENT_CONFIGURED:
             /* Set the flag indicating device is configured. */
             bootloaderData.deviceConfigured = true;
+            _everConfigured = true;          /* enable the #568 re-enumeration backstop */
+            _awaitingReconfigure = false;    /* reconfigure landed -- disarm the backstop */
+            _detachHoldActive = false;       /* a reconfigure landed; no detach hold pending */
             //BSP_LEDOn(BSP_LED_2);
             /* Register application HID event handler */
             USB_DEVICE_HID_EventHandlerSet(USB_DEVICE_HID_INDEX_0, APP_USBDeviceHIDEventHandler, (uintptr_t)&bootloaderData);
@@ -271,13 +327,19 @@ void _USBDeviceEventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
             /* VBUS was detected. We can attach the device */
-
+            _vbusPresent = true;
             USB_DEVICE_Attach (bootloaderData.datastreamBufferHandle);
             break;
 
         case USB_DEVICE_EVENT_POWER_REMOVED:
 
             /* VBUS is not available */
+            _vbusPresent = false;
+            _awaitingReconfigure = false;   /* #568: disarm the backstop -- never attach without VBUS */
+            _detachHoldActive = false;
+            _everConfigured = false;        /* #568: this device stays powered across a USB unplug/replug,
+                                             * so a replug is effectively a fresh INITIAL enumeration --
+                                             * re-gate the backstop (it must never disturb initial enum) */
             USB_DEVICE_Detach(bootloaderData.datastreamBufferHandle);
             break;
 
