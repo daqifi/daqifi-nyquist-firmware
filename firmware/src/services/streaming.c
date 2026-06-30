@@ -505,6 +505,16 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
             uint32_t hwScanMax = MC12b_HardwareScanMaxFreq(scanCount);
             if (hwScanMax < maxFreq) maxFreq = hwScanMax;
         }
+        /* #574: SD-PB writer-vs-scan cap. The SD writer task loses CPU to the
+         * scan's data-ready/EOS ISRs, so scan-armed configs sustain a lower
+         * zero-loss SD rate than the ADC/transport terms predict. SD interface
+         * only — UsbAndSd is uncharacterized (separate follow-up). */
+        if (iface == StreamingInterface_SD) {
+            uint32_t sdMax = Streaming_SdAdditiveCap_NQ1(
+                    type1, userT2, nMon,
+                    (sc->Encoding == Streaming_ProtoBuffer) ? 1u : 0u);
+            if (sdMax < maxFreq) maxFreq = sdMax;
+        }
     } else {
         /* NQ2/NQ3 (AD7609 — no MODULE7 scan) and the 0-channel case: legacy
          * conservative formula (#541). Mirror ComputeMaxFreq's ISR_MAX-for-0

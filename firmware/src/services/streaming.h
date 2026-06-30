@@ -132,6 +132,42 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
 }
 
 /**
+ * #574: NQ1 SD-PB sustainable-rate cap (Hz). The SD writer task (pri 5) loses
+ * CPU to the ADC scan's per-conversion data-ready + EOS ISRs, so a scan-armed
+ * config sustains a LOWER zero-loss SD rate than a pure-T1 (no-scan) config.
+ * The interface-agnostic ADC additive cap and the byte-rate transport cap both
+ * MISS this (neither models SD-writer starvation), so several scan-armed
+ * configs were enforced ABOVE their true SD ceiling and silently dropped
+ * (SdDroppedBytes > 0) — issue #574.
+ *
+ *   period_ns = base + arm*armed + cT1*nT1 + cT2*nT2user
+ *   hz        = 1e9 / period_ns ;   armed = (nT2user>0 || nMon>0)
+ *
+ * Fitted by LP (never-over) to the 2026-06-30 MULTI-TRIAL SD ceilings. (The
+ * single-pass campaign was unreliable — transient SD-GC stalls produced
+ * spurious leaks; 3xT1's single-pass "dip" below its neighbours was the giveaway
+ * and re-tested clean.) Constraints: cap <= measured ceiling for the 6 genuine
+ * over-cap configs (1xT2, 3xT2, 1xT1+OBDiag, 5xT1+OBDiag, 5T1+3T2, 5T1+5T2),
+ * AND cap >= the existing enforced cap for the pure-T1 / published configs so
+ * their existing terms still bind (1ch=9000, 5ch=7500, 10ch, 16ch unchanged).
+ * cMon fit to 0 — monitoring load is captured by `armed`. CSV is byte-bound
+ * (the transport term binds it below this), so this is PB-only. Applied for the
+ * SD interface only; UsbAndSd is uncharacterized (separate follow-up).
+ */
+static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2user,
+                                                   uint32_t nMon, uint32_t isProtoBuf) {
+    if (isProtoBuf == 0u) {
+        return STREAMING_ISR_MAX_HZ;   /* CSV is byte-bound: the transport term binds it */
+    }
+    uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
+    uint64_t period_ns = 93539ULL + 63468ULL*armed
+                       + 7959ULL*(uint64_t)nT1 + 4615ULL*(uint64_t)nT2user;
+    uint32_t hz = (uint32_t)(1000000000ULL / period_ns);  /* period_ns >= base, no div-by-0 */
+    if (hz > STREAMING_ISR_MAX_HZ) hz = STREAMING_ISR_MAX_HZ;
+    return (hz == 0u) ? 1u : hz;
+}
+
+/**
  * Per-interface, per-format TRANSPORT wire-rate cap (Hz) — generalizes the
  * WiFi-only term (#520) to USB / SD / USB+SD (#524).  Fitted to the 3-run
  * real-ADC zero-loss characterization (matrix_524 run-1/2/3 + WiFi-v2,
