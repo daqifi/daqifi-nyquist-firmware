@@ -880,7 +880,14 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
             // declines.) The caller ignores this return value.
             bool consumed = UsbCdc_TransparentReadCmpltCB(client->readBuffer, client->readBufferLength);
             client->readBufferLength = 0;
-            return consumed;
+            if (!consumed) {
+                // #575: surface a persistently-declining transparent consumer
+                // (one-shot so it can't flood). The buffer was dropped to keep
+                // the CDC read armed — losing it beats wedging the channel.
+                LOG_E_ONCE(LOG_ONCE_USB_TRANSPARENT_DECLINE,
+                           "USB transparent read declined; buffer dropped to re-arm CDC");
+            }
+            return true;   // always finalize: buffer cleared + read re-armed (caller ignores this)
         }
     }
     return false;
