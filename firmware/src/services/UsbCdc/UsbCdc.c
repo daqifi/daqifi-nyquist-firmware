@@ -870,10 +870,24 @@ static bool UsbCdc_FinalizeRead(UsbCdcData_t* client) {
                 client->readBufferLength = 0;
                 return true;
             }
-            if (UsbCdc_TransparentReadCmpltCB(client->readBuffer, client->readBufferLength) == true) {
-                client->readBufferLength = 0;
-                return true;
+            // #575: clear readBufferLength on BOTH outcomes. If the transparent
+            // consumer DECLINES (returns false), leaving readBufferLength > 0
+            // permanently un-arms the next CDC read — UsbCdc_BeginRead gates on
+            // readBufferLength == 0 — producing the enumerated-but-CDC-dead
+            // wedge. Drop the declined buffer and re-arm the control channel
+            // rather than wedge it. (Default CB returns true, so normal
+            // operation is unchanged; this only affects an override that
+            // declines.) The caller ignores this return value.
+            bool consumed = UsbCdc_TransparentReadCmpltCB(client->readBuffer, client->readBufferLength);
+            client->readBufferLength = 0;
+            if (!consumed) {
+                // #575: surface a persistently-declining transparent consumer
+                // (one-shot so it can't flood). The buffer was dropped to keep
+                // the CDC read armed — losing it beats wedging the channel.
+                LOG_E_ONCE(LOG_ONCE_USB_TRANSPARENT_DECLINE,
+                           "USB transparent read declined; buffer dropped to re-arm CDC");
             }
+            return true;   // always finalize: buffer cleared + read re-armed (caller ignores this)
         }
     }
     return false;
