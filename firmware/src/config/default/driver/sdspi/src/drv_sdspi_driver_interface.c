@@ -90,6 +90,17 @@ void DRV_SDSPI_SPIDriverEventHandler(
 {
     DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ *)context;
 
+    /* #567: ignore a completion that doesn't belong to the transfer we are
+     * currently waiting on. After the spiXferTimer watchdog times out and
+     * aborts a transfer, its completion may still arrive late; without this
+     * guard it would overwrite spiTransferStatus (falsely completing a later
+     * transfer) and de-assert CS mid-transfer. The expected handle is updated
+     * on every submit, so a stale handle here means a timed-out transfer. */
+    if (transferHandle != dObj->expectedXferHandle)
+    {
+        return;
+    }
+
     if (event == DRV_SPI_TRANSFER_EVENT_COMPLETE)
     {
         dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_COMPLETE;
@@ -126,6 +137,7 @@ bool DRV_SDSPI_SPIWrite(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
+    dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
@@ -164,6 +176,7 @@ bool DRV_SDSPI_SPIRead(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_ReadTransferAdd (dObj->spiDrvHandle, pReadBuffer, nBytes, &rdTransferHandle);
+    dObj->expectedXferHandle = rdTransferHandle;   /* #567: correlate completion */
 
     if (rdTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
@@ -192,6 +205,7 @@ bool DRV_SDSPI_SPIWriteWithChipSelectDisabled(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
+    dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
     {

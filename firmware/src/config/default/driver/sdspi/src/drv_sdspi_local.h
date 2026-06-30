@@ -55,6 +55,7 @@
 
 #include "configuration.h"
 #include "driver/sdspi/drv_sdspi.h"
+#include "driver/spi/drv_spi.h"   /* #567: DRV_SPI_TRANSFER_HANDLE (expectedXferHandle) */
 #include "osal/osal.h"
 
 // *****************************************************************************
@@ -1443,6 +1444,14 @@ typedef struct
     bool                                            spiXferTimerFlag;
     SYS_TIME_HANDLE                                 spiXferTimerHandle;
     volatile bool                                   spiXferTimerExpired;
+
+    /* #567: handle of the SPI transfer we are currently waiting on. The
+     * completion callback ignores any event whose transferHandle doesn't
+     * match this, so a late completion from a transfer that was already
+     * timed-out (and aborted by the spiXferTimer watchdog) can't overwrite
+     * spiTransferStatus — or de-assert CS — during a later transfer.
+     * Set once per submit (atomic 32-bit store), read in the callback. */
+    DRV_SPI_TRANSFER_HANDLE                         expectedXferHandle;
 
     /* Flag to indicate if the device is Standard Speed or High Speed */
     uint8_t                                         sdHcHost;
