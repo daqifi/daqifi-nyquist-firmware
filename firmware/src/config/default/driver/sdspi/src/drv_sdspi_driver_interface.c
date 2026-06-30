@@ -412,3 +412,40 @@ bool DRV_SDSPI_TimerStop( DRV_SDSPI_OBJ* const dObj )
 
     return isSuccess;
 }
+
+/* #567: dedicated start/stop for the SPI bus-completion (DMA) wait timer.
+ * Mirrors DRV_SDSPI_TimerStart/Stop but targets spiXferTimer* so it never
+ * collides with the shared read/write busy-token timer (timerHandle), which
+ * can be concurrently armed while DRV_SDSPI_TASK_SPI_STATUS is waiting.
+ * Reuses the generic DRV_SDSPI_TimerCallback (sets *(bool*)context = true). */
+bool DRV_SDSPI_SpiXferTimerStart(
+    DRV_SDSPI_OBJ* const dObj,
+    uint32_t period
+)
+{
+    bool isSuccess = false;
+    dObj->spiXferTimerExpired = false;
+
+    dObj->spiXferTimerHandle = SYS_TIME_CallbackRegisterMS(DRV_SDSPI_TimerCallback,
+             (uintptr_t)&dObj->spiXferTimerExpired, period, SYS_TIME_SINGLE);
+
+    if (dObj->spiXferTimerHandle != SYS_TIME_HANDLE_INVALID)
+    {
+        isSuccess = true;
+    }
+
+    return isSuccess;
+}
+
+bool DRV_SDSPI_SpiXferTimerStop( DRV_SDSPI_OBJ* const dObj )
+{
+    bool isSuccess = false;
+
+    if (dObj->spiXferTimerHandle != SYS_TIME_HANDLE_INVALID)
+    {
+        (void) SYS_TIME_TimerDestroy(dObj->spiXferTimerHandle);
+        isSuccess = true;
+    }
+
+    return isSuccess;
+}

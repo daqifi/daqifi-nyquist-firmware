@@ -906,12 +906,23 @@ static DRV_SDSPI_ATTACH lDRV_SDSPI_MediaCommandDetect
 
             if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_COMPLETE)
             {
+                /* #567: detect transfer done — disarm the watchdog. */
+                if (dObj->spiXferTimerFlag == true)
+                {
+                    (void) DRV_SDSPI_SpiXferTimerStop(dObj);
+                    dObj->spiXferTimerFlag = false;
+                }
                 /* Re-enable Chip Select */
                 (void) DRV_SDSPI_SPISpeedSetup(dObj, DRV_SDSPI_SPI_INITIAL_SPEED, dObj->chipSelectPin);
                 dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_RESET_SDCARD;
             }
             else if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR)
             {
+                if (dObj->spiXferTimerFlag == true)
+                {
+                    (void) DRV_SDSPI_SpiXferTimerStop(dObj);
+                    dObj->spiXferTimerFlag = false;
+                }
                 /* Re-enable Chip Select */
                 (void) DRV_SDSPI_SPISpeedSetup(dObj, DRV_SDSPI_SPI_INITIAL_SPEED, dObj->chipSelectPin);
                 dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_CHK_FOR_CARD;
@@ -919,7 +930,34 @@ static DRV_SDSPI_ATTACH lDRV_SDSPI_MediaCommandDetect
             }
             else
             {
-                /* Nothing to do */
+                /* #567: same lost-completion hazard as the buffer-IO wait. A
+                 * never-firing callback here leaves mediaState latched
+                 * DETACHED (the "No SD Card Detected" face) while holding the
+                 * bus. On timeout, behave like the ERROR branch: re-enable CS
+                 * and retry detection so a transient completion loss self-heals
+                 * instead of wedging until power-cycle. */
+                if (dObj->spiXferTimerFlag == false)
+                {
+                    if (DRV_SDSPI_SpiXferTimerStart(dObj, DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS) == false)
+                    {
+                        (void) DRV_SDSPI_SPISpeedSetup(dObj, DRV_SDSPI_SPI_INITIAL_SPEED, dObj->chipSelectPin);
+                        dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_CHK_FOR_CARD;
+                        dObj->sdState = TASK_STATE_IDLE;
+                        break;
+                    }
+                    dObj->spiXferTimerFlag = true;
+                }
+                else if (dObj->spiXferTimerExpired == true)
+                {
+                    dObj->spiXferTimerFlag = false;
+                    (void) DRV_SDSPI_SPISpeedSetup(dObj, DRV_SDSPI_SPI_INITIAL_SPEED, dObj->chipSelectPin);
+                    dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_CHK_FOR_CARD;
+                    dObj->sdState = TASK_STATE_IDLE;
+                }
+                else
+                {
+                    /* Still waiting, timer running. Nothing to do. */
+                }
             }
             break;
 
@@ -1815,15 +1853,53 @@ static void lDRV_SDSPI_BufferIOTasks
 
             if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_COMPLETE)
             {
+                /* #567: transfer done — disarm the bus-completion watchdog. */
+                if (dObj->spiXferTimerFlag == true)
+                {
+                    (void) DRV_SDSPI_SpiXferTimerStop(dObj);
+                    dObj->spiXferTimerFlag = false;
+                }
                 dObj->taskBufferIOState = dObj->nextTaskState;
             }
             else if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR)
             {
+                if (dObj->spiXferTimerFlag == true)
+                {
+                    (void) DRV_SDSPI_SpiXferTimerStop(dObj);
+                    dObj->spiXferTimerFlag = false;
+                }
                 dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
             }
             else
             {
-                /* Nothing to do */
+                /* #567: spiTransferStatus is written only by the DMA completion
+                 * callback (DRV_SDSPI_SPIDriverEventHandler). If that event is
+                 * lost (observed under SD write load) this wait used to spin
+                 * forever holding the SPI0 exclusive lock — the root cause of
+                 * the read-0 / no-file / no-SD wedge that only a power-cycle
+                 * cleared. Arm a hard timeout; on expiry force ERROR and route
+                 * to READ_WRITE_ABORT, which releases the exclusive lock and
+                 * lets the manager FSM recover without a power-cycle. */
+                if (dObj->spiXferTimerFlag == false)
+                {
+                    if (DRV_SDSPI_SpiXferTimerStart(dObj, DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS) == false)
+                    {
+                        dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+                        dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                        break;
+                    }
+                    dObj->spiXferTimerFlag = true;
+                }
+                else if (dObj->spiXferTimerExpired == true)
+                {
+                    dObj->spiXferTimerFlag = false;
+                    dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+                    dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
+                }
+                else
+                {
+                    /* Still waiting, timer running. Nothing to do. */
+                }
             }
             break;
 

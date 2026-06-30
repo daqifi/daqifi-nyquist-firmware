@@ -215,6 +215,21 @@ bool DRV_SDSPI_CmdResponseTimerStart(
 bool DRV_SDSPI_TimerStop( DRV_SDSPI_OBJ* const dObj );
 
 // *****************************************************************************
+/* #567: SPI bus-completion (DMA) wait timer start/stop.
+
+  Summary:
+    Arms/stops a dedicated hard timeout for the SPI transfer-completion waits,
+    independent of the shared read/write timer so a lost DMA completion can no
+    longer park the driver forever holding the SPI0 exclusive lock.
+*/
+bool DRV_SDSPI_SpiXferTimerStart(
+    DRV_SDSPI_OBJ* const dObj,
+    uint32_t period
+);
+
+bool DRV_SDSPI_SpiXferTimerStop( DRV_SDSPI_OBJ* const dObj );
+
+// *****************************************************************************
 /* SD Card Command-Response Timer Stop
 
   Summary:
