@@ -90,6 +90,17 @@ void DRV_SDSPI_SPIDriverEventHandler(
 {
     DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ *)context;
 
+    /* #567: ignore a completion that doesn't belong to the transfer we are
+     * currently waiting on. After the spiXferTimer watchdog times out and
+     * aborts a transfer, its completion may still arrive late; without this
+     * guard it would overwrite spiTransferStatus (falsely completing a later
+     * transfer) and de-assert CS mid-transfer. The expected handle is updated
+     * on every submit, so a stale handle here means a timed-out transfer. */
+    if (transferHandle != dObj->expectedXferHandle)
+    {
+        return;
+    }
+
     if (event == DRV_SPI_TRANSFER_EVENT_COMPLETE)
     {
         dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_COMPLETE;
@@ -126,6 +137,7 @@ bool DRV_SDSPI_SPIWrite(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
+    dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
@@ -164,6 +176,7 @@ bool DRV_SDSPI_SPIRead(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_ReadTransferAdd (dObj->spiDrvHandle, pReadBuffer, nBytes, &rdTransferHandle);
+    dObj->expectedXferHandle = rdTransferHandle;   /* #567: correlate completion */
 
     if (rdTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
@@ -192,6 +205,7 @@ bool DRV_SDSPI_SPIWriteWithChipSelectDisabled(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
+    dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
     {
@@ -407,6 +421,43 @@ bool DRV_SDSPI_TimerStop( DRV_SDSPI_OBJ* const dObj )
     if (dObj->timerHandle != SYS_TIME_HANDLE_INVALID)
     {
         (void) SYS_TIME_TimerDestroy(dObj->timerHandle);
+        isSuccess = true;
+    }
+
+    return isSuccess;
+}
+
+/* #567: dedicated start/stop for the SPI bus-completion (DMA) wait timer.
+ * Mirrors DRV_SDSPI_TimerStart/Stop but targets spiXferTimer* so it never
+ * collides with the shared read/write busy-token timer (timerHandle), which
+ * can be concurrently armed while DRV_SDSPI_TASK_SPI_STATUS is waiting.
+ * Reuses the generic DRV_SDSPI_TimerCallback (sets *(bool*)context = true). */
+bool DRV_SDSPI_SpiXferTimerStart(
+    DRV_SDSPI_OBJ* const dObj,
+    uint32_t period
+)
+{
+    bool isSuccess = false;
+    dObj->spiXferTimerExpired = false;
+
+    dObj->spiXferTimerHandle = SYS_TIME_CallbackRegisterMS(DRV_SDSPI_TimerCallback,
+             (uintptr_t)&dObj->spiXferTimerExpired, period, SYS_TIME_SINGLE);
+
+    if (dObj->spiXferTimerHandle != SYS_TIME_HANDLE_INVALID)
+    {
+        isSuccess = true;
+    }
+
+    return isSuccess;
+}
+
+bool DRV_SDSPI_SpiXferTimerStop( DRV_SDSPI_OBJ* const dObj )
+{
+    bool isSuccess = false;
+
+    if (dObj->spiXferTimerHandle != SYS_TIME_HANDLE_INVALID)
+    {
+        (void) SYS_TIME_TimerDestroy(dObj->spiXferTimerHandle);
         isSuccess = true;
     }
 

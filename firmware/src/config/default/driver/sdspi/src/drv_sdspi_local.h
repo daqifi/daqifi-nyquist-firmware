@@ -55,6 +55,7 @@
 
 #include "configuration.h"
 #include "driver/sdspi/drv_sdspi.h"
+#include "driver/spi/drv_spi.h"   /* #567: DRV_SPI_TRANSFER_HANDLE (expectedXferHandle) */
 #include "osal/osal.h"
 
 // *****************************************************************************
@@ -91,6 +92,14 @@
 
 #define DRV_SDSPI_READ_TIMEOUT_IN_MS              (250)
 #define DRV_SDSPI_WRITE_TIMEOUT_IN_MS             (250)
+
+/* #567: hard timeout for the SPI bus-completion (DMA) waits. A single block
+ * or command-byte DRV_SPI transfer completes in well under 1 ms; the only way
+ * a bus-completion wait lasts this long is a LOST DMA completion callback,
+ * which (pre-fix) parked the driver forever holding the SPI0 exclusive lock.
+ * 500 ms is generous against any legitimate transfer + SD-task preemption,
+ * and recovering a previously-permanent wedge in 500 ms is a large win. */
+#define DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS          (500)
 
 #define DRV_SDSPI_APP_CMD_RESP_TIMEOUT_IN_MS      (1000)
 #define DRV_SDSPI_CSD_TOKEN_TIMEOUT_IN_MS         (1000)
@@ -1426,6 +1435,23 @@ typedef struct
     volatile bool                                   timerExpired;
 
     volatile bool                                   cardPollingTimerExpired;
+
+    /* #567: dedicated timer for the SPI bus-completion (DMA) wait. Kept
+     * separate from timerHandle/timerFlag/timerExpired because the shared
+     * read/write timer is concurrently armed by the write-stop busy-token
+     * poll while DRV_SDSPI_TASK_SPI_STATUS waits for that poll's SPI read to
+     * complete — reusing it would corrupt the 250 ms busy-token budget. */
+    bool                                            spiXferTimerFlag;
+    SYS_TIME_HANDLE                                 spiXferTimerHandle;
+    volatile bool                                   spiXferTimerExpired;
+
+    /* #567: handle of the SPI transfer we are currently waiting on. The
+     * completion callback ignores any event whose transferHandle doesn't
+     * match this, so a late completion from a transfer that was already
+     * timed-out (and aborted by the spiXferTimer watchdog) can't overwrite
+     * spiTransferStatus — or de-assert CS — during a later transfer.
+     * Set once per submit (atomic 32-bit store), read in the callback. */
+    DRV_SPI_TRANSFER_HANDLE                         expectedXferHandle;
 
     /* Flag to indicate if the device is Standard Speed or High Speed */
     uint8_t                                         sdHcHost;
