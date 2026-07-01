@@ -84,7 +84,9 @@ void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName )
        {
            char c = pcTaskName[i];
            if ( c == '\0' ) { break; }
-           gCrashTaskName[i] = c;
+           /* Keep it printable — the name field may be garbage if the overflow
+            * clobbered it (matches CrashCapture_CopyName in exceptions.c). */
+           gCrashTaskName[i] = ( ( c >= 0x20 ) && ( c <= 0x7E ) ) ? c : '?';
        }
        gCrashTaskName[i] = '\0';
    }
