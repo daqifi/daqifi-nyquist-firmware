@@ -390,6 +390,18 @@ uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
 }
 
 uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {
+    // #557/#563 SCOPE: on NQ1 this whole function is SUPERSEDED — the enforced
+    // cap uses Streaming_AdcAdditiveCap_NQ1() min()'d only with the scan-busy
+    // term MC12b_HardwareScanMaxFreq() (see Streaming_ComputeMaxFreqForConfigIface).
+    // MC12b_ScanMaxFreq() is called only for NQ2/NQ3 (AD7609 — no MODULE7 scan,
+    // different timing), which still use the legacy formula below. The EOS-rate
+    // and event-rate terms it applies were NEVER a silicon limit: the "USB-fatal"
+    // symptom that motivated them (#544/#545) was root-caused (#557) to the #525
+    // EOS-task vsnprintf stack overflow, fixed in v3.6.1 (PR #551) and re-tested
+    // GONE. They are retained here as conservative NQ2/NQ3 placeholders pending a
+    // per-variant headroom review; the scan-busy term below is the only one that
+    // reflects a real (FRM-documented #539) hardware bound.
+    //
     // #541 D-C: max safe shared-scan trigger rate.  Retriggering the scan
     // while in progress is documented-undefined (FRM §22.3.2) — the #539
     // mechanism — so the streaming tick period must exceed the scan's
@@ -422,9 +434,10 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {
     // Scan-busy hardware limit (SAMC/divider-dependent) — extracted to
     // MC12b_HardwareScanMaxFreq (#563) so the NQ1 additive cap can reuse it.
     uint32_t hz = MC12b_HardwareScanMaxFreq(nActive);
-    // EOS-RATE limit (v3, 2026-06-12): independent of scan length, the
-    // end-of-scan interrupt/task machinery is USB-FATAL when driven
-    // sustained above ~11.5-12 kHz.  Silicon anchors: an n=1 scan
+    // EOS-RATE limit (v3, 2026-06-12; NQ2/NQ3-only since #563 — see banner):
+    // independent of scan length. Was believed USB-fatal above ~11.5-12 kHz;
+    // #557 re-root-caused that to the #525 vsnprintf overflow (not silicon),
+    // fixed v3.6.1. Retained as a conservative NQ2/NQ3 bound.  Bench anchors: an n=1 scan
     // (in-spec — T_busy ~17 us << 83 us period, mid-scan retrigger
     // impossible) wedged the USB peripheral at 12,000 Hz on the plain
     // ADMITTED path, clean at 10,000 x 60 s; the n=7 scan was clean at
@@ -438,10 +451,11 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {
     // proven EOS rate.  Storm-vs-starvation mechanism unconfirmed: #545.
     #define ADC_EOS_RATE_MAX_HZ 10400u
     if (hz > ADC_EOS_RATE_MAX_HZ) hz = ADC_EOS_RATE_MAX_HZ;
-    // AGGREGATE ADC-event-rate limit (v4, 2026-06-12): a third independent
-    // fatal threshold.  Each enabled T2 USER channel fires a per-conversion
-    // data-ready ISR in addition to the per-scan EOS, and the combined
-    // event rate  f x (nUserT2 + 1)  is USB-FATAL around ~66-72k events/s:
+    // AGGREGATE ADC-event-rate limit (v4, 2026-06-12; NQ2/NQ3-only since #563):
+    // a third threshold once believed independently fatal.  Each enabled T2 USER
+    // channel fires a per-conversion data-ready ISR in addition to the per-scan
+    // EOS, and the combined event rate  f x (nUserT2 + 1)  was seen "fatal"
+    // around ~66-72k events/s (also the #525 overflow, #557 — not silicon):
     // 11xT2 OBDiag=0 wedges at 6,000 Hz on the plain ADMITTED path
     // (12 events/tick = 72k/s) and at 6,750 NOCAP (81k/s), clean at
     // 5,500 x 60 s (66k/s); the 16-channel cell is endurance-proven at
