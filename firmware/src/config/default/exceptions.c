@@ -204,9 +204,11 @@ void __attribute__((noreturn, weak)) _general_exception_handler ( void )
     gCrashExcAddr = exception_address;
     gCrashTaskName[0] = '\0';   /* fresh per-crash; overwritten below only on a good capture,
                                  * so a failed/invalid-TCB read can't show a stale name */
-    /* Only call into the kernel once the scheduler is running — a pre-scheduler
-     * exception has no valid pxCurrentTCB, so the accessors could nested-fault. */
-    if ( xTaskGetSchedulerState() == taskSCHEDULER_RUNNING )
+    /* Capture whenever the scheduler has started (RUNNING or SUSPENDED — a
+     * scheduler-suspended crash still has a valid pxCurrentTCB); only skip
+     * pre-scheduler (NOT_STARTED), where pxCurrentTCB is invalid and the kernel
+     * accessors could nested-fault. */
+    if ( xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED )
     {
         TaskHandle_t tcb = xTaskGetCurrentTaskHandle();
         gCrashTaskHandle = (uint32_t) tcb;
