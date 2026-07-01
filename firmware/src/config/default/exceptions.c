@@ -132,7 +132,8 @@ static bool CrashCapture_PtrInRam( uint32_t p )
              ( p >= 0xA0000000U && p < 0xA0080000U ) );
 }
 
-static void CrashCapture_CopyName( const char * nm )
+/* Non-static: also used by vApplicationStackOverflowHook (freertos_hooks.c). */
+void CrashCapture_CopyName( const char * nm )
 {
     unsigned int i;
     if ( ( nm == NULL ) || !CrashCapture_PtrInRam( (uint32_t) nm ) )
@@ -141,11 +142,28 @@ static void CrashCapture_CopyName( const char * nm )
     }
     for ( i = 0U; i < ( CRASH_TASK_NAME_MAX - 1U ); i++ )
     {
+        /* Validate EACH byte's address: a pointer near the RAM-top boundary
+         * could otherwise read past mapped RAM and nested-fault mid-capture. */
+        if ( !CrashCapture_PtrInRam( (uint32_t) &nm[i] ) ) { break; }
         char c = nm[i];
         if ( c == '\0' ) { break; }
         gCrashTaskName[i] = ( ( c >= 0x20 ) && ( c <= 0x7E ) ) ? c : '?';
     }
     gCrashTaskName[i] = '\0';
+}
+
+/* Zero the crash-capture globals at boot. They live in per-symbol .bss.<name>
+ * sections that crt0 does NOT zero across MCLR / IPE flash (retained RAM, #409),
+ * so without this an un-crashed boot could read stale metadata (e.g. a non-zero
+ * gCrashReason). Call pre-scheduler alongside the other #409 retained-RAM
+ * scrubs. See #552. */
+void CrashCapture_Init( void )
+{
+    gCrashReason      = 0U;
+    gCrashExcCode     = 0U;
+    gCrashExcAddr     = 0U;
+    gCrashTaskHandle  = 0U;
+    gCrashTaskName[0] = '\0';
 }
 
 

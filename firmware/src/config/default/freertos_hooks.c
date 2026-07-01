@@ -50,6 +50,7 @@ void vAssertCalled( const char * pcFile, unsigned long ulLine );
 extern volatile uint32_t gCrashReason;
 extern volatile uint32_t gCrashTaskHandle;
 extern volatile char     gCrashTaskName[];
+extern void CrashCapture_CopyName( const char * nm );  /* bounds-checked, in exceptions.c */
 
 /*
 *********************************************************************************************************
@@ -75,24 +76,11 @@ void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName )
     * and no vsnprintf/LOG_E (that printf frame is itself what overflows). */
    gCrashReason     = 1U;
    gCrashTaskHandle = (uint32_t) xTask;
-   gCrashTaskName[0] = '\0';   /* fresh per-crash; a NULL name can't leave stale data */
-   if ( pcTaskName != NULL )
-   {
-       unsigned int i;
-       /* Task names are <= configMAX_TASK_NAME_LEN (16) incl. null; gCrashTaskName
-        * is 20 bytes, so this never overruns. */
-       for ( i = 0U; i < configMAX_TASK_NAME_LEN; i++ )
-       {
-           char c = pcTaskName[i];
-           if ( c == '\0' ) { break; }
-           /* Keep it printable — the name field may be garbage if the overflow
-            * clobbered it (matches CrashCapture_CopyName in exceptions.c). */
-           gCrashTaskName[i] = ( ( c >= 0x20 ) && ( c <= 0x7E ) ) ? c : '?';
-       }
-       gCrashTaskName[i] = '\0';
-   }
+   gCrashTaskName[0] = '\0';   /* fresh per-crash; a NULL/bad name can't leave stale data */
+   /* Shared hardened copy — bounds-checks every byte and filters non-printables,
+    * so a name field clobbered by the overflow can't nested-fault or mislead. */
+   CrashCapture_CopyName( pcTaskName );
 
-   ( void ) pcTaskName;
    ( void ) xTask;
 
    /* Run time task stack overflow checking is performed if
