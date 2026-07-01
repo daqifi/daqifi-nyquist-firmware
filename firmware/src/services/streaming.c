@@ -2021,6 +2021,13 @@ void streaming_Task(void) {
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();
+            // #560/#475 Opt 1 — the transport is confirmed dead past the grace
+            // window; if WiFi was the consumer, reap the stale TCP client so a
+            // no-FIN client-kill (PATH 2) can't leave the one-client slot held
+            // forever (accept-then-drop). Grace-confirmed → safe to force-close.
+            if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_WiFi) {
+                wifi_tcp_server_ReapDeadClient();
+            }
             goto iter_done;
         }
 

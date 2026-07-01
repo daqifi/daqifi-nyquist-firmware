@@ -155,6 +155,16 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size);
 bool wifi_tcp_server_HasActiveClient(void);
 
 /**
+ * #560/#475 Opt 1 — force-close a provably-dead TCP client (PATH-2 zombie).
+ * Call ONLY when the client's death has been independently confirmed by a
+ * grace-expired signal (the #397 consumer-down auto-stop). Clears the stale
+ * clientSocket so subsequent connects stop being refused by the one-client
+ * policy. Returns true if a client was held and closed. Bumps
+ * clientForceClosed (surfaced in SYST:STReam:STATS?).
+ */
+bool wifi_tcp_server_ReapDeadClient(void);
+
+/**
  * Returns the current count of bytes sitting in the WiFi TCP write
  * circular buffer (queued for send() but not yet drained).
  * Used by Streaming_Stop to capture session-end "tail" bytes for the

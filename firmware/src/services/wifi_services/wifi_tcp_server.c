@@ -473,6 +473,32 @@ void wifi_tcp_server_CloseClientSocket() {
     }
 }
 
+// #560/#475 Opt 1 — reap a provably-dead TCP client (PATH-2 zombie fix).
+//
+// PATH 2 of the listener wedge: a client killed mid-stream with no FIN/RST
+// never triggers SOCKET_MSG_RECV(0), so client.clientSocket stays >= 0
+// forever and every subsequent connect is refused by the one-client policy
+// (accept-then-drop).  This forces the stale client fd closed once its death
+// is CONFIRMED by an out-of-band grace-expired signal — currently the #397
+// consumer-down auto-stop (all configured transports down > grace).  Reusing
+// that already-graced signal means we only reap a client the pipeline has
+// independently judged dead, never a slow-but-live one.  Runs in the caller's
+// task context (streaming_Task); CloseClientSocket is deferred-reset-safe.
+//
+// Returns true if a client socket was actually held and closed.  Increments
+// clientForceClosed for #560 observability.  NOTE (D1, pending bench): this
+// clears the HOST-side zombie; if the WINC also leaked the chip-side slot
+// (fire-and-forget shutdown, socket.c:1012), a chip nm_reset (SYST:COMM:LAN:
+// HRESet) may still be required — that escalation is validated separately.
+bool wifi_tcp_server_ReapDeadClient(void) {
+    if (gpServerData == NULL || gpServerData->client.clientSocket == -1) {
+        return false;
+    }
+    gpServerData->clientForceClosed++;
+    wifi_tcp_server_CloseClientSocket();
+    return true;
+}
+
 // #437: helper called at the start of every wMutex critical section.
 // Drains a deferred CircularBuf_Reset that CloseClientSocket /
 // CloseSocket couldn't perform from a non-blocking context.  Caller
