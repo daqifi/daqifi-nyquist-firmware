@@ -178,6 +178,8 @@ void __attribute__((noreturn, weak)) _general_exception_handler ( void )
     gCrashReason  = 2U;
     gCrashExcCode = exception_code;
     gCrashExcAddr = exception_address;
+    gCrashTaskName[0] = '\0';   /* fresh per-crash; overwritten below only on a good capture,
+                                 * so a failed/invalid-TCB read can't show a stale name */
     {
         TaskHandle_t tcb = xTaskGetCurrentTaskHandle();
         gCrashTaskHandle = (uint32_t) tcb;

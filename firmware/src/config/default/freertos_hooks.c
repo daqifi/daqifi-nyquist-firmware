@@ -75,6 +75,7 @@ void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName )
     * and no vsnprintf/LOG_E (that printf frame is itself what overflows). */
    gCrashReason     = 1U;
    gCrashTaskHandle = (uint32_t) xTask;
+   gCrashTaskName[0] = '\0';   /* fresh per-crash; a NULL name can't leave stale data */
    if ( pcTaskName != NULL )
    {
        unsigned int i;
