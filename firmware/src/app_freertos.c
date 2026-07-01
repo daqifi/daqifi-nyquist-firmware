@@ -138,6 +138,7 @@ static tBoardData * gpBoardData;
 static tBoardRuntimeConfig * gpBoardRuntimeConfig;
 static tBoardConfig * gpBoardConfig;
 extern const NanopbFlagsArray fields_discovery;
+extern void CrashCapture_Init(void);   /* #552 crash-capture globals scrub (exceptions.c) */
 
 // USB transfer constants for SD card callback
 // Clamp chunk size to USB buffer capacity with underflow protection
@@ -550,6 +551,7 @@ void app_SystemInit() {
      * kseg1). crt0 does not zero those; without these calls the
      * statics retain values across MCLR / IPE flash. See #409. */
     wifi_manager_BootInit();
+    CrashCapture_Init();   /* #552: zero gCrash* crash-capture globals (retained RAM) */
 
     // Power initialization - enables 3.3V rail by default - other power
     // functions are in power task

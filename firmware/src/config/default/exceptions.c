@@ -101,6 +101,77 @@ volatile static unsigned int exception_address;
 /* Code identifying the cause of the exception (CP0 Cause register). */
 volatile static uint32_t  exception_code;
 
+/* ---- #552 crash capture (custom — not MCC-generated; preserve on regen) ----
+ * A task stack overflow that corrupts pxTopOfStack faults inside the FreeRTOS
+ * context-switch restore (port_asm.S) and vectors to _general_exception_handler,
+ * BYPASSING vApplicationStackOverflowHook. Record the culprit into these fixed
+ * globals (BSS — NOT any task's stack) so the offending task is diagnosable via
+ * mdb (`print gCrash*`) or a Logger dump without a live repro. Peer capture in
+ * vApplicationStackOverflowHook (freertos_hooks.c) covers the guard-caught case.
+ * These read valid only after a crash sets them THIS boot (not zeroed across
+ * MCLR in retained-RAM regions — see #409). */
+#define CRASH_TASK_NAME_MAX 20
+
+volatile uint32_t gCrashReason     = 0U; /* 0 none, 1 stack-overflow hook, 2 general exception, 3 malloc-fail */
+volatile uint32_t gCrashExcCode    = 0U; /* CP0 ExcCode: 2=TLBL, 4=AdEL, 5=AdES, 7=DBE, ... */
+volatile uint32_t gCrashExcAddr    = 0U; /* EPC of the faulting instruction */
+volatile uint32_t gCrashTaskHandle = 0U; /* current TCB (pxCurrentTCB) at the fault */
+volatile char     gCrashTaskName[CRASH_TASK_NAME_MAX] = { 0 };
+
+/* FreeRTOS accessors used below (xTaskGetCurrentTaskHandle / pcTaskGetName) are
+ * declared via definitions.h -> task.h, already in scope here. Both are always
+ * compiled in this config (INCLUDE_xTaskGetCurrentTaskHandle == 1; pcTaskGetName
+ * is unconditional). */
+
+/* On-chip RAM bounds so a corrupt pointer can't cause a nested fault while we
+ * copy a name. PIC32MZ2048EFM144 has 512 KB RAM at KSEG0 0x80000000 (KSEG1
+ * uncached mirror at 0xA0000000). */
+static bool CrashCapture_PtrInRam( uint32_t p )
+{
+    return ( ( p >= 0x80000000U && p < 0x80080000U ) ||
+             ( p >= 0xA0000000U && p < 0xA0080000U ) );
+}
+
+/* Non-static: also used by vApplicationStackOverflowHook (freertos_hooks.c). */
+void CrashCapture_CopyName( const char * nm )
+{
+    unsigned int i;
+    if ( ( nm == NULL ) || !CrashCapture_PtrInRam( (uint32_t) nm ) )
+    {
+        return;
+    }
+    for ( i = 0U; i < ( CRASH_TASK_NAME_MAX - 1U ); i++ )
+    {
+        /* Validate EACH byte's address: a pointer near the RAM-top boundary
+         * could otherwise read past mapped RAM and nested-fault mid-capture. */
+        if ( !CrashCapture_PtrInRam( (uint32_t) &nm[i] ) ) { break; }
+        char c = nm[i];
+        if ( c == '\0' ) { break; }
+        gCrashTaskName[i] = ( ( c >= 0x20 ) && ( c <= 0x7E ) ) ? c : '?';
+    }
+    gCrashTaskName[i] = '\0';
+}
+
+/* Zero the crash-capture globals at boot. They live in per-symbol .bss.<name>
+ * sections that crt0 does NOT zero across MCLR / IPE flash (retained RAM, #409),
+ * so without this an un-crashed boot could read stale metadata (e.g. a non-zero
+ * gCrashReason). Call pre-scheduler alongside the other #409 retained-RAM
+ * scrubs. See #552. */
+void CrashCapture_Init( void )
+{
+    unsigned int i;
+    gCrashReason      = 0U;
+    gCrashExcCode     = 0U;
+    gCrashExcAddr     = 0U;
+    gCrashTaskHandle  = 0U;
+    /* Clear the WHOLE buffer (not just the terminator) so a raw memory dump
+     * before any crash shows no stale bytes. */
+    for ( i = 0U; i < CRASH_TASK_NAME_MAX; i++ )
+    {
+        gCrashTaskName[i] = '\0';
+    }
+}
+
 
 // </editor-fold>
 
@@ -123,7 +194,31 @@ void __attribute__((noreturn, weak)) _general_exception_handler ( void )
     exception_code = ((_CP0_GET_CAUSE() & 0x0000007CU) >> 2U);
     exception_address = _CP0_GET_EPC();
 
-    while (true) 
+    /* #552: record the culprit into fixed globals (not any task stack) so a
+     * stack-overflow-escape TLBL — which never reaches the FreeRTOS overflow
+     * hook — is diagnosable via mdb without a live repro. pxCurrentTCB is a
+     * kernel global (not on a task stack), so it survives a task overflow; the
+     * bounds check guards against a wild pointer causing a nested fault. */
+    gCrashReason  = 2U;
+    gCrashExcCode = exception_code;
+    gCrashExcAddr = exception_address;
+    gCrashTaskName[0] = '\0';   /* fresh per-crash; overwritten below only on a good capture,
+                                 * so a failed/invalid-TCB read can't show a stale name */
+    /* Capture whenever the scheduler has started (RUNNING or SUSPENDED — a
+     * scheduler-suspended crash still has a valid pxCurrentTCB); only skip
+     * pre-scheduler (NOT_STARTED), where pxCurrentTCB is invalid and the kernel
+     * accessors could nested-fault. */
+    if ( xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED )
+    {
+        TaskHandle_t tcb = xTaskGetCurrentTaskHandle();
+        gCrashTaskHandle = (uint32_t) tcb;
+        if ( ( tcb != NULL ) && CrashCapture_PtrInRam( (uint32_t) tcb ) )
+        {
+            CrashCapture_CopyName( pcTaskGetName( tcb ) );
+        }
+    }
+
+    while (true)
     {
         #if defined(__DEBUG) || defined(__DEBUG_D) && defined(__XC32)
             __builtin_software_breakpoint();

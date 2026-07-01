@@ -44,6 +44,14 @@ void vApplicationIdleHook( void );
 void vApplicationTickHook( void );
 void vAssertCalled( const char * pcFile, unsigned long ulLine );
 
+/* #552 crash capture — shared globals defined in exceptions.c. Written here so
+ * the guard-caught (configCHECK_FOR_STACK_OVERFLOW == 2) overflow names its
+ * culprit into fixed BSS (not the dying task's stack) for mdb / Logger dump. */
+extern volatile uint32_t gCrashReason;
+extern volatile uint32_t gCrashTaskHandle;
+extern volatile char     gCrashTaskName[];
+extern void CrashCapture_CopyName( const char * nm );  /* bounds-checked, in exceptions.c */
+
 /*
 *********************************************************************************************************
 *                                          vApplicationStackOverflowHook()
@@ -61,7 +69,18 @@ void vAssertCalled( const char * pcFile, unsigned long ulLine );
 */
 void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName )
 {
-   ( void ) pcTaskName;
+   /* #552: record the culprit BEFORE disabling interrupts / spinning, into
+    * fixed globals (not this task's overflowed stack) so it is diagnosable via
+    * mdb (`print gCrashTaskName`) or a Logger dump without a live repro.
+    * FreeRTOS hands us the name and handle directly here — no TCB deref needed,
+    * and no vsnprintf/LOG_E (that printf frame is itself what overflows). */
+   gCrashReason     = 1U;
+   gCrashTaskHandle = (uint32_t) xTask;
+   gCrashTaskName[0] = '\0';   /* fresh per-crash; a NULL/bad name can't leave stale data */
+   /* Shared hardened copy — bounds-checks every byte and filters non-printables,
+    * so a name field clobbered by the overflow can't nested-fault or mislead. */
+   CrashCapture_CopyName( pcTaskName );
+
    ( void ) xTask;
 
    /* Run time task stack overflow checking is performed if
