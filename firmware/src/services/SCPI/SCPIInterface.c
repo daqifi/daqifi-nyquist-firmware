@@ -2825,6 +2825,16 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         }
         pTcp->client.inflightHead = 0;
         pTcp->client.inflightTail = 0;
+        // #560/#475 Opt 0 — listener-health counters. Reset only on this
+        // operator-initiated clear (NOT at stream start) so the slow PATH-1
+        // listen-slot leak stays visible across streaming sessions.
+        pTcp->socketOpenFails = 0;
+        pTcp->listenFails = 0;
+        pTcp->acceptFails = 0;
+        pTcp->acceptRefused = 0;
+        pTcp->clientForceClosed = 0;
+        pTcp->listenReopens = 0;
+        pTcp->listenHardResets = 0;
         taskEXIT_CRITICAL();
     }
     // Reset SD write metrics
@@ -2970,6 +2980,9 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         uint32_t sendErrors = 0, partialSends = 0, partialMissing = 0;
         uint32_t rejectedCalls = 0, rejectedBytes = 0;
         uint32_t cirbufProduced = 0, cirbufConsumed = 0, cirbufBufSize = 0;
+        // #560/#475 Opt 0 — listener-health observability
+        uint32_t socketOpenFails = 0, listenFails = 0, acceptFails = 0, acceptRefused = 0;
+        uint32_t clientForceClosed = 0, listenReopens = 0, listenHardResets = 0, listenState = 0;
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {
             // Atomic snapshot of 64-bit counters (not atomic on 32-bit PIC32MZ)
@@ -2984,6 +2997,16 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
             cirbufProduced = pTcp->client.wCirbuf.producedBytes;
             cirbufConsumed = pTcp->client.wCirbuf.consumedBytes;
             cirbufBufSize  = pTcp->client.wCirbuf.buf_size;
+            // #560/#475 Opt 0 — 32-bit reads (atomic on PIC32MZ), snapshotted
+            // in the same critical section for a consistent view.
+            socketOpenFails = pTcp->socketOpenFails;
+            listenFails = pTcp->listenFails;
+            acceptFails = pTcp->acceptFails;
+            acceptRefused = pTcp->acceptRefused;
+            clientForceClosed = pTcp->clientForceClosed;
+            listenReopens = pTcp->listenReopens;
+            listenHardResets = pTcp->listenHardResets;
+            listenState = (pTcp->serverSocket >= 0) ? 1u : 0u;  // 0=closed, 1=open (2=suspect reserved for Opt 2 watchdog)
             taskEXIT_CRITICAL();
         }
         // Always print for consistent response schema
@@ -3008,6 +3031,20 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         // watchdog this enables.
         scpi_printf(context, "WifiListenUptimeSec=%u\r\n",
                     (unsigned)wifi_manager_GetListenSocketUptimeSec());
+        // #560/#475 Opt 0 — listener-health counters (persist across streaming
+        // sessions; reset at boot + on STATS:CLEar).  Let a client distinguish
+        // "association up but TCP listener dead": WifiListenState + a nonzero
+        // WifiSocketOpenFails (WINC TCP-table exhaustion) / climbing
+        // WifiAcceptRefused (PATH-2 zombie) pinpoint the wedge that ADDR?/ping
+        // cannot see.
+        scpi_printf(context, "WifiListenState=%u\r\n", (unsigned)listenState);
+        scpi_printf(context, "WifiSocketOpenFails=%u\r\n", (unsigned)socketOpenFails);
+        scpi_printf(context, "WifiListenFails=%u\r\n", (unsigned)listenFails);
+        scpi_printf(context, "WifiAcceptFails=%u\r\n", (unsigned)acceptFails);
+        scpi_printf(context, "WifiAcceptRefused=%u\r\n", (unsigned)acceptRefused);
+        scpi_printf(context, "WifiClientForceClosed=%u\r\n", (unsigned)clientForceClosed);
+        scpi_printf(context, "WifiListenReopens=%u\r\n", (unsigned)listenReopens);
+        scpi_printf(context, "WifiListenHardResets=%u\r\n", (unsigned)listenHardResets);
     }
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
     scpi_printf(context, "SdDroppedBytesSteady=%u\r\n", (unsigned)s.sdDroppedBytesSteady);

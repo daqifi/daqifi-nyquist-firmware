@@ -569,6 +569,12 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 } else if (gStateMachineContext.pTcpServerContext != NULL &&
                            socket == gStateMachineContext.pTcpServerContext->serverSocket) {
                     gStateMachineContext.pTcpServerContext->serverSocket = -1;
+                    // #560 Opt 0: socketOpenFails is also written from
+                    // wifi_tcp_server_OpenSocket (app_WifiTask) — guard the
+                    // cross-task RMW (this runs on the WINC driver task).
+                    taskENTER_CRITICAL();
+                    gStateMachineContext.pTcpServerContext->socketOpenFails++;
+                    taskEXIT_CRITICAL();
                 }
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
@@ -590,6 +596,9 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                       (gStateMachineContext.pTcpServerContext != NULL)
                           ? gStateMachineContext.pTcpServerContext->serverSocket : -1,
                       (pListenMessage != NULL) ? pListenMessage->status : -1);
+                if (gStateMachineContext.pTcpServerContext != NULL) {
+                    gStateMachineContext.pTcpServerContext->listenFails++;  // #560 Opt 0
+                }
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;
@@ -621,6 +630,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // no corruption of the active session).
                 if (gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
                     LOG_I("TCP: refusing 2nd client on listen socket (one-client policy, #452)");
+                    gStateMachineContext.pTcpServerContext->acceptRefused++;  // #560 Opt 0: climbing = PATH-2 zombie churn
                     int8_t rc = shutdown(pAcceptMessage->sock);
                     if (rc != SOCK_ERR_NO_ERROR) {
                         // WINC shutdown() clears local socket state even on
@@ -644,6 +654,9 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // failure occurred.  pTcpServerContext->serverSocket could
                 // be -1 already if a concurrent error path reset it.
                 LOG_E("TCP: accept() failed listen-sock=%d (NULL msg)", socket);
+                if (gStateMachineContext.pTcpServerContext != NULL) {
+                    gStateMachineContext.pTcpServerContext->acceptFails++;  // #560 Opt 0
+                }
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }
             break;
