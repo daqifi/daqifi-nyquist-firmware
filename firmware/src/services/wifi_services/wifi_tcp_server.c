@@ -366,6 +366,7 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
                 // sync-side failure and release the descriptor.
                 LOG_E("TCP: bind() HIF send failed sock=%d port=%u rc=%d",
                       gpServerData->serverSocket, (unsigned)port, bindRc);
+                gpServerData->socketOpenFails++;  // #560 Opt 0: listener could not bind
                 int8_t shutdownRc = shutdown(gpServerData->serverSocket);
                 if (shutdownRc != SOCK_ERR_NO_ERROR) {
                     // If bind's HIF send failed, the chip is likely still
@@ -388,6 +389,7 @@ void wifi_tcp_server_OpenSocket(uint16_t port) {
             // matters for diagnosing the heap-pressure case in #475.
             LOG_E("TCP: socket(AF_INET,SOCK_STREAM) failed rc=%d",
                   gpServerData->serverSocket);
+            gpServerData->socketOpenFails++;  // #560 Opt 0: nonzero = WINC TCP-table exhaustion (H2 smoking gun)
             // Normalize to -1 so callers' `< 0` check is consistent even
             // if WINC starts returning a different negative sentinel.
             gpServerData->serverSocket = -1;
