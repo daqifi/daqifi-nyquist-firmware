@@ -159,11 +159,17 @@ void CrashCapture_CopyName( const char * nm )
  * scrubs. See #552. */
 void CrashCapture_Init( void )
 {
+    unsigned int i;
     gCrashReason      = 0U;
     gCrashExcCode     = 0U;
     gCrashExcAddr     = 0U;
     gCrashTaskHandle  = 0U;
-    gCrashTaskName[0] = '\0';
+    /* Clear the WHOLE buffer (not just the terminator) so a raw memory dump
+     * before any crash shows no stale bytes. */
+    for ( i = 0U; i < CRASH_TASK_NAME_MAX; i++ )
+    {
+        gCrashTaskName[i] = '\0';
+    }
 }
 
 
@@ -198,6 +204,9 @@ void __attribute__((noreturn, weak)) _general_exception_handler ( void )
     gCrashExcAddr = exception_address;
     gCrashTaskName[0] = '\0';   /* fresh per-crash; overwritten below only on a good capture,
                                  * so a failed/invalid-TCB read can't show a stale name */
+    /* Only call into the kernel once the scheduler is running — a pre-scheduler
+     * exception has no valid pxCurrentTCB, so the accessors could nested-fault. */
+    if ( xTaskGetSchedulerState() == taskSCHEDULER_RUNNING )
     {
         TaskHandle_t tcb = xTaskGetCurrentTaskHandle();
         gCrashTaskHandle = (uint32_t) tcb;
