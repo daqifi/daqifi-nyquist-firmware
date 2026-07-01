@@ -569,7 +569,12 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 } else if (gStateMachineContext.pTcpServerContext != NULL &&
                            socket == gStateMachineContext.pTcpServerContext->serverSocket) {
                     gStateMachineContext.pTcpServerContext->serverSocket = -1;
-                    gStateMachineContext.pTcpServerContext->socketOpenFails++;  // #560 Opt 0
+                    // #560 Opt 0: socketOpenFails is also written from
+                    // wifi_tcp_server_OpenSocket (app_WifiTask) — guard the
+                    // cross-task RMW (this runs on the WINC driver task).
+                    taskENTER_CRITICAL();
+                    gStateMachineContext.pTcpServerContext->socketOpenFails++;
+                    taskEXIT_CRITICAL();
                 }
                 SendEvent(WIFI_MANAGER_EVENT_ERROR);
             }

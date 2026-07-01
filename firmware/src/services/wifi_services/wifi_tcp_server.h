@@ -112,19 +112,28 @@ typedef struct s_tcpServerContext
 
     wifi_tcp_server_clientContext_t client;
 
-    /* #560/#475 listener-health observability (Opt 0).  All uint32_t,
-     * incremented in app_WifiTask context only — the only writers are
-     * wifi_tcp_server_OpenSocket() (state machine) and SocketEventCallback()
-     * (WINC events), both on app_WifiTask — so plain ++ is safe and 32-bit
-     * reads are atomic on PIC32MZ (mirrors wifiTcpSendErrors above).  These
-     * PERSIST across streaming sessions (deliberately NOT reset at stream
+    /* #560/#475 listener-health observability (Opt 0).  uint32_t counters
+     * surfaced in SYST:STReam:STATS? (read there under taskENTER_CRITICAL).
+     * They PERSIST across streaming sessions (deliberately NOT reset at stream
      * start) so the slow PATH-1 listen-slot leak stays visible cross-session;
-     * they are zeroed at boot (wifi_manager_BootInit memset) and on an
-     * operator SYST:STReam:STATS:CLEar.  Surfaced in SYST:STReam:STATS?.  */
-    uint32_t socketOpenFails;   /* socket()/bind() HIF-send failure in OpenSocket — nonzero = WINC TCP-table exhaustion (the H2 smoking gun) */
-    uint32_t listenFails;       /* SOCKET_MSG_LISTEN reported status != 0 */
-    uint32_t acceptFails;       /* SOCKET_MSG_ACCEPT arrived with a NULL message (WINC/HIF state break) */
-    uint32_t acceptRefused;     /* one-client policy refused a 2nd connect — climbing = PATH-2 zombie churn (#560) */
+     * zeroed at boot (wifi_manager_BootInit memset) and on operator STATS:CLEar.
+     *
+     * Writer model / atomicity (PIC32MZ):
+     *  - socketOpenFails is written from TWO tasks: wifi_tcp_server_OpenSocket()
+     *    on app_WifiTask (pri 2) AND SocketEventCallback()'s SOCKET_MSG_BIND
+     *    handler on the WINC driver task lWDRV_WINC_Tasks (pri 1).  Cross-task
+     *    RMW → guarded by taskENTER_CRITICAL at every write site (matches the
+     *    team pattern in #223/#451).
+     *  - listenFails / acceptFails / acceptRefused are written ONLY from
+     *    SocketEventCallback (single task) — plain ++ is safe; the 32-bit read
+     *    is atomic and the SCPI reader's critical section keeps the snapshot
+     *    coherent.
+     *  - clientForceClosed / listenReopens / listenHardResets: self-heal action
+     *    counts, single-writer (0 until Opt 1/2/3 land). */
+    uint32_t socketOpenFails;   /* socket()/bind() HIF-send failure in OpenSocket — nonzero = WINC TCP-table exhaustion (the H2 smoking gun). CROSS-TASK: guard with taskENTER_CRITICAL */
+    uint32_t listenFails;       /* SOCKET_MSG_LISTEN reported status != 0 (single-writer: SocketEventCallback) */
+    uint32_t acceptFails;       /* SOCKET_MSG_ACCEPT arrived with a NULL message (single-writer: SocketEventCallback) */
+    uint32_t acceptRefused;     /* one-client policy refused a 2nd connect — climbing = PATH-2 zombie churn (single-writer: SocketEventCallback) */
     uint32_t clientForceClosed; /* self-heal: dead client force-closed (0 until Opt 1) */
     uint32_t listenReopens;     /* self-heal: host re-listen count (0 until Opt 2) */
     uint32_t listenHardResets;  /* self-heal: WINC HardReset escalations (0 until Opt 3) */
