@@ -26,7 +26,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define TIMER_CLOCK_FRQ 100000000
+#include "clock_config.h"
+#define TIMER_CLOCK_FRQ DAQIFI_PBCLK_HZ  /* #487: PBCLK3 (84 MHz @252 / 100 @200 via clock_config.h). Governs streaming-timer period + CSV/JSON/PB timestamps. */
 
 typedef enum {
     TMR_INDEX_2 = 2,

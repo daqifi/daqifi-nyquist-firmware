@@ -48,6 +48,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "clock_config.h"   /* #487: single 200/252 MHz toggle */
 #include "crypto/crypto.h"
 #include "peripheral/ocmp/plib_ocmp8.h"
 #include "peripheral/ocmp/plib_ocmp6.h"
@@ -116,8 +117,8 @@ extern "C" {
 #define DEVICE_FAMILY        "PIC32MZEF"
 #define DEVICE_SERIES        "PIC32MZ"
 
-/* CPU clock frequency */
-#define CPU_CLOCK_FREQUENCY 200000000U
+/* CPU clock frequency (informational — not referenced functionally) */
+#define CPU_CLOCK_FREQUENCY DAQIFI_SYSCLK_HZ  /* #487: via clock_config.h toggle (252/200) */
 
 // *****************************************************************************
 // *****************************************************************************

@@ -50,8 +50,11 @@
 /* Scheduling behaviour related definitions. **********************************/
 /******************************************************************************/
 
-/* configTICK_RATE_HZ sets frequency of the tick interrupt in Hz, normally
- * calculated from the configCPU_CLOCK_HZ value. */
+/* configTICK_RATE_HZ sets frequency of the tick interrupt in Hz.  This PIC32MZ
+ * port runs the tick on peripheral Timer 1 (PBCLK3), so the compare value is
+ * derived from configPERIPHERAL_CLOCK_HZ (below), not configCPU_CLOCK_HZ (which
+ * this port does not use).  SYSCLK is 252 MHz (#487); the CPU clock is not
+ * referenced by the RTOS tick. */
 #define configTICK_RATE_HZ                      ( ( TickType_t ) 1000 )
 
 /* Force list-item link fields (pxNext/pxPrevious/pxContainer/xItemValue) to
@@ -293,7 +296,8 @@
 /* Interrupt nesting behaviour configuration. *********************************/
 /******************************************************************************/
 
-#define configPERIPHERAL_CLOCK_HZ               ( 100000000UL )
+#include "clock_config.h"
+#define configPERIPHERAL_CLOCK_HZ               ( DAQIFI_PBCLK_HZ )  /* #487: PBCLK3 via clock_config.h toggle. Tick timer (T1) rides PBCLK3 — must match for a correct 1000 Hz tick. */
 #define configISR_STACK_SIZE                    ( 8192 )
 /* configKERNEL_INTERRUPT_PRIORITY sets the priority of the tick and context
  * switch performing interrupts.  Not supported by all FreeRTOS ports.  See

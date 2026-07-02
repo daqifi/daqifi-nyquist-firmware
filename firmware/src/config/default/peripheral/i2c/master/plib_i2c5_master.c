@@ -51,6 +51,7 @@
 #include "device.h"
 #include "plib_i2c5_master.h"
 #include "interrupts.h"
+#include "clock_config.h"   /* #487: PBCLK2-derived I2C5 BRG (DAQIFI_SYSCLK_252 / DAQIFI_PBCLK_HZ) */
 
 
 // *****************************************************************************
@@ -72,7 +73,11 @@ void I2C5_Initialize(void)
     /* Disable the I2C Bus collision interrupt */
     IEC5CLR = _IEC5_I2C5BIE_MASK;
 
-    I2C5BRG = 992;
+#if DAQIFI_SYSCLK_252
+    I2C5BRG = 833;   /* #487: PBCLK2 84 MHz — same I2C bus speed as the 100 MHz/992 setting */
+#else
+    I2C5BRG = 992;   /* PBCLK2 100 MHz */
+#endif
 
     I2C5CONCLR = _I2C5CON_SIDL_MASK;
     I2C5CONCLR = _I2C5CON_DISSLW_MASK;
@@ -542,7 +547,7 @@ bool I2C5_TransferSetup(I2C_TRANSFER_SETUP* setup, uint32_t srcClkFreq )
 
     if( srcClkFreq == 0U)
     {
-        srcClkFreq = 100000000UL;
+        srcClkFreq = DAQIFI_PBCLK_HZ;   /* #487: PBCLK2 via clock_config.h (84 @252 / 100 @200) */
     }
 
     fBaudValue = (((float)srcClkFreq / 2.0f) * ((1.0f / (float)i2cClkSpeed) - 0.000000130f)) - 1.0f;

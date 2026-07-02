@@ -7,6 +7,7 @@
 #include "../DIO.h"
 #include "configuration.h"
 #include "definitions.h"
+#include "clock_config.h"   /* #487: DAQIFI_PBCLK_MHZ for ADC TCLK */
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
@@ -373,7 +374,7 @@ void MC12b_RestoreIdleScanList(void) {
  * cap can min() with it directly: the additive model intentionally replaces the
  * EOS-rate/event-rate terms (re-tested non-fatal on v3.6.1, #557) but NOT this
  * one, which must scale with the live SAMC/TAD config. All terms read live:
- *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x 10ns (PBCLK3 100MHz).
+ *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK, TCLK = 1000/84 ns (PBCLK3 84MHz, #487).
  *   T_busy = N x (SAMC + 16) x TAD7 + ~6us;  cap = 1 / (T_busy x 1.1).
  * Returns 0xFFFFFFFF when no scan is armed (no bound). */
 uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
@@ -382,7 +383,14 @@ uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
     uint32_t adcdiv    = ADCCON2 & 0x7Fu;
     if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
     uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
-    uint32_t tadNs     = 2u * adcdiv * (conclkdiv + 1u) * 10u;
+    /* #487: TCLK = 1/PBCLK3 (ADC control clock).  DAQIFI_PBCLK_MHZ from
+     * clock_config.h = 84 @252 MHz SYSCLK (TCLK ~11.9 ns) or 100 @200 MHz
+     * (TCLK 10 ns). tadNs = 2·ADCDIV·(CONCLKDIV+1)·TCLK, scaled ×1000 for ns.
+     * Round the divide UP (ceil) so tadNs never under-estimates TAD — this is a
+     * safety bound, so an over-estimate of busy time (→ lower max freq) is the
+     * conservative direction. Qodo #584. */
+    uint32_t tadNumer  = 2u * adcdiv * (conclkdiv + 1u) * 1000u;
+    uint32_t tadNs     = (tadNumer + DAQIFI_PBCLK_MHZ - 1u) / DAQIFI_PBCLK_MHZ;
     uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
     uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
     uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);

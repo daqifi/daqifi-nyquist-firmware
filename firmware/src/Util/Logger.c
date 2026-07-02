@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include "clock_config.h"   /* #487: PBCLK2-derived UART4 BRG */
 #include <stdbool.h>
 #include <ctype.h>
 #include <xc.h>
@@ -229,9 +230,9 @@ static void InitICSPLogging(void)
     U4MODE = 0x8;           // BRGH = 1 for high-speed mode
     U4STASET = (_U4STA_UTXEN_MASK | _U4STA_UTXISEL1_MASK);
 
-    /* BAUD Rate: 921600 bps @ 100MHz peripheral clock */
-    /* U4BRG = (PBCLK / (4 * BAUD)) - 1 = (100MHz / (4 * 921600)) - 1 = 26 */
-    U4BRG = 26;
+    /* BAUD Rate: 921600 bps, BRGH=1. #487: BRG derived from PBCLK2 via
+     * clock_config.h — 22 @84 MHz (~913 kbps, 0.9% err), 26 @100 MHz. */
+    U4BRG = DAQIFI_UART_BRGH_DIV(921600UL);
 
     /* Enable UART4 */
     U4MODESET = _U4MODE_ON_MASK;
