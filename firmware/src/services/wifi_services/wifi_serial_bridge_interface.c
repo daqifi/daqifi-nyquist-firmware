@@ -1,12 +1,22 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#define LOG_MODULE LOG_MODULE_WIFI
+#include "Util/Logger.h"
 #include "wifi_serial_bridge_interface.h"
 #include "definitions.h"
 #include "osal/osal.h"
 #include "../UsbCdc/UsbCdc.h"
 
-#define WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE   512
+/* One full USB CDC read (512) of headroom on top of the largest single read,
+ * BSS is too tight for a burst-sized ring (linker reserves 8 KB ISR stack).
+ * Loss-freedom comes from backpressure in UsbCdc_TransparentReadCmpltCB
+ * instead: it blocks (bounded) until the bridge drains, which holds off the
+ * next CDC read arm and NAK-throttles the host at the USB level.
+ * The previous 512-byte ring had NO overflow protection at all — it silently
+ * wrapped over unread payload, corrupting WINC firmware images mid-flash with
+ * a valid-looking ACK (#WINC-recovery). */
+#define WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE   1024
 
 
 
@@ -21,17 +31,40 @@ bool UsbCdc_TransparentReadCmpltCB(uint8_t* pBuff, size_t buffLen) {
         return true;
     if(gUsartReadMutex==NULL)
         return false;
-    if (OSAL_RESULT_TRUE == OSAL_MUTEX_Lock(&gUsartReadMutex, OSAL_WAIT_FOREVER)) {
-        for (size_t i = 0; i < buffLen; i++) {
-            gUsartReceiveBuffer[gUsartReceiveInOffset] = pBuff[i];
-            gUsartReceiveInOffset++;
-            gUsartReceiveLength++;
-            if (WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE == gUsartReceiveInOffset) {
-                gUsartReceiveInOffset = 0;
+
+    /* Backpressure (#WINC-recovery): runs on the USB task, and the next CDC
+     * read is not re-armed until this callback returns — so waiting here for
+     * the bridge task to drain makes the host NAK at the USB level instead of
+     * losing bytes. The previous code copied unconditionally, silently
+     * wrapping the ring over unread payload and corrupting WINC firmware
+     * images mid-flash behind a valid-looking ACK. Bounded so a dead consumer
+     * degrades to a visible drop, not a wedged USB task — the mutex take is
+     * bounded too and the window uses wrap-safe tick arithmetic, so the whole
+     * callback is hard-limited to ~500 ms (Qodo #587). */
+    const TickType_t startTick = xTaskGetTickCount();
+    const TickType_t windowTicks = pdMS_TO_TICKS(500);
+    do {
+        if (OSAL_RESULT_TRUE == OSAL_MUTEX_Lock(&gUsartReadMutex, 10)) {
+            size_t freeSpace = WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE - gUsartReceiveLength;
+            if (freeSpace >= buffLen) {
+                for (size_t i = 0; i < buffLen; i++) {
+                    gUsartReceiveBuffer[gUsartReceiveInOffset] = pBuff[i];
+                    gUsartReceiveInOffset++;
+                    gUsartReceiveLength++;
+                    if (WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE == gUsartReceiveInOffset) {
+                        gUsartReceiveInOffset = 0;
+                    }
+                }
+                OSAL_MUTEX_Unlock(&gUsartReadMutex);
+                return true;
             }
+            OSAL_MUTEX_Unlock(&gUsartReadMutex);
         }
-        OSAL_MUTEX_Unlock(&gUsartReadMutex);
-    }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    } while ((xTaskGetTickCount() - startTick) < windowTicks);
+
+    LOG_E_ONCE(LOG_ONCE_BRIDGE_RX_OVERFLOW,
+               "Serial bridge RX ring overflow; bytes dropped");
     return true;
 }
 
