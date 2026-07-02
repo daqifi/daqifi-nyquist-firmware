@@ -46,6 +46,7 @@
 #include "configuration.h"
 #include "definitions.h"
 #include "device.h"
+#include "clock_config.h"   /* #487: single 200/252 MHz toggle (DAQIFI_SYSCLK_*) */
 
 
 // ****************************************************************************
@@ -91,8 +92,15 @@
 #pragma config FPLLIDIV =   DIV_3
 #pragma config FPLLRNG =    RANGE_5_10_MHZ
 #pragma config FPLLICLK =   PLL_POSC
-#pragma config FPLLMULT =   MUL_63    // #487: 8 MHz PLL in x63 = 504 MHz VCO
-#pragma config FPLLODIV =   DIV_2      // 504 / 2 = 252 MHz SYSCLK (was MUL_50 -> 200 MHz)
+/* #487: FPLLMULT selects SYSCLK via the DAQIFI_SYSCLK_252 toggle in
+ * clock_config.h (pragma can't take a macro). 8 MHz PLL input (FPLLIDIV DIV_3),
+ * /2 output (FPLLODIV) are the same for both points; only the multiplier moves. */
+#if DAQIFI_SYSCLK_252
+#pragma config FPLLMULT =   MUL_63    // 8 MHz x63 = 504 MHz VCO / 2 = 252 MHz SYSCLK
+#else
+#pragma config FPLLMULT =   MUL_50    // 8 MHz x50 = 400 MHz VCO / 2 = 200 MHz SYSCLK
+#endif
+#pragma config FPLLODIV =   DIV_2
 #pragma config UPLLFSEL =   FREQ_24MHZ
 
 /*** DEVCFG3 ***/
@@ -649,11 +657,11 @@ void SYS_Initialize ( void* data )
     SYSKEY = 0x00000000U;
     SYSKEY = 0xAA996655U;
     SYSKEY = 0x556699AAU;
-    PB1DIVbits.PBDIV = 2;   /* system / INT controller / DMA        -> 84 MHz */
-    PB2DIVbits.PBDIV = 2;   /* I2C5, UART4, SPI2/4/6                 -> 84 MHz */
-    PB3DIVbits.PBDIV = 2;   /* timers (FreeRTOS tick, streaming), OC/IC, ADC ctrl -> 84 MHz */
-    PB4DIVbits.PBDIV = 2;   /* PORTx                                 -> 84 MHz */
-    PB5DIVbits.PBDIV = 2;   /* flash controller, crypto, USB regs    -> 84 MHz */
+    PB1DIVbits.PBDIV = DAQIFI_PBDIV;   /* system / INT controller / DMA */
+    PB2DIVbits.PBDIV = DAQIFI_PBDIV;   /* I2C5, UART4, SPI2/4/6 */
+    PB3DIVbits.PBDIV = DAQIFI_PBDIV;   /* timers (FreeRTOS tick, streaming), OC/IC, ADC ctrl */
+    PB4DIVbits.PBDIV = DAQIFI_PBDIV;   /* PORTx */
+    PB5DIVbits.PBDIV = DAQIFI_PBDIV;   /* flash controller, crypto, USB regs */
     SYSKEY = 0x33333333U;
 
     /* Configure Prefetch, Wait States and ECC */
@@ -662,7 +670,7 @@ void SYS_Initialize ( void* data )
      * At 252 MHz set conservatively high (5) for the first bring-up so the CPU can
      * never fault on a flash read; extra wait states are hidden by prefetch + I-cache.
      * TODO(#487): tune down to the DS60001320H Table 7-1 / §39 value after boot-verify. */
-    PRECONbits.PFMWS = 5;
+    PRECONbits.PFMWS = DAQIFI_PFMWS;
     CFGCONbits.ECCCON = 3;
 
 

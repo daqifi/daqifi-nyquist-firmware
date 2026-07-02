@@ -85,7 +85,8 @@ extern "C" {
 #define SYS_TIME_HW_COUNTER_WIDTH                   (32)
 #define SYS_TIME_HW_COUNTER_PERIOD                  (4294967295U)
 #define SYS_TIME_HW_COUNTER_HALF_PERIOD             (SYS_TIME_HW_COUNTER_PERIOD>>1)
-#define SYS_TIME_CPU_CLOCK_FREQUENCY                (252000000)  /* #487: SYSCLK 252 MHz (was 200) */
+#include "clock_config.h"
+#define SYS_TIME_CPU_CLOCK_FREQUENCY                (DAQIFI_SYSCLK_HZ)  /* #487: SYSCLK via clock_config.h toggle (252/200) */
 #define SYS_TIME_COMPARE_UPDATE_EXECUTION_CYCLES    (620)
 
 

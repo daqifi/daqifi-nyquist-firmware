@@ -296,7 +296,8 @@
 /* Interrupt nesting behaviour configuration. *********************************/
 /******************************************************************************/
 
-#define configPERIPHERAL_CLOCK_HZ               ( 84000000UL )  /* #487: PBCLK3 /3 @ 252 MHz SYSCLK (was 100 MHz). Tick timer (T1) rides PBCLK3 — must match for a correct 1000 Hz tick. */
+#include "clock_config.h"
+#define configPERIPHERAL_CLOCK_HZ               ( DAQIFI_PBCLK_HZ )  /* #487: PBCLK3 via clock_config.h toggle. Tick timer (T1) rides PBCLK3 — must match for a correct 1000 Hz tick. */
 #define configISR_STACK_SIZE                    ( 8192 )
 /* configKERNEL_INTERRUPT_PRIORITY sets the priority of the tick and context
  * switch performing interrupts.  Not supported by all FreeRTOS ports.  See

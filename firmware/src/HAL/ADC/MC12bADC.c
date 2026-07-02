@@ -7,6 +7,7 @@
 #include "../DIO.h"
 #include "configuration.h"
 #include "definitions.h"
+#include "clock_config.h"   /* #487: DAQIFI_PBCLK_MHZ for ADC TCLK */
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
@@ -382,9 +383,10 @@ uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
     uint32_t adcdiv    = ADCCON2 & 0x7Fu;
     if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
     uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
-    /* #487: TCLK = 1/PBCLK3.  PBCLK3 = 84 MHz at 252 MHz SYSCLK (/3), so
-     * TCLK = 1000/84 ns ~= 11.9 ns (was 10 ns at the old 100 MHz PBCLK3). */
-    uint32_t tadNs     = (2u * adcdiv * (conclkdiv + 1u) * 1000u) / 84u;
+    /* #487: TCLK = 1/PBCLK3 (ADC control clock).  DAQIFI_PBCLK_MHZ from
+     * clock_config.h = 84 @252 MHz SYSCLK (TCLK ~11.9 ns) or 100 @200 MHz
+     * (TCLK 10 ns). tadNs = 2·ADCDIV·(CONCLKDIV+1)·TCLK, scaled ×1000 for ns. */
+    uint32_t tadNs     = (2u * adcdiv * (conclkdiv + 1u) * 1000u) / DAQIFI_PBCLK_MHZ;
     uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
     uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
     uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);

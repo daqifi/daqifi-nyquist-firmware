@@ -47,7 +47,8 @@
     extern "C" {
 #endif
 
-#define CORE_TIMER_FREQUENCY    (126000000U)  /* #487: SYSCLK/2 at 252 MHz (was 100M @ 200 MHz). SYS_TIME divides ms by this. */
+#include "clock_config.h"
+#define CORE_TIMER_FREQUENCY    (DAQIFI_CORE_TIMER_HZ)  /* #487: SYSCLK/2 via clock_config.h (126M @252 / 100M @200). SYS_TIME divides ms by this. */
 
 
 typedef void (*CORETIMER_CALLBACK)(uint32_t status, uintptr_t context);
