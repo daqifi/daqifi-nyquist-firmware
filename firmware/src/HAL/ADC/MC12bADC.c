@@ -373,7 +373,7 @@ void MC12b_RestoreIdleScanList(void) {
  * cap can min() with it directly: the additive model intentionally replaces the
  * EOS-rate/event-rate terms (re-tested non-fatal on v3.6.1, #557) but NOT this
  * one, which must scale with the live SAMC/TAD config. All terms read live:
- *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x 10ns (PBCLK3 100MHz).
+ *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK, TCLK = 1000/84 ns (PBCLK3 84MHz, #487).
  *   T_busy = N x (SAMC + 16) x TAD7 + ~6us;  cap = 1 / (T_busy x 1.1).
  * Returns 0xFFFFFFFF when no scan is armed (no bound). */
 uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
@@ -382,7 +382,9 @@ uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
     uint32_t adcdiv    = ADCCON2 & 0x7Fu;
     if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
     uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
-    uint32_t tadNs     = 2u * adcdiv * (conclkdiv + 1u) * 10u;
+    /* #487: TCLK = 1/PBCLK3.  PBCLK3 = 84 MHz at 252 MHz SYSCLK (/3), so
+     * TCLK = 1000/84 ns ~= 11.9 ns (was 10 ns at the old 100 MHz PBCLK3). */
+    uint32_t tadNs     = (2u * adcdiv * (conclkdiv + 1u) * 1000u) / 84u;
     uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
     uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
     uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);

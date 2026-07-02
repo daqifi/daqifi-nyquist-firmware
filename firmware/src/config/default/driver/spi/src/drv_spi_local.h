@@ -65,7 +65,10 @@
 #define DRV_SPI_TOKEN_MAX                       (0xFFFFU)
 
 
-#define USE_FREQ_CONFIGURED_IN_CLOCK_MANAGER    (0)
+/* #487: SPI4 (SD + WINC), SPI2/6 ride PBCLK2, now 84 MHz (was 100 MHz) at 252 MHz
+ * SYSCLK. Was (0) = "use PLIB fallback", whose fallback is hardcoded 100 MHz —
+ * which would compute BRG against the wrong source clock. Pass 84 MHz explicitly. */
+#define USE_FREQ_CONFIGURED_IN_CLOCK_MANAGER    (84000000)
 #define NULL_INDEX                              (0xFF)
 
 // *****************************************************************************

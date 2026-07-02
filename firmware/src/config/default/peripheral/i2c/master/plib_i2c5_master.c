@@ -72,7 +72,7 @@ void I2C5_Initialize(void)
     /* Disable the I2C Bus collision interrupt */
     IEC5CLR = _IEC5_I2C5BIE_MASK;
 
-    I2C5BRG = 992;
+    I2C5BRG = 833;   /* #487: PBCLK2 84 MHz (was 100 MHz -> 992) to hold the same I2C bus speed */
 
     I2C5CONCLR = _I2C5CON_SIDL_MASK;
     I2C5CONCLR = _I2C5CON_DISSLW_MASK;
@@ -542,7 +542,7 @@ bool I2C5_TransferSetup(I2C_TRANSFER_SETUP* setup, uint32_t srcClkFreq )
 
     if( srcClkFreq == 0U)
     {
-        srcClkFreq = 100000000UL;
+        srcClkFreq = 84000000UL;   /* #487: PBCLK2 84 MHz at 252 MHz SYSCLK (was 100 MHz) */
     }
 
     fBaudValue = (((float)srcClkFreq / 2.0f) * ((1.0f / (float)i2cClkSpeed) - 0.000000130f)) - 1.0f;

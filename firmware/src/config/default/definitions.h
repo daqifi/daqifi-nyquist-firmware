@@ -117,7 +117,7 @@ extern "C" {
 #define DEVICE_SERIES        "PIC32MZ"
 
 /* CPU clock frequency */
-#define CPU_CLOCK_FREQUENCY 200000000U
+#define CPU_CLOCK_FREQUENCY 252000000U  /* #487: SYSCLK 252 MHz (was 200). Informational — not referenced functionally. */
 
 // *****************************************************************************
 // *****************************************************************************

@@ -26,7 +26,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define TIMER_CLOCK_FRQ 100000000
+#define TIMER_CLOCK_FRQ 84000000  /* #487: PBCLK3 /3 @ 252 MHz SYSCLK (was 100 MHz). Governs streaming-timer period + CSV/JSON/PB timestamp rates. */
 
 typedef enum {
     TMR_INDEX_2 = 2,

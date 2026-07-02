@@ -229,9 +229,9 @@ static void InitICSPLogging(void)
     U4MODE = 0x8;           // BRGH = 1 for high-speed mode
     U4STASET = (_U4STA_UTXEN_MASK | _U4STA_UTXISEL1_MASK);
 
-    /* BAUD Rate: 921600 bps @ 100MHz peripheral clock */
-    /* U4BRG = (PBCLK / (4 * BAUD)) - 1 = (100MHz / (4 * 921600)) - 1 = 26 */
-    U4BRG = 26;
+    /* BAUD Rate: 921600 bps @ 84 MHz peripheral clock (#487: PBCLK2 /3 at 252 MHz SYSCLK) */
+    /* U4BRG = (PBCLK / (4 * BAUD)) - 1 = (84MHz / (4 * 921600)) - 1 = 22 -> ~913 kbps (0.9% err) */
+    U4BRG = 22;
 
     /* Enable UART4 */
     U4MODESET = _U4MODE_ON_MASK;
