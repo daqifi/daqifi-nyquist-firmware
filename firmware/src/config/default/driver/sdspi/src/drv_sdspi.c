@@ -2595,6 +2595,18 @@ void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object)
         LOG_E("SD: released SPI exclusive lock on suspend (depth=%u)", (unsigned)unwind);
     }
 
+    /* Force the SD chip-select inactive (Qodo #587). DRV_SPI asserts CS at
+     * transfer start and deasserts it in its completion path — the exact path
+     * that is missing in the lost-completion wedge this function recovers
+     * from. Without this, the WINC could take the bus with the SD card still
+     * selected (active-low CS). Harmless when already deasserted. */
+    SYS_PORT_PinSet(dObj->chipSelectPin);
+
+    /* Clear a stale in-flight transfer status so the resumed FSM (and the
+     * CommandSend watchdog keyed on IN_PROGRESS) starts from a settled state
+     * instead of burning a timeout on a transfer that no longer exists. */
+    dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+
     /* Restart detection from scratch when polling resumes. */
     dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_START_INIT;
     dObj->cmdState = DRV_SDSPI_CMD_FRAME_PACKET;

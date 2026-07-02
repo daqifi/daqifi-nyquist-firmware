@@ -38,27 +38,30 @@ bool UsbCdc_TransparentReadCmpltCB(uint8_t* pBuff, size_t buffLen) {
      * losing bytes. The previous code copied unconditionally, silently
      * wrapping the ring over unread payload and corrupting WINC firmware
      * images mid-flash behind a valid-looking ACK. Bounded so a dead consumer
-     * degrades to a visible drop, not a wedged USB task. */
-    uint32_t waitedMs = 0;
-    while (waitedMs < 500U) {
-        OSAL_MUTEX_Lock(&gUsartReadMutex, OSAL_WAIT_FOREVER);
-        size_t freeSpace = WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE - gUsartReceiveLength;
-        if (freeSpace >= buffLen) {
-            for (size_t i = 0; i < buffLen; i++) {
-                gUsartReceiveBuffer[gUsartReceiveInOffset] = pBuff[i];
-                gUsartReceiveInOffset++;
-                gUsartReceiveLength++;
-                if (WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE == gUsartReceiveInOffset) {
-                    gUsartReceiveInOffset = 0;
+     * degrades to a visible drop, not a wedged USB task — the mutex take is
+     * bounded too and the window uses wrap-safe tick arithmetic, so the whole
+     * callback is hard-limited to ~500 ms (Qodo #587). */
+    const TickType_t startTick = xTaskGetTickCount();
+    const TickType_t windowTicks = pdMS_TO_TICKS(500);
+    do {
+        if (OSAL_RESULT_TRUE == OSAL_MUTEX_Lock(&gUsartReadMutex, 10)) {
+            size_t freeSpace = WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE - gUsartReceiveLength;
+            if (freeSpace >= buffLen) {
+                for (size_t i = 0; i < buffLen; i++) {
+                    gUsartReceiveBuffer[gUsartReceiveInOffset] = pBuff[i];
+                    gUsartReceiveInOffset++;
+                    gUsartReceiveLength++;
+                    if (WIFI_SERIAL_BRIDGE_INTERFACE_USART_RECEIVE_BUFFER_SIZE == gUsartReceiveInOffset) {
+                        gUsartReceiveInOffset = 0;
+                    }
                 }
+                OSAL_MUTEX_Unlock(&gUsartReadMutex);
+                return true;
             }
             OSAL_MUTEX_Unlock(&gUsartReadMutex);
-            return true;
         }
-        OSAL_MUTEX_Unlock(&gUsartReadMutex);
         vTaskDelay(pdMS_TO_TICKS(1));
-        waitedMs++;
-    }
+    } while ((xTaskGetTickCount() - startTick) < windowTicks);
 
     LOG_E_ONCE(LOG_ONCE_BRIDGE_RX_OVERFLOW,
                "Serial bridge RX ring overflow; bytes dropped");
