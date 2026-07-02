@@ -385,8 +385,12 @@ uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
     uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
     /* #487: TCLK = 1/PBCLK3 (ADC control clock).  DAQIFI_PBCLK_MHZ from
      * clock_config.h = 84 @252 MHz SYSCLK (TCLK ~11.9 ns) or 100 @200 MHz
-     * (TCLK 10 ns). tadNs = 2·ADCDIV·(CONCLKDIV+1)·TCLK, scaled ×1000 for ns. */
-    uint32_t tadNs     = (2u * adcdiv * (conclkdiv + 1u) * 1000u) / DAQIFI_PBCLK_MHZ;
+     * (TCLK 10 ns). tadNs = 2·ADCDIV·(CONCLKDIV+1)·TCLK, scaled ×1000 for ns.
+     * Round the divide UP (ceil) so tadNs never under-estimates TAD — this is a
+     * safety bound, so an over-estimate of busy time (→ lower max freq) is the
+     * conservative direction. Qodo #584. */
+    uint32_t tadNumer  = 2u * adcdiv * (conclkdiv + 1u) * 1000u;
+    uint32_t tadNs     = (tadNumer + DAQIFI_PBCLK_MHZ - 1u) / DAQIFI_PBCLK_MHZ;
     uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
     uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
     uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);

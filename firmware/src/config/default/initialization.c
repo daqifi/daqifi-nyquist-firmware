@@ -653,7 +653,17 @@ void SYS_Initialize ( void* data )
      * puts every peripheral bus at 126 MHz, over the 100 MHz spec.  /3 = 84 MHz.
      * Harmony CLK_Initialize() only sets PMD, not PBxDIV, so these run at the
      * reset default /2 unless set here.  PB7 (CPU) is left at its /1 default so
-     * the core runs at the full 252 MHz.  PBxDIV writes need the system unlock. */
+     * the core runs at the full 252 MHz.  PBxDIV writes need the system unlock.
+     *
+     * KNOWN transient (Qodo #584, accepted): between reset and this point the
+     * buses run at the /2 default = 126 MHz during crt0 (.data copy / .bss zero,
+     * ~sub-ms). Accepted, not fixed: the only peripheral clocked during crt0 is
+     * flash (PBCLK5), whose access timing is governed by PFMWS in SYSCLK cycles
+     * (reset default = max 7 = most tolerant), and no I2C/SPI/UART/timer/ADC is
+     * running yet. Empirically boots + runs clean. The spec-clean fix (set PBxDIV
+     * in an XC32 _on_reset() hook before crt0) is deferred: it adds a new boot
+     * path element (brick risk) disproportionate to a bounded, benign transient.
+     * If revisited, keep these writes as the fallback. */
     SYSKEY = 0x00000000U;
     SYSKEY = 0xAA996655U;
     SYSKEY = 0x556699AAU;
