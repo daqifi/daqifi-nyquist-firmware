@@ -78,6 +78,23 @@ static WDRV_WINC_SPIDCPT spiDcpt;
 // share coherent memory with SD/USB DMA buffers.
 static uint8_t* alignedBuffer = NULL;
 static uint32_t alignedBufferSize = 0;
+// Capped fail-path logging — a rejected transfer here cascades into
+// M2M_ERR_BUS_FAIL wedges that used to be completely silent (#WINC-recovery).
+static uint8_t gWincSpiFailLogs = 0;
+
+// DRV_SPI_*TransferAdd rejects transfers while the SD card client holds the
+// shared bus in exclusive mode (attach-detect polling locks it for several
+// task iterations). Retry briefly instead of failing the whole HIF operation
+// — task context only, so a tick sleep is safe.
+#define WINC_SPI_ADD_RETRIES        100U
+static bool WincSpiAddRetryDelay(uint32_t attempt)
+{
+    if (attempt >= WINC_SPI_ADD_RETRIES) {
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+    return true;
+}
 
 void WDRV_WINC_SPI_SetBuffer(uint8_t* buf, uint32_t size) {
     if (buf == NULL || size == 0) return;
@@ -160,12 +177,29 @@ static void spiTransferEventHandler(DRV_SPI_TRANSFER_EVENT event,
 
 bool WDRV_WINC_SPISend(void* pTransmitData, size_t txSize)
 {
-    if (alignedBuffer == NULL || txSize > alignedBufferSize) return false;
+    if (alignedBuffer == NULL || txSize > alignedBufferSize) {
+        if (gWincSpiFailLogs < 8) {
+            gWincSpiFailLogs++;
+            LOG_E("WSPI tx guard: buf=%p sz=%u cap=%u", alignedBuffer,
+                  (unsigned)txSize, (unsigned)alignedBufferSize);
+        }
+        return false;
+    }
     memcpy(alignedBuffer, pTransmitData, txSize);
-    DRV_SPI_WriteTransferAdd(spiDcpt.spiHandle, alignedBuffer, txSize, &spiDcpt.transferTxHandle);
+
+    uint32_t attempt = 0;
+    do {
+        DRV_SPI_WriteTransferAdd(spiDcpt.spiHandle, alignedBuffer, txSize, &spiDcpt.transferTxHandle);
+    } while ((DRV_SPI_TRANSFER_HANDLE_INVALID == spiDcpt.transferTxHandle) &&
+             WincSpiAddRetryDelay(attempt++));
 
     if (DRV_SPI_TRANSFER_HANDLE_INVALID == spiDcpt.transferTxHandle)
     {
+        if (gWincSpiFailLogs < 8) {
+            gWincSpiFailLogs++;
+            LOG_E("WSPI tx add fail: drvHandle=%08lx sz=%u",
+                  (unsigned long)spiDcpt.spiHandle, (unsigned)txSize);
+        }
         return false;
     }
 
@@ -197,11 +231,27 @@ bool WDRV_WINC_SPIReceive(void* pReceiveData, size_t rxSize)
 {
     static uint8_t dummy = 0;
 
-    if (alignedBuffer == NULL || rxSize > alignedBufferSize) return false;
-    DRV_SPI_WriteReadTransferAdd(spiDcpt.spiHandle, &dummy, 1, alignedBuffer, rxSize, &spiDcpt.transferRxHandle);
+    if (alignedBuffer == NULL || rxSize > alignedBufferSize) {
+        if (gWincSpiFailLogs < 8) {
+            gWincSpiFailLogs++;
+            LOG_E("WSPI rx guard: buf=%p sz=%u cap=%u", alignedBuffer,
+                  (unsigned)rxSize, (unsigned)alignedBufferSize);
+        }
+        return false;
+    }
+    uint32_t attempt = 0;
+    do {
+        DRV_SPI_WriteReadTransferAdd(spiDcpt.spiHandle, &dummy, 1, alignedBuffer, rxSize, &spiDcpt.transferRxHandle);
+    } while ((DRV_SPI_TRANSFER_HANDLE_INVALID == spiDcpt.transferRxHandle) &&
+             WincSpiAddRetryDelay(attempt++));
 
     if (DRV_SPI_TRANSFER_HANDLE_INVALID == spiDcpt.transferRxHandle)
     {
+        if (gWincSpiFailLogs < 8) {
+            gWincSpiFailLogs++;
+            LOG_E("WSPI rx add fail: drvHandle=%08lx sz=%u",
+                  (unsigned long)spiDcpt.spiHandle, (unsigned)rxSize);
+        }
         return false;
     }
 

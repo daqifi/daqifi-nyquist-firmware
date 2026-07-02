@@ -1017,10 +1017,17 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 break;
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
+            // Failures below used to be completely silent — the FW-update
+            // bridge then ran against an unreachable chip and the PC-side
+            // programmer saw only bogus chip IDs and NACKs (#WINC-recovery).
             if (wincStatus == SYS_STATUS_READY) {
-                if (m2m_wifi_get_firmware_version(&pInstance->wifiFirmwareVersion) != M2M_SUCCESS) {
+                int8_t verRet = m2m_wifi_get_firmware_version(&pInstance->wifiFirmwareVersion);
+                if (verRet != M2M_SUCCESS) {
+                    LOG_E("FW-update entry: WINC version read failed (ret=%d)", (int)verRet);
                     memset(&pInstance->wifiFirmwareVersion, 0, sizeof (tstrM2mRev));
                 }
+            } else {
+                LOG_E("FW-update entry: WINC driver not ready (status=%d)", (int)wincStatus);
             }
             wifi_serial_bridge_Init(&pInstance->serialBridgeContext);
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
@@ -2568,7 +2575,19 @@ void wifi_manager_RequestWifiFirmwareUpdate(void) {
 }
 
 bool wifi_manager_IsWifiFirmwareUpdateActive(void) {
-    return GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY);
+    // REQUESTED counts too (#WINC-recovery): the SD task uses this to hand
+    // over the shared SPI bus. Waiting for READY was too late — the FW-update
+    // entry (fresh version read + download-mode chip reset) had already run,
+    // colliding with SD attach-detect polling that holds the DRV_SPI
+    // exclusive lock across iterations. Suspending SD as soon as the update
+    // is requested (SYST:COMM:LAN:FWUpdate, before APPLY) means the bridge
+    // comes up on a quiet bus. If the user never issues APPLY, SD stays
+    // suspended until the next reinit clears the flag — acceptable for an
+    // explicit maintenance mode.
+    return GetEventFlagStatus(gStateMachineContext.eventFlags,
+                              WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_READY) ||
+           GetEventFlagStatus(gStateMachineContext.eventFlags,
+                              WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED);
 }
 
 bool wifi_manager_GetRSSI(uint8_t *pRssi, uint32_t timeoutMs) {

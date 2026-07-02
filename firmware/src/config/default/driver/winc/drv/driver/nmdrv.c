@@ -243,7 +243,19 @@ int8_t nm_drv_init_download_mode(void)
     if(!ISNMC3000(GET_CHIPID()))
     {
         /*Execuate that function only for 1500A/B, no room in 3000, but it may be needed in 3400 no wait*/
-        cpu_halt();
+        /* DAQiFi (#WINC-recovery, 2026-07-02): the stock code only called
+         * cpu_halt() here, on a chip that may be mid-flight running its WiFi
+         * firmware (this download mode is entered from FW-update mode while
+         * the AP is beaconing). The PC-side programmer
+         * (winc_programmer 2.0.2) expects to take over a chip in a clean
+         * post-reset state — it performs its own halt, IRAM download and
+         * cpu-start sequence over the bridge. Against a soft-halted,
+         * dirty-state chip the start sequence goes nowhere: the boot ROM
+         * never runs (BOOTROM_REG keeps the unconsumed 0xEF522F61 start
+         * magic) and the tool fails with "time out waiting for firmware to
+         * run" (bench-verified via bridge command tracing). Give it the real
+         * thing: the canonical hard CHIP_EN/RESET_N power-cycle pulse. */
+        nm_reset();
     }
 
     /* Must do this after global reset to set SPI data packet size. */

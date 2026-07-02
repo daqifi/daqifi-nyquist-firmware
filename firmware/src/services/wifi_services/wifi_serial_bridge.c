@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#define LOG_MODULE LOG_MODULE_WIFI
+#include "Util/Logger.h"
 #include "wifi_serial_bridge_interface.h"
 #include "wifi_serial_bridge.h"
 #include "nmdrv.h"
@@ -149,7 +151,22 @@ void wifi_serial_bridge_Init(wifi_serial_bridge_context_t * const pContext) {
 
     wifi_serial_bridge_interface_Init();
     pContext->state = WIFI_SERIAL_BRIDGE_STATE_WAIT_OP_CODE;
-    m2m_wifi_download_mode();
+    {
+        int8_t dlRet = m2m_wifi_download_mode();
+        // Sanity-read the chip ID (reg 0x1000) so a bridge armed against an
+        // unreachable chip is visible in SYST:LOG? instead of surfacing only
+        // as NACKs in the PC-side programmer (#WINC-recovery). A live WINC1500
+        // reads 0x0015xxxx with firmware running or 0x0010xxxx once halted in
+        // download mode (bench-observed 0x001003A0).
+        uint32_t chipId = 0;
+        int8_t rdRet = nm_read_reg_with_ret(0x1000, &chipId);
+        uint32_t chipFamily = chipId >> 16;
+        if ((dlRet != M2M_SUCCESS) || (rdRet != M2M_SUCCESS) ||
+            ((chipFamily != 0x15UL) && (chipFamily != 0x10UL))) {
+            LOG_E("Serial bridge: WINC unreachable at download-mode entry (dl=%d rd=%d chipId=%08lx)",
+                  (int)dlRet, (int)rdRet, (unsigned long)chipId);
+        }
+    }
 }
 
 void wifi_serial_bridge_Deinit(wifi_serial_bridge_context_t * const pContext) {

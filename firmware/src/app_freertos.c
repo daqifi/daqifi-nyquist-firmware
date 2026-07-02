@@ -276,7 +276,15 @@ static void app_WifiTask(void* p_arg) {
  * @return true if SD reached idle within timeout, false if timed out
  */
 static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) {
+    // Every exit below stops the app from calling DRV_SDSPI_Tasks (SUSPENDED /
+    // WAIT_POWER_UP), so the SDSPI attach-detect FSM must not be left holding
+    // the shared SPI0 bus's exclusive lock — a mid-cycle park used to leave the
+    // lock held forever, silently rejecting every WINC transfer (WiFi FW
+    // version 0.0.0, bogus chip IDs, NACKed WINC flash updates) until reboot.
+    extern void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object);
+
     if (sd_card_manager_IsIdle()) {
+        DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
         return true;
     }
 
@@ -301,10 +309,12 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
     if (!sd_card_manager_IsIdle()) {
         LOG_E("[SD] Graceful shutdown timeout after %u ms: %s",
               (unsigned)timeoutMs, reason);
+        DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
         return false;
     }
 
     LOG_I("[SD] Graceful shutdown complete: %s", reason);
+    DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
     return true;
 }
 

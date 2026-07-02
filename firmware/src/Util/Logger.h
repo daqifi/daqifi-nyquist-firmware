@@ -179,6 +179,7 @@ extern "C" {
         LOG_ONCE_USB_FLUSH_STUCK,         /**< UsbCdc.c: flush timeout (host not reading) — defer flush (#525); distinct bit so it isn't masked by the write-stall one-shot */
         LOG_ONCE_AD7609_BSY_STUCK,        /**< AD7609.c: BSY pin stuck low after SPI read — hardware fault; one-shot so a stuck pin can't flood + repeatedly enter vsnprintf (#525 follow-up) */
         LOG_ONCE_USB_TRANSPARENT_DECLINE, /**< UsbCdc.c: transparent-mode read CB declined a buffer — dropped to avoid un-arming the CDC read (#575); one-shot so a persistently-declining CB can't flood */
+        LOG_ONCE_BRIDGE_RX_OVERFLOW,      /**< wifi_serial_bridge_interface.c: transparent RX ring full — bytes dropped instead of wrapped (silent wrap corrupted WINC images mid-flash, #WINC-recovery) */
         /* Add new entries above this line */
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;

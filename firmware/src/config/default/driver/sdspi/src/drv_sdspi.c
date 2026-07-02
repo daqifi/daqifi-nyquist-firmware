@@ -49,6 +49,12 @@
 #include "drv_sdspi_driver_interface.h"
 #include "driver/spi/drv_spi.h"
 
+/* DAQiFi patch (#WINC-recovery, 2026-07-02): shared-SPI-bus lock hygiene.
+ * See DRV_SDSPI_ReleaseBus, the CHK_FOR_CARD lock rollback, and the
+ * command-executor bus-completion watchdog (#567 extension). */
+#define LOG_MODULE LOG_MODULE_SD
+#include "Util/Logger.h"
+
 #include "drv_sdspi_local.h"
 #include "driver/sdspi/src/drv_sdspi_file_system.h"
 
@@ -474,6 +480,54 @@ static void lDRV_SDSPI_CommandSend
     DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ*)&gDrvSDSPIObj[object];
     uint8_t endianArray[4];
 
+    /* #567 extension (DAQiFi, #WINC-recovery 2026-07-02): the original #567
+     * watchdogs covered the detect and buffer-IO waits, but a lost SPI
+     * completion inside THIS executor's wait states (CHECK_TRANSFER_COMPLETE,
+     * EXEC_CHECK_COMPLETION, response reads, ...) was bench-observed to
+     * freeze the FSM forever while holding the shared SPI0 bus exclusive at
+     * depth 2 — every WINC transfer is then rejected until reboot (WiFi FW
+     * version 0.0.0 / dead sockets / NACKed WINC flash updates). One generic
+     * watchdog here covers every wait state: while a submitted transfer is
+     * pending, arm the bus-completion timer; on expiry force the ERROR status
+     * so the state's existing ERROR branch routes to CONFIRM_EXEC_ERROR,
+     * which releases the exclusive lock. */
+    if (dObj->spiTransferStatus == DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS)
+    {
+        if (dObj->spiXferTimerFlag == false)
+        {
+            if (DRV_SDSPI_SpiXferTimerStart(dObj, DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS) == true)
+            {
+                dObj->spiXferTimerFlag = true;
+            }
+            else
+            {
+                dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+            }
+        }
+        else if (dObj->spiXferTimerExpired == true)
+        {
+            /* Fires routinely on card-less boards under concurrent WINC
+             * traffic — cap the logging so it can't flood the log buffer. */
+            static uint8_t sCmdTimeoutLogs = 0;
+            dObj->spiXferTimerFlag = false;
+            if (sCmdTimeoutLogs < 4U)
+            {
+                sCmdTimeoutLogs++;
+                LOG_E("SD: cmd bus-completion timeout — forcing error path");
+            }
+            dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
+        }
+        else
+        {
+            /* Timer armed and still counting. */
+        }
+    }
+    else if (dObj->spiXferTimerFlag == true)
+    {
+        (void) DRV_SDSPI_SpiXferTimerStop(dObj);
+        dObj->spiXferTimerFlag = false;
+    }
+
     switch (dObj->cmdState)
     {
         case DRV_SDSPI_CMD_FRAME_PACKET:
@@ -898,6 +952,17 @@ static DRV_SDSPI_ATTACH lDRV_SDSPI_MediaCommandDetect
                             MEDIA_INIT_ARRAY_SIZE) == true)
                 {
                     dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_WAIT_TRANSFER_COMPLETE;
+                }
+                else
+                {
+                    /* DAQiFi fix (#WINC-recovery): the write was rejected, so
+                     * this state re-enters next iteration and would take the
+                     * exclusive lock AGAIN — the recursive count ratchets and
+                     * the shared bus never releases (kills the WINC client).
+                     * Release the count taken above; sdState stays
+                     * CARD_STATUS so the caller doesn't double-unlock. */
+                    (void) DRV_SDSPI_SPIExclusiveAccess(dObj, false);
+                    LOG_E("SDDET: clk-pulse write rejected; exclusive lock rolled back");
                 }
             }
             break;
@@ -2477,6 +2542,63 @@ void DRV_SDSPI_Tasks
 {
     lDRV_SDSPI_AttachDetachTasks (object);
     lDRV_SDSPI_BufferIOTasks (object);
+}
+
+/* DAQiFi addition (#WINC-recovery, 2026-07-02): release the shared-bus
+ * exclusive lock before the app stops driving DRV_SDSPI_Tasks.
+ *
+ * The attach-detect FSM holds the underlying DRV_SPI instance's exclusive
+ * lock ACROSS task iterations (lock in CMD_DETECT_CHK_FOR_CARD /
+ * CHK_FOR_DETCH, unlock several iterations later in the caller).  If the
+ * app parks the SD task mid-cycle (WiFi FW-update / WiFi-streaming SPI
+ * handoff, power-down), the lock is never released and every transfer from
+ * the other client on the bus (WINC1500) is silently rejected by
+ * DRV_SPI_WriteTransferAdd until reboot — observed as WiFi FW version
+ * 0.0.0, bogus chip IDs, and NACKed WINC flash updates.
+ *
+ * Fully unwinds the recursive exclusive count and resets the detect/cmd
+ * FSMs so polling restarts cleanly when the app resumes DRV_SDSPI_Tasks.
+ */
+void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object)
+{
+    DRV_SDSPI_OBJ* dObj;
+    uint8_t unwind;
+
+    if (object >= DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        return;
+    }
+
+    dObj = (DRV_SDSPI_OBJ*)&gDrvSDSPIObj[object];
+
+    /* Disarm the #567 bus-completion watchdog if it is running. */
+    if (dObj->spiXferTimerFlag == true)
+    {
+        (void) DRV_SDSPI_SpiXferTimerStop(dObj);
+        dObj->spiXferTimerFlag = false;
+    }
+
+    /* Unwind the recursive exclusive-use count.  The unlock call returns
+     * true while this client still holds the lock and false once the
+     * handle no longer matches (fully released / never held).  Bounded to
+     * defend against semantics changes in DRV_SPI_ExclusiveUse. */
+    for (unwind = 0; unwind < 16U; unwind++)
+    {
+        if (DRV_SDSPI_SPIExclusiveAccess(dObj, false) == false)
+        {
+            break;
+        }
+    }
+
+    if (unwind > 0U)
+    {
+        LOG_E("SD: released SPI exclusive lock on suspend (depth=%u)", (unsigned)unwind);
+    }
+
+    /* Restart detection from scratch when polling resumes. */
+    dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_START_INIT;
+    dObj->cmdState = DRV_SDSPI_CMD_FRAME_PACKET;
+    dObj->sdState = TASK_STATE_IDLE;
 }
 
 DRV_HANDLE DRV_SDSPI_Open

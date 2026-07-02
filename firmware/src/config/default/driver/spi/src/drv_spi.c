@@ -48,6 +48,14 @@
 #include <string.h>
 #include "configuration.h"
 #include "driver/spi/drv_spi.h"
+
+/* DAQiFi patch (#WINC-recovery, 2026-07-02): TransferAdd rejects are silent
+ * by design upstream, but on the shared SPI0 bus (SD + WINC clients) they
+ * cascade into hard-to-diagnose wedges (WiFi FW version 0.0.0, NACKed WINC
+ * flash updates). Log the first few rejects with the reason. */
+#define LOG_MODULE LOG_MODULE_GENERAL
+#include "Util/Logger.h"
+static uint8_t gSpiAddRejectLogs = 0;
 #include "system/debug/sys_debug.h"
 
 // *****************************************************************************
@@ -1189,6 +1197,10 @@ void DRV_SPI_WriteReadTransferAdd (
     clientObj = lDRV_SPI_DriverHandleValidate(handle);
     if (clientObj == NULL)
     {
+        if (gSpiAddRejectLogs < 8) {
+            gSpiAddRejectLogs++;
+            LOG_E("SPIADD reject: stale handle=%08lx", (unsigned long)handle);
+        }
         return;
     }
 
@@ -1200,6 +1212,12 @@ void DRV_SPI_WriteReadTransferAdd (
         {
             if (dObj->exclusiveUseClientHandle != handle)
             {
+                if (gSpiAddRejectLogs < 8) {
+                    gSpiAddRejectLogs++;
+                    LOG_E("SPIADD reject: exclusive holder=%08lx me=%08lx cntr=%u",
+                          (unsigned long)dObj->exclusiveUseClientHandle,
+                          (unsigned long)handle, (unsigned)dObj->exclusiveUseCntr);
+                }
                 return;
             }
         }
@@ -1207,6 +1225,10 @@ void DRV_SPI_WriteReadTransferAdd (
         if(lDRV_SPI_ResourceLock(dObj) == false)
         {
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Failed to get resource lock");
+            if (gSpiAddRejectLogs < 8) {
+                gSpiAddRejectLogs++;
+                LOG_E("SPIADD reject: resource lock fail");
+            }
             return;
         }
 
@@ -1219,6 +1241,10 @@ void DRV_SPI_WriteReadTransferAdd (
              * transfer queue size parameter is configured to be less */
 
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Insufficient Queue Depth");
+            if (gSpiAddRejectLogs < 8) {
+                gSpiAddRejectLogs++;
+                LOG_E("SPIADD reject: queue full (handle=%08lx)", (unsigned long)handle);
+            }
             lDRV_SPI_ResourceUnlock(dObj);
             return;
         }
