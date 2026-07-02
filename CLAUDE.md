@@ -732,7 +732,7 @@ The firmware supports building for different board variants using MPLAB X config
 
 ### MCU Reference: PIC32MZ2048EFM144
 
-**Architecture**: MIPS32 M-Class (microAptiv), 200 MHz, 32-bit data bus
+**Architecture**: MIPS32 M-Class (microAptiv), 252 MHz (chip-rated max, DS60001320H §39; raised from 200 MHz in #487), 32-bit data bus
 **Flash**: 2MB | **RAM**: 512KB | **L1 Cache**: 16KB I-cache + 4KB D-cache
 **Package**: 144-pin LQFP
 **Datasheet**: [DS60001320](https://www.microchip.com/en-us/product/PIC32MZ2048EFM144)
@@ -757,18 +757,21 @@ The firmware supports building for different board variants using MPLAB X config
 - **No hardware cache coherency** — software must invalidate/flush cache around DMA transfers. Harmony drivers handle this for SPI, USB, etc.
 - **Coherent attribute** (`__attribute__((coherent, aligned(16)))`) maps buffers to uncached address space — simplest solution for DMA buffers.
 
-#### Clock Tree (as configured)
+#### Clock Tree (as configured — #487, 2026-07-01)
 
 | Clock | Source | Frequency | Peripherals |
 |-------|--------|-----------|-------------|
-| SYSCLK | SPLL (24MHz POSC × 50 / 3 / 2) | 200 MHz | CPU, REFCLK |
-| PBCLK1 | SYSCLK/2 | 100 MHz | Watchdog |
-| PBCLK2 | SYSCLK/2 | 100 MHz | I2C, UART, SPI (default) |
-| PBCLK3 | SYSCLK/2 | 100 MHz | Timers, OC, IC |
-| PBCLK5 | SYSCLK/2 | 100 MHz | Flash, Crypto, USB |
-| REFCLK1 | SYSCLK (passthrough) | 200 MHz | SPI4 master clock (MCLKSEL=1) |
+| SYSCLK | SPLL (24MHz POSC / 3 × 63 / 2) | 252 MHz | CPU, core timer (÷2 = 126 MHz) |
+| PBCLK1 | SYSCLK/3 | 84 MHz | Watchdog |
+| PBCLK2 | SYSCLK/3 | 84 MHz | I2C, UART, SPI2/4/6 |
+| PBCLK3 | SYSCLK/3 | 84 MHz | Timers (FreeRTOS tick T1, streaming TMR4/5), OC, IC, ADC control clock |
+| PBCLK5 | SYSCLK/3 | 84 MHz | Flash, Crypto, USB regs |
 
-SPI4 BRG formula with REFCLK1: `SPI_CLK = 200MHz / (2 × (BRG + 1))`
+The PBxDIV /3 writes live in `SystemInit`/`initialization.c` (Harmony's `CLK_Initialize` only sets PMD, so without them the buses run at the reset-default /2 — which would be 126 MHz, over the 100 MHz bus spec). Single defines that must track the clock tree: `TIMER_CLOCK_FRQ` (TimerApi.h), `configPERIPHERAL_CLOCK_HZ` (FreeRTOSConfig.h), `CORE_TIMER_FREQUENCY` (plib_coretimer.h), `SYS_TIME_CPU_CLOCK_FREQUENCY` (configuration.h), `USE_FREQ_CONFIGURED_IN_CLOCK_MANAGER` (drv_spi_local.h).
+
+**SPI4 (SD + WINC) is clocked from PBCLK2, not REFCLK1** — `MCLKSEL=0` in `plib_spi4_master.c`, and no `REFO1CON` configuration exists anywhere in the tree (the pre-#487 revision of this table claiming "REFCLK1 passthrough, MCLKSEL=1" was stale: the measured 16.67 MHz SPI4 clock matched PBCLK2=100/BRG=2 exactly, not REFCLK1=200). SPI4 BRG formula: `SPI_CLK = 84MHz / (2 × (BRG + 1))` — SDSPI's 20 MHz request now rounds to 21 MHz (BRG=1); at the old 100 MHz PBCLK2 it rounded to 16.67 MHz (BRG=2).
+
+> **⚠️ Throughput tables below pre-date #487.** All characterization numbers in this file (Session-24 soaks, fit basis, enforced caps) were measured at 200 MHz/100 MHz. The enforced caps are unchanged by #487 — the device only got faster, so they remain safe (just more conservative). Re-fitting at 252 MHz is follow-up work.
 
 #### Hardware FPU
 
@@ -821,7 +824,7 @@ All items verified against the actual errata document. Only issues affecting fea
 
 | Issue | Module | Rev | Summary | Our Status |
 |-------|--------|-----|---------|------------|
-| #1 | Oscillator | All | **REFCLK cannot divide inputs >100 MHz.** | **Safe.** Errata workaround: "do not divide the SYSCLK and allow the destination peripheral (SPI) to divide it. Set RODIV and ROTRIM to 0." This is exactly our PR #219 approach (RODIV=0 passthrough). |
+| #1 | Oscillator | All | **REFCLK cannot divide inputs >100 MHz.** | **Safe.** REFCLK1 is not configured/used in the current tree at all (SPI4 rides PBCLK2, MCLKSEL=0 — see Clock Tree above); the erratum cannot apply. (Historical: PR #219's RODIV=0 passthrough followed the documented workaround while REFCLK1 was in use.) |
 | #5 | Power-Saving | A1/A3 | Turning off REFCLK via PMD bits causes unpredictable behavior. | **Safe.** We never disable REFCLK via PMD. Not affected on B2/B3. |
 | #6 | I2C | A1/A3 | Indeterminate I2C at >100 kHz and/or >500 bytes continuous. False collision detect, receive overflow, suspended transactions. All recoverable in software. | **Monitor.** I2C5 for BQ24297 at 100 kHz with mutex. Not affected on B2/B3 but good to know. |
 | #8 | UART | All | **RX FIFO overflow → shift registers stop → UART loses sync.** Only recovery: toggle UART OFF/ON multiple times. | **Low risk.** Debug UART4 only. Workaround: ensure UART interrupt priority prevents RX overrun, or set URXISEL for earlier interrupt. |
@@ -830,7 +833,7 @@ All items verified against the actual errata document. Only issues affecting fea
 | #25/#26 | Crypto | All | Crypto DMA: no partial packets, no zero-length hash. | **N/A.** wolfSSL runs in software mode. |
 | #27 | SPI | All | **SRMT bit falsely indicates TX complete** before last block shifts out. Does NOT affect Transmit Buffer Empty Interrupt (STXISEL=0). | **Safe.** Harmony SPI driver uses interrupts, not SRMT polling. |
 | #37 | I2C | All | **SCL tLOW doesn't meet I2C spec at ≥400 kHz.** No workaround. | **Safe.** BQ24297 I2C at 100 kHz. Never use ≥400 kHz on this chip. |
-| #38 | System Bus | B2/B3 | **Flash wait states at SYSCLK >184 MHz with ECC need 3 wait states** (not 2). <2% CPU impact with cache. | **Safe.** Verified: `PRECONbits.PFMWS = 3` and `ECCCON = 3` in `initialization.c:645-646`. |
+| #38 | System Bus | B2/B3 | **Flash wait states at SYSCLK >184 MHz with ECC need 3 wait states** (not 2). <2% CPU impact with cache. | **Safe.** At 252 MHz (#487) we run `PRECONbits.PFMWS = 5` (set conservatively for bring-up; tune-down to the DS60001320H table value is a tracked follow-up) and `ECCCON = 3` in `initialization.c`. |
 | #39 | ADC | All | Excessive current through VREF- when external reference used and VREF- > AVss. | **Monitor.** Workaround: connect VREF- to AVss. Check NQ3 board schematic. |
 | #40 | USB | All | FLUSH bit (USBIENCSRx<19>) doesn't flush TX FIFO properly. | **Safe.** Harmony USB driver: set FLUSH + clear TXPKTRDY simultaneously, repeat twice. |
 | #42 | DMA | All | **DMA half-full interrupt can fire twice** when cleared at n/2 byte, re-triggers at (n/2)+1. | **Safe.** Workaround: clear CHDHIF along with CHBCIF. Harmony DMA driver handles this. |
