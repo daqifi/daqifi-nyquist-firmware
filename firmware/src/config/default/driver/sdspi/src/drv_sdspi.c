@@ -501,13 +501,15 @@ static void lDRV_SDSPI_CommandSend
             }
             else
             {
+                dObj->abortedXferHandle = dObj->expectedXferHandle;
                 dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
             }
         }
         else if (dObj->spiXferTimerExpired == true)
         {
-            /* Fires routinely on card-less boards under concurrent WINC
-             * traffic — cap the logging so it can't flood the log buffer. */
+            /* With the completion-correlation race fixed (#567 rework in
+             * DRV_SDSPI_SPIDriverEventHandler), an expiry here means a
+             * genuinely lost completion — rare; capped logging regardless. */
             static uint8_t sCmdTimeoutLogs = 0;
             dObj->spiXferTimerFlag = false;
             if (sCmdTimeoutLogs < 4U)
@@ -515,6 +517,7 @@ static void lDRV_SDSPI_CommandSend
                 sCmdTimeoutLogs++;
                 LOG_E("SD: cmd bus-completion timeout — forcing error path");
             }
+            dObj->abortedXferHandle = dObj->expectedXferHandle;
             dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
         }
         else
@@ -1005,6 +1008,7 @@ static DRV_SDSPI_ATTACH lDRV_SDSPI_MediaCommandDetect
                 {
                     if (DRV_SDSPI_SpiXferTimerStart(dObj, DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS) == false)
                     {
+                        dObj->abortedXferHandle = dObj->expectedXferHandle;
                         (void) DRV_SDSPI_SPISpeedSetup(dObj, DRV_SDSPI_SPI_INITIAL_SPEED, dObj->chipSelectPin);
                         dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_CHK_FOR_CARD;
                         dObj->sdState = TASK_STATE_IDLE;
@@ -1015,6 +1019,7 @@ static DRV_SDSPI_ATTACH lDRV_SDSPI_MediaCommandDetect
                 else if (dObj->spiXferTimerExpired == true)
                 {
                     dObj->spiXferTimerFlag = false;
+                    dObj->abortedXferHandle = dObj->expectedXferHandle;
                     (void) DRV_SDSPI_SPISpeedSetup(dObj, DRV_SDSPI_SPI_INITIAL_SPEED, dObj->chipSelectPin);
                     dObj->cmdDetectState = DRV_SDSPI_CMD_DETECT_CHK_FOR_CARD;
                     dObj->sdState = TASK_STATE_IDLE;
@@ -1949,6 +1954,7 @@ static void lDRV_SDSPI_BufferIOTasks
                 {
                     if (DRV_SDSPI_SpiXferTimerStart(dObj, DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS) == false)
                     {
+                        dObj->abortedXferHandle = dObj->expectedXferHandle;
                         dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
                         dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
                         break;
@@ -1958,6 +1964,7 @@ static void lDRV_SDSPI_BufferIOTasks
                 else if (dObj->spiXferTimerExpired == true)
                 {
                     dObj->spiXferTimerFlag = false;
+                    dObj->abortedXferHandle = dObj->expectedXferHandle;
                     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
                     dObj->taskBufferIOState = DRV_SDSPI_TASK_READ_WRITE_ABORT;
                 }
@@ -2464,6 +2471,8 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
 
     dObj->spiDrvIndex           = sdSPIInit->spiDrvIndex;
     dObj->spiDrvHandle          = DRV_HANDLE_INVALID;
+    dObj->expectedXferHandle    = DRV_SPI_TRANSFER_HANDLE_INVALID;
+    dObj->abortedXferHandle     = DRV_SPI_TRANSFER_HANDLE_INVALID;
 
     dObj->status                = SYS_STATUS_UNINITIALIZED;
     dObj->inUse                 = true;
@@ -2604,7 +2613,9 @@ void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object)
 
     /* Clear a stale in-flight transfer status so the resumed FSM (and the
      * CommandSend watchdog keyed on IN_PROGRESS) starts from a settled state
-     * instead of burning a timeout on a transfer that no longer exists. */
+     * instead of burning a timeout on a transfer that no longer exists. Its
+     * late completion, if any, must be ignored by the callback. */
+    dObj->abortedXferHandle = dObj->expectedXferHandle;
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;
 
     /* Restart detection from scratch when polling resumes. */

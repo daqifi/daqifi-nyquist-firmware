@@ -90,14 +90,20 @@ void DRV_SDSPI_SPIDriverEventHandler(
 {
     DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ *)context;
 
-    /* #567: ignore a completion that doesn't belong to the transfer we are
-     * currently waiting on. After the spiXferTimer watchdog times out and
-     * aborts a transfer, its completion may still arrive late; without this
-     * guard it would overwrite spiTransferStatus (falsely completing a later
-     * transfer) and de-assert CS mid-transfer. The expected handle is updated
-     * on every submit, so a stale handle here means a timed-out transfer. */
-    if (transferHandle != dObj->expectedXferHandle)
+    /* #567 rework (SD-detect regression fix): the original guard ignored any
+     * completion whose handle didn't match expectedXferHandle — but that
+     * field is stored only AFTER DRV_SPI_*TransferAdd() returns, and short
+     * transfers complete from ISR context before the store executes, so
+     * valid completions were dropped (spiTransferStatus stuck IN_PROGRESS,
+     * watchdog aborted, the card never initialized — bisected to #567/#578,
+     * clean on its parent commit). Accept completions by default; ignore
+     * ONLY the late completion of a transfer the watchdog explicitly aborted
+     * (recorded at abort time, when the handle is stable), which is the case
+     * the #567 guard existed for. */
+    if ((dObj->abortedXferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID) &&
+        (transferHandle == dObj->abortedXferHandle))
     {
+        dObj->abortedXferHandle = DRV_SPI_TRANSFER_HANDLE_INVALID;
         return;
     }
 
