@@ -1001,21 +1001,40 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             }
             break;
         case WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT:
+        {
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+            // Bounded BUSY wait (#WINC-recovery): give an in-flight driver
+            // init a few seconds to settle, then proceed regardless. On a
+            // board whose module firmware doesn't boot, the driver never
+            // leaves BUSY/ERROR cleanly, and this used to ping-pong events
+            // forever — the bridge (raw nm layer) doesn't need the driver.
+            static uint8_t sFwUpdInitWaits = 0;
+            if ((WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) &&
+                (sFwUpdInitWaits < 60U)) {
+                sFwUpdInitWaits++;
+                vTaskDelay(pdMS_TO_TICKS(50));
                 SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
                 break;
             }
+            if (sFwUpdInitWaits >= 60U) {
+                LOG_E("FW-update entry: driver still BUSY after 3 s — arming bridge anyway");
+            }
+            sFwUpdInitWaits = 0;
             sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
             SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
             break;
+        }
         case WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY:
         {
             SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
-            if (wincStatus == SYS_STATUS_BUSY) {
+            static uint8_t sFwUpdReadyWaits = 0;
+            if ((wincStatus == SYS_STATUS_BUSY) && (sFwUpdReadyWaits < 60U)) {
+                sFwUpdReadyWaits++;
+                vTaskDelay(pdMS_TO_TICKS(50));
                 SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
                 break;
             }
+            sFwUpdReadyWaits = 0;
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
             // Failures below used to be completely silent — the FW-update
             // bridge then ran against an unreachable chip and the PC-side
@@ -1365,17 +1384,24 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 SendEvent(WIFI_MANAGER_EVENT_DEINIT);
                 break;
             }
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
-                vTaskDelay(pdMS_TO_TICKS(50)); // Add a small delay to prevent busy-looping
-                SendEvent(WIFI_MANAGER_EVENT_REINIT);
-                break;
-            }
-
-            // If WiFi firmware update requested, transition to MainState which will route to WIFI_FW_UPDATE_INIT
+            // If WiFi firmware update requested, transition to MainState which
+            // will route to WIFI_FW_UPDATE_INIT. Checked BEFORE the driver-BUSY
+            // gate (#WINC-recovery): on a board whose WiFi module firmware
+            // doesn't boot, the driver init loop keeps the status BUSY/ERROR
+            // near-continuously, and gating the FW-update entry on !BUSY makes
+            // the rescue path — the only way to REFLASH that module — almost
+            // unreachable. The bridge talks to the chip below the driver, so
+            // it doesn't need the driver settled.
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED)) {
                 LOG_D("WiFi firmware update mode requested - transitioning to MainState\r\n");
                 returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
                 pInstance->nextState = MainState;
+                break;
+            }
+
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                vTaskDelay(pdMS_TO_TICKS(50)); // Add a small delay to prevent busy-looping
+                SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 break;
             }
 

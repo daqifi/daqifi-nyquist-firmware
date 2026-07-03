@@ -254,8 +254,44 @@ int8_t nm_drv_init_download_mode(void)
          * never runs (BOOTROM_REG keeps the unconsumed 0xEF522F61 start
          * magic) and the tool fails with "time out waiting for firmware to
          * run" (bench-verified via bridge command tracing). Give it the real
-         * thing: the canonical hard CHIP_EN/RESET_N power-cycle pulse. */
-        nm_reset();
+         * thing: the canonical hard CHIP_EN/RESET_N power-cycle pulse.
+         *
+         * VERIFIED bring-up with retries: module boot ramp varies board to
+         * board, and touching SPI before the chip is ready desyncs the host
+         * protocol layer for the whole session (all register reads 0, tool
+         * chip IDs like 0x00050000, NACKed writes — bench board ...026A).
+         * After each reset, re-sync the host SPI protocol, wait for the
+         * efuse-load-done flag the boot ROM sets (same readiness gate
+         * wait_for_bootrom uses), and verify the chip ID reads sane before
+         * accepting the bring-up. */
+        {
+            uint8_t attempt;
+            for (attempt = 0; attempt < 4; attempt++)
+            {
+                uint32_t reg = 0;
+                uint32_t chipId = 0;
+                uint16_t waited;
+
+                nm_reset();
+                nm_spi_init();  /* re-sync host protocol state after reset */
+
+                for (waited = 0; waited < 800; waited += 20)
+                {
+                    if ((nm_read_reg_with_ret(0x1014, &reg) == M2M_SUCCESS) &&
+                        ((reg & 0x80000000UL) != 0UL))
+                    {
+                        break;  /* efuse loaded — ROM is up */
+                    }
+                    nm_sleep(20);
+                }
+
+                if ((nm_read_reg_with_ret(0x1000, &chipId) == M2M_SUCCESS) &&
+                    (((chipId >> 16) == 0x15UL) || ((chipId >> 16) == 0x10UL)))
+                {
+                    break;  /* chip verified reachable */
+                }
+            }
+        }
     }
 
     /* Must do this after global reset to set SPI data packet size. */
