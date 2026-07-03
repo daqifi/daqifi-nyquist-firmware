@@ -82,6 +82,34 @@ static void DRV_SDSPI_TimerCallback( uintptr_t context )
   Remarks:
 */
 
+
+/* #567 rework (Qodo #590): remember a watchdog-aborted transfer so its late
+ * completion — DRV_SPI has no cancel API — is ignored exactly once. */
+void DRV_SDSPI_AbortedXferRecord(DRV_SDSPI_OBJ* const dObj)
+{
+    if (dObj->expectedXferHandle == DRV_SPI_TRANSFER_HANDLE_INVALID)
+    {
+        return;
+    }
+    dObj->abortedXferHandles[dObj->abortedXferIdx] = dObj->expectedXferHandle;
+    dObj->abortedXferIdx = (uint8_t)((dObj->abortedXferIdx + 1U) % DRV_SDSPI_ABORTED_XFER_SLOTS);
+}
+
+/* #567 rework (Qodo #590): DRV_SPI handle tokens wrap, so a fresh submit can
+ * receive the same handle VALUE as a stale aborted entry. Reuse means the old
+ * transfer object was freed and its completion can no longer arrive — forget
+ * the entry so the new transfer's valid completion isn't dropped. */
+static void lDRV_SDSPI_AbortedXferForget(DRV_SDSPI_OBJ* const dObj, DRV_SPI_TRANSFER_HANDLE handle)
+{
+    for (uint8_t slot = 0; slot < DRV_SDSPI_ABORTED_XFER_SLOTS; slot++)
+    {
+        if (dObj->abortedXferHandles[slot] == handle)
+        {
+            dObj->abortedXferHandles[slot] = DRV_SPI_TRANSFER_HANDLE_INVALID;
+        }
+    }
+}
+
 void DRV_SDSPI_SPIDriverEventHandler(
     DRV_SPI_TRANSFER_EVENT event,
     DRV_SPI_TRANSFER_HANDLE transferHandle,
@@ -90,15 +118,24 @@ void DRV_SDSPI_SPIDriverEventHandler(
 {
     DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ *)context;
 
-    /* #567: ignore a completion that doesn't belong to the transfer we are
-     * currently waiting on. After the spiXferTimer watchdog times out and
-     * aborts a transfer, its completion may still arrive late; without this
-     * guard it would overwrite spiTransferStatus (falsely completing a later
-     * transfer) and de-assert CS mid-transfer. The expected handle is updated
-     * on every submit, so a stale handle here means a timed-out transfer. */
-    if (transferHandle != dObj->expectedXferHandle)
+    /* #567 rework (SD-detect regression fix): the original guard ignored any
+     * completion whose handle didn't match expectedXferHandle — but that
+     * field is stored only AFTER DRV_SPI_*TransferAdd() returns, and short
+     * transfers complete from ISR context before the store executes, so
+     * valid completions were dropped (spiTransferStatus stuck IN_PROGRESS,
+     * watchdog aborted, the card never initialized — bisected to #567/#578,
+     * clean on its parent commit). Accept completions by default; ignore
+     * ONLY the late completion of a transfer the watchdog explicitly aborted
+     * (recorded at abort time, when the handle is stable), which is the case
+     * the #567 guard existed for. */
+    for (uint8_t slot = 0; slot < DRV_SDSPI_ABORTED_XFER_SLOTS; slot++)
     {
-        return;
+        if ((dObj->abortedXferHandles[slot] != DRV_SPI_TRANSFER_HANDLE_INVALID) &&
+            (transferHandle == dObj->abortedXferHandles[slot]))
+        {
+            dObj->abortedXferHandles[slot] = DRV_SPI_TRANSFER_HANDLE_INVALID;
+            return;
+        }
     }
 
     if (event == DRV_SPI_TRANSFER_EVENT_COMPLETE)
@@ -137,6 +174,7 @@ bool DRV_SDSPI_SPIWrite(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
+    lDRV_SDSPI_AbortedXferForget(dObj, wrTransferHandle);   /* Qodo #590: handle-value reuse */
     dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
@@ -176,6 +214,7 @@ bool DRV_SDSPI_SPIRead(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_ReadTransferAdd (dObj->spiDrvHandle, pReadBuffer, nBytes, &rdTransferHandle);
+    lDRV_SDSPI_AbortedXferForget(dObj, rdTransferHandle);   /* Qodo #590: handle-value reuse */
     dObj->expectedXferHandle = rdTransferHandle;   /* #567: correlate completion */
 
     if (rdTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
@@ -205,6 +244,7 @@ bool DRV_SDSPI_SPIWriteWithChipSelectDisabled(
     dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_IN_PROGRESS;
 
     DRV_SPI_WriteTransferAdd (dObj->spiDrvHandle, pWriteBuffer, nBytes, &wrTransferHandle);
+    lDRV_SDSPI_AbortedXferForget(dObj, wrTransferHandle);   /* Qodo #590: handle-value reuse */
     dObj->expectedXferHandle = wrTransferHandle;   /* #567: correlate completion */
 
     if (wrTransferHandle != DRV_SPI_TRANSFER_HANDLE_INVALID)
