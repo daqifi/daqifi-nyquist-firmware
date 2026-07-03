@@ -56,6 +56,9 @@
 #include "configuration.h"
 #include "driver/sdspi/drv_sdspi.h"
 #include "driver/spi/drv_spi.h"   /* #567: DRV_SPI_TRANSFER_HANDLE (expectedXferHandle) */
+
+/* #567 rework (Qodo #590): depth of the aborted-transfer ignore ring. */
+#define DRV_SDSPI_ABORTED_XFER_SLOTS    (4U)
 #include "osal/osal.h"
 
 // *****************************************************************************
@@ -1453,11 +1456,20 @@ typedef struct
      * which is the race that broke SD detection (bisected to #567/#578). */
     DRV_SPI_TRANSFER_HANDLE                         expectedXferHandle;
 
-    /* #567 rework: handle of a transfer the watchdog aborted. The completion
-     * callback ignores exactly this one late completion (then clears the
-     * field) so a timed-out transfer can't falsely complete a later one —
-     * the protection #567's original always-on guard was after. */
-    DRV_SPI_TRANSFER_HANDLE                         abortedXferHandle;
+    /* #567 rework: handles of transfers a watchdog aborted (Qodo #590: a
+     * ring, not a single slot, so back-to-back aborts can't evict an entry
+     * whose late completion is still in flight). The completion callback
+     * ignores a matching late completion once (then clears the slot) so a
+     * timed-out transfer can't falsely complete a later one — the protection
+     * #567's original always-on guard was after. Entries are also cleared
+     * when DRV_SPI reuses the same handle value for a new submit (the old
+     * transfer object was freed, so its completion can no longer arrive).
+     * Cross-context notes: slots are 32-bit (atomic on PIC32MZ), task writes
+     * precede any possible ISR read by the >=500 ms watchdog timeout, and
+     * every path crosses opaque call boundaries — per the project atomicity
+     * rules and the #578 precedent, no volatile. */
+    DRV_SPI_TRANSFER_HANDLE                         abortedXferHandles[DRV_SDSPI_ABORTED_XFER_SLOTS];
+    uint8_t                                         abortedXferIdx;
 
     /* Flag to indicate if the device is Standard Speed or High Speed */
     uint8_t                                         sdHcHost;

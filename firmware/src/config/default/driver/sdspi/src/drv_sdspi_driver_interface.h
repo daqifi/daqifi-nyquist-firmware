@@ -229,6 +229,10 @@ bool DRV_SDSPI_SpiXferTimerStart(
 
 bool DRV_SDSPI_SpiXferTimerStop( DRV_SDSPI_OBJ* const dObj );
 
+/* #567 rework (Qodo #590): record a watchdog-aborted transfer handle so its
+ * late completion is ignored exactly once by the SPI completion callback. */
+void DRV_SDSPI_AbortedXferRecord( DRV_SDSPI_OBJ* const dObj );
+
 // *****************************************************************************
 /* SD Card Command-Response Timer Stop
 
