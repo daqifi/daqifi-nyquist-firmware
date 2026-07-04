@@ -24,6 +24,8 @@
 /* ************************************************************************** */
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
+#include "Util/SpiBusHealth.h"
+#include "services/streaming.h"
 #include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
 #include "../../state/runtime/BoardRuntimeConfig.h"
@@ -110,6 +112,12 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = true;
+        // #589: manual re-enable clears a bus-jam quarantine (user has
+        // presumably reseated or replaced the card).
+        if (SpiBusHealth_IsSdQuarantined()) {
+            SpiBusHealth_SetSdQuarantine(false);
+            Streaming_QuesExternalClear(STREAMING_QUES_SPI_BUS_FAULT);
+        }
     } else {
         // Disable SD card - check if busy first to prevent data loss
         if (sd_card_manager_IsBusy()) {
