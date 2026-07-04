@@ -400,6 +400,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         }
         if (!sd_card_manager_IsWriteReady()) {
             LOG_E("SD:BENCH - File not ready after timeout\r\n");
+            LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
+                  "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
@@ -463,6 +465,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
 
         if (written != chunkSize) {
             LOG_E("SD:BENCH - Write failed at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
+            LOG_E("SD:BENCH - if reads/LIST work but writes fail, the card is "
+                  "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
@@ -487,6 +491,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         }
         if (idleWait >= 500) {
             LOG_E("SD:BENCH - SD idle timeout after 5s\r\n");
+            LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
+                  "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
         }
     }
 

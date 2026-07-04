@@ -91,10 +91,19 @@
 #define DRV_SDSPI_TOKEN_MAX                       (0xFFFFU)
 
 #define DRV_SDSPI_FLOATING_BUS_TIMEOUT            (1000)
-#define DRV_SDSPI_R1B_RESP_TIMEOUT                (100)
+/* R1b busy-wait ceiling: raised with the write timeout — A2/SDXC cards'
+ * cache-commit pauses can exceed 100 ms between write bursts (diagnostic,
+ * 2026-07-04; see WRITE_TIMEOUT note below). */
+#define DRV_SDSPI_R1B_RESP_TIMEOUT                (500)
 
 #define DRV_SDSPI_READ_TIMEOUT_IN_MS              (250)
-#define DRV_SDSPI_WRITE_TIMEOUT_IN_MS             (250)
+/* 500 ms = SD spec worst-case write busy for SDXC-class cards (SDHC is
+ * 250 ms). The Harmony default of 250 ms aborts mid-write on big/fast cards
+ * whose internal garbage collection produces occasional long-busy events —
+ * bench card wrote 2 GB flawlessly in a PC reader but died at 32 KB here
+ * (2026-07-04). This is an abort ceiling, not a wait: healthy cards are
+ * unaffected. */
+#define DRV_SDSPI_WRITE_TIMEOUT_IN_MS             (500)
 
 /* #567: hard timeout for the SPI bus-completion (DMA) waits. A single block
  * or command-byte DRV_SPI transfer completes in well under 1 ms; the only way

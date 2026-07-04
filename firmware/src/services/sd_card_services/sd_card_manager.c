@@ -1711,6 +1711,13 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
         return true;  // Operation completed
     } else {
         LOG_E("[SD] WaitForCompletion timeout after %u ms\r\n", timeoutMs);
+        // #589: a card whose reads/LIST work while writes hang or abort is
+        // the bench-proven signature of an SPI-mode-incompatible card (e.g.
+        // A2-class SDXC). Say so — this line is the difference between a
+        // support mystery and a card swap.
+        LOG_E("[SD] card operations hanging while reads work - card may be "
+              "SPI-mode incompatible (A2/SDXC class); try a different card "
+              "(wiki: SD-Card-Compatibility)\r\n");
         return false;  // Timeout
     }
 }
