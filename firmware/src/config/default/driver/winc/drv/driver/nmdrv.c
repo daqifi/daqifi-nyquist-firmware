@@ -273,7 +273,12 @@ int8_t nm_drv_init_download_mode(void)
                 uint16_t waited;
 
                 nm_reset();
-                nm_spi_init();  /* re-sync host protocol state after reset */
+                if (nm_spi_init() != M2M_SUCCESS)
+                {
+                    /* host protocol re-sync failed - retry the whole
+                       reset/init sequence (Qodo #592 imp-1) */
+                    continue;
+                }
 
                 for (waited = 0; waited < 800; waited += 20)
                 {

@@ -1033,7 +1033,10 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             if ((wincStatus == SYS_STATUS_BUSY) && (sFwUpdReadyWaits < 60U)) {
                 sFwUpdReadyWaits++;
                 vTaskDelay(pdMS_TO_TICKS(50));
-                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
+                // wait in place (re-queue READY, not INIT): re-entering INIT
+                // re-runs Initialize and compounds the two bounded waits into
+                // a ~3-minute worst case (Qodo #592 imp-0)
+                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
                 break;
             }
             sFwUpdReadyWaits = 0;
