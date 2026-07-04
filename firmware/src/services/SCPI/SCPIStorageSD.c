@@ -457,15 +457,32 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                 break;
         }
 
-        // Write to SD card (WriteToBuffer has timeout protection). Release
-        // the shared mutex before checking the result so the error path
-        // doesn't need to remember to give it back.
-        size_t written = sd_card_manager_WriteToBuffer((const char*)testBuffer, chunkSize);
+        // Write to SD card, pacing the producer to the drain rate: this
+        // task (USB SCPI, pri 7) fills the SD circular buffer far faster
+        // than the SD task (pri 5) drains it, so "buffer momentarily full"
+        // is the NORMAL steady state of a throughput benchmark - not a
+        // failure. The pre-2026-07-04 code aborted on the first short
+        // write, which killed every benchmark at exactly the circular
+        // buffer size (32768) and was misdiagnosed as a card problem.
+        // Only a sustained stall (no drain progress for 10 s) is an error.
+        size_t written = 0;
+        uint32_t stallMs = 0;
+        while ((written < chunkSize) && (stallMs < 10000U)) {
+            size_t w = sd_card_manager_WriteToBuffer(
+                (const char*)testBuffer + written, chunkSize - written);
+            if (w == 0U) {
+                vTaskDelay(pdMS_TO_TICKS(5));
+                stallMs += 5U;
+            } else {
+                written += w;
+                stallMs = 0U;
+            }
+        }
         SCPI_ResponseBuf_Give();
 
         if (written != chunkSize) {
-            LOG_E("SD:BENCH - Write failed at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
-            LOG_E("SD:BENCH - if reads/LIST work but writes fail, the card is "
+            LOG_E("SD:BENCH - drain stalled >10s at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
+            LOG_E("SD:BENCH - if reads/LIST work but writes stall, the card is "
                   "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
