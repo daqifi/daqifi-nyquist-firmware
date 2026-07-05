@@ -141,6 +141,10 @@
 
 #define DRV_SDSPI_SPI_INITIAL_SPEED                        400000
 
+/* #589 P1: detect-poll backoff (see detachedPollCount). */
+#define DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS               (10U)
+#define DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS               (5000U)
+
 
 // *****************************************************************************
 /* Count for 8 clock pulses
@@ -1512,6 +1516,13 @@ typedef struct
 
     /* Flag to indicate the SD Card last attached status */
     DRV_SDSPI_ATTACH                                isAttachedLastStatus;
+
+    /* #589 P1: consecutive card-absent detect polls (saturating). After
+       DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS misses the poll interval stretches
+       to DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS - an empty slot stops costing
+       the shared bus a CMD exchange every second (WiFi shares SPI4). Reset on
+       attach or via DRV_SDSPI_DetectPollKick (SD manager activity). */
+    uint16_t                                        detachedPollCount;
 
     /* Flag indicating the presence of the SD Card */
     SYS_MEDIA_STATUS                                mediaState;

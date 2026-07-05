@@ -1099,7 +1099,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         sInitFailTracking = true;
                     }
                     if (!sJamCheckDone &&
-                        ((xTaskGetTickCount() - sInitFailSince) > pdMS_TO_TICKS(3000))) {
+                        ((xTaskGetTickCount() - sInitFailSince) > pdMS_TO_TICKS(8000))) {
                         sJamCheckDone = true;  // one-shot per failure episode
                         SpiBusHealthResult_t busState = SPI_BUS_BUSY;
                         // Retry through BUSY: the init churn asserts the WINC CS
@@ -1115,7 +1115,16 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                             }
                         }
                         if (busState == SPI_BUS_CLEAR) {
-                            LOG_E("WiFi unreachable but SPI4 probes read CLEAR - if an SD card is inserted, try removing it (transfer-speed interference is not probe-visible)");
+                            extern bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
+                            if (DRV_SDSPI_IsCardAttached(sysObj.drvSDSPI0)) {
+                                // #589: proof-grade class (bench 2026-07-05): a card
+                                // whose DAT0 driver never tri-states crushes the
+                                // WINC's replies to mid-rail - invisible to every
+                                // probe, cured only by removal.
+                                LOG_E("WiFi unreachable and an SD card IS present on the shared bus - the card is likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");
+                            } else {
+                                LOG_E("WiFi unreachable but SPI4 probes read CLEAR - if an SD card is inserted, try removing it (transfer-speed interference is not probe-visible)");
+                            }
                         }
                         if (busState == SPI_BUS_JAMMED) {
                             LOG_E("WiFi init failing with SPI4 bus JAMMED - suspect SD card; attempting release");

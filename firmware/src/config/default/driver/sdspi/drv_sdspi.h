@@ -921,7 +921,10 @@ void DRV_SDSPI_AsyncWrite
 
 // *****************************************************************************
 /* Function:
-    bool DRV_SDSPI_IsAttached
+    bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
+void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
+
+bool DRV_SDSPI_IsAttached
     (
         const DRV_HANDLE handle
     )
