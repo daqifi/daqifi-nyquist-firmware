@@ -60,6 +60,12 @@ SpiBusHealthResult_t SpiBusHealth_TryRelease(void);
  */
 SpiBusHealthResult_t SpiBusHealth_ProbeActive(void);
 
+/** DIAG: clock burst with the WINC's CS manually asserted - see .c docs. */
+SpiBusHealthResult_t SpiBusHealth_ProbeCrossCs(void);
+
+/** DIAG: drive MISO as GPIO, count read-back fights (0xFFFFFFFF = bus busy). */
+uint32_t SpiBusHealth_ProbeMisoFight(void);
+
 /** Last probe result (for diagnostics queries; SPI_BUS_CLEAR if never run). */
 SpiBusHealthResult_t SpiBusHealth_LastResult(void);
 

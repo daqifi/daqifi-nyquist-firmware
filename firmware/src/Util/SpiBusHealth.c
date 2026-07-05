@@ -256,6 +256,121 @@ SpiBusHealthResult_t SpiBusHealth_ProbeActive(void)
     return result;
 }
 
+/**
+ * DIAG (#589 deep-dive): cross-CS probe. Clock a 0xFF burst while MANUALLY
+ * holding the WINC's CS (RK4) low - the card must ignore clocks (its own CS
+ * on RD9 stays high), so any non-0xFF on MISO means the card reacts when the
+ * WINC's CS asserts: CS-edge crosstalk onto the card, or card CS-input
+ * sensitivity. Only call when WiFi is already failing (this sends junk to
+ * the WINC, which resyncs on its next reset).
+ */
+SpiBusHealthResult_t SpiBusHealth_ProbeCrossCs(void)
+{
+    if ((GPIO_PinRead(GPIO_PIN_RD9) == 0U) || (GPIO_PinRead(WDRV_WINC_SS_PIN) == 0U))
+    {
+        gLastResult = SPI_BUS_BUSY;
+        return SPI_BUS_BUSY;
+    }
+    if (!SpiBusHealth_EnsureClient())
+    {
+        return gLastResult;
+    }
+
+    bool pullWasEnabled = ((CNPUA & (1UL << 15)) != 0U);
+    CNPUASET = (1UL << 15);
+
+    GPIO_PinClear(WDRV_WINC_SS_PIN);   // assert WINC CS like a real transfer
+
+    for (uint32_t i = 0; i < sizeof(gActiveProbeRx); i++)
+    {
+        gActiveProbeRx[i] = 0U;
+    }
+    DRV_SPI_TRANSFER_HANDLE xfer = DRV_SPI_TRANSFER_HANDLE_INVALID;
+    DRV_SPI_WriteReadTransferAdd(gSpiHandle, gReleasePattern,
+                                 sizeof(gActiveProbeRx),
+                                 gActiveProbeRx, sizeof(gActiveProbeRx), &xfer);
+    SpiBusHealthResult_t result = SPI_BUS_INDETERMINATE;
+    if (xfer != DRV_SPI_TRANSFER_HANDLE_INVALID)
+    {
+        for (uint32_t waitMs = 0; waitMs < 50U; waitMs += 5U)
+        {
+            DRV_SPI_TRANSFER_EVENT ev = DRV_SPI_TransferStatusGet(xfer);
+            if (ev == DRV_SPI_TRANSFER_EVENT_COMPLETE)
+            {
+                // The WINC itself answers when its CS is low, so non-FF here
+                // is expected FROM THE WINC. The discriminator is the card:
+                // repeat with a second burst pattern and compare against the
+                // card-out baseline the bench records. Report raw count.
+                uint32_t nonFF = 0;
+                for (uint32_t i = 0; i < sizeof(gActiveProbeRx); i++)
+                {
+                    if (gActiveProbeRx[i] != 0xFFU)
+                    {
+                        nonFF++;
+                    }
+                }
+                LOG_E("SpiBusHealth: cross-CS probe rx nonFF=%lu first4=%02X %02X %02X %02X",
+                      (unsigned long)nonFF, gActiveProbeRx[0], gActiveProbeRx[1],
+                      gActiveProbeRx[2], gActiveProbeRx[3]);
+                result = (nonFF == 0U) ? SPI_BUS_CLEAR : SPI_BUS_JAMMED;
+                break;
+            }
+            if (ev == DRV_SPI_TRANSFER_EVENT_ERROR)
+            {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+
+    GPIO_PinSet(WDRV_WINC_SS_PIN);     // deassert WINC CS
+
+    if (!pullWasEnabled)
+    {
+        CNPUACLR = (1UL << 15);
+    }
+    gLastResult = result;
+    return result;
+}
+
+/**
+ * DIAG (#589 deep-dive): MISO drive-fight probe. Temporarily drive RA15
+ * (the shared MISO net) as a GPIO output through 0/1 patterns and read the
+ * pin back. With both CS lines high the WINC tri-states MISO, so any
+ * read-back mismatch means another driver is fighting us - a card whose
+ * damaged DO stage clamps the net when it is actively driven (the one
+ * stimulus every passive/active probe so far lacked: they only ever
+ * observed a floating pulled-up line). Restores RA15 to input; safe at
+ * idle only (returns BUSY if a CS is asserted).
+ */
+uint32_t SpiBusHealth_ProbeMisoFight(void)
+{
+    if ((GPIO_PinRead(GPIO_PIN_RD9) == 0U) || (GPIO_PinRead(WDRV_WINC_SS_PIN) == 0U))
+    {
+        return 0xFFFFFFFFU;  // busy sentinel
+    }
+
+    uint32_t mismatches = 0;
+    // Drive RA15 as output: PPS input (SDI4) keeps reading the pad, which
+    // is exactly what we want - LAT vs PORT disagreement = bus fight.
+    TRISACLR = (1UL << 15);
+    for (uint32_t i = 0; i < 64U; i++)
+    {
+        uint32_t level = (i & 1U);
+        if (level != 0U) { LATASET = (1UL << 15); } else { LATACLR = (1UL << 15); }
+        for (volatile uint32_t settle = 0; settle < 100U; settle++) { }
+        uint32_t readBack = ((PORTA >> 15) & 1U);
+        if (readBack != level)
+        {
+            mismatches++;
+        }
+    }
+    TRISASET = (1UL << 15);  // restore input for SDI4
+    LOG_E("SpiBusHealth: MISO drive-fight probe - %lu/64 mismatches",
+          (unsigned long)mismatches);
+    return mismatches;
+}
+
 SpiBusHealthResult_t SpiBusHealth_TryRelease(void)
 {
     if (!SpiBusHealth_EnsureClient())
