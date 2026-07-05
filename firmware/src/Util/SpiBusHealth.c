@@ -373,6 +373,14 @@ uint32_t SpiBusHealth_ProbeMisoFight(void)
 
 SpiBusHealthResult_t SpiBusHealth_TryRelease(void)
 {
+    // Same idle precondition as the probes (Qodo #594): DRV_SPI serializes
+    // queued transfers, so this is belt-and-braces, but a release burst
+    // interleaved between a live client's transactions helps nobody.
+    if ((GPIO_PinRead(GPIO_PIN_RD9) == 0U) || (GPIO_PinRead(WDRV_WINC_SS_PIN) == 0U))
+    {
+        gLastResult = SPI_BUS_BUSY;
+        return SPI_BUS_BUSY;
+    }
     if (!SpiBusHealth_EnsureClient())
     {
         return SpiBusHealth_ProbeJam();  // couldn't clock — report current state
@@ -387,16 +395,24 @@ SpiBusHealthResult_t SpiBusHealth_TryRelease(void)
         return SpiBusHealth_ProbeJam();
     }
 
-    // 600 bytes at 1 MHz is ~5 ms; poll with a generous bound.
+    // 600 bytes is well under a ms at bus speed; poll with a generous bound.
+    bool releaseDone = false;
     for (uint32_t waitMs = 0; waitMs < 100U; waitMs += 5U)
     {
         DRV_SPI_TRANSFER_EVENT ev = DRV_SPI_TransferStatusGet(xfer);
         if ((ev == DRV_SPI_TRANSFER_EVENT_COMPLETE) ||
             (ev == DRV_SPI_TRANSFER_EVENT_ERROR))
         {
+            releaseDone = (ev == DRV_SPI_TRANSFER_EVENT_COMPLETE);
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    if (!releaseDone)
+    {
+        // The re-probe below is still the ground truth for line state, but a
+        // transfer that never completed is its own diagnostic (Qodo #594).
+        LOG_E("SpiBusHealth: release transfer did not complete cleanly");
     }
 
     SpiBusHealthResult_t after = SpiBusHealth_ProbeJam();
