@@ -1008,18 +1008,25 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // board whose module firmware doesn't boot, the driver never
             // leaves BUSY/ERROR cleanly, and this used to ping-pong events
             // forever — the bridge (raw nm layer) doesn't need the driver.
-            static uint8_t sFwUpdInitWaits = 0;
-            if ((WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) &&
-                (sFwUpdInitWaits < 60U)) {
-                sFwUpdInitWaits++;
-                vTaskDelay(pdMS_TO_TICKS(50));
-                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
-                break;
-            }
-            if (sFwUpdInitWaits >= 60U) {
+            // Tick-deadline budget with hot re-queue (Qodo #592 pass-2:
+            // sleeping in the handler holds gProcessStateMutex for up to
+            // 3 s, stalling other ProcessState callers such as USB SCPI).
+            // The event-loop round trip paces the retries instead; wrap-safe
+            // (now - start) < window arithmetic.
+            static TickType_t sFwUpdInitSince = 0;
+            static bool sFwUpdInitWaiting = false;
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                if (!sFwUpdInitWaiting) {
+                    sFwUpdInitWaiting = true;
+                    sFwUpdInitSince = xTaskGetTickCount();
+                }
+                if ((xTaskGetTickCount() - sFwUpdInitSince) < pdMS_TO_TICKS(3000)) {
+                    SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
+                    break;
+                }
                 LOG_E("FW-update entry: driver still BUSY after 3 s — arming bridge anyway");
             }
-            sFwUpdInitWaits = 0;
+            sFwUpdInitWaiting = false;
             sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
             SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
             break;
@@ -1027,17 +1034,22 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
         case WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY:
         {
             SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
-            static uint8_t sFwUpdReadyWaits = 0;
-            if ((wincStatus == SYS_STATUS_BUSY) && (sFwUpdReadyWaits < 60U)) {
-                sFwUpdReadyWaits++;
-                vTaskDelay(pdMS_TO_TICKS(50));
-                // wait in place (re-queue READY, not INIT): re-entering INIT
-                // re-runs Initialize and compounds the two bounded waits into
-                // a ~3-minute worst case (Qodo #592 imp-0)
-                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
-                break;
+            // Same tick-deadline hot re-queue as the INIT wait above; still
+            // re-queues READY, not INIT (Qodo #592 imp-0: re-entering INIT
+            // re-runs Initialize and compounds the waits into minutes).
+            static TickType_t sFwUpdReadySince = 0;
+            static bool sFwUpdReadyWaiting = false;
+            if (wincStatus == SYS_STATUS_BUSY) {
+                if (!sFwUpdReadyWaiting) {
+                    sFwUpdReadyWaiting = true;
+                    sFwUpdReadySince = xTaskGetTickCount();
+                }
+                if ((xTaskGetTickCount() - sFwUpdReadySince) < pdMS_TO_TICKS(3000)) {
+                    SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
+                    break;
+                }
             }
-            sFwUpdReadyWaits = 0;
+            sFwUpdReadyWaiting = false;
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
             // Failures below used to be completely silent — the FW-update
             // bridge then ran against an unreachable chip and the PC-side
