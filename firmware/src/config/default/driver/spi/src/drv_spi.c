@@ -67,6 +67,33 @@ static uint8_t gSpiAddRejectLogs = 0;
 /* This is the driver instance object array. */
 static CACHE_ALIGN DRV_SPI_OBJ gDrvSPIObj[DRV_SPI_INSTANCES_NUMBER];
 
+/* #589 P2: shared-bus health counters. Every TransferAdd reject already logs
+ * (capped); these counters make the totals queryable (SYST:DIAG:SPIBus:STATs?)
+ * so a field report can distinguish "occasional arbitration hiccup" from
+ * "bus wedged for minutes". Increments are RMW -> critical sections per the
+ * project atomicity rules; 32-bit reads are atomic. */
+static volatile uint32_t gSpiRejStale = 0;
+static volatile uint32_t gSpiRejExclusive = 0;
+static volatile uint32_t gSpiRejLockFail = 0;
+static volatile uint32_t gSpiRejQueueFull = 0;
+
+static inline void lDRV_SPI_CountReject(volatile uint32_t *ctr)
+{
+    taskENTER_CRITICAL();
+    (*ctr)++;
+    taskEXIT_CRITICAL();
+}
+
+void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
+                               uint32_t *lockFail, uint32_t *queueFull)
+{
+    if (stale != NULL)     { *stale     = gSpiRejStale; }
+    if (exclusive != NULL) { *exclusive = gSpiRejExclusive; }
+    if (lockFail != NULL)  { *lockFail  = gSpiRejLockFail; }
+    if (queueFull != NULL) { *queueFull = gSpiRejQueueFull; }
+}
+
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: File scope functions
@@ -1199,6 +1226,7 @@ void DRV_SPI_WriteReadTransferAdd (
     {
         if (gSpiAddRejectLogs < 8) {
             gSpiAddRejectLogs++;
+            lDRV_SPI_CountReject(&gSpiRejStale);
             LOG_E("SPIADD reject: stale handle=%08lx", (unsigned long)handle);
         }
         return;
@@ -1214,7 +1242,8 @@ void DRV_SPI_WriteReadTransferAdd (
             {
                 if (gSpiAddRejectLogs < 8) {
                     gSpiAddRejectLogs++;
-                    LOG_E("SPIADD reject: exclusive holder=%08lx me=%08lx cntr=%u",
+                    lDRV_SPI_CountReject(&gSpiRejExclusive);
+            LOG_E("SPIADD reject: exclusive holder=%08lx me=%08lx cntr=%u",
                           (unsigned long)dObj->exclusiveUseClientHandle,
                           (unsigned long)handle, (unsigned)dObj->exclusiveUseCntr);
                 }
@@ -1227,7 +1256,8 @@ void DRV_SPI_WriteReadTransferAdd (
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Failed to get resource lock");
             if (gSpiAddRejectLogs < 8) {
                 gSpiAddRejectLogs++;
-                LOG_E("SPIADD reject: resource lock fail");
+                lDRV_SPI_CountReject(&gSpiRejLockFail);
+            LOG_E("SPIADD reject: resource lock fail");
             }
             return;
         }
@@ -1243,7 +1273,8 @@ void DRV_SPI_WriteReadTransferAdd (
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Insufficient Queue Depth");
             if (gSpiAddRejectLogs < 8) {
                 gSpiAddRejectLogs++;
-                LOG_E("SPIADD reject: queue full (handle=%08lx)", (unsigned long)handle);
+                lDRV_SPI_CountReject(&gSpiRejQueueFull);
+            LOG_E("SPIADD reject: queue full (handle=%08lx)", (unsigned long)handle);
             }
             lDRV_SPI_ResourceUnlock(dObj);
             return;

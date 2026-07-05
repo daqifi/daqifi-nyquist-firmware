@@ -4946,6 +4946,21 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
  * (sick SD card holding MISO with no chip select asserted).
  * Response: CLEAR | JAMMED | BUSY | INDETERMINATE, plus ",QUARANTINED".
  */
+static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
+{
+    extern void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
+                                          uint32_t *lockFail, uint32_t *queueFull);
+    uint32_t st, ex, lk, qf;
+    DRV_SPI_GetRejectCounters(&st, &ex, &lk, &qf);
+    char out[96];
+    snprintf(out, sizeof(out),
+             "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu",
+             (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
+             (unsigned long)qf);
+    SCPI_ResultText(context, out);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_DiagSpiBusMisoFightGet(scpi_t * context)
 {
     SCPI_ResultUInt32(context, SpiBusHealth_ProbeMisoFight());
@@ -5243,6 +5258,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:FILE", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
+    {.pattern = "SYSTem:DIAGnostic:SPIBus:STATs?", .callback = SCPI_DiagSpiBusStatsGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus:MISOFight?", .callback = SCPI_DiagSpiBusMisoFightGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus:CROSScs?", .callback = SCPI_DiagSpiBusCrossCsGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus?", .callback = SCPI_DiagSpiBusGet,},
