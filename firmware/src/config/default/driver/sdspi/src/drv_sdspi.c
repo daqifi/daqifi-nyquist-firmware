@@ -1729,10 +1729,15 @@ static void lDRV_SDSPI_AttachDetachTasks
             if (dObj->cardPollingTimerExpired == true)
             {
                 dObj->cardPollingTimerExpired = false;
-                /* #605: mark this CHECK_DEVICE entry as a timer-gated poll so
-                 * the backoff counter counts real polls, not the task-rate
-                 * spins CHECK_DEVICE makes while sdState != IDLE. */
-                dObj->detectPollFresh = true;
+                /* #605 (shape per Qodo #606): count the poll HERE - exactly
+                 * once per timer expiry by construction. CHECK_DEVICE can't
+                 * count reliably: it spins at task rate while sdState != IDLE,
+                 * and the detect verdict emerges from a multi-pass async
+                 * sequence, so no single CHECK_DEVICE pass is "the poll". */
+                if (dObj->detachedPollCount < 0xFFFFU)
+                {
+                    dObj->detachedPollCount++;
+                }
                 dObj->taskState = DRV_SDSPI_TASK_CHECK_DEVICE;
             }
             break;
@@ -1741,25 +1746,15 @@ static void lDRV_SDSPI_AttachDetachTasks
             /* Check for device attach */
 
             dObj->isAttached = (DRV_SDSPI_ATTACH)lDRV_SDSPI_MediaCommandDetect (object);
-            /* #589 P1 / #605: track consecutive card-absent polls (saturating).
-             * Gated on detectPollFresh - CHECK_DEVICE re-executes every
-             * SYS_Tasks pass while sdState != IDLE, and counting those spins
-             * (~task rate) re-saturated the counter within milliseconds of any
-             * DetectPollKick, making the kick ineffective (#605). */
-            if (dObj->detectPollFresh)
+            /* #589 P1 / #605: pin the backoff counter to 0 whenever the
+             * current verdict is ATTACHED - on every pass, spin or fresh
+             * (the async detect sequence can deliver its verdict on a spin
+             * pass; resets are idempotent, so over-resetting is harmless and
+             * an attached card keeps the stock 1 s removal-detection cadence).
+             * The increment lives in WAIT_POLLING_TIMER_EXPIRE. */
+            if (dObj->isAttached == DRV_SDSPI_IS_ATTACHED)
             {
-                dObj->detectPollFresh = false;
-                if (dObj->isAttached == DRV_SDSPI_IS_DETACHED)
-                {
-                    if (dObj->detachedPollCount < 0xFFFFU)
-                    {
-                        dObj->detachedPollCount++;
-                    }
-                }
-                else
-                {
-                    dObj->detachedPollCount = 0U;
-                }
+                dObj->detachedPollCount = 0U;
             }
             if (dObj->isAttachedLastStatus != dObj->isAttached)
             {
@@ -2528,7 +2523,6 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
     dObj->sdcardSpeedHz         = sdSPIInit->sdcardSpeedHz;
     dObj->pollingIntervalMs     = sdSPIInit->pollingIntervalMs;
     dObj->detachedPollCount     = 0U;
-    dObj->detectPollFresh       = false;
     dObj->sdspiTokenCount       = 1;
 
     /* Reset the SDSPI attach/detach variables */
