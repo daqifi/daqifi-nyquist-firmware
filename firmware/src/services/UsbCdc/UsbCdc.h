@@ -195,6 +195,11 @@ extern "C" {
      */
     bool UsbCdc_IsConfigured(void);
 
+/** #511: cumulative bytes the USB peripheral confirmed transferred
+ *  (WRITE_COMPLETE events) since boot - the wire-side twin of
+ *  SdBytesWritten. */
+uint64_t UsbCdc_GetWireBytesSent(void);
+
     /**
      * Runtime USB settings structure
      * Used for monitoring USB enumeration state

@@ -3049,6 +3049,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiListenReopens=%u\r\n", (unsigned)listenReopens);
         scpi_printf(context, "WifiListenHardResets=%u\r\n", (unsigned)listenHardResets);
     }
+    scpi_printf(context, "UsbBytesSent=%llu\r\n", (unsigned long long)UsbCdc_GetWireBytesSent());
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
     scpi_printf(context, "SdDroppedBytesSteady=%u\r\n", (unsigned)s.sdDroppedBytesSteady);
     {
