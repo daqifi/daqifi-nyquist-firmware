@@ -19,6 +19,7 @@
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
+#include "Util/SpiBusHealth.h"
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
@@ -71,8 +72,10 @@
 #define QUES_SD_OVERFLOW    (1 << 10)  // Bit 10: SD write failure
 #define QUES_ENCODER_FAIL   (1 << 11)  // Bit 11: Encoder failure
 #define QUES_TRANSPORT_DOWN (1 << 12)  // Bit 12: all configured transports down >grace (#397 auto-stop)
+#define QUES_SPI_BUS_FAULT  (1 << 13)  // Bit 13: shared SPI4 bus jammed (#589 — suspect SD card)
 #define QUES_ALL_BITS       (QUES_DATA_LOSS | QUES_USB_OVERFLOW | QUES_WIFI_OVERFLOW | \
-                             QUES_SD_OVERFLOW | QUES_ENCODER_FAIL | QUES_TRANSPORT_DOWN)
+                             QUES_SD_OVERFLOW | QUES_ENCODER_FAIL | QUES_TRANSPORT_DOWN | \
+                             QUES_SPI_BUS_FAULT)
 
 #define UNUSED(x) (void)(x)
 //
@@ -4938,6 +4941,44 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * #589 Tier-1 diagnostics: probe the shared SPI4 bus for an electrical jam
+ * (sick SD card holding MISO with no chip select asserted).
+ * Response: CLEAR | JAMMED | BUSY | INDETERMINATE, plus ",QUARANTINED".
+ */
+static scpi_result_t SCPI_DiagSpiBusMisoFightGet(scpi_t * context)
+{
+    SCPI_ResultUInt32(context, SpiBusHealth_ProbeMisoFight());
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_DiagSpiBusCrossCsGet(scpi_t * context)
+{
+    SpiBusHealthResult_t r = SpiBusHealth_ProbeCrossCs();
+    SCPI_ResultText(context,
+        (r == SPI_BUS_CLEAR) ? "CLEAR" :
+        (r == SPI_BUS_JAMMED) ? "RESPONSE" :
+        (r == SPI_BUS_BUSY) ? "BUSY" : "INDETERMINATE");
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_DiagSpiBusGet(scpi_t * context)
+{
+    SpiBusHealthResult_t r = SpiBusHealth_ProbeJam();
+    if (r == SPI_BUS_CLEAR)
+    {
+        r = SpiBusHealth_ProbeActive();  // idle-clear != transfer-clear (#589 Tier 1b)
+    }
+    const char *txt = (r == SPI_BUS_CLEAR) ? "CLEAR" :
+                      (r == SPI_BUS_JAMMED) ? "JAMMED" :
+                      (r == SPI_BUS_BUSY) ? "BUSY" : "INDETERMINATE";
+    char out[48];
+    snprintf(out, sizeof(out), "%s%s", txt,
+             SpiBusHealth_IsSdQuarantined() ? ",QUARANTINED" : "");
+    SCPI_ResultText(context, out);
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t scpi_commands[] = {
     // Build into libscpi
     {.pattern = "*CLS", .callback = SCPI_CoreCls,},
@@ -5202,6 +5243,9 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:FILE", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
     {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
+    {.pattern = "SYSTem:DIAGnostic:SPIBus:MISOFight?", .callback = SCPI_DiagSpiBusMisoFightGet,},
+    {.pattern = "SYSTem:DIAGnostic:SPIBus:CROSScs?", .callback = SCPI_DiagSpiBusCrossCsGet,},
+    {.pattern = "SYSTem:DIAGnostic:SPIBus?", .callback = SCPI_DiagSpiBusGet,},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
     {.pattern = "SYSTem:STORage:SD:ENAble?", .callback = SCPI_StorageSDEnableGet},
     {.pattern = "SYSTem:STORage:SD:DELete", .callback = SCPI_StorageSDDelete},

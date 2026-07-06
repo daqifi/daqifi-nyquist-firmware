@@ -1,6 +1,8 @@
 #define LOG_LVL LOG_LEVEL_WIFI
 #define LOG_MODULE LOG_MODULE_WIFI
 #include "wifi_manager.h"
+#include "Util/SpiBusHealth.h"
+#include "services/streaming.h"
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
@@ -1090,16 +1092,68 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
 
                 SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
+                // #589: episode trackers for the not-ready retry loop. If the
+                // driver stays not-ready for several seconds, check whether the
+                // shared SPI4 bus is electrically jammed (sick SD card holding
+                // MISO) — probe, one release attempt, then quarantine the SD
+                // subsystem so it stops driving the bus.
+                static TickType_t sInitFailSince = 0;
+                static bool sInitFailTracking = false;
+                static bool sJamCheckDone = false;
                 if (wincStatus != SYS_STATUS_READY) {
                     // Log error only once when entering error state
                     if (!initErrorLogged) {
                         LOG_E("WiFi driver not ready (status=%d), retrying...\r\n", wincStatus);
                         initErrorLogged = true;
                     }
+                    if (!sInitFailTracking) {
+                        sInitFailSince = xTaskGetTickCount();
+                        sInitFailTracking = true;
+                    }
+                    if (!sJamCheckDone &&
+                        ((xTaskGetTickCount() - sInitFailSince) > pdMS_TO_TICKS(8000))) {
+                        sJamCheckDone = true;  // one-shot per failure episode
+                        SpiBusHealthResult_t busState = SPI_BUS_BUSY;
+                        // Retry through BUSY: the init churn asserts the WINC CS
+                        // in bursts, and a one-shot probe can land inside one.
+                        for (uint8_t attempt = 0; (attempt < 5U) && (busState == SPI_BUS_BUSY); attempt++) {
+                            busState = SpiBusHealth_ProbeJam();
+                            if (busState == SPI_BUS_CLEAR) {
+                                // idle-clear does not prove transfer-clear (#589 Tier 1b)
+                                busState = SpiBusHealth_ProbeActive();
+                            }
+                            if (busState == SPI_BUS_BUSY) {
+                                vTaskDelay(pdMS_TO_TICKS(100));
+                            }
+                        }
+                        if (busState == SPI_BUS_CLEAR) {
+                            extern bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
+                            if (DRV_SDSPI_IsCardAttached(sysObj.drvSDSPI0)) {
+                                // #589: proof-grade class (bench 2026-07-05): a card
+                                // whose DAT0 driver never tri-states crushes the
+                                // WINC's replies to mid-rail - invisible to every
+                                // probe, cured only by removal.
+                                LOG_E("WiFi unreachable and an SD card IS present on the shared bus - the card is likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");
+                            } else {
+                                LOG_E("WiFi unreachable but SPI4 probes read CLEAR - if an SD card is inserted, try removing it (transfer-speed interference is not probe-visible)");
+                            }
+                        }
+                        if (busState == SPI_BUS_JAMMED) {
+                            LOG_E("WiFi init failing with SPI4 bus JAMMED - suspect SD card; attempting release");
+                            if (SpiBusHealth_TryRelease() == SPI_BUS_JAMMED) {
+                                SpiBusHealth_SetSdQuarantine(true);
+                                Streaming_QuesExternalSet(STREAMING_QUES_SPI_BUS_FAULT);
+                                LOG_E("SPI4 still jammed after release - SD quarantined; remove the SD card if WiFi stays down");
+                            }
+                        }
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(10));  // pace the retry loop
                     //wait for initialization to complete
                     SendEvent(WIFI_MANAGER_EVENT_INIT);
                     break;
                 }
+                sInitFailTracking = false;
+                sJamCheckDone = false;
                 // Reset error flag on success
                 if (initErrorLogged) {
                     LOG_D("WiFi driver initialization succeeded\r\n");

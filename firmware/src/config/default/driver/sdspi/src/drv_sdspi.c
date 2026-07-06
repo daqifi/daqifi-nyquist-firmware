@@ -1707,11 +1707,21 @@ static void lDRV_SDSPI_AttachDetachTasks
             }
             break;
         case DRV_SDSPI_TASK_START_POLLING_TIMER:
-            if (DRV_SDSPI_CardDetectPollingTimerStart(dObj, dObj->pollingIntervalMs) == true)
+        {
+            /* #589 P1: stretch the poll interval once the slot has been
+               empty for a while; every poll costs the shared bus a CMD
+               exchange that interrupts the WiFi module's traffic. */
+            uint32_t pollMs = dObj->pollingIntervalMs;
+            if (dObj->detachedPollCount >= DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS)
+            {
+                pollMs = DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS;
+            }
+            if (DRV_SDSPI_CardDetectPollingTimerStart(dObj, pollMs) == true)
             {
                 dObj->taskState = DRV_SDSPI_TASK_WAIT_POLLING_TIMER_EXPIRE;
             }
             break;
+        }
 
         case DRV_SDSPI_TASK_WAIT_POLLING_TIMER_EXPIRE:
             if (dObj->cardPollingTimerExpired == true)
@@ -1725,6 +1735,18 @@ static void lDRV_SDSPI_AttachDetachTasks
             /* Check for device attach */
 
             dObj->isAttached = (DRV_SDSPI_ATTACH)lDRV_SDSPI_MediaCommandDetect (object);
+            /* #589 P1: track consecutive card-absent polls (saturating). */
+            if (dObj->isAttached == DRV_SDSPI_IS_DETACHED)
+            {
+                if (dObj->detachedPollCount < 0xFFFFU)
+                {
+                    dObj->detachedPollCount++;
+                }
+            }
+            else
+            {
+                dObj->detachedPollCount = 0U;
+            }
             if (dObj->isAttachedLastStatus != dObj->isAttached)
             {
                 dObj->isAttachedLastStatus = dObj->isAttached;
@@ -2491,6 +2513,7 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
     dObj->chipSelectPin         = sdSPIInit->chipSelectPin;
     dObj->sdcardSpeedHz         = sdSPIInit->sdcardSpeedHz;
     dObj->pollingIntervalMs     = sdSPIInit->pollingIntervalMs;
+    dObj->detachedPollCount     = 0U;
     dObj->sdspiTokenCount       = 1;
 
     /* Reset the SDSPI attach/detach variables */
@@ -2952,6 +2975,27 @@ void DRV_SDSPI_EventHandlerSet (
         clientObj->context = context;
     }
 }
+/* #589: module-level card-presence query (DRV_SDSPI_IsAttached needs an open
+   CLIENT handle; diagnostics like the WiFi jam advisory have none). */
+bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object)
+{
+    if (object >= DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        return false;
+    }
+    return (gDrvSDSPIObj[object].isAttached == DRV_SDSPI_IS_ATTACHED);
+}
+
+/* #589 P1: reset the detect-poll backoff so an expected insertion (user just
+   enabled SD / requested an operation) is noticed at the fast cadence. */
+void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
+{
+    if (object < DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        gDrvSDSPIObj[object].detachedPollCount = 0U;
+    }
+}
+
 bool DRV_SDSPI_IsAttached (
     const DRV_HANDLE handle
 )

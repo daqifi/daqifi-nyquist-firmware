@@ -472,6 +472,13 @@ void Streaming_NoteEosFired(void);
  */
 uint32_t Streaming_GetQuesBits(void);
 
+// #589: QUES condition bit 13 — shared SPI4 bus jammed (suspect SD card).
+// Owned by SpiBusHealth/wifi_manager (not the streaming session); survives
+// per-session QUES clears; cleared when the SD subsystem is re-enabled.
+#define STREAMING_QUES_SPI_BUS_FAULT (1UL << 13)
+void Streaming_QuesExternalSet(uint32_t mask);
+void Streaming_QuesExternalClear(uint32_t mask);
+
 /**
  * #397 self-heal grace window — seconds an active transport may be
  * unhealthy before the streaming task counts it as "dead".  Default 60.
