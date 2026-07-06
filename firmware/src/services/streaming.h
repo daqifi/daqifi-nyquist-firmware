@@ -53,8 +53,15 @@ extern "C" {
 // ISR_MAX raised 13000->16000 (#524): the per-interface TRANSPORT caps
 // (Streaming_TransportMaxFreq) now govern the real ceilings; ISR_MAX is the
 // ADC/ISR safety ceiling and must sit above the highest single-channel transport
-// cap (USB PB 1ch = 15000) so it does not override it.
-#define STREAMING_ISR_MAX_HZ        16000
+// cap (USB PB 1ch = 22000 as of the 2026-07-05 252 MHz refit) so it does not
+// override it. NQ1 note: the ADC additive model binds T1-only cells below this
+// anyway; NQ2/NQ3's legacy formula keeps its own 16000 start via
+// STREAMING_ISR_MAX_HZ_LEGACY below.
+#define STREAMING_ISR_MAX_HZ        22000
+// NQ2/NQ3 legacy-formula start value and additive-clamp ceiling for paths
+// characterized only at 16 kHz (pre-252 MHz basis). Do not raise without a
+// per-variant review.
+#define STREAMING_ISR_MAX_HZ_LEGACY 16000
 #define STREAMING_TYPE1_AGG_MAX_HZ  55000
 #define STREAMING_TICK_BUDGET       110000
 #define STREAMING_TICK_OVERHEAD     6
@@ -80,7 +87,7 @@ extern "C" {
  * @return Maximum safe frequency in Hz
  */
 static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t totalEnabledChannels) {
-    uint32_t maxFreq = STREAMING_ISR_MAX_HZ;
+    uint32_t maxFreq = STREAMING_ISR_MAX_HZ_LEGACY;
 
     // Type 1 aggregate constraint
     if (type1Count > 0) {
@@ -223,7 +230,15 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
     uint32_t single, A, B;
     switch (interface) {
         case StreamingInterface_USB:
-            if (pb) { single = 15000u; A = 180000u; B = 10u; }
+            /* PB refit 2026-07-05 @252 MHz (#487 harvest, two-night 600 s
+             * worst-night basis, refit_252_transport.py in the test suite):
+             * transport-bound cells measured 1ch=22000 / 5ch(T1)=20000 clean
+             * both nights -> single 22000, A/(B+n)=120000/(1+n) through the
+             * 5ch point (raise-only vs the old curve at every n; mid-n values
+             * shelter under the ADC additive model and the ISR clamp). Note:
+             * the additive models (fitted at 200 MHz) now bind most cells --
+             * their 252 MHz re-fit is the follow-up that unlocks the rest. */
+            if (pb) { single = 22000u; A = 120000u; B =  1u; }
             else    { single = 15000u; A =  34000u; B =  1u; }
             break;
         case StreamingInterface_WiFi:
@@ -250,11 +265,23 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
              * Night-to-night link variation remains (the 06-10 basis held
              * its caps clean; tonight needed 0.66x) — static caps are
              * worst-observed-safe, runtime AIMD (#523) is the real fix. */
-            if (pb) { single =  5175u; A = 139000u; B = 30u; }
+            /* PB single refit 2026-07-05 @252 MHz: 1ch cells 600 s-clean at
+             * 8000-9000 both nights (worst-night basis); single 5175 -> 8000.
+             * The multi-channel curve is UNCHANGED: its two-night basis had
+             * soak-unproven (leaked-at-ceiling) points at 5/8/10 ch which the
+             * never-over discipline penalizes below the current curve -- a
+             * raise there needs a third night or the additive-model re-fit. */
+            if (pb) { single =  8000u; A = 139000u; B = 30u; }
             else    { single =  4675u; A =  20000u; B =  2u; }
             break;
         case StreamingInterface_SD:
-            if (pb) { single =  9000u; A = 150000u; B = 15u; }
+            /* PB refit 2026-07-05 @252 MHz (see USB note): transport-bound
+             * cells 1ch=13000 / 5ch(T1)=11000, 600 s-clean both nights ->
+             * single 13000, A/(B+n)=99000/(4+n) (raise-only at every n).
+             * The SD-additive model (#574, 200 MHz fit) now binds most SD
+             * cells (e.g. 1xT1 at 9852, 5xT1 at 7500) -- its re-fit is the
+             * follow-up. */
+            if (pb) { single = 13000u; A =  99000u; B =  4u; }
             else    { single =  7500u; A =  42000u; B = 12u; }
             break;
         case StreamingInterface_UsbAndSd:
@@ -492,6 +519,13 @@ void Streaming_NoteEosFired(void);
  * Bits are cleared automatically when streaming stops.
  */
 uint32_t Streaming_GetQuesBits(void);
+
+// #589: QUES condition bit 13 — shared SPI4 bus jammed (suspect SD card).
+// Owned by SpiBusHealth/wifi_manager (not the streaming session); survives
+// per-session QUES clears; cleared when the SD subsystem is re-enabled.
+#define STREAMING_QUES_SPI_BUS_FAULT (1UL << 13)
+void Streaming_QuesExternalSet(uint32_t mask);
+void Streaming_QuesExternalClear(uint32_t mask);
 
 /**
  * #397 self-heal grace window — seconds an active transport may be

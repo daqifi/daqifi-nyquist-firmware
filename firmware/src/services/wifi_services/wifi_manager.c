@@ -1,6 +1,8 @@
 #define LOG_LVL LOG_LEVEL_WIFI
 #define LOG_MODULE LOG_MODULE_WIFI
 #include "wifi_manager.h"
+#include "Util/SpiBusHealth.h"
+#include "services/streaming.h"
 #include "wdrv_winc_client_api.h"
 #include "Util/Logger.h"
 #include "wifi_tcp_server.h"
@@ -1001,21 +1003,55 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             }
             break;
         case WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT:
+        {
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
+            // Bounded BUSY wait (#WINC-recovery): give an in-flight driver
+            // init a few seconds to settle, then proceed regardless. On a
+            // board whose module firmware doesn't boot, the driver never
+            // leaves BUSY/ERROR cleanly, and this used to ping-pong events
+            // forever — the bridge (raw nm layer) doesn't need the driver.
+            // Tick-deadline budget with hot re-queue (Qodo #592 pass-2:
+            // sleeping in the handler holds gProcessStateMutex for up to
+            // 3 s, stalling other ProcessState callers such as USB SCPI).
+            // The event-loop round trip paces the retries instead; wrap-safe
+            // (now - start) < window arithmetic.
+            static TickType_t sFwUpdInitSince = 0;
+            static bool sFwUpdInitWaiting = false;
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
-                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
-                break;
+                if (!sFwUpdInitWaiting) {
+                    sFwUpdInitWaiting = true;
+                    sFwUpdInitSince = xTaskGetTickCount();
+                }
+                if ((xTaskGetTickCount() - sFwUpdInitSince) < pdMS_TO_TICKS(3000)) {
+                    SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
+                    break;
+                }
+                LOG_E("FW-update entry: driver still BUSY after 3 s — arming bridge anyway");
             }
+            sFwUpdInitWaiting = false;
             sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
             SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
             break;
+        }
         case WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY:
         {
             SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
+            // Same tick-deadline hot re-queue as the INIT wait above; still
+            // re-queues READY, not INIT (Qodo #592 imp-0: re-entering INIT
+            // re-runs Initialize and compounds the waits into minutes).
+            static TickType_t sFwUpdReadySince = 0;
+            static bool sFwUpdReadyWaiting = false;
             if (wincStatus == SYS_STATUS_BUSY) {
-                SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
-                break;
+                if (!sFwUpdReadyWaiting) {
+                    sFwUpdReadyWaiting = true;
+                    sFwUpdReadySince = xTaskGetTickCount();
+                }
+                if ((xTaskGetTickCount() - sFwUpdReadySince) < pdMS_TO_TICKS(3000)) {
+                    SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_READY);
+                    break;
+                }
             }
+            sFwUpdReadyWaiting = false;
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
             // Failures below used to be completely silent — the FW-update
             // bridge then ran against an unreachable chip and the PC-side
@@ -1056,16 +1092,68 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
 
                 SYS_STATUS wincStatus = WDRV_WINC_Status(sysObj.drvWifiWinc);
+                // #589: episode trackers for the not-ready retry loop. If the
+                // driver stays not-ready for several seconds, check whether the
+                // shared SPI4 bus is electrically jammed (sick SD card holding
+                // MISO) — probe, one release attempt, then quarantine the SD
+                // subsystem so it stops driving the bus.
+                static TickType_t sInitFailSince = 0;
+                static bool sInitFailTracking = false;
+                static bool sJamCheckDone = false;
                 if (wincStatus != SYS_STATUS_READY) {
                     // Log error only once when entering error state
                     if (!initErrorLogged) {
                         LOG_E("WiFi driver not ready (status=%d), retrying...\r\n", wincStatus);
                         initErrorLogged = true;
                     }
+                    if (!sInitFailTracking) {
+                        sInitFailSince = xTaskGetTickCount();
+                        sInitFailTracking = true;
+                    }
+                    if (!sJamCheckDone &&
+                        ((xTaskGetTickCount() - sInitFailSince) > pdMS_TO_TICKS(8000))) {
+                        sJamCheckDone = true;  // one-shot per failure episode
+                        SpiBusHealthResult_t busState = SPI_BUS_BUSY;
+                        // Retry through BUSY: the init churn asserts the WINC CS
+                        // in bursts, and a one-shot probe can land inside one.
+                        for (uint8_t attempt = 0; (attempt < 5U) && (busState == SPI_BUS_BUSY); attempt++) {
+                            busState = SpiBusHealth_ProbeJam();
+                            if (busState == SPI_BUS_CLEAR) {
+                                // idle-clear does not prove transfer-clear (#589 Tier 1b)
+                                busState = SpiBusHealth_ProbeActive();
+                            }
+                            if (busState == SPI_BUS_BUSY) {
+                                vTaskDelay(pdMS_TO_TICKS(100));
+                            }
+                        }
+                        if (busState == SPI_BUS_CLEAR) {
+                            extern bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
+                            if (DRV_SDSPI_IsCardAttached(sysObj.drvSDSPI0)) {
+                                // #589: proof-grade class (bench 2026-07-05): a card
+                                // whose DAT0 driver never tri-states crushes the
+                                // WINC's replies to mid-rail - invisible to every
+                                // probe, cured only by removal.
+                                LOG_E("WiFi unreachable and an SD card IS present on the shared bus - the card is likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");
+                            } else {
+                                LOG_E("WiFi unreachable but SPI4 probes read CLEAR - if an SD card is inserted, try removing it (transfer-speed interference is not probe-visible)");
+                            }
+                        }
+                        if (busState == SPI_BUS_JAMMED) {
+                            LOG_E("WiFi init failing with SPI4 bus JAMMED - suspect SD card; attempting release");
+                            if (SpiBusHealth_TryRelease() == SPI_BUS_JAMMED) {
+                                SpiBusHealth_SetSdQuarantine(true);
+                                Streaming_QuesExternalSet(STREAMING_QUES_SPI_BUS_FAULT);
+                                LOG_E("SPI4 still jammed after release - SD quarantined; remove the SD card if WiFi stays down");
+                            }
+                        }
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(10));  // pace the retry loop
                     //wait for initialization to complete
                     SendEvent(WIFI_MANAGER_EVENT_INIT);
                     break;
                 }
+                sInitFailTracking = false;
+                sJamCheckDone = false;
                 // Reset error flag on success
                 if (initErrorLogged) {
                     LOG_D("WiFi driver initialization succeeded\r\n");
@@ -1365,17 +1453,24 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 SendEvent(WIFI_MANAGER_EVENT_DEINIT);
                 break;
             }
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
-                vTaskDelay(pdMS_TO_TICKS(50)); // Add a small delay to prevent busy-looping
-                SendEvent(WIFI_MANAGER_EVENT_REINIT);
-                break;
-            }
-
-            // If WiFi firmware update requested, transition to MainState which will route to WIFI_FW_UPDATE_INIT
+            // If WiFi firmware update requested, transition to MainState which
+            // will route to WIFI_FW_UPDATE_INIT. Checked BEFORE the driver-BUSY
+            // gate (#WINC-recovery): on a board whose WiFi module firmware
+            // doesn't boot, the driver init loop keeps the status BUSY/ERROR
+            // near-continuously, and gating the FW-update entry on !BUSY makes
+            // the rescue path — the only way to REFLASH that module — almost
+            // unreachable. The bridge talks to the chip below the driver, so
+            // it doesn't need the driver settled.
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_WIFI_FW_UPDATE_REQUESTED)) {
                 LOG_D("WiFi firmware update mode requested - transitioning to MainState\r\n");
                 returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
                 pInstance->nextState = MainState;
+                break;
+            }
+
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_BUSY) {
+                vTaskDelay(pdMS_TO_TICKS(50)); // Add a small delay to prevent busy-looping
+                SendEvent(WIFI_MANAGER_EVENT_REINIT);
                 break;
             }
 
