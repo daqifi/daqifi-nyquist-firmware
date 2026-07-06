@@ -53,6 +53,7 @@
  * See DRV_SDSPI_ReleaseBus, the CHK_FOR_CARD lock rollback, and the
  * command-executor bus-completion watchdog (#567 extension). */
 #define LOG_MODULE LOG_MODULE_SD
+#define LOG_LVL LOG_LEVEL_SD   /* compile ceiling: without this every LOG_D in this file is a no-op (found #589 P1) */
 #include "Util/Logger.h"
 
 #include "drv_sdspi_local.h"
@@ -1728,6 +1729,10 @@ static void lDRV_SDSPI_AttachDetachTasks
             if (dObj->cardPollingTimerExpired == true)
             {
                 dObj->cardPollingTimerExpired = false;
+                /* #605: mark this CHECK_DEVICE entry as a timer-gated poll so
+                 * the backoff counter counts real polls, not the task-rate
+                 * spins CHECK_DEVICE makes while sdState != IDLE. */
+                dObj->detectPollFresh = true;
                 dObj->taskState = DRV_SDSPI_TASK_CHECK_DEVICE;
             }
             break;
@@ -1736,17 +1741,25 @@ static void lDRV_SDSPI_AttachDetachTasks
             /* Check for device attach */
 
             dObj->isAttached = (DRV_SDSPI_ATTACH)lDRV_SDSPI_MediaCommandDetect (object);
-            /* #589 P1: track consecutive card-absent polls (saturating). */
-            if (dObj->isAttached == DRV_SDSPI_IS_DETACHED)
+            /* #589 P1 / #605: track consecutive card-absent polls (saturating).
+             * Gated on detectPollFresh - CHECK_DEVICE re-executes every
+             * SYS_Tasks pass while sdState != IDLE, and counting those spins
+             * (~task rate) re-saturated the counter within milliseconds of any
+             * DetectPollKick, making the kick ineffective (#605). */
+            if (dObj->detectPollFresh)
             {
-                if (dObj->detachedPollCount < 0xFFFFU)
+                dObj->detectPollFresh = false;
+                if (dObj->isAttached == DRV_SDSPI_IS_DETACHED)
                 {
-                    dObj->detachedPollCount++;
+                    if (dObj->detachedPollCount < 0xFFFFU)
+                    {
+                        dObj->detachedPollCount++;
+                    }
                 }
-            }
-            else
-            {
-                dObj->detachedPollCount = 0U;
+                else
+                {
+                    dObj->detachedPollCount = 0U;
+                }
             }
             if (dObj->isAttachedLastStatus != dObj->isAttached)
             {
@@ -2515,6 +2528,7 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
     dObj->sdcardSpeedHz         = sdSPIInit->sdcardSpeedHz;
     dObj->pollingIntervalMs     = sdSPIInit->pollingIntervalMs;
     dObj->detachedPollCount     = 0U;
+    dObj->detectPollFresh       = false;
     dObj->sdspiTokenCount       = 1;
 
     /* Reset the SDSPI attach/detach variables */

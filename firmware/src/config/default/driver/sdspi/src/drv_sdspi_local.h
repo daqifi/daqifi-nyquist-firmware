@@ -1524,6 +1524,11 @@ typedef struct
        attach or via DRV_SDSPI_DetectPollKick (SD manager activity). */
     uint16_t                                        detachedPollCount;
 
+    /* #605: set on polling-timer expiry, cleared by CHECK_DEVICE - gates the
+       backoff counter to timer-gated polls only (CHECK_DEVICE spins at task
+       rate while sdState != IDLE). */
+    bool                                            detectPollFresh;
+
     /* Flag indicating the presence of the SD Card */
     SYS_MEDIA_STATUS                                mediaState;
 
