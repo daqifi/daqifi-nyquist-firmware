@@ -31,6 +31,8 @@
 // These should be many times longer than expected operation duration.
 // Only logs error when timeout is hit, indicating a real problem.
 #define SD_MOUNT_MAX_RETRIES        10      // Max mount attempts before giving up (incompatible FS, etc.)
+#define SD_UNMOUNT_MAX_RETRIES        (40U)   /* #603: bounded, then force-clear */
+#define SD_UNMOUNT_RETRY_DELAY_MS     (50U)   /* #603: 40 x 50 ms = 2 s ceiling */
 #define SD_MOUNT_RETRY_DELAY_MS     100     // Delay between mount retries (total budget: retries * delay = 1s)
 #define SD_SECTOR_SIZE_BYTES        512U    // FAT sector size (must match ffconf.h FF_MIN_SS/FF_MAX_SS)
 #define SD_DEBUG_TIMEOUT_MS         60000U  // 60 seconds - filesystem operations
@@ -173,7 +175,8 @@ typedef struct {
     bool lastOperationSuccess;   // Result of last completed operation
 
     // Mount retry tracking
-    uint8_t mountRetryCount;     // Number of consecutive mount failures
+    uint8_t mountRetryCount;
+    uint8_t unmountRetryCount;   /* #603: bounded unmount retries */     // Number of consecutive mount failures
 
     // Space query result (populated by GET_SPACE mode)
     uint64_t spaceResultFreeBytes;
@@ -786,14 +789,34 @@ void sd_card_manager_ProcessState() {
                 LOG_D("[SD] Unmounted successfully\r\n");
             }
             if (gSDCardData.discMounted == true) {
-                /* The disk could not be un mounted. Try
-                 * un mounting again untill success. */
+                /* #603: retrying "untill success" wedged the manager forever
+                 * when the card was physically removed while mounted - the
+                 * unmount can never succeed, IsBusy() stays true, and every
+                 * SD SCPI (including ENAble 0) rejects until reboot. Bound
+                 * the retries, and skip them entirely when the card is
+                 * confirmed absent; force-clear our mount state so the
+                 * manager returns to idle (next insertion mounts fresh). */
+                extern bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
+                gSDCardData.unmountRetryCount++;
+                if (!DRV_SDSPI_IsCardAttached(0) ||
+                    (gSDCardData.unmountRetryCount >= SD_UNMOUNT_MAX_RETRIES)) {
+                    LOG_E("[SD] Unmount unrecoverable (card %s, %u attempts) - forcing state clear",
+                          DRV_SDSPI_IsCardAttached(0) ? "present" : "absent",
+                          (unsigned)gSDCardData.unmountRetryCount);
+                    gSDCardData.discMounted = false;
+                    gSDCardData.unmountRetryCount = 0;
+                    gLoggedUnmountFail = false;
+                    /* fall through to the cleanup branch below on next pass */
+                    break;
+                }
                 if (!gLoggedUnmountFail) {
                     gLoggedUnmountFail = true;
                     LOG_E("[SD] Unmount failed, retrying");
                 }
+                vTaskDelay(pdMS_TO_TICKS(SD_UNMOUNT_RETRY_DELAY_MS));
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             } else {
+                gSDCardData.unmountRetryCount = 0;
                 // Reset file splitting state for next session
                 gSDCardData.fileCounter = 0;
                 gSDCardData.currentFileBytes = 0;
