@@ -55,6 +55,7 @@
  * flash updates). Log the first few rejects with the reason. */
 #define LOG_MODULE LOG_MODULE_GENERAL
 #include "Util/Logger.h"
+#include "task.h"   /* taskENTER_CRITICAL for the reject counters */
 static uint8_t gSpiAddRejectLogs = 0;
 #include "system/debug/sys_debug.h"
 
@@ -1224,9 +1225,9 @@ void DRV_SPI_WriteReadTransferAdd (
     clientObj = lDRV_SPI_DriverHandleValidate(handle);
     if (clientObj == NULL)
     {
+        lDRV_SPI_CountReject(&gSpiRejStale);
         if (gSpiAddRejectLogs < 8) {
             gSpiAddRejectLogs++;
-            lDRV_SPI_CountReject(&gSpiRejStale);
             LOG_E("SPIADD reject: stale handle=%08lx", (unsigned long)handle);
         }
         return;
@@ -1240,9 +1241,9 @@ void DRV_SPI_WriteReadTransferAdd (
         {
             if (dObj->exclusiveUseClientHandle != handle)
             {
+                lDRV_SPI_CountReject(&gSpiRejExclusive);
                 if (gSpiAddRejectLogs < 8) {
                     gSpiAddRejectLogs++;
-                    lDRV_SPI_CountReject(&gSpiRejExclusive);
             LOG_E("SPIADD reject: exclusive holder=%08lx me=%08lx cntr=%u",
                           (unsigned long)dObj->exclusiveUseClientHandle,
                           (unsigned long)handle, (unsigned)dObj->exclusiveUseCntr);
@@ -1254,9 +1255,9 @@ void DRV_SPI_WriteReadTransferAdd (
         if(lDRV_SPI_ResourceLock(dObj) == false)
         {
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Failed to get resource lock");
+            lDRV_SPI_CountReject(&gSpiRejLockFail);
             if (gSpiAddRejectLogs < 8) {
                 gSpiAddRejectLogs++;
-                lDRV_SPI_CountReject(&gSpiRejLockFail);
             LOG_E("SPIADD reject: resource lock fail");
             }
             return;
@@ -1271,9 +1272,9 @@ void DRV_SPI_WriteReadTransferAdd (
              * transfer queue size parameter is configured to be less */
 
             SYS_DEBUG_MESSAGE(SYS_ERROR_ERROR, "Insufficient Queue Depth");
+            lDRV_SPI_CountReject(&gSpiRejQueueFull);
             if (gSpiAddRejectLogs < 8) {
                 gSpiAddRejectLogs++;
-                lDRV_SPI_CountReject(&gSpiRejQueueFull);
             LOG_E("SPIADD reject: queue full (handle=%08lx)", (unsigned long)handle);
             }
             lDRV_SPI_ResourceUnlock(dObj);
