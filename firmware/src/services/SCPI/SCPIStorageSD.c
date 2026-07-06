@@ -24,6 +24,8 @@
 /* ************************************************************************** */
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
+#include "Util/SpiBusHealth.h"
+#include "services/streaming.h"
 #include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
 #include "../../state/runtime/BoardRuntimeConfig.h"
@@ -110,6 +112,12 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         // Enable SD card
         LOG_D("SD:ENAble - Enabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = true;
+        // #589: manual re-enable clears a bus-jam quarantine (user has
+        // presumably reseated or replaced the card).
+        if (SpiBusHealth_IsSdQuarantined()) {
+            SpiBusHealth_SetSdQuarantine(false);
+            Streaming_QuesExternalClear(STREAMING_QUES_SPI_BUS_FAULT);
+        }
     } else {
         // Disable SD card - check if busy first to prevent data loss
         if (sd_card_manager_IsBusy()) {
@@ -392,6 +400,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         }
         if (!sd_card_manager_IsWriteReady()) {
             LOG_E("SD:BENCH - File not ready after timeout\r\n");
+            LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
+                  "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
@@ -447,14 +457,33 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                 break;
         }
 
-        // Write to SD card (WriteToBuffer has timeout protection). Release
-        // the shared mutex before checking the result so the error path
-        // doesn't need to remember to give it back.
-        size_t written = sd_card_manager_WriteToBuffer((const char*)testBuffer, chunkSize);
+        // Write to SD card, pacing the producer to the drain rate: this
+        // task (USB SCPI, pri 7) fills the SD circular buffer far faster
+        // than the SD task (pri 5) drains it, so "buffer momentarily full"
+        // is the NORMAL steady state of a throughput benchmark - not a
+        // failure. The pre-2026-07-04 code aborted on the first short
+        // write, which killed every benchmark at exactly the circular
+        // buffer size (32768) and was misdiagnosed as a card problem.
+        // Only a sustained stall (no drain progress for 10 s) is an error.
+        size_t written = 0;
+        uint32_t stallMs = 0;
+        while ((written < chunkSize) && (stallMs < 10000U)) {
+            size_t w = sd_card_manager_WriteToBuffer(
+                (const char*)testBuffer + written, chunkSize - written);
+            if (w == 0U) {
+                vTaskDelay(pdMS_TO_TICKS(5));
+                stallMs += 5U;
+            } else {
+                written += w;
+                stallMs = 0U;
+            }
+        }
         SCPI_ResponseBuf_Give();
 
         if (written != chunkSize) {
-            LOG_E("SD:BENCH - Write failed at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
+            LOG_E("SD:BENCH - drain stalled >10s at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
+            LOG_E("SD:BENCH - if reads/LIST work but writes stall, the card is "
+                  "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
@@ -479,6 +508,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         }
         if (idleWait >= 500) {
             LOG_E("SD:BENCH - SD idle timeout after 5s\r\n");
+            LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
+                  "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
         }
     }
 

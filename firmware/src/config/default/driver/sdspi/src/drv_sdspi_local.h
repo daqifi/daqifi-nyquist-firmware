@@ -91,10 +91,19 @@
 #define DRV_SDSPI_TOKEN_MAX                       (0xFFFFU)
 
 #define DRV_SDSPI_FLOATING_BUS_TIMEOUT            (1000)
-#define DRV_SDSPI_R1B_RESP_TIMEOUT                (100)
+/* R1b busy-wait ceiling: raised with the write timeout — A2/SDXC cards'
+ * cache-commit pauses can exceed 100 ms between write bursts (diagnostic,
+ * 2026-07-04; see WRITE_TIMEOUT note below). */
+#define DRV_SDSPI_R1B_RESP_TIMEOUT                (500)
 
 #define DRV_SDSPI_READ_TIMEOUT_IN_MS              (250)
-#define DRV_SDSPI_WRITE_TIMEOUT_IN_MS             (250)
+/* 500 ms = SD spec worst-case write busy for SDXC-class cards (SDHC is
+ * 250 ms). The Harmony default of 250 ms aborts mid-write on big/fast cards
+ * whose internal garbage collection produces occasional long-busy events —
+ * bench card wrote 2 GB flawlessly in a PC reader but died at 32 KB here
+ * (2026-07-04). This is an abort ceiling, not a wait: healthy cards are
+ * unaffected. */
+#define DRV_SDSPI_WRITE_TIMEOUT_IN_MS             (500)
 
 /* #567: hard timeout for the SPI bus-completion (DMA) waits. A single block
  * or command-byte DRV_SPI transfer completes in well under 1 ms; the only way
@@ -131,6 +140,10 @@
 */
 
 #define DRV_SDSPI_SPI_INITIAL_SPEED                        400000
+
+/* #589 P1: detect-poll backoff (see detachedPollCount). */
+#define DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS               (10U)
+#define DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS               (5000U)
 
 
 // *****************************************************************************
@@ -1503,6 +1516,13 @@ typedef struct
 
     /* Flag to indicate the SD Card last attached status */
     DRV_SDSPI_ATTACH                                isAttachedLastStatus;
+
+    /* #589 P1: consecutive card-absent detect polls (saturating). After
+       DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS misses the poll interval stretches
+       to DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS - an empty slot stops costing
+       the shared bus a CMD exchange every second (WiFi shares SPI4). Reset on
+       attach or via DRV_SDSPI_DetectPollKick (SD manager activity). */
+    uint16_t                                        detachedPollCount;
 
     /* Flag indicating the presence of the SD Card */
     SYS_MEDIA_STATUS                                mediaState;
