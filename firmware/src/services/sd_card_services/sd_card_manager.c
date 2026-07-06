@@ -1682,8 +1682,8 @@ bool sd_card_manager_Deinit() {
 
 bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     /* #589 P1: SD activity expected - restore the fast detect-poll cadence.
-       (extern per the app_freertos.c DRV_SDSPI_ReleaseBus pattern - the
-       manager doesn't pull in the full driver header.) */
+       (extern kept per the app_freertos.c pattern; prototype now also lives
+       in drv_sdspi.h so signatures are checkable.) */
     extern void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
     DRV_SDSPI_DetectPollKick(0);
 

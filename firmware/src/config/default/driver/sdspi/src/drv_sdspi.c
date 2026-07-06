@@ -2990,10 +2990,9 @@ bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object)
    enabled SD / requested an operation) is noticed at the fast cadence. */
 void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
 {
-    DRV_SDSPI_OBJ* dObj = (DRV_SDSPI_OBJ*)&gDrvSDSPIObj[object];
     if (object < DRV_SDSPI_INSTANCES_NUMBER)
     {
-        dObj->detachedPollCount = 0U;
+        gDrvSDSPIObj[object].detachedPollCount = 0U;
     }
 }
 
