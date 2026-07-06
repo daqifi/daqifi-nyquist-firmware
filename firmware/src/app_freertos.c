@@ -169,11 +169,38 @@ void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSe
     *pPacketLen = count;
 }
 
+/* #598: writer shims so READ/LIST data can flow to the requesting
+ * interface. Runs on the SD task (pri 5); the TCP write buffer is drained
+ * by WifiTask (pri 2) concurrently, so retry-with-delay makes progress. */
+static size_t sd_reply_write_usb(const char* data, size_t len)
+{
+    return UsbCdc_WriteToBuffer(NULL, data, len);
+}
+
+static size_t sd_reply_write_tcp(const char* data, size_t len)
+{
+    /* wifi_tcp_server_WriteBuffer is all-or-nothing (#371 policy), and the
+     * TCP circular buffer can be as small as 1400 B after a non-WiFi
+     * streaming session re-partitions the pool - a chunk larger than the
+     * whole buffer would never fit and the transfer would time out (Qodo
+     * #599). Clamp below that floor; the caller loop handles short writes. */
+    if (len > 1024u)
+    {
+        len = 1024u;
+    }
+    return wifi_tcp_server_WriteBuffer(data, len);
+}
+
 void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
     // Defensive checks
     if (pDataBuff == NULL || dataLen == 0) {
         return;
     }
+
+    const sd_card_manager_settings_t* pSet =
+            (const sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    const bool toTcp = (pSet != NULL) && (pSet->replyTarget == SD_CARD_REPLY_WIFI_TCP);
+    size_t (*writeFn)(const char*, size_t) = toTcp ? sd_reply_write_tcp : sd_reply_write_usb;
 
     size_t transferredLength = 0;
     uint32_t retryCount = 0;
@@ -182,8 +209,7 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
         size_t remaining = dataLen - transferredLength;
         size_t toSend = (remaining < USB_TRANSFER_CHUNK_SIZE) ? remaining : USB_TRANSFER_CHUNK_SIZE;
 
-        size_t bytesWritten = UsbCdc_WriteToBuffer(
-                NULL,
+        size_t bytesWritten = writeFn(
                 (const char *) pDataBuff + transferredLength,
                 toSend
                 );
@@ -198,7 +224,8 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
         } else {
             retryCount++;
             if (retryCount >= USB_TRANSFER_MAX_RETRIES) {
-                LOG_E("[USB] Callback timeout: sent %u/%u bytes after %u retries",
+                LOG_E("[SD reply] %s timeout: sent %u/%u bytes after %u retries",
+                      toTcp ? "TCP" : "USB",
                       (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
                 break;
             }

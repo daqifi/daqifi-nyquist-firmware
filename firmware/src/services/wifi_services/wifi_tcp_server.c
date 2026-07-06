@@ -167,6 +167,15 @@ static wifi_tcp_server_clientContext_t* SCPI_TCP_GetClient(scpi_t * context) {
  * @param len The length of 'data'
  * @return The number of characters written
  */
+bool wifi_tcp_server_ContextIsTcp(const scpi_t* context) {
+    // #598: identify the TCP SCPI context by its user_context (set in
+    // CreateSCPIContext below to the TCP client context). USB's context
+    // carries &gRunTimeUsbSttings instead.
+    return (gpServerData != NULL) &&
+           (context != NULL) &&
+           (context->user_context == (void*)&gpServerData->client);
+}
+
 static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
     // Skip retry loop if client is disconnected — no progress possible
     if (gpServerData == NULL || gpServerData->client.clientSocket < 0) {
