@@ -103,12 +103,14 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
  *
  * period_ns = base + arm*(scan armed) + cT1*nT1 + cT2*nT2_user + cMon*nMon
  *
- * Fitted to the 2026-06-22 freeze-aware ceiling sweep — the first sweep whose
- * leak detector counts ScanStaleDropped (scan didn't complete -> frozen data)
- * as a drop. The prior drop-blind sweeps counted frozen data as "clean" and so
- * INFLATED the T2/scanned ceilings; this model replaces the over-conservative-
- * yet-wrong tick-budget / type1Agg / MC12b_ScanMaxFreq terms FOR NQ1 only.
- *   - PB fits to +-13% -> margin 0.88 makes it a safe never-over envelope.
+ * Originally fitted to the 2026-06-22 freeze-aware ceiling sweep (#563),
+ * replacing the drop-blind tick-budget / type1Agg / MC12b_ScanMaxFreq terms
+ * FOR NQ1 only. #596 (2026-07-06, 252 MHz three-night grid) re-fitted the
+ * PB path as a PIECEWISE model split by scan class — pure-T1 (no scan),
+ * armed OBDiag-off, and OBDiag-on (the last keeps the #563 coefficients,
+ * 600 s at-cap revalidated) — because a single additive law under-fit the
+ * grid (tightness 0.74). CSV keeps the #563 single law (no CSV grid basis).
+ *   - PB: margin 0.88 keeps each class a safe never-over envelope.
  *   - CSV is byte/transport-bound (noisier) -> margin 0.80 here, AND the
  *     per-format transport term is still min()'d downstream (binds CSV lower).
  * NQ2/NQ3 (AD7609 — no MODULE7 scan, different timing) keep the legacy formula.
