@@ -1715,6 +1715,7 @@ static void lDRV_SDSPI_AttachDetachTasks
             if (dObj->detachedPollCount >= DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS)
             {
                 pollMs = DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS;
+                LOG_D_ONCE(LOG_ONCE_BIT_SD_BACKOFF, "SDSPI detect-poll backoff engaged");
             }
             if (DRV_SDSPI_CardDetectPollingTimerStart(dObj, pollMs) == true)
             {
@@ -2992,6 +2993,8 @@ void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
 {
     if (object < DRV_SDSPI_INSTANCES_NUMBER)
     {
+        LOG_D("SDSPI detect-poll kick (count was %u)",
+              (unsigned)gDrvSDSPIObj[object].detachedPollCount);
         gDrvSDSPIObj[object].detachedPollCount = 0U;
     }
 }
