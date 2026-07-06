@@ -5340,6 +5340,12 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
             scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
             scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
 
+    // #598: SCPI_Init doesn't take user_context, and this function accepted
+    // the parameter without ever storing it - both transports were passing
+    // their context pointer into the void. Interface-origin detection
+    // (wifi_tcp_server_ContextIsTcp) needs it actually set.
+    daqifiScpiContext.user_context = user_context;
+
     // Return it to the app
     return daqifiScpiContext;
 }
