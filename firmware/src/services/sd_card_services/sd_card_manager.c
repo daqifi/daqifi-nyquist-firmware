@@ -7,6 +7,7 @@
 #include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
+#include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE
@@ -128,6 +129,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_FORMAT,
     SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE,
+    SD_CARD_MANAGER_PROCESS_STATE_COMPUTE_CRC,   /* #306 */
     SD_CARD_MANAGER_PROCESS_STATE_DEINIT,
     SD_CARD_MANAGER_PROCESS_STATE_IDLE,
     SD_CARD_MANAGER_PROCESS_STATE_ERROR,
@@ -177,6 +179,12 @@ typedef struct {
     // Mount retry tracking
     uint8_t mountRetryCount;
     uint8_t unmountRetryCount;   /* #603: bounded unmount retries */     // Number of consecutive mount failures
+
+    // #306: CRC result (populated by COMPUTE_CRC mode)
+    volatile bool crcResultValid;
+    uint32_t crcResult;
+    uint64_t crcLength;
+    uint32_t crcRunning;      /* streaming accumulator (task-only access) */
 
     // Space query result (populated by GET_SPACE mode)
     uint64_t spaceResultFreeBytes;
@@ -1015,15 +1023,26 @@ void sd_card_manager_ProcessState() {
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Failed to open SD Card file for writing: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
                 }
-            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
-                // For READ mode, construct filename directly from settings (no splitting)
+            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
+                       gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
+                // READ/CRC: construct filename directly from settings (no splitting)
                 snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
                         gpSDCardSettings->directory, gpSDCardSettings->file);
                 LOG_D("[SD] Opening file for read: '%s'\r\n", gSDCardData.filePath);
 
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE;
+                if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
+                    /* #306: invalidate prior result, arm the accumulator */
+                    taskENTER_CRITICAL();
+                    gSDCardData.crcResultValid = false;
+                    taskEXIT_CRITICAL();
+                    gSDCardData.crcRunning = CRC32_Init();
+                    gSDCardData.crcLength = 0;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_COMPUTE_CRC;
+                } else {
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE;
+                }
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                     /* Could not open the file. Error out*/
@@ -1633,6 +1652,52 @@ void sd_card_manager_ProcessState() {
         }
             break;
 
+        case SD_CARD_MANAGER_PROCESS_STATE_COMPUTE_CRC:
+        {
+            /* #306: fold the file into the CRC in bounded chunks per task
+             * pass - no priority boost, no long loop: CRC is a background
+             * diagnostic and must not starve streaming/WiFi. ~8 KB per pass
+             * via the shared op buffer (serialized by gSDOpMutex). */
+            if (gSDOpMutex) {
+                SD_TakeMutexDebug(gSDOpMutex, "crc_operation");
+            }
+            bool done = false;
+            for (int pass = 0; pass < 4 && !done; pass++) {
+                size_t rd = SYS_FS_FileRead(gSDCardData.fileHandle,
+                                            gSdSharedBuffer, 2048);
+                if ((int32_t)rd > 0) {
+                    gSDCardData.crcRunning = CRC32_Update(gSDCardData.crcRunning,
+                                                          gSdSharedBuffer, rd);
+                    gSDCardData.crcLength += rd;
+                } else {
+                    done = true;
+                }
+            }
+            if (gSDOpMutex) {
+                xSemaphoreGive(gSDOpMutex);
+            }
+            if (done) {
+                bool eof = SYS_FS_FileEOF(gSDCardData.fileHandle);
+                SYS_FS_FileClose(gSDCardData.fileHandle);
+                gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                if (eof) {
+                    uint32_t crc = CRC32_Finalize(gSDCardData.crcRunning);
+                    taskENTER_CRITICAL();
+                    gSDCardData.crcResult = crc;
+                    gSDCardData.crcResultValid = true;
+                    taskEXIT_CRITICAL();
+                    gSDCardData.lastOperationSuccess = true;
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                } else {
+                    LOG_E("[SD] CRC read error before EOF on '%s'", gSDCardData.filePath);
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                }
+            }
+        }
+            break;
+
         case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
 
             break;
@@ -1800,6 +1865,18 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * is correct, since gating on settings init could leave the
      * flag stuck-true if SCPI ever runs before sd init. */
     gSDCardData.startupDiskFull = false;
+}
+
+bool sd_card_manager_GetCrcResult(uint32_t *crc32, uint64_t *length) {
+    bool valid;
+    taskENTER_CRITICAL();
+    valid = gSDCardData.crcResultValid;
+    if (valid) {
+        if (crc32 != NULL)  { *crc32  = gSDCardData.crcResult; }
+        if (length != NULL) { *length = gSDCardData.crcLength; }
+    }
+    taskEXIT_CRITICAL();
+    return valid;
 }
 
 bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {

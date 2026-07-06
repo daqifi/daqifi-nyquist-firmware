@@ -1014,6 +1014,7 @@
         <itemPath>../src/Util/CoherentPool.c</itemPath>
         <itemPath>../src/Util/CircularBuffer.c</itemPath>
         <itemPath>../src/Util/Logger.c</itemPath>
+        <itemPath>../src/Util/CRC32.c</itemPath>
         <itemPath>../src/Util/SpiBusHealth.c</itemPath>
         <itemPath>../src/Util/StringFormatters.c</itemPath>
         <itemPath>../src/Util/StreamingBufferPool.c</itemPath>
