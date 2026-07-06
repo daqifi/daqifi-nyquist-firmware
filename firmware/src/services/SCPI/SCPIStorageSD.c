@@ -26,6 +26,7 @@
 #include "SCPIStorageSD.h"
 #include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
+#include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -220,6 +221,9 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
         pSDCardRuntimeConfig->file[fileLen] = '\0';
     }
+    /* #598: route the async file data back to the interface that asked. */
+    pSDCardRuntimeConfig->replyTarget = wifi_tcp_server_ContextIsTcp(context)
+            ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     result = SCPI_RES_OK;
@@ -271,6 +275,8 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     // If no directory specified, the sd_card_manager will use the default from settings
     
     // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
+    pSDCardRuntimeConfig->replyTarget = wifi_tcp_server_ContextIsTcp(context)
+            ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;   /* #598 */
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 

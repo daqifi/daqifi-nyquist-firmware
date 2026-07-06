@@ -49,9 +49,16 @@ extern "C" {
         SD_CARD_MANAGER_MODE_GET_SPACE,
     } sd_card_manager_mode_t;
 
+    /** #598: which interface receives async READ/LIST output data. */
+    typedef enum {
+        SD_CARD_REPLY_USB = 0,      /**< default - preserves legacy behavior */
+        SD_CARD_REPLY_WIFI_TCP = 1,
+    } sd_card_manager_reply_target_t;
+
     typedef struct {
         bool enable;
         sd_card_manager_mode_t mode;
+        sd_card_manager_reply_target_t replyTarget;  /**< #598 */
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
         uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)

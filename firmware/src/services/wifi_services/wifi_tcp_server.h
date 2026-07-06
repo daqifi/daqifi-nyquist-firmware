@@ -147,6 +147,13 @@ typedef struct s_tcpServerContext
  */
 bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize);
 
+/** Queue bytes to the TCP client write buffer (drained by WifiTask).
+ *  Returns bytes accepted (0 = buffer full or no client - see #371 counters). */
+size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len);
+
+/** #598: true when the given SCPI context is the WiFi TCP console's. */
+bool wifi_tcp_server_ContextIsTcp(const scpi_t* context);
+
 /**
  * Swap the WiFi TCP circular write buffer to pool-managed memory.
  * Resets the buffer (discards pending data). Called by StreamingBufferPool
