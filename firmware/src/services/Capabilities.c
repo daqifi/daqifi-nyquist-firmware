@@ -123,7 +123,14 @@ void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
      * this the capability query would advertise a higher rate than the device
      * delivers (clients pre-validate against current_max_rate_hz). */
     out->maxFreqHz = (total > 0) ? Streaming_ComputeMaxFreqForConfig() : 0;
-    out->isrMaxHz      = STREAMING_ISR_MAX_HZ;
+    /* Qodo #595: advertise the variant-appropriate ISR ceiling. NQ1's basis
+     * supports 22 kHz (2026-07-05 refit); NQ2/NQ3 remain characterized only
+     * to the legacy 16 kHz and their legacy formula still enforces it -
+     * exporting 22 kHz there would mislead client-side rate models. */
+    const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    out->isrMaxHz      = (cfg != NULL && cfg->BoardVariant == 1u)
+                             ? STREAMING_ISR_MAX_HZ
+                             : STREAMING_ISR_MAX_HZ_LEGACY;
     out->type1AggMaxHz = STREAMING_TYPE1_AGG_MAX_HZ;
     out->tickBudget    = STREAMING_TICK_BUDGET;
     out->tickOverhead  = STREAMING_TICK_OVERHEAD;
