@@ -120,7 +120,26 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
     uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
     uint64_t period_ns, num;
     if (isProtoBuf) {
-        period_ns = 55300ULL + 20000ULL*armed + 2160ULL*nT1 + 13470ULL*nT2user + 2260ULL*nMon;
+        /* #596 (2026-07-06, 252 MHz re-fit): three-night fine-grain grid
+         * (600 s freeze-aware endurance, benchmarks/overnight_*additive_grid*)
+         * showed a single additive law under-fits - the armed classes are
+         * fitted separately (never-over the worst-night clean basis):
+         *   armed=0 (pure T1, no scan):  43200 + 2300*nT1   (+21..26%)
+         *   armed=1, OBDiag off:         58000 + 2160*nT1 + 10000*nT2 (+31..33%)
+         *   OBDiag on (nMon>0):          UNCHANGED - every cell 600 s at-cap
+         *                                validated 2026-07-06 (12/12 clean);
+         *                                the grid's lower readings were
+         *                                1000 Hz-sweep lower bounds.
+         * cT1=2160 in the armed class is carried from the prior fit (grid
+         * fits it to ~0; keeping it is strictly conservative for mixed
+         * configs, which have no dedicated OBD=OFF basis cells). */
+        if (nMon > 0u) {
+            period_ns = 55300ULL + 20000ULL*armed + 2160ULL*nT1 + 13470ULL*nT2user + 2260ULL*nMon;
+        } else if (armed != 0u) {
+            period_ns = 58000ULL + 2160ULL*nT1 + 10000ULL*nT2user;
+        } else {
+            period_ns = 43200ULL + 2300ULL*nT1;
+        }
         num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
     } else {
         period_ns = 71000ULL + 21300ULL*armed + 4550ULL*nT1 + 15190ULL*nT2user + 2680ULL*nMon;
