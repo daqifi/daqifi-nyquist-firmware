@@ -31,7 +31,8 @@
 // These should be many times longer than expected operation duration.
 // Only logs error when timeout is hit, indicating a real problem.
 #define SD_MOUNT_MAX_RETRIES        10      // Max mount attempts before giving up (incompatible FS, etc.)
-#define SD_UNMOUNT_MAX_RETRIES        (40U)   /* #603: ~2 s at 50 ms/retry, then force-clear */
+#define SD_UNMOUNT_MAX_RETRIES        (40U)   /* #603: bounded, then force-clear */
+#define SD_UNMOUNT_RETRY_DELAY_MS     (50U)   /* #603: 40 x 50 ms = 2 s ceiling */
 #define SD_MOUNT_RETRY_DELAY_MS     100     // Delay between mount retries (total budget: retries * delay = 1s)
 #define SD_SECTOR_SIZE_BYTES        512U    // FAT sector size (must match ffconf.h FF_MIN_SS/FF_MAX_SS)
 #define SD_DEBUG_TIMEOUT_MS         60000U  // 60 seconds - filesystem operations
@@ -812,7 +813,7 @@ void sd_card_manager_ProcessState() {
                     gLoggedUnmountFail = true;
                     LOG_E("[SD] Unmount failed, retrying");
                 }
-                vTaskDelay(pdMS_TO_TICKS(50));
+                vTaskDelay(pdMS_TO_TICKS(SD_UNMOUNT_RETRY_DELAY_MS));
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
             } else {
                 gSDCardData.unmountRetryCount = 0;
