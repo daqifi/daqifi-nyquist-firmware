@@ -208,7 +208,10 @@ SpiBusHealthResult_t SpiBusHealth_ProbeActive(void)
     }
     if (!SpiBusHealth_EnsureClient())
     {
-        return gLastResult;
+        // Qodo #594: don't echo a stale verdict when the probe never ran -
+        // report indeterminate so callers know this pass produced no data.
+        gLastResult = SPI_BUS_INDETERMINATE;
+        return SPI_BUS_INDETERMINATE;
     }
 
     bool pullWasEnabled = ((CNPUA & (1UL << 15)) != 0U);
@@ -290,7 +293,10 @@ SpiBusHealthResult_t SpiBusHealth_ProbeCrossCs(void)
     }
     if (!SpiBusHealth_EnsureClient())
     {
-        return gLastResult;
+        // Qodo #594: don't echo a stale verdict when the probe never ran -
+        // report indeterminate so callers know this pass produced no data.
+        gLastResult = SPI_BUS_INDETERMINATE;
+        return SPI_BUS_INDETERMINATE;
     }
 
     bool pullWasEnabled = ((CNPUA & (1UL << 15)) != 0U);
