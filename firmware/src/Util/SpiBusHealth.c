@@ -131,15 +131,30 @@ SpiBusHealthResult_t SpiBusHealth_ProbeJam(void)
 // and WINC clients without touching either driver's state machine.
 static bool SpiBusHealth_EnsureClient(void)
 {
+    // Claim-flag guard (Qodo #594): probes run from multiple tasks (WiFi
+    // init hook, USB SCPI diagnostics). Without it, concurrent first calls
+    // could both DRV_SPI_Open and leak a client slot. DRV_SPI_Open blocks,
+    // so it cannot run inside the critical section - claim first, open after.
+    static volatile bool sOpening = false;
+    taskENTER_CRITICAL();
     if (gSpiHandle != DRV_HANDLE_INVALID)
     {
+        taskEXIT_CRITICAL();
         return true;
     }
+    if (sOpening)
+    {
+        taskEXIT_CRITICAL();
+        return false;   // another task is mid-open; caller reports BUSY-ish
+    }
+    sOpening = true;
+    taskEXIT_CRITICAL();
 
     DRV_HANDLE h = DRV_SPI_Open(DRV_SPI_INDEX_0, DRV_IO_INTENT_READWRITE);
     if (h == DRV_HANDLE_INVALID)
     {
         LOG_E("SpiBusHealth: DRV_SPI_Open failed (clients exhausted?)");
+        sOpening = false;
         return false;
     }
 
@@ -155,6 +170,7 @@ static bool SpiBusHealth_EnsureClient(void)
     {
         LOG_E("SpiBusHealth: DRV_SPI_TransferSetup failed");
         DRV_SPI_Close(h);
+        sOpening = false;
         return false;
     }
 
@@ -173,6 +189,7 @@ static bool SpiBusHealth_EnsureClient(void)
     gCmd0Frame[5] = 0x00U;
     gCmd0Frame[6] = 0x95U;  // ... with its fixed, correct CRC7
     gSpiHandle = h;
+    sOpening = false;
     return true;
 }
 
