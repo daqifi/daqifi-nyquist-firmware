@@ -178,6 +178,15 @@ static size_t sd_reply_write_usb(const char* data, size_t len)
 
 static size_t sd_reply_write_tcp(const char* data, size_t len)
 {
+    /* wifi_tcp_server_WriteBuffer is all-or-nothing (#371 policy), and the
+     * TCP circular buffer can be as small as 1400 B after a non-WiFi
+     * streaming session re-partitions the pool - a chunk larger than the
+     * whole buffer would never fit and the transfer would time out (Qodo
+     * #599). Clamp below that floor; the caller loop handles short writes. */
+    if (len > 1024u)
+    {
+        len = 1024u;
+    }
     return wifi_tcp_server_WriteBuffer(data, len);
 }
 
