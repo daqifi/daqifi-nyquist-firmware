@@ -53,6 +53,7 @@
  * See DRV_SDSPI_ReleaseBus, the CHK_FOR_CARD lock rollback, and the
  * command-executor bus-completion watchdog (#567 extension). */
 #define LOG_MODULE LOG_MODULE_SD
+#define LOG_LVL LOG_LEVEL_SD   /* compile ceiling: without this every LOG_D in this file is a no-op (found #589 P1) */
 #include "Util/Logger.h"
 
 #include "drv_sdspi_local.h"
@@ -1728,6 +1729,15 @@ static void lDRV_SDSPI_AttachDetachTasks
             if (dObj->cardPollingTimerExpired == true)
             {
                 dObj->cardPollingTimerExpired = false;
+                /* #605 (shape per Qodo #606): count the poll HERE - exactly
+                 * once per timer expiry by construction. CHECK_DEVICE can't
+                 * count reliably: it spins at task rate while sdState != IDLE,
+                 * and the detect verdict emerges from a multi-pass async
+                 * sequence, so no single CHECK_DEVICE pass is "the poll". */
+                if (dObj->detachedPollCount < 0xFFFFU)
+                {
+                    dObj->detachedPollCount++;
+                }
                 dObj->taskState = DRV_SDSPI_TASK_CHECK_DEVICE;
             }
             break;
@@ -1736,15 +1746,13 @@ static void lDRV_SDSPI_AttachDetachTasks
             /* Check for device attach */
 
             dObj->isAttached = (DRV_SDSPI_ATTACH)lDRV_SDSPI_MediaCommandDetect (object);
-            /* #589 P1: track consecutive card-absent polls (saturating). */
-            if (dObj->isAttached == DRV_SDSPI_IS_DETACHED)
-            {
-                if (dObj->detachedPollCount < 0xFFFFU)
-                {
-                    dObj->detachedPollCount++;
-                }
-            }
-            else
+            /* #589 P1 / #605: pin the backoff counter to 0 whenever the
+             * current verdict is ATTACHED - on every pass, spin or fresh
+             * (the async detect sequence can deliver its verdict on a spin
+             * pass; resets are idempotent, so over-resetting is harmless and
+             * an attached card keeps the stock 1 s removal-detection cadence).
+             * The increment lives in WAIT_POLLING_TIMER_EXPIRE. */
+            if (dObj->isAttached == DRV_SDSPI_IS_ATTACHED)
             {
                 dObj->detachedPollCount = 0U;
             }
