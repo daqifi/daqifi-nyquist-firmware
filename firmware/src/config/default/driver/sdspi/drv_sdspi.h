@@ -968,6 +968,13 @@ void DRV_SDSPI_AsyncWrite
 
 bool DRV_SDSPI_IsAttached(const DRV_HANDLE handle);
 
+/* #589: module-level card-presence query (IsAttached above needs an open
+   client handle; diagnostics have none). */
+bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
+
+/* #589 P1: reset the detect-poll backoff (expected insertion). */
+void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
+
 // *****************************************************************************
 /* Function:
     bool DRV_SDSPI_IsWriteProtected

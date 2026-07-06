@@ -6,6 +6,7 @@
 #include "services/DaqifiPB/DaqifiOutMessage.pb.h"
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 #include "services/wifi_services/wifi_manager.h"
+#include "Util/SpiBusHealth.h"
 #include "services/sd_card_services/sd_card_manager.h"
 #include "HAL/DIO.h"
 #include "HAL/DioProbe.h"
@@ -356,7 +357,8 @@ static bool app_SDCard_IsWifiUsingSPI(void) {
      * explicit Interface_WiFi puts WiFi on the SPI bus. */
     bool isWifiStreaming = isStreaming &&
                           pStreamConfig->ActiveInterface == StreamingInterface_WiFi;
-    return isWifiStreaming || wifi_manager_IsWifiFirmwareUpdateActive();
+    return isWifiStreaming || wifi_manager_IsWifiFirmwareUpdateActive() ||
+           SpiBusHealth_IsSdQuarantined();  // #589: jammed-bus quarantine
 }
 
 /**
@@ -407,6 +409,7 @@ static void app_SDCardTask(void* p_arg) {
                 // Check if WiFi needs exclusive SPI bus access
                 if (app_SDCard_IsWifiUsingSPI()) {
                     app_SDCard_GracefulShutdown(3000,
+                        SpiBusHealth_IsSdQuarantined() ? "SPI bus quarantine (#589)" :
                         wifi_manager_IsWifiFirmwareUpdateActive()
                             ? "WiFi firmware update" : "WiFi streaming");
                     state = APP_SD_STATE_SUSPENDED;

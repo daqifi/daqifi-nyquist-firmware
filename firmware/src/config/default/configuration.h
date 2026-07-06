@@ -183,7 +183,7 @@ extern "C" {
 
 /* SPI Driver Instance 0 Configuration Options */
 #define DRV_SPI_INDEX_0                       0
-#define DRV_SPI_CLIENTS_NUMBER_IDX0           2  // WiFi + SD clients on shared SPI0 bus
+#define DRV_SPI_CLIENTS_NUMBER_IDX0           3  // WiFi + SD + SpiBusHealth (#589 jam probe/release) on shared SPI4 bus
 #define DRV_SPI_DMA_MODE
 #define DRV_SPI_XMIT_DMA_CH_IDX0              SYS_DMA_CHANNEL_0
 #define DRV_SPI_RCV_DMA_CH_IDX0               SYS_DMA_CHANNEL_1

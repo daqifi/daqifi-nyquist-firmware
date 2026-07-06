@@ -142,6 +142,7 @@ static void Streaming_UpdateFlowWindow(bool dropped);
 #define QUES_BIT_SD_OVERFLOW  (1 << 10)  // Bit 10: SD write failure
 #define QUES_BIT_ENCODER_FAIL (1 << 11)  // Bit 11: Encoder failure
 #define QUES_BIT_TRANSPORT_DOWN (1 << 12) // Bit 12: all configured transports down >grace (auto-stop fired)
+#define QUES_BIT_SPI_BUS_FAULT STREAMING_QUES_SPI_BUS_FAULT // Bit 13: shared SPI4 bus jammed (#589 — suspect SD card); set/cleared externally, survives session clears
 
 #define FLOW_WINDOW_MIN   20
 #define FLOW_WINDOW_MAX   10000
@@ -1602,7 +1603,7 @@ static void Streaming_Stop(void) {
         // rules — gQuesBits is also `|=`'d by the deferred ISR task and
         // streaming task at the overflow sites.
         taskENTER_CRITICAL();
-        gQuesBits &= QUES_BIT_TRANSPORT_DOWN;
+        gQuesBits &= (QUES_BIT_TRANSPORT_DOWN | QUES_BIT_SPI_BUS_FAULT);
         taskEXIT_CRITICAL();
 
         if (hadDrops) {
@@ -1658,7 +1659,9 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gFlowWindowCount = 0;
     gFlowWindowSize = FLOW_WINDOW_MIN;
     gFlowWindowOverride = 0;
-    gQuesBits = 0;
+    taskENTER_CRITICAL();
+    gQuesBits &= QUES_BIT_SPI_BUS_FAULT;  // externally-owned fault bit survives session clears
+    taskEXIT_CRITICAL();
     gInTimerHandler = false;
     /* #397 self-heal: defensive reset of transport-down trackers and the
      * grace window. These live in retained-RAM along with the other
@@ -1769,7 +1772,9 @@ void Streaming_ClearStats(void) {
 #endif
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
-    gQuesBits = 0;
+    taskENTER_CRITICAL();
+    gQuesBits &= QUES_BIT_SPI_BUS_FAULT;  // externally-owned fault bit survives session clears
+    taskEXIT_CRITICAL();
     // #397 reset per-transport down-since trackers so a new session starts
     // with every transport considered healthy, regardless of pre-session state.
     gTransportDownSinceUsb = 0;
@@ -1801,7 +1806,23 @@ static void Streaming_InitFlowWindow(uint64_t frequency) {
     }
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
     gFlowWindowCount = 0;
-    gQuesBits = 0;  // 32-bit write is atomic on PIC32MZ
+    taskENTER_CRITICAL();
+    gQuesBits &= QUES_BIT_SPI_BUS_FAULT;  // RMW: preserve externally-owned fault bit
+    taskEXIT_CRITICAL();
+}
+
+void Streaming_QuesExternalSet(uint32_t mask)
+{
+    taskENTER_CRITICAL();
+    gQuesBits |= mask;
+    taskEXIT_CRITICAL();
+}
+
+void Streaming_QuesExternalClear(uint32_t mask)
+{
+    taskENTER_CRITICAL();
+    gQuesBits &= ~mask;
+    taskEXIT_CRITICAL();
 }
 
 /**

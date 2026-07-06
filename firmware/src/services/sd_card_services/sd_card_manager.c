@@ -1681,6 +1681,12 @@ bool sd_card_manager_Deinit() {
 }
 
 bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
+    /* #589 P1: SD activity expected - restore the fast detect-poll cadence.
+       (extern kept per the app_freertos.c pattern; prototype now also lives
+       in drv_sdspi.h so signatures are checkable.) */
+    extern void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
+    DRV_SDSPI_DetectPollKick(0);
+
     if (pSettings != NULL && gpSDCardSettings != NULL) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
     }
@@ -1711,6 +1717,13 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
         return true;  // Operation completed
     } else {
         LOG_E("[SD] WaitForCompletion timeout after %u ms\r\n", timeoutMs);
+        // #589: a card whose reads/LIST work while writes hang or abort is
+        // the bench-proven signature of an SPI-mode-incompatible card (e.g.
+        // A2-class SDXC). Say so — this line is the difference between a
+        // support mystery and a card swap.
+        LOG_E("[SD] card operations hanging while reads work - card may be "
+              "SPI-mode incompatible (A2/SDXC class); try a different card "
+              "(wiki: SD-Card-Compatibility)\r\n");
         return false;  // Timeout
     }
 }
