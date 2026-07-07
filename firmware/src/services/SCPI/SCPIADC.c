@@ -671,6 +671,16 @@ scpi_result_t SCPI_ADCUseCalSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #620: reject an out-of-range value BEFORE any state mutation. The paths
+    // below clear RawOutputMode, assign calVals (a bool, so e.g. 7 -> 1) and
+    // SaveToNvm before the switch's default rejected it — a command that
+    // returns an error would otherwise persist a wrong calibration selection
+    // (loaded as USER cal on the next reboot).
+    if (param1 < 0 || param1 > 2) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+
     // #158/#270: value 2 = no calibration -> raw ADC-code output (CSV/JSON
     // emit the integer code, skipping cal + voltage conversion; PB is
     // already raw). Runtime-only streaming mode: it does NOT touch the NVM
