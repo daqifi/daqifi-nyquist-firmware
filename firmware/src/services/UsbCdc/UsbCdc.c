@@ -265,6 +265,14 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             // NanoPB_Encoder reads it directly for the streaming device_status
             // "USB connected" bit. Clear it on real teardown (stale-global audit).
             gRunTimeUsbSttings.isCdcHostConnected = 0;
+            /* #127/#617: a write in flight at teardown may never get its
+             * WRITE_COMPLETE (comment below), so the writeInProgress claim
+             * and the transfer handle would stay set forever and wedge every
+             * write after re-enumeration. Clear both here - the abandoned
+             * transfer is gone with the disconnect; a late WRITE_COMPLETE for
+             * the old handle no longer matches and is harmlessly ignored. */
+            gRunTimeUsbSttings.writeInProgress = false;
+            gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             }
