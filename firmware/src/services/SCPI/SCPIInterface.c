@@ -4946,6 +4946,84 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
  * (sick SD card holding MISO with no chip select asserted).
  * Response: CLEAR | JAMMED | BUSY | INDETERMINATE, plus ",QUARANTINED".
  */
+// #285: human/machine name for each onboard diagnostic (monitoring) channel.
+// The monitoring set is hardware-identical across NQ1/NQ2/NQ3 (defined once in
+// CommonMonitoringChannels.h), so this map is variant-independent.
+static const char* SCPI_DiagAdcChannelName(uint8_t channelId)
+{
+    switch (channelId) {
+        case ADC_CHANNEL_3_3V:    return "3.3V";
+        case ADC_CHANNEL_2_5VREF: return "2.5VREF";
+        case ADC_CHANNEL_VBATT:   return "VBATT";
+        case ADC_CHANNEL_5V:      return "5V";
+        case ADC_CHANNEL_10V:     return "10V";
+        case ADC_CHANNEL_TEMP:    return "TEMP";
+        case ADC_CHANNEL_5VREF:   return "5VREF";
+        case ADC_CHANNEL_VSYS:    return "VSYS";
+        default:                  return NULL;
+    }
+}
+
+// #285: SYSTem:DIAGnostic:ADC? — on-demand snapshot of the onboard diagnostic
+// (MODULE7 monitoring) channels: rails/refs/battery. Grouped under the existing
+// SYSTem:DIAGnostic:* namespace (alongside SPIBus health) per the lean-command
+// rule. Returns the last-known BOARDDATA monitoring values (continuously
+// refreshed by ADC_Tasks/MC12bADC_EosInterruptTask when idle) as
+// comma-separated NAME=VOLTS pairs, terminated by AGE=<seconds since last diag
+// scan> and STALE=<0|1>. Per the "inform on stale data" principle we never hide
+// values — staleness is surfaced via AGE/STALE rather than an error. STALE=1
+// when a scan-armed OBDiag=0 stream is freezing the monitoring channels.
+static scpi_result_t SCPI_DiagADCGet(scpi_t * context)
+{
+    AInArray* pAInConfig = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+    AInRuntimeArray* pAInRuntime = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
+    size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
+
+    char out[192];
+    int len = 0;
+
+    for (size_t i = 0; i < sampleCount && len < (int)sizeof(out); i++) {
+        // Only enabled monitoring channels (ID >= ADC_CHANNEL_3_3V). TEMP is
+        // runtime-disabled (PIC32MZ silicon errata) so it is skipped, giving a
+        // deterministic set of rails across every variant.
+        if (i >= pAInConfig->Size || i >= pAInRuntime->Size) break;
+        uint8_t channelId = pAInConfig->Data[i].DaqifiAdcChannelId;
+        if (channelId < ADC_CHANNEL_3_3V) continue;
+        if (!pAInRuntime->Data[i].IsEnabled) continue;
+
+        const char* name = SCPI_DiagAdcChannelName(channelId);
+        if (name == NULL) continue;
+
+        AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
+        double voltage = sample ? ADC_ConvertToVoltageByIndex(i, sample->Value)
+                                : 0.0;
+        len += snprintf(out + len, sizeof(out) - (size_t)len, "%s%s=%.4f",
+                        (len > 0) ? "," : "", name, voltage);
+    }
+
+    // Age of the monitoring snapshot (seconds since the last completed diag
+    // scan). -1 when no scan has run since boot.
+    uint32_t lastDiagTick = ADC_GetLastDiagScanTick();
+    long ageSec = -1;
+    if (lastDiagTick > 0) {
+        ageSec = (long)((xTaskGetTickCount() - lastDiagTick) / configTICK_RATE_HZ);
+    }
+    bool stale = (pStreamCfg != NULL) && pStreamCfg->Running &&
+                 !pStreamCfg->OnboardDiagEnabled;
+    if (len < (int)sizeof(out)) {
+        len += snprintf(out + len, sizeof(out) - (size_t)len,
+                        "%sAGE=%ld,STALE=%d",
+                        (len > 0) ? "," : "", ageSec, stale ? 1 : 0);
+    }
+
+    SCPI_ResultText(context, out);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
 {
     extern void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
@@ -5262,6 +5340,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:DIAGnostic:SPIBus:MISOFight?", .callback = SCPI_DiagSpiBusMisoFightGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus:CROSScs?", .callback = SCPI_DiagSpiBusCrossCsGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus?", .callback = SCPI_DiagSpiBusGet,},
+    {.pattern = "SYSTem:DIAGnostic:ADC?", .callback = SCPI_DiagADCGet,},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
     {.pattern = "SYSTem:STORage:SD:ENAble?", .callback = SCPI_StorageSDEnableGet},
     {.pattern = "SYSTem:STORage:SD:DELete", .callback = SCPI_StorageSDDelete},
