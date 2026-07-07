@@ -1363,12 +1363,17 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
     size_t dioSize = 0;
     uint8_t dioDir[2] = {0};
     size_t dioDirSize = 0;
+    uint32_t dioTimestamp = state->StreamTrigStamp;  /* #614: fallback if no DIO sample */
 
     if (hasDIO) {
         DIOSample DIOdata;
         if (DIOSampleList_PopFront(&state->DIOSamples, &DIOdata)) {
             memcpy(dioValues, &DIOdata.Values, sizeof(dioValues));
             dioSize = sizeof(dioValues);
+            /* #614 (Qodo): stamp the standalone DIO frame with the tick that
+             * captured this sample, not the live StreamTrigStamp, which drifts
+             * ahead under encoder lag. */
+            dioTimestamp = DIOdata.Timestamp;
         }
 
         /* Build port direction bitmap (1=input per channel) */
@@ -1470,7 +1475,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
     if (!dioIncluded && dioSize > 0) {
         size_t written = encode_streaming_msg_delimited(
             pBuffer + bufferOffset, buffSize - bufferOffset,
-            state->StreamTrigStamp, NULL, 0,
+            dioTimestamp, NULL, 0,
             dioValues, dioSize, dioDir, dioDirSize);
 
         if (written > 0) {
