@@ -1300,6 +1300,18 @@ Fixes #23
 
 ### How we test (policy)
 
+**RULE (user standing rule, 2026-07-06): every firmware PR ships with a
+regression test in `daqifi-python-test-suite`.** When you open a PR that
+changes device behavior, a companion test that exercises the new behavior
+(and would fail on the old firmware) must land in the suite — committed and
+referenced in the PR body. Prefer building it from `test_harness.py`
+primitives; if the test needs a new reusable capability, add it to the
+harness (not a one-off in the script) so the next PR reuses it. Exempt:
+docs-only, lint-only, comment-only, and pure-refactor PRs with no behavior
+change. If bench hardware is occupied when the PR opens, the test is still
+committed and the run is queued (note it in the PR); the test existing is
+the requirement, not that it has run yet.
+
 All **durable regression tests** — firmware regression, MCP integration, client SDK validation, throughput characterization — live in **`daqifi-python-test-suite`**. The full policy is in [`docs/HOW_WE_TEST.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/HOW_WE_TEST.md) in that repo (private, see `docs/README.md` for access); the short version:
 
 1. **Anything you'd run again** — regression checks, ceiling sweeps, endurance soaks, integration validation — lives in `daqifi-python-test-suite`. Firmware-internal unit tests (boot self-tests, cppcheck, `mdb`-driven device tests) stay in the firmware repo.
