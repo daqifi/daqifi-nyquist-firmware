@@ -379,6 +379,13 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             // but conservative approach is to reset the interface
             gRunTimeUsbSttings.isConfigured = false;
             gRunTimeUsbSttings.isCdcHostConnected = 0;  // host link reset (stale-global audit)
+            /* #127/#617: mirror the DECONFIGURED/RESET clear - a write in
+             * flight when this error resets the interface may never get its
+             * WRITE_COMPLETE, so release the claim and the transfer handle
+             * here or writeInProgress stays stuck true and wedges every write
+             * once the interface is re-established. */
+            gRunTimeUsbSttings.writeInProgress = false;
+            gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             break;
         default:
@@ -1332,6 +1339,13 @@ void UsbCdc_ProcessState() {
             gRunTimeUsbSttings.writeTransferHandle =
                     USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             gRunTimeUsbSttings.readBufferLength = 0;
+            /* #127/#617: teardown funnel. The endpoint-halt / terminated-by-
+             * host resets in BeginRead/BeginWrite reach CLOSED only through
+             * BEGIN_CLOSE - no event handler clears them - so release the
+             * write claim here too. An in-flight write abandoned at teardown
+             * must not leave writeInProgress stuck true and wedge every write
+             * after re-enumeration. */
+            gRunTimeUsbSttings.writeInProgress = false;
 
             gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
