@@ -1661,14 +1661,32 @@ void sd_card_manager_ProcessState() {
             if (gSDOpMutex) {
                 SD_TakeMutexDebug(gSDOpMutex, "crc_operation");
             }
-            /* #306 fix (OOB write): clamp each read to the ACTUAL shared-buffer
-             * size. gSdSharedBuffer is the SD-circular partition, which shrinks
-             * to STREAMING_SD_CIRCULAR_MIN (512) whenever SD is not the active
-             * streaming target - a hardcoded 2048 overruns into the adjacent
-             * streaming sample pool. */
+            /* #306 fix (OOB write) + Qodo #610: clamp each read to the ACTUAL
+             * shared-buffer size, never past it. gSdSharedBuffer is the
+             * SD-circular partition, which shrinks to STREAMING_SD_CIRCULAR_MIN
+             * (512) whenever SD is not the active streaming target - a hardcoded
+             * 2048 overruns into the adjacent streaming sample pool. */
             size_t crcChunk = (gSdSharedBufferSize < 2048u)
                               ? (size_t)gSdSharedBufferSize : 2048u;
             bool done = false;
+            /* Qodo #610: if the pool has not been partitioned yet the buffer is
+             * NULL / size 0. A 0-length read returns 0 and would falsely report
+             * "read error before EOF" for a perfectly good file - fail the CRC
+             * cleanly instead (mirrors the read-error terminal path below). */
+            if (gSdSharedBuffer == NULL || crcChunk == 0u) {
+                LOG_E("[SD] CRC: shared buffer unavailable (size=%u)",
+                      (unsigned)gSdSharedBufferSize);
+                if (gSDOpMutex) {
+                    xSemaphoreGive(gSDOpMutex);
+                }
+                SYS_FS_FileClose(gSDCardData.fileHandle);
+                gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                gSDCardData.lastOperationSuccess = false;
+                gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                gSDCardData.currentProcessState =
+                        SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                break;
+            }
             for (int pass = 0; pass < 4 && !done; pass++) {
                 size_t rd = SYS_FS_FileRead(gSDCardData.fileHandle,
                                             gSdSharedBuffer, crcChunk);
