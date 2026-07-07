@@ -122,6 +122,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
         .ipAddr = {.Val = 0}, \
         .ipMask = {.Val = 0}, \
         .gateway = {.Val = 0}, \
+        .ssidHidden = false, \
     }
 
 /**

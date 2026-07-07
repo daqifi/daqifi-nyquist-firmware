@@ -243,6 +243,41 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
 }
 
 /**
+ * SCPI Callback: Get the AP-mode SSID hidden/cloaked flag (#45)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHiddenGet(scpi_t * context) {
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+    SCPI_ResultInt32(context, (int) pWifiSettings->ssidHidden);
+
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Set the AP-mode SSID hidden/cloaked flag (#45)
+ * 1 = SSID hidden (not broadcast in beacons), 0 = SSID visible (default).
+ * Takes effect at the next LAN:APPLY / AP (re)start.
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHiddenSet(scpi_t * context) {
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    int param1;
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    if (param1 != 0 && param1 != 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    pRunTimeWifiSettings->ssidHidden = (bool) param1;
+    return SCPI_RES_OK;
+}
+
+/**
  * SCPI Callback: Get the Ip address of the device
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
