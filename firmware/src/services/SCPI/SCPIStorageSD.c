@@ -113,13 +113,24 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
     if (p[0] == '/' || p[0] == '\\') {
         return false;               /* absolute paths */
     }
-    for (size_t i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)p[i];
-        if (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':') {
+    /* Reject '.' and '..' only as whole path SEGMENTS (between '/'), not as
+     * substrings - Qodo #615: the old substring check false-rejected
+     * legitimate names like "data..csv". */
+    size_t segStart = 0;
+    for (size_t i = 0; i <= len; i++) {
+        unsigned char c = (i < len) ? (unsigned char)p[i] : (unsigned char)'/';
+        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':')) {
             return false;           /* control chars, backslash, drive prefix */
         }
-        if (c == '.' && (i + 1u) < len && p[i + 1u] == '.') {
-            return false;           /* traversal */
+        if (c == '/') {
+            size_t segLen = i - segStart;
+            if (segLen == 1u && p[segStart] == '.') {
+                return false;       /* "." segment */
+            }
+            if (segLen == 2u && p[segStart] == '.' && p[segStart + 1u] == '.') {
+                return false;       /* ".." traversal segment */
+            }
+            segStart = i + 1u;
         }
     }
     return true;
