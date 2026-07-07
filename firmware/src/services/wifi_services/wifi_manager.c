@@ -2346,6 +2346,21 @@ bool wifi_manager_PowerOff(void) {
 // SYST:COMM:LAN:ADDR? to confirm association.
 bool wifi_manager_PowerOn(void) {
     if (gStateMachineContext.pWifiSettings == NULL) return false;
+    // #637: idempotent. If the WINC is already powered and up, POWer 1 is a
+    // no-op. Re-sending INIT here would fall through the INIT handler's
+    // alreadyInitialized path and re-run WDRV_WINC_BSSConnect/APStart on the
+    // live, socket-bound chip — bypassing the #435/#437b HardReset divert
+    // (which only guards the APPLY/UpdateNetworkSettings REINIT path) and
+    // dropping/oscillating the active link. Only proceed with the re-init
+    // when the chip is actually down: deep-power-down latched, or
+    // initialized-but-not-yet-started.
+    if (!gWincDeepPowerOff &&
+        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED) &&
+        (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED) ||
+         GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))) {
+        LOG_I("WiFi: power-up requested but WINC already powered/up — no-op (#637)");
+        return true;
+    }
     taskENTER_CRITICAL();
     gWincDeepPowerOff = false;
     gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
