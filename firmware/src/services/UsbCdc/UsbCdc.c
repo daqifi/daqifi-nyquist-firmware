@@ -246,14 +246,21 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
              * the next write. */
             USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE val = *(USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE*) (pData);
             if (val.handle == pUsbCdcDataObject->writeTransferHandle) {
-                /* #511: wire-confirmed bytes - val.length is what the USB
-                 * peripheral actually transferred (SD parity: SdBytesWritten).
-                 * Interrupt context, single writer: plain 64-bit RMW is safe
-                 * here only because no other context writes this counter and
-                 * this event can't preempt itself; readers snapshot via
-                 * UsbCdc_GetWireBytesSent (critical section for the 64-bit
-                 * read, same pattern as gTimerISRCalls). */
-                gUsbWireBytesSent += val.length;
+                /* #511: wire-confirmed bytes. Count ONLY writes the peripheral
+                 * actually delivered. val.status==USB_DEVICE_CDC_RESULT_OK means
+                 * the IRP COMPLETED (or COMPLETED_SHORT) and val.length is the
+                 * delivered size. On ENDPOINT_HALTED / TERMINATED_BY_HOST / ERROR
+                 * the Harmony CDC layer still reports val.length = irp->size
+                 * (the requested length, not what went on the wire), so counting
+                 * it would over-report on aborted writes (cable pull, host
+                 * clear-feature). Interrupt context, single writer: plain 64-bit
+                 * RMW is safe only because no other context writes this counter
+                 * and this event can't preempt itself; readers snapshot via
+                 * UsbCdc_GetWireBytesSent (critical section for the 64-bit read,
+                 * same pattern as gTimerISRCalls). */
+                if (val.status == USB_DEVICE_CDC_RESULT_OK) {
+                    gUsbWireBytesSent += val.length;
+                }
                 // Log warning if actual transferred length differs from requested
                 if (val.length != pUsbCdcDataObject->writeBufferLength) {
                     LOG_E_ONCE(LOG_ONCE_USB_WRITE_MISMATCH, "USB write length mismatch");

@@ -11,7 +11,7 @@
 #include "HAL/DIO.h"
 #include "HAL/DioProbe.h"
 #include "HAL/DAC7718/DAC7718.h"
-#define LOG_LVL LOG_LEVEL_GENERAL   /* compile ceiling - without it every LOG_D/LOG_I here is a no-op (#605 audit) */
+#define LOG_LVL LOG_LEVEL_DEBUG   /* compile ceiling - without it every LOG_D/LOG_I here is a no-op (#605 audit) */
 #include "Util/Logger.h"
 #include "Util/CoherentPool.h"
 #include "Util/StreamingBufferPool.h"
