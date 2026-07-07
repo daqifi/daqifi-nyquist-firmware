@@ -16,6 +16,7 @@
 #include "../HAL/ADC.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "streaming.h"
+#include "services/daqifi_settings.h"
 
 #ifndef min
 #define min(x,y) x <= y ? x : y
@@ -329,8 +330,23 @@ size_t Json_Encode(tBoardData* state,
                 break;
             }
             case DaqifiOutMessage_friendly_device_name_tag:
-                //TODO:  message.friendly_device_name[32];
+            {
+                // #14: emit the user-defined friendly name when set.
+                const char* friendlyName = daqifi_settings_GetFriendlyName();
+                if (friendlyName[0] == '\0') {
+                    break;  // unset — omit the field
+                }
+                int written = snprintf(charBuffer + startIndex,
+                        buffSize - startIndex,
+                        "\"friendlyName\":\"%s\",\n",
+                        friendlyName);
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    // Optional field - skip on buffer full, continue processing
+                    break;
+                }
+                startIndex += written;
                 break;
+            }
             default:
                 // Skip unknown fields
                 break;

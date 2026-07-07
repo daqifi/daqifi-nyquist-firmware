@@ -550,6 +550,10 @@ void app_SystemInit() {
         }
     }
 
+    // #14: Seed the runtime friendly-name cache from persisted NVM.
+    daqifi_settings_SeedFriendlyName(
+            tmpTopLevelSettings.settings.topLevelSettings.friendlyDeviceName);
+
     // Try to load WiFiSettings from NVM - if this fails, store default 
     // settings to NVM (first run after a program)
 

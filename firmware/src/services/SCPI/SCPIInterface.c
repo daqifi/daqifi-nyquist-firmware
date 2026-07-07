@@ -3717,6 +3717,59 @@ static scpi_result_t SCPI_LoadDataPrecision(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// #14: user-definable device friendly name (emitted in the PB/JSON info
+// message). Runtime cache lives in daqifi_settings; persisted into the
+// TopLevelSettings NVM blob (same page as voltagePrecision) via
+// SYSTem:DEVice:NAME:SAVE.
+static scpi_result_t SCPI_SetDeviceName(scpi_t * context) {
+    char nameBuf[FRIENDLY_DEVICE_NAME_SIZE];
+    size_t nameLen = 0;
+    // maxLen excludes the NUL terminator so SCPI_ParamCopyText's write at
+    // index nameLen stays inside nameBuf.
+    if (!SCPI_ParamCopyText(context, nameBuf, sizeof(nameBuf), &nameLen,
+            TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
+        return SCPI_RES_ERR;
+    }
+    daqifi_settings_SetFriendlyName(nameBuf);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetDeviceName(scpi_t * context) {
+    SCPI_ResultText(context, daqifi_settings_GetFriendlyName());
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SaveDeviceName(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    // Load existing NVM to preserve other TopLevelSettings fields.
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
+            &settings)) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings,
+                &settings);
+    }
+    settings.type = DaqifiSettings_TopLevelSettings;
+    // SaveToNvm captures the current friendly name from the runtime cache
+    // automatically (same pattern as voltagePrecision).
+    if (!daqifi_settings_SaveToNvm(&settings)) {
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_LoadDeviceName(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
+            &settings)) {
+        return SCPI_RES_ERR;
+    }
+    daqifi_settings_SetFriendlyName(
+            settings.settings.topLevelSettings.friendlyDeviceName);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     int param1;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
@@ -5178,6 +5231,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:VOLTage:PRECision?", .callback = SCPI_GetDataPrecision,},
     {.pattern = "CONFigure:VOLTage:SAVE", .callback = SCPI_SaveDataPrecision,},
     {.pattern = "CONFigure:VOLTage:LOAD", .callback = SCPI_LoadDataPrecision,},
+    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_SetDeviceName,},          // #14
+    {.pattern = "SYSTem:DEVice:NAME?", .callback = SCPI_GetDeviceName,},
+    {.pattern = "SYSTem:DEVice:NAME:SAVE", .callback = SCPI_SaveDeviceName,},
+    {.pattern = "SYSTem:DEVice:NAME:LOAD", .callback = SCPI_LoadDeviceName,},
     //
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},

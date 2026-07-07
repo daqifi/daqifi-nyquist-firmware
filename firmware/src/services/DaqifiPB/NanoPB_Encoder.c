@@ -979,7 +979,15 @@ size_t Nanopb_Encode(tBoardData* state,
                 break;
             }
             case DaqifiOutMessage_friendly_device_name_tag:
+            {
+                // #14: emit the user-defined friendly name (empty when unset).
+                const char* friendlyName = daqifi_settings_GetFriendlyName();
+                size_t len = min(strlen(friendlyName),
+                        sizeof (message.friendly_device_name) - 1);
+                memcpy(message.friendly_device_name, friendlyName, len);
+                message.friendly_device_name[len] = '\0';
                 break;
+            }
             case DaqifiOutMessage_ssid_tag:
             {
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;

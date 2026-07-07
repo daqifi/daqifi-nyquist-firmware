@@ -38,6 +38,11 @@
 #define BOARD_VARIANT       1       //TODO(Daqifi) : Relocate to proper location
 #define MAX_AV_NETWORK_SSID 8
 
+// User-definable device friendly name (#14). Buffer size MUST match the
+// protobuf field DaqifiOutMessage.friendly_device_name (char[32]); the
+// stored string is always NUL-terminated, so the usable length is 31.
+#define FRIENDLY_DEVICE_NAME_SIZE 32
+
 
 #define NVM_PROGRAM_UNLOCK_KEY1 0xAA996655
 #define NVM_PROGRAM_UNLOCK_KEY2 0x556699AA
@@ -103,6 +108,13 @@ extern "C" {
          * false for back-compat.
          */
         bool autoPowerOnUsb;
+
+        /**
+         * #14: user-definable device friendly name, emitted in the
+         * protobuf/JSON info message when set (empty string = unset).
+         * NUL-terminated; sized to match the proto field (char[32]).
+         */
+        char friendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE];
 
     } TopLevelSettings;
 
@@ -196,7 +208,28 @@ extern "C" {
      */
     bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
+    /**
+     * #14: Sets the runtime device friendly name cache. The value is
+     * persisted to NVM only on the next TopLevelSettings save (which
+     * captures this cache automatically). Truncated to fit
+     * FRIENDLY_DEVICE_NAME_SIZE and always NUL-terminated. A NULL or
+     * empty string clears the name.
+     * @param name The friendly name to store (may be NULL to clear)
+     */
+    void daqifi_settings_SetFriendlyName(const char* name);
 
+    /**
+     * #14: Returns a pointer to the runtime device friendly name cache
+     * (NUL-terminated; empty string when unset). Never returns NULL.
+     */
+    const char* daqifi_settings_GetFriendlyName(void);
+
+    /**
+     * #14: Seeds the runtime friendly-name cache from a loaded
+     * TopLevelSettings blob (called at boot after NVM load).
+     * @param name The NVM-stored name (may be empty)
+     */
+    void daqifi_settings_SeedFriendlyName(const char* name);
 
 
 #ifdef	__cplusplus
