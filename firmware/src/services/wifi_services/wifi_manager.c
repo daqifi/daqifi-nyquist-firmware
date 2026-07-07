@@ -2593,6 +2593,28 @@ static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance) {
         return;  // no change — no HIF transaction needed
     }
 
+    // #29 fix: keep BROADCAST reception enabled under power-save.
+    // WDRV_WINC_PowerSaveSetMode has no bcast parameter -- it derives the
+    // WINC broadcast-reception flag from powerSaveDTIMInterval
+    // (m2m_wifi_set_sleep_mode's BcastEn = interval ? 1 : 0), and that field
+    // defaults to 0 -> BcastEn=0.  Per the WINC docs BcastEn=0 tells the
+    // module NOT to wake at the DTIM beacon, so an idle STA stops receiving
+    // BROADCAST traffic, blinding the device to broadcast UDP discovery
+    // (contrary to the "discovery stays responsive" contract).  Force a
+    // non-zero DTIM listen interval (1 = wake every DTIM beacon) before we
+    // sleep, so the SetMode call below transmits BcastEn=1.  Idempotent: the
+    // driver early-returns once the interval already matches (no repeat HIF);
+    // on failure we retry next loop rather than enter power-save blind.
+    if (desired != WDRV_WINC_PS_MODE_OFF &&
+        WDRV_WINC_STATUS_OK !=
+            WDRV_WINC_PowerSaveSetBeaconInterval(pInstance->wdrvHandle, 1)) {
+        if (!psSetFailedLogged) {
+            psSetFailedLogged = true;
+            LOG_E("WiFi power-save DTIM interval set rejected by WINC");
+        }
+        return;  // never enter power-save with broadcast reception disabled
+    }
+
     if (WDRV_WINC_STATUS_OK ==
             WDRV_WINC_PowerSaveSetMode(pInstance->wdrvHandle, desired)) {
         gAppliedPsMode = desired;
