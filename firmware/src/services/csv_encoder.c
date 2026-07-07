@@ -382,7 +382,11 @@ static size_t tryWriteRow(
             // no voltage conversion, no double math (fastest path; also the
             // uncalibrated high-speed-streaming path #158 asked for).
             if (rawMode) {
-                p = uint32_to_str(ainPeek->Values[j], p, space);
+                // #620: AD7609 (18-bit bipolar) negative codes are
+                // sign-extended two's-complement int32 (e.g. -4096 =
+                // 0xFFFFF000); emit SIGNED to match the PB sint32 raw path
+                // (unsigned would misprint negatives as ~4.29e9).
+                p = int_to_str((int32_t)ainPeek->Values[j], p, space);
                 if (p == NULL) return 0;
             } else
             // Convert raw ADC value to voltage using the board config index
