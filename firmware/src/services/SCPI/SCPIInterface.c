@@ -5097,6 +5097,8 @@ static const scpi_command_t scpi_commands[] = {
     //    // Wifi
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled", .callback = SCPI_LANEnabledSet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:POWer?", .callback = SCPI_LANPowerGet,},  // #334
+    {.pattern = "SYSTem:COMMunicate:LAN:POWer", .callback = SCPI_LANPowerSet,},   // #334
     {.pattern = "SYSTem:COMMunicate:LAN:NETType?", .callback = SCPI_LANNetModeGet,},
     //    {.pattern = "SYSTem:COMMunicate:LAN:AvNETType?", .callback = SCPI_LANAVNetTypeGet, },
     {.pattern = "SYSTem:COMMunicate:LAN:NETType", .callback = SCPI_LANNetModeSet,},
