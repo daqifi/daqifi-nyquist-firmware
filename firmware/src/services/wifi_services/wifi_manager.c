@@ -1170,7 +1170,15 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // stale deep-power-down latch so SYST:COMM:LAN:POWer? reports
                 // the true state (covers bring-up via APPLY/ENAbled, not just
                 // the dedicated PowerOn path).
-                gWincDeepPowerOff = false;
+                // #637: but only on a genuine bring-up (isEnabled==1). A
+                // concurrent SYST:COMM:LAN:POWer 0 on the higher-priority USB
+                // SCPI task sets the latch and isEnabled=0, then queues DEINIT
+                // behind this in-flight INIT; clearing unconditionally here
+                // would clobber that request so the trailing DEINIT skips the
+                // CHIP_EN/RESET_N deassert and the WINC stays powered.
+                if (pInstance->pWifiSettings->isEnabled) {
+                    gWincDeepPowerOff = false;
+                }
                 // Reset error flag on success
                 if (initErrorLogged) {
                     LOG_D("WiFi driver initialization succeeded\r\n");
