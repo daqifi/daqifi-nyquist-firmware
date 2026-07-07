@@ -2531,3 +2531,16 @@ bool Streaming_IsActiveOnNonWifiInterface(void) {
             iface == StreamingInterface_UsbAndSd);
 }
 
+// #29: complement of the above — true only when a streaming session is
+// enabled and its active interface is WiFi.  Read by the WiFi power-save
+// policy (app_WifiTask) to keep the WINC at full power while the WiFi data
+// path is carrying a stream.  Same volatile-view / staleness reasoning as
+// Streaming_IsActiveOnNonWifiInterface().
+bool Streaming_IsActiveOnWifiInterface(void) {
+    const volatile StreamingRuntimeConfig* cfg =
+        (const volatile StreamingRuntimeConfig*)gpRuntimeConfigStream;
+    if (cfg == NULL) return false;
+    if (!cfg->IsEnabled) return false;
+    return (cfg->ActiveInterface == StreamingInterface_WiFi);
+}
+

@@ -87,6 +87,7 @@ static void __attribute__((unused)) ResetEventFlag(wifi_manager_stateFlag_t *pEv
 static uint8_t __attribute__((unused)) GetEventFlagStatus(wifi_manager_stateFlag_t eventFlagState, uint16_t flag);
 static bool SendEvent(wifi_manager_event_t event);
 static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event);
+static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance);
 
 extern bool wifi_tcp_server_TransmitBufferedData();
 extern size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len);
@@ -153,6 +154,24 @@ static volatile TickType_t gListenSocketOpenTick = 0;
 // runs wifi_tcp_server_ProcessReceivedBuff on WifiTask's stack, then re-arms
 // recv. WINC buffers inbound TCP while we process (per WINC docs).
 static volatile bool gTcpRxPending = false;
+
+// #29 dynamic WiFi power-save.  gPowerSaveEnabled is the user intent flag
+// (default on): when true the WiFi manager is allowed to drop the WINC into
+// its light auto power-save mode while associated as a STA but idle.  It is
+// written from any task via wifi_manager_SetPowerSaveEnabled() and read on
+// app_WifiTask; a plain 32-bit-atomic bool is sufficient (a one-cycle-stale
+// read only delays the policy by one 5 ms ProcessState iteration).
+//
+// gAppliedPsMode is the last mode we actually pushed to the WINC — tracked so
+// the policy only issues a WDRV_WINC_PowerSaveSetMode HIF transaction on a
+// real transition, not every loop.  Owned exclusively by app_WifiTask.  The
+// idle mode is AUTO_MED_POWER (M2M_PS_H_AUTOMATIC): the WINC still wakes each
+// DTIM to receive beacons/broadcasts, so device discovery and inbound SCPI
+// keep working with only the ~100-300 ms wake latency documented in #29 —
+// deliberately NOT the deeper AUTO_LOW_POWER, which trades more latency for
+// marginal extra savings and is riskier for the control plane.
+static volatile bool gPowerSaveEnabled = true;
+static WDRV_WINC_PS_MODE gAppliedPsMode = WDRV_WINC_PS_MODE_OFF;
 
 // Deadline (in ticks) at which wifi_manager_ProcessState should queue
 // the deferred WIFI_MANAGER_EVENT_INIT after a HardReset.  0 = none
@@ -1168,6 +1187,11 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             // Only open driver handle if not already open
             if (pInstance->wdrvHandle == DRV_HANDLE_INVALID) {
                 pInstance->wdrvHandle = WDRV_WINC_Open(0, 0);
+                // #29: a freshly-opened WINC boots with power-save OFF —
+                // resync our tracker so the policy re-applies from a known
+                // baseline (a stale MED tracker would otherwise skip the
+                // first re-engage after a reconnect).
+                gAppliedPsMode = WDRV_WINC_PS_MODE_OFF;
                 WDRV_WINC_EthernetAddressGet(pInstance->wdrvHandle, pInstance->pWifiSettings->macAddr.addr);
                 if (pInstance->wdrvHandle == DRV_HANDLE_INVALID) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
@@ -2258,6 +2282,26 @@ bool wifi_manager_IsWiFiConnected(void) {
     return (wifi_manager_GetWiFiStatus() == WIFI_STATUS_CONNECTED);
 }
 
+void wifi_manager_SetPowerSaveEnabled(bool enabled) {
+    // Plain 32-bit-atomic write; the policy on app_WifiTask picks up the new
+    // intent on its next iteration and re-applies the mode (disabling forces
+    // full power back on within one 5 ms loop).
+    gPowerSaveEnabled = enabled;
+}
+
+bool wifi_manager_GetPowerSaveEnabled(void) {
+    return gPowerSaveEnabled;
+}
+
+int wifi_manager_GetPowerSaveMode(void) {
+    if (gStateMachineContext.wdrvHandle == DRV_HANDLE_INVALID) {
+        return -1;
+    }
+    // Report the mode we last applied rather than round-tripping to the WINC,
+    // so the query is non-blocking and safe from the USB SCPI task.
+    return (int)gAppliedPsMode;
+}
+
 bool wifi_manager_Deinit() {
     if (gStateMachineContext.pWifiSettings == NULL) return false;
     // Tear down iperf2 sockets before the WINC GPIO toggle — otherwise
@@ -2502,6 +2546,65 @@ static void MaybeReconcileStaConnected(void) {
 // lifecycle/event-queue work without dispatching new TCP-arrived SCPI,
 // to prevent re-entrant SCPI_Input() on the same scpiContext when the
 // outer SCPI command itself arrived over TCP.
+// #29 dynamic WiFi power-save policy.  Runs on app_WifiTask (the owner of
+// the WINC client handle) once per normal ProcessState iteration.  Computes
+// the desired power-save mode from live WiFi + streaming state and pushes it
+// to the WINC only on a transition, so the common steady state issues no HIF
+// traffic at all.
+//
+// Full power (OFF) is the conservative default.  The light auto power-save
+// mode is requested only when EVERY one of these holds:
+//   - the feature is enabled (gPowerSaveEnabled),
+//   - we are associated as a STA (soft-AP must keep beaconing for its
+//     clients, so it must never sleep),
+//   - no TCP control-plane client is connected, and
+//   - WiFi is not the active streaming interface.
+// A WiFi stream and TCP-SCPI both run over the TCP client socket, so
+// wifi_tcp_server_HasActiveClient() alone would force full power during
+// either; the explicit Streaming_IsActiveOnWifiInterface() check is a
+// belt-and-suspenders backstop and the concrete "wire into streaming
+// start/stop" hook — a stream start/stop flips these predicates and the
+// next 5 ms iteration re-applies the correct mode.
+static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance) {
+    // Tracks whether we have already logged the current failure streak so a
+    // persistently-rejecting WINC can't flood the log at the 5 ms loop rate.
+    static bool psSetFailedLogged = false;
+
+    if (pInstance == NULL || pInstance->wdrvHandle == DRV_HANDLE_INVALID) {
+        return;
+    }
+
+    WDRV_WINC_PS_MODE desired = WDRV_WINC_PS_MODE_OFF;
+
+    bool staConnected =
+        (GetEventFlagStatus(pInstance->eventFlags,
+                            WIFI_MANAGER_STATE_FLAG_STA_CONNECTED) != 0);
+    bool apStarted =
+        (GetEventFlagStatus(pInstance->eventFlags,
+                            WIFI_MANAGER_STATE_FLAG_AP_STARTED) != 0);
+
+    if (gPowerSaveEnabled && staConnected && !apStarted &&
+        !wifi_tcp_server_HasActiveClient() &&
+        !Streaming_IsActiveOnWifiInterface()) {
+        desired = WDRV_WINC_PS_MODE_AUTO_MED_POWER;
+    }
+
+    if (desired == gAppliedPsMode) {
+        return;  // no change — no HIF transaction needed
+    }
+
+    if (WDRV_WINC_STATUS_OK ==
+            WDRV_WINC_PowerSaveSetMode(pInstance->wdrvHandle, desired)) {
+        gAppliedPsMode = desired;
+        psSetFailedLogged = false;
+        LOG_I("WiFi power-save mode -> %d", (int)desired);
+    } else if (!psSetFailedLogged) {
+        // Leave gAppliedPsMode unchanged so the next iteration retries.
+        psSetFailedLogged = true;
+        LOG_E("WiFi power-save set mode %d rejected by WINC", (int)desired);
+    }
+}
+
 static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     wifi_manager_event_t event;
     wifi_manager_stateMachineReturnStatus_t ret;
@@ -2636,6 +2739,14 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
                 LOG_E("%s : %d : State Change Requested, but NextSate is NULL", __func__, __LINE__);
             }
         }
+    }
+
+    // #29: re-evaluate the dynamic WiFi power-save mode once per normal
+    // WifiTask iteration.  Skipped on the nested SCPI active-pump path
+    // (drainTcpRx == false) so we don't issue an extra HIF transaction in
+    // the middle of a command dispatch — the outer loop applies it.
+    if (drainTcpRx) {
+        ApplyPowerSavePolicy(&gStateMachineContext);
     }
 
     if (gProcessStateMutex != NULL) {

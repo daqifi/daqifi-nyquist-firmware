@@ -5136,6 +5136,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:DISPlay", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:APPLY", .callback = SCPI_LANSettingsApply,},
     {.pattern = "SYSTem:COMMunicate:LAN:HRESet", .callback = SCPI_LANHardReset,},   // hard reset WINC (#383 recovery)
+    {.pattern = "SYSTem:COMMunicate:LAN:PSave", .callback = SCPI_LANPowerSaveSet,}, // #29 auto power-save enable
+    {.pattern = "SYSTem:COMMunicate:LAN:PSave?", .callback = SCPI_LANPowerSaveGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:LOAD", .callback = SCPI_LANSettingsLoad,},
     {.pattern = "SYSTem:COMMunicate:LAN:SAVE", .callback = SCPI_LANSettingsSave,},
     {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad,},
