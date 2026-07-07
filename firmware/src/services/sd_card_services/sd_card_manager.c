@@ -643,6 +643,15 @@ void sd_card_manager_ProcessState() {
                     if (gSDCardData.mountRetryCount >= SD_MOUNT_MAX_RETRIES) {
                         LOG_E("[SD] Mount failed after %d attempts - check SD card is FAT32 formatted",
                               gSDCardData.mountRetryCount);
+                        /* #613: roll the enable back so the armed-but-broken
+                         * state can't persist - it blocked ALL streaming
+                         * starts (SD logging rides alongside USB when
+                         * enabled) with a bare -200, and left the detect
+                         * path unable to recover a later hot-insert without
+                         * a reboot. User re-runs ENAble 1 after fixing the
+                         * card - which also restarts detection cleanly. */
+                        LOG_E("[SD] SD disabled - re-run SYST:STOR:SD:ENAble 1 after inserting/fixing the card");
+                        gpSDCardSettings->enable = false;
                         gSDCardData.lastOperationSuccess = false;
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
@@ -663,6 +672,7 @@ void sd_card_manager_ProcessState() {
                     } else {
                         LOG_E("[SD] Unsupported filesystem (type=%d) - reformat as FAT32",
                               fs ? fs->fs_type : 0);
+                        gpSDCardSettings->enable = false;   /* #613: atomic enable */
                         gSDCardData.lastOperationSuccess = false;
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.discMounted = true;  // Mark mounted so ERROR→UNMOUNT can clean up
