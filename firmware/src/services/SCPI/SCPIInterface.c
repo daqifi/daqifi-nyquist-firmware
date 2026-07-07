@@ -3731,6 +3731,15 @@ static scpi_result_t SCPI_SetDeviceName(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         return SCPI_RES_ERR;
     }
+    // #625: reject control chars, non-ASCII, and the JSON-structural
+    // characters '"' / '\\' — an unescaped name in the JSON info message
+    // ("friendlyName":"%s") would otherwise emit malformed JSON. Rejecting
+    // at the setter keeps every downstream encoder safe without per-encoder
+    // escaping, and the cache/NVM never hold an unsafe name.
+    if (!daqifi_settings_FriendlyNameIsValid(nameBuf)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
     daqifi_settings_SetFriendlyName(nameBuf);
     return SCPI_RES_OK;
 }

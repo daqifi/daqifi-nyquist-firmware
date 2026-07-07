@@ -16,8 +16,35 @@ uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16
  * readers always see a valid NUL-terminated string. */
 static char gFriendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE] = {0};
 
-void daqifi_settings_SetFriendlyName(const char* name) {
+/* #625: the friendly name is emitted UNESCAPED into the JSON info message
+ * ("friendlyName":"%s") and copied into the PB info message, so it must be
+ * printable ASCII with no JSON-structural characters. Reject control chars
+ * (< 0x20, 0x7F), non-ASCII (> 0x7E), and '"' / '\\'. Bounded scan: the
+ * boot-seed path hands us a fixed NVM field that may be blank flash (0xFF,
+ * no NUL) — a name with no terminator inside the field is invalid. */
+bool daqifi_settings_FriendlyNameIsValid(const char* name) {
     if (name == NULL) {
+        return false;
+    }
+    for (size_t i = 0; i < FRIENDLY_DEVICE_NAME_SIZE; i++) {
+        unsigned char c = (unsigned char)name[i];
+        if (c == '\0') {
+            return true;   // reached the terminator, all chars were safe
+        }
+        if (c < 0x20 || c > 0x7E || c == '"' || c == '\\') {
+            return false;
+        }
+    }
+    return false;          // no NUL within the field = malformed / invalid
+}
+
+void daqifi_settings_SetFriendlyName(const char* name) {
+    /* Fail safe: a NULL or invalid name (blank-flash NVM, an older build,
+     * or a corrupt blob reaching the boot-seed / NVM-load paths) leaves the
+     * cache EMPTY rather than injecting corruption into the JSON/PB
+     * encoders. The SCPI setter validates and rejects with an error first,
+     * so a user command never silently lands in this clear-to-empty branch. */
+    if (!daqifi_settings_FriendlyNameIsValid(name)) {
         gFriendlyDeviceName[0] = '\0';
         return;
     }

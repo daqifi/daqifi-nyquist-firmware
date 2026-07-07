@@ -219,6 +219,17 @@ extern "C" {
     void daqifi_settings_SetFriendlyName(const char* name);
 
     /**
+     * #625: True when @p name is a valid friendly name — printable ASCII
+     * (0x20..0x7E) with no NUL-region overrun and none of the
+     * JSON-structural characters '"' or '\\'. Used by the SCPI setter to
+     * reject unsafe input before it can corrupt the JSON info message.
+     * A NULL pointer or a field with no terminator returns false.
+     * @param name Candidate name (scanned up to FRIENDLY_DEVICE_NAME_SIZE)
+     * @return true if safe to store and emit, false otherwise
+     */
+    bool daqifi_settings_FriendlyNameIsValid(const char* name);
+
+    /**
      * #14: Returns a pointer to the runtime device friendly name cache
      * (NUL-terminated; empty string when unset). Never returns NULL.
      */
