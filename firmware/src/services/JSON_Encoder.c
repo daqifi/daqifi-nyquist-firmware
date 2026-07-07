@@ -416,6 +416,7 @@ size_t Json_Encode(tBoardData* state,
         StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
                 BOARDRUNTIME_STREAMING_CONFIGURATION);
         uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+        bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;   /* #158/#270 */
         while (((buffSize - startIndex) >= 65) && (qSize > 0)) {
             if (!AInSampleList_PopFront(&pPublicSampleList)) {
                 break;
@@ -453,9 +454,18 @@ size_t Json_Encode(tBoardData* state,
                     timestampAdded = true;
                 }
 
+                // #158/#270: raw mode emits the ADC code directly (no cal /
+                // no voltage conversion / no double math).
+                int written;
+                if (rawMode) {
+                    written = snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "{\"ch\":%u, \"val\":%u},\n",
+                            channelId,
+                            (unsigned)rawValue);
+                } else
                 // Convert raw ADC value to voltage by board config index
                 // directly (#268/#269). Skips O(N) channel-ID search.
-                int written;
                 if (precision == 0) {
                     // Integer millivolts (backwards compatible)
                     double voltage_mv = ADC_ConvertToVoltageByIndex(

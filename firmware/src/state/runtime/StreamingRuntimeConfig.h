@@ -121,6 +121,18 @@ extern "C" {
          */
         bool OnboardDiagEnabled;
 
+        /**
+         * #158/#270: raw ADC-code output mode. When true, CSV and JSON
+         * encoders emit the raw integer ADC code instead of the calibrated
+         * voltage - skipping ADC_ConvertToVoltageByIndex (slope/offset cal +
+         * double math) entirely. Serves both "disable calibration for
+         * high-speed streaming" (#158) and "raw ADC code output" (#270).
+         * ProtoBuf already ships raw codes, so it is unaffected. VoltagePrecision
+         * is ignored in raw mode. Controlled via CONF:ADC:RAWmode. Runtime-only,
+         * resets on reboot.
+         */
+        bool RawOutputMode;
+
     } StreamingRuntimeConfig;
 
     /**
