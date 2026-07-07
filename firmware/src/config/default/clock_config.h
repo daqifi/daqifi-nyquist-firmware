@@ -34,7 +34,7 @@
   #define DAQIFI_PBCLK_HZ     84000000UL   /* peripheral buses at PBxDIV /3 */
   #define DAQIFI_PBCLK_MHZ           84u    /* = DAQIFI_PBCLK_HZ / 1e6 */
   #define DAQIFI_PBDIV                2u    /* PBxDIVbits.PBDIV = divisor-1 → /3 */
-  #define DAQIFI_PFMWS                5u    /* flash wait states (bring-up conservative; datasheet tune-down pending) */
+  #define DAQIFI_PFMWS                4u    /* #586: datasheet+errata-#38 minimum at 252 MHz w/ ECC (raw needs 3, ECC +1); was 5 (bring-up conservative) */
 #else
   #define DAQIFI_SYSCLK_HZ   200000000UL   /* SPLL: 24 MHz POSC /3 x50 /2 */
   #define DAQIFI_PBCLK_HZ    100000000UL   /* peripheral buses at PBxDIV /2 */
