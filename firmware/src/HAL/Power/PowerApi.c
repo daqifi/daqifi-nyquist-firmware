@@ -191,6 +191,32 @@ void Power_Tasks(void) {
         BQ24297_ManageIINLIM(vbusPresent);
     }
 
+    /* #193: Interrupt-driven BQ24297 fault monitoring.
+     * The INT pin (RA4) change-notification ISR sets intFlag on any fault /
+     * charge-status / power-good change. Consume it here (~100ms cadence) for
+     * an immediate status refresh. Clear the flag BEFORE the I2C reads so an
+     * INT that fires during the read is not lost (it stays set and is handled
+     * next cycle). intFlag is a volatile bool — single-byte atomic on PIC32MZ,
+     * one ISR writer / one task clearer — so no critical section is needed.
+     * I2C stays task-context and mutex-protected inside the read functions. */
+    if (pData->BQ24297Data.initComplete && pData->BQ24297Data.intFlag) {
+        pData->BQ24297Data.intFlag = false;
+        BQ24297_UpdateStatus();
+        BQ24297_UpdateBatteryStatus();
+    }
+
+    /* #193 fallback: periodic REG09 fault refresh (~5s) in case a CN edge was
+     * missed. Cheap belt-and-suspenders — the INT path above handles the
+     * common case within ~100ms. */
+    static TickType_t lastFaultPollTime = 0;
+    TickType_t nowFault = xTaskGetTickCount();
+    if (pData->BQ24297Data.initComplete &&
+        (nowFault - lastFaultPollTime) >= pdMS_TO_TICKS(5000)) {
+        lastFaultPollTime = nowFault;
+        BQ24297_UpdateStatus();
+        BQ24297_UpdateBatteryStatus();
+    }
+
     /* Update power state at 1 second intervals */
     static TickType_t lastUpdateTime = 0;
     TickType_t currentTime = xTaskGetTickCount();
