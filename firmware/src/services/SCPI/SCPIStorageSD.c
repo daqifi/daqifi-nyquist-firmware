@@ -229,9 +229,14 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
         pSDCardRuntimeConfig->file[fileLen] = '\0';
     }
-    /* #598: route the async file data back to the interface that asked. */
-    pSDCardRuntimeConfig->replyTarget = wifi_tcp_server_ContextIsTcp(context)
+    /* #598: route the async file data back to the interface that asked.
+     * #599: capture the requesting TCP connection's generation so the SD
+     * reply can't leak into a different client that later inherits the slot. */
+    const bool getOverTcp = wifi_tcp_server_ContextIsTcp(context);
+    pSDCardRuntimeConfig->replyTarget = getOverTcp
             ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    pSDCardRuntimeConfig->replyGeneration =
+            getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     result = SCPI_RES_OK;
@@ -283,8 +288,11 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     // If no directory specified, the sd_card_manager will use the default from settings
     
     // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
-    pSDCardRuntimeConfig->replyTarget = wifi_tcp_server_ContextIsTcp(context)
-            ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;   /* #598 */
+    const bool listOverTcp = wifi_tcp_server_ContextIsTcp(context);   /* #598 */
+    pSDCardRuntimeConfig->replyTarget = listOverTcp
+            ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    pSDCardRuntimeConfig->replyGeneration =
+            listOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;   /* #599 */
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 

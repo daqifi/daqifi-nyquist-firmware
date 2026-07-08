@@ -176,6 +176,20 @@ bool wifi_tcp_server_ContextIsTcp(const scpi_t* context) {
            (context->user_context == (void*)&gpServerData->client);
 }
 
+uint32_t wifi_tcp_server_GetConnGeneration(void) {
+    return (gpServerData != NULL) ? gpServerData->client.connGeneration : 0u;
+}
+
+bool wifi_tcp_server_ConnIsCurrent(uint32_t generation) {
+    // #599: the originating connection still owns the single TCP slot only if
+    // a client is currently connected (clientSocket >= 0) AND its generation
+    // is unchanged.  A disconnect (clientSocket -> -1) or a different client
+    // taking the slot (generation bumped in SOCKET_MSG_ACCEPT) both fail this.
+    return (gpServerData != NULL) &&
+           (gpServerData->client.clientSocket >= 0) &&
+           (gpServerData->client.connGeneration == generation);
+}
+
 static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
     // Skip retry loop if client is disconnected — no progress possible
     if (gpServerData == NULL || gpServerData->client.clientSocket < 0) {
@@ -336,6 +350,7 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         gpServerData->client.wifiWriteBufferRejectedBytes = 0;
         gpServerData->client.inflightHead = 0;
         gpServerData->client.inflightTail = 0;
+        gpServerData->client.connGeneration = 0;
         for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
             gpServerData->client.inflightSizes[i] = 0;
         }

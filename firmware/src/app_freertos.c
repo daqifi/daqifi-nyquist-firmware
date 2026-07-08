@@ -200,6 +200,22 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
     const sd_card_manager_settings_t* pSet =
             (const sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     const bool toTcp = (pSet != NULL) && (pSet->replyTarget == SD_CARD_REPLY_WIFI_TCP);
+
+    /* #599: a TCP-targeted async reply must reach ONLY the connection that
+     * issued the GET/LIST.  If that client disconnected (and possibly a
+     * different client has since taken the single TCP slot), writing the
+     * remaining file bytes + __END_OF_FILE__ into the new client's SCPI
+     * stream is an info leak and a parser desync.  Bail when the originating
+     * connection no longer owns the slot, and abort the SD READ so it closes
+     * the file and resets mode cleanly on its next loop iteration (the LIST
+     * path simply finishes with its remaining chunks dropped). */
+    if (toTcp && !wifi_tcp_server_ConnIsCurrent(pSet->replyGeneration)) {
+        sd_card_manager_AbortTransfer();
+        LOG_E("[SD reply] TCP client changed/gone (gen %u) - reply aborted",
+              (unsigned)pSet->replyGeneration);
+        return;
+    }
+
     size_t (*writeFn)(const char*, size_t) = toTcp ? sd_reply_write_tcp : sd_reply_write_usb;
 
     size_t transferredLength = 0;

@@ -532,8 +532,12 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
     /* Per-interface, per-format TRANSPORT cap (#524) applies to ALL variants;
      * binds CSV (byte-bound) below the ADC cap. Interface is a PARAMETER so the
      * capabilities query can compute for the detected interface w/o mutating
-     * shared state (#524 Qodo). */
-    uint32_t transportMax = Streaming_TransportMaxFreq(iface, sc->Encoding, total);
+     * shared state (#524 Qodo). The isNQ1 flag selects the 252 MHz PB refit
+     * (#595 — NQ1-only basis) vs the conservative pre-#595 PB caps for NQ2/NQ3
+     * (their wider ADC samples push more PB bytes/sample per Hz). */
+    uint32_t transportMax = Streaming_TransportMaxFreq(
+            iface, sc->Encoding, total,
+            (bc != NULL && bc->BoardVariant == 1u) ? 1u : 0u);
     if (transportMax < maxFreq) maxFreq = transportMax;
     return maxFreq;
 }
