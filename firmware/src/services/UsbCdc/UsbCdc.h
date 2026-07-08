@@ -81,6 +81,14 @@ extern "C" {
         /** Write transfer handle */
         USB_DEVICE_CDC_TRANSFER_HANDLE writeTransferHandle;
 
+        /** #127: write-submission claim. writeTransferHandle alone can't gate
+         * concurrent writers - it is INVALID during the window between the
+         * critical-section check and USB_DEVICE_CDC_Write() assigning it, so
+         * two tasks could both pass the check and race on dmaWriteBuffer.
+         * Claimed (set true) inside the checking critical section; cleared on
+         * WRITE_COMPLETE (FinalizeWrite) or submission failure. */
+        volatile bool writeInProgress;
+
         /** #525: latched true when a write/flush wait times out (host stopped
          * draining the CDC IN endpoint). While set, WaitForWrite/FlushWriteBuffer
          * bail immediately instead of each burning the full stall timeout, so a

@@ -293,6 +293,14 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             // NanoPB_Encoder reads it directly for the streaming device_status
             // "USB connected" bit. Clear it on real teardown (stale-global audit).
             gRunTimeUsbSttings.isCdcHostConnected = 0;
+            /* #127/#617: a write in flight at teardown may never get its
+             * WRITE_COMPLETE (comment below), so the writeInProgress claim
+             * and the transfer handle would stay set forever and wedge every
+             * write after re-enumeration. Clear both here - the abandoned
+             * transfer is gone with the disconnect; a late WRITE_COMPLETE for
+             * the old handle no longer matches and is harmlessly ignored. */
+            gRunTimeUsbSttings.writeInProgress = false;
+            gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             if (gRunTimeUsbSttings.deviceHandle != USB_DEVICE_HANDLE_INVALID) {
                 gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             }
@@ -399,6 +407,13 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
             // but conservative approach is to reset the interface
             gRunTimeUsbSttings.isConfigured = false;
             gRunTimeUsbSttings.isCdcHostConnected = 0;  // host link reset (stale-global audit)
+            /* #127/#617: mirror the DECONFIGURED/RESET clear - a write in
+             * flight when this error resets the interface may never get its
+             * WRITE_COMPLETE, so release the claim and the transfer handle
+             * here or writeInProgress stays stuck true and wedges every write
+             * once the interface is re-established. */
+            gRunTimeUsbSttings.writeInProgress = false;
+            gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             gRunTimeUsbSttings.state = USB_CDC_STATE_BEGIN_CLOSE;
             break;
         default:
@@ -428,12 +443,17 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
     // Begin atomic section to prevent race conditions with concurrent writes
     taskENTER_CRITICAL();
 
-    // Check if previous write is still pending to prevent buffer corruption
-    if (gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+    // Check if previous write is still pending to prevent buffer corruption.
+    // #127: writeInProgress closes the TOCTOU window - the handle reads
+    // INVALID between this critical section and the driver call assigning
+    // it, so the handle alone can't exclude a concurrent writer.
+    if (gRunTimeUsbSttings.writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID ||
+        gRunTimeUsbSttings.writeInProgress) {
         taskEXIT_CRITICAL();
         LOG_D("USB write: previous transfer pending");
         return -1;  // Previous write still in progress
     }
+    gRunTimeUsbSttings.writeInProgress = true;
 
     // Prepare buffer while in atomic section to prevent another task from corrupting it
     memcpy(gRunTimeUsbSttings.dmaWriteBuffer, buf, (size_t)len);
@@ -468,6 +488,7 @@ int UsbCdc_Wrapper_Write(uint8_t* buf, uint32_t len) {
         taskENTER_CRITICAL();
         gRunTimeUsbSttings.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
         gRunTimeUsbSttings.writeBufferLength = 0;
+        gRunTimeUsbSttings.writeInProgress = false;   /* #127: release claim */
         taskEXIT_CRITICAL();
 #if PB_PROFILE_COUNTERS
         // #388: ensure no stale start cycles linger after a partial
@@ -613,6 +634,7 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client) {
 #endif
     client->writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
     client->writeBufferLength = 0;
+    client->writeInProgress = false;   /* #127: release claim on completion */
     // #525: a completed transfer means the host resumed draining the IN
     // endpoint — clear the stall latch so the next write proceeds normally
     // instead of being dropped by the early-bail in WaitForWrite.
@@ -1345,6 +1367,13 @@ void UsbCdc_ProcessState() {
             gRunTimeUsbSttings.writeTransferHandle =
                     USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             gRunTimeUsbSttings.readBufferLength = 0;
+            /* #127/#617: teardown funnel. The endpoint-halt / terminated-by-
+             * host resets in BeginRead/BeginWrite reach CLOSED only through
+             * BEGIN_CLOSE - no event handler clears them - so release the
+             * write claim here too. An in-flight write abandoned at teardown
+             * must not leave writeInProgress stuck true and wedge every write
+             * after re-enumeration. */
+            gRunTimeUsbSttings.writeInProgress = false;
 
             gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
