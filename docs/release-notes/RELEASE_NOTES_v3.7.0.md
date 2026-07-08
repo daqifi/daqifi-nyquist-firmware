@@ -1,6 +1,6 @@
 # DAQiFi Nyquist Firmware v3.7.0
 
-**Release date:** 2026-07-06
+**Release date:** 2026-07-08
 **Baseline:** v3.6.3
 
 ## Highlights
@@ -57,6 +57,22 @@
   (Saleae-validated: 1 s x10 -> 5 s idle backoff -> instant fast-cadence
   restore on SD activity).
 
+- **Pre-release hardening (#654).** An independent adversarial pre-merge
+  audit over the full release delta caught three issues the endurance soak
+  could not, all fixed before release:
+  - *SD-over-WiFi connection isolation (#599).* An async `SD:GET`/`LISt?`
+    reply is now bound to the TCP connection that requested it. Previously,
+    if that client disconnected mid-transfer and a second client inherited
+    the single console slot, the remaining file bytes could land in the new
+    client's stream. Normal single-client transfers are unchanged.
+  - *252 MHz PB cap raise scoped to NQ1 (#595).* The raised ProtoBuf
+    transport caps were characterized on NQ1 only; they now apply to NQ1
+    exclusively, and NQ2/NQ3 keep their pre-raise conservative caps until
+    re-characterized (no silent over-cap on those variants).
+  - *Build-config integrity.* The Nq1/Nq3 standalone build configurations
+    were restored to the correct linker layout (internal; the shipped
+    release hex is `default`-built and was always correct).
+
 ## New SCPI commands
 
 | Command | Description |
@@ -92,3 +108,8 @@
   overnight, `nightly_regression.py`) — results referenced in the PR.
 - Sick-card advisory + quarantine validated live against the incompatible
   card; bus-counter query validated on hardware.
+- Post-fix cross-board re-validation (2026-07-08): the at-cap USB PB+CSV
+  matrix run on two independent NQ1 units (COM3 + COM12) is byte-identical
+  and 28/28 PASS zero-loss on both, confirming the #654 fixes did not
+  regress streaming. Firmware-counter check: the device achieves its
+  enforced cap (e.g. 8786 sps at an 8788 Hz cap, invariant holds, 0 drops).
