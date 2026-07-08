@@ -1363,12 +1363,17 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
     size_t dioSize = 0;
     uint8_t dioDir[2] = {0};
     size_t dioDirSize = 0;
+    uint32_t dioTimestamp = state->StreamTrigStamp;  /* #614: fallback if no DIO sample */
 
     if (hasDIO) {
         DIOSample DIOdata;
         if (DIOSampleList_PopFront(&state->DIOSamples, &DIOdata)) {
             memcpy(dioValues, &DIOdata.Values, sizeof(dioValues));
             dioSize = sizeof(dioValues);
+            /* #614 (Qodo): stamp the standalone DIO frame with the tick that
+             * captured this sample, not the live StreamTrigStamp, which drifts
+             * ahead under encoder lag. */
+            dioTimestamp = DIOdata.Timestamp;
         }
 
         /* Build port direction bitmap (1=input per channel) */
@@ -1388,10 +1393,11 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
      * Each sample set has its own timestamp that must be preserved.
      * DIO data is included in the first AIN message if available,
      * or in a standalone message if no AIN data is present. */
+    bool dioIncluded = false;
+
     if (hasAIN) {
         uint32_t queueSize = AInSampleList_Size();
         AInPublicSampleList_t *pPublicSampleList;
-        bool dioIncluded = false;
 
         while (queueSize > 0) {
             /* Check buffer space BEFORE consuming a sample from the queue.
@@ -1460,11 +1466,16 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
         }
     }
 
-    /* DIO-only message if no AIN data consumed the DIO */
-    if (!hasAIN && dioSize > 0) {
+    /* Standalone DIO message whenever no AIN message consumed it. #593: the
+     * old !hasAIN gate was unreachable in DIO-only sessions - the deferred
+     * tick task enqueues an EMPTY AIn list every tick (timestamp fallback),
+     * so hasAIN was always true, the AIN branch popped the DIO sample, every
+     * empty list skipped encoding at count>0, and the popped DIO sample was
+     * destroyed. Zero bytes forever, no SCPI error. Gate on dioIncluded. */
+    if (!dioIncluded && dioSize > 0) {
         size_t written = encode_streaming_msg_delimited(
             pBuffer + bufferOffset, buffSize - bufferOffset,
-            state->StreamTrigStamp, NULL, 0,
+            dioTimestamp, NULL, 0,
             dioValues, dioSize, dioDir, dioDirSize);
 
         if (written > 0) {
