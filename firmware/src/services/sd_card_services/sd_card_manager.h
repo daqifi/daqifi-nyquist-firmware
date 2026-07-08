@@ -59,6 +59,13 @@ extern "C" {
         bool enable;
         sd_card_manager_mode_t mode;
         sd_card_manager_reply_target_t replyTarget;  /**< #598 */
+        /* #599: TCP connection generation captured when a WIFI_TCP reply was
+         * requested (SCPI GET/LIST).  sd_card_manager_DataReadyCB refuses to
+         * write (and aborts the transfer) if the live connection no longer
+         * matches this value, so an async GET/LIST reply cannot leak into a
+         * different client that inherited the single TCP slot.  Meaningless
+         * (and left 0) when replyTarget == SD_CARD_REPLY_USB. */
+        uint32_t replyGeneration;
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
         uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
