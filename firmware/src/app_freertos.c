@@ -1,3 +1,7 @@
+/* LOG_LVL must precede EVERY include: a transitive Logger.h inclusion
+ * bakes the LOG_* macros at first sight of the header (Qodo #608). */
+#define LOG_LVL LOG_LEVEL_ERROR   /* compile ceiling: ERROR-only — LOG_E compiled in; LOG_D/LOG_I stripped from the binary (boot loop / hot path) */
+
 #include "app_freertos.h"
 #include "wdrv_winc_client_api.h"
 #include "queue.h"
