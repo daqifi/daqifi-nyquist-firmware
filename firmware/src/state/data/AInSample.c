@@ -22,7 +22,7 @@
 
 /* LOG_LVL must precede EVERY include: a transitive Logger.h inclusion
  * bakes the LOG_* macros at first sight of the header (Qodo #608). */
-#define LOG_LVL LOG_LEVEL_DEBUG   /* compile ceiling - without it every LOG_D/LOG_I here is a no-op (#605 audit) */
+#define LOG_LVL LOG_LEVEL_ERROR   /* compile ceiling: ERROR-only — LOG_E compiled in; LOG_D/LOG_I stripped from the binary (per-sample hot path) */
 
 #include "AInSample.h"
 #include "FreeRTOS.h"
