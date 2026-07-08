@@ -1046,6 +1046,16 @@ void sd_card_manager_ProcessState() {
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                     /* Could not open the file. Error out*/
+                    /* #306 fix (wedge): reset mode so this op is terminal.
+                     * This branch is shared by READ and COMPUTE_CRC; on a
+                     * missing/unopenable file the INIT guard
+                     * ((enable || GET_SPACE) && mode != NONE) would otherwise
+                     * re-arm the op every ERROR->UNMOUNT->INIT cycle, wedging
+                     * the SD subsystem (IsBusy() stuck true) until reboot.
+                     * Mirrors the CRC read-error terminal path. Fixes the
+                     * SYST:STOR:SD:CRC "missing" wedge and the pre-existing
+                     * latent SD:GET open-fail wedge. */
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
                 }
