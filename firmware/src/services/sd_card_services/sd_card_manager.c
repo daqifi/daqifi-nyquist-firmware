@@ -7,6 +7,7 @@
 #include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
+#include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE
@@ -128,6 +129,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE,
     SD_CARD_MANAGER_PROCESS_STATE_FORMAT,
     SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE,
+    SD_CARD_MANAGER_PROCESS_STATE_COMPUTE_CRC,   /* #306 */
     SD_CARD_MANAGER_PROCESS_STATE_DEINIT,
     SD_CARD_MANAGER_PROCESS_STATE_IDLE,
     SD_CARD_MANAGER_PROCESS_STATE_ERROR,
@@ -177,6 +179,12 @@ typedef struct {
     // Mount retry tracking
     uint8_t mountRetryCount;
     uint8_t unmountRetryCount;   /* #603: bounded unmount retries */     // Number of consecutive mount failures
+
+    // #306: CRC result (populated by COMPUTE_CRC mode)
+    volatile bool crcResultValid;
+    uint32_t crcResult;
+    uint64_t crcLength;
+    uint32_t crcRunning;      /* streaming accumulator (task-only access) */
 
     // Space query result (populated by GET_SPACE mode)
     uint64_t spaceResultFreeBytes;
@@ -1035,18 +1043,39 @@ void sd_card_manager_ProcessState() {
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Failed to open SD Card file for writing: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
                 }
-            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
-                // For READ mode, construct filename directly from settings (no splitting)
+            } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
+                       gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
+                // READ/CRC: construct filename directly from settings (no splitting)
                 snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
                         gpSDCardSettings->directory, gpSDCardSettings->file);
                 LOG_D("[SD] Opening file for read: '%s'\r\n", gSDCardData.filePath);
 
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE;
+                if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
+                    /* #306: invalidate prior result, arm the accumulator */
+                    taskENTER_CRITICAL();
+                    gSDCardData.crcResultValid = false;
+                    taskEXIT_CRITICAL();
+                    gSDCardData.crcRunning = CRC32_Init();
+                    gSDCardData.crcLength = 0;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_COMPUTE_CRC;
+                } else {
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE;
+                }
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                     /* Could not open the file. Error out*/
+                    /* #306 fix (wedge): reset mode so this op is terminal.
+                     * This branch is shared by READ and COMPUTE_CRC; on a
+                     * missing/unopenable file the INIT guard
+                     * ((enable || GET_SPACE) && mode != NONE) would otherwise
+                     * re-arm the op every ERROR->UNMOUNT->INIT cycle, wedging
+                     * the SD subsystem (IsBusy() stuck true) until reboot.
+                     * Mirrors the CRC read-error terminal path. Fixes the
+                     * SYST:STOR:SD:CRC "missing" wedge and the pre-existing
+                     * latent SD:GET open-fail wedge. */
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
                 }
@@ -1653,6 +1682,83 @@ void sd_card_manager_ProcessState() {
         }
             break;
 
+        case SD_CARD_MANAGER_PROCESS_STATE_COMPUTE_CRC:
+        {
+            /* #306: fold the file into the CRC in bounded chunks per task
+             * pass - no priority boost, no long loop: CRC is a background
+             * diagnostic and must not starve streaming/WiFi. ~8 KB per pass
+             * via the shared op buffer (serialized by gSDOpMutex). */
+            if (gSDOpMutex) {
+                SD_TakeMutexDebug(gSDOpMutex, "crc_operation");
+            }
+            /* #306 fix (OOB write) + Qodo #610: clamp each read to the ACTUAL
+             * shared-buffer size, never past it. gSdSharedBuffer is the
+             * SD-circular partition, which shrinks to STREAMING_SD_CIRCULAR_MIN
+             * (512) whenever SD is not the active streaming target - a hardcoded
+             * 2048 overruns into the adjacent streaming sample pool. */
+            size_t crcChunk = (gSdSharedBufferSize < 2048u)
+                              ? (size_t)gSdSharedBufferSize : 2048u;
+            bool done = false;
+            /* Qodo #610: if the pool has not been partitioned yet the buffer is
+             * NULL / size 0. A 0-length read returns 0 and would falsely report
+             * "read error before EOF" for a perfectly good file - fail the CRC
+             * cleanly instead (mirrors the read-error terminal path below). */
+            if (gSdSharedBuffer == NULL || crcChunk == 0u) {
+                LOG_E("[SD] CRC: shared buffer unavailable (size=%u)",
+                      (unsigned)gSdSharedBufferSize);
+                if (gSDOpMutex) {
+                    xSemaphoreGive(gSDOpMutex);
+                }
+                SYS_FS_FileClose(gSDCardData.fileHandle);
+                gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                gSDCardData.lastOperationSuccess = false;
+                gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                gSDCardData.currentProcessState =
+                        SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                break;
+            }
+            for (int pass = 0; pass < 4 && !done; pass++) {
+                size_t rd = SYS_FS_FileRead(gSDCardData.fileHandle,
+                                            gSdSharedBuffer, crcChunk);
+                if ((int32_t)rd > 0) {
+                    gSDCardData.crcRunning = CRC32_Update(gSDCardData.crcRunning,
+                                                          gSdSharedBuffer, rd);
+                    gSDCardData.crcLength += rd;
+                } else {
+                    done = true;
+                }
+            }
+            if (gSDOpMutex) {
+                xSemaphoreGive(gSDOpMutex);
+            }
+            if (done) {
+                bool eof = SYS_FS_FileEOF(gSDCardData.fileHandle);
+                SYS_FS_FileClose(gSDCardData.fileHandle);
+                gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                if (eof) {
+                    uint32_t crc = CRC32_Finalize(gSDCardData.crcRunning);
+                    taskENTER_CRITICAL();
+                    gSDCardData.crcResult = crc;
+                    gSDCardData.crcResultValid = true;
+                    taskEXIT_CRITICAL();
+                    gSDCardData.lastOperationSuccess = true;
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                } else {
+                    LOG_E("[SD] CRC read error before EOF on '%s'", gSDCardData.filePath);
+                    /* #306 fix (wedge): reset mode so this op is terminal -
+                     * otherwise IsBusy() stays true forever and the INIT
+                     * dispatch keeps re-arming COMPUTE_CRC, wedging the SD
+                     * subsystem until reboot. Mirrors every other terminal
+                     * error path. */
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                }
+            }
+        }
+            break;
+
         case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
 
             break;
@@ -1732,6 +1838,15 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
 
     if (pSettings != NULL && gpSDCardSettings != NULL) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
+        /* #306 fix (stale CRC): a new CRC request must invalidate any prior
+         * result immediately, so a CRC? query in the window before OPEN_FILE
+         * cannot return the previous file's CRC (GetCrcResult is checked
+         * before IsBusy in the SCPI query). */
+        if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
+            taskENTER_CRITICAL();
+            gSDCardData.crcResultValid = false;
+            taskEXIT_CRITICAL();
+        }
     }
     // Drain any stale completion token, but only when idle to avoid
     // consuming a signal that an in-flight WaitForCompletion is expecting
@@ -1820,6 +1935,18 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * is correct, since gating on settings init could leave the
      * flag stuck-true if SCPI ever runs before sd init. */
     gSDCardData.startupDiskFull = false;
+}
+
+bool sd_card_manager_GetCrcResult(uint32_t *crc32, uint64_t *length) {
+    bool valid;
+    taskENTER_CRITICAL();
+    valid = gSDCardData.crcResultValid;
+    if (valid) {
+        if (crc32 != NULL)  { *crc32  = gSDCardData.crcResult; }
+        if (length != NULL) { *length = gSDCardData.crcLength; }
+    }
+    taskEXIT_CRITICAL();
+    return valid;
 }
 
 bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {

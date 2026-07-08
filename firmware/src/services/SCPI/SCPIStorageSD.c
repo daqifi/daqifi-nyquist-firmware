@@ -235,6 +235,59 @@ __exit_point:
     return result;
 }
 
+/* #306: start an async CRC32 computation over a stored file. Result via
+ * SYST:STOR:SD:CRC? - mirrors the GET_SPACE request/query split so the SCPI
+ * task never blocks on a multi-second file scan. */
+scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
+    const char* pBuff;
+    size_t fileLen = 0;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!pSDCardRuntimeConfig->enable) {
+        context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
+        return SCPI_RES_ERR;
+    }
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("CRC");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_CheckSDCardPresent(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE) ||
+        fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
+    pSDCardRuntimeConfig->file[fileLen] = '\0';
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    return SCPI_RES_OK;
+}
+
+/* #306: CRC result query. "BUSY" while computing; "0xXXXXXXXX,<bytes>" when
+ * done; -230 (data corrupt/stale) if no valid result exists. */
+scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context) {
+    uint32_t crc;
+    uint64_t len;
+    if (sd_card_manager_GetCrcResult(&crc, &len)) {
+        char out[40];
+        snprintf(out, sizeof(out), "0x%08lX,%llu",
+                 (unsigned long)crc, (unsigned long long)len);
+        SCPI_ResultText(context, out);
+        return SCPI_RES_OK;
+    }
+    if (sd_card_manager_IsBusy()) {
+        SCPI_ResultText(context, "BUSY");
+        return SCPI_RES_OK;
+    }
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_CORRUPT);
+    return SCPI_RES_ERR;
+}
+
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
