@@ -22,6 +22,18 @@ scpi_result_t SCPI_LANEnabledGet(scpi_t * context);
 scpi_result_t SCPI_LANEnabledSet(scpi_t * context);
 
 /**
+ * SCPI Callback: Get the WINC deep-power-down state (#334).
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANPowerGet(scpi_t * context);
+
+/**
+ * SCPI Callback: Deep power-down / power-up the WINC chip (#334).
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANPowerSet(scpi_t * context);
+
+/**
  * SCPI Callback: Get the type of LAN network
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */

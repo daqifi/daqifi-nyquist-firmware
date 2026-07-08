@@ -12,6 +12,7 @@
 #include "wifi_serial_bridge_interface.h"
 #include "iperf2/iperf2.h"
 #include "driver/winc/include/drv/common/nm_common.h"  // nm_reset (canonical WINC reset pulse)
+#include "wdrv_winc_gpio.h"  // WDRV_WINC_GPIOChipEnable*/Reset* (#334 deep power-down)
 #include "semphr.h"
 #include "driver/winc/include/drv/driver/m2m_wifi.h"
 
@@ -160,6 +161,17 @@ static volatile bool gTcpRxPending = false;
 // concurrency rules).  Marked volatile because it's set from any task
 // calling HardReset/Deinit and read every tick from app_WifiTask.
 static volatile TickType_t gWifiReinitDeadlineTick = 0;
+
+// #334: deep power-down latch. When true the user has requested that the
+// WINC1500 chip be held in full shutdown (CHIP_EN driven LOW) for battery
+// savings — distinct from a plain Deinit, which leaves nm_reset's final
+// CHIP_EN HIGH so the chip stays powered but idle. The DEINIT event handler
+// consults this to drive CHIP_EN/RESET_N LOW after teardown; the INIT
+// success path clears it (any bring-up implies the chip is powered again).
+// Runtime-only, scrubbed in wifi_manager_BootInit (#409). 32-bit/bool
+// reads/writes are atomic on PIC32MZ; volatile because it is written from a
+// SCPI task and read from app_WifiTask.
+static volatile bool gWincDeepPowerOff = false;
 
 // Recursive mutex serializing wifi_manager_ProcessState across callers.
 // Today app_WifiTask is the primary owner; SCPI_Reset's active pump
@@ -1159,6 +1171,19 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
                 sInitFailTracking = false;
                 sJamCheckDone = false;
+                // #334: the chip is powered and reachable again — clear any
+                // stale deep-power-down latch so SYST:COMM:LAN:POWer? reports
+                // the true state (covers bring-up via APPLY/ENAbled, not just
+                // the dedicated PowerOn path).
+                // #637: but only on a genuine bring-up (isEnabled==1). A
+                // concurrent SYST:COMM:LAN:POWer 0 on the higher-priority USB
+                // SCPI task sets the latch and isEnabled=0, then queues DEINIT
+                // behind this in-flight INIT; clearing unconditionally here
+                // would clobber that request so the trailing DEINIT skips the
+                // CHIP_EN/RESET_N deassert and the WINC stays powered.
+                if (pInstance->pWifiSettings->isEnabled) {
+                    gWincDeepPowerOff = false;
+                }
                 // Reset error flag on success
                 if (initErrorLogged) {
                     LOG_D("WiFi driver initialization succeeded\r\n");
@@ -1988,6 +2013,18 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED);
                 LOG_D("WiFi de-initialized and taken out of reset\r\n");
             }
+            // #334: honor a deep power-down request. wifi_manager_FixWincResetState
+            // (nm_reset) above leaves CHIP_EN HIGH — chip powered but idle. For a
+            // true low-power shutdown, override that and hold CHIP_EN + RESET_N LOW
+            // so the WINC draws only its shutdown-mode current. Done unconditionally
+            // when latched (even if the driver was never initialized) so the chip
+            // reaches the same state regardless of prior WiFi activity. Power-up
+            // (INIT via the driver's nm_reset) drives both lines back HIGH.
+            if (gWincDeepPowerOff) {
+                WDRV_WINC_GPIOChipEnableDeassert();  // CHIP_EN LOW  (full shutdown)
+                WDRV_WINC_GPIOResetAssert();         // RESET_N LOW
+                LOG_I("WiFi: WINC held in deep power-down (CHIP_EN low)");
+            }
             break;
         case WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED:
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED);
@@ -2139,6 +2176,7 @@ void wifi_manager_BootInit(void) {
     gTcpRxPending = false;
     gLastRssiPercentage = 0;
     gWifiReinitDeadlineTick = 0;
+    gWincDeepPowerOff = false;  // #334 — retained-RAM scrub
     gApplyInProgress = false;
     gApplyInProgressDeadlineTick = 0;
     gApplyTeardownStartTick = 0;
@@ -2301,6 +2339,74 @@ bool wifi_manager_Deinit() {
     // link.  Doing it here makes the query gates trip the moment Deinit runs.
     InvalidateStaLinkState();
     return SendEvent(WIFI_MANAGER_EVENT_DEINIT);
+}
+
+// #334: Full deep power-down of the WINC1500 chip for battery savings.
+//
+// A plain wifi_manager_Deinit() tears down the driver but nm_reset (run at
+// the tail of the DEINIT event) leaves CHIP_EN HIGH, so the chip stays
+// powered and continues drawing its idle current. PowerOff sets the
+// deep-power-down latch first, then drives the same Deinit teardown; the
+// DEINIT event handler sees the latch and holds CHIP_EN + RESET_N LOW,
+// putting the WINC in shutdown mode (minimal quiescent current).
+//
+// The rest of the device (USB/SD streaming, ADC, power management) is
+// unaffected — this only touches the WINC. Reverse with wifi_manager_PowerOn.
+//
+// Non-blocking: queues the DEINIT event. Works whether called from
+// app_WifiTask (TCP SCPI) or another task (USB CDC SCPI). The caller may
+// actively pump wifi_manager_ProcessState[NoTcpRx] to force completion, the
+// same pattern SCPI_SetPowerState uses.
+bool wifi_manager_PowerOff(void) {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    gWincDeepPowerOff = true;
+    LOG_I("WiFi: deep power-down requested (WINC shutdown)");
+    return wifi_manager_Deinit();
+}
+
+// #334: Bring the WINC1500 back up after a PowerOff. Clears the
+// deep-power-down latch, re-enables WiFi, and queues INIT — the driver's
+// own init path (nm_reset in nm_drv_init) drives CHIP_EN/RESET_N back HIGH
+// and re-syncs the chip, so no explicit GPIO wake is needed here. Full
+// bring-up (re-init + STA reassoc + DHCP) takes ~1-2 s+; poll
+// SYST:COMM:LAN:ADDR? to confirm association.
+bool wifi_manager_PowerOn(void) {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    // #637: idempotent. If the WINC is already powered and up, POWer 1 is a
+    // no-op. Re-sending INIT here would fall through the INIT handler's
+    // alreadyInitialized path and re-run WDRV_WINC_BSSConnect/APStart on the
+    // live, socket-bound chip — bypassing the #435/#437b HardReset divert
+    // (which only guards the APPLY/UpdateNetworkSettings REINIT path) and
+    // dropping/oscillating the active link. Only proceed with the re-init
+    // when the chip is actually down: deep-power-down latched, or
+    // initialized-but-not-yet-started.
+    if (!gWincDeepPowerOff &&
+        GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED) &&
+        (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED) ||
+         GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))) {
+        LOG_I("WiFi: power-up requested but WINC already powered/up — no-op (#637)");
+        return true;
+    }
+    taskENTER_CRITICAL();
+    gWincDeepPowerOff = false;
+    gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
+    gStateMachineContext.pWifiSettings->isEnabled = 1;
+    taskEXIT_CRITICAL();
+    LOG_I("WiFi: power-up requested (WINC re-init)");
+    return SendEvent(WIFI_MANAGER_EVENT_INIT);
+}
+
+// #334: query the deep-power-down latch. true = WINC is (or is being) held
+// in deep power-down; false = powered/available.
+bool wifi_manager_IsPoweredOff(void) {
+    return gWincDeepPowerOff;
+}
+
+// #334: report the live enabled state. Read a plain aligned bool — atomic
+// on PIC32MZ; no critical section needed for a single-field read.
+bool wifi_manager_IsEnabled(void) {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    return gStateMachineContext.pWifiSettings->isEnabled != 0;
 }
 
 // True hardware reset of the WINC chip: disable -> DEINIT (toggles
