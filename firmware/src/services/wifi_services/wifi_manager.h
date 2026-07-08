@@ -251,6 +251,18 @@ extern "C" {
     bool wifi_manager_IsPoweredOff(void);
 
     /**
+     * @brief #334: Query whether WiFi is currently enabled (user setting).
+     *
+     * Reads the live pWifiSettings->isEnabled. Used by the power-state
+     * machine to remember whether to bring WiFi back up when the device
+     * leaves STANDBY (it is captured BEFORE the deep-power-down teardown,
+     * which clears isEnabled in wifi_manager_Deinit).
+     *
+     * @return True if WiFi is enabled, false if disabled or not yet init.
+     */
+    bool wifi_manager_IsEnabled(void);
+
+    /**
      * @brief Hardware reset the WINC chip (true GPIO reset).
      *
      * Disables WiFi and queues the DEINIT event (toggles CHIP_EN /

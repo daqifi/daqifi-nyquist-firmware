@@ -2384,6 +2384,13 @@ bool wifi_manager_IsPoweredOff(void) {
     return gWincDeepPowerOff;
 }
 
+// #334: report the live enabled state. Read a plain aligned bool — atomic
+// on PIC32MZ; no critical section needed for a single-field read.
+bool wifi_manager_IsEnabled(void) {
+    if (gStateMachineContext.pWifiSettings == NULL) return false;
+    return gStateMachineContext.pWifiSettings->isEnabled != 0;
+}
+
 // True hardware reset of the WINC chip: disable -> DEINIT (toggles
 // CHIP_EN/RESET_N GPIOs via wifi_manager_FixWincResetState) -> after
 // 2 s settle, re-enable -> REINIT to bring the chip back up.

@@ -697,7 +697,10 @@ static void Power_HandlePoweredUpExtDownState(void) {
  */
 static void Power_UpdateState(void) {
     static POWER_STATE lastLoggedState = -1;
-    
+    /* #334/#637: WiFi's enabled state captured on the way into STANDBY, so
+     * we know whether to bring it back up on the way out. */
+    static bool sWifiEnabledPreStandby = false;
+
     /* Monitor 3.3V rail state (debug/diagnostic) */
     static bool last3v3State = false;
     static bool first3v3Check = true;
@@ -711,6 +714,26 @@ static void Power_UpdateState(void) {
     // Log state changes
     if (pData->powerState != lastLoggedState) {
         LOG_D("Power_UpdateState: State changed from %d to %d", lastLoggedState, pData->powerState);
+
+        /* #334/#637: keep WiFi silent in STANDBY — no beacon, no STA
+         * reconnect. Hold the WINC in reset (CHIP_EN/RESET_N low, via the
+         * deep-power-down latch) on the way in; on the way out restore it
+         * ONLY if it was enabled before standby. wifi_manager_PowerOn()
+         * force-sets isEnabled=1, so an unconditional restore would turn
+         * WiFi on for a user who had it off; and Deinit (inside PowerOff)
+         * clears isEnabled, so the pre-standby value must be captured first.
+         * The (POWER_STATE)-1 sentinel skips first-boot: the normal WiFi
+         * init path owns the initial power-up, and PowerOff/PowerOn are
+         * NULL-guarded no-ops before wifi_manager is initialized anyway. */
+        if (lastLoggedState != (POWER_STATE)-1) {
+            if (pData->powerState == STANDBY) {
+                sWifiEnabledPreStandby = wifi_manager_IsEnabled();
+                wifi_manager_PowerOff();
+            } else if (lastLoggedState == STANDBY && sWifiEnabledPreStandby) {
+                wifi_manager_PowerOn();
+            }
+        }
+
         lastLoggedState = pData->powerState;
     }
     
