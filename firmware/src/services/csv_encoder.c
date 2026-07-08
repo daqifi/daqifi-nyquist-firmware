@@ -322,7 +322,8 @@ static size_t tryWriteRow(
     bool        dioEnabled,
     bool       *hadAIN,
     bool       *hadDIO,
-    uint8_t     voltagePrecision
+    uint8_t     voltagePrecision,
+    bool        rawMode              /* #158/#270: emit raw ADC codes */
 ) {
     // 1) peek queues
     AInPublicSampleList_t *ainPeek = NULL;
@@ -377,6 +378,17 @@ static size_t tryWriteRow(
             *p++ = ',';
             space--;
 
+            // #158/#270: raw mode emits the ADC code directly - no cal,
+            // no voltage conversion, no double math (fastest path; also the
+            // uncalibrated high-speed-streaming path #158 asked for).
+            if (rawMode) {
+                // #620: AD7609 (18-bit bipolar) negative codes are
+                // sign-extended two's-complement int32 (e.g. -4096 =
+                // 0xFFFFF000); emit SIGNED to match the PB sint32 raw path
+                // (unsigned would misprint negatives as ~4.29e9).
+                p = int_to_str((int32_t)ainPeek->Values[j], p, space);
+                if (p == NULL) return 0;
+            } else
             // Convert raw ADC value to voltage using the board config index
             // directly (#268/#269). Skips the O(N) channel-ID-to-index linear
             // search that ADC_ConvertToVoltage performs internally.
@@ -533,7 +545,8 @@ size_t csv_Encode(
     while (1) {
         bool hadAIN, hadDIO;
         // attempt to write the next row in-place
-        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO, voltagePrecision);
+        bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;
+        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO, voltagePrecision, rawMode);
         if (rowLen == 0 || rowLen > rem) {
             break;  // no data left or row won?t fit
         }

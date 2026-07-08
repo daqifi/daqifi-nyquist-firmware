@@ -273,6 +273,30 @@ survives across `StopStreamData` until the next start or
 Out-of-band visibility (Saleae, PC-side iperf2.log) for long runs;
 never poll the device under test. Mirrored in the SCPI wiki.
 
+#### SCPI Command Surface — keep it lean
+
+**Before adding a new SCPI command, try to extend an existing one.** The
+command table is a maintenance and documentation surface (every entry needs
+a wiki row, a callback, client-library awareness); an ever-growing list is
+a liability. Order of preference when adding capability:
+
+1. **Add a parameter value to an existing setter.** A new mode almost always
+   fits an existing command as another enum value. *Example (#158/#270):
+   raw/no-calibration output shipped as `CONFigure:ADC:USECal 2` (0=factory,
+   1=user, 2=raw) rather than a separate `CONF:ADC:RAWmode` — one command,
+   backward-compatible (0/1 unchanged), no new table entry.*
+2. **Add an optional parameter** to an existing command (e.g. an extra
+   channel-index or flag argument) rather than a parallel command.
+3. **Group under an existing namespace** (`SYST:...:`, `CONF:ADC:...`) so
+   related functionality is discoverable together.
+4. **Only add a brand-new command** when the capability is genuinely
+   orthogonal to everything present and can't be expressed as a value/arg.
+
+When you do extend a command, keep old values' behavior identical (append
+new values at the end — don't renumber), and update the wiki row to document
+the full value set. This preference is the user's standing rule (2026-07-06):
+"keep our command list from blowing up."
+
 #### SCPI Command Verification Protocol
 
 **⚠️ CRITICAL: NEVER guess SCPI command syntax. ALWAYS verify first.**
@@ -1275,6 +1299,18 @@ Fixes #23
 ```
 
 ### How we test (policy)
+
+**RULE (user standing rule, 2026-07-06): every firmware PR ships with a
+regression test in `daqifi-python-test-suite`.** When you open a PR that
+changes device behavior, a companion test that exercises the new behavior
+(and would fail on the old firmware) must land in the suite — committed and
+referenced in the PR body. Prefer building it from `test_harness.py`
+primitives; if the test needs a new reusable capability, add it to the
+harness (not a one-off in the script) so the next PR reuses it. Exempt:
+docs-only, lint-only, comment-only, and pure-refactor PRs with no behavior
+change. If bench hardware is occupied when the PR opens, the test is still
+committed and the run is queued (note it in the PR); the test existing is
+the requirement, not that it has run yet.
 
 All **durable regression tests** — firmware regression, MCP integration, client SDK validation, throughput characterization — live in **`daqifi-python-test-suite`**. The full policy is in [`docs/HOW_WE_TEST.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/HOW_WE_TEST.md) in that repo (private, see `docs/README.md` for access); the short version:
 
