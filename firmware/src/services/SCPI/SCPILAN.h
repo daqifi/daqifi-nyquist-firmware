@@ -39,6 +39,19 @@ scpi_result_t SCPI_LANNetModeGet(scpi_t * context);
 scpi_result_t SCPI_LANNetModeSet(scpi_t * context);
 
 /**
+ * SCPI Callback: Get the AP-mode SSID hidden/cloaked flag (#45)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHiddenGet(scpi_t * context);
+
+/**
+ * SCPI Callback: Set the AP-mode SSID hidden/cloaked flag (#45)
+ *   1 = SSID hidden (not broadcast), 0 = SSID visible (default)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHiddenSet(scpi_t * context);
+
+/**
  * SCPI Callback: Get the Ip address of the device
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */

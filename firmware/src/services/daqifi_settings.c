@@ -113,6 +113,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             wifi->gateway.Val = inet_addr(DEFAULT_NETWORK_GATEWAY_IP_ADDRESS);
 
             wifi->tcpPort = DEFAULT_TCP_PORT;
+            wifi->ssidHidden = false;  // #45: AP SSID visible by default
             break;
         }
         default:

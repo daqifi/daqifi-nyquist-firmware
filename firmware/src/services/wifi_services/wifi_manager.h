@@ -134,6 +134,14 @@ extern "C" {
          */
         uint16_t tcpPort;
 
+        /**
+         * AP-mode SSID visibility (#45). When true the soft-AP SSID is
+         * hidden/cloaked (not broadcast in beacons); when false (default)
+         * the SSID is broadcast normally. Appended at the end of the struct
+         * to preserve the NVM offsets of the existing fields.
+         */
+        bool ssidHidden;
+
     } wifi_manager_settings_t;
 
     typedef struct {
