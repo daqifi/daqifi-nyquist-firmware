@@ -8,6 +8,58 @@
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
+/* #14: Runtime cache of the device friendly name. Seeded at boot from
+ * NVM-persisted TopLevelSettings; read by the PB/JSON info-message
+ * encoders and the SYST:DEVice:NAME? query; captured into the NVM blob
+ * on the next TopLevelSettings save. Empty string = unset. Written only
+ * from task context (SCPI callbacks / boot); the fixed buffer means
+ * readers always see a valid NUL-terminated string. */
+static char gFriendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE] = {0};
+
+/* #625: the friendly name is emitted UNESCAPED into the JSON info message
+ * ("friendlyName":"%s") and copied into the PB info message, so it must be
+ * printable ASCII with no JSON-structural characters. Reject control chars
+ * (< 0x20, 0x7F), non-ASCII (> 0x7E), and '"' / '\\'. Bounded scan: the
+ * boot-seed path hands us a fixed NVM field that may be blank flash (0xFF,
+ * no NUL) — a name with no terminator inside the field is invalid. */
+bool daqifi_settings_FriendlyNameIsValid(const char* name) {
+    if (name == NULL) {
+        return false;
+    }
+    for (size_t i = 0; i < FRIENDLY_DEVICE_NAME_SIZE; i++) {
+        unsigned char c = (unsigned char)name[i];
+        if (c == '\0') {
+            return true;   // reached the terminator, all chars were safe
+        }
+        if (c < 0x20 || c > 0x7E || c == '"' || c == '\\') {
+            return false;
+        }
+    }
+    return false;          // no NUL within the field = malformed / invalid
+}
+
+void daqifi_settings_SetFriendlyName(const char* name) {
+    /* Fail safe: a NULL or invalid name (blank-flash NVM, an older build,
+     * or a corrupt blob reaching the boot-seed / NVM-load paths) leaves the
+     * cache EMPTY rather than injecting corruption into the JSON/PB
+     * encoders. The SCPI setter validates and rejects with an error first,
+     * so a user command never silently lands in this clear-to-empty branch. */
+    if (!daqifi_settings_FriendlyNameIsValid(name)) {
+        gFriendlyDeviceName[0] = '\0';
+        return;
+    }
+    strncpy(gFriendlyDeviceName, name, FRIENDLY_DEVICE_NAME_SIZE - 1);
+    gFriendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE - 1] = '\0';
+}
+
+const char* daqifi_settings_GetFriendlyName(void) {
+    return gFriendlyDeviceName;
+}
+
+void daqifi_settings_SeedFriendlyName(const char* name) {
+    daqifi_settings_SetFriendlyName(name);
+}
+
 bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settings) {
 
     
@@ -63,6 +115,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
             pTopLevelSettings->calVals = 0;
             pTopLevelSettings->voltagePrecision = pBoardConfig->DefaultVoltagePrecision;
             pTopLevelSettings->autoPowerOnUsb = false;  // #454: opt-in
+            pTopLevelSettings->friendlyDeviceName[0] = '\0';  // #14: unset by default
             strcpy(pTopLevelSettings->boardHardwareRev, HARDWARE_REVISION);
             strcpy(pTopLevelSettings->boardFirmwareRev, FIRMWARE_REVISION);
             pTopLevelSettings->boardVariant = pBoardConfig->BoardVariant;
@@ -149,6 +202,14 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
             // Auto-capture would clobber the persisted value on every
             // unrelated save (e.g. CONF:VOLT:SAVE) if PowerData has been
             // toggled at runtime without an AUTOOn:SAVE.
+            // #14 friendly name IS captured from the runtime cache here
+            // (same auto-capture pattern as voltagePrecision), so any
+            // TopLevelSettings save persists the current name.
+            strncpy(settings->settings.topLevelSettings.friendlyDeviceName,
+                    daqifi_settings_GetFriendlyName(),
+                    FRIENDLY_DEVICE_NAME_SIZE - 1);
+            settings->settings.topLevelSettings
+                    .friendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE - 1] = '\0';
             address = TOP_LEVEL_SETTINGS_ADDR;
             dataSize = sizeof (TopLevelSettings);
             break;
