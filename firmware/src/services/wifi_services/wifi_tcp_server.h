@@ -99,6 +99,15 @@ typedef struct s_tcpClientContext
     volatile uint16_t inflightSizes[WIFI_TCP_MAX_IN_FLIGHT];
     volatile uint8_t inflightHead;
     volatile uint8_t inflightTail;
+
+    /** #599: monotonically-increasing accepted-connection counter.  Bumped
+     *  once per SOCKET_MSG_ACCEPT that installs a client (single writer:
+     *  SocketEventCallback on the WINC driver task — same pattern as
+     *  acceptRefused/acceptFails, so a plain ++ is safe; the 32-bit read is
+     *  atomic).  Lets an in-flight async SD GET/LIST reply verify it still
+     *  targets the connection that issued it, so a later client inheriting
+     *  the single slot can never receive it. */
+    volatile uint32_t connGeneration;
 } wifi_tcp_server_clientContext_t;
 
 /**
@@ -153,6 +162,17 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len);
 
 /** #598: true when the given SCPI context is the WiFi TCP console's. */
 bool wifi_tcp_server_ContextIsTcp(const scpi_t* context);
+
+/** #599: current accepted-connection generation (0 if no client has ever
+ *  been accepted).  Captured at SD GET/LIST time to bind an async reply. */
+uint32_t wifi_tcp_server_GetConnGeneration(void);
+
+/** #599: true only if a client is currently connected AND its generation
+ *  equals `generation` — i.e. the originating connection still owns the
+ *  single TCP slot.  False after that client disconnects, or once a
+ *  different client has taken the slot.  Backpressure (buffer full while the
+ *  same client stays connected) does NOT flip this false. */
+bool wifi_tcp_server_ConnIsCurrent(uint32_t generation);
 
 /**
  * Swap the WiFi TCP circular write buffer to pool-managed memory.

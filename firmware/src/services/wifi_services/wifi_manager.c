@@ -644,6 +644,11 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     break;
                 }
                 gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
+                // #599: this connection now owns the single TCP slot.  Bump the
+                // generation so any still-in-flight async SD GET/LIST reply that
+                // was bound to the previous connection stops writing to us.
+                // Single-writer (this callback only) -> plain ++ is safe.
+                gStateMachineContext.pTcpServerContext->client.connGeneration++;
                 LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
                 recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
 
