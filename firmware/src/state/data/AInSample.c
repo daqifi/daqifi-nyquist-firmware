@@ -28,6 +28,7 @@
 #include "FreeRTOS.h"
 #include "queue.h"
 #include <string.h>  // For memset
+#define LOG_LVL LOG_LEVEL_DEBUG   /* compile ceiling - without it every LOG_D/LOG_I here is a no-op (#605 audit) */
 #include "Util/Logger.h"
 
 //! Ticks to wait for QUEUE OPERATIONS

@@ -33,6 +33,19 @@ void UsbCdc_Profile_ResetPendingStamp(void) {
 // services
 #include "services/SCPI/SCPIInterface.h"
 #include "Util/Logger.h"
+
+/* #511: bytes confirmed transferred by the USB peripheral (WRITE_COMPLETE),
+ * cumulative since boot. 64-bit so a million-year session can't wrap. */
+static volatile uint64_t gUsbWireBytesSent = 0;
+
+uint64_t UsbCdc_GetWireBytesSent(void)
+{
+    taskENTER_CRITICAL();
+    uint64_t v = gUsbWireBytesSent;
+    taskEXIT_CRITICAL();
+    return v;
+}
+
 #include "Util/StreamingBufferPool.h"
 #include "Util/CoherentPool.h"
 #include "HAL/BQ24297/BQ24297.h"
@@ -233,6 +246,21 @@ USB_DEVICE_CDC_EVENT_RESPONSE UsbCdc_CDCEventHandler
              * the next write. */
             USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE val = *(USB_DEVICE_CDC_EVENT_DATA_WRITE_COMPLETE*) (pData);
             if (val.handle == pUsbCdcDataObject->writeTransferHandle) {
+                /* #511: wire-confirmed bytes. Count ONLY writes the peripheral
+                 * actually delivered. val.status==USB_DEVICE_CDC_RESULT_OK means
+                 * the IRP COMPLETED (or COMPLETED_SHORT) and val.length is the
+                 * delivered size. On ENDPOINT_HALTED / TERMINATED_BY_HOST / ERROR
+                 * the Harmony CDC layer still reports val.length = irp->size
+                 * (the requested length, not what went on the wire), so counting
+                 * it would over-report on aborted writes (cable pull, host
+                 * clear-feature). Interrupt context, single writer: plain 64-bit
+                 * RMW is safe only because no other context writes this counter
+                 * and this event can't preempt itself; readers snapshot via
+                 * UsbCdc_GetWireBytesSent (critical section for the 64-bit read,
+                 * same pattern as gTimerISRCalls). */
+                if (val.status == USB_DEVICE_CDC_RESULT_OK) {
+                    gUsbWireBytesSent += val.length;
+                }
                 // Log warning if actual transferred length differs from requested
                 if (val.length != pUsbCdcDataObject->writeBufferLength) {
                     LOG_E_ONCE(LOG_ONCE_USB_WRITE_MISMATCH, "USB write length mismatch");
@@ -1386,6 +1414,7 @@ void UsbCdc_SetWriteBuffer(uint8_t* buf, uint32_t size) {
 
     LOG_I("USB circular buffer: %u -> %u bytes", (unsigned)oldSize, (unsigned)size);
 }
+
 
 void UsbCdc_SetDmaWriteBuffer(uint8_t* buf, uint32_t size) {
     if (buf == NULL || size == 0) return;
