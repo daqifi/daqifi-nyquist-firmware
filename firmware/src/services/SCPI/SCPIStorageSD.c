@@ -261,6 +261,10 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
+    if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612: CRC was the deferred site (post-#610-merge) */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
     memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
     pSDCardRuntimeConfig->file[fileLen] = '\0';
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;
