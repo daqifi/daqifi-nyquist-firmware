@@ -2213,13 +2213,27 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
         if (pSettings != NULL) {
             gStateMachineContext.pWifiSettings = pSettings;
         }
-        if (gStateMachineContext.pWifiSettings != NULL) {
-            taskENTER_CRITICAL();
-            gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
+        /* #656: honor the user's enable setting on the standby->powered
+         * re-init.  The state-machine copy (gpBoardData->wifiSettings) had its
+         * isEnabled zeroed by the standby Deinit, so the authoritative
+         * "user wants WiFi" bit is the runtime-config copy — written by the
+         * ENAbled setter / NVM boot-load, untouched by Deinit.  Only re-arm and
+         * drive the FSM back through INIT when WiFi is actually enabled; a
+         * user-disabled device then stays quiet across the power cycle, matching
+         * the cold-boot ENTRY gate (line ~1018).  Cancel any pending
+         * deferred-INIT regardless (matches the existing teardown semantics). */
+        wifi_manager_settings_t *pRtWifi =
+                BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+        bool userEnabled = (pRtWifi != NULL && pRtWifi->isEnabled);
+        taskENTER_CRITICAL();
+        gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
+        if (gStateMachineContext.pWifiSettings != NULL && userEnabled) {
             gStateMachineContext.pWifiSettings->isEnabled = 1;
-            taskEXIT_CRITICAL();
         }
-        SendEvent(WIFI_MANAGER_EVENT_INIT);
+        taskEXIT_CRITICAL();
+        if (userEnabled) {
+            SendEvent(WIFI_MANAGER_EVENT_INIT);
+        }
         return true;
     }
     if (pSettings != NULL)
