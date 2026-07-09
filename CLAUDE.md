@@ -593,7 +593,7 @@ The firmware computes a maximum safe streaming frequency as a `min()` of an **AD
 |-----------|----:|----:|----:|
 | USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
 | WiFi   | 5175 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
-| SD     | 9000 / 7500   | 150000/(15+n) | 42000/(12+n) |
+| SD     | 9000 / 7500   | 150000/(15+n) | 36000/(12+n) |
 | USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
 
 **Fit basis (normative — the zero-loss sweep subset the F3 coefficients derive from, Hz):**

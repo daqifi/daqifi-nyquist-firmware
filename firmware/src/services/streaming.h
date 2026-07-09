@@ -304,7 +304,14 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                 if (isNQ1) { single = 13000u; A =  99000u; B =  4u; }
                 else       { single =  9000u; A = 150000u; B = 15u; }
             }
-            else    { single =  7500u; A =  42000u; B = 12u; }
+            /* SD CSV A 42000->36000 (2026-07-09): the 8 h freeze-aware soak
+             * dropped SD bytes at the 10ch cap (5T1+5T2 @ 1909 = 42000/22) in
+             * 2/7 rounds -- byte-rate-limited (sdDrop, no wedge). sdDrop scales
+             * with the high-channel byte-rate asymptote (~A*bytes/sample), so
+             * lowering A pulls the many-channel ceiling under the SD write
+             * limit (10ch 1909->1636, ~14% margin) while the clean low-channel
+             * cells only gain headroom. Single-channel (7500) unaffected. */
+            else    { single =  7500u; A =  36000u; B = 12u; }
             break;
         case StreamingInterface_UsbAndSd:
             if (pb) { single =  8000u; A =  66000u; B =  6u; }
